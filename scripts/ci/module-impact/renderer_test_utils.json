@@ -12,7 +12,10 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [],
-    "contract": [],
+    "contract": [
+      "src/renderer/src/pages/workspace/workspace-components.test.tsx",
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
     "consumer": [
       "src/renderer/src/components/JobDetailModal.render.test.tsx",
       "src/renderer/src/components/job-observation-ui.test.tsx",

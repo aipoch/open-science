@@ -82,6 +82,8 @@
         ".github/workflows/pr-gate.yml",
         "e2e/playwright.*.config.ts",
         "e2e/vite.browser-test.config.ts",
+        "e2e/accessibility-reporter.ts",
+        "e2e/windows-shard-reporter.ts",
         "test/config/**",
         ".github/actions/source-regression/**",
         ".github/workflows/source-regression.yml",
@@ -420,7 +422,314 @@
       "id": "renderer_browser_e2e",
       "role": "owner",
       "paths": ["e2e/browser/**"],
+      "runner": "playwright",
       "capabilities": ["renderer_browser_e2e"]
+    },
+    {
+      "id": "desktop_e2e_journeys",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/brand-storage.spec.ts",
+        "e2e/electron-foundation.spec.ts",
+        "e2e/settings-persistence.spec.ts",
+        "e2e/windows-window-system.spec.ts",
+        "e2e/wsl-setup-conversation.spec.ts",
+        "e2e/session-package.spec.ts",
+        "e2e/session-package-drop.spec.ts",
+        "e2e/session-fork.spec.ts",
+        "e2e/session-diagnostics.spec.ts",
+        "e2e/specialist-marketplace-redirect.spec.ts",
+        "e2e/fixtures/localized-settings.ts"
+      ],
+      "capabilities": ["desktop_e2e_source", "e2e_functional"]
+    },
+    {
+      "id": "desktop_e2e_workspace",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/launch-environment.spec.ts",
+        "e2e/message-tool-layout-stability.spec.ts",
+        "e2e/workspace-project-switcher.spec.ts",
+        "e2e/workspace-conversation.spec.ts",
+        "e2e/workspace-files.spec.ts",
+        "e2e/office-spreadsheet-search.spec.ts",
+        "e2e/fixtures/pptx.ts"
+      ],
+      "capabilities": ["desktop_e2e_source", "e2e_workspace"]
+    },
+    {
+      "id": "desktop_e2e_regressions",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/desktop-composer-draft-restart.spec.ts",
+        "e2e/desktop-runtime-lifetime.spec.ts",
+        "e2e/desktop-runtime-backpressure.spec.ts",
+        "e2e/desktop-runtime-event-delivery.spec.ts",
+        "e2e/desktop-runtime-recovery.spec.ts",
+        "e2e/desktop-runtime-restart.spec.ts",
+        "e2e/desktop-runtime-preview-recovery.spec.ts",
+        "e2e/desktop-runtime-stop.spec.ts",
+        "e2e/pdf-annotations.spec.ts",
+        "e2e/pdf-translation-pair.spec.ts",
+        "e2e/pdf-translation-preparation.spec.ts",
+        "e2e/pdf-translation-recovery.spec.ts",
+        "e2e/pdf-notebook-capacity.spec.ts",
+        "e2e/background-result-delivery.spec.ts",
+        "e2e/renderer-startup-dependencies.spec.ts",
+        "e2e/interaction-restart.spec.ts",
+        "e2e/interrupted-turn-recovery.spec.ts",
+        "e2e/resume-agent-recovery.spec.ts",
+        "e2e/specialist-switch-recovery.spec.ts",
+        "e2e/session-plan-recovery.spec.ts",
+        "e2e/auto-review-stop-resume.spec.ts",
+        "e2e/provider-connection-validation.spec.ts",
+        "e2e/global-search.spec.ts",
+        "e2e/search-file-navigation.spec.ts",
+        "e2e/transcript-capacity.spec.ts",
+        "e2e/session-residency-capacity.spec.ts",
+        "e2e/compute-execution-mode.spec.ts",
+        "e2e/find-overlay.spec.ts",
+        "e2e/literature-client-sync.spec.ts",
+        "e2e/journal-attributes.spec.ts",
+        "e2e/literature-smart-collections.spec.ts",
+        "e2e/session-client-consistency.spec.ts",
+        "e2e/runtime-writer-browser.spec.ts",
+        "e2e/mermaid-block.spec.ts",
+        "e2e/highlight-style-isolation.spec.ts",
+        "e2e/message-queue-presentation-gate.spec.ts",
+        "e2e/mobile-message-handoff.spec.ts",
+        "e2e/message-scroll-anchor.spec.ts",
+        "e2e/message-scroll-reanchor.spec.ts",
+        "e2e/message-scroll-release.spec.ts",
+        "e2e/message-tool-order.spec.ts",
+        "e2e/preview-context-menu.spec.ts",
+        "e2e/source-preview-storage.spec.ts",
+        "e2e/reproducibility-preview.spec.ts",
+        "e2e/skill-permission-card.spec.ts",
+        "e2e/window-presentation.spec.ts",
+        "e2e/ux-quality.spec.ts",
+        "e2e/side-chat-admission.spec.ts",
+        "e2e/artifact-task-lifecycle.spec.ts",
+        "e2e/artifact-resume-finalization.spec.ts",
+        "e2e/replay-stage.spec.ts",
+        "e2e/session-replay.spec.ts",
+        "e2e/session-replay-concurrency.spec.ts",
+        "e2e/session-replay-navigation.spec.ts",
+        "e2e/session-replay-notebook.spec.ts",
+        "e2e/helpers/research-replay.ts",
+        "e2e/session-turn-outcome.spec.ts",
+        "e2e/pdf-translation-editions.spec.ts",
+        "e2e/pdf-workspace-translation.spec.ts",
+        "e2e/pdf-translation-local.spec.ts",
+        "e2e/pdf-translation-performance.spec.ts",
+        "e2e/runtime-approval.spec.ts",
+        "e2e/session-wait-status.spec.ts",
+        "e2e/settings-error-transport.spec.ts",
+        "e2e/desktop-runtime-startup.spec.ts",
+        "e2e/desktop-runtime-native-relaunch.spec.ts",
+        "e2e/runtime-update-ui-acceptance.spec.ts",
+        "e2e/fixtures/library.ts",
+        "e2e/fixtures/relaunch-observer.cjs",
+        "e2e/fixtures/runtime-relaunch-stall.cjs",
+        "e2e/fixtures/replay-stage/**",
+        "e2e/fixtures/reproducibility-preview/**",
+        "e2e/fixtures/session-outcome-fault.ts",
+        "e2e/fixtures/settings-error-transport.ts"
+      ],
+      "capabilities": ["desktop_e2e_source", "e2e_regressions"]
+    },
+    {
+      "id": "desktop_e2e_delegation",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/subagent-model-release-gate.spec.ts",
+        "e2e/subagent-release-gate.spec.ts",
+        "e2e/delegation-resume.spec.ts",
+        "e2e/delegation-cold-recovery.spec.ts",
+        "e2e/fixtures/session-revision-retry.ts"
+      ],
+      "capabilities": ["desktop_e2e_source", "e2e_delegation"]
+    },
+    {
+      "id": "desktop_e2e_accessibility",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": ["e2e/accessibility.spec.ts"],
+      "capabilities": ["desktop_e2e_source", "e2e_accessibility"]
+    },
+    {
+      "id": "desktop_e2e_visual",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": ["e2e/visual-regression.spec.ts", "e2e/visual-regression.spec.ts-snapshots/*.png"],
+      "capabilities": ["desktop_e2e_source", "e2e_visual"]
+    },
+    {
+      "id": "desktop_e2e_presentation_fixtures",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": ["e2e/fixtures/viewport.ts"],
+      "capabilities": ["desktop_e2e_source", "e2e_accessibility", "e2e_visual"]
+    },
+    {
+      "id": "desktop_e2e_shared_harness",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/certification/helpers.ts",
+        "e2e/fixtures/brand-storage-data.ts",
+        "e2e/fixtures/conversation.ts",
+        "e2e/fixtures/electron-app.ts",
+        "e2e/fixtures/fake-opencode.mjs",
+        "e2e/fixtures/fake-remoteit.cjs",
+        "e2e/fixtures/mock-credential-identity.cjs",
+        "e2e/fixtures/mock-credential-identity.sh",
+        "e2e/fixtures/mock-node-credentials.cjs",
+        "e2e/fixtures/mock-node-secret.sh",
+        "e2e/fixtures/native-quit-dialog.ts",
+        "e2e/fixtures/node-runtime-child-preload.cjs",
+        "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/project.ts",
+        "e2e/fixtures/renderer-failure-gate.ts",
+        "e2e/fixtures/research-analysis.mjs",
+        "e2e/fixtures/sanitized-performance.png",
+        "e2e/fixtures/session-outcome-preload.cjs",
+        "e2e/fixtures/settings-preferences.ts"
+      ],
+      "capabilities": ["desktop_e2e_source", "desktop_e2e_all"]
+    },
+    {
+      "id": "desktop_e2e_without_pr_executor",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/certification/*.spec.ts",
+        "e2e/runtime-performance.spec.ts",
+        "e2e/startup-performance.spec.ts"
+      ],
+      "capabilities": ["desktop_e2e_source"]
+    },
+    {
+      "id": "windows_notebook_mutation",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": [
+        "e2e/fixtures/fake-micromamba.rs",
+        "e2e/fixtures/run-notebook-lifecycle-windows.ps1"
+      ],
+      "capabilities": ["windows_notebook_mutation"]
+    },
+    {
+      "id": "desktop_e2e_smoke",
+      "role": "overlay",
+      "paths": [
+        "e2e/electron-foundation.spec.ts",
+        "e2e/settings-persistence.spec.ts",
+        "e2e/window-presentation.spec.ts",
+        "e2e/fixtures/localized-settings.ts"
+      ],
+      "capabilities": ["e2e_smoke"]
+    },
+    {
+      "id": "desktop_e2e_windows_journeys",
+      "role": "overlay",
+      "paths": ["e2e/electron-foundation.spec.ts", "e2e/windows-window-system.spec.ts"],
+      "capabilities": ["e2e_windows_functional"]
+    },
+    {
+      "id": "desktop_e2e_windows_workspace",
+      "role": "overlay",
+      "paths": [
+        "e2e/workspace-conversation.spec.ts",
+        "e2e/workspace-files.spec.ts",
+        "e2e/fixtures/pptx.ts"
+      ],
+      "capabilities": ["e2e_windows_workspace"]
+    },
+    {
+      "id": "desktop_e2e_browser_fixtures",
+      "role": "overlay",
+      "paths": ["e2e/fixtures/localized-settings.ts", "e2e/fixtures/settings-preferences.ts"],
+      "capabilities": ["renderer_browser_e2e"]
+    },
+    {
+      "id": "desktop_e2e_reader_electron_app",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/electron-app.ts",
+        "e2e/fixtures/brand-storage-data.ts",
+        "e2e/fixtures/native-quit-dialog.ts"
+      ],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts",
+        "scripts/electron-fixture-teardown.test.ts"
+      ],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_preload",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/session-outcome-preload.cjs",
+        "e2e/fixtures/mock-node-credentials.cjs",
+        "e2e/fixtures/mock-credential-identity.cjs",
+        "e2e/fixtures/mock-credential-identity.sh"
+      ],
+      "tests": ["scripts/electron-app-fixture.test.ts"],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_native_quit",
+      "role": "overlay",
+      "paths": [
+        "e2e/fixtures/native-quit-dialog.ts",
+        "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/node-runtime-child-preload.cjs",
+        "e2e/fixtures/session-outcome-preload.cjs",
+        "e2e/fixtures/mock-node-credentials.cjs"
+      ],
+      "tests": ["scripts/native-quit-dialog.test.ts"],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_renderer_failure_gate",
+      "role": "overlay",
+      "paths": ["e2e/fixtures/renderer-failure-gate.ts"],
+      "tests": ["scripts/electron-app-fixture.test.ts", "test/renderer-failure-gate.test.ts"],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_brand_storage",
+      "role": "overlay",
+      "paths": ["e2e/fixtures/brand-storage-data.ts"],
+      "tests": ["src/main/storage/brand-location.test.ts"],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_session_outcome",
+      "role": "overlay",
+      "paths": ["e2e/fixtures/session-outcome-preload.cjs"],
+      "tests": ["test/config/playwright.config.test.ts"],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_session_revision",
+      "role": "overlay",
+      "paths": ["e2e/fixtures/session-revision-retry.ts"],
+      "tests": ["scripts/electron-session-revision-retry.test.ts"],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_visual_baseline",
+      "role": "overlay",
+      "paths": ["e2e/visual-regression.spec.ts-snapshots/home-empty-darwin.png"],
+      "tests": ["src/main/uploads/attachment-media.sharp.test.ts"],
+      "capabilities": ["desktop_e2e_unit_readers"]
     },
     {
       "id": "critical_desktop_runtime",
@@ -628,6 +937,44 @@
     "e2e_delegation": {
       "consumers": [],
       "lanes": ["e2e_delegation_macos"]
+    },
+    "desktop_e2e_source": {
+      "consumers": [],
+      "lanes": ["format", "lint", "typecheck_node"]
+    },
+    "desktop_e2e_all": {
+      "consumers": [
+        "e2e_smoke",
+        "e2e_functional",
+        "e2e_workspace",
+        "e2e_accessibility",
+        "e2e_visual",
+        "e2e_regressions",
+        "e2e_delegation",
+        "e2e_windows_functional",
+        "e2e_windows_workspace"
+      ],
+      "lanes": []
+    },
+    "e2e_smoke": {
+      "consumers": [],
+      "lanes": ["e2e_smoke_macos"]
+    },
+    "e2e_windows_functional": {
+      "consumers": [],
+      "lanes": ["e2e_functional_windows"]
+    },
+    "e2e_windows_workspace": {
+      "consumers": [],
+      "lanes": ["e2e_workspace_windows"]
+    },
+    "desktop_e2e_unit_readers": {
+      "consumers": [],
+      "lanes": ["unit_macos"]
+    },
+    "windows_notebook_mutation": {
+      "consumers": [],
+      "lanes": []
     },
     "renderer_browser_e2e": {
       "consumers": [],

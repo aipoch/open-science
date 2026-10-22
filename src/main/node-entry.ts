@@ -703,7 +703,9 @@ void main().catch((error: unknown) => {
       ? {
           recoveryReason: error.reason,
           identityProbe: error.probe,
-          validationDiagnostic: error.diagnostic
+          // Inventory context is transient UI data, not an additional persisted diagnostic.
+          validationDiagnostic:
+            error.diagnostic?.code === 'inventory-failed' ? undefined : error.diagnostic
         }
       : {})
   })

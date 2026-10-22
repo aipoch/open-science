@@ -5,14 +5,19 @@
 import { randomUUID } from 'node:crypto'
 import { closeSync, createWriteStream, existsSync, openSync, realpathSync } from 'node:fs'
 import { chmod, lstat, mkdir, readFile, readlink, rename, rm, stat } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { text as readStreamText } from 'node:stream/consumers'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-import { findServiceState, readWebToken, resolveConfigRoot } from './config-root.mjs'
+import {
+  candidateConfigRoots,
+  findServiceState,
+  readWebToken,
+  resolveConfigRoot
+} from './config-root.mjs'
 import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateBackend } from './locate-backend.mjs'
@@ -27,6 +32,9 @@ const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 const usage = `Usage: open-science <command> [options]
 
 Commands:
+  version     Print the local application version (also --version or -v)
+  help [command]  Show general or command help
+  paths       Show local CLI, Node and configuration discovery paths
   init        Create the local CLI configuration directory
   start       Start the headless backend and localhost web UI
   stop        Gracefully stop the backend
@@ -126,6 +134,7 @@ Options:
   --no-sandbox           Disable Chromium's process sandbox (security risk; start only)
   --force                Sign in again even when Codex credentials already exist
   --json                 Emit one machine-readable result
+  -v, --version          Print the local application version and exit
   -h, --help             Show this help`
 
 // Flags that take a value, mapped to their camelCase option key (explicit so new hyphenated flags
@@ -263,6 +272,9 @@ const POSITIONAL_LIMITS = new Map([
   ...Object.keys(OBSERVATION_COMMANDS).map((command) => [`observations ${command}`, 0]),
   ...Object.keys(PACKAGE_COMMANDS).map((command) => [`package ${command}`, 0]),
   ...Object.keys(EXECUTION_COMMANDS).map((command) => [`execution ${command}`, 0]),
+  ['version', 0],
+  ['help', 1],
+  ['paths', 0],
   ['doctor', 0],
   ['runtime list', 0],
   ['runtime install', 1],
@@ -332,7 +344,17 @@ const assertPositionalLimit = (command, subcommand, positionals) => {
 
 export const parseCliArgs = (argv) => {
   const args = [...argv]
-  const command = args.shift()
+  const requestedCommand = args.shift()
+  const command =
+    requestedCommand === '--version' || requestedCommand === '-v' ? 'version' : requestedCommand
+  const localOptions =
+    command === 'version'
+      ? ['--json', '--help', '-h']
+      : command === 'paths'
+        ? ['--json', '--help', '-h', '--config-root', '--profile']
+        : command === 'help'
+          ? ['--help', '-h']
+          : undefined
   const subcommand =
     (GROUP_COMMANDS.has(command) && args[0] && !args[0].startsWith('-')) ||
     (command === 'run' && (args[0] === 'status' || args[0] === 'cancel'))
@@ -347,6 +369,9 @@ export const parseCliArgs = (argv) => {
   const positionals = []
   while (args.length > 0) {
     const arg = args.shift()
+    if (localOptions && arg.startsWith('-') && !localOptions.includes(arg)) {
+      throw new CliUsageError(`Unknown option for ${command}: ${arg}`)
+    }
     if (arg.startsWith('--credential-store=')) {
       if (options.credentialStore !== undefined)
         throw new CliUsageError('Specify --credential-store only once.')
@@ -423,6 +448,10 @@ export const parseCliArgs = (argv) => {
     ...(subcommand ? { subcommand } : {}),
     ...(positionals.length ? { positionals } : {}),
     options
+  }
+  if (localOptions) {
+    assertPositionalLimit(command, subcommand, positionals)
+    return parsed
   }
   // Help is local: it must not require execution-only options or a running backend.
   if (options.help) return parsed
@@ -1977,14 +2006,55 @@ ${commands.join('\n')}
 Run "open-science --help" for the complete option reference.`
 }
 
+const readCliMetadata = async () => {
+  const here = dirname(fileURLToPath(import.meta.url))
+  // Source SDK metadata has its own version; installed CLI manifests carry the release version.
+  const development =
+    basename(here) === 'open-science' &&
+    basename(dirname(here)) === 'packages' &&
+    existsSync(join(here, '../../src/main/node-entry.ts'))
+  const manifestPath = join(development ? join(here, '../..') : here, 'package.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  if (
+    manifest.name !== (development ? 'open-science' : '@aipoch/open-science') ||
+    typeof manifest.version !== 'string' ||
+    !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?$/.test(manifest.version)
+  ) {
+    throw new Error(`Invalid Open-Science CLI metadata: ${manifestPath}`)
+  }
+  return { version: manifest.version, development }
+}
+
+const pathsCommand = async (options) => {
+  const { development } = await readCliMetadata()
+  const paths = {
+    cliPath: fileURLToPath(import.meta.url),
+    nodePath: process.execPath,
+    startupConfigRoot: resolveConfigRoot({
+      packaged: !development,
+      override: options.configRoot
+    }),
+    discoveryConfigRoots: candidateConfigRoots({ override: options.configRoot })
+  }
+  console.log(
+    options.json
+      ? JSON.stringify(paths)
+      : `CLI: ${paths.cliPath}\nNode: ${paths.nodePath}\nStartup configuration: ${paths.startupConfigRoot}\nService discovery (in order):\n${paths.discoveryConfigRoots.map((root) => `  ${root}`).join('\n')}`
+  )
+}
+
 export const runCli = async (argv = process.argv.slice(2)) => {
   const parsed = parseCliArgs(argv)
   const { command, options } = parsed
-  if (options.help || !command || command === '-h' || command === '--help') {
-    console.log(commandHelp(command))
+  if (options.help || !command || command === 'help' || command === '-h' || command === '--help') {
+    console.log(commandHelp(command === 'help' ? parsed.positionals?.[0] : command))
     return
   }
-  if (command === 'init') await initCommand(options)
+  if (command === 'version') {
+    const { version } = await readCliMetadata()
+    console.log(options.json ? JSON.stringify({ version }) : version)
+  } else if (command === 'paths') await pathsCommand(options)
+  else if (command === 'init') await initCommand(options)
   else if (command === 'start') await startCommand(options)
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)

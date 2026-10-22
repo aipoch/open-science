@@ -9661,8 +9661,13 @@ describe('notebook runtime service', () => {
       const root = await createStorageRoot()
       let active = 0
       let maxConcurrent = 0
+      let finishing = false
       const releases: Array<{ language?: string; release: () => void }> = []
       const service = holdingService(root, (request, resolve) => {
+        if (finishing) {
+          resolve()
+          return
+        }
         active += 1
         maxConcurrent = Math.max(maxConcurrent, active)
         releases.push({ language: request.language, release: resolve })
@@ -9704,22 +9709,26 @@ describe('notebook runtime service', () => {
       const r1 = service.runCell({ sessionId: 's', workspaceCwd: root, cellId: 'r1' })
       const py2 = service.runCell({ sessionId: 's', workspaceCwd: root, cellId: 'py2' })
 
-      // python and r are independent processes → both enter the executor at once; the second python
-      // queues behind the first, so exactly two runs (one python, one r) are in flight.
-      await vi.waitFor(() => expect(releases).toHaveLength(2))
-      await new Promise((resolve) => setTimeout(resolve, 20))
-      expect(releases).toHaveLength(2)
-      expect(maxConcurrent).toBe(2)
-      expect(releases.map((entry) => entry.language).sort()).toEqual(['python', 'r'])
+      try {
+        // python and r are independent processes → both enter the executor at once; the second python
+        // queues behind the first, so exactly two runs (one python, one r) are in flight.
+        await vi.waitFor(() => expect(releases).toHaveLength(2), { timeout: 10_000 })
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(releases).toHaveLength(2)
+        expect(maxConcurrent).toBe(2)
+        expect(releases.map((entry) => entry.language).sort()).toEqual(['python', 'r'])
 
-      // Drain the first python; the queued second python now takes the freed python slot (still only
-      // two concurrent, never three).
-      drain(releases.find((entry) => entry.language === 'python')!)
-      await vi.waitFor(() => expect(releases).toHaveLength(3))
-      expect(maxConcurrent).toBe(2)
-
-      releases.forEach((entry) => entry.release())
-      await Promise.all([py1, r1, py2])
+        // Drain the first python; the queued second python now takes the freed python slot (still only
+        // two concurrent, never three).
+        drain(releases.find((entry) => entry.language === 'python')!)
+        await vi.waitFor(() => expect(releases).toHaveLength(3), { timeout: 10_000 })
+        expect(maxConcurrent).toBe(2)
+      } finally {
+        // Settle queued work before afterEach removes the repository, including assertion failures.
+        finishing = true
+        releases.forEach((entry) => entry.release())
+        await Promise.all([py1, r1, py2])
+      }
     })
 
     it('blocks a package install on the same language until an in-flight run finishes (G2)', async () => {

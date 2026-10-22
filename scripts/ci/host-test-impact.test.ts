@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { refineHostTests } from './package-host-test-impact.mjs'
 import { runModuleTestCli } from './module-test-impact.mjs'
-import { moduleRelationships } from './module-relationships.mjs'
+import { moduleRelationships } from './module-graph/index.mjs'
 
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
@@ -291,4 +291,34 @@ it('exports immutable, separately directed dependency and test-routing evidence'
     false
   )
   expect(moduleRelationships(f.head, f.cwd)).toEqual(before)
+})
+
+it('reports reviewed module edges as capability routing without conflating source dependencies', () => {
+  const f = fixture()
+  const source = 'src/shared/fuzzy-match.ts'
+  f.put(source, 'export const value = 1')
+  f.put(
+    'scripts/ci/module-impact.json',
+    JSON.stringify({
+      schemaVersion: 1,
+      modules: {
+        shared_fuzzy_match: {
+          ...f.manifest.modules.owner,
+          ownerPaths: [source],
+          interfacePaths: [source],
+          consumerModules: ['host_command_runtime']
+        },
+        host_command_runtime: f.manifest.modules.downstream
+      }
+    })
+  )
+  const report = moduleRelationships(f.commit(), f.cwd)
+  expect(report.relations).toContainEqual(
+    expect.objectContaining({
+      kind: 'capability-routing',
+      from: 'shared_fuzzy_match',
+      to: 'host_command_runtime'
+    })
+  )
+  expect(report.relations.some(({ kind }: { kind: string }) => kind === 'test-routing')).toBe(false)
 })

@@ -38,7 +38,10 @@
       "src/renderer/src/pages/literature/useLiteratureChanges.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx"
     ],
-    "contract": ["src/renderer/src/pages/literature/public-boundary.architecture.test.ts"],
+    "contract": [
+      "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
     "consumer": [
       "src/main/literature/catalog.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",

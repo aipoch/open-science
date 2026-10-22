@@ -18,7 +18,7 @@
       "src/renderer/src/pages/workspace/annotations/AnnotationCards.test.tsx",
       "src/renderer/src/pages/workspace/annotations/TextAnnotationSurface.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",

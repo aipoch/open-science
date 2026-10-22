@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type { Annotation, ImagePointAnnotation } from '../../../../../shared/annotation-contract'
 import type { AnnotationValidationError } from '../../../../../shared/annotations'
 

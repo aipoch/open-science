@@ -48,7 +48,7 @@
       "src/renderer/src/pages/settings/FileBrowserModal.render.test.tsx",
       "src/renderer/src/pages/settings/file-browser-remote-error.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/notebook/mirror-probe.test.ts",
       "src/main/session-persistence/usage-regressions.test.ts",

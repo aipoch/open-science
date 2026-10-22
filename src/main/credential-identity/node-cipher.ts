@@ -20,7 +20,7 @@ import {
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { SecureStorageCipher } from './cipher-contract'
-import { CredentialIdentityError, type CredentialIdentity } from './selection'
+import { CredentialIdentityError, type CredentialIdentity } from './identity-contract'
 
 // Electron 43.7.5's pinned OSCrypt sync format; no new ciphertext envelope is persisted.
 // https://github.com/electron/electron/blob/v43.7.5/patches/chromium/revert_oscrypt_remove_sync_backend.patch

@@ -1,4 +1,4 @@
-import type { CredentialCiphertext } from './credential-identity/ciphertext-inventory'
+import type { CredentialCiphertext } from './credential-identity/cipher-contract'
 import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
 import {

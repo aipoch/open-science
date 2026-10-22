@@ -18,6 +18,7 @@ import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 
 import type {
+  AgentFrameworkId,
   AppIconVariant,
   ClaudeInfo,
   ClaudeSubscriptionProviderId,
@@ -36,7 +37,6 @@ import type {
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
-import type { AgentFrameworkId } from '../agent-framework'
 type StoredClassificationService = {
   id: string
   adapter: ClassificationAdapter
@@ -208,9 +208,9 @@ export type StoredConnectors = {
   // Fully-qualified "<connector>/<method>" ids that require per-call approval (opt-in). Tools default
   // to allow (no prompt); this is the set the user switched to "Require approval".
   askToolIds?: string[]
-  // Ids of bundled connectors the user turned OFF. Absent/empty means every bundled connector is
-  // enabled (default-on), mirroring disabledSkillIds. This is the authoritative bundled gate.
+  // Explicit bundled choices override catalog defaults; disabled wins conflicting input.
   disabledConnectorIds?: string[]
+  enabledConnectorIds?: string[]
   customMcpServers?: StoredCustomMcpServer[]
   // Durable tombstones for Connector deletions that still need their permission grants pruned.
   pendingCustomServerDeletionIds?: string[]

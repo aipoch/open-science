@@ -331,6 +331,32 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
     )
   }
 )
+it('displays inventory details without persisting them or initializing the profile', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  f.inventory.mockImplementationOnce(() => {
+    throw new CredentialIdentityError('ciphertext-inventory-unavailable', undefined, {
+      code: 'inventory-failed',
+      source: 'application-database',
+      stage: 'check-journal',
+      reason: 'journal-incomplete'
+    })
+  })
+  await import('./index')
+  expect(f.dialog.showErrorBox).toHaveBeenCalledWith(
+    'Open-Science',
+    expect.stringContaining('Affected data: Application database')
+  )
+  for (const sink of [f.log.error, f.fatalLog]) {
+    expect(sink).toHaveBeenCalled()
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('inventory-failed')
+    expect(JSON.stringify(sink.mock.calls)).not.toContain('journal-incomplete')
+  }
+  expect(f.app.exit).toHaveBeenCalledWith(1)
+  expect(f.app.whenReady).not.toHaveBeenCalled()
+  expect(f.key).not.toHaveBeenCalled()
+  expect(f.launch).not.toHaveBeenCalled()
+})
+
 it('releases credential preflight and exits without yielding or initializing the profile after recovery failure', async () => {
   // beforeEach resets module identity; use the same error class as this entry import.
   const { CredentialIdentityError } = await import('./credential-identity/selection')

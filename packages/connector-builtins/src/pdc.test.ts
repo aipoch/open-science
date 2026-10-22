@@ -658,7 +658,10 @@ describe('PDC clinical metadata', () => {
         returned: 1,
         next_offset: 1,
         pagination_mode: 'local',
-        usage: { discovery_note: expect.stringContaining('no data use agreement') }
+        usage: {
+          citation_note: expect.stringContaining('Follow PDC data use guidelines (CC BY 4.0)'),
+          discovery_note: expect.stringContaining('no data use agreement')
+        }
       })
       const request = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))
       expect(request.variables).toEqual(selection)

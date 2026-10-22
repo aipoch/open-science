@@ -13,11 +13,8 @@ import {
   previewLeaveGuards,
   workbenchPreviewGuardScope
 } from './preview-leave-guard'
-import {
-  createPendingPdfContext,
-  usePreviewWorkbenchStore,
-  type PreviewFileItem
-} from './preview-workbench-store'
+import { createPendingPdfContext, usePreviewWorkbenchStore } from './preview-workbench-store'
+import type { PreviewFileItem } from './preview-workbench-contract'
 import {
   findMostRecentSessionId as findMostRecentProjectSessionId,
   useSessionStore

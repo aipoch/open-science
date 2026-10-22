@@ -64,11 +64,11 @@
     "src/main/session-package/test-helpers/browser-import-port.ts",
     "src/main/session-package/literature-source.ts",
     "src/main/session-package/literature-source.test.ts",
+    "src/main/session-package/materialize.ts",
+    "src/main/session-package/materialize.test.ts",
     "src/main/session-package/research-reproduction.integration.test.ts",
     "src/main/session-package/headless.test.ts",
-    "src/main/session-package/headless.ts",
-    "src/main/session-package/materialize.ts",
-    "src/main/session-package/materialize.test.ts"
+    "src/main/session-package/headless.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -112,16 +112,17 @@
       "src/main/session-package/browser-import.test.ts",
       "src/main/session-package/browser-import-protocol.test.ts",
       "src/main/session-package/browser-import-sdk.integration.test.ts",
+      "src/main/session-package/materialize.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts",
-      "src/main/session-package/headless.test.ts",
-      "src/main/session-package/materialize.test.ts"
+      "src/main/session-package/headless.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-package/literature-source.test.ts"
+      "src/main/session-package/literature-source.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
@@ -165,5 +166,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Headless portable package operations extend the reviewed package owner across import recovery, authorization, restart and shutdown lifecycles; retain full validation of desktop, CLI and browser consumers."
 }

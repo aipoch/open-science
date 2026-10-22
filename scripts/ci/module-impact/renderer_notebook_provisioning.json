@@ -6,7 +6,8 @@
     "owner": [],
     "contract": [
       "src/renderer/src/pages/workspace/provisioning-view.test.ts",
-      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/renderer/src/App.test.tsx",

@@ -12,17 +12,67 @@ import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { resolveAuthoritativePlan } from './module-impact-shadow.mjs'
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
 import {
+  createModuleImpactModel,
+  productionFullReasonContracts
+} from './module-impact-model.test-support'
+import {
   selectWindowsCoreChecks,
   windowsCoreChecks,
   validWindowsCoreChecks
 } from './windows-core-plan.mjs'
 
-const manifest = loadModuleImpactManifest()
+// This model isolates direct Windows evidence from indirect consumers. The production
+// manifest remains separately exercised below, including its conservative full owners.
+const windowsCoreModel = (): ReturnType<typeof createModuleImpactModel> =>
+  createModuleImpactModel({
+    main_literature: {
+      ownerPaths: ['src/main/literature/catalog.ts'],
+      ownerTests: ['src/main/literature/smart-collections.test.ts'],
+      consumerTests: ['src/main/process-tree.windows.integration.test.ts'],
+      capabilityOverlays: ['windows_sensitive']
+    },
+    page_literature: {
+      ownerPaths: ['src/renderer/src/pages/literature/LiteratureLibraryPage.tsx'],
+      ownerTests: ['src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx'],
+      fallbackCapability: 'renderer_view'
+    },
+    shell_runtime: {
+      ownerPaths: [
+        'src/main/notebook/shell-runtime.ts',
+        'src/main/notebook/windows-shell.integration.test.ts'
+      ],
+      ownerTests: ['src/main/notebook/windows-shell.integration.test.ts'],
+      capabilityOverlays: ['windows_sensitive', 'notebook_network_sandbox']
+    },
+    acp_runtime: {
+      ownerPaths: ['src/main/acp/runtime.ts'],
+      ownerTests: ['src/main/acp/runtime.test.ts'],
+      capabilityOverlays: ['windows_sensitive']
+    },
+    delegation_execution: {
+      ownerPaths: ['src/main/delegation/process-ownership.ts'],
+      ownerTests: ['src/main/delegation/process-ownership.test.ts'],
+      capabilityOverlays: ['windows_sensitive']
+    },
+    environment_engine: {
+      ownerPaths: ['packages/environment/src/pip-wheel-evidence.ts'],
+      ownerTests: ['packages/environment/src/pip-wheel-evidence.test.ts'],
+      capabilityOverlays: ['windows_sensitive']
+    },
+    notebook_network_sandbox: {
+      ownerPaths: ['packages/notebook-network-sandbox/vendor/windows-src/src/main.rs'],
+      ownerTests: [
+        'packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts'
+      ],
+      fallbackCapability: 'notebook_network_sandbox'
+    }
+  })
 const select = (
   paths: string[],
   event = 'pull_request',
   status = 'modified'
 ): ReturnType<typeof selectWindowsCoreChecks> => {
+  const manifest = windowsCoreModel()
   const changes = paths.map((path) => ({ path, status }))
   const modulePlan = createAffectedTestPlan(
     changes,
@@ -30,7 +80,10 @@ const select = (
     manifest
   )
   const plan = platformExecutionPlan(
-    resolveAuthoritativePlan(classifyChanges(changes), modulePlan),
+    resolveAuthoritativePlan(
+      classifyChanges(changes, undefined, { moduleManifest: manifest }),
+      modulePlan
+    ),
     changes,
     event
   )
@@ -111,6 +164,19 @@ describe('Windows core impact and event selection', () => {
     for (const path of paths)
       expect(union).toEqual(expect.arrayContaining(select([path], 'merge_group').windowsCoreChecks))
   })
+
+  it.each(['pull_request', 'merge_group'])(
+    'does not widen %s core checks for a Playwright-only input in a mixed diff',
+    (event) => {
+      const source = select(['src/main/literature/catalog.ts'], event)
+      const mixed = select(
+        ['src/main/literature/catalog.ts', 'e2e/desktop-runtime-recovery.spec.ts'],
+        event
+      )
+      expect(mixed.windowsCoreChecks).toEqual(source.windowsCoreChecks)
+      expect(select(['e2e/fixtures/new-unattributed-helper.ts'], event).mode).toBe('full')
+    }
+  )
 
   it('falls back when a platform overlay has no mapped evidence', () => {
     const plan = selectWindowsCoreChecks(
@@ -197,5 +263,52 @@ it.skipIf(process.platform === 'win32')(
         WINDOWS_PROCESS_OUTCOME: 'success'
       }).status
     ).toBe(0)
+  }
+)
+
+it.each(['pull_request', 'merge_group'])(
+  'retains every Windows core check for the real full Literature owner on %s',
+  (event) => {
+    const manifest = loadModuleImpactManifest()
+    const changes = [{ path: 'src/main/literature/catalog.ts', status: 'modified' }]
+    const modulePlan = createAffectedTestPlan(
+      changes,
+      { status: 'not-requested', testFiles: [] },
+      manifest
+    )
+    const explanation = productionFullReasonContracts.main_literature
+    expect(manifest.modules.main_literature.fullTestReason).toBe(explanation)
+    const reason = `main_literature -> ${explanation} -> full`
+    expect(modulePlan.mode).toBe('full')
+    expect(modulePlan.reasonChains.join('\n')).toContain(reason)
+    const selected = selectWindowsCoreChecks(
+      platformExecutionPlan(
+        resolveAuthoritativePlan(
+          classifyChanges(changes, undefined, { moduleManifest: manifest }),
+          modulePlan
+        ),
+        changes,
+        event
+      ),
+      modulePlan,
+      changes,
+      manifest,
+      event
+    )
+    expect(selected.mode).toBe('full')
+    expect(selected.windowsCoreChecks).toEqual(
+      expect.arrayContaining(Object.keys(windowsCoreChecks))
+    )
+    expect(validWindowsCoreChecks(selected)).toBe(true)
+    const conclusions = Object.fromEntries(
+      ['preflight', ...selected.bundles].map((name) => [name, 'success'])
+    )
+    expect(
+      evaluatePrGate(
+        selected,
+        { ...conclusions, windows_core: 'skipped' },
+        { executionMode: 'bundles' }
+      ).ok
+    ).toBe(false)
   }
 )

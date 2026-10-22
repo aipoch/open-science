@@ -2863,3 +2863,25 @@ describe('prepared research Run admission', () => {
     })
   })
 })
+
+it('blocks direct, queued, branch, resume and side-chat admission while credentials need recovery', async () => {
+  const input = options({ isTurnAdmissionBlocked: true, sideChat: { start: vi.fn() } })
+  const hook = renderController(input)
+  mounted.push(hook)
+  expect(hook.result.current.availability).toMatchObject({
+    submit: false,
+    revise: false,
+    resume: false,
+    branch: false
+  })
+  await act(async () => {
+    hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+    hook.result.current.actions.submit.draft({ forcedSkillIds: [], mode: 'branch' })
+    hook.result.current.actions.sideChat.start()
+    await hook.result.current.actions.resume()
+  })
+  expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  expect(input.runtime.resumeInterruptedSession).not.toHaveBeenCalled()
+  expect(input.sideChat!.start).not.toHaveBeenCalled()
+  expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+})

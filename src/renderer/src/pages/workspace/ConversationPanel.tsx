@@ -1,3 +1,4 @@
+import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import { isAgentAuthenticationRequired } from './agent-authentication-error'
 import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
@@ -49,11 +50,9 @@ import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import {
-  projectSessionActionability,
-  useSessionStore,
-  type ChatSession
-} from '@/stores/session-store'
+import { projectSessionActionability } from '@/stores/session-actionability'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
@@ -345,6 +344,7 @@ type ConversationPanelView = {
   researchSourceSession?: ChatSession
   researchSourceContextError?: string
   retryResearchSourceContext?: () => void
+  authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
   persistenceBlocked?: boolean
@@ -1037,12 +1037,14 @@ const ConversationPanel = ({
   )
   const resumeDiagnostic =
     operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
-  const authenticationRequired = [
-    actionError,
-    composerError,
-    currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
-    showLegacyRunError ? legacyDisplayState?.error : undefined
-  ].some(isAgentAuthenticationRequired)
+  const authenticationRequired =
+    view.authenticationRecovery?.required ??
+    [
+      actionError,
+      composerError,
+      currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
+      showLegacyRunError ? legacyDisplayState?.error : undefined
+    ].some(isAgentAuthenticationRequired)
   const resolvedActionError = isAgentAuthenticationRequired(actionError)
     ? undefined
     : ((isClaudeCliCompatibilityError(actionError ?? '')
@@ -1206,7 +1208,9 @@ const ConversationPanel = ({
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
-  const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
+  const ordinaryComposerBlocked = Boolean(
+    blockingInteraction || packageLocked || authenticationRequired
+  )
 
   useEffect(() => {
     let tooltipEscape: KeyboardEvent | undefined
@@ -1335,7 +1339,7 @@ const ConversationPanel = ({
   }
 
   const handleSubmit = (): void => {
-    if (!canEditDraft || !effectiveCanSend) return
+    if (!canEditDraft || !effectiveCanSend || authenticationRequired) return
     if (docToText(draftDoc).trim() === '/setup-wsl') {
       void handleWslSetupCommand()
       return
@@ -1398,6 +1402,7 @@ const ConversationPanel = ({
       node.attachmentId ? ([[node.attachmentId, node]] as const) : []
     )
   )
+  const canQueueMessage = effectiveCanSend && submitMode === 'queue'
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const hasSideChatDraft = hasTextDraft || annotations.length > 0
   const openSideChatReason =
@@ -1790,7 +1795,7 @@ const ConversationPanel = ({
                 {composerError && composerErrorDetail ? (
                   <DiagnosticDetails detail={composerErrorDetail} />
                 ) : null}
-                {showSessionRecovery ? (
+                {showSessionRecovery && !authenticationRequired ? (
                   <SessionInterruptedBanner
                     message={
                       hasUnsupportedCodexRunError
@@ -1800,19 +1805,6 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
-                  />
-                ) : null}
-                {authenticationRequired ? (
-                  <ErrorNotice
-                    className="mb-2"
-                    title={t('Sign in to continue this conversation')}
-                    description={t(
-                      'The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.'
-                    )}
-                    primaryButton={{
-                      label: t('Model settings'),
-                      onClick: () => openSettingsToPanel('model')
-                    }}
                   />
                 ) : null}
                 {activeSession?.compacting ? (
@@ -2067,7 +2059,8 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (packageLocked ||
+                      (authenticationRequired ||
+                        packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
                         pendingPlan ||
@@ -2116,7 +2109,7 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {ordinaryComposerBlocked ? (
+                  {ordinaryComposerBlocked && !authenticationRequired ? (
                     <div
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
@@ -2309,6 +2302,29 @@ const ConversationPanel = ({
                           </details>
                         ) : null}
                       </section>
+                    ) : authenticationRequired ? (
+                      <ErrorNotice
+                        icon={LockKeyhole}
+                        tone="amber"
+                        title={
+                          view.authenticationRecovery?.provider &&
+                          ['custom', 'official'].includes(view.authenticationRecovery.provider.type)
+                            ? t('Update credential')
+                            : t('Sign in to continue this conversation')
+                        }
+                        description={t(
+                          'Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.'
+                        )}
+                        primaryButton={{
+                          label: view.authenticationRecovery?.provider
+                            ? t('Open account settings')
+                            : t('Model settings'),
+                          onClick: () =>
+                            view.authenticationRecovery
+                              ? view.authenticationRecovery.openSettings()
+                              : openSettingsToPanel('model')
+                        }}
+                      />
                     ) : (
                       <form
                         ref={composerFormRef}
@@ -3352,7 +3368,7 @@ const ConversationPanel = ({
                             />
 
                             {rootTurnBusy ? (
-                              // Running sessions expose cancel instead of send to prevent overlapping turns.
+                              // A sendable draft replaces Stop with queue submission without starting another turn.
                               // Detached children can outlive a wait=false Main turn, so their durable
                               // running aggregate keeps the same root cascade reachable after Main settles.
                               // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
@@ -3360,32 +3376,35 @@ const ConversationPanel = ({
                               // reachable across the whole loop, not just the agent-fix running turn.
                               <div
                                 data-testid="composer-running-control-slot"
-                                className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                                className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                               >
                                 <button
                                   type="button"
-                                  onClick={handleSubmit}
-                                  disabled={!effectiveCanSend || submitMode !== 'queue'}
-                                  className={composerIconButtonClassName}
-                                  aria-label={t('Add message to queue')}
-                                  data-testid="composer-queue-submit"
-                                >
-                                  <ArrowUp
-                                    className="size-4"
-                                    strokeWidth={2.2}
-                                    aria-hidden="true"
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleStop}
+                                  onClick={canQueueMessage ? handleSubmit : handleStop}
                                   disabled={isStopping}
-                                  className={composerCancelButtonClassName}
+                                  data-testid={
+                                    canQueueMessage ? 'composer-queue-submit' : undefined
+                                  }
+                                  className={cn(
+                                    composerCancelButtonClassName,
+                                    canQueueMessage &&
+                                      'bg-primary text-primary-foreground hover:bg-primary/90'
+                                  )}
                                   aria-label={
-                                    isStopping ? t('Stopping run and subagents') : t('Cancel run')
+                                    canQueueMessage
+                                      ? t('Add message to queue')
+                                      : isStopping
+                                        ? t('Stopping run and subagents')
+                                        : t('Cancel run')
                                   }
                                 >
-                                  {isStopping ? (
+                                  {canQueueMessage ? (
+                                    <ArrowUp
+                                      className="size-4"
+                                      strokeWidth={2.2}
+                                      aria-hidden="true"
+                                    />
+                                  ) : isStopping ? (
                                     <Loader2
                                       className="size-3.5 animate-spin"
                                       strokeWidth={2.2}
@@ -3424,6 +3443,7 @@ const ConversationPanel = ({
                                               type="button"
                                               className={composerIconButtonClassName}
                                               disabled={
+                                                !canQueueMessage &&
                                                 !canOpenSideChat &&
                                                 !canStartSideChat &&
                                                 !canRetrySideChatHydration
@@ -3440,11 +3460,26 @@ const ConversationPanel = ({
                                         </span>
                                       </TooltipTrigger>
                                       <TooltipContent side="top">
-                                        {sideChatDisabledReason ?? t('More send options')}
+                                        {canQueueMessage
+                                          ? t('More send options')
+                                          : (sideChatDisabledReason ?? t('More send options'))}
                                       </TooltipContent>
                                     </Tooltip>
                                   </>
                                   <DropdownMenuContent side="top" align="end" className="w-64">
+                                    {canQueueMessage ? (
+                                      <DropdownMenuItem
+                                        onSelect={handleStop}
+                                        aria-label={t('Cancel run')}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <Square
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Cancel run')}
+                                      </DropdownMenuItem>
+                                    ) : null}
                                     {sideChatMenuItems}
                                   </DropdownMenuContent>
                                 </DropdownMenu>

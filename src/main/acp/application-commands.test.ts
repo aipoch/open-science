@@ -242,6 +242,40 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.revokePermissionGrant).toHaveBeenCalledWith(grant)
   })
 
+  describe.each(['createSession', 'resumeSession', 'resetSessionContext'] as const)(
+    '%s authentication boundary',
+    (operation) => {
+      it.each([401, 403, 429])('only normalizes authentication status %s', async (statusCode) => {
+        const dependencies = createDependencies()
+        const method =
+          operation === 'resetSessionContext'
+            ? dependencies.runtime.resetSessionContext
+            : dependencies.workflows[operation]
+        vi.mocked(method).mockRejectedValueOnce(
+          Object.assign(new Error(`Provider status ${statusCode}`), {
+            name: 'RequestError',
+            code: -32603,
+            data: { errorName: 'APIError', statusCode }
+          })
+        )
+        const router = createApplicationCommandRouter()
+        registerAcpCommands(router.registrar, dependencies)
+
+        await expect(
+          router.dispatcher.invoke(
+            acpCommands[operation],
+            invocation(
+              [{ sessionId: 'session-1', cwd: '/workspace' }],
+              createWebCallerContext('local-web')
+            )
+          )
+        ).rejects.toThrow(
+          statusCode === 401 ? 'Authentication required' : `Provider status ${statusCode}`
+        )
+      })
+    }
+  )
+
   it('accepts interrupted-turn continuation only from a current human caller', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()

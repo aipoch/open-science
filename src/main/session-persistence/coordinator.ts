@@ -403,6 +403,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         }
       },
       committed: (session) => {
+        this.hydrationCache.invalidate()
         const hadProblems = this.listSessionRecordProblems(session.projectId, session.id).length > 0
         this.clearSessionRecordProblem(session.projectId, session.id)
         if (hadProblems)

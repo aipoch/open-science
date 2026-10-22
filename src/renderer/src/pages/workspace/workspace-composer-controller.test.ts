@@ -1,5 +1,6 @@
 import type { ResearchMembership } from '../../../../shared/session-persistence'
 import { researchDraftKey } from './research-draft-identity'
+import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 // @vitest-environment jsdom
@@ -298,6 +299,23 @@ describe('workspace composer controller', () => {
     hook.selectResearch(source)
     expect(docToText(hook.result.current.view.doc)).toBe('First study question')
     expect(hook.result.current.lifecycle.captureSend().researchMembership).toEqual(source)
+  })
+
+  it('retains the failed validation baseline across draft switches and captures repeated failures', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    const provider = useSettingsStore.getState().providers[0]
+    useSettingsStore.setState({ providers: [{ ...provider, id: 'provider', lastValidatedAt: 10 }] })
+    act(() => hook.result.current.actions.setError('Authentication required'))
+    expect(hook.result.current.view.errorProviderValidations).toEqual({ provider: 10 })
+    hook.selectDraft('second')
+    hook.selectDraft('first')
+    expect(hook.result.current.view.errorProviderValidations).toEqual({ provider: 10 })
+    useSettingsStore.setState({ providers: [{ ...provider, id: 'provider', lastValidatedAt: 30 }] })
+    act(() => hook.result.current.actions.setError('Authentication required'))
+    expect(hook.result.current.view.errorProviderValidations).toEqual({ provider: 30 })
+    act(() => hook.result.current.actions.setError(null))
+    expect(hook.result.current.view.errorProviderValidations).toBeUndefined()
   })
 
   it('replaces a discussion source atomically, preserves ordinary annotations, and allows undo', () => {
@@ -726,6 +744,24 @@ describe('workspace composer controller', () => {
     act(() => expect(hook.result.current.actions.discardWslSetupDraft()).toBe(false))
 
     expect(hook.result.current.view.doc).toEqual(textDoc('ordinary unsent message'))
+  })
+
+  it('keeps a draft editable without republishing the same storage failure on every render', () => {
+    configureComposerDraftStorage('scope')
+    const hook = renderController()
+    mounted.push(hook)
+    using storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('Storage unavailable')
+    })
+    act(() => hook.result.current.actions.changeDoc(textDoc('unsent draft')))
+    expect(hook.result.current.view.error).toBe(
+      'Draft storage is unavailable. Copy your draft before leaving this page.'
+    )
+    expect(storage).toHaveBeenCalled()
+    const validationSnapshot = hook.result.current.view.errorProviderValidations
+    act(() => hook.result.current.actions.changeDoc(textDoc('updated draft')))
+    expect(hook.result.current.view.doc).toEqual(textDoc('updated draft'))
+    expect(hook.result.current.view.errorProviderValidations).toBe(validationSnapshot)
   })
 
   it('restores an active scratch from a new provider after reload and removes sent drafts', () => {

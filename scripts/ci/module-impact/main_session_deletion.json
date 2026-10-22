@@ -8,17 +8,18 @@
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/artifact-reproducibility-lifecycle.test.ts",
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/session-persistence/deletion-integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
       "src/main/node-entry.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts",
       "src/main/composition/artifact-surfaces.test.ts"
     ]
   },

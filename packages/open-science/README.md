@@ -1,10 +1,88 @@
 # @aipoch/open-science
 
-Node.js SDK and command-line client for an Open-Science daemon running on the local machine.
+[AIPOCH Open-Science](https://github.com/aipoch/open-science) is an open-source, local-first,
+model-agnostic AI research workbench. Use scientific Agents, Python and R Notebooks, and
+scientific data connectors to turn research questions into reports, tables and figures.
+
+This package provides the **standalone CLI, local Web UI and Node.js SDK**. npm installs the
+matching platform package with the backend and resources; the desktop app is not required.
+
+## Install
+
+Install [Node.js](https://nodejs.org/) **22.13.0 or later**, then run:
+
+```bash
+npm install --global @aipoch/open-science
+open-science --help
+```
+
+Supported platforms are macOS Apple Silicon/Intel, Linux ARM64/x64 with glibc, and Windows x64.
+Linux musl (including Alpine) and Windows ARM64 are not supported by the published native packages.
+Keep npm optional dependencies enabled: they contain the platform runtime. If startup reports a
+missing native package, reinstall with `npm install --global @aipoch/open-science --include=optional`.
+
+Linux also needs working credential storage and Notebook sandbox prerequisites; see the
+[Linux setup requirements](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#linux-prerequisites).
+Python/R and an Agent runtime/model provider are configured separately during setup.
+For installations that include Node itself, see the
+[Homebrew and Release archive options](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md).
+
+## Get started
+
+Start the local service and request its browser URL:
+
+```bash
+open-science start --no-open
+open-science url
+```
+
+Open the printed URL, complete the setup checks, configure an Agent runtime and model provider,
+and create your first research project. Set up a Python or R Notebook runtime if your work needs
+code execution. The URL contains a local authentication token; keep it private.
+For setup from the terminal, follow the
+[CLI first-run guide](https://github.com/aipoch/open-science/blob/main/packages/open-science/CLI.md#first-run-setup-codex).
+
+After setup, submit a task from the terminal:
+
+```bash
+open-science doctor --json
+open-science project create "First research" --json
+open-science run --project "First research" --prompt "Draft a research plan for comparing two analysis methods." --wait --jsonl
+```
+
+Confirm `ready: true` in the doctor output before submitting work. The CLI accepts a Project ID
+or an exact, unambiguous name; SDK calls use IDs. Closing the browser does not stop the service:
+
+```bash
+open-science status --json
+open-science stop
+```
+
+Stopping the service affects all connected clients. For automated tasks, review the
+[permissions and output options](https://github.com/aipoch/open-science/blob/main/packages/open-science/CLI.md)
+and the safety guidance below.
+
+## Update or uninstall
+
+Stop services started by this installation before replacing it. Use the same `--config-root`
+when stopping and restarting a custom profile.
+
+```bash
+open-science stop
+npm install --global @aipoch/open-science@latest
+open-science start --no-open
+```
+
+To uninstall, stop the service and run `npm uninstall --global @aipoch/open-science`.
+Uninstalling the npm package retains research data and credentials. Review
+[release compatibility](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md)
+before changing versions; replacing program files does not reverse data migrations.
 
 ## Documentation
 
-- [CLI guide](./CLI.md) - installation, daemon lifecycle, task automation, artifacts, and exit codes
+- [CLI guide](https://github.com/aipoch/open-science/blob/main/packages/open-science/CLI.md) - installation, daemon lifecycle, task automation, artifacts, and exit codes
+- [Product overview](https://github.com/aipoch/open-science#readme) - research workflows, screenshots and desktop downloads
+- [Report an issue](https://github.com/aipoch/open-science/issues) - bugs and feature requests
 - [Release compatibility](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md) - stable interfaces, versioning, and data upgrades
 - [Intended use](https://github.com/aipoch/open-science/blob/main/docs/usage-scope.md) and [known limitations](https://github.com/aipoch/open-science/blob/main/docs/known-limitations.md) - workflow precautions, data disclosure, and execution boundaries
 
@@ -25,19 +103,28 @@ Node.js SDK and command-line client for an Open-Science daemon running on the lo
 ## Browser-held package import
 
 Use `@aipoch/open-science/browser-import` to send a downloaded `.science` Blob to the desktop app.
-See the [browser integration guide](./BROWSER_IMPORT.md) for the click flow, API, security contract,
+See the [browser integration guide](https://github.com/aipoch/open-science/blob/main/packages/open-science/BROWSER_IMPORT.md) for the click flow, API, security contract,
 limits, and browser requirements. The desktop never downloads the online package URL.
 
 ## SDK quick start
+
+Install the package in your Node.js project (a global CLI install does not make it importable):
+
+```bash
+npm install @aipoch/open-science
+```
+
+Start and configure the local service as above. Save the example in an `.mjs` file and run it
+with Node.js. It creates a Project and uses its ID for subsequent requests:
 
 ```js
 import { connectToOpenScience } from '@aipoch/open-science'
 
 const client = await connectToOpenScience()
+const project = await client.createProject({ name: 'Evidence review' })
 const run = await client.startRun({
-  project: '<project-id-or-exact-name>',
+  project: project.id,
   prompt: 'Summarize the evidence.',
-  cwd: '/absolute/path/to/research',
   permissionProfile: 'auto',
   permissionPrompts: 'none' // Deny requests that would require a human; keep existing permission rules.
 })
@@ -55,8 +142,8 @@ await client.updateSessionConfiguration(run.sessionId, {
   memoryEnabled: false
 })
 
-const defaults = await client.getProjectSessionDefaults('systematic-review')
-await client.updateProjectSessionDefaults('systematic-review', {
+const defaults = await client.getProjectSessionDefaults(project.id)
+await client.updateProjectSessionDefaults(project.id, {
   expectedUpdatedAt: defaults.updatedAt,
   patch: { permissionProfile: 'auto' }
 })
@@ -142,7 +229,7 @@ const progress = (async () => {
 })()
 
 const observedRun = await client.startRun({
-  project: '<project-id-or-exact-name>',
+  project: project.id,
   prompt: 'Summarize the evidence.',
   permissionProfile: 'auto'
 })

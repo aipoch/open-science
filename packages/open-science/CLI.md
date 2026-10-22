@@ -8,7 +8,29 @@ defines the 1.x contract for commands, machine-readable output and exit codes.
 
 ## Installation
 
-### Standalone Node package
+### From npm
+
+Install the published [standalone CLI](https://www.npmjs.com/package/@aipoch/open-science)
+with Node.js **22.13.0 or later**:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+The registry package installs the matching native backend, Web UI and resources through npm
+optional dependencies. It runs without Electron or an installed desktop app. Supported targets
+are macOS ARM64/x64, glibc Linux ARM64/x64 and Windows x64; musl Linux and Windows ARM64 are not
+supported. Do not omit optional dependencies. If startup reports a missing native package, run
+`npm install --global @aipoch/open-science --include=optional`.
+
+Open the printed authenticated URL to configure an Agent runtime, model provider and optional
+Python/R Notebook runtime, or follow [First-run setup (Codex)](#first-run-setup-codex) from the
+terminal. See the [standalone runtime guide](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#linux-prerequisites)
+for Linux credential storage and sandbox prerequisites.
+
+### Locally built standalone tarball
 
 Install the target-specific standalone tarball built with `npm run pack:backend`, using ordinary
 Node >=22.13.0. It includes the backend, Web UI, resources and native dependencies; Electron and
@@ -54,18 +76,6 @@ not require a separate Node.js installation.
 If the launcher directory is not yet on PATH, the Settings panel shows the line to add. Open a new
 terminal after updating PATH. Choose **Uninstall command** in the same panel to remove the launcher.
 
-### From npm
-
-The lightweight CLI/SDK package requires Node.js 22.5 or later. It controls an existing service.
-To start an independent service, install the standalone artifact (Node >=22.13.0); the lightweight
-package alone does not contain backend resources.
-Install it globally after the package is published:
-
-```bash
-npm install --global @aipoch/open-science
-open-science --help
-```
-
 ### From a source checkout
 
 Replace `open-science` in the examples below with:
@@ -73,6 +83,51 @@ Replace `open-science` in the examples below with:
 ```bash
 node packages/open-science/cli.mjs
 ```
+
+## Local information and help
+
+These commands work without starting or connecting to the service:
+
+```bash
+open-science --version
+open-science -v
+open-science version --json
+open-science help
+open-science help run
+open-science paths --json
+open-science paths --profile /absolute/path/to/profile
+```
+
+`--version`, `-v`, and `version` print the invoked CLI's application version, including any
+nightly suffix. `version --json` prints `{ "version": "..." }`. Source checkouts use the root
+application version; installed distributions use their own release metadata. This is not the
+version of a running service. The version flags are standalone commands, not options for `run`,
+`start`, or other commands.
+
+`help` is equivalent to `--help`; `help <command>` is equivalent to `<command> --help`.
+For example, `help project` lists Project commands. Unknown command names and unsupported
+arguments fail with the existing usage-error exit code `2`.
+
+`paths` prints human-readable locations; `paths --json` prints one object with:
+
+| Field                  | Meaning                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `cliPath`              | The CLI implementation file used by this invocation.                                     |
+| `nodePath`             | The Node executable running the CLI.                                                     |
+| `startupConfigRoot`    | The configuration directory selected by the installation's default or explicit override. |
+| `discoveryConfigRoots` | Ordered candidate configuration directories searched for an existing service.            |
+
+Source checkouts default to `~/.open-science-project` for startup; installations default to
+`~/.open-science`. Without an override, service discovery checks the development directory first,
+then the production directory. `--config-root` (or `--profile`) takes precedence over
+`OPEN_SCIENCE_CONFIG_ROOT`, then `OPEN_SCIENCE_STORAGE_ROOT`; an override selects a single
+absolute directory for both startup and discovery. Paths are reported even when they do not exist.
+The output does not identify an active service or a research-data directory, which may differ.
+
+These commands do not create profiles, modify settings, read credentials, or print authenticated
+URLs. Successful queries exit `0`; missing or invalid version metadata produces an error rather
+than a fallback version. `paths` accepts only the profile, JSON, and help options; `version`
+accepts only JSON and help options, and `help` accepts only one optional command name and help flags.
 
 ## Service lifecycle
 
@@ -106,7 +161,7 @@ open-science url
 `open-science url` is the only command that intentionally prints an authenticated browser URL. Normal
 human-readable, JSON, and JSONL output never includes the local token.
 
-Use `--port <port>` to override `OPEN_SCIENCE_WEB_PORT`, or the default port of `44100` when neither is set. `start` discovers the standalone
+Use `--port <port>` to override `OPEN_SCIENCE_WEB_PORT`, or the default port of `44100` when neither is set. `start` discovers the matching npm platform package, the standalone
 Node entry bundled beside the CLI, or `out/backend/index.cjs` in a source checkout. Build the
 source entry with `npm run build:backend` and Web UI with `npm run build:web` first.
 `--app-path` and `OPEN_SCIENCE_APP_PATH` no longer select a hidden Electron backend.
@@ -166,7 +221,7 @@ nonzero CLI error codes.
 
 ## First-run setup (Codex)
 
-Install the standalone artifact or a desktop package containing the ordinary Node backend first.
+Install the npm package, a standalone artifact or a desktop package containing the ordinary Node backend first.
 `init` creates a configuration directory only; `--profile` selects an absolute configuration directory.
 
 ```bash
@@ -249,9 +304,23 @@ open-science runtime list --json
 ## Upgrading installations
 
 Stop the backend before upgrading an installation, then restart it with the same profile.
+For a global npm installation:
+
+```bash
+open-science stop
+npm install --global @aipoch/open-science@latest
+open-science start --no-open
+```
+
+Stop every profile started by that installation before updating it; use `--config-root` for
+custom profiles. To uninstall, stop those services and run
+`npm uninstall --global @aipoch/open-science`. Research data and credentials are retained.
+See [release compatibility](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md)
+before downgrading; reinstalling an older package does not undo data migrations.
+
 Use the installation channel that owns the CLI: Homebrew for a Formula, the new downloaded
 package for deb/rpm or a local npm tarball, or a verified new Release archive in a new directory
-with PATH/the symlink updated. npm registry publication remains deferred.
+with PATH/the symlink updated.
 The desktop update UI discovers and downloads packages. Automatic replacement remains closed for
 macOS ZIP, Linux AppImage and Debian until each channel passes complete installed-package
 acceptance. Windows automatic installation remains disabled; artifact checks and same-version copy tests do not certify a cross-version upgrade.

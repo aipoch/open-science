@@ -7,7 +7,7 @@ export default defineConfig({
       'scripts/ci/impact-registration-gate.test.ts',
       'scripts/ci/validate-module-impact.test.ts',
       'scripts/ci/audit-module-ownership.test.ts',
-      'scripts/ci/module-consumer-coverage.test.ts',
+      'scripts/ci/module-graph/consumer-coverage.test.ts',
       'scripts/ci/package-boundaries.test.ts',
       'scripts/ci/classify-pr-changes.test.ts',
       'scripts/ci/platform-risk-gates.test.ts',

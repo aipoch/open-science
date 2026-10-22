@@ -17,7 +17,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": ["src/renderer/src/pages/workspace/SpecialistSubmenu.render.test.tsx"],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",
@@ -139,7 +139,6 @@
       "src/renderer/src/pages/workspace/session-plan/session-plan-resume.test.tsx",
       "src/renderer/src/pages/workspace/subagent-release-projection.test.ts",
       "src/renderer/src/pages/workspace/tool-execution-phase.test.ts",
-      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
       "src/renderer/src/pages/workspace/use-transcript-window.test.tsx",
       "src/renderer/src/pages/workspace/workspace-components.test.tsx",
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts",
@@ -156,7 +155,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx"
     ]
   },
   "capabilityOverlays": [],

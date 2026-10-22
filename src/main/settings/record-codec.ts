@@ -394,6 +394,8 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   if (blockedToolIds.length) connectors.blockedToolIds = blockedToolIds
   const askToolIds = asStringArray(value.askToolIds)
   if (askToolIds.length) connectors.askToolIds = askToolIds
+  const enabledConnectorIds = asStringArray(value.enabledConnectorIds)
+  if (enabledConnectorIds.length) connectors.enabledConnectorIds = [...new Set(enabledConnectorIds)]
   const disabledConnectorIds = asStringArray(value.disabledConnectorIds)
   if (disabledConnectorIds.length) {
     connectors.disabledConnectorIds = [...new Set(disabledConnectorIds)]

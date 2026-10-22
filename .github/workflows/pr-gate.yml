@@ -150,65 +150,14 @@ jobs:
           mkdir -p "$trusted_dir"
           echo "dir=$trusted_dir" >> "$GITHUB_OUTPUT"
 
-          required=(
-            scripts/ci/module-impact-authority.mjs
-            scripts/ci/module-impact-shadow.mjs
-            scripts/ci/module-test-impact.mjs
-            scripts/ci/module-impact.json
-            scripts/ci/validate-module-impact.mjs
-            scripts/ci/classify-pr-changes.mjs
-            scripts/ci/change-impact.json
-          )
-          for file in "${required[@]}"; do
-            if ! git cat-file -e "${BASE_SHA}:${file}" 2>/dev/null; then
-              echo "source=bootstrap" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
-          for file in "${required[@]}"; do
-            git show "${BASE_SHA}:${file}" > "$trusted_dir/${file##*/}"
-          done
-          # Optional on older bases; a missing selection retains every legacy check.
-          for file in windows-core-plan.mjs windows-core-checks.json; do
-            if git cat-file -e "${BASE_SHA}:scripts/ci/$file" 2>/dev/null; then
-              git show "${BASE_SHA}:scripts/ci/$file" > "$trusted_dir/$file"
-            fi
-          done
-          # Newer trusted selectors validate additive registration blobs as data.
-          if git cat-file -e "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" 2>/dev/null; then
-            git show "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" > "$trusted_dir/module-impact-inputs.mjs"
+          # A base without the authority predates the trusted classifier: bootstrap a full plan.
+          if ! git cat-file -e "${BASE_SHA}:scripts/ci/module-impact-authority.mjs" 2>/dev/null; then
+            echo "source=bootstrap" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          # The ownership helper is additive; older trusted bases keep their legacy module reader.
-          if git cat-file -e "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" 2>/dev/null; then
-            git show "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" > "$trusted_dir/module-ownership-paths.mjs"
-          fi
-          # Derived evidence stays JSON-only in preflight; Integrity recomputes it from Git blobs.
-          for file in module-derived-consumers.mjs module-derived-consumers.json; do
-            if git cat-file -e "${BASE_SHA}:scripts/ci/$file" 2>/dev/null; then
-              git show "${BASE_SHA}:scripts/ci/$file" > "$trusted_dir/$file"
-            fi
-          done
-          # Older trusted bases predate the loader; retain their original classifier.
-          if git cat-file -e "${BASE_SHA}:scripts/ci/package-test-impact.mjs" 2>/dev/null; then
-            git show "${BASE_SHA}:scripts/ci/package-test-impact.mjs" > "$trusted_dir/package-test-impact.mjs"
-          fi
-          if git cat-file -e "${BASE_SHA}:scripts/ci/package-test-boundaries.json" 2>/dev/null; then
-            git show "${BASE_SHA}:scripts/ci/package-test-boundaries.json" > "$trusted_dir/package-test-boundaries.json"
-          fi
-          if git cat-file -e "${BASE_SHA}:scripts/ci/load-module-impact.mjs" 2>/dev/null; then
-            git show "${BASE_SHA}:scripts/ci/load-module-impact.mjs" > "$trusted_dir/load-module-impact.mjs"
-            # Materialize the trusted manifest through its reader. Never execute candidate code.
-            BASE_SHA="$BASE_SHA" TRUSTED_DIR="$trusted_dir" node --input-type=module <<'NODE'
-          import { writeFileSync } from 'node:fs'
-          import { join } from 'node:path'
-          import { pathToFileURL } from 'node:url'
-          const { loadModuleImpactManifestAtRevision } = await import(
-            pathToFileURL(join(process.env.TRUSTED_DIR, 'load-module-impact.mjs')).href
-          )
-          const manifest = loadModuleImpactManifestAtRevision(process.env.BASE_SHA)
-          writeFileSync(join(process.env.TRUSTED_DIR, 'module-impact.json'), JSON.stringify(manifest))
-          NODE
-          fi
+          # Export the whole trusted tree, so internal module layout never requires a workflow
+          # edit. Only Git blobs are read; candidate code is never checked out or executed.
+          git archive --format=tar "$BASE_SHA" scripts/ci | tar -x -C "$trusted_dir" --strip-components=2
           echo "source=base" >> "$GITHUB_OUTPUT"
 
       - name: Classify change impact
@@ -632,7 +581,7 @@ jobs:
       - name: Check complete module ownership and consumer evidence
         # Registration/full plans include these guards in the contract suite below.
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}
-        run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
+        run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-graph/consumer-coverage.test.ts
       - name: Check module registration policy and architecture contracts
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         run: node scripts/ci/module-registration-tests.mjs

@@ -35,7 +35,7 @@
       "src/renderer/src/components/notification-event-visual.test.ts",
       "src/renderer/src/components/notification-inbox-presentation.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",

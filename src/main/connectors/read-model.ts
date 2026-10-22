@@ -1,4 +1,4 @@
-import { CONNECTOR_CATALOG } from './catalog'
+import { CONNECTOR_CATALOG, isBundledConnectorEnabled } from './catalog'
 import {
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
@@ -26,13 +26,12 @@ export const projectConnectorsFromStored = (
   customServerAvailability: (id: string) => CustomMcpFailureAvailability | undefined = () =>
     undefined
 ): ConnectorReadModel[] => {
-  const disabled = new Set(stored?.disabledConnectorIds ?? [])
   const bundled: ConnectorReadModel[] = CONNECTOR_CATALOG.map((meta) => ({
     id: meta.id,
     name: meta.id,
     displayName: meta.displayName,
     description: meta.description,
-    mainEnabled: !disabled.has(meta.id),
+    mainEnabled: isBundledConnectorEnabled(meta.id, stored),
     availability: 'available',
     source: 'bundled',
     tools: getConnectorTools(meta.id).map((tool) => ({

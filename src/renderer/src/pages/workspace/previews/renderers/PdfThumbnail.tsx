@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { AcquireManagedPreviewRequest } from '../../../../../../shared/preview-resources'
 import type { ManagedPreviewResource } from '../../../../../../shared/preview-resources'
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { isUnavailableFileError } from '../preview-errors'

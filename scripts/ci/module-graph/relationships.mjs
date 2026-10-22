@@ -2,70 +2,11 @@
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { sourceSnapshot, createConsumerDependencyReader } from './consumer-retirement.mjs'
-import { loadModuleImpactManifestAtRevision } from './load-module-impact.mjs'
-
-export function dependencyLayer(path) {
-  if (
-    /\.(test|spec)\.|\/(?:__tests__|__fixtures__|test-fixtures|test-support|test-utils)\/|(?:^|[/._-])(?:test|spec)[-_.](?:support|fixtures|helpers)/.test(
-      path
-    )
-  )
-    return 'test'
-  if (['src/shared/in-flight-promise.ts', 'src/shared/pdf-text.ts'].includes(path))
-    return 'foundation'
-  if (path.startsWith('src/shared/')) return 'shared-contract'
-  if (
-    path.startsWith('src/main/composition/') ||
-    [
-      'src/main/ipc-application-composition.ts',
-      'src/main/core-runtime.ts',
-      'src/main/ipc.ts',
-      'src/main/index.ts',
-      'src/main/node-entry.ts',
-      'src/main/app-startup.ts'
-    ].includes(path)
-  )
-    return 'composition'
-  if (path.startsWith('src/renderer/') || path.startsWith('src/preload/')) return 'presentation'
-  if (path.startsWith('packages/')) return 'package'
-  if (path.startsWith('src/main/ipc-surfaces/')) return 'transport-adapter'
-  if (path.startsWith('src/main/')) return 'host-owner'
-  return 'resource-or-tooling'
-}
-
-// These are enforced seams, not a claim that every legacy owner is fully encapsulated.
-export function boundaryViolations(edges, modules) {
-  const owners = new Map(
-    Object.entries(modules).flatMap(([id, module]) => module.ownerPaths.map((path) => [path, id]))
-  )
-  const violations = []
-  for (const [source, targets] of edges) {
-    const layer = dependencyLayer(source)
-    if (layer === 'test') continue
-    for (const target of targets) {
-      const targetLayer = dependencyLayer(target)
-      let reason
-      if (layer === 'foundation') reason = 'pure foundation must not import another owner'
-      else if (
-        layer === 'shared-contract' &&
-        /^(host-owner|composition|transport-adapter|presentation)$/.test(targetLayer)
-      )
-        reason = 'shared contracts must not depend on host or presentation implementations'
-      else if (layer === 'host-owner' && targetLayer === 'composition')
-        reason = 'domain owners must not depend on composition'
-      const targetOwner = owners.get(target)
-      if (
-        ['pdf_documents', 'shared_promise_identity', 'pdf_text'].includes(targetOwner) &&
-        owners.get(source) !== targetOwner &&
-        !modules[targetOwner].interfacePaths.includes(target)
-      )
-        reason = 'cross-owner dependency must use the public interface'
-      if (reason) violations.push(`${source} -> ${target}: ${reason}`)
-    }
-  }
-  return violations.sort()
-}
+import { loadModuleImpactManifestAtRevision } from '../load-module-impact.mjs'
+import { usesReviewedBoundary } from './boundaries.mjs'
+import { createDependencyReader } from './dependency-reader.mjs'
+import { dependencyLayer } from './layers.mjs'
+import { sourceSnapshot } from './source.mjs'
 
 export function moduleRelationships(revision = 'HEAD', cwd = process.cwd()) {
   const sha = execFileSync(
@@ -80,8 +21,8 @@ export function moduleRelationships(revision = 'HEAD', cwd = process.cwd()) {
       module.ownerPaths.map((path) => [path, id])
     )
   )
-  const structural = createConsumerDependencyReader(source, [])
-  const runtime = createConsumerDependencyReader(source, [], { runtimeOnly: true })
+  const structural = createDependencyReader(source, [])
+  const runtime = createDependencyReader(source, [], { runtimeOnly: true })
   const relations = new Map()
   const add = (kind, from, to, sourcePath, targetPath) => {
     if (!from || !to || from === to) return
@@ -112,14 +53,16 @@ export function moduleRelationships(revision = 'HEAD', cwd = process.cwd()) {
     for (const consumer of consumers)
       add('dynamic-contract', owners.get(consumer), owners.get(target), consumer, target)
   for (const [id, module] of Object.entries(manifest.modules))
-    for (const consumer of module.consumerModules) add('test-routing', id, consumer)
+    for (const consumer of module.consumerModules)
+      add(usesReviewedBoundary(id, module) ? 'capability-routing' : 'test-routing', id, consumer)
   return {
     revision: sha,
     directions: {
       'runtime-import': 'consumer -> dependency',
       'type-import': 'consumer -> dependency',
       'dynamic-contract': 'consumer -> dependency',
-      'test-routing': 'changed owner -> consumer evidence'
+      'test-routing': 'changed owner -> consumer evidence',
+      'capability-routing': 'changed owner -> platform/fallback obligations only'
     },
     note: 'Layers describe file roles, not complete domain encapsulation. Runtime schemas are values. Missing/opaque dependencies are not proof of independence; edges do not represent observed execution.',
     modules: Object.entries(manifest.modules).map(([id, module]) => ({

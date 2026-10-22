@@ -166,7 +166,7 @@ export function Fixture(): React.JSX.Element {
           <ActionToast
             title={t('{{name}} needs sign-in', { name: 'Research-connector-with-a-long-name' })}
             detail={t(
-              'Authorization expired or was revoked. Sign in again to keep this Connector available.'
+              'This Connector could not verify its credentials. Sign in again to restore access.'
             )}
             actionLabel={t('Open Connectors')}
             dismissLabel={t('Close')}

@@ -10,15 +10,73 @@ import {
 } from './classify-pr-changes.mjs'
 import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
+import {
+  createModuleImpactModel,
+  resolveModuleImpactModel,
+  productionFullReasonContracts
+} from './module-impact-model.test-support'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { windowsCoreChecks } from './windows-core-plan.mjs'
 
 const full = classifyChanges([{ path: 'package.json', status: 'modified' }])
 const changes = (path: string): Array<{ path: string; status: string }> => [
   { path, status: 'modified' }
 ]
 
+// Sources and evidence are deliberately bounded examples, independent of production research edges.
+const boundedPlatformModel = (): ReturnType<typeof createModuleImpactModel> =>
+  createModuleImpactModel({
+    renderer_ui: {
+      ownerPaths: ['src/renderer/src/components/ui/button.tsx'],
+      ownerTests: ['src/renderer/src/components/ui/control-primitives.render.test.tsx'],
+      fallbackCapability: 'renderer_view'
+    },
+    i18n_main_adapter: {
+      ownerPaths: ['src/main/locale/main-process-messages.ts'],
+      ownerTests: ['src/main/locale/owner.test.ts'],
+      fallbackCapability: 'main_runtime'
+    },
+    connector_builtins: {
+      ownerPaths: [
+        'packages/connector-builtins/src/genes-ontology.ts',
+        'packages/connector-builtins/src/genomes-ensembl.ts'
+      ],
+      ownerTests: ['packages/connector-builtins/src/genomes-ensembl.test.ts'],
+      consumerModules: ['notebook_host'],
+      fallbackCapability: 'main_runtime'
+    },
+    notebook_host: {
+      ownerPaths: ['src/main/notebook/host-mcp.integration.test.ts'],
+      interfacePaths: ['src/main/notebook/host-mcp.integration.test.ts'],
+      ownerTests: ['src/main/notebook/host-mcp.integration.test.ts']
+    },
+    acp_runtime: {
+      ownerPaths: ['src/main/acp/runtime-coordinator.ts', 'src/main/acp/runtime.ts'],
+      ownerTests: ['src/main/acp/runtime-coordinator.test.ts', 'src/main/acp/runtime.test.ts'],
+      consumerModules: ['reviewer_orchestrator'],
+      capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation']
+    },
+    reviewer_orchestrator: {
+      ownerPaths: [
+        'src/main/reviewer/correction-context.ts',
+        'src/main/reviewer/correction.ts',
+        'src/main/reviewer/fix-loop.test.ts',
+        'src/main/reviewer/orchestrator.ts',
+        'src/main/reviewer/reviewer-fix-loop-owner.ts',
+        'src/main/reviewer/scope.ts'
+      ],
+      ownerTests: [
+        'src/main/reviewer/correction-context.test.ts',
+        'src/main/reviewer/correction.test.ts',
+        'src/main/reviewer/fix-loop.test.ts',
+        'src/main/reviewer/reviewer-fix-loop-owner.test.ts'
+      ]
+    }
+  })
+
 describe('platform risk execution policy', () => {
   it.each([
-    ['shared owner', 'M', 'src/shared/app-config.ts'],
+    ['shared owner', 'M', 'src/shared/settings.ts'],
     ['unknown owner', 'A', 'src/shared/new-unregistered-contract.ts'],
     ['destructive change', 'D', 'src/shared/app-config.ts'],
     ['global input', 'M', 'package.json'],
@@ -69,13 +127,10 @@ describe('platform risk execution policy', () => {
   it.each(['pull_request', 'merge_group'])(
     'keeps bounded module tests and their blocking gate on %s',
     (event) => {
-      const { plan } = runModuleImpactAuthorityCli(
-        ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
-        { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
-        {
-          execute: () => Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0'),
-          write: () => undefined
-        }
+      const { plan } = resolveModuleImpactModel(
+        changes('src/renderer/src/components/ui/button.tsx'),
+        boundedPlatformModel(),
+        event
       )
       expect(plan.mode).toBe('selective')
       expect(plan.bundles).toContain('unit')
@@ -288,16 +343,13 @@ it.each(['pull_request', 'merge_group'])(
 it.each(['pull_request', 'merge_group'])(
   'does not let a workflow contract expand an ordinary UI change on %s',
   (event) => {
-    const { plan, report } = runModuleImpactAuthorityCli(
-      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
-      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
-      {
-        execute: () =>
-          Buffer.from(
-            'M\0src/renderer/src/components/ui/button.tsx\0M\0scripts/ci/pr-gate-workflow.test.ts\0'
-          ),
-        write: () => undefined
-      }
+    const { plan, report } = resolveModuleImpactModel(
+      [
+        ...changes('src/renderer/src/components/ui/button.tsx'),
+        ...changes('scripts/ci/pr-gate-workflow.test.ts')
+      ],
+      boundedPlatformModel(),
+      event
     )
     expect(plan.mode).toBe('selective')
     expect(plan.macosProfile).toBe('smoke')
@@ -308,15 +360,38 @@ it.each(['pull_request', 'merge_group'])(
 )
 
 it('applies the platform policy only when explicitly enabled', () => {
-  const changes = Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0')
+  for (const policy of [undefined, 'risk-v1']) {
+    const { plan } = resolveModuleImpactModel(
+      changes('src/renderer/src/components/ui/button.tsx'),
+      boundedPlatformModel(),
+      'pull_request',
+      policy ?? null
+    )
+    expect(plan.macosProfile).toBe(policy ? 'smoke' : undefined)
+    expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 0 : 3)
+  }
+})
+
+it('applies the policy opt-in at the real CLI entry point without changing full impact', () => {
   for (const policy of [undefined, 'risk-v1']) {
     const { plan } = runModuleImpactAuthorityCli(
       ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
       { EVENT_NAME: 'pull_request', PR_GATE_PLATFORM_POLICY: policy },
-      { execute: () => changes, write: () => undefined }
+      {
+        execute: () => Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0'),
+        write: () => undefined
+      }
     )
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains.join('\n')).toContain(productionFullReasonContracts.renderer_ui)
     expect(plan.macosProfile).toBe(policy ? 'smoke' : undefined)
-    expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 0 : 3)
+    expect(macosGroupsForPlan(plan)).toHaveLength(policy ? 0 : 4)
+    expect(plan.bundles.includes('unit')).toBe(policy === undefined)
+    expect(
+      plan.reasonChains.includes(
+        'pull_request: full portable tests and coverage deferred to scheduled/manual acceptance'
+      )
+    ).toBe(policy === 'risk-v1')
   }
 })
 
@@ -324,11 +399,7 @@ it.each([
   'src/main/locale/main-process-messages.ts',
   'packages/connector-builtins/src/genes-ontology.ts'
 ])('uses Windows business coverage without Mac for known non-native main changes: %s', (path) => {
-  const { plan } = runModuleImpactAuthorityCli(
-    ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
-    { EVENT_NAME: 'pull_request', PR_GATE_PLATFORM_POLICY: 'risk-v1' },
-    { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
-  )
+  const { plan } = resolveModuleImpactModel(changes(path), boundedPlatformModel())
   expect(plan.macosProfile).toBe('smoke')
   expect(plan.bundles).toContain('windows_e2e')
   expect(macosGroupsForPlan(plan)).toEqual([])
@@ -403,13 +474,10 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
       ]
     }
   ]) {
-    const { plan, report } = runModuleImpactAuthorityCli(
-      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
-      { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
-      {
-        execute: () => Buffer.from(fixture.paths.map((path) => `M\0${path}\0`).join('')),
-        write: () => undefined
-      }
+    const { plan, report } = resolveModuleImpactModel(
+      fixture.paths.map((path) => ({ path, status: 'modified' })),
+      boundedPlatformModel(),
+      event
     )
     expect(plan.mode, `PR ${fixture.number}: ${plan.reasonChains.join('\n')}`).toBe('selective')
     expect(plan.macosProfile).toBe('expanded')
@@ -539,3 +607,43 @@ describe('queue-only Mac policy', () => {
     }
   })
 })
+
+it.each(['pull_request', 'merge_group'])(
+  'keeps real reclassified owners on explained full platform gates for %s',
+  (event) => {
+    const manifest = loadModuleImpactManifest()
+    for (const [id, path, profile] of [
+      ['renderer_ui', 'src/renderer/src/components/ui/button.tsx', 'smoke'],
+      ['i18n_main_adapter', 'src/main/locale/main-process-messages.ts', 'expanded'],
+      ['connector_builtins', 'packages/connector-builtins/src/genes-ontology.ts', 'smoke']
+    ] as const) {
+      const { plan, report } = runModuleImpactAuthorityCli(
+        ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+        { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+        { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
+      )
+      const explanation = productionFullReasonContracts[id]
+      expect(manifest.modules[id].fullTestReason, id).toBe(explanation)
+      const reason = `${id} -> ${explanation} -> full`
+      expect(report.resolved.mode, id).toBe('full')
+      expect(plan.mode, id).toBe('full')
+      expect(plan.reasonChains.join('\n'), id).toContain(reason)
+      expect(plan.bundles, id).toEqual(expect.arrayContaining(['linux_runtime', 'windows_core']))
+      expect(plan.windowsCoreChecks, id).toEqual(
+        expect.arrayContaining(Object.keys(windowsCoreChecks))
+      )
+      expect(plan.macosProfile, id).toBe(profile)
+      expect(macosGroupsForPlan(plan), id).toEqual(event === 'merge_group' ? ['journeys'] : [])
+      expect(plan.bundles.includes('windows_e2e'), id).toBe(event === 'pull_request')
+      const conclusions = Object.fromEntries(
+        ['preflight', ...plan.bundles].map((name) => [name, 'success'])
+      )
+      for (const gate of ['linux_runtime', 'windows_core'])
+        expect(
+          evaluatePrGate(plan, { ...conclusions, [gate]: 'skipped' }, { executionMode: 'bundles' })
+            .ok,
+          `${id}: ${gate} remains blocking`
+        ).toBe(false)
+    }
+  }
+)

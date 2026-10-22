@@ -1,4 +1,4 @@
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 
 // The Skill runtime serves loads through its own MCP server; ACP providers namespace the tool as

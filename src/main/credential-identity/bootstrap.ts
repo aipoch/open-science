@@ -1,5 +1,4 @@
-import type { CredentialCiphertext } from './ciphertext-inventory'
-import type { SecureStorageCipher } from './cipher-contract'
+import type { CredentialCiphertext, SecureStorageCipher } from './cipher-contract'
 import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
 import { selectLinuxCredentialBackend } from './linux-backend'
 import { probeLinuxKWalletIdentity } from './linux-kwallet'

@@ -1,5 +1,5 @@
 import { parseSideChatAnnotationText } from '../../../../shared/annotations'
-import type { SideChatView } from './use-side-chat-controller'
+import type { SideChatView } from './side-chat-contract'
 
 export const sideChatSummary = (view: SideChatView): string => {
   const first = view.entries.find((entry) => entry.kind === 'message' && entry.role === 'user')

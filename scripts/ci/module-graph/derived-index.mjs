@@ -35,7 +35,7 @@ export function validateDerivedConsumers(index, manifest) {
 }
 
 export function loadDerivedConsumers(
-  path = new URL('./module-derived-consumers.json', import.meta.url)
+  path = new URL('../module-derived-consumers.json', import.meta.url)
 ) {
   if (!lstatSync(path).isFile()) throw Error('Derived consumer index must be a regular file')
   return JSON.parse(readFileSync(path, 'utf8'))

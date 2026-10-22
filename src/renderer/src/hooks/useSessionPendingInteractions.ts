@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSkillImportStore } from '@/stores/skill-import-store'
-import type { SessionActionabilityFacts } from '@/stores/session-store'
+import type { SessionActionabilityFacts } from '@/stores/session-actionability'
 
 export type SessionPendingInteractionFacts = Pick<
   SessionActionabilityFacts,

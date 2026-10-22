@@ -40,7 +40,7 @@
       "src/renderer/src/stores/session-details-fallback.test.ts",
       "src/renderer/src/stores/research-run-store.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/session-persistence/usage-regressions.test.ts",
       "src/main/specialist/application-commands.test.ts",
@@ -511,5 +511,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Research-run state adds long-lived execution and observation subscriptions to shared renderer state; validate the expanded state and publication lifecycle across workspace consumers in full."
 }

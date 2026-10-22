@@ -2,7 +2,7 @@ import { openProjectWorkspace } from '../workspace/project-workspace-entry'
 import { type SettingsEditorLeaveState, SettingsFormFooter } from './SettingsLayout'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import { Notice } from '@/components/notice'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -123,58 +123,58 @@ const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).A
 const GeneralPanel = lazy(async () => ({ default: (await import('./GeneralPanel')).GeneralPanel }))
 const NetworkPanel = lazy(async () => ({ default: (await import('./NetworkPanel')).NetworkPanel }))
 const StoragePanel = lazy(async () => {
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./StoragePanel'),
     () =>
       import('@/stores/storage-info-store').then(({ useStorageInfoStore }) =>
         useStorageInfoStore.getState().loadStatus()
       )
   )
-  return { default: module.StoragePanel }
+  return { default: panelModule.StoragePanel }
 })
 const RuntimesPanel = lazy(async () => {
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./RuntimesPanel'),
     () =>
       import('@/stores/runtime-settings-store').then(({ useRuntimeSettingsStore }) =>
         useRuntimeSettingsStore.getState().load()
       )
   )
-  return { default: module.RuntimesPanel }
+  return { default: panelModule.RuntimesPanel }
 })
 const RemoteControlPanel = lazy(async () => {
-  const module = await import('./RemoteControlPanel')
-  await module.RemoteControlPanel.preload().catch(() => undefined)
-  return { default: module.RemoteControlPanel }
+  const panelModule = await import('./RemoteControlPanel')
+  await panelModule.RemoteControlPanel.preload().catch(() => undefined)
+  return { default: panelModule.RemoteControlPanel }
 })
 const SkillsPanel = lazy(async () => {
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./SkillsPanel'),
     () => useSettingsStore.getState().loadSkills()
   )
-  return { default: module.SkillsPanel }
+  return { default: panelModule.SkillsPanel }
 })
 const ConnectorsPanel = lazy(async () => {
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./ConnectorsPanel'),
     () => useSettingsStore.getState().loadConnectors()
   )
-  return { default: module.ConnectorsPanel }
+  return { default: panelModule.ConnectorsPanel }
 })
 const SpecialistsPanel = lazy(async () => {
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./SpecialistsPanel'),
     () => useSpecialistStore.getState().load()
   )
-  return { default: module.SpecialistsPanel }
+  return { default: panelModule.SpecialistsPanel }
 })
 const MemoryPanel = lazy(async () => {
-  const module = await import('./MemoryPanel')
-  return { default: module.MemoryPanel }
+  const panelModule = await import('./MemoryPanel')
+  return { default: panelModule.MemoryPanel }
 })
 const TagsPanel = lazy(async () => {
   const tagState = useTagStore.getState()
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./TagsPanel'),
     () =>
       Promise.all([
@@ -184,7 +184,7 @@ const TagsPanel = lazy(async () => {
         useSpecialistStore.getState().load()
       ])
   )
-  return { default: module.TagsPanel }
+  return { default: panelModule.TagsPanel }
 })
 const ConnectorDetailView = lazy(async () => ({
   default: (await import('./ConnectorDetailView')).ConnectorDetailView
@@ -199,11 +199,11 @@ const ConnectorImportView = lazy(async () => ({
   default: (await import('./ConnectorImportView')).ConnectorImportView
 }))
 const ComputePanel = lazy(async () => {
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./ComputePanel'),
     () => preloadComputeHosts()
   )
-  return { default: module.ComputePanel }
+  return { default: panelModule.ComputePanel }
 })
 const ComputeAddForm = lazy(async () => ({
   default: (await import('./ComputeAddForm')).ComputeAddForm
@@ -212,14 +212,14 @@ const ComputeHostDetail = lazy(async () => ({
   default: (await import('./ComputeHostDetail')).ComputeHostDetail
 }))
 const PermissionsPanel = lazy(async () => {
-  const module = await loadSettingsPanel(
+  const panelModule = await loadSettingsPanel(
     () => import('./PermissionsPanel'),
     () =>
       import('@/stores/permission-grants-store').then(({ usePermissionGrantsStore }) =>
         usePermissionGrantsStore.getState().load()
       )
   )
-  return { default: module.PermissionsPanel }
+  return { default: panelModule.PermissionsPanel }
 })
 const CredentialsPanel = lazy(async () => ({
   default: (await import('./CredentialsPanel')).CredentialsPanel
@@ -394,8 +394,8 @@ const EMPTY_USAGE_SESSIONS = [] as const
 const EMPTY_USAGE_PROJECTS = [] as const
 
 const PdfAnnotationPreviewDialog = lazy(() =>
-  import('../workspace/pdf-annotations/PdfAnnotationPreviewDialog').then((module) => ({
-    default: module.PdfAnnotationPreviewDialog
+  import('../workspace/pdf-annotations/PdfAnnotationPreviewDialog').then((panelModule) => ({
+    default: panelModule.PdfAnnotationPreviewDialog
   }))
 )
 
@@ -2066,6 +2066,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         </div>
                       ) : (
                         <ConnectorsPanel
+                          recoveryConnectorId={
+                            connectorsView.kind === 'list'
+                              ? connectorsView.recoveryConnectorId
+                              : undefined
+                          }
                           onNavigate={navigateConnectors}
                           onOpenTag={navigateTag}
                           onOpenSpecialist={(usage) =>
@@ -2340,6 +2345,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           />
                         ) : null}
                         <ProvidersPanel
+                          recoveryProviderId={
+                            modelView.kind === 'list' ? modelView.recoveryProviderId : undefined
+                          }
+                          recoveryModel={
+                            modelView.kind === 'list' ? modelView.recoveryModel : undefined
+                          }
                           onCreateProvider={openCreate}
                           onEditProvider={openEdit}
                           busyProviderId={busyProviderId}

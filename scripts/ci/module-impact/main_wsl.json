@@ -40,10 +40,15 @@
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
-      "src/shared/renderer-contract-catalog.test.ts"
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
+      "src/main/notebook/wsl-setup-powershell.integration.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/notebook/mcp-wsl-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/acp/application-commands.test.ts",
@@ -170,7 +175,6 @@
       "src/main/notebook/windows-r-conda-discovery.integration.test.ts",
       "src/main/notebook/windows-repl-termination.integration.test.ts",
       "src/main/notebook/windows-shell.integration.test.ts",
-      "src/main/notebook/wsl-setup-powershell.integration.test.ts",
       "src/main/notebook/wsl2-shell.integration.test.ts",
       "src/main/office-preview/office-preview-ipc-lifecycle.test.ts",
       "src/main/office-preview/office-preview-navigation.test.ts",
@@ -192,7 +196,6 @@
       "src/main/reviewer/orchestrator.test.ts",
       "src/main/reviewer/review-assessment-owner.test.ts",
       "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
-      "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-state-ownership.architecture.test.ts",
       "src/main/session-package/service.test.ts",
       "src/main/session-plan/plan-service.test.ts",
@@ -227,7 +230,6 @@
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
-      "src/main/notebook/mcp-wsl-diagnostics.test.ts",
       "src/main/notebook/scientific-replay.test.ts",
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
@@ -250,7 +252,6 @@
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/wsl/wsl2-preview-gate.test.ts",
-      "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
@@ -296,5 +297,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The main_wsl owner retains 38 explicit research consumer obligations beyond its reviewed source-derived edges, including session-packages.lifecycle.test.ts, local-service.macos.integration.test.ts, research-service.macos.integration.test.ts. 36 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
 }

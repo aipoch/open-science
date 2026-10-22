@@ -21,9 +21,8 @@
       "src/renderer/src/pages/workspace/EnvironmentPackageSearch.test.tsx",
       "src/renderer/src/pages/workspace/provisioning-view.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
-      "src/main/replay-viewer/desktop-embed.integration.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",
       "src/renderer/src/components/SessionPackageOperation.test.tsx",
@@ -154,7 +153,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

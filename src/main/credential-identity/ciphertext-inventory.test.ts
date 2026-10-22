@@ -73,14 +73,14 @@ describe('read-only ciphertext inventory', () => {
   })
 
   it.each([
-    null,
-    {},
-    { version: 2, profiles: [] },
-    { version: 1, profiles: [{}] },
-    researchDocument({ provider: 'enc:invalid-base64-private-value' })
+    [null, 'invalid-document'],
+    [{}, 'invalid-document'],
+    [{ version: 2, profiles: [] }, 'invalid-document'],
+    [{ version: 1, profiles: [{}] }, 'invalid-document'],
+    [researchDocument({ provider: 'enc:invalid-base64-private-value' }), 'invalid-ciphertext']
   ])(
     'fails closed on malformed research credential documents without exposing values: %j',
-    (value) => {
+    (value, reason) => {
       const paths = fixture()
       const path = join(paths.configRoot, 'research-execution-profiles.json')
       const contents = JSON.stringify(value)
@@ -93,10 +93,18 @@ describe('read-only ciphertext inventory', () => {
       }
       expect(failure).toMatchObject({
         name: 'CredentialIdentityError',
-        reason: 'ciphertext-inventory-unavailable'
+        reason: 'ciphertext-inventory-unavailable',
+        diagnostic: {
+          code: 'inventory-failed',
+          source: 'configuration',
+          stage: 'parse-document',
+          reason
+        }
       })
       expect(String(failure)).not.toContain('private-value')
       expect(String(failure)).not.toContain(path)
+      expect(JSON.stringify(failure)).not.toContain('private-value')
+      expect(JSON.stringify(failure)).not.toContain(path)
       expect(readFileSync(path, 'utf8')).toBe(contents)
     }
   )
@@ -107,6 +115,16 @@ describe('read-only ciphertext inventory', () => {
     const contents = JSON.stringify(researchDocument({ provider: ref('pending-research') }))
     writeFileSync(join(paths.configRoot, name), contents)
     expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+    expect(() => readCredentialCiphertexts(paths)).toThrow(
+      expect.objectContaining({
+        diagnostic: expect.objectContaining({
+          code: 'inventory-failed',
+          source: 'configuration',
+          stage: 'read-files',
+          reason: 'pending-document'
+        })
+      })
+    )
     expect(readdirSync(paths.configRoot)).toEqual([name])
     expect(readFileSync(join(paths.configRoot, name), 'utf8')).toBe(contents)
   })
@@ -613,6 +631,16 @@ describe('typed Chromium cookie inventory', () => {
         path = cookieDatabase(paths, version),
         before = readFileSync(path)
       expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+      expect(() => readCredentialCiphertexts(paths)).toThrow(
+        expect.objectContaining({
+          diagnostic: expect.objectContaining({
+            code: 'inventory-failed',
+            source: 'cookies',
+            stage: 'read-database',
+            reason: 'invalid-document'
+          })
+        })
+      )
       expect(readFileSync(path)).toEqual(before)
     }
   )
@@ -633,6 +661,16 @@ describe('typed Chromium cookie inventory', () => {
     db.exec('UPDATE cookies SET host_key = NULL')
     db.close()
     expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+    expect(() => readCredentialCiphertexts(paths)).toThrow(
+      expect.objectContaining({
+        diagnostic: expect.objectContaining({
+          code: 'inventory-failed',
+          source: 'cookies',
+          stage: 'read-database',
+          reason: 'invalid-ciphertext'
+        })
+      })
+    )
   })
   it('does not require cookie metadata when there is no encrypted value', () => {
     const paths = fixture(),

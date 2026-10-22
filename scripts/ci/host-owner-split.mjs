@@ -1,9 +1,13 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
-import { sourceSnapshot, createConsumerDependencyReader } from './consumer-retirement.mjs'
 import { isModuleImpactRegistrationPath } from './load-module-impact.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
-import { derivedConsumersPath, withDerivedConsumers } from './module-derived-consumers.mjs'
+import {
+  createDependencyReader,
+  derivedConsumersPath,
+  sourceSnapshot,
+  withDerivedConsumers
+} from './module-graph/index.mjs'
 
 // Existing owners can exchange unchanged host paths without copying unrelated interfaces.
 // Unlike a split, this proof retains every historical test bucket and authorizes no retirement.
@@ -196,10 +200,10 @@ export function verifiedHostOwnerSplits(
     )
     // Registration moves preserve source bytes. Use import/runtime relationships, including
     // type and mock edges; host globals alone do not make those relationships incomplete.
-    const inspect = createConsumerDependencyReader(after, edges)
+    const inspect = createDependencyReader(after, edges)
     // Removing old evidence needs stronger proof: a known import does not explain
     // every filesystem/IPC dependency exercised by that test.
-    const inspectRetirement = createConsumerDependencyReader(after, edges, { staticOnly: true })
+    const inspectRetirement = createDependencyReader(after, edges, { staticOnly: true })
     const result = empty()
     const verifiedOriginals = new Map()
     for (const { target, originalId, original, remaining } of candidates) {
@@ -360,10 +364,10 @@ export function verifiedHostSourceMoves(
     const edges = [before, after].flatMap((source) =>
       Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json')))
     )
-    const inspectBefore = createConsumerDependencyReader(before, edges)
-    const inspectAfter = createConsumerDependencyReader(after, edges)
-    const retireBefore = createConsumerDependencyReader(before, edges, { staticOnly: true })
-    const retireAfter = createConsumerDependencyReader(after, edges, { staticOnly: true })
+    const inspectBefore = createDependencyReader(before, edges)
+    const inspectAfter = createDependencyReader(after, edges)
+    const retireBefore = createDependencyReader(before, edges, { staticOnly: true })
+    const retireAfter = createDependencyReader(after, edges, { staticOnly: true })
     const result = empty()
     for (const { id, original, remaining, targets } of transfers) {
       const originalSources = new Set(original.ownerPaths.filter((path) => !isTest(path)))

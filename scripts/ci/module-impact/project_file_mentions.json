@@ -20,7 +20,10 @@
       "src/renderer/src/pages/workspace/project-file-mention-transfer.test.ts",
       "src/renderer/src/pages/workspace/project-file-mention.interaction.test.tsx"
     ],
-    "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
+    "contract": [
+      "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",

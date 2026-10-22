@@ -3272,6 +3272,50 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
+  it.each(['Reading', 'reading'])(
+    'allows deleting a parent when its promoted child shares its name (%s)',
+    async (childName) => {
+      const parent = {
+        id: 'parent',
+        revision: 1,
+        name: 'Reading',
+        description: '',
+        itemCount: 0,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const child = { ...parent, id: 'child', name: childName, parentId: parent.id }
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(
+          request.scope === 'collections' ? { entries: [parent, child] } : { entries: [] }
+        )
+      )
+      useNavigationStore.setState({ pendingLiteratureCollectionId: parent.id })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: parent.name })
+      await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Delete collection' }))
+      const alert = await screen.findByRole('alertdialog')
+      expect(
+        within(alert).getByText('Child collections will move to the top level.')
+      ).not.toBeNull()
+      expect(
+        within(alert).queryByRole('button', { name: 'Rename conflicting collection' })
+      ).toBeNull()
+      const deleteButton = within(alert).getByRole('button', { name: 'Delete collection' })
+      expect(deleteButton.hasAttribute('disabled')).toBe(false)
+      transact.mockResolvedValueOnce({ kind: 'collection', id: parent.id })
+      fireEvent.click(deleteButton)
+      await waitFor(() =>
+        expect(transact).toHaveBeenCalledWith({
+          kind: 'delete-collection',
+          collectionId: parent.id
+        })
+      )
+      expect(await screen.findByRole('heading', { name: 'All references' })).not.toBeNull()
+    }
+  )
+
   it('previews promoted children and opens the conflicting child in the existing editor', async () => {
     const parent = {
       id: 'parent',

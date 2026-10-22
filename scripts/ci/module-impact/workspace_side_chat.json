@@ -5,13 +5,15 @@
     "src/renderer/src/pages/workspace/side-chat-availability.ts",
     "src/renderer/src/pages/workspace/side-chat-summary.ts",
     "src/renderer/src/pages/workspace/use-side-chat-controller.test.ts",
-    "src/renderer/src/pages/workspace/use-side-chat-controller.ts"
+    "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
+    "src/renderer/src/pages/workspace/side-chat-contract.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/SideChatCloseConfirmation.tsx",
     "src/renderer/src/pages/workspace/side-chat-availability.ts",
     "src/renderer/src/pages/workspace/side-chat-summary.ts",
-    "src/renderer/src/pages/workspace/use-side-chat-controller.ts"
+    "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
+    "src/renderer/src/pages/workspace/side-chat-contract.ts"
   ],
   "testFiles": {
     "owner": [
@@ -24,7 +26,8 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",
       "src/renderer/src/pages/workspace/handoff-lifecycle-projection.test.ts",
       "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
-      "src/renderer/src/stores/session-store.test.ts"
+      "src/renderer/src/stores/session-store.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/renderer/src/App.test.tsx",

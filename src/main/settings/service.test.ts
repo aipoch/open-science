@@ -1,3 +1,4 @@
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync } from 'node:fs'
 import {
@@ -1914,7 +1915,9 @@ describe('SettingsService: providers', () => {
 
     expect(backend.persistentSystemPrompt).toContain('Stable Open-Science app guidance.')
     const appInstructions = await readFile(
-      join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'open-science.md'),
+      JSON.parse(backend.env.OPENCODE_CONFIG_CONTENT).instructions.find((path: string) =>
+        /open-science-[a-f0-9]+\.md$/.test(path)
+      ),
       'utf8'
     )
     expect(appInstructions).toContain('Stable Open-Science app guidance.')
@@ -1922,14 +1925,17 @@ describe('SettingsService: providers', () => {
     expect(appInstructions).toContain(join(storageRoot, 'skills', 'imported'))
 
     const baseline = await readFile(
-      join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'connectors.md'),
+      JSON.parse(backend.env.OPENCODE_CONFIG_CONTENT).instructions.find((path: string) =>
+        /connectors-[a-f0-9]+\.md$/.test(path)
+      ),
       'utf8'
     )
     expect(baseline).toContain('host.mcp')
     expect(baseline).toContain('mcp-*')
     expect(baseline).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
     expect(baseline).toContain('Never guess a connector server or method name')
-    expect(baseline).toContain('`mcp-xt`')
+    expect(baseline).not.toContain('`mcp-xt`')
+    expect(JSON.parse(backend.env.OPENCODE_CONFIG_CONTENT).permission.skill['mcp-xt']).toBe('ask')
     expect(baseline).not.toContain('Use XT records.')
     expect(baseline).not.toContain('host.mcp("xt"')
     expect(baseline).not.toContain('pubchem_get_compounds')
@@ -4749,11 +4755,13 @@ describe('SettingsService: skills', () => {
     expect(resolved?.body).not.toContain('name: mcp-molecule')
   })
 
-  it('does not resolve a disabled bundled connector skill', async () => {
+  it('previews a bundled definition independently of Main runtime permission', async () => {
     const service = await createSkillService()
     await service.setConnectorEnabled({ id: 'molecule', enabled: false })
 
-    await expect(service.resolveSkillDocument({ name: 'mcp-molecule' })).resolves.toBeNull()
+    await expect(service.resolveSkillDocument({ name: 'mcp-molecule' })).resolves.toMatchObject({
+      name: 'mcp-molecule'
+    })
   })
 
   it('resolves a materialized custom connector skill from the provisioned source dir', async () => {
@@ -4948,7 +4956,7 @@ describe('SettingsService: skills', () => {
     ])
   })
 
-  it('force-loads a disabled picked skill for the turn without mutating stored settings', async () => {
+  it('prepares disabled source documents without granting Main or mutating stored settings', async () => {
     const service = await createSkillService()
 
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -4970,14 +4978,28 @@ describe('SettingsService: skills', () => {
         () => false
       )
 
-    // Disabled: the skill is not materialized on a normal spawn.
+    // Source documents are prepared independently of per-session authorization.
     const disabledBackend = await resolveActiveBackend(service)
     expect(
+      (
+        disabledBackend.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as {
+          mainAllowedNames: string[]
+        }
+      ).mainAllowedNames
+    ).not.toContain('demo')
+    expect(
       await exists(join(claudeSkillProjectionRoot(disabledBackend), '.claude', 'skills', 'demo'))
-    ).toBe(false)
+    ).toBe(true)
 
-    // Turn-forced: the disabled skill is materialized for this spawn only.
+    // A Specialist force-load cannot transfer its authority into a shared Main session.
     const forcedBackend = await resolveActiveBackend(service, { forcedSkillIds: ['demo'] })
+    expect(
+      (
+        forcedBackend.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as {
+          mainAllowedNames: string[]
+        }
+      ).mainAllowedNames
+    ).not.toContain('demo')
     expect(
       await exists(join(claudeSkillProjectionRoot(forcedBackend), '.claude', 'skills', 'demo'))
     ).toBe(true)
@@ -4986,11 +5008,18 @@ describe('SettingsService: skills', () => {
     const skills = await service.listSkills()
     expect(skills.find((skill) => skill.id === 'demo')?.enabled).toBe(false)
 
-    // Clearing the force set removes it again on the next spawn.
+    // Main remains unable to discover it after the Specialist turn closes.
     const clearedBackend = await resolveActiveBackend(service)
     expect(
+      (
+        clearedBackend.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as {
+          mainAllowedNames: string[]
+        }
+      ).mainAllowedNames
+    ).not.toContain('demo')
+    expect(
       await exists(join(claudeSkillProjectionRoot(clearedBackend), '.claude', 'skills', 'demo'))
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('keeps the shared Claude profile private while exposing only canonical Skill identities', async () => {

@@ -58,7 +58,7 @@ for (const queued of [false, true]) {
           phone,
           `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
         )
-        await expect(phone.getByTestId('composer-queue-submit')).toBeVisible()
+        await expect(phone.getByRole('button', { name: 'Cancel run', exact: true })).toBeVisible()
       }
       await phone.route(routePattern, async (route) => {
         const submitted = route.request().postDataJSON()?.args?.[0]

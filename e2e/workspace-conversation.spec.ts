@@ -284,7 +284,7 @@ test('explains disabled revision navigation while a turn is running', async ({ a
     `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
   )
   try {
-    await expect(page.getByTestId('composer-queue-submit')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toBeVisible()
     await expect(previous).toBeDisabled()
     const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
     const trigger = previous.locator('..')

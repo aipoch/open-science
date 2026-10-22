@@ -42,7 +42,7 @@
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.reviewer.integration.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "scripts/pdf-translation-corpus.test.ts",
       "scripts/pdfjs-resource-scope.test.ts",

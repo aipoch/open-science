@@ -10,7 +10,8 @@ import {
   classifyChanges,
   fixtureTestPatterns,
   matchesPath,
-  parseNameStatus
+  parseNameStatus,
+  playwrightReaderTests
 } from './classify-pr-changes.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
@@ -18,7 +19,11 @@ import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 
-import { loadDerivedConsumers, withDerivedConsumers } from './module-derived-consumers.mjs'
+import {
+  loadDerivedConsumers,
+  withDerivedConsumers,
+  usesReviewedBoundary
+} from './module-graph/policy.mjs'
 
 const defaultManifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
@@ -85,11 +90,12 @@ export function modulesForPath(manifest, path) {
     .map(([moduleId]) => moduleId)
 }
 
-function expandConsumers(manifest, seeds) {
+function expandConsumers(manifest, seeds, testsOnly = false) {
   const selected = new Set()
   const visit = (moduleId) => {
     if (selected.has(moduleId)) return
     selected.add(moduleId)
+    if (testsOnly && usesReviewedBoundary(moduleId, manifest.modules[moduleId])) return
     for (const consumer of manifest.modules[moduleId].consumerModules) visit(consumer)
   }
   for (const seed of seeds) visit(seed)
@@ -202,10 +208,16 @@ export function createAffectedTestPlan(
       reasons.push(`${change.path} -> documentation lane -> no module tests`)
       continue
     }
-    // Browser fixtures/specs execute in the complete browser lane, not Vitest. This explicit
-    // owner must remain selected in mixed diffs; unknown E2E helpers still fall back to full.
-    if (pathPlan.roots.includes('renderer_browser_e2e') && !pathPlan.bundles.includes('unit')) {
-      reasons.push(`${change.path} -> renderer browser E2E lane -> no module tests`)
+    // Playwright specs and fixtures execute in their E2E lanes, not Vitest. Only declared
+    // readers run here; unattributed E2E files still fall back to full through the classifier.
+    const readerTests = playwrightReaderTests(change.path)
+    if (pathPlan.mode === 'selective' && readerTests) {
+      for (const test of readerTests) directTests.add(test)
+      reasons.push(
+        readerTests.length > 0
+          ? `${change.path} -> Playwright E2E input -> declared readers ${readerTests.join(', ')}`
+          : `${change.path} -> Playwright E2E lane -> no module tests`
+      )
       continue
     }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
@@ -247,7 +259,8 @@ export function createAffectedTestPlan(
     }
   }
 
-  const modules = expandConsumers(manifest, [...seeds])
+  const capabilityModules = expandConsumers(manifest, [...seeds])
+  const modules = expandConsumers(manifest, [...seeds], true)
   // A consumer's full marker describes edits to its own contract, not selecting
   // its tests as evidence for another owner. Retain the entire consumer closure.
   const fullModule = [...seeds, ...testModules].find(
@@ -258,7 +271,13 @@ export function createAffectedTestPlan(
   }
   for (const moduleId of seeds) {
     const visit = (consumer, chain) => {
-      reasons.push([...chain, consumer].join(' -> '))
+      reasons.push(
+        [
+          ...chain,
+          consumer,
+          ...(!modules.includes(consumer) ? ['capability routing only'] : [])
+        ].join(' -> ')
+      )
       for (const next of manifest.modules[consumer].consumerModules) {
         visit(next, [...chain, consumer])
       }
@@ -268,6 +287,9 @@ export function createAffectedTestPlan(
     }
   }
   const plan = selectivePlan(manifest, [...modules, ...testModules], reasons, graph)
+  const capabilityPlan = selectivePlan(manifest, [...capabilityModules, ...testModules], [], graph)
+  plan.capabilityOverlays = capabilityPlan.capabilityOverlays
+  plan.fallbackCapabilities = capabilityPlan.fallbackCapabilities
   // Editing a registered test runs that test; changing implementations or shared fixtures
   // still runs every declared owner, contract and transitive consumer test.
   plan.testFiles = sorted([
@@ -462,16 +484,14 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (arguments_.includes('--coverage-changed') && !coverageChanged) {
     throw new Error('--coverage-changed requires a Git revision')
   }
-  const changes = changesFromGit(base, head, options)
+  const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
+    changesFromGit(base, head, options),
+    { base, head, ...options }
+  )
   const paths = sorted(
     changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
   )
   const graph = collectCodeGraphTests(paths, options)
-  const { manifest, registrationModules, registrationOnly } = resolveModuleImpactInputs(changes, {
-    base,
-    head,
-    ...options
-  })
   let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules, registrationOnly)
   // Documentation and trusted additive records do not turn a source boundary into a
   // mixed product change. Keep their plan evidence and capability selection intact.

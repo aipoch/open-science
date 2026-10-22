@@ -16,10 +16,10 @@ import { cn } from '@/lib/utils'
 import {
   createProjectLibraryPreviewItem,
   createSessionSubagentsPreviewItem,
-  type PreviewToolItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import type { ChatSession } from '@/stores/session-store'
+import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSessionStore } from '@/stores/session-store'
 import type { DelegatedWorkUnavailableReason } from '../../../../shared/acp'
 import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'

@@ -78,10 +78,8 @@ import {
   selectStartupCredentialIdentity,
   prepareCredentialValidation
 } from './credential-identity/bootstrap'
-import {
-  readCredentialCiphertexts,
-  type CredentialCiphertext
-} from './credential-identity/ciphertext-inventory'
+import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
+import type { CredentialCiphertext } from './credential-identity/cipher-contract'
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
 import { startOrAttachDesktopBackend, desktopBackendPaths } from './desktop-runtime-launcher'
@@ -1872,7 +1870,12 @@ void startDesktop().catch(async (error: unknown) => {
     ...diagnosticErrorFields(error),
     phase: bootstrapPhase,
     ...(error instanceof CredentialIdentityError
-      ? { recoveryReason: error.reason, validationDiagnostic: error.diagnostic }
+      ? {
+          recoveryReason: error.reason,
+          // Inventory context is transient UI data, not an additional persisted diagnostic.
+          validationDiagnostic:
+            error.diagnostic?.code === 'inventory-failed' ? undefined : error.diagnostic
+        }
       : {})
   }
   bootstrapLog.error('desktop startup failed', failureFields)

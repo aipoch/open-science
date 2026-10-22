@@ -24,7 +24,7 @@
       "src/renderer/src/pages/workspace/notebook-tool-names.test.ts",
       "src/renderer/src/pages/workspace/notebook-tool-presentation.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/SessionPackageOperation.test.tsx",

@@ -43,7 +43,7 @@ import {
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSessionStore } from '@/stores/session-store'
 import { useResearchDemoCarriers } from '@/stores/research-demo-store'
 import { useProjectStore } from '@/stores/project-store'

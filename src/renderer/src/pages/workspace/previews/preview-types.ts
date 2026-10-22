@@ -1,4 +1,4 @@
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type { Annotation } from '../../../../../shared/annotation-contract'
 import type { AnnotationValidationError } from '../../../../../shared/annotations'
 import type { PdfProseRegion } from '../../../../../shared/pdf-text'

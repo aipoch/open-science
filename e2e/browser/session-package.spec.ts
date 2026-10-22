@@ -1,5 +1,323 @@
 import { expect, test, type Locator } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
+import type { PackageOperationSnapshot } from '../../src/shared/session-package'
+
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 320, height: 740 },
+  { width: 375, height: 812 },
+  { width: 414, height: 896 },
+  { width: 768, height: 850 },
+  { width: 640, height: 360 }
+]) {
+  test(`export retains one dialog and stable progress geometry at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?retained&pdf-notes')
+    const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
+    const steps = dialog.getByRole('list', { name: 'Package steps' })
+    await expect(dialog).toBeVisible()
+    const original = await dialog.elementHandle()
+    const selectionBounds = await dialog.boundingBox()
+    await page.screenshot({ path: testInfo.outputPath('export-selection.png') })
+    await dialog.getByRole('button', { name: 'Choose save location…', exact: true }).click()
+    await expect(dialog.getByRole('status')).toHaveText('Waiting for a save location…')
+    await expectLayoutSettled(dialog)
+    const bounds = await dialog.boundingBox()
+    const stepBounds = await steps.boundingBox()
+    expect(bounds!.height).toBeLessThanOrEqual(viewport.height * 0.85)
+    expect(bounds!.width).toBe(selectionBounds!.width)
+    const stages: Partial<PackageOperationSnapshot>[] = [
+      { state: 'running', progress: { phase: 'choosing-location' } },
+      { state: 'running', progress: { phase: 'copying', totalBytes: 100, completedBytes: 40 } },
+      { state: 'running', progress: { phase: 'validating' } },
+      { state: 'running', progress: { phase: 'compressing' } },
+      { state: 'running', progress: { phase: 'saving', totalBytes: 100, completedBytes: 70 } },
+      { state: 'running', progress: { phase: 'cleaning' } },
+      { state: 'cancelling', progress: { phase: 'cleaning' } },
+      { state: 'cancelled', progress: { phase: 'cleaning' } },
+      { state: 'failed', progress: { phase: 'saving' }, error: 'Disk full' },
+      {
+        state: 'succeeded',
+        progress: { phase: 'cleaning' },
+        error: undefined,
+        result: { filePath: '/Users/researcher/Documents/research.science' }
+      }
+    ]
+    for (const stage of stages) {
+      await page.evaluate((detail) => {
+        window.dispatchEvent(new CustomEvent('package-fixture-progress', { detail }))
+      }, stage)
+      await expect(dialog).toBeVisible()
+      await expectFooterFits(dialog)
+      await expect(async () => {
+        expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+        const current = (await dialog.boundingBox())!
+        expect({ x: current.x, y: current.y, width: current.width }).toEqual({
+          x: bounds!.x,
+          y: bounds!.y,
+          width: bounds!.width
+        })
+        if (stage.state === 'running' || stage.state === 'cancelling')
+          expect(current.height).toBe(bounds!.height)
+        expect(await steps.boundingBox()).toEqual(stepBounds)
+      }).toPass()
+      await expect(
+        dialog.getByRole('button', { name: /^(Cancel|Close|Run in background)$/ }).last()
+      ).toBeInViewport()
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true
+      )
+      if (['failed', 'cancelled', 'cancelling'].includes(stage.state!)) {
+        await expect(steps.locator('[aria-current]')).toHaveCount(0)
+        await expect(steps.locator('svg')).toHaveCount(0)
+      }
+      await page.screenshot({
+        path: testInfo.outputPath(`export-${stage.state}-${stage.progress!.phase}.png`)
+      })
+    }
+    await expect(steps.locator('svg')).toHaveCount(3)
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new CustomEvent('package-fixture-progress', {
+          detail: { ioBytesPerSecond: 1024 }
+        })
+      )
+    })
+    await expect(dialog).toHaveCount(0)
+  })
+
+  test(`import retains its dialog through changing counters and results at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?import=checking')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    const steps = dialog.getByRole('list', { name: 'Package steps' })
+    await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+    await expectLayoutSettled(dialog)
+    const original = await dialog.elementHandle()
+    const bounds = await dialog.boundingBox()
+    const stepBounds = await steps.boundingBox()
+    const publish = async (detail: Partial<PackageOperationSnapshot>): Promise<void> => {
+      await page.evaluate((detail) => {
+        window.dispatchEvent(new CustomEvent('package-fixture-progress', { detail }))
+      }, detail)
+    }
+    const expectCompact = async (): Promise<void> => {
+      await expect(async () => {
+        expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+        expect(await dialog.boundingBox()).toEqual(bounds)
+        expect(await steps.boundingBox()).toEqual(stepBounds)
+      }).toPass()
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true
+      )
+      await expect(
+        dialog.getByRole('button', { name: /^(Cancel|Close|Run in background)$/ }).last()
+      ).toBeInViewport()
+    }
+    expect(bounds!.height).toBeLessThanOrEqual(viewport.height * 0.85)
+    for (const progress of [
+      { phase: 'copying', completedBytes: 10, totalBytes: 100 },
+      { phase: 'copying' },
+      { phase: 'validating', completedFiles: 1, totalFiles: 4 },
+      { phase: 'validating' }
+    ] satisfies PackageOperationSnapshot['progress'][]) {
+      await publish({ progress })
+      await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+      await expectCompact()
+    }
+    await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
+    await expectLayoutSettled(dialog)
+    expect((await dialog.boundingBox())!.y).toBe(bounds!.y)
+    await dialog.screenshot({ path: testInfo.outputPath('import-compact-review.png') })
+    expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+    await dialog.getByRole('button', { name: 'Import', exact: true }).click()
+    await expect(dialog.getByRole('status')).toHaveText('Importing research…')
+    await expectCompact()
+    if (viewport.width >= 768) {
+      const details = await dialog
+        .locator('summary')
+        .filter({ hasText: /^Transfer details$/ })
+        .boundingBox()
+      const footer = await dialog
+        .getByRole('button', { name: 'Run in background', exact: true })
+        .evaluate((element) => element.parentElement!.getBoundingClientRect().y)
+      expect(details!.y + details!.height).toBeLessThanOrEqual(footer)
+    }
+    await dialog.screenshot({ path: testInfo.outputPath('import-stable-progress.png') })
+    for (const progress of [
+      { phase: 'importing', completedBytes: 60, totalBytes: 100 },
+      { phase: 'importing' },
+      { phase: 'importing', completedFiles: 3, totalFiles: 4 },
+      { phase: 'cleaning' }
+    ] satisfies PackageOperationSnapshot['progress'][]) {
+      await publish({ progress })
+      await expectCompact()
+    }
+    for (const state of ['cancelling', 'cancelled', 'failed', 'succeeded'] as const) {
+      await publish({
+        state,
+        progress: { phase: 'cleaning' },
+        error: state === 'failed' ? 'Import failed' : undefined,
+        result:
+          state === 'succeeded'
+            ? { imported: { projectId: 'cancer', sessionId: 'imported' } }
+            : undefined
+      })
+      if (state === 'succeeded') {
+        expect((await dialog.boundingBox())!.height).toBeLessThanOrEqual(bounds!.height)
+        expect((await dialog.boundingBox())!.y).toBe(bounds!.y)
+        expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+        await expect(
+          dialog.getByRole('button', { name: 'Open imported Session', exact: true })
+        ).toBeInViewport()
+      } else if (state === 'cancelling') await expectCompact()
+      else expect((await dialog.boundingBox())!.y).toBe(bounds!.y)
+      await expect(steps.locator('[aria-current]')).toHaveCount(0)
+      await expect(steps.locator('svg')).toHaveCount(state === 'succeeded' ? 3 : 0)
+    }
+    await expectFooterFits(dialog)
+    await dialog.screenshot({ path: testInfo.outputPath('import-stable-result.png') })
+  })
+}
+
+test('sensitive export review reserves room for the warning and acknowledgement', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/session-package.html?evidence')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  const acknowledgement = dialog.getByRole('checkbox', {
+    name: 'I understand the risk and want to export anyway'
+  })
+  const exportAnyway = dialog.getByRole('button', { name: 'Export anyway', exact: true })
+  await expect(acknowledgement).toBeInViewport()
+  await expect(exportAnyway).toBeInViewport()
+  await expect(exportAnyway).toBeDisabled()
+  await dialog.screenshot({ path: testInfo.outputPath('sensitive-export-review.png') })
+  const bounds = await dialog.boundingBox()
+  await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
+  await expect(async () => {
+    expect((await dialog.boundingBox())!.y).toBe(bounds!.y)
+    expect((await dialog.boundingBox())!.height).toBeGreaterThanOrEqual(bounds!.height)
+  }).toPass()
+  await expectSingleBodyScroll(dialog, exportAnyway)
+  await acknowledgement.check()
+  await expect(exportAnyway).toBeEnabled()
+  await dialog.screenshot({ path: testInfo.outputPath('sensitive-export-evidence.png') })
+})
+
+for (const flow of [
+  { kind: 'export', query: '', action: 'Choose save location…' },
+  { kind: 'import', query: '?import=review', action: 'Import' }
+]) {
+  test(`${flow.kind} resizes from a stable top and coordinates incoming content`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.goto(`/session-package.html${flow.query}`)
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await page.evaluate(() => document.fonts.ready)
+    await expect(async () =>
+      expect(await dialog.evaluate((element) => element.getAnimations().length)).toBe(0)
+    ).toPass()
+    const before = (await dialog.boundingBox())!
+    await expect(dialog).toHaveCSS('transition-property', 'height')
+    await dialog.evaluate((element) => {
+      const samples: { height: number; top: number; opacity: number }[] = []
+      element.addEventListener(
+        'transitionrun',
+        () => {
+          const sample = (): void => {
+            const { height, y } = element.getBoundingClientRect()
+            samples.push({
+              height,
+              top: y,
+              opacity: parseFloat(
+                getComputedStyle(element.querySelector('[data-package-content]')!).opacity
+              )
+            })
+            if (element.getAnimations().some((animation) => animation.playState === 'running'))
+              requestAnimationFrame(sample)
+            else element.setAttribute('data-layout-samples', JSON.stringify(samples))
+          }
+          requestAnimationFrame(sample)
+        },
+        { once: true }
+      )
+    })
+    await dialog.getByRole('button', { name: flow.action, exact: true }).click()
+    await expect(dialog).toHaveAttribute('data-layout-samples')
+    const after = (await dialog.boundingBox())!
+    const samples = JSON.parse((await dialog.getAttribute('data-layout-samples'))!) as {
+      height: number
+      top: number
+      opacity: number
+    }[]
+    expect(
+      samples.some(
+        ({ height }) =>
+          height > Math.min(before.height, after.height) + 1 &&
+          height < Math.max(before.height, after.height) - 1
+      )
+    ).toBe(true)
+    expect(samples.every(({ top }) => Math.abs(top - before.y) < 1)).toBe(true)
+    expect(samples.every(({ opacity }) => opacity >= 0.7)).toBe(true)
+    await expect(async () =>
+      expect(
+        await dialog
+          .locator('[data-package-content]')
+          .evaluate((body) => getComputedStyle(body).opacity)
+      ).toBe('1')
+    ).toPass()
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport()
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(dialog).toHaveCSS('transition-property', 'none')
+  })
+}
+
+test('hidden export stays hidden through progress and completion until explicitly opened', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/session-package.html')
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: 'Hide progress', exact: true }).click()
+  for (const detail of [
+    { ioBytesPerSecond: 1024 },
+    { state: 'running', progress: { phase: 'compressing' } },
+    { state: 'running', progress: { phase: 'saving' } },
+    { state: 'succeeded', progress: { phase: 'cleaning' } }
+  ]) {
+    await page.evaluate((detail) => {
+      window.dispatchEvent(new CustomEvent('package-fixture-progress', { detail }))
+    }, detail)
+    await expect(dialog).toHaveCount(0)
+  }
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent('package-fixture-progress', {
+        detail: { presentationRevision: 1 }
+      })
+    )
+  })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('status')).toHaveText('Session package exported')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+})
 
 test('rejects a real native folder drop before package import', async ({ page }, testInfo) => {
   await page.goto('/session-package.html?background=running&surface=home&locale=zh-Hans')
@@ -31,6 +349,27 @@ test('rejects a real native folder drop before package import', async ({ page },
   }
 })
 
+async function expectLayoutSettled(dialog: Locator): Promise<void> {
+  await expect(async () => {
+    const difference = await dialog.evaluate((panel) => {
+      const target = Math.min(
+        parseFloat((panel as HTMLElement).style.height),
+        parseFloat(getComputedStyle(panel).maxHeight)
+      )
+      return Math.abs(panel.getBoundingClientRect().height - target)
+    })
+    expect(difference).toBeLessThanOrEqual(1)
+  }).toPass()
+}
+
+async function expectFooterFits(dialog: Locator): Promise<void> {
+  await expect(async () => {
+    const bounds = await dialog.boundingBox()
+    const footer = await dialog.locator('[data-package-footer]').boundingBox()
+    expect(footer!.y + footer!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height + 1)
+  }).toPass()
+}
+
 // Inspect real overflow: jsdom cannot detect a second scrollbar or a clipped footer.
 async function expectSingleBodyScroll(dialog: Locator, primary: Locator): Promise<void> {
   const heading = dialog.getByRole('heading').first()
@@ -45,6 +384,7 @@ async function expectSingleBodyScroll(dialog: Locator, primary: Locator): Promis
     return regions.length
   })
   expect(scrollable, 'exactly one vertical scroll region').toBe(1)
+  await expectFooterFits(dialog)
   await expect(heading).toBeInViewport()
   await expect(primary).toBeInViewport()
   expect((await heading.boundingBox())!.y).toBeCloseTo(before.heading!.y, 0)
@@ -350,17 +690,14 @@ for (const width of [1280, 414]) {
       await expect(customize).toBeVisible()
       await page.evaluate(() => document.fonts.ready)
       const before = await dialog.boundingBox()
-      const footer = await save.boundingBox()
       await page.screenshot({ path: testInfo.outputPath('export-collapsed.png') })
       await customize.click()
       const search = dialog.getByLabel('Search optional files', { exact: true })
       await expect(search).toBeVisible()
       const after = await dialog.boundingBox()
-      for (const key of ['x', 'y', 'width', 'height'] as const)
+      for (const key of ['x', 'y', 'width'] as const)
         expect.soft(Math.abs(after![key] - before![key]), `dialog ${key}`).toBeLessThanOrEqual(1)
-      expect
-        .soft(Math.abs((await save.boundingBox())!.y - footer!.y), 'footer position')
-        .toBeLessThanOrEqual(1)
+      await expect(save).toBeInViewport()
       const filters = dialog.locator('summary').filter({ hasText: /^File filters$/ })
       await search.scrollIntoViewIfNeeded()
       const inputBox = await search.boundingBox()
@@ -379,13 +716,15 @@ for (const width of [1280, 414]) {
       ).toHaveCount(0)
       await page.screenshot({ path: testInfo.outputPath('export-expanded.png') })
       const afterFilters = await dialog.boundingBox()
-      expect.soft(afterFilters!.height).toBeCloseTo(before!.height, 0)
-      expect.soft(Math.abs((await save.boundingBox())!.y - footer!.y)).toBeLessThanOrEqual(1)
+      expect.soft(afterFilters!.y).toBeCloseTo(before!.y, 0)
+      await expect(save).toBeInViewport()
       expect.soft(afterFilters!.x).toBeGreaterThanOrEqual(0)
       expect.soft(afterFilters!.x + afterFilters!.width).toBeLessThanOrEqual(width)
       await customize.click()
       await expect(search).toHaveCount(0)
-      expect((await dialog.boundingBox())!.height).toBeCloseTo(before!.height, 0)
+      await expect(async () =>
+        expect((await dialog.boundingBox())!.height).toBeCloseTo(before!.height, 0)
+      ).toPass()
     })
   }
 }
@@ -446,15 +785,18 @@ for (const width of [1280, 768, 414, 375, 320]) {
     const name = dialog.getByRole('textbox', { name: 'Project name' })
     await expect(name).toBeFocused()
     await expect(page.getByRole('dialog')).toHaveCount(1)
+    await expectLayoutSettled(dialog)
     const box = await dialog.boundingBox()
     await page.screenshot({ path: testInfo.outputPath('new-project-form.png') })
     await name.fill('Imported research')
     await name.press('Enter')
     await expect(dialog.getByText('Imported research', { exact: true })).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeEnabled()
+    await expectLayoutSettled(dialog)
     await page.screenshot({ path: testInfo.outputPath('new-project-selected.png') })
     const after = await dialog.boundingBox()
-    expect(after?.height).toBe(box?.height)
+    expect(after?.y).toBe(box?.y)
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeInViewport()
     expect(after!.x).toBeGreaterThanOrEqual(0)
     expect(after!.x + after!.width).toBeLessThanOrEqual(width)
   })
@@ -665,3 +1007,75 @@ for (const locale of ['en', 'zh-Hans']) {
     })
   }
 }
+
+test.describe('recorded package transition acceptance', () => {
+  test('keeps one anchored dialog across the complete import flow', async ({
+    browser
+  }, testInfo) => {
+    const context = await browser.newContext({
+      baseURL: String(testInfo.project.use.baseURL),
+      viewport: { width: 1280, height: 900 },
+      recordVideo: { dir: testInfo.outputPath('video'), size: { width: 1280, height: 900 } }
+    })
+    const page = await context.newPage()
+    try {
+      await page.goto('/session-package.html?import=checking')
+      const dialog = page.getByRole('dialog')
+      await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+      await expectFooterFits(dialog)
+      await expect(async () =>
+        expect(await dialog.evaluate((element) => element.getAnimations().length)).toBe(0)
+      ).toPass()
+      const top = (await dialog.boundingBox())!.y
+      await page.waitForTimeout(900) // Keep each stage readable in the requested acceptance recording.
+      await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
+      const confirm = dialog.getByRole('button', { name: 'Import', exact: true })
+      await expect(confirm).toBeVisible()
+      await expectFooterFits(dialog)
+      await page.waitForTimeout(900)
+      await confirm.click()
+      await expect(dialog.getByRole('status')).toHaveText('Importing research…')
+      await expect(async () =>
+        expect(await dialog.evaluate((element) => element.getAnimations().length)).toBe(0)
+      ).toPass()
+      const progressBounds = await dialog.boundingBox()
+      for (const progress of [
+        { phase: 'importing', completedBytes: 64, totalBytes: 100 },
+        { phase: 'importing' },
+        { phase: 'importing', completedBytes: 91, totalBytes: 100 }
+      ]) {
+        await page.evaluate(
+          (progress) =>
+            window.dispatchEvent(
+              new CustomEvent('package-fixture-progress', { detail: { progress } })
+            ),
+          progress
+        )
+        await expect(async () =>
+          expect(await dialog.boundingBox()).toEqual(progressBounds)
+        ).toPass()
+        await page.waitForTimeout(350)
+      }
+      await page.evaluate(() =>
+        window.dispatchEvent(
+          new CustomEvent('package-fixture-progress', {
+            detail: {
+              state: 'succeeded',
+              progress: { phase: 'cleaning' },
+              result: { imported: { projectId: 'cancer', sessionId: 'imported' } }
+            }
+          })
+        )
+      )
+      await expect(dialog.getByRole('status')).toHaveText('Session imported')
+      await expectFooterFits(dialog)
+      await page.waitForTimeout(900)
+      expect((await dialog.boundingBox())!.y).toBe(top)
+      await dialog.screenshot({ path: testInfo.outputPath('import-result-reworked.png') })
+      await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+      await expect(dialog).toHaveCount(0)
+    } finally {
+      await context.close()
+    }
+  })
+})

@@ -1,4 +1,4 @@
-import type { CredentialCiphertext } from './ciphertext-inventory'
+import type { CredentialCiphertext } from './cipher-contract'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { z } from 'zod'

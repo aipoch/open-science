@@ -17,7 +17,7 @@ import {
   X
 } from 'lucide-react'
 
-import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem, PreviewItem } from '@/stores/preview-workbench-contract'
 import type {
   ActionMenuBinding,
   ActionMenuDefinition,

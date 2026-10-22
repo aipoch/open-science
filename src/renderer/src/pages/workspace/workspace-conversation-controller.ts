@@ -6,10 +6,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   projectSessionActionability,
-  type ChatMessage,
-  type ChatSession,
   type SessionActionabilityProjection
-} from '@/stores/session-store'
+} from '@/stores/session-actionability'
+import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import {
   annotationRequiresImageInput,
   sideChatAnnotationText,
@@ -415,6 +414,7 @@ const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
   )
 
 const canStartSideChat = (options: WorkspaceConversationControllerOptions): boolean =>
+  !options.isTurnAdmissionBlocked &&
   Boolean(options.sideChat) &&
   !sideChatBlock({
     action: 'send',
@@ -461,7 +461,7 @@ const useWorkspaceConversationController = (
     isPresentationRevealing: isWorkspacePresentationRevealing,
     isSpecialistReady: (sessionId) => {
       const current = optionsRef.current
-      return current.session.lifecycle.canStartSend(sessionId)
+      return !current.isTurnAdmissionBlocked && current.session.lifecycle.canStartSend(sessionId)
     },
     isPersistenceBlocked: (sessionId) =>
       optionsRef.current.persistenceBlockedSessionIds.includes(sessionId),

@@ -1,3 +1,7 @@
+export type CredentialCiphertext =
+  | { kind: 'application'; value: Buffer }
+  | { kind: 'cookie'; value: Buffer; hostKey: string; databaseVersion: number }
+
 export interface SecureStorageCipher {
   isEncryptionAvailable(): boolean
   getSelectedStorageBackend?(): string

@@ -28,7 +28,7 @@
       "packages/literature-reading/test/index.test.ts",
       "packages/literature-reading/test/reader.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",

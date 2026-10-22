@@ -8,6 +8,10 @@ import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { requiredLanesForModulePlan } from './module-impact-shadow.mjs'
 import {
+  createModuleImpactModel,
+  productionFullReasonContracts
+} from './module-impact-model.test-support'
+import {
   createPackageTestPlan,
   dedicatedPackageTestRoots,
   validatePackageTestRegistry
@@ -27,6 +31,236 @@ function files(root: string): string[] {
     return entry.isDirectory() ? files(path) : [path]
   })
 }
+
+// Explicit bounded routing model. Production ownership and full markers are tested separately.
+// No module or edge is copied from the expanded production manifest.
+const createPackageDirectionModel = (): ReturnType<typeof createModuleImpactModel> =>
+  createModuleImpactModel({
+    main_pdf_translation: {
+      ownerPaths: [
+        'src/main/literature/pdf-translation/index.ts',
+        'src/main/literature/pdf-translation/local.ts',
+        'src/main/literature/pdf-translation/text-generation.ts',
+        'src/main/literature/pdf-translation/api-target.ts'
+      ],
+      ownerTests: [
+        'src/main/literature/pdf-translation/index.test.ts',
+        'src/main/literature/pdf-translation/local.test.ts',
+        'src/main/literature/pdf-translation/text-generation.test.ts',
+        'src/main/literature/pdf-translation/api-target.test.ts'
+      ]
+    },
+    workspace_previews: {
+      ownerPaths: ['src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'],
+      ownerTests: ['src/renderer/src/pages/workspace/preview-support.test.ts'],
+      capabilityOverlays: ['renderer_runtime']
+    },
+    main_literature: {
+      ownerPaths: [
+        'src/main/literature/command-owner.ts',
+        'src/main/literature/journal-attributes.ts',
+        'src/main/literature/catalog.ts',
+        'src/main/literature/document-reader.ts'
+      ],
+      ownerTests: [
+        'src/main/literature/command-owner.test.ts',
+        'src/main/literature/journal-attributes.test.ts',
+        'src/main/literature/catalog.test.ts',
+        'src/main/literature/document-reader.test.ts'
+      ]
+    },
+    page_literature: {
+      ownerPaths: ['src/renderer/src/pages/literature/workflows/useLiteratureMetadata.ts'],
+      ownerTests: ['src/renderer/src/pages/literature/workflows/useLiteratureMetadata.test.tsx'],
+      capabilityOverlays: ['renderer_runtime']
+    },
+    package_pdf_translation: {
+      ownerPaths: ['packages/pdf-translation/src/index.ts'],
+      ownerTests: ['packages/pdf-translation/test/checkpoints.test.ts']
+    },
+    compute_service: {
+      ownerPaths: ['src/main/compute/compute-job-workflow-owner.ts'],
+      ownerTests: ['src/main/compute/compute-job-workflow-owner.test.ts']
+    },
+    package_compute: {
+      ownerPaths: ['packages/compute/src/job-poller.ts', 'packages/compute/src/node.ts'],
+      ownerTests: ['packages/compute/src/job-poller.test.ts'],
+      consumerTests: [
+        'src/main/compute/job-poller.test.ts',
+        'src/main/compute/cancellation-runtime.integration.test.ts',
+        'src/main/compute/job-deletion-runtime-isolation.test.ts'
+      ]
+    },
+    compute_domain_model: {
+      ownerPaths: ['packages/compute/src/model.ts'],
+      ownerTests: ['packages/compute/src/model.test.ts'],
+      consumerTests: [
+        'packages/compute/src/job-poller.test.ts',
+        'src/main/compute/job-poller.test.ts',
+        'src/main/compute/cancellation-runtime.integration.test.ts',
+        'src/main/compute/job-deletion-runtime-isolation.test.ts',
+        'packages/open-science/cli.test.ts',
+        'packages/open-science/client.test.ts'
+      ]
+    },
+    durable_files: {
+      ownerPaths: [
+        'packages/durable-files/src/index.ts',
+        'packages/durable-files/src/durable-json-file.ts'
+      ],
+      ownerTests: ['packages/durable-files/src/durable-json-file.test.ts'],
+      consumerModules: [
+        'skill_package',
+        'specialist_package',
+        'main_storage',
+        'artifact_repository'
+      ]
+    },
+    skill_package: {
+      ownerPaths: ['packages/skills/src/specialist-package-adapter.ts'],
+      ownerTests: ['packages/skills/src/specialist-package-adapter.test.ts']
+    },
+    specialist_package: {
+      ownerPaths: ['packages/specialists/src/repository.ts'],
+      ownerTests: ['packages/specialists/src/repository.test.ts']
+    },
+    main_storage: {
+      ownerPaths: ['src/main/settings/document-store.ts'],
+      ownerTests: [
+        'src/main/settings/document-store.test.ts',
+        'src/main/session-persistence/repository.test.ts'
+      ]
+    },
+    artifact_repository: {
+      ownerPaths: ['src/main/artifacts/repository.ts'],
+      ownerTests: ['src/main/artifacts/artifact-save-crash.integration.test.ts']
+    },
+    package_journal_catalog: {
+      ownerPaths: ['packages/journal-catalog/src/index.ts'],
+      ownerTests: ['packages/journal-catalog/test/catalog.test.ts'],
+      consumerModules: ['package_literature_library']
+    },
+    package_literature_library: {
+      ownerPaths: ['packages/literature-library/src/library.ts'],
+      ownerTests: ['packages/literature-library/test/library.test.ts']
+    },
+    package_literature_reading: {
+      ownerPaths: ['packages/literature-reading/src/reader.ts'],
+      ownerTests: ['packages/literature-reading/test/reader.test.ts']
+    },
+    resilient_download: {
+      ownerPaths: [
+        'packages/resilient-download/src/resilient-download.ts',
+        'packages/resilient-download/src/index.ts',
+        'packages/resilient-download/src/types.ts',
+        'packages/resilient-download/src/errors.ts',
+        'packages/resilient-download/src/download-speed.ts'
+      ],
+      ownerTests: [
+        'packages/resilient-download/src/resilient-download.test.ts',
+        'packages/resilient-download/src/transport.test.ts'
+      ],
+      consumerModules: [
+        'update_download',
+        'local_models_download',
+        'local_models_owner',
+        'environment_download',
+        'windows_runtime_download',
+        'package_transfer'
+      ],
+      capabilityOverlays: ['windows_sensitive', 'notebook_network_sandbox']
+    },
+    update_download: {
+      ownerPaths: ['src/main/update/downloader.ts'],
+      ownerTests: ['src/main/update/downloader.test.ts']
+    },
+    local_models_download: {
+      ownerPaths: ['src/main/local-models/download.ts'],
+      ownerTests: ['src/main/local-models/download.test.ts']
+    },
+    local_models_owner: {
+      ownerPaths: ['src/main/local-models/owner.ts'],
+      ownerTests: ['src/main/local-models/owner.test.ts']
+    },
+    environment_download: {
+      ownerPaths: ['src/main/notebook/environment-download.ts'],
+      ownerTests: ['src/main/notebook/environment-download.contract.test.ts']
+    },
+    windows_runtime_download: {
+      ownerPaths: ['src/main/notebook/windows-runtime-manager.ts'],
+      ownerTests: ['src/main/notebook/windows-runtime-download.contract.test.ts']
+    },
+    package_transfer: {
+      ownerPaths: ['src/main/session-package/transfer.ts'],
+      ownerTests: ['src/main/session-package/transfer.test.ts']
+    },
+    providers: {
+      ownerPaths: [
+        'packages/providers/src/providers/lookup.ts',
+        'packages/providers/src/providers/create.ts',
+        'packages/providers/src/providers/connection.ts',
+        'packages/providers/src/protocols/messages/conversion.ts',
+        'packages/providers/src/protocols/chat-completions/stream.ts',
+        'packages/providers/src/protocols/messages/text.ts',
+        'packages/providers/src/protocols/chat-completions/text.ts',
+        'packages/providers/src/protocols/responses/text.ts',
+        'packages/providers/src/providers/definitions.ts',
+        'packages/providers/src/models/types.ts',
+        'packages/providers/src/models/classification.ts',
+        'packages/providers/src/discovery/models.ts',
+        'packages/providers/src/protocols/responses/conversion.ts',
+        'packages/providers/src/protocols/xai/responses.ts',
+        'packages/providers/src/protocols/messages/tokens.ts',
+        'packages/providers/src/responses/native.ts',
+        'packages/providers/src/responses/request.ts',
+        'packages/providers/src/responses/adapter.ts',
+        'packages/providers/src/responses/replay.ts',
+        'packages/providers/src/transport/sse.ts',
+        'packages/providers/src/models/text-generation.ts',
+        'packages/providers/src/providers.ts',
+        'packages/providers/src/protocol.ts',
+        'packages/providers/src/client.ts'
+      ],
+      ownerTests: [
+        'packages/providers/src/providers/lookup.test.ts',
+        'packages/providers/src/responses/conversion.test.ts',
+        'packages/providers/src/models/text-generation.test.ts',
+        'packages/providers/src/models/classification.test.ts',
+        'packages/providers/src/providers/create.test.ts',
+        'packages/providers/src/protocols/messages/conversion.test.ts',
+        'packages/providers/src/protocols/chat-completions/stream.test.ts'
+      ],
+      consumerTests: [
+        'src/main/settings/classification-settings.test.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.test.ts',
+        'src/main/settings/provider-transport-owner.test.ts',
+        'src/main/literature/pdf-translation/api-target.test.ts',
+        'src/main/agent-framework/codex.test.ts',
+        'src/main/agent-framework/claude-code.test.ts',
+        'src/main/agent-framework/opencode.test.ts'
+      ]
+    },
+    pdf_text: {
+      ownerPaths: ['src/shared/pdf-text.ts'],
+      ownerTests: ['src/shared/pdf-text.test.ts']
+    },
+    fuzzy_match: {
+      ownerPaths: ['src/shared/fuzzy-match.ts'],
+      ownerTests: ['src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts']
+    },
+    responses_bridge: {
+      ownerPaths: ['src/main/settings/responses-to-chat-completions-bridge.ts'],
+      ownerTests: ['src/main/settings/responses-to-chat-completions-bridge.test.ts']
+    },
+    classification_settings: {
+      ownerPaths: ['src/main/settings/classification-settings.ts'],
+      ownerTests: ['src/main/settings/classification-settings.test.ts']
+    },
+    native_responses: {
+      ownerPaths: ['src/main/settings/native-responses-compatibility.ts'],
+      ownerTests: ['src/main/settings/native-responses-compatibility.test.ts']
+    }
+  })
 
 it('resolves every exported implementation in this checkout without installed source aliases', () => {
   expect(Object.keys(localPackageSourcePaths()).length).toBeGreaterThan(manifests.length)
@@ -226,6 +460,7 @@ it('PDF workflow sources contain no application source taxonomy or database adap
 })
 
 it('local module and affected plans obey the same downstream package direction as Ubuntu', async () => {
+  const model = createPackageDirectionModel()
   const { createModuleTestPlan, createAffectedTestPlan } = await import('./module-test-impact.mjs')
   for (const id of [
     'main_pdf_translation',
@@ -234,7 +469,7 @@ it('local module and affected plans obey the same downstream package direction a
     'page_literature'
   ])
     expect(
-      createModuleTestPlan(id).testFiles.filter((path) => path.startsWith('packages/'))
+      createModuleTestPlan(id, model).testFiles.filter((path) => path.startsWith('packages/'))
     ).toEqual([])
   for (const path of [
     'src/main/literature/pdf-translation/index.ts',
@@ -242,15 +477,19 @@ it('local module and affected plans obey the same downstream package direction a
     'src/main/literature/command-owner.ts',
     'src/main/literature/journal-attributes.ts'
   ]) {
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-      status: 'unavailable',
-      testFiles: ['packages/pdf-translation/test/checkpoints.test.ts']
-    })
+    const plan = createAffectedTestPlan(
+      [{ path, status: 'modified' }],
+      {
+        status: 'unavailable',
+        testFiles: ['packages/pdf-translation/test/checkpoints.test.ts']
+      },
+      model
+    )
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles.filter((path) => path.startsWith('packages/'))).toEqual([])
     expect(plan.testFiles.some((path) => path.startsWith('src/'))).toBe(true)
   }
-  const plan = createModuleTestPlan('package_pdf_translation')
+  const plan = createModuleTestPlan('package_pdf_translation', model)
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-translation/'))).toBe(true)
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
 })
@@ -258,19 +497,17 @@ it('local module and affected plans obey the same downstream package direction a
 const hostBoundaryManifest = loadModuleImpactManifest()
 it('retains dedicated downstream host evidence while excluding independent upstream suites', async () => {
   const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
-  const manifest = structuredClone(hostBoundaryManifest)
   const source = 'src/shared/in-flight-promise.ts'
-  const id = Object.keys(manifest.modules).find((id) =>
-    manifest.modules[id].ownerPaths.includes(source)
-  )!
-  const module = manifest.modules[id]
-  delete module.fullTestReason
-  module.ownerPaths = [source, 'src/shared/in-flight-promise.test.ts']
-  module.interfacePaths = [source]
-  module.consumerModules = []
+  const id = 'in_flight_model'
   const upstream = 'packages/diagnostics/src/index.test.ts'
   const dedicated = 'packages/notebook-network-sandbox/src/address-policy.test.ts'
-  module.testFiles.consumer = [upstream, dedicated]
+  const manifest = createModuleImpactModel({
+    [id]: {
+      ownerPaths: [source],
+      ownerTests: ['src/shared/in-flight-promise.test.ts'],
+      consumerTests: [upstream, dedicated]
+    }
+  })
   const plan = createAffectedTestPlan(
     [{ path: source, status: 'modified' }],
     { status: 'not-requested', testFiles: [] },
@@ -365,6 +602,7 @@ it('host source edits never select unchanged upstream PDF package implementation
 })
 
 it('Compute host edits never register or select upstream Compute units', async () => {
+  const model = createPackageDirectionModel()
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
   const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
   const { modules } = loadModuleImpactManifest()
@@ -381,14 +619,15 @@ it('Compute host edits never register or select upstream Compute units', async (
     ).toEqual([])
   }
   expect(
-    createModuleTestPlan('compute_service').testFiles.filter((path) =>
+    createModuleTestPlan('compute_service', model).testFiles.filter((path) =>
       path.startsWith('packages/compute/')
     )
   ).toEqual([])
   const graph = { status: 'not-used', testFiles: [] }
   const host = createAffectedTestPlan(
     [{ path: 'src/main/compute/compute-job-workflow-owner.ts', status: 'modified' }],
-    graph
+    graph,
+    model
   )
   expect(host.mode).toBe('selective')
   expect(host.testFiles).toContain('src/main/compute/compute-job-workflow-owner.test.ts')
@@ -398,7 +637,7 @@ it('Compute host edits never register or select upstream Compute units', async (
     'packages/compute/src/node.ts',
     'packages/compute/src/model.ts'
   ]) {
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     expect(plan.mode, path).toBe('selective')
     expect(plan.testFiles, path).toEqual(
       expect.arrayContaining([
@@ -443,6 +682,7 @@ it('every module plan excludes unrelated upstream package tests', async () => {
 })
 
 it('selects durable file consumers downstream without testing unchanged prerequisites', async () => {
+  const model = createPackageDirectionModel()
   const { createAffectedTestPlan, createModuleTestPlan, executeModuleTestPlan } =
     await import('./module-test-impact.mjs')
   const graph = { status: 'not-used', testFiles: [] }
@@ -468,7 +708,7 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   for (const [path, selected] of cases) {
     const packagePlan = createPackageTestPlan([path], registry)
     expect([...packagePlan.selected].sort(), path).toEqual([...selected].sort())
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     expect(plan.mode, path).toBe('selective')
     for (const entry of registry.packages) {
       const included = plan.testFiles.some((test: string) => test.startsWith(entry.root + '/'))
@@ -477,7 +717,8 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   }
   const durable = createAffectedTestPlan(
     [{ path: 'packages/durable-files/src/durable-json-file.ts', status: 'modified' }],
-    graph
+    graph,
+    model
   )
   expect(durable.testFiles).toEqual(
     expect.arrayContaining([
@@ -491,7 +732,7 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   )
   for (const id of ['main_storage', 'skill_package', 'specialist_package']) {
     expect(
-      createModuleTestPlan(id).testFiles.filter((test: string) =>
+      createModuleTestPlan(id, model).testFiles.filter((test: string) =>
         test.startsWith('packages/durable-files/')
       ),
       id
@@ -514,6 +755,7 @@ it('selects durable file consumers downstream without testing unchanged prerequi
 })
 
 it('routes download package changes downstream and host adapters without unchanged package units', async () => {
+  const model = createPackageDirectionModel()
   const { createAffectedTestPlan, executeModuleTestPlan } = await import('./module-test-impact.mjs')
   const graph = { status: 'not-used', testFiles: [] }
   const packageRoot = 'packages/resilient-download'
@@ -525,7 +767,7 @@ it('routes download package changes downstream and host adapters without unchang
     `${packageRoot}/src/download-speed.ts`
   ]) {
     expect(createPackageTestPlan([path], registry).selected, path).toEqual([packageRoot])
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toEqual(
       expect.arrayContaining([
@@ -561,7 +803,7 @@ it('routes download package changes downstream and host adapters without unchang
     ],
     ['src/main/session-package/transfer.ts', 'src/main/session-package/transfer.test.ts']
   ]) {
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toContain(test)
     for (const entry of registry.packages)
@@ -605,8 +847,38 @@ it('independent packages do not depend on dedicated host packages', () => {
 
 it('dedicated package edits retain module evidence and platform overlays', async () => {
   const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const manifest = loadModuleImpactManifest()
+  const dedicatedSources = [
+    [
+      'packages/notebook-network-sandbox',
+      'src/index.ts',
+      'packages/notebook-network-sandbox/src/address-policy.test.ts'
+    ],
+    ['packages/open-science', 'cli.mjs', 'packages/open-science/cli.test.ts'],
+    [
+      'packages/credential-identity-probe-native',
+      'index.cjs',
+      'packages/credential-identity-probe-native/test/validator.test.cjs'
+    ],
+    ['packages/process-tree-native', 'index.cjs', 'src/main/process-tree.native-bridge.test.ts'],
+    [
+      'packages/safe-file-publisher-native',
+      'index.cjs',
+      'src/main/local-fs/safe-file-publisher.test.ts'
+    ]
+  ] as const
+  expect(dedicatedSources.map(([root]) => root)).toEqual(dedicatedPackageTestRoots)
+  const manifest = createModuleImpactModel(
+    Object.fromEntries(
+      dedicatedSources.map(([root, source, test], i) => [
+        `dedicated_model_${i}`,
+        {
+          ownerPaths: [`${root}/${source}`],
+          ownerTests: [test],
+          capabilityOverlays: ['windows_sensitive']
+        }
+      ])
+    )
+  )
   for (const root of dedicatedPackageTestRoots) {
     const owner = Object.values(manifest.modules).find((module) =>
       module.ownerPaths.some((path) => path.startsWith(root + '/'))
@@ -634,6 +906,7 @@ it('dedicated package edits retain module evidence and platform overlays', async
 })
 
 it('keeps provider units upstream of host adapters and selects real downstream contracts', async () => {
+  const model = createPackageDirectionModel()
   const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
   const { packageVerificationPlan } = await import('../package-verification-plan.mjs')
   const graph = { status: 'not-used', testFiles: [] }
@@ -664,7 +937,7 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     'packages/providers/src/client.ts'
   ]) {
     expect(createPackageTestPlan([path], registry).selected).toEqual(['packages/providers'])
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toEqual(
       expect.arrayContaining([
@@ -676,7 +949,6 @@ it('keeps provider units upstream of host adapters and selects real downstream c
         'packages/providers/src/protocols/messages/conversion.test.ts',
         'packages/providers/src/protocols/chat-completions/stream.test.ts',
         'src/main/settings/classification-settings.test.ts',
-        'src/main/literature/pdf-translation/local.test.ts',
         'src/main/settings/responses-to-chat-completions-bridge.test.ts',
         'src/main/settings/provider-transport-owner.test.ts',
         'src/main/literature/pdf-translation/api-target.test.ts',
@@ -692,8 +964,8 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     ).toEqual([])
   }
   for (const [path, test] of [
-    ['src/shared/pdf-text.ts', 'src/main/literature/pdf-translation/text-generation.test.ts'],
-    ['src/shared/fuzzy-match.ts', 'src/main/literature/pdf-translation/text-generation.test.ts'],
+    ['src/shared/pdf-text.ts', 'src/shared/pdf-text.test.ts'],
+    ['src/shared/fuzzy-match.ts', 'src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts'],
     [
       'src/main/settings/responses-to-chat-completions-bridge.ts',
       'src/main/settings/responses-to-chat-completions-bridge.test.ts'
@@ -719,7 +991,7 @@ it('keeps provider units upstream of host adapters and selects real downstream c
       'src/main/literature/pdf-translation/api-target.test.ts'
     ]
   ]) {
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toContain(test)
     expect(plan.testFiles.filter((file) => file.startsWith('packages/providers/'))).toEqual([])
@@ -762,4 +1034,65 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     createPackageTestPlan(['scripts/check-providers-package.mjs'], registry, { verification: true })
       .selected
   ).toEqual(['packages/providers'])
+})
+
+it('retains real production full validation and exact reasons for expanded package consumers', async () => {
+  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  const manifest = loadModuleImpactManifest()
+  const cases = [
+    {
+      owner: 'durable_files',
+      source: 'packages/durable-files/src/index.ts',
+      reason:
+        'The durable_files owner retains 1 explicit research consumer obligation beyond its reviewed source-derived edges, including run-observation-external-port.test.ts. 1 consumer cone has opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+    },
+    {
+      owner: 'resilient_download',
+      source: 'packages/resilient-download/src/index.ts',
+      reason:
+        'The resilient_download owner retains 1 explicit research consumer obligation beyond its reviewed source-derived edges, including run-observation-external-port.test.ts. 1 consumer cone has opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+    },
+    {
+      owner: 'notebook_network_sandbox',
+      source: 'packages/notebook-network-sandbox/src/index.ts',
+      reason:
+        'Managed execution adds local-service and confinement gateways to the reviewed sandbox sources and a Notebook execution consumer edge; validate the expanded native, worker and host boundary in full.'
+    },
+    {
+      owner: 'compute_service',
+      source: 'src/main/compute/compute-job-workflow-owner.ts',
+      reason:
+        'The compute_service owner retains 41 explicit research consumer obligations beyond its reviewed source-derived edges, including local-rpc-server.managed-execution.test.ts, managed-auxiliary-output.test.ts, managed-execution-collection.integration.test.ts. 36 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+    },
+    {
+      owner: 'main_literature',
+      source: 'src/main/literature/catalog.ts',
+      reason: productionFullReasonContracts.main_literature
+    }
+  ]
+  for (const { owner, source, reason } of cases) {
+    const plan = createAffectedTestPlan(
+      [{ path: source, status: 'modified' }],
+      { status: 'not-requested', testFiles: [] },
+      manifest
+    )
+    expect(manifest.modules[owner].fullTestReason, owner).toBe(reason)
+    expect(plan.mode, source).toBe('full')
+    expect(plan.testFiles, source).toEqual([])
+    expect(plan.reasonChains, source).toContainEqual(
+      expect.stringContaining(`${owner} -> ${reason} -> full`)
+    )
+  }
+})
+
+it('keeps the reviewed provider package selective in the real production graph', async () => {
+  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  const plan = createAffectedTestPlan(
+    [{ path: 'packages/providers/src/client.ts', status: 'modified' }],
+    { status: 'not-requested', testFiles: [] },
+    loadModuleImpactManifest()
+  )
+  expect(plan.mode).toBe('selective')
+  expect(plan.testFiles).toContain('packages/providers/src/providers/lookup.test.ts')
+  expect(plan.testFiles).toContain('src/main/settings/provider-transport-owner.test.ts')
 })

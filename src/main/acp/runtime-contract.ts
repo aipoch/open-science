@@ -101,6 +101,7 @@ export type AcpRuntimeOptions = {
   // provider switch takes effect on reconnect.
   resolveBackend?: (context: {
     forcedSkillIds: string[]
+    skillWhitelist?: string[]
     systemPromptAppends: string[]
     grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend

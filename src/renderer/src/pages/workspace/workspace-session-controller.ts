@@ -19,8 +19,9 @@ import type {
 import type { JobSummary } from '../../../../shared/compute'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
-import { projectSessionActionability, useSessionStore } from '@/stores/session-store'
-import type { ChatSession } from '@/stores/session-store'
+import { projectSessionActionability } from '@/stores/session-actionability'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import {
   hydratePersistedSessionIfPresent,
   loadPersistedSession

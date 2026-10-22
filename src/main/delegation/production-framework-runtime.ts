@@ -3,7 +3,8 @@ import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp
 import { DelegatedProcessOwnership } from './process-ownership'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { filterSpecialistConnectorSkills } from '../../shared/specialist'
 import {
   materializeSessionConversationGraph,
   type PersistedChatSession
@@ -207,11 +208,68 @@ const createProductionDelegatedFrameworkRuntime = (
               frameworkId === 'claude-code' || frameworkId === 'codebuddy'
                 ? join(root, '.claude')
                 : root
-            preparedSkills = await prepareSkills.call(
-              options.runtime.settingsService,
-              configRoot,
-              effective.skillIds
+            const settingsService = options.runtime.settingsService
+            const [connectorNames, connectors] = await Promise.all([
+              settingsService.provisionedConnectorSkillNames(),
+              settingsService.getConnectors()
+            ])
+            const namesById = new Map(
+              (connectors?.customMcpServers ?? []).map((server) => [server.id, server.name])
             )
+            const publicName = (id: string): string => namesById.get(id) ?? id
+            const connectorSkills = filterSpecialistConnectorSkills(connectorNames, {
+              ...specialist,
+              selectedCapabilities: {
+                ...specialist.selectedCapabilities,
+                connectorIds: specialist.selectedCapabilities.connectorIds.map(publicName)
+              },
+              fullAccess: {
+                ...specialist.fullAccess,
+                excludedConnectorIds: specialist.fullAccess.excludedConnectorIds.map(publicName)
+              }
+            })
+            preparedSkills = await prepareSkills.call(
+              settingsService,
+              configRoot,
+              effective.skillIds,
+              connectorSkills
+            )
+            if (frameworkId === 'opencode') {
+              const allowed = new Set([...effective.frameworkNames, ...connectorSkills])
+              const catalog = preparedSkills.catalog.filter(({ name }) => allowed.has(name))
+              const config = JSON.parse(runtimeBackend.env.OPENCODE_CONFIG_CONTENT ?? '{}')
+              runtimeBackend = {
+                ...runtimeBackend,
+                env: {
+                  ...runtimeBackend.env,
+                  OPENCODE_CONFIG_CONTENT: JSON.stringify({
+                    ...config,
+                    permission: {
+                      ...config.permission,
+                      skill: {
+                        '*': 'deny',
+                        ...Object.fromEntries(catalog.map(({ name }) => [name, 'ask']))
+                      },
+                      external_directory: {
+                        '*': 'deny',
+                        ...Object.fromEntries(
+                          catalog.map(({ path }) => [join(dirname(path), '*'), 'allow'])
+                        )
+                      }
+                    }
+                  })
+                }
+              }
+              runtimeBackend.sessionOptions = {
+                ...runtimeBackend.sessionOptions,
+                [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+                  ...(runtimeBackend.sessionOptions?.[
+                    OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
+                  ] as Record<string, unknown>),
+                  nativeAllowedNames: catalog.map(({ name }) => name)
+                }
+              }
+            }
             const sessionOptions = runtimeBackend.sessionOptions ?? {}
             const skillRuntime = sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
               Record<string, unknown> | undefined

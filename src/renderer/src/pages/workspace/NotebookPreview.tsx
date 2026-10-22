@@ -30,7 +30,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
-import { usePreviewWorkbenchStore, type PreviewToolItem } from '@/stores/preview-workbench-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 

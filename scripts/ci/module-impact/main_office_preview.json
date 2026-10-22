@@ -35,7 +35,8 @@
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
@@ -62,6 +63,8 @@
       "src/main/web-service/controller.test.ts",
       "src/main/web-service/http-server.test.ts",
       "src/main/web-service/task-api.test.ts",
+      "src/main/desktop-native-electron.test.ts",
+      "src/main/node-entry.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/web-service/artifact-download.integration.test.ts",
       "src/main/remote-access/service.test.ts",
@@ -72,10 +75,8 @@
       "src/main/remote-access/pairing.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/session-persistence/ipc.test.ts",
-      "src/main/desktop-native-electron.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
-      "src/main/node-entry.test.ts",
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
@@ -90,5 +91,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The main_office_preview owner retains 1 explicit research consumer obligation beyond its reviewed source-derived edges, including managed-research-acceptance.macos.integration.test.ts. 1 consumer cone has opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
 }

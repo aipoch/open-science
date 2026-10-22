@@ -1,12 +1,19 @@
 {
   "ownerPaths": [
     "src/renderer/src/lib/acp/workspace-operation-error.ts",
-    "src/renderer/src/lib/acp/workspace-operation-error.test.ts"
+    "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
+    "src/renderer/src/lib/provider-validation-snapshot.ts"
   ],
-  "interfacePaths": ["src/renderer/src/lib/acp/workspace-operation-error.ts"],
+  "interfacePaths": [
+    "src/renderer/src/lib/acp/workspace-operation-error.ts",
+    "src/renderer/src/lib/provider-validation-snapshot.ts"
+  ],
   "testFiles": {
     "owner": ["src/renderer/src/lib/acp/workspace-operation-error.test.ts"],
-    "contract": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"],
+    "contract": [
+      "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx",
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",

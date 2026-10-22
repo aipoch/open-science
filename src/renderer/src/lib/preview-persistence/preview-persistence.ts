@@ -18,13 +18,14 @@ import {
 } from '../../../../shared/preview-state'
 import { parseLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import { getUploadedAttachmentPath } from '../../../../shared/uploads'
-import {
-  usePreviewWorkbenchStore,
-  type PreviewFileFormat,
-  type PreviewFileSource,
-  type RestoredPreviewSlice
-} from '../../stores/preview-workbench-store'
-import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
+import type {
+  PreviewFileFormat,
+  PreviewFileSource,
+  RestoredPreviewSlice
+} from '../../stores/preview-workbench-contract'
+import { useSessionStore } from '../../stores/session-store'
+import type { ChatSession } from '../../stores/session-store-contract'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 
 type PreviewStoreState = ReturnType<typeof usePreviewWorkbenchStore.getState>

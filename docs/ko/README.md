@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **AIPOCH Open-Science v1.0.1** _(2026년 10월 업데이트)_. 이번 패치에는 브라우저에서 `.science` 패키지를 원클릭으로 가져오기, 더 명확하고 신뢰할 수 있는 앱 내 업데이터(특히 Windows), 항상 표시되는 세션 대기 상태, MCP OAuth 자격 증명 처리에 대한 보안 수정, PDF·문헌·세션 패키지 관련 수정이 포함됩니다. 자세한 내용은 [1.0.1 릴리스 노트](../../release-notes/1.0.1/ko.md)를 참조하세요. 다운로드는 계속 [최신 공개 릴리스](https://github.com/aipoch/open-science/releases/latest)를 기준으로 합니다.
+> 💡 **AIPOCH Open-Science v1.0.2** _(2026년 10월 업데이트)_. 이번 패치에는 다섯 개의 새로운 Scientific Connector와 더 깊어진 GDC·Ensembl 지원, 답변 카드의 정확한 단일/다중 선택 레이블, 더 이상 흔들리지 않는 세션 패키지 대화 상자, 더 빨라진 세션 로딩, 그리고 세션·Notebook·자격 증명 복구 전반의 수정, 더불어 Node 런타임 보안 패치와 CLI의 첫 npm 릴리스가 포함됩니다. 자세한 내용은 [1.0.2 릴리스 노트](../../release-notes/1.0.2/ko.md)를 참조하세요. 다운로드는 계속 [최신 공개 릴리스](https://github.com/aipoch/open-science/releases/latest)를 기준으로 합니다.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
@@ -101,6 +101,16 @@ brew install aipoch/tap/open-science
 ```
 
 이 Formula는 Node를 포함하고 데스크톱 앱 없이 실행됩니다. 버전은 데스크톱 Cask와 다를 수 있습니다. 전제 조건과 업그레이드는 [독립 실행 환경 가이드](../standalone-runtime.md)를 참고하세요.
+
+독립 CLI와 웹 UI는 **Node.js 22.13.0 이상**에서 배포된 [npm 패키지](https://www.npmjs.com/package/@aipoch/open-science)로 설치할 수 있습니다:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+출력된 URL을 열어 설정을 완료하거나 [터미널 설정 가이드](../../packages/open-science/CLI.md#first-run-setup-codex)를 따르세요. npm은 macOS ARM64/x64, glibc 기반 Linux ARM64/x64 및 Windows x64를 지원하며 데스크톱 앱은 필요하지 않습니다. npm 선택적 의존성을 활성화하고 [Linux 사전 요구 사항 및 업그레이드 안내](../standalone-runtime.md#install-from-npm)를 확인하세요. URL에는 인증 토큰이 포함되므로 공유하지 마세요.
 
 Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화하려면 확인 후 로컬 데이터를 영구 삭제하는 [데이터 초기화 도구](../../scripts/windows-reset/README.md)를 참고하세요.
 
@@ -331,7 +341,7 @@ npm run pack:backend
 
 웹 UI는 일반 Node 백엔드에서 실행되며 Electron이나 그래픽 화면이 필요하지 않습니다. `npm run dev:web`와 `npm run dev:headless`는 백엔드와 웹 UI를 빌드하고 실행하며 데스크톱이나 트레이를 시작하지 않습니다. `OPEN_SCIENCE_WEB_PORT`로 포트를 선택합니다(기본값 `44100`). Ctrl+C는 전경 서비스를 정상 종료합니다.
 
-소스 개발에는 Node.js 24가 필요합니다. 독립 npm tarball에는 Node >=22.13.0, 경량 CLI/SDK에는 Node >=22.5가 필요합니다. Release 압축 파일, Homebrew Formula, 데스크톱 명령 실행기는 런타임을 포함합니다.
+소스 개발에는 Node.js 24가 필요합니다. 배포된 npm 패키지와 로컬에서 빌드한 독립 tarball에는 Node.js >=22.13.0이 필요합니다. Release 압축 파일, Homebrew Formula, 데스크톱 명령 실행기는 런타임을 포함합니다.
 
 데스크톱과 브라우저는 같은 서비스를 공유합니다. 데스크톱을 종료하면 직접 시작한 백엔드만 중지하며, CLI가 시작한 서비스에서는 연결만 해제합니다.
 
