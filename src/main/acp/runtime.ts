@@ -1619,8 +1619,20 @@ class AcpRuntime {
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
       let response: PromptResponse | undefined
+      const assertWriterAvailable = (): void => {
+        if (this.hasPendingSessionWriterRelease(request.sessionId)) {
+          throw new Error(
+            'Cannot send a prompt while its writer release is pending. Resume the Session first.'
+          )
+        }
+      }
       try {
-        response = await this.promptTurnWorkflow.run(request, intent, onPromptAdmitted)
+        assertWriterAvailable()
+        response = await this.promptTurnWorkflow.run(request, intent, async () => {
+          // Preflight can yield before interaction ownership prevents a new writer release.
+          assertWriterAvailable()
+          return onPromptAdmitted?.()
+        })
         return response
       } finally {
         this.repeatedToolFailureGuard.clearSession(request.sessionId)

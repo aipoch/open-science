@@ -30166,6 +30166,128 @@ describe('Specialist Skill scoping', () => {
     }
   )
 
+  it.each(['user', 'application', 'continuation'] as const)(
+    'requires recovery before %s prompting after a writer close timeout',
+    async (route) => {
+      const process = new FakeAgentProcess()
+      const closing = createDeferred()
+      const closed = createDeferred()
+      const agent = startFakeAgent(process, ['019fb8c8-6c66-7f22-9653-17b5b287dbbb'], {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+        onClose: () => {
+          closing.resolve(undefined)
+          return closed.promise
+        }
+      })
+      let fireTimeout: (() => void) | undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: codexFramework,
+        resumeTimeoutMs: 1000,
+        setTimer: (callback) => {
+          fireTimeout = callback
+          return 0 as unknown as ReturnType<typeof setTimeout>
+        },
+        clearTimer: () => {}
+      })
+      try {
+        const { sessionId } = await runtime.createSession({ cwd: '/workspace' })
+        const release = runtime.releaseSessionForTransfer(sessionId)
+        const timedOut = expect(release).rejects.toThrow('timed out')
+        await closing.promise
+        fireTimeout?.()
+        await timedOut
+        expect(runtime.hasPendingSessionWriterRelease(sessionId)).toBe(true)
+        const send = (): Promise<PromptResponse> => {
+          const request = { sessionId, text: 'must wait for recovery' }
+          if (route === 'application')
+            return runtime.sendApplicationPrompt(request, {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            })
+          if (route === 'continuation') return runtime.sendAppContinuation(request)
+          return runtime.sendPrompt(request)
+        }
+        await expect(send()).rejects.toThrow('Resume the Session first')
+        expect(agent.prompts).toEqual([])
+        closed.resolve(undefined)
+        await vi.waitFor(() => expect(agent.closedSessions).toHaveLength(1))
+        await expect(send()).rejects.toThrow('Resume the Session first')
+        await runtime.resumeSession({
+          sessionId,
+          cwd: '/workspace',
+          previousFrameworkId: 'codex',
+          previousBackendId: runtime.captureBackend().backendId
+        })
+        await expect(send()).resolves.toMatchObject({ stopReason: 'end_turn' })
+        expect(agent.prompts).toHaveLength(1)
+      } finally {
+        closed.resolve(undefined)
+        await runtime.disconnect()
+      }
+    }
+  )
+
+  it('rechecks writer release after asynchronous prompt preflight', async () => {
+    const process = new FakeAgentProcess()
+    const preparing = createDeferred()
+    const prepared = createDeferred()
+    const closing = createDeferred()
+    const closed = createDeferred()
+    let holdPreparation = false
+    let fireTimeout: (() => void) | undefined
+    const agent = startFakeAgent(process, ['pending-preflight-close'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onClose: () => {
+        closing.resolve(undefined)
+        return closed.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: 'Specialist' }),
+      resolveSpecialistSkills: async () => {
+        if (holdPreparation) {
+          preparing.resolve(undefined)
+          await prepared.promise
+        }
+        return { kind: 'specialist', skillIds: [], frameworkNames: [], missingSkillIds: [] }
+      },
+      resumeTimeoutMs: 1000,
+      setTimer: (callback) => {
+        fireTimeout = callback
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: () => {}
+    })
+    try {
+      const { sessionId } = await runtime.createSession({ cwd: '/workspace', specialistId: 'zero' })
+      holdPreparation = true
+      const prompt = runtime.sendPrompt({ sessionId, text: 'prepared before close' })
+      const rejected = expect(prompt).rejects.toThrow('Resume the Session first')
+      await preparing.promise
+      const release = runtime.releaseSessionForTransfer(sessionId)
+      const timedOut = expect(release).rejects.toThrow('timed out')
+      await closing.promise
+      fireTimeout?.()
+      await timedOut
+      prepared.resolve(undefined)
+      await rejected
+      expect(agent.prompts).toEqual([])
+    } finally {
+      prepared.resolve(undefined)
+      closed.resolve(undefined)
+      await runtime.disconnect()
+    }
+  })
+
   it('preserves a Specialist attachment when writer close starts during identity resolution', async () => {
     const process = new FakeAgentProcess()
     const identity = createDeferred<{ append: string; prefix: string }>()
