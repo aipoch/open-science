@@ -9,6 +9,10 @@ on:
         description: Standalone archive, Linux CLI deb/rpm, or deferred npm validation.
         options: [archive, npm, linux-packages]
         default: archive
+      include_npm:
+        type: boolean
+        description: Also pack and verify npm from the archive backend, without publication.
+        default: false
       source_release:
         type: string
         description: Published stable Release to repack for linux-packages only.
@@ -70,6 +74,7 @@ jobs:
     uses: ./.github/workflows/runtime-packages.yml
     with:
       distribution: ${{ inputs.distribution }}
+      include_npm: ${{ inputs.include_npm }}
       source_sha: ${{ needs.source.outputs.source_sha }}
       target: ${{ inputs.target }}
       desktop_run_id: ${{ inputs.desktop_run_id }}

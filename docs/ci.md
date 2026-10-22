@@ -173,19 +173,38 @@ credential-free npm packaging dry-run. No npm token is needed for a GitHub Relea
 
 ### Publishing npm packages
 
-`npm-release.yml` publishes the shared CLI entry package and five platform packages after a
-successful stable Release. Manual runs can select a historical `release_run_id` and default to
-`dry_run=true`; use a single `target` for focused checks and `all` for publication. The existing
-`publish-npm.yml` dispatcher also supports historical npm dry-runs.
+Stable Release preparation creates npm tarballs alongside CLI archives from the same signed
+backend, without compiling it again. All five native installation checks, the minimum supported
+Node check and the complete-set gate must pass before Release publication. Nightly remains
+archive-only. npm tarballs and their existing integrity reports are retained as Actions artifacts
+for 30 days; they are not attached to the public GitHub Release.
 
-The workflow builds the certified Release source and verifies native installation on every
-platform before publishing. It checks source, version and integrity, publishes platform packages
-first, and rejects overwrites or `latest` downgrades. Retry a partial publication using the same
-run's artifacts rather than rebuilding already published versions.
+`npm-release.yml` runs independently after a successful stable Release. It downloads that exact
+Release run's verified npm artifacts without rebuilding or repacking. Manual dispatch requires
+`release_run_id` and defaults to `dry_run=true`, which validates the complete artifact set and
+registry preflight without writes or npm credentials. Old Release runs without npm artifacts,
+expired artifacts, mismatched bytes and `latest` downgrades fail closed; there is no rebuild fallback.
 
-Publishing runs from `main` through the `npm` environment using npm Trusted Publishing (OIDC).
-First publication requires explicit bootstrap credentials; remove them after configuring trust.
-Build jobs and dry-runs receive no npm credentials.
+The publisher checks source, version, all six packages and registry integrity before any write.
+It uploads missing platform packages concurrently and waits for all five exact versions and
+integrity values to be readable in the registry before publishing the shared CLI entry package.
+Any platform failure blocks the entry package and fails the job, while other in-flight uploads
+finish. Successful uploads remain published; retry using the same Release run's original artifacts.
+Matching published versions are skipped. An authentication failure still requires repairing that
+package's publishing authorization before retrying; concurrency does not repair credentials.
+
+Publishing stays on `main` through the `npm` environment using npm Trusted Publishing (OIDC).
+Registry failures do not undo or block the already published GitHub Release. First publication
+requires explicit bootstrap credentials; remove them after configuring trust. Build jobs and
+dry-runs receive no npm credentials. No application data, state enums or report schema changes
+are involved.
+
+For focused preparation checks, dispatch `publish-npm.yml` with `distribution=archive`,
+`include_npm=true` and a single `target`; select `all` to exercise the complete-set gate.
+This reuses the combined preparation path without publication. Leave `desktop_run_id` empty:
+that input remains an extraction-only check. The dispatcher also retains credential-free
+historical source packaging with `distribution=npm` and `release_run_id`, but those rebuilt
+artifacts must not replace the original bytes of a partially published version.
 
 #### Updating the npm package documentation
 
@@ -279,12 +298,40 @@ uses the same repository-owned dependency reader as package tiering, without ext
 tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
 destructive changes, dirty checkouts and missing evidence retain the broad selection.
 
+## Module graph engine
+
+`scripts/ci/module-graph/` owns source evidence and the proofs built on it. Each file has one role:
+
+| File                    | Responsibility                                                      |
+| ----------------------- | ------------------------------------------------------------------- |
+| `source.mjs`            | Git snapshots and working-tree reads; never executes candidate code |
+| `dependency-reader.mjs` | The single TypeScript-based import reader                           |
+| `boundaries.mjs`        | Loads and validates `scripts/ci/module-boundaries.json`             |
+| `layers.mjs`            | File roles and layer rules                                          |
+| `derived-index.mjs`     | Reads and applies `module-derived-consumers.json`                   |
+| `derived-consumers.mjs` | Generates/checks the index and runs the coverage guard (CLI)        |
+| `boundary-evidence.mjs` | Verifies reviewed boundaries; rejections name the unmet condition   |
+| `retirement.mjs`        | Trusted base/head consumer and package-evidence retirement proofs   |
+| `relationships.mjs`     | Exports the module relationship report (CLI)                        |
+
+Other scripts import only `index.mjs`, or `policy.mjs` when they must stay dependency-free:
+trusted preflight runs from an exported base tree without installed packages.
+`module-graph/boundaries.test.ts` enforces both rules. Data files stay at their existing
+`scripts/ci/` paths because base-revision checkers read them from candidate revisions.
+
+PR Gate preflight exports the complete base `scripts/ci/` tree with `git archive`, so moving
+internal files never requires a workflow change. A base without `module-impact-authority.mjs`
+bootstraps a full plan.
+
 ## Derived consumer evidence
 
 The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
 selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
 Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
-missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+missing, stale or invalid evidence. Index changes require CI owner review. PR Gate treats a modified,
+valid index as additive evidence: it merges the candidate tests into the trusted index, so selection
+can only grow, and routes the remaining paths normally. An added, deleted, renamed or invalid index,
+or any other CI input, still selects the full plan.
 Non-source resource changes anywhere in the repository do not reject an inherited stale index
 when the dependency reader's text inputs and recomputed consumer memberships are unchanged.
 This uses the reader's own JavaScript/TypeScript/JSON input boundary, not a documentation-path
@@ -308,7 +355,7 @@ retirement checks described below authorize removing those existing obligations.
 
 Reviewed modules use known source dependencies plus explicit runtime and behavioral
 contracts instead of historical whole-module test inheritance. The exact module cohort and source
-boundaries are trusted policy in `module-derived-consumers.mjs`, not candidate metadata. Pure
+boundaries are trusted policy in `scripts/ci/module-boundaries.json`, not candidate metadata. Pure
 boundaries require a complete runtime-cone check; stateful boundaries require reviewed direct runtime
 imports and mandatory behavior tests. An unknown direct loader or external runtime import requires
 reclassification. This does not prove transitive services or packages pure; their declared contracts
@@ -502,6 +549,22 @@ non-reachability, retaining uncertainty from host globals and filesystem access.
 This proves bounded registration coverage, not behavioral equivalence of the refactor. Required
 behavior tests, CI owner review of policy and trusted-base validation remain mandatory. Merge this
 policy before proposing source/registration cleanup that depends on it.
+
+Full owners split under a separate proof. Only module-impact JSON and the derived consumer index
+may change; source, test and runtime declarations stay byte-identical. The remaining owner keeps
+a nonempty full marker, which may be restated, plus every contract, consumer, module edge,
+overlay, fallback and its surviving interfaces. Each moved path needs a unique destination.
+Shared sources move only into **new** modules that inherit the origin's fallback, overlays,
+downstream module edges and moved interfaces. A new full destination can take any surface.
+A selective destination accepts only static contracts: no runtime-consumer edge, no
+renderer-catalog or generated Web API file, no channel/event name (a `domain:action` literal or
+template segment, or any name passed to an event/IPC API) or persisted-format marker, and
+complete direct dependency evidence. Its plan must select every statically reachable
+test (outside excluded package roots) and every original explicit test with no static path from
+the origin's sources; those may observe the owner through IPC or files. Regression fixtures may
+move to an existing reader owner only when their fixture routing, lanes and selected tests are
+preserved. Moved owner tests keep their owner classification. Merge this policy before
+proposing a registration split that depends on it.
 
 This registration-only proof follows source imports (including type and test-mock imports) and
 explicit runtime-consumer edges. Host globals such as `process` or `window`, Node built-ins and

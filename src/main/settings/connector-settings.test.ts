@@ -58,33 +58,40 @@ describe('ConnectorSettingsModule', () => {
     expect(await service.getConnectors()).toEqual(stored)
   })
 
-  it('keeps historical defaults and opt-outs while persisting Orphadata opt-in for views and Skills', async () => {
-    const existing = ['genes', 'pubmed', 'clinical-genomics', 'rna']
-    expect(service.enabledConnectorIds(undefined)).toEqual(expect.arrayContaining(existing))
-    expect(service.enabledConnectorIds(undefined)).not.toContain('orphadata')
-    await service.setConnectorEnabled({ id: 'genes', enabled: false })
-    let snapshot = await service.setConnectorEnabled({ id: 'orphadata', enabled: true })
-    expect(snapshot.connectors.find((entry) => entry.id === 'orphadata')?.enabled).toBe(true)
-    const stored = (await new SettingsRepository(dir).getSettings()).connectors
-    expect(service.enabledConnectorIds(stored)).not.toContain('genes')
-    expect(service.connectorSkillNames(stored)).toContain('mcp-orphadata')
-    expect(service.connectorSkillCatalogEntries(stored).map((entry) => entry.name)).toContain(
-      'mcp-orphadata'
-    )
-    expect(
-      projectConnectorsFromStored(stored).find((entry) => entry.id === 'orphadata')?.mainEnabled
-    ).toBe(true)
-    snapshot = await service.setConnectorEnabled({ id: 'orphadata', enabled: false })
-    expect(snapshot.connectors.find((entry) => entry.id === 'orphadata')?.enabled).toBe(false)
-    const off = await service.getConnectors()
-    expect(service.connectorSkillNames(off)).not.toContain('mcp-orphadata')
-    expect(
-      service.enabledConnectorIds({ ...stored!, disabledConnectorIds: ['orphadata'] })
-    ).not.toContain('orphadata')
-    expect(
-      projectConnectorsFromStored(undefined).find((entry) => entry.id === 'orphadata')?.mainEnabled
-    ).toBe(false)
-  })
+  it.each(['orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
+    'persists %s opt-in for views and Skills without changing historical choices',
+    async (id) => {
+      const existing = ['genes', 'pubmed', 'clinical-genomics', 'rna']
+      expect(service.enabledConnectorIds(undefined)).toEqual(expect.arrayContaining(existing))
+      expect(service.enabledConnectorIds(undefined)).not.toContain(id)
+      expect(service.connectorSkillNames(undefined)).not.toContain(`mcp-${id}`)
+      expect(
+        service.connectorSkillCatalogEntries(undefined).map((entry) => entry.name)
+      ).not.toContain(`mcp-${id}`)
+      await service.setConnectorEnabled({ id: 'genes', enabled: false })
+      let snapshot = await service.setConnectorEnabled({ id, enabled: true })
+      expect(snapshot.connectors.find((entry) => entry.id === id)?.enabled).toBe(true)
+      const stored = (await new SettingsRepository(dir).getSettings()).connectors
+      expect(service.enabledConnectorIds(stored)).not.toContain('genes')
+      expect(service.connectorSkillNames(stored)).toContain(`mcp-${id}`)
+      expect(service.connectorSkillCatalogEntries(stored).map((entry) => entry.name)).toContain(
+        `mcp-${id}`
+      )
+      expect(
+        projectConnectorsFromStored(stored).find((entry) => entry.id === id)?.mainEnabled
+      ).toBe(true)
+      snapshot = await service.setConnectorEnabled({ id, enabled: false })
+      expect(snapshot.connectors.find((entry) => entry.id === id)?.enabled).toBe(false)
+      const off = await service.getConnectors()
+      expect(service.connectorSkillNames(off)).not.toContain(`mcp-${id}`)
+      expect(service.enabledConnectorIds({ ...stored!, disabledConnectorIds: [id] })).not.toContain(
+        id
+      )
+      expect(
+        projectConnectorsFromStored(undefined).find((entry) => entry.id === id)?.mainEnabled
+      ).toBe(false)
+    }
+  )
 
   it('validates OpenAlex before saving, persists enablement, and refuses to replace a key', async () => {
     const probe = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }))
@@ -186,7 +193,13 @@ describe('ConnectorSettingsModule', () => {
     const snapshot = await service.listConnectors()
 
     expect(snapshot.connectors).toHaveLength(ALL_CONNECTOR_IDS.length)
-    expect(snapshot.connectors.filter((c) => !c.enabled).map((c) => c.id)).toEqual(['orphadata'])
+    expect(snapshot.connectors.filter((c) => !c.enabled).map((c) => c.id)).toEqual([
+      'biosamples',
+      'dailymed',
+      'orphadata',
+      'rxnorm',
+      'wikipathways'
+    ])
     expect(snapshot.connectors.every((c) => !c.autoAllow)).toBe(true)
     expect(snapshot.customServers).toEqual([])
     expect(snapshot.ncbi).toEqual({ contactEmail: undefined, hasApiKey: false })

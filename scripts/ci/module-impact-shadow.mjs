@@ -296,13 +296,10 @@ export function runModuleImpactShadowCli(
       environment.AUTHORITATIVE_PLAN ??
       environment.PR_GATE_PLAN
   )
-  const changes = changesFromGit(base, head, { cwd, execute })
-  const { manifest, registrationModules, registrationOnly } = resolveModuleImpactInputs(changes, {
-    base,
-    head,
-    cwd,
-    execute
-  })
+  const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
+    changesFromGit(base, head, { cwd, execute }),
+    { base, head, cwd, execute }
+  )
   const modulePlan = createAffectedTestPlan(
     changes,
     manifestOnlyGraph,

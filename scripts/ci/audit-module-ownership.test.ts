@@ -189,7 +189,7 @@ describe('complete module ownership', () => {
 
   it('keeps source consumers in mixed source and test changes', () => {
     const test = 'src/main/reviewer/correction-owner.test.ts'
-    const path = 'packages/connector-builtins/src/genes-ontology.ts'
+    const path = 'packages/connector-core/src/engine.ts'
     const sourcePlan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     const mixed = createAffectedTestPlan(
       [
@@ -198,6 +198,8 @@ describe('complete module ownership', () => {
       ],
       graph
     )
+    expect(sourcePlan.mode).toBe('selective')
+    expect(mixed.mode).toBe('selective')
     expect(mixed.testFiles).toEqual([...new Set([...sourcePlan.testFiles, test])].sort())
   })
 
@@ -211,7 +213,9 @@ describe('complete module ownership', () => {
     const path = 'src/shared/reviewer.ts'
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     expect(plan.mode).toBe('full')
-    expect(plan.reasonChains.join('\n')).toContain('Shared cross-process contracts')
+    expect(plan.reasonChains.join('\n')).toContain(
+      loadModuleImpactManifest().modules.shared_conversation_contracts.fullTestReason
+    )
     expect(plan.reasonChains.join('\n')).not.toContain('unknown module owner')
     expect(createModuleTestPlan('shared_conversation_contracts').mode).toBe('full')
   })

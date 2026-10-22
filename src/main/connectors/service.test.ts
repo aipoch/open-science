@@ -23,34 +23,38 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
-  it('gates Orphadata calls before transport until explicit opt-in, with opt-out winning conflicts', async () => {
-    let settings = {
-      enabledIds: [],
-      autoAllowIds: [],
-      enabledConnectorIds: [] as string[],
-      disabledConnectorIds: [] as string[]
+  it.each(['orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
+    'gates %s before transport until explicit opt-in, with opt-out winning conflicts',
+    async (id) => {
+      const tool = builtinConnectorRegistry.getConnectorTools(id)[0]
+      let settings = {
+        enabledIds: [],
+        autoAllowIds: [],
+        enabledConnectorIds: [] as string[],
+        disabledConnectorIds: [] as string[]
+      }
+      const call = vi.fn().mockResolvedValue({ source: 'Orphadata' })
+      const service = new ConnectorService({
+        registry: builtinConnectorRegistry,
+        getConnectors: () => settings,
+        resolveApiKey: () => undefined,
+        engine: { call } as unknown as ParserEngine
+      })
+      await expect(service.call(id, tool.id, tool.exampleArgs!, internal)).rejects.toThrow(
+        /disabled/
+      )
+      expect(call).not.toHaveBeenCalled()
+      settings = { ...settings, enabledConnectorIds: [id] }
+      await expect(service.call(id, tool.id, tool.exampleArgs!, internal)).resolves.toEqual({
+        source: 'Orphadata'
+      })
+      settings = { ...settings, disabledConnectorIds: [id] }
+      await expect(service.call(id, tool.id, tool.exampleArgs!, internal)).rejects.toThrow(
+        /disabled/
+      )
+      expect(call).toHaveBeenCalledTimes(1)
     }
-    const call = vi.fn().mockResolvedValue({ source: 'Orphadata' })
-    const service = new ConnectorService({
-      registry: builtinConnectorRegistry,
-      getConnectors: () => settings,
-      resolveApiKey: () => undefined,
-      engine: { call } as unknown as ParserEngine
-    })
-    await expect(
-      service.call('orphadata', 'get_disease_genes', { orphacode: 166024 }, internal)
-    ).rejects.toThrow(/disabled/)
-    expect(call).not.toHaveBeenCalled()
-    settings = { ...settings, enabledConnectorIds: ['orphadata'] }
-    await expect(
-      service.call('orphadata', 'get_disease_genes', { orphacode: 166024 }, internal)
-    ).resolves.toEqual({ source: 'Orphadata' })
-    settings = { ...settings, disabledConnectorIds: ['orphadata'] }
-    await expect(
-      service.call('orphadata', 'get_disease_genes', { orphacode: 166024 }, internal)
-    ).rejects.toThrow(/disabled/)
-    expect(call).toHaveBeenCalledTimes(1)
-  })
+  )
 
   it('dispatches only the injected descriptor set with the usual argument gate', async () => {
     const run = vi.fn(async () => ({ value: 42 }))

@@ -458,8 +458,27 @@ describe('ACP Session resume policy', () => {
       )
     ).toEqual({
       disposition: 'adoptable',
-      reason: 'legacy-unresumable-details'
+      reason: 'codex-rollout-not-found'
     })
+  })
+
+  it.each([
+    'Provider error: no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+    'no rollout found for thread id arbitrary-private-text',
+    'no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb; credential=private',
+    'Failed to resume session'
+  ])('does not allow Specialist reset for a non-matching native diagnostic: %s', (details) => {
+    const policy = new AcpSessionResumePolicy()
+    expect(
+      policy.classifyFailure(
+        { code: -32603, message: 'Internal error', data: { details } },
+        {
+          currentFrameworkId: 'codex',
+          currentModelRoute: 'codex-bridge',
+          providerSessionIdPersisted: true
+        }
+      ).reason
+    ).not.toBe('codex-rollout-not-found')
   })
 
   it('keeps a provider-wrapped missing-rollout diagnostic authoritative in Codex context', () => {

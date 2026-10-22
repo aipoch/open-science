@@ -6,8 +6,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
-import { checkDerivedConsumerRevisions } from './generate-module-derived-consumers.mjs'
-import { withDerivedConsumers } from './module-derived-consumers.mjs'
+import { checkDerivedConsumerRevisions, withDerivedConsumers } from './module-graph/index.mjs'
 
 const roots: string[] = []
 afterEach(() => {

@@ -25,7 +25,7 @@ it('includes host and package tier proofs alongside registration preservation', 
   const files = [
     'scripts/ci/host-test-impact.test.ts',
     'scripts/ci/package-host-test-impact.test.ts',
-    'scripts/ci/consumer-retirement.test.ts',
+    'scripts/ci/module-graph/retirement.test.ts',
     'scripts/ci/host-owner-split.test.ts'
   ]
   expect(moduleRegistrationTests(files, () => '')).toEqual([...files].sort())

@@ -1,0 +1,22 @@
+{
+  "ownerPaths": [
+    "src/shared/projects.ts",
+    "src/shared/project-scope.ts",
+    "src/shared/project-files.ts",
+    "src/shared/projects.test.ts",
+    "src/shared/project-scope.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/projects.ts",
+    "src/shared/project-scope.ts",
+    "src/shared/project-files.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/shared/projects.test.ts", "src/shared/project-scope.test.ts"],
+    "contract": [],
+    "consumer": ["src/shared/notebook-env.typecheck.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

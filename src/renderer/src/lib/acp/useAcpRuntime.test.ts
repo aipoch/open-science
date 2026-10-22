@@ -241,6 +241,21 @@ describe('useAcpRuntime snapshot action failures', () => {
 })
 
 describe('useAcpRuntime value action failures', () => {
+  it('keeps a failed session resume out of workspace actionError', async () => {
+    const failure = new Error('Internal error: thread already has an active writer')
+    acpApi.resumeSession.mockRejectedValueOnce(failure)
+    const { result } = await mountRuntime()
+    let thrown: unknown
+    await act(async () => {
+      await result.current.resumeSession('session-1', '/workspace').catch((error: unknown) => {
+        thrown = error
+      })
+    })
+    expect(thrown).toBe(failure)
+    expect(result.current.isConnecting).toBe(false)
+    expect(result.current.actionError).toBeNull()
+  })
+
   it('rethrows a rejecting value action without recording it in actionError', async () => {
     const failure = new Error('createSession failed')
     acpApi.createSession.mockRejectedValueOnce(failure)
