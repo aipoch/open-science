@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-// Non-authoritative shadow planner: file-level runtime import DAG plus declared dynamic edges.
-// Module ownership never selects tests here; it is compared against the registered planner.
+// Non-authoritative shadow planner: tests reachable from each changed file through runtime
+// imports plus declared dynamic edges. Module ownership never selects tests here; the plan is
+// compared against the module planner in module-test-impact.mjs.
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -57,7 +58,7 @@ export const sourceReaderTests = [
   }
 ]
 
-export function createDagTestPlan(
+export function createFileTestPlan(
   changes,
   {
     source,
@@ -152,16 +153,16 @@ export function createDagTestPlan(
   }
 }
 
-// Tests the registered planner selects but the DAG does not, labelled by the evidence that put
-// them there. `explicit` entries are the candidates for declared dynamic edges.
-export function compareTestPlans(legacy, dag, manifest) {
-  if (legacy.mode !== 'selective' || dag.mode !== 'selective')
-    return { status: 'not-comparable', legacy: legacy.mode, dag: dag.mode }
-  const dagTests = new Set(dag.testFiles)
-  const legacyTests = new Set(legacy.testFiles)
+// Tests the module planner selects but the file planner does not, labelled by the evidence that
+// put them there. Explicit entries are the candidates for declared dynamic edges.
+export function compareTestPlans(modulePlan, filePlan, manifest) {
+  if (modulePlan.mode !== 'selective' || filePlan.mode !== 'selective')
+    return { status: 'not-comparable', module: modulePlan.mode, file: filePlan.mode }
+  const fileTests = new Set(filePlan.testFiles)
+  const moduleTests = new Set(modulePlan.testFiles)
   const evidence = (test) => {
     const found = []
-    for (const id of legacy.modules ?? []) {
+    for (const id of modulePlan.modules ?? []) {
       const module = manifest.modules[id]
       if ((module.derivedConsumerTests ?? []).includes(test)) found.push(`${id}:derived`)
       else
@@ -172,13 +173,13 @@ export function compareTestPlans(legacy, dag, manifest) {
   }
   return {
     status: 'compared',
-    legacy: legacy.testFiles.length,
-    dag: dag.testFiles.length,
-    missing: legacy.testFiles
-      .filter((test) => !dagTests.has(test))
+    module: modulePlan.testFiles.length,
+    file: filePlan.testFiles.length,
+    missing: modulePlan.testFiles
+      .filter((test) => !fileTests.has(test))
       .map((test) => ({ test, evidence: evidence(test) })),
-    extra: dag.testFiles.filter((test) => !legacyTests.has(test)),
-    unresolved: dag.unresolved
+    extra: filePlan.testFiles.filter((test) => !moduleTests.has(test)),
+    unresolved: filePlan.unresolved
   }
 }
 
@@ -214,16 +215,16 @@ export function compareRecentCommits({ count = 30, ref = 'HEAD', cwd = process.c
         registrationModules: inputs.registrationModules,
         registrationOnly: inputs.registrationOnly
       }
-      const legacy = createAffectedTestPlan(
+      const modulePlan = createAffectedTestPlan(
         inputs.changes,
         noGraph,
         effective,
         inputs.registrationModules,
         inputs.registrationOnly
       )
-      const dag = inputs.registrationOnly
+      const filePlan = inputs.registrationOnly
         ? { mode: 'selective', testFiles: [], unresolved: [], reasonChains: [] }
-        : createDagTestPlan(inputs.changes, {
+        : createFileTestPlan(inputs.changes, {
             source,
             reverse,
             classify: (changes) => classifyChanges(changes, undefined, registration)
@@ -232,7 +233,7 @@ export function compareRecentCommits({ count = 30, ref = 'HEAD', cwd = process.c
         commit: commit.slice(0, 10),
         subject: git('log', '-1', '--format=%s', commit).trim(),
         ...(inputs.derivedIndexAccepted && { derivedIndexAccepted: true }),
-        ...compareTestPlans(legacy, dag, effective)
+        ...compareTestPlans(modulePlan, filePlan, effective)
       }
     })
 }

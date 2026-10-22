@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { compareTestPlans, createDagTestPlan } from './dag-test-plan.mjs'
+import { compareTestPlans, createFileTestPlan } from './file-test-impact.mjs'
 import { consumerDependencyGraph } from './module-graph/index.mjs'
 
 const files = {
@@ -22,7 +22,7 @@ const source = {
   read: (path: string) => files[path as keyof typeof files]
 }
 type Edges = [string, string[]][]
-type Plan = ReturnType<typeof createDagTestPlan>
+type Plan = ReturnType<typeof createFileTestPlan>
 const graph = (edges: Edges = []): Map<string, Set<string>> =>
   consumerDependencyGraph(source, edges).reverse
 const classify = (
@@ -43,12 +43,12 @@ const classify = (
   reasonChains: []
 })
 const plan = (paths: string[], edges: Edges = []): Plan =>
-  createDagTestPlan(
+  createFileTestPlan(
     paths.map((path) => ({ path, status: 'modified' })),
     { source, reverse: graph(edges), classify }
   )
 
-describe('createDagTestPlan', () => {
+describe('createFileTestPlan', () => {
   it('selects runtime-reachable tests and ignores type-only importers', () => {
     expect(plan(['src/main/owner.ts']).testFiles).toEqual([
       'src/main/host-layer-dependencies.architecture.test.ts',
@@ -114,7 +114,7 @@ describe('createDagTestPlan', () => {
 })
 
 describe('compareTestPlans', () => {
-  it('labels tests the DAG drops by their registered evidence', () => {
+  it('labels tests the file planner drops by their registered evidence', () => {
     const manifest = {
       modules: {
         owner: {
