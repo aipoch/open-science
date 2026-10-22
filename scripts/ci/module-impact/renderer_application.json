@@ -126,6 +126,7 @@
     "src/renderer/src/components/manual-update-install.tsx"
   ],
   "consumerModules": ["renderer_hooks"],
+  "fullTestReason": "Manual installer guidance adds a renderer source outside the reviewed dependency boundary; keep full-suite fallback until the extended boundary is reviewed.",
   "testFiles": {
     "owner": [
       "src/renderer/src/App.test.tsx",
