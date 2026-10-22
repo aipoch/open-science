@@ -182,10 +182,13 @@ export function checkModuleConsumerCoverage({
 // The index is formatted like every other committed JSON file, so that regenerating it can never
 // fail the repository format check. Prettier is a devDependency, never part of trusted preflight.
 function formatIndexJson(text, destination) {
-  const prettier = fileURLToPath(
-    new URL('../../../node_modules/prettier/bin/prettier.cjs', import.meta.url)
-  )
+  // Prettier resolves .prettierrc.yaml from the spawned process's cwd, not from
+  // --stdin-filepath. Pin it to the repository root so the result does not depend on
+  // whatever directory the caller's process happened to inherit.
+  const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url))
+  const prettier = resolve(repositoryRoot, 'node_modules/prettier/bin/prettier.cjs')
   return execFileSync(process.execPath, [prettier, '--stdin-filepath', destination], {
+    cwd: repositoryRoot,
     input: text,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024
