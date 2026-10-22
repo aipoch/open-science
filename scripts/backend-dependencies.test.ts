@@ -1,13 +1,17 @@
 import { readFileSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   assertBackendImports,
   backendDependencyIncludes,
   createDesktopDependencyFilter,
   desktopBackendDependencies,
+  desktopBackendPeerDependencies,
+  desktopBundledDependencies,
   isElectronPackage,
   isBackendRuntimeDependency,
   isShippableDependencyPath,
@@ -15,6 +19,169 @@ import {
 } from './backend-dependencies.mjs'
 
 describe('desktop-only dependency contents', () => {
+  it('rejects an external consumer of bundled i18next in the real staging command', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-bundle-consumer-'))
+    const put = async (file: string, content: string): Promise<void> => {
+      await mkdir(dirname(join(root, file)), { recursive: true })
+      await writeFile(join(root, file), content)
+    }
+    try {
+      for (const file of ['scripts/stage-backend.mjs', 'scripts/backend-dependencies.mjs'])
+        await put(file, await readFile(join(process.cwd(), file), 'utf8'))
+      await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
+      await put('packages/open-science/package.json', '{}')
+      await put('out/backend/dependencies.json', '[]')
+      const stage = (): Promise<unknown> =>
+        promisify(execFile)(
+          process.execPath,
+          [join(root, 'scripts/stage-backend.mjs'), '--desktop'],
+          { cwd: root, timeout: 10_000 }
+        )
+      // The old default output must not silently substitute for a missing desktop build.
+      await expect(stage()).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('desktop-backend-build')
+      })
+      await put(
+        'out/desktop-backend-build/dependencies.json',
+        JSON.stringify([
+          {
+            inputs: { 'node_modules/i18next/dist/cjs/i18next.js': { imports: [] } },
+            outputs: { 'index.cjs': { imports: [] } }
+          }
+        ])
+      )
+      const platform = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform]
+      for (const file of [
+        'out/web/index.html',
+        'LICENSE',
+        'packages/open-science/README.md',
+        'packages/open-science/CLI.md',
+        `resources/bin/${platform}/${process.arch}/micromamba${process.platform === 'win32' ? '.exe' : ''}`,
+        ...(process.platform === 'win32'
+          ? [
+              `resources/bin/win/${process.arch}/micromamba-compat.exe`,
+              `packages/notebook-network-sandbox/vendor/windows/${process.arch}/fixture.exe`,
+              'packages/notebook-network-sandbox/vendor/wsl2/manifest.json'
+            ]
+          : [])
+      ])
+        await put(file, 'synthetic fixture')
+      await put(
+        'node_modules/consumer/package.json',
+        JSON.stringify({ name: 'consumer', version: '1', dependencies: { i18next: '1' } })
+      )
+      await expect(stage()).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('requires bundled i18next')
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['/', '\\'])(
+    'omits i18next only after compilation proves it is inlined (%s)',
+    (separator) => {
+      const dependencies = { i18next: '25.10.10', 'external-package': '1' }
+      const metadata = [
+        {
+          inputs: {
+            ['node_modules/i18next/dist/cjs/i18next.js'.replaceAll('/', separator)]: { imports: [] }
+          },
+          outputs: { 'index.cjs': { imports: [] } }
+        }
+      ]
+      expect([...desktopBundledDependencies(metadata)]).toEqual(['i18next'])
+      expect(desktopBackendDependencies(dependencies, metadata)).toEqual(['external-package'])
+      expect(desktopBackendDependencies(dependencies, [{ inputs: {}, outputs: {} }])).toEqual(
+        Object.keys(dependencies)
+      )
+      expect(() =>
+        desktopBackendDependencies(dependencies, [
+          ...metadata,
+          {
+            inputs: {},
+            outputs: { 'worker.cjs': { imports: [{ path: 'i18next', external: true }] } }
+          }
+        ])
+      ).toThrow('cannot mix bundled and external i18next')
+    }
+  )
+
+  it('omits only the audited type-only peer edge, retaining new versions and other consumers', () => {
+    const manifest = {
+      name: '@anthropic-ai/claude-agent-sdk',
+      version: '0.3.232',
+      peerDependencies: { '@anthropic-ai/sdk': '>=0.93.0', zod: '^4.0.0' }
+    }
+    expect(desktopBackendPeerDependencies(manifest)).toEqual(['zod'])
+    for (const other of [
+      { ...manifest, version: '0.3.233' },
+      { ...manifest, name: 'another-consumer' }
+    ])
+      expect(desktopBackendPeerDependencies(other)).toEqual(['@anthropic-ai/sdk', 'zod'])
+    expect(Object.keys(manifest.peerDependencies)).toEqual(['@anthropic-ai/sdk', 'zod'])
+    expect(isBackendRuntimeDependency('@anthropic-ai/sdk', manifest.name)).toBe(true)
+    expect(
+      desktopBackendDependencies({ '@anthropic-ai/sdk': '1' }, [{ inputs: {}, outputs: {} }])
+    ).toEqual(['@anthropic-ai/sdk'])
+  })
+
+  it('runs Claude transcript and SDK MCP behavior with API SDK loading forbidden', async () => {
+    const script = `
+      import assert from 'node:assert/strict'
+      import { registerHooks } from 'node:module'
+      registerHooks({ resolve(specifier, context, next) {
+        if (specifier === '@anthropic-ai/sdk' || specifier.startsWith('@anthropic-ai/sdk/'))
+          throw new Error('Type-only API SDK requested at runtime')
+        return next(specifier, context)
+      } })
+      await assert.rejects(import('@anthropic-ai/sdk'), /Type-only API SDK/)
+      const sdk = await import('@anthropic-ai/claude-agent-sdk')
+      const acp = await import('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js')
+      assert.equal(typeof acp.ClaudeAcpAgent, 'function')
+      const sessionId = '11111111-1111-4111-8111-111111111111'
+      const messages = await sdk.getSessionMessages(sessionId, {
+        dir: process.cwd(),
+        sessionStore: { append: async () => {}, load: async () => [
+          { type: 'user', uuid: 'u1', parentUuid: null, sessionId,
+            message: { role: 'user', content: 'synthetic input' } },
+          { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId,
+            parent_tool_use_id: null, message: { id: 'm1', role: 'assistant',
+              content: [{ type: 'text', text: 'synthetic reply' }] } }
+        ] }
+      })
+      assert.equal(messages.length, 2)
+      assert.equal(messages[1].message.content[0].text, 'synthetic reply')
+      const { z } = await import('zod')
+      const server = sdk.createSdkMcpServer({ name: 'packaging-test', version: '1.0.0', tools: [
+        sdk.tool('add', 'Add synthetic inputs', { a: z.number(), b: z.number() },
+          async ({ a, b }) => ({ content: [{ type: 'text', text: String(a + b) }] }))
+      ] })
+      const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+      const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js')
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      const client = new Client({ name: 'packaging-test', version: '1.0.0' })
+      try {
+        await server.instance.connect(serverTransport)
+        await client.connect(clientTransport)
+        const result = await client.callTool({ name: 'add', arguments: { a: 2, b: 3 } })
+        assert.equal(result.content[0].text, '5')
+      } finally {
+        await client.close()
+        await server.instance.close()
+      }
+      console.log('Claude runtime without API SDK: PASS')
+    `
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ['--input-type=module', '--eval', script],
+      { timeout: 15_000 }
+    )
+    expect(stdout).toContain('Claude runtime without API SDK: PASS')
+  }, 20_000)
+
   it('omits only audited renderer roots and keeps unclassified and dynamic runtime dependencies', () => {
     const dependencies = {
       '@radix-ui/react-focus-scope': '1',

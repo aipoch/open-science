@@ -284,13 +284,15 @@ test('explains disabled revision navigation while a turn is running', async ({ a
     `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
   )
   try {
-    await expect(page.getByTestId('composer-queue-submit')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toBeVisible()
     await expect(previous).toBeDisabled()
     const explanation = 'Message revisions are unavailable while this session is busy or blocked.'
     const trigger = previous.locator('..')
     // Scroll back like a reader before focusing: a focus-induced scroll dismisses Radix tooltips.
     await conversation.hover()
     await page.mouse.wheel(0, -100_000)
+    await expect.poll(() => conversation.evaluate((viewport) => viewport.scrollTop)).toBeLessThan(1)
+    await expect(trigger).toBeInViewport()
     await trigger.hover()
     await trigger.focus()
     await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()

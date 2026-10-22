@@ -27,7 +27,7 @@ export function resolveVitestMaxWorkers(
 export const VITEST_ARCHITECTURE_TEST_GLOBS = [
   '**/*.architecture.test.ts',
   // Whole-repository graph scanning belongs after the parallel pool, retaining its timeout.
-  'scripts/ci/module-consumer-coverage.test.ts'
+  'scripts/ci/module-graph/consumer-coverage.test.ts'
 ] as const
 
 export const VITEST_DATABASE_TEST_GLOBS = [

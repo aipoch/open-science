@@ -88,7 +88,7 @@ it.each(['python', 'r'] as const)(
           timeout: 15000
         }
       )
-      expect(await readFile(join(dataRoot, 'summary.csv'), 'utf8')).toBe(
+      expect((await readFile(join(dataRoot, 'summary.csv'), 'utf8')).replaceAll('\r\n', '\n')).toBe(
         'group,n\nCtrl,33\nIRI,33\n'
       )
     } finally {

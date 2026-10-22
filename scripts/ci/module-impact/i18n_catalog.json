@@ -23,7 +23,7 @@
   "testFiles": {
     "owner": ["src/renderer/src/i18n/resources.test.ts"],
     "contract": ["src/main/locale/owner.test.ts"],
-    "consumer": []
+    "consumer": ["scripts/build-backend.integration.test.ts"]
   },
   "capabilityOverlays": ["i18n_catalog"],
   "fallbackCapability": "shared_contract"

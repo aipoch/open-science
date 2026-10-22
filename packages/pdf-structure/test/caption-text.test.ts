@@ -18,6 +18,7 @@ const {
   joinCaptionLines,
   groupPageLines,
   joinPdfSmallCapsLine,
+  isNativeRowReference,
   findCaptionCandidates
 } = await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
 
@@ -79,6 +80,19 @@ it('recognizes manuscript legend headings without treating past-tense references
 it('keeps noun-phrase figure titles distinct from finite-verb references', () => {
   expect(captionKind('Figure 1 Plot of the results.')).toBe('figure')
   expect(captionKind('Figure 1 plots the results.')).toBeUndefined()
+})
+
+it.each([
+  ['Figure 2 flips the comparison between groups.', undefined],
+  ['Figure 3 clarifies in more detail the change between groups.', undefined],
+  ['Figure 4 assesses the effect of the settings.', undefined],
+  ['Figure C.2 assesses the effect of the settings.', undefined],
+  ['Figure C.2: Assesses the effect of the settings.', 'figure'],
+  ['Figure 4 Assessment of the settings.', 'figure'],
+  ['Figure 2: Flips between measured states.', 'figure'],
+  ['Figure 3. Clarifies the notation used below.', 'figure']
+])('distinguishes finite references from punctuation-delimited captions: %s', (text, kind) => {
+  expect(captionKind(text)).toBe(kind)
 })
 
 it.each([
@@ -734,7 +748,7 @@ it('keeps an all-caps Roman table title across an interleaved body column', () =
 })
 
 it('places a delayed native subscript beside its source anchor before following prose', () => {
-  // 12270199.pdf, page 11, Table 5 note: the stream paints w after the sentence.
+  // A delayed native subscript can be painted after its containing sentence.
   const items = [
     { str: 'κ', width: 4.448, height: 8.282314652317915, transform: [8, 0, 2.144, 8, 281.58, 163] },
     { str: ' ', width: 0.88775, height: 0, transform: [8, 0, 2.144, 8, 286.028, 163] },
@@ -814,5 +828,241 @@ it.each(['reviews', 'displays', 'measures', 'lists', 'reports', 'shows', 'comple
   'still rejects a finite verb after panel A: %s',
   (verb) => {
     expect(captionKind(`Figure 1 A ${verb} the measured responses.`)).toBeUndefined()
+  }
+)
+
+type NativeRowReferenceFixture = {
+  page: {
+    pageNumber: number
+    width: number
+    height: number
+    lines: CaptionLine[]
+    graphicsBounds: { normalizedRect: number[] }[]
+    invalidGraphicsBounds: number
+  }
+  context: {
+    pageNumber: number
+    viewport: { width: number; height: number; transform: number[] }
+    content: {
+      styles: Record<string, object>
+      items: {
+        str: string
+        dir: string
+        width: number
+        height: number
+        transform: number[]
+        fontName: string
+        hasEOL: boolean
+        sourceItem: { pageNumber: number; index: number; text: string }
+      }[]
+    }
+  }
+  rules: number[][]
+}
+
+const nativeRowReferenceFixture = (): NativeRowReferenceFixture => {
+  const values: [string, number, number, number][] = [
+    ['The preceding discussion has ended.', 70, 70, 220],
+    ['The measured changes are demonstrated in the top row of', 62, 100, 388],
+    ['Figure 2 using paired inputs to compare the measured effects.', 50, 114, 400],
+    ['Further details explain the observations and their consequences.', 50, 128, 400]
+  ]
+  const lines = values.map(([text, x, y, width]) => ({
+    text,
+    x,
+    y,
+    width,
+    height: 10,
+    fontSize: 10
+  }))
+  return {
+    page: {
+      pageNumber: 1,
+      width: 500,
+      height: 600,
+      lines,
+      graphicsBounds: [] as { normalizedRect: number[] }[],
+      invalidGraphicsBounds: 0
+    },
+    context: {
+      pageNumber: 1,
+      viewport: { width: 500, height: 600, transform: [1, 0, 0, -1, 0, 600] },
+      content: {
+        styles: { body: { ascent: 0.8, descent: -0.2, vertical: false } },
+        items: values.map(([str, x, y, width], index) => ({
+          str,
+          dir: 'ltr',
+          width,
+          height: 10,
+          transform: [10, 0, 0, 10, x, 600 - y - 10],
+          fontName: 'body',
+          hasEOL: true,
+          sourceItem: { pageNumber: 1, index, text: str }
+        }))
+      }
+    },
+    rules: []
+  }
+}
+
+it('rejects a native paragraph reference only after complete source binding', () => {
+  const a = nativeRowReferenceFixture()
+  const before = findCaptionCandidates([a.page])
+  expect(before).toHaveLength(1)
+  expect(isNativeRowReference(before[0], a.page, a.context, a.rules)).toBe(true)
+})
+const nativeRowReferenceNegatives: [
+  string,
+  (a: ReturnType<typeof nativeRowReferenceFixture>) => void
+][] = [
+  [
+    'unknown zero-advance native ink outside the paragraph',
+    (a) => {
+      const index = a.context.content.items.length
+      a.context.content.items.push({
+        str: 'Other',
+        dir: 'ltr',
+        width: 0,
+        height: 10,
+        transform: [10, 0, 0, 10, 49, 495],
+        fontName: 'unknown',
+        hasEOL: true,
+        sourceItem: { pageNumber: 1, index, text: 'Other' }
+      })
+    }
+  ],
+  [
+    'vertical native font style',
+    (a) => {
+      Object.assign(a.context.content.styles.body, { vertical: true })
+    }
+  ],
+  [
+    'missing native context',
+    (a) => {
+      Reflect.deleteProperty(a, 'context')
+    }
+  ],
+  [
+    'missing source identity',
+    (a) => {
+      Reflect.deleteProperty(a.context.content.items[2], 'sourceItem')
+    }
+  ],
+  [
+    'discontinuous source index',
+    (a) => {
+      a.context.content.items[2].sourceItem.index = 9
+    }
+  ],
+  [
+    'different font',
+    (a) => {
+      a.context.content.items[1].fontName = 'other'
+    }
+  ],
+  [
+    'large leading',
+    (a) => {
+      a.context.content.items[1].transform[5] += 15
+      a.page.lines[1].y -= 15
+    }
+  ],
+  [
+    'different column',
+    (a) => {
+      a.context.content.items[1].transform[4] += 120
+      a.page.lines[1].x += 120
+    }
+  ],
+  [
+    'punctuated caption',
+    (a) => {
+      a.page.lines[2].text =
+        a.context.content.items[2].str =
+        a.context.content.items[2].sourceItem.text =
+          'Figure 2: Using paired inputs to compare the measured effects.'
+    }
+  ],
+  [
+    'paint separator',
+    (a) => {
+      a.rules.push([50, 112, 450, 112])
+    }
+  ],
+  [
+    'painted image',
+    (a) => {
+      a.page.graphicsBounds.push({ normalizedRect: [0.1, 0.17, 0.9, 0.2] })
+    }
+  ],
+  [
+    'duplicate native owner',
+    (a) => {
+      a.context.content.items.push(structuredClone(a.context.content.items[2]))
+    }
+  ],
+  [
+    'absent preceding geometry source',
+    (a) => {
+      a.page.lines.splice(1, 1)
+    }
+  ],
+  [
+    'closed preceding sentence',
+    (a) => {
+      a.page.lines[1].text =
+        a.context.content.items[1].str =
+        a.context.content.items[1].sourceItem.text =
+          'The measured changes are demonstrated in the top row.'
+    }
+  ],
+  [
+    'non-repeated leading',
+    (a) => {
+      a.context.content.items[3].transform[5] -= 5
+      a.page.lines[3].y += 5
+    }
+  ],
+  [
+    'unknown graphics inventory',
+    (a) => {
+      a.page.invalidGraphicsBounds = 1
+    }
+  ],
+  [
+    'partial native row',
+    (a) => {
+      a.context.content.items[1].hasEOL = false
+    }
+  ],
+  [
+    'foreign overlapping native text',
+    (a) => {
+      const index = a.context.content.items.length
+      a.context.content.items.push({
+        str: 'Other',
+        dir: 'ltr',
+        width: 30,
+        height: 10,
+        transform: [10, 0, 0, 10, 200, 485],
+        fontName: 'body',
+        hasEOL: true,
+        sourceItem: { pageNumber: 1, index, text: 'Other' }
+      })
+    }
+  ]
+]
+it.each(nativeRowReferenceNegatives)(
+  'retains an unproved native paragraph reference: %s',
+  (_name, mutate) => {
+    const a = nativeRowReferenceFixture()
+    mutate(a)
+    const original = structuredClone(a)
+    const before = findCaptionCandidates([a.page], new Map([[a.page.pageNumber, a.rules]]))
+    expect(
+      before.filter((c: unknown) => !isNativeRowReference(c, a.page, a.context, a.rules))
+    ).toEqual(before)
+    expect(a).toEqual(original)
   }
 )

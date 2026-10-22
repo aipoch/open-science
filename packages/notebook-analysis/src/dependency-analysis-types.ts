@@ -94,6 +94,8 @@ type NotebookFileCallEffectSummary = Pick<NotebookFileCallEffect, 'kind' | 'inpu
   position: number
   keywords: string[]
   dependencyNames: string[]
+  // Requires a trusted hashlib module and unshadowed open/iter at every invocation.
+  pythonStreamingChecksum?: 'sha256' | 'md5'
 }
 
 type NotebookPythonHelperModule = {
@@ -117,9 +119,13 @@ type NotebookSourceFileAccessContext = {
     name: string
     values: string[]
     entries?: Array<{ key: string; value: string }>
+    // Python tuple of tuples containing primitive strings only; values is flattened.
+    tupleRows?: string[][]
     rKind?: 'vector' | 'list'
   }>
   localFileWrappers: NotebookFileCallEffectSummary[]
+  // Per-run revocations; the context projector removes these guarded identities.
+  pythonInvalidatedChecksumNames?: string[]
   // Bounded identities only: no live objects, interpreter handles or settings.
   pythonBindings?: Array<{
     name: string
@@ -131,6 +137,9 @@ type NotebookSourceFileAccessContext = {
   }>
   // Observed monkeypatches survive re-imports within the same kernel epoch.
   pythonTaintedNamespaces?: string[]
+  // Same-kernel risk only, not live handles or path ownership. Aliases/views may
+  // survive variable changes, and relative targets may outlive their original cwd.
+  pythonMayHaveWritableMappings?: true
   // Derived from prior same-epoch facts for the live run only. The bounded sidecar serializer
   // deliberately omits this field, so dependency-analysis.json remains unchanged.
   resolvedKernelNames?: string[]
@@ -138,6 +147,8 @@ type NotebookSourceFileAccessContext = {
   rFunctions?: Array<{ name: string; summary: NotebookDependencyTypeSummary }>
   // Plain atomic values only; no R objects or vector contents are captured here.
   rAtomicValueNames?: string[]
+  // Bounded source evidence: these table bindings have classless atomic columns.
+  rAtomicTableNames?: string[]
   // Transient ordinary-value ownership, rebuilt from same-epoch facts; no object contents.
   rCopyOnModifyNames?: string[]
   // Candidate serialized generations; usable only after matching a captured input checksum.
@@ -169,7 +180,7 @@ export type NotebookSerializedValue = {
 export type NotebookPythonCallbackContainerSummary = {
   name: string
   callbackNames: string[]
-  container?: 'dict'
+  container?: 'dict' | 'constraint-records'
 }
 
 type NotebookRunDependencyFacts =
@@ -188,6 +199,8 @@ type NotebookRunDependencyFacts =
       pythonCallbackContainerSummaries?: NotebookPythonCallbackContainerSummary[]
       copyOnModifyNames?: string[]
       rAtomicValueNames?: string[]
+      // Bounded source evidence: these table bindings have classless atomic columns.
+      rAtomicTableNames?: string[]
       serializedValueWrites?: NotebookSerializedValue[]
       serializedValueReads?: string[]
       rPackageLoads?: string[]
@@ -221,6 +234,8 @@ type NotebookRunDependencyFacts =
       pythonCallbackContainerSummaries?: NotebookPythonCallbackContainerSummary[]
       copyOnModifyNames?: string[]
       rAtomicValueNames?: string[]
+      // Bounded source evidence: these table bindings have classless atomic columns.
+      rAtomicTableNames?: string[]
       serializedValueWrites?: NotebookSerializedValue[]
       serializedValueReads?: string[]
       rPackageLoads?: string[]

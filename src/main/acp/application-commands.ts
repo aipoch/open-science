@@ -41,6 +41,7 @@ import { bindResumeRequestToProject } from './session-project-binding'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { preserveSessionSizeLimitCode } from '../session-persistence/application-command-errors'
+import { withAgentAuthenticationRecovery } from './prompt-error'
 
 const acpStateCommandResponseCodec = validationCodec(
   z.custom<AcpStateCommandResponse>(
@@ -342,11 +343,15 @@ const registerAcpCommands = (
       'acp:disconnect': () => stateCommand(dependencies.runtime.disconnect()),
       'acp:create-session': (invocation) =>
         preserveSessionSizeLimitCode(() =>
-          dependencies.workflows.createSession(invocation.args[0])
+          withAgentAuthenticationRecovery(() =>
+            dependencies.workflows.createSession(invocation.args[0])
+          )
         ),
       'acp:resume-session': (invocation) =>
         preserveSessionSizeLimitCode(() =>
-          dependencies.workflows.resumeSession(invocation.args[0])
+          withAgentAuthenticationRecovery(() =>
+            dependencies.workflows.resumeSession(invocation.args[0])
+          )
         ),
       'acp:continue-interrupted-turn': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
@@ -356,15 +361,17 @@ const registerAcpCommands = (
       },
       'acp:reset-session-context': (invocation) =>
         preserveSessionSizeLimitCode(() =>
-          dependencies.archiveAvailability
-            ? dependencies.archiveAvailability.withSessionAvailableById(
-                invocation.args[0].sessionId,
-                (projectId) =>
-                  dependencies.runtime.resetSessionContext(
-                    bindResumeRequestToProject(invocation.args[0], projectId)
-                  )
-              )
-            : dependencies.runtime.resetSessionContext(invocation.args[0])
+          withAgentAuthenticationRecovery(() =>
+            dependencies.archiveAvailability
+              ? dependencies.archiveAvailability.withSessionAvailableById(
+                  invocation.args[0].sessionId,
+                  (projectId) =>
+                    dependencies.runtime.resetSessionContext(
+                      bindResumeRequestToProject(invocation.args[0], projectId)
+                    )
+                )
+              : dependencies.runtime.resetSessionContext(invocation.args[0])
+          )
         ),
       'acp:compact-session': (invocation) =>
         stateCommand(

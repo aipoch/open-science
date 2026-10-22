@@ -15,7 +15,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": ["src/renderer/src/pages/workspace/bookmarks/BookmarksProvider.test.tsx"],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
@@ -78,13 +78,7 @@
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx",
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
-      "src/main/ipc-surfaces/desktop-utilities.test.ts",
-      "src/main/runtime-electron-wiring.test.ts",
-      "src/main/settings-window-ipc.test.ts",
-      "src/main/windows.test.ts"
+      "src/renderer/src/pages/workspace/NotebookFolderAccessNotice.interaction.test.tsx"
     ]
   },
   "capabilityOverlays": [],

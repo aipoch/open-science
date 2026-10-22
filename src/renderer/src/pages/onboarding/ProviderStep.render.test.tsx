@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
 import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
-import type { ValidateProviderResult } from '../../../../shared/settings'
+import type { ValidateProviderResult, XaiOAuthLoginResult } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ProviderStep } from './ProviderStep'
@@ -774,61 +774,75 @@ describe('ProviderStep', () => {
     root = createRoot(container)
   })
 
-  it('completes xAI device authorization before activating and advancing', async () => {
-    let finishLogin!: (result: { accountEmail?: string }) => void
-    const waitXaiOAuthLogin = vi.fn(
-      () =>
-        new Promise<{ accountEmail?: string }>((resolve) => {
-          finishLogin = resolve
-        })
-    )
-    const persistProvider = vi.fn().mockResolvedValue('builtin-xai-subscription')
-    const validateProvider = vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: true })
-    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
-    useSettingsStore.setState({
-      ...codexReadyState(),
-      agentFrameworks: [
-        {
-          id: 'codex',
-          displayName: 'Codex',
-          supportedApiTypes: ['responses'],
-          supportsSkills: true
-        }
-      ],
-      persistProvider,
-      beginXaiOAuthLogin: vi.fn().mockResolvedValue({
-        userCode: 'GROK-2468',
-        verificationUri: 'https://auth.x.ai/activate',
-        expiresAt: Date.now() + 300_000
-      }),
-      waitXaiOAuthLogin,
-      validateProvider,
-      setActiveProvider
-    })
-    const onAdvance = vi.fn()
-
-    await renderStep({ onAdvance })
-    await selectOption('Provider type', 'xAI (Grok) OAuth')
-    await clickButton(/sign in & continue/i)
-
-    await vi.waitFor(() => {
-      expect(document.body.textContent).toContain('GROK-2468')
-    })
-    expect(setActiveProvider).not.toHaveBeenCalled()
-
-    await act(async () => finishLogin({ accountEmail: 'researcher@example.com' }))
-
-    await vi.waitFor(() => {
-      expect(persistProvider).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.7' })
+  it.each<ValidateProviderResult>([
+    { ok: true, category: 'ok', applied: true },
+    { ok: false, category: 'auth', status: 401, applied: true },
+    { ok: false, category: 'network', applied: true },
+    { ok: true, category: 'ok', applied: false }
+  ])(
+    'reuses xAI login validation before advancing ($category, applied: $applied)',
+    async (validation) => {
+      let finishLogin!: (result: XaiOAuthLoginResult) => void
+      const waitXaiOAuthLogin = vi.fn(
+        () =>
+          new Promise<XaiOAuthLoginResult>((resolve) => {
+            finishLogin = resolve
+          })
       )
-      expect(validateProvider).toHaveBeenCalledWith({
-        providerId: 'builtin-xai-subscription'
+      const persistProvider = vi.fn().mockResolvedValue('builtin-xai-subscription')
+      const validateProvider = vi
+        .fn()
+        .mockResolvedValue({ ok: true, category: 'ok', applied: true })
+      const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState({
+        ...codexReadyState(),
+        agentFrameworks: [
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            supportedApiTypes: ['responses'],
+            supportsSkills: true
+          }
+        ],
+        persistProvider,
+        beginXaiOAuthLogin: vi.fn().mockResolvedValue({
+          userCode: 'GROK-2468',
+          verificationUri: 'https://auth.x.ai/activate',
+          expiresAt: Date.now() + 300_000
+        }),
+        waitXaiOAuthLogin,
+        validateProvider,
+        setActiveProvider
       })
-      expect(setActiveProvider).toHaveBeenCalledWith('builtin-xai-subscription')
-      expect(onAdvance).toHaveBeenCalledOnce()
-    })
-  })
+      const onAdvance = vi.fn()
+
+      await renderStep({ onAdvance })
+      await selectOption('Provider type', 'xAI (Grok) OAuth')
+      await clickButton(/sign in & continue/i)
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('GROK-2468')
+      })
+      expect(setActiveProvider).not.toHaveBeenCalled()
+
+      await act(async () => finishLogin({ accountEmail: 'researcher@example.com', validation }))
+
+      await vi.waitFor(() => {
+        expect(persistProvider).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.7' })
+        )
+        expect(waitXaiOAuthLogin).toHaveBeenCalledOnce()
+        expect(validateProvider).not.toHaveBeenCalled()
+        if (validation.ok && validation.applied !== false) {
+          expect(setActiveProvider).toHaveBeenCalledWith('builtin-xai-subscription')
+          expect(onAdvance).toHaveBeenCalledOnce()
+        } else {
+          expect(setActiveProvider).not.toHaveBeenCalled()
+          expect(onAdvance).not.toHaveBeenCalled()
+        }
+      })
+    }
+  )
 
   it('cancels xAI device authorization while the device session is starting', async () => {
     let finishBegin!: (session: {
@@ -903,7 +917,7 @@ describe('ProviderStep', () => {
         verificationUri: 'https://auth.x.ai/activate',
         expiresAt: Date.now() + 300_000
       }),
-      waitXaiOAuthLogin: vi.fn(() => new Promise<{ accountEmail?: string }>(() => undefined)),
+      waitXaiOAuthLogin: vi.fn(() => new Promise<XaiOAuthLoginResult>(() => undefined)),
       cancelXaiOAuthLogin
     })
 

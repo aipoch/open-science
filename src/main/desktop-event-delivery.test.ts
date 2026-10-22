@@ -37,7 +37,10 @@ it('continues to healthy windows when a native send throws without logging priva
 
 it('skips destroyed contents and windows outside the application', () => {
   const send = vi.fn()
-  const window = { isDestroyed: (): boolean => false, webContents: { isDestroyed: () => true, send } }
+  const window = {
+    isDestroyed: (): boolean => false,
+    webContents: { isDestroyed: () => true, send }
+  }
   deliverDesktopEvent([window] as unknown as BrowserWindow[], () => true, 'event', null)
   window.webContents.isDestroyed = () => false
   deliverDesktopEvent([window] as unknown as BrowserWindow[], () => false, 'event', null)

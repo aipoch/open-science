@@ -52,6 +52,7 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
   // session adoption.
@@ -216,6 +217,14 @@ export class AcpProviderSessionAdopter {
         break
       }
 
+      try {
+        this.deps.registerSessionSpecialist?.(
+          stableAppSessionId,
+          this.deps.registry.lookup(stableAppSessionId)?.aggregate.snapshot().specialistId
+        )
+      } catch (error) {
+        this.safeLogError('register adopted session specialist failed', error, stableAppSessionId)
+      }
       try {
         this.deps.emitState()
       } catch (error) {

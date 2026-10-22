@@ -405,9 +405,11 @@ describe('ProviderTransportOwner generations', () => {
   it('uses the native Responses base for compatibility targets', async () => {
     const proxy = makeNativeProxy()
     let targetBaseUrl: string | undefined
+    let targetVendorId: string | undefined
     const owner = new ProviderTransportOwner({
       createNativeResponsesProxy: (target) => {
         targetBaseUrl = target.baseUrl
+        targetVendorId = target.vendorId
         return proxy
       }
     })
@@ -431,6 +433,7 @@ describe('ProviderTransportOwner generations', () => {
     })
 
     expect(targetBaseUrl).toBe('https://api.deepseek.com')
+    expect(targetVendorId).toBe('deepseek')
     await generation.release()
   })
 

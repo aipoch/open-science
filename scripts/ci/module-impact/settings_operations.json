@@ -179,8 +179,7 @@
       "src/main/settings/transport-validation.test.ts",
       "src/main/settings/workflows.test.ts",
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
-      "src/main/settings/workflows/local-shell.test.ts",
-      "src/main/archive-tasks/index.test.ts"
+      "src/main/settings/workflows/local-shell.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -718,18 +717,9 @@
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
-      "src/main/composition/session-packages.test.ts",
-      "src/main/notebook/skill-loading-guidance.test.ts",
-      "src/main/skills/export.test.ts",
-      "src/main/skills/host-skills-service.test.ts",
-      "src/main/skill-marketplace/installation.test.ts",
-      "src/main/skill-marketplace/service.test.ts"
+      "src/main/composition/session-packages.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }

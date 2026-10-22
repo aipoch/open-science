@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type { Annotation, ImagePointAnnotation } from '../../../../../shared/annotation-contract'
 import type { AnnotationValidationError } from '../../../../../shared/annotations'
 
@@ -51,6 +51,7 @@ const sameImageVersion = (
 const ImagePointAnnotationSurface = ({
   item,
   src,
+  sourceSize,
   activeAnnotations,
   onAdd,
   onUpdateNote,
@@ -60,6 +61,7 @@ const ImagePointAnnotationSurface = ({
 }: {
   item: PreviewFileItem
   src: string
+  sourceSize?: ImageNaturalSize
   activeAnnotations: readonly Annotation[]
   onAdd?: (annotation: ImagePointAnnotation) => AnnotationValidationError | undefined
   onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
@@ -185,7 +187,7 @@ const ImagePointAnnotationSurface = ({
     const point = viewportPointToNormalized({ x: event.clientX, y: event.clientY }, imageRect)
     if (!point) return
     focusReturnRef.current = surface
-    setPending({ point, source, naturalSize })
+    setPending({ point, source, naturalSize: sourceSize ?? naturalSize })
     setPendingMode('edit')
     setNote('')
     setNoteRequired(false)

@@ -5,6 +5,8 @@ import type { NotificationInboxSnapshot } from '../../../shared/notifications'
 type NotificationInboxStore = NotificationInboxSnapshot & {
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
+  markAllReadPending: boolean
+  markAllReadError?: string
   refresh: () => Promise<void>
   markRead: (ids: readonly string[]) => Promise<void>
   markAllRead: () => Promise<void>
@@ -31,6 +33,7 @@ let trailingRefreshRequested = false
 export const useNotificationInboxStore = create<NotificationInboxStore>((set, get) => ({
   ...EMPTY_SNAPSHOT,
   status: 'idle',
+  markAllReadPending: false,
 
   refresh: () => {
     if (refreshTail) {
@@ -74,12 +77,21 @@ export const useNotificationInboxStore = create<NotificationInboxStore>((set, ge
   },
 
   markAllRead: async () => {
+    if (get().markAllReadPending) return
     const throughSequence = get().latestSequence
     if (throughSequence <= 0 || get().unreadCount === 0) return
     const mark = window.api?.notifications?.markAllRead
     if (!mark) return
-    await mark({ throughSequence })
-    await get().refresh()
+    set({ markAllReadPending: true, markAllReadError: undefined })
+    try {
+      await mark({ throughSequence })
+      await get().refresh()
+    } catch (error) {
+      set({ markAllReadError: error instanceof Error ? error.message : String(error) })
+      throw error
+    } finally {
+      set({ markAllReadPending: false })
+    }
   },
 
   markSessionCompletionsRead: async (sessionIds) => {

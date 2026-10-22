@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent } from '@testing-library/react'
 
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -64,6 +65,44 @@ describe('ArchivedPanel', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+  })
+
+  it('filters archived sessions by title or project and clears an empty search', async () => {
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+    const input = container.querySelector('input')!
+    await act(async () => fireEvent.change(input, { target: { value: 'no match' } }))
+    expect(container.textContent).not.toContain('Archived session')
+    expect(container.textContent).toContain('No matching archived work.')
+    await act(async () => fireEvent.change(input, { target: { value: 'archived sess' } }))
+    expect(container.textContent).toContain('Archived session')
+    await act(async () => fireEvent.change(input, { target: { value: 'PROJECT' } }))
+    expect(container.textContent).toContain('Archived session')
+    await act(async () => fireEvent.change(input, { target: { value: '' } }))
+    expect(container.textContent).toContain('Archived session')
+    await act(async () =>
+      useSessionStore.setState({ sessions: [{ ...session, archivedAt: undefined }] })
+    )
+    expect(container.textContent).not.toContain('Archived session')
+  })
+
+  it('finds archived projects by a contained session title without restoring them', async () => {
+    useProjectStore.setState({ projects: [{ ...project, archivedAt: 2 }] })
+    const navigate = vi.fn()
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={navigate} />)
+    )
+    await act(async () =>
+      fireEvent.change(container.querySelector('input')!, { target: { value: 'Archived session' } })
+    )
+    const manage = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Manage')
+    )!
+    expect(manage).toBeDefined()
+    await act(async () => manage.click())
+    expect(navigate).toHaveBeenCalledWith({ kind: 'project', projectId: project.id })
+    expect(updateArchive).not.toHaveBeenCalled()
   })
 
   it('keeps session-load recovery available locally after the global notice is closed', async () => {

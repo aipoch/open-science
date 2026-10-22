@@ -1,4 +1,4 @@
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import type { ActivePlanProjection } from '../../../../../shared/session-plan/contract'
 
 // The authoritative Plan is Session-scoped, while historical projections are view-only. Only its

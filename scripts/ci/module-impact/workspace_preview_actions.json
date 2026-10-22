@@ -18,7 +18,7 @@
       "src/renderer/src/pages/workspace/preview-actions/preview-action-adapter.test.tsx",
       "src/renderer/src/pages/workspace/preview-actions/preview-action-model.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
@@ -70,13 +70,7 @@
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan-progress-refresh.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewToolContent.reviewer.integration.test.tsx",
-      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
-      "src/main/ipc-surfaces/desktop-utilities.test.ts",
-      "src/main/runtime-electron-wiring.test.ts",
-      "src/main/settings-window-ipc.test.ts",
-      "src/main/windows.test.ts"
+      "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx"
     ]
   },
   "capabilityOverlays": [],

@@ -18,7 +18,8 @@ import {
   loadPersistedSession
 } from '../session-persistence/session-persistence'
 import { useSessionJobStore } from '../../stores/session-job-store'
-import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import { useSessionStore } from '../../stores/session-store'
+import type { ChatSession } from '../../stores/session-store-contract'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
 import { isComputeJobCompletionAttribution } from '../../../../shared/session-persistence'
 import type { JobAnalysisTriggerDeps } from './job-analysis-trigger'

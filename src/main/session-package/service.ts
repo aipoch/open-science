@@ -81,7 +81,7 @@ import {
   writePackageArchive
 } from './archive'
 import { assertPackageCapacity } from './capacity'
-import { withPackageCleanup } from './cleanup'
+import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { SessionPackageDeletion } from './deletion'
 import { executionEvidenceKeys } from './execution-evidence'
 import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './fork-session'
@@ -164,6 +164,19 @@ const importJournalSchema = sessionPackageRequestSchema
   .strict()
 type ImportJournal = z.infer<typeof importJournalSchema>
 
+// A native commit may already exist. Desktop retries this handle instead of importing new bytes.
+export class PackageImportRecoveryRequiredError extends Error {
+  constructor(
+    readonly identity: SessionPackageRequest,
+    readonly resume: (signal?: AbortSignal) => Promise<SessionPackageRequest | undefined>,
+    cause: unknown
+  ) {
+    super(cause instanceof Error ? cause.message : 'Session package import recovery failed.', {
+      cause
+    })
+  }
+}
+
 const PACKAGE_README =
   '# Open-Science Session package\n\nOpen-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.\n'
 
@@ -175,6 +188,11 @@ type PackageOptions = {
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
   inspectPackage?: typeof inspectSessionPackage
+  runSessionPublication?: (
+    projectId: string,
+    sessionId: string,
+    work: () => Promise<PersistedChatSession>
+  ) => Promise<PersistedChatSession>
   onSessionPublished?: (publication: PublishedSessionHandoff) => Promise<void>
 }
 
@@ -1345,6 +1363,39 @@ export class SessionPackageService {
     }
     let published: boolean | undefined = false
     let journal: ImportJournal | undefined
+    const recoveryError = (cause: unknown): PackageImportRecoveryRequiredError =>
+      new PackageImportRecoveryRequiredError({ projectId, sessionId }, resume, cause)
+    const resume = (signal?: AbortSignal): Promise<SessionPackageRequest | undefined> =>
+      this.serialize(async () => {
+        try {
+          if (published === undefined) {
+            const client = await this.options.getClient()
+            published = Boolean(
+              await client.fileOriginSession.findUnique({
+                where: { projectId_sessionId: { projectId, sessionId } }
+              })
+            )
+          }
+          if (published) {
+            // A data-root reconnect may already have recovered and removed the journal. The
+            // captured journal still identifies the same live authority, including deletion.
+            await this.finishPublishedImport(configOperationRoot, operationId, journal)
+          }
+        } catch (error) {
+          throw recoveryError(error)
+        }
+        return withPackageCleanup(
+          async () => (published ? { projectId, sessionId } : undefined),
+          async () => {
+            if (!published && journal) await this.removeUnpublished(journal, operationId)
+            await cleanupStaging()
+          }
+        )
+      }, signal).catch((error: unknown) => {
+        if (error instanceof PackageCleanupPendingError) throw error
+        if (error instanceof PackageImportRecoveryRequiredError) throw error
+        throw recoveryError(error)
+      })
     try {
       await writeFile(join(operationRoot, '.session-package-owner'), operationId, { flag: 'wx' })
       if (forkSource) {
@@ -1672,7 +1723,7 @@ export class SessionPackageService {
               { projectId, sessionId, operationId, outcome: 'unconfirmed' },
               witnessError
             )
-          throw witnessError
+          throw recoveryError(witnessError)
         }
       }
       if (published === false) {
@@ -1698,7 +1749,7 @@ export class SessionPackageService {
           { projectId, sessionId, operationId, outcome: 'committed' },
           error
         )
-      throw error
+      throw recoveryError(error)
     }
     return withPackageCleanup(async () => ({ projectId, sessionId }), cleanupStaging)
   }
@@ -1946,10 +1997,14 @@ export class SessionPackageService {
     })
   }
 
-  private async finishPublishedImport(operationRoot: string, operation: string): Promise<void> {
-    const identity = importJournalSchema.parse(
-      await readPackageJson(join(operationRoot, 'journal.json'))
-    )
+  private async finishPublishedImport(
+    operationRoot: string,
+    operation: string,
+    knownIdentity?: ImportJournal
+  ): Promise<void> {
+    const identity =
+      knownIdentity ??
+      importJournalSchema.parse(await readPackageJson(join(operationRoot, 'journal.json')))
     const client = await this.options.getClient()
     const projected = await client.session.findUnique({ where: { id: identity.sessionId } })
     if (projected && projected.projectId !== identity.projectId)
@@ -1981,21 +2036,37 @@ export class SessionPackageService {
         ...(pendingProjectImport ? { pendingProjectImport } : {})
       })
     }
-    const current = await repository.loadSessionWithDiagnostics(
+    const work = (): Promise<PersistedChatSession> =>
+      this.prepareSessionPublication(repository, identity, operationRoot, operation)
+    const saved = this.options.runSessionPublication
+      ? await this.options.runSessionPublication(identity.projectId, identity.sessionId, work)
+      : await work()
+    // Adoption also enters the owner lane, so publish only after the complete write has released it.
+    await publish(saved)
+    // Keep the directory claims after publication. Startup package deletion requires these exact
+    // import identities before it can retire any native scope, including retained upstream scopes.
+  }
+
+  private async prepareSessionPublication(
+    repository: SessionRepository,
+    identity: ImportJournal,
+    operationRoot: string,
+    operation: string
+  ): Promise<PersistedChatSession> {
+    // The live owner serializes this entire decision with normal saves and deletion, including
+    // missing authority that needs to be published from stage for the first time.
+    await repository.assertSessionIdentityOwnership(identity.sessionId, identity.projectId)
+    const current = await loadSessionMutationAuthority(
+      repository,
       identity.projectId,
-      identity.sessionId,
-      { mode: 'read-only' }
+      identity.sessionId
     )
     if (current.status === 'unreadable')
       throw new Error('Import publication Session cannot be read safely.')
     if (current.status === 'found') {
       if ((current.session.packageOrigin ?? current.session.forkOrigin)?.importId !== operation)
         throw new Error('Import publication Session identity mismatch.')
-      // Resume with live authority, preserving later preferences and completing any interrupted
-      // JSON-to-SQLite projection through the repository that owns that publication.
-      const saved = await repository.saveSession(current.session)
-      await publish(saved)
-      return
+      return repository.saveSession(current.session)
     }
     let session = await new SessionRepository(join(operationRoot, 'session-stage')).loadSession(
       identity.projectId,
@@ -2027,10 +2098,7 @@ export class SessionPackageService {
     }
     // Live Session authority appears only after native records commit. Recovery repeats the
     // same repository publication; it never republishes records or replaces another Session.
-    const saved = await repository.saveSession(session)
-    await publish(saved)
-    // Keep the directory claims after publication. Startup package deletion requires these exact
-    // import identities before it can retire any native scope, including retained upstream scopes.
+    return repository.saveSession(session)
   }
   private async syncTree(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {

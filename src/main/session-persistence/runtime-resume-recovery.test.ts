@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -77,6 +77,88 @@ afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
+
+it.each(['missing', 'wrong-project', 'unreadable'] as const)(
+  'exports runtime context read failure identity for %s without changing the rejection',
+  async (failure) => {
+    const h = await harness()
+    const logDir = join(h.root, 'logs')
+    initLogger({ logDir, mirrorToConsole: false })
+    h.log.warn.mockImplementation(createLogger('session-persistence').warn)
+    h.owner.replaceMetadata([h.initial], true)
+    await expect(h.owner.readRuntimeContext(scope.projectId, scope.sessionId)).resolves.toEqual({
+      version: 1,
+      revision: 0
+    })
+    expect(h.log.warn).not.toHaveBeenCalled()
+
+    // Controlled authority failures reproduce the diagnostic gap, not the unknown user trigger.
+    const sessionPath = join(h.root, 'sessions', scope.projectId, `${scope.sessionId}.json`)
+    const originalBytes = await readFile(sessionPath, 'utf8')
+    if (failure === 'missing') await rm(sessionPath)
+    if (failure === 'unreadable') await writeFile(sessionPath, '{PRIVATE_INVALID_JSON', 'utf8')
+    const projectId = failure === 'wrong-project' ? 'other-project' : scope.projectId
+    const authorityStatus = failure === 'unreadable' ? 'unreadable' : 'missing'
+    const expectedError =
+      failure === 'unreadable'
+        ? 'Cannot read Session runtime context because its durable JSON is unreadable.'
+        : 'Cannot read runtime context for a missing Session.'
+    const readContext = (): Promise<unknown> =>
+      h.owner.readRuntimeContext(projectId, scope.sessionId)
+
+    await expect(readContext()).rejects.toThrow(expectedError)
+    const diagnostics = {
+      operation: 'runtime-context-read',
+      phase: 'load-authority',
+      projectId,
+      sessionId: scope.sessionId,
+      authorityStatus,
+      cachedProjectId: scope.projectId,
+      metadataComplete: true
+    }
+    expect(h.log.warn).toHaveBeenCalledExactlyOnceWith(
+      'Runtime Session authority unavailable',
+      diagnostics
+    )
+    await flushLogs()
+    const raw = await readFile(join(logDir, 'main.log'), 'utf8')
+    const files = await exportDiagnosticFiles(
+      {
+        configRoot: h.root,
+        dataRoot: h.root,
+        logPath: join(logDir, 'main.log'),
+        appVersion: 'test'
+      },
+      { ...scope, selectedItems: ['log:main.log'] }
+    )
+    expect(
+      files['logs/main.log']
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+    ).toContainEqual(
+      expect.objectContaining({ event: 'Runtime Session authority unavailable', diagnostics })
+    )
+    for (const content of [raw, files['logs/main.log']]) {
+      expect(content).not.toContain('PRIVATE_INVALID_JSON')
+      expect(content).not.toContain(h.initial.title)
+      expect(content).not.toContain(h.initial.cwd)
+      expect(content).not.toContain(h.initial.messages[0].content)
+    }
+
+    h.log.warn.mockImplementationOnce(() => {
+      throw new Error('Diagnostic sink unavailable')
+    })
+    await expect(readContext()).rejects.toThrow(expectedError)
+    if (failure === 'missing') {
+      expect(await h.raw()).toEqual({ status: 'missing' })
+    } else {
+      expect(await readFile(sessionPath, 'utf8')).toBe(
+        failure === 'unreadable' ? '{PRIVATE_INVALID_JSON' : originalBytes
+      )
+    }
+  }
+)
 
 it('exports runtime mutation failure diagnostics without changing the missing Session rejection', async () => {
   const h = await harness(true, true)

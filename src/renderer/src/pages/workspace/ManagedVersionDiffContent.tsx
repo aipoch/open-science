@@ -2,7 +2,7 @@ import { Children, memo, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AgentMarkdown, type AgentMarkdownExtension } from '@/components/streamdown/AgentMarkdown'
-import type { PreviewFileFormat } from '@/stores/preview-workbench-store'
+import type { PreviewFileFormat } from '@/stores/preview-workbench-contract'
 import type {
   ManagedFileVersionDiffResult,
   ManagedFileVersionDiffSegment

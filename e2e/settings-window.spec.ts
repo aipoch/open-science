@@ -4,6 +4,7 @@ import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { getSettingsPage } from './fixtures/settings-window'
 import { openGeneralSettings } from './fixtures/settings-preferences'
+import { createProjectViaUi } from './fixtures/project'
 
 test('isolates settings rendering, keeps workspace interactive and synchronizes preferences', async ({
   app
@@ -215,4 +216,23 @@ test('preserves the damaged catalog warning in archived project deletion', async
     .getByRole('button', { name: 'Cancel', exact: true })
     .click()
   expect(await workspace.evaluate(async () => (await window.api.projects.list()).length)).toBe(1)
+})
+
+test('keeps native workspace helpers bound to the workspace after settings is hidden', async ({
+  app
+}) => {
+  const workspace = await app.completeOnboarding()
+  await createProjectViaUi(workspace, 'Native window targeting')
+  await expect(workspace.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  await app.showMainWindow()
+  const dialog = await openGeneralSettings(workspace)
+  await dialog.getByRole('button', { name: 'Close settings' }).click()
+  await expect(dialog).toBeHidden()
+
+  // Electron may reorder the retained settings window ahead of the workspace. Native helpers must
+  // still observe and send shortcuts to the workspace, without reopening or closing settings.
+  await expect.poll(() => app.mainWindowState()).toEqual({ minimized: false, visible: true })
+  await app.pressMainWindowShortcut('F', process.platform === 'darwin' ? ['meta'] : ['control'])
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
+  await expect(dialog).toBeHidden()
 })

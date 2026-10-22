@@ -87,7 +87,6 @@ const ProviderStep = ({
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
   const persistProvider = useSettingsStore((state) => state.persistProvider)
-  const validateProvider = useSettingsStore((state) => state.validateProvider)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
   const cancelCodexLogin = useSettingsStore((state) => state.cancelCodexLogin)
@@ -352,17 +351,17 @@ const ProviderStep = ({
         const providerId = await persistProvider(toUpsertRequest(formValue))
         xaiLoginCancelledRef.current = false
         xaiLoginPendingRef.current = true
+        let validation: ValidateProviderResult
         try {
           const session = await beginXaiOAuthLogin()
           if (xaiLoginCancelledRef.current) return
           setXaiSession(session)
-          await waitXaiOAuthLogin()
+          ;({ validation } = await waitXaiOAuthLogin())
         } finally {
           xaiLoginPendingRef.current = false
         }
         if (xaiLoginCancelledRef.current) return
         setXaiSession(undefined)
-        const validation = await validateProvider({ providerId })
         if (validation.applied === false) {
           setValidationOk(false)
           setValidationMessage(t('The provider changed during testing. Try again.'))
@@ -427,6 +426,11 @@ const ProviderStep = ({
             'Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.'
           )}
         </CardDescription>
+        <p className="text-xs leading-5 text-muted-foreground">
+          {t(
+            'Connect and test a model to finish setup. The agent needs this connection to respond to your requests.'
+          )}
+        </p>
       </CardHeader>
       <Separator className="bg-border-200" />
 

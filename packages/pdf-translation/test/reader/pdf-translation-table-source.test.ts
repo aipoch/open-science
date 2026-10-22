@@ -154,6 +154,72 @@ function incompleteComponentSetup() {
 
 describe('transactional fallback for incomplete whole-unit allocations', () => {
   it.each([false, true])(
+    'retains an unmeasured multi-region shared source without disabling independent tables, reverse: %s',
+    async (reverse) => {
+      const f = incompleteComponentSetup(),
+        origin = { pageNumber: 1, index: 0, text: 'Alpha Beta Gamma' }
+      f.items[0].str = origin.text
+      f.context.extraction = {
+        ...f.extraction,
+        source: createPdfTranslationSource({
+          ...f.extraction.source,
+          units: [
+            {
+              ...f.extraction.source.units[0],
+              source: 'Alpha Beta Gamma 10',
+              fragments: [
+                {
+                  ...f.extraction.source.units[0].fragments[0],
+                  items: [
+                    { index: 0, text: origin.text },
+                    { index: 1, text: '10' }
+                  ]
+                }
+              ]
+            },
+            f.extraction.source.units[1]
+          ]
+        })
+      }
+      const table = f.cached.elements[0].table!
+      table.columnCount = 2
+      table.cells = [
+        {
+          ...table.cells[0],
+          text: 'Alpha Beta',
+          regions: [
+            { page: 1, ...f.rect(0.1), width: 0.04 },
+            { page: 1, ...f.rect(0.15), width: 0.04 }
+          ],
+          sourceItems: [origin]
+        },
+        {
+          ...table.cells[0],
+          column: 1,
+          text: 'Gamma',
+          regions: [{ page: 1, ...f.rect(0.22), width: 0.08 }],
+          sourceItems: [{ ...origin }]
+        }
+      ]
+      if (reverse) f.cached.elements.reverse()
+      const before = structuredClone(f.cached)
+      const result = await applyCachedPdfTableSources(f.context)
+      expect(result.source.units.find((u) => u.id === 'group')).toEqual(
+        f.context.extraction.source.units[0]
+      )
+      expect(
+        result.source.units.filter((u) => u.id.startsWith('table-source:')).map((u) => u.source)
+      ).toEqual(['Prose'])
+      expect(result.coverage.warnings).toContainEqual({
+        unitId: 'group',
+        reasons: ['table-layout', 'table-structure-unreliable']
+      })
+      expect(f.cached).toEqual(before)
+      f.items[0].str = 'Different native source'
+      expect(await applyCachedPdfTableSources(f.context)).toBe(f.context.extraction)
+    }
+  )
+  it.each([false, true])(
     'quarantines an unpartitionable shared parent without blocking an independent table, reverse: %s',
     async (reverse) => {
       const f = incompleteComponentSetup()
@@ -668,51 +734,65 @@ describe('cached PDF table source ownership', () => {
     ).toBe(true)
   })
 
-  it('isolates reliable grouped-table parts from an independent conflicting part', async () => {
-    const f = setup()
-    const table = f.cached.elements[0].table!
-    table.issues = [{ code: 'unresolved-spanning-cells', detail: 'Ambiguous' }]
-    f.cached.elements[0] = {
-      ...f.cached.elements[0],
-      table: undefined,
-      caption: {
-        text: 'Table. Two domains',
-        regions: structuredClone(f.cached.elements[0].regions)
-      },
-      regions: [...f.cached.elements[0].regions, { page: 1, ...f.rect(0.1, 0.6) }],
-      tableParts: [
-        { title: 'Unresolved', table },
-        {
-          title: 'Reliable',
-          table: {
-            rowCount: 1,
-            columnCount: 1,
-            issues: [],
-            unassignedText: [],
-            cells: [
-              {
-                row: 0,
-                column: 0,
-                rowSpan: 1,
-                columnSpan: 1,
-                text: 'Prose',
-                regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
-                sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
-              }
-            ]
+  it.each([false, true])(
+    'isolates grouped parts unless a genuine parent conflict exists: %s',
+    async (parentConflict) => {
+      const f = setup()
+      const table = f.cached.elements[0].table!
+      table.issues = [{ code: 'unresolved-spanning-cells', detail: 'Ambiguous' }]
+      f.cached.elements[0] = {
+        ...f.cached.elements[0],
+        // The same code/detail may also describe an independent whole-group
+        // conflict. Readers must not subtract parent issues matching a part.
+        issues: parentConflict ? structuredClone(table.issues) : [],
+        table: undefined,
+        caption: {
+          text: 'Table. Two domains',
+          regions: structuredClone(f.cached.elements[0].regions)
+        },
+        regions: [...f.cached.elements[0].regions, { page: 1, ...f.rect(0.1, 0.6) }],
+        tableParts: [
+          { title: 'Unresolved', table },
+          {
+            title: 'Reliable',
+            table: {
+              rowCount: 1,
+              columnCount: 1,
+              issues: [],
+              unassignedText: [],
+              cells: [
+                {
+                  row: 0,
+                  column: 0,
+                  rowSpan: 1,
+                  columnSpan: 1,
+                  text: 'Prose',
+                  regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+                  sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
+                }
+              ]
+            }
           }
-        }
-      ]
+        ]
+      }
+      expect(() => parsePdfStructureResult(f.cached, f.cached)).not.toThrow()
+      const result = await applyCachedPdfTableSources(f.context)
+      expect(
+        result.source.units.filter((unit) => unit.sourceOnly).map((unit) => unit.source)
+      ).toEqual(parentConflict ? [] : ['Prose'])
+      expect(result.source.units.find((unit) => unit.id === 'group')).toEqual(
+        f.extraction.source.units[0]
+      )
+      if (parentConflict) {
+        expect(result.source.units).toEqual(f.extraction.source.units)
+        expect(
+          result.coverage.warnings.every((warning) =>
+            warning.reasons.includes('table-structure-unreliable')
+          )
+        ).toBe(true)
+      }
     }
-    expect(() => parsePdfStructureResult(f.cached, f.cached)).not.toThrow()
-    const result = await applyCachedPdfTableSources(f.context)
-    expect(
-      result.source.units.filter((unit) => unit.sourceOnly).map((unit) => unit.source)
-    ).toEqual(['Prose'])
-    expect(result.source.units.find((unit) => unit.id === 'group')).toEqual(
-      f.extraction.source.units[0]
-    )
-  })
+  )
 
   // Insert inside the existing cached PDF table source ownership describe, using setup().
   it('remaps removed-unit warnings to the native owners created by table replacement', async () => {
@@ -829,13 +909,14 @@ describe('cached PDF table source ownership', () => {
     'outside-native-ink',
     'outside-unit',
     'missing-caption',
-    'uncertain-figure'
+    'uncertain-figure',
+    'unsafe-figure'
   ])('keeps prose when figure ownership is not complete: %s', async (variant) => {
     const fixture = setup()
     const figure: PdfStructureResult['elements'][number] = {
       id: 'figure-1',
       kind: 'figure',
-      issues: [],
+      issues: [{ code: 'native-raster-composite-grid', detail: 'native-raster-composite-grid' }],
       regions: [{ page: 1, x: 0.05, y: 0.05, width: 0.7, height: 0.3 }],
       caption: {
         text: 'Figure 1. Measured signals.',
@@ -866,6 +947,8 @@ describe('cached PDF table source ownership', () => {
     if (variant === 'missing-caption') delete figure.caption
     if (variant === 'uncertain-figure')
       figure.issues.push({ code: 'uncertain', detail: 'Unproved' })
+    if (variant === 'unsafe-figure')
+      figure.issues.push({ code: 'text-dominant-graphics', detail: 'text-dominant-graphics' })
     expect(await applyCachedPdfFigureSources(fixture.context)).toBe(fixture.extraction)
     expect(fixture.extraction.source.units[0].sourceOnly).toBeUndefined()
   })
@@ -878,34 +961,39 @@ describe('cached PDF table source ownership', () => {
     await expect(applyCachedPdfFigureSources(fixture.context)).rejects.toThrow()
   })
 
-  it('retains proved figure text once as source-only while keeping prose and captions eligible', async () => {
-    const fixture = setup()
-    fixture.cached.elements = [
-      {
-        id: 'figure-1',
-        kind: 'figure',
-        issues: [],
-        regions: [{ page: 1, x: 0.05, y: 0.05, width: 0.7, height: 0.3 }],
-        caption: {
-          text: 'Figure 1. Measured signals.',
-          regions: [{ page: 1, x: 0.05, y: 0.4, width: 0.7, height: 0.1 }]
-        },
-        sourceItems: [
-          { pageNumber: 1, index: 0, text: 'Row' },
-          { pageNumber: 1, index: 1, text: '10' }
-        ]
-      }
-    ]
-    const result = await applyCachedPdfFigureSources(fixture.context)
-    expect(result.source.units).toEqual([
-      { ...fixture.extraction.source.units[0], sourceOnly: true },
-      fixture.extraction.source.units[1]
-    ])
-    expect(result.coverage).toEqual(fixture.extraction.coverage)
-    expect(fixture.extraction.source.units[0].sourceOnly).toBeUndefined()
-    expect(fixture.document.destroy).not.toHaveBeenCalled()
-    expect(fixture.page.cleanup).not.toHaveBeenCalled()
-  })
+  it.each([false, true])(
+    'retains proved figure text with informational recovery %s while keeping prose and captions eligible',
+    async (informational) => {
+      const fixture = setup()
+      fixture.cached.elements = [
+        {
+          id: 'figure-1',
+          kind: 'figure',
+          issues: informational
+            ? [{ code: 'native-raster-composite-grid', detail: 'native-raster-composite-grid' }]
+            : [],
+          regions: [{ page: 1, x: 0.05, y: 0.05, width: 0.7, height: 0.3 }],
+          caption: {
+            text: 'Figure 1. Measured signals.',
+            regions: [{ page: 1, x: 0.05, y: 0.4, width: 0.7, height: 0.1 }]
+          },
+          sourceItems: [
+            { pageNumber: 1, index: 0, text: 'Row' },
+            { pageNumber: 1, index: 1, text: '10' }
+          ]
+        }
+      ]
+      const result = await applyCachedPdfFigureSources(fixture.context)
+      expect(result.source.units).toEqual([
+        { ...fixture.extraction.source.units[0], sourceOnly: true },
+        fixture.extraction.source.units[1]
+      ])
+      expect(result.coverage).toEqual(fixture.extraction.coverage)
+      expect(fixture.extraction.source.units[0].sourceOnly).toBeUndefined()
+      expect(fixture.document.destroy).not.toHaveBeenCalled()
+      expect(fixture.page.cleanup).not.toHaveBeenCalled()
+    }
+  )
 
   const measuredSegmentsSetup = () => {
     const f = setup()

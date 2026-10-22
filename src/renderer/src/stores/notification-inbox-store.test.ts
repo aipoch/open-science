@@ -4,7 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from './notification-inbox-store'
 
 afterEach(() => {
-  useNotificationInboxStore.setState({ ...EMPTY_SNAPSHOT, status: 'idle', error: undefined })
+  useNotificationInboxStore.setState({
+    ...EMPTY_SNAPSHOT,
+    status: 'idle',
+    error: undefined,
+    markAllReadPending: false,
+    markAllReadError: undefined
+  })
   vi.unstubAllGlobals()
 })
 
@@ -157,4 +163,58 @@ describe('notification inbox store', () => {
       error: 'network unavailable'
     })
   })
+})
+
+it('retains unread messages and exposes a failed mark-all command, then clears it on retry', async () => {
+  const markAllRead = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('write failed'))
+    .mockResolvedValueOnce(undefined)
+  const getSnapshot = vi.fn().mockResolvedValue({ ...EMPTY_SNAPSHOT, latestSequence: 3 })
+  vi.stubGlobal('window', { api: { notifications: { markAllRead, getSnapshot } } })
+  useNotificationInboxStore.setState({
+    ...EMPTY_SNAPSHOT,
+    unreadCount: 2,
+    latestSequence: 3,
+    status: 'ready'
+  })
+  await expect(useNotificationInboxStore.getState().markAllRead()).rejects.toThrow('write failed')
+  expect(useNotificationInboxStore.getState()).toMatchObject({
+    unreadCount: 2,
+    status: 'ready',
+    markAllReadPending: false,
+    markAllReadError: 'write failed'
+  })
+  expect(getSnapshot).not.toHaveBeenCalled()
+  await useNotificationInboxStore.getState().markAllRead()
+  expect(useNotificationInboxStore.getState()).toMatchObject({
+    unreadCount: 0,
+    markAllReadPending: false,
+    markAllReadError: undefined
+  })
+})
+
+it('deduplicates mark-all requests until the write and refresh settle', async () => {
+  let finish!: () => void
+  const markAllRead = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  const getSnapshot = vi.fn().mockResolvedValue({ ...EMPTY_SNAPSHOT, latestSequence: 3 })
+  vi.stubGlobal('window', { api: { notifications: { markAllRead, getSnapshot } } })
+  useNotificationInboxStore.setState({
+    ...EMPTY_SNAPSHOT,
+    unreadCount: 2,
+    latestSequence: 3,
+    status: 'ready'
+  })
+  const first = useNotificationInboxStore.getState().markAllRead()
+  await useNotificationInboxStore.getState().markAllRead()
+  expect(markAllRead).toHaveBeenCalledOnce()
+  expect(useNotificationInboxStore.getState().markAllReadPending).toBe(true)
+  finish()
+  await first
+  expect(useNotificationInboxStore.getState().markAllReadPending).toBe(false)
 })

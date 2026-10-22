@@ -1,5 +1,5 @@
-import type { ChatSession } from '@/stores/session-store'
-import type { PreviewFileFormat } from '@/stores/preview-workbench-store'
+import type { ChatSession } from '@/stores/session-store-contract'
+import type { PreviewFileFormat } from '@/stores/preview-workbench-contract'
 
 import {
   getFileExtension,

@@ -901,6 +901,14 @@ export const createSessionDetailsOwner = (
           ) {
             throw new SessionDetailsConflictError()
           }
+          const edited = {
+            ...session,
+            ...(titleChanged ? { title: details.title } : {}),
+            ...(descriptionChanged ? { description: details.description } : {})
+          }
+          // Imported generation provenance is recorded research, not local editing authority.
+          // The repository still rejects any research changes, including description edits.
+          if (session.packageOrigin) return { kind: 'write', session: edited }
           const generation = session.sessionDetailsGeneration
           const superseded =
             generation?.status === 'queued' || generation?.status === 'running'
@@ -909,9 +917,7 @@ export const createSessionDetailsOwner = (
           return {
             kind: 'write',
             session: {
-              ...session,
-              ...(titleChanged ? { title: details.title } : {}),
-              ...(descriptionChanged ? { description: details.description } : {}),
+              ...edited,
               sessionDetailsSource: 'manual',
               ...(superseded ? { sessionDetailsGeneration: superseded } : {})
             }

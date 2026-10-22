@@ -1,10 +1,16 @@
-import type { ProxyConfig } from 'electron'
+// Shared by the Electron and Node adapters; host ports do not import an adapter's types.
+export type RuntimeProxyConfig = Readonly<{
+  mode?: 'direct' | 'auto_detect' | 'pac_script' | 'fixed_servers' | 'system'
+  pacScript?: string
+  proxyBypassRules?: string
+  proxyRules?: string
+}>
 
 export type RuntimeNetwork = Readonly<{
   fetch: typeof fetch
   fetchWithManualRedirect: typeof fetch
   resolveProxy: (url: string) => Promise<string>
-  setProxy: (config: ProxyConfig) => Promise<void>
+  setProxy: (config: RuntimeProxyConfig) => Promise<void>
 }>
 let network: RuntimeNetwork | undefined
 export function configureRuntimeNetwork(value: RuntimeNetwork): void {

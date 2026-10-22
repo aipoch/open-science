@@ -53,6 +53,51 @@ describe('opencodeFramework spawn seam', () => {
   })
 })
 
+it.each(['darwin', 'linux', 'win32'] as const)(
+  'ignores inherited OpenCode config and plugin controls on %s while keeping the app configuration',
+  (platform) => {
+    const spawnProcess = vi.fn().mockReturnValue(fakeChild)
+    const sourceEnv = {
+      PATH: '/parent-bin',
+      OPENCODE_CONFIG: '/personal/opencode.json',
+      OPENCODE_CONFIG_DIR: '/personal/plugins',
+      OPENCODE_CONFIG_CONTENT: '{"plugin":["personal-plugin"]}',
+      OPENCODE_TEST_MANAGED_CONFIG_DIR: '/personal/managed',
+      OPENCODE_PLUGIN_META_FILE: '/personal/plugin-metadata.json',
+      OPENCODE_PURE: '1'
+    }
+    const inheritedEnv =
+      platform === 'win32'
+        ? Object.fromEntries(
+            Object.entries(sourceEnv).map(([key, value]) => [key.toLowerCase(), value])
+          )
+        : sourceEnv
+    const framework = createOpencodeFramework({ platform, sourceEnv: inheritedEnv, spawnProcess })
+    const config = framework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+    framework.spawn({ executablePath: '/bin/opencode', args: [], env: config.env ?? {} })
+    const env = spawnProcess.mock.calls[0][2].env
+    for (const name of [
+      'OPENCODE_CONFIG',
+      'OPENCODE_CONFIG_DIR',
+      'OPENCODE_TEST_MANAGED_CONFIG_DIR',
+      'OPENCODE_PLUGIN_META_FILE',
+      'OPENCODE_PURE'
+    ]) {
+      expect(env).not.toHaveProperty(name)
+      expect(env).not.toHaveProperty(name.toLowerCase())
+    }
+    expect(inheritedEnv).toHaveProperty(
+      platform === 'win32' ? 'opencode_config' : 'OPENCODE_CONFIG'
+    )
+    expect(env.OPENCODE_CONFIG_CONTENT).toBe(config.env?.OPENCODE_CONFIG_CONTENT)
+    expect(env.OPENCODE_CONFIG_CONTENT).not.toContain('personal-plugin')
+    expect(env.OPENCODE_DISABLE_PROJECT_CONFIG).toBe('true')
+  }
+)
+
 describe('opencodeFramework.prepareModelConfig', () => {
   it('writes connector conventions and wires them into opencode.json instructions', () => {
     const config = opencodeFramework.prepareModelConfig(
@@ -64,12 +109,17 @@ describe('opencodeFramework.prepareModelConfig', () => {
       }
     )
 
-    const instructionsFile = config.configFiles?.find((file) => file.path.endsWith('connectors.md'))
+    const instructionsFile = config.configFiles?.find((file) =>
+      /connectors-[a-f0-9]+\.md$/.test(file.path)
+    )
     expect(instructionsFile?.content).toContain('host.mcp(')
 
     const opencodeJson = config.configFiles?.find((file) => file.path.endsWith('opencode.json'))
     const parsed = JSON.parse(opencodeJson?.content ?? '{}')
-    expect(parsed.instructions).toContain(instructionsFile?.path)
+    expect(parsed.instructions ?? []).toEqual([])
+    expect(JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').instructions).toContain(
+      instructionsFile?.path
+    )
   })
 
   it('writes stable app guidance to native instructions instead of a user prompt', () => {
@@ -86,13 +136,16 @@ describe('opencodeFramework.prepareModelConfig', () => {
     )
 
     const instructionsFile = config.configFiles?.find((file) =>
-      file.path.endsWith('open-science.md')
+      /open-science-[a-f0-9]+\.md$/.test(file.path)
     )
     expect(instructionsFile?.content).toBe(
       'Use `open_science_notebook_notebook_execute` from `open_science_notebook`.\n\nThen call `open_science_artifacts_write_artifact_file`.'
     )
     const opencodeJson = config.configFiles?.find((file) => file.path.endsWith('opencode.json'))
-    expect(JSON.parse(opencodeJson?.content ?? '{}').instructions).toContain(instructionsFile?.path)
+    expect(JSON.parse(opencodeJson?.content ?? '{}').instructions ?? []).toEqual([])
+    expect(JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').instructions).toContain(
+      instructionsFile?.path
+    )
     expect(config.persistentSystemPrompt).toBe(instructionsFile?.content)
     expect(
       opencodeFramework.buildSessionSetup({
@@ -102,13 +155,44 @@ describe('opencodeFramework.prepareModelConfig', () => {
     ).toEqual({ promptPrefix: 'turn-only reminder' })
   })
 
+  it('pins independent discovery, reference roots and immutable instructions for parallel scopes', () => {
+    const provider = { type: 'custom' as const, baseUrl: 'https://gw/v1', model: 'm' }
+    const config = (name: string): ReturnType<typeof opencodeFramework.prepareModelConfig> =>
+      opencodeFramework.prepareModelConfig(provider, {
+        storageRoot: '/data',
+        executablePath: '/bin/opencode',
+        instructions: `Scope: ${name}`,
+        skillDiscovery: {
+          allowedNames: [name],
+          allowedPaths: [`/data/opencode/config/opencode/skills/${name}/SKILL.md`]
+        }
+      })
+    const main = config('mcp-genes')
+    const specialist = config('mcp-orphadata')
+    const policy = JSON.parse(main.env!.OPENCODE_CONFIG_CONTENT!)
+    expect(policy.permission.skill).toEqual({ '*': 'deny', 'mcp-genes': 'ask' })
+    expect(policy.permission.external_directory).toEqual({
+      '*': 'deny',
+      [join('/data/opencode/config/opencode/skills/mcp-genes', '*')]: 'allow'
+    })
+    expect(JSON.stringify(policy)).not.toContain('orphadata')
+    const other = JSON.parse(specialist.env!.OPENCODE_CONFIG_CONTENT!)
+    expect(other.instructions).not.toEqual(policy.instructions)
+    expect(main.configFiles!.find(({ path }) => policy.instructions.includes(path))?.content).toBe(
+      'Scope: mcp-genes'
+    )
+    expect(JSON.parse(specialist.configFiles![0].content).instructions ?? []).toEqual([])
+  })
+
   it('omits instructions when none are provided', () => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
     )
 
-    expect(config.configFiles?.some((file) => file.path.endsWith('connectors.md'))).toBe(false)
+    expect(config.configFiles?.some((file) => /connectors-[a-f0-9]+\.md$/.test(file.path))).toBe(
+      false
+    )
     const parsed = JSON.parse(
       config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
     )
@@ -160,7 +244,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const writtenConfig = JSON.parse(
       config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
     )
-    expect(writtenConfig.permission).toEqual(rules)
+    expect(writtenConfig.permission).toEqual({ ...rules, external_directory: 'deny' })
     expect(rules.task).toBe('deny')
     expect(JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').agent).toEqual({
       general: { disable: true },

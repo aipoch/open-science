@@ -246,7 +246,11 @@ describe('trusted additive module registrations', () => {
         'package-test-boundaries.json',
         'module-impact-inputs.mjs',
         'module-test-impact.mjs',
-        'module-derived-consumers.mjs',
+        'module-graph/policy.mjs',
+        'module-graph/boundaries.mjs',
+        'module-graph/derived-index.mjs',
+        'module-graph/layers.mjs',
+        'module-boundaries.json',
         'module-derived-consumers.json',
         'module-ownership-paths.mjs',
         'module-impact-authority.mjs',
@@ -405,6 +409,155 @@ describe('trusted additive module registrations', () => {
       expect(resolve().registrationOnly).not.toBe(true)
     }
   )
+
+  describe('regenerated derived consumer index', () => {
+    const index = 'scripts/ci/module-derived-consumers.json'
+    const source = 'resources/sample/worker.mjs'
+    const derivedTest = 'src/main/derived.test.ts'
+    const fixture = (): {
+      cwd: string
+      base: string
+      write: (value: unknown) => string
+      put: (path: string, value: unknown) => void
+    } => {
+      const cwd = mkdtempSync(join(tmpdir(), 'derived index '))
+      roots.push(cwd)
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      const put = (path: string, value: unknown): void => {
+        mkdirSync(dirname(join(cwd, path)), { recursive: true })
+        writeFileSync(join(cwd, path), typeof value === 'string' ? value : JSON.stringify(value))
+      }
+      git('init', '--quiet')
+      git('config', 'user.email', 'ci@example.com')
+      git('config', 'user.name', 'CI Test')
+      put('scripts/ci/module-impact.json', { schemaVersion: 1 })
+      put('scripts/ci/module-impact/sample.json', sample().modules.sample)
+      for (const path of paths(sample())) put(path, 'not executable')
+      put(derivedTest, 'export {}')
+      put(index, { schemaVersion: 1, modules: {} })
+      const write = (value: unknown): string => {
+        put(index, value)
+        put(source, `export const revision = ${Math.random()}`)
+        git('add', '.')
+        git('commit', '--quiet', '-m', 'ci(test): derived evidence')
+        return git('rev-parse', 'HEAD')
+      }
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'ci(test): base')
+      return { cwd, base: git('rev-parse', 'HEAD'), write, put }
+    }
+    const changes = [
+      { path: source, status: 'modified' },
+      { path: index, status: 'modified' }
+    ]
+    const resolveAt = (
+      f: ReturnType<typeof fixture>,
+      head: string,
+      trusted = { schemaVersion: 1, modules: { sample: ['src/main/sample.test.ts'] } },
+      candidateChanges = changes
+    ): ReturnType<typeof resolveModuleImpactInputs> =>
+      resolveModuleImpactInputs(candidateChanges, {
+        base: f.base,
+        head,
+        cwd: f.cwd,
+        manifest: sample(),
+        derivedConsumers: trusted
+      })
+
+    it('routes a valid index as additive evidence instead of a global input', () => {
+      const f = fixture()
+      const inputs = resolveAt(f, f.write({ schemaVersion: 1, modules: { sample: [derivedTest] } }))
+      expect(inputs.derivedIndexAccepted).toBe(true)
+      expect(inputs.changes).toEqual([changes[0]])
+      expect(classifyChanges(changes).mode).toBe('full')
+      expect(
+        classifyChanges(inputs.changes, undefined, { moduleManifest: inputs.manifest }).mode
+      ).toBe('selective')
+      const plan = createAffectedTestPlan(inputs.changes, graph, inputs.manifest)
+      expect(plan.mode).toBe('selective')
+      // Trusted and candidate evidence are both selected; neither replaces the other.
+      expect(plan.testFiles).toEqual(
+        expect.arrayContaining(['src/main/sample.test.ts', derivedTest])
+      )
+    })
+
+    it('never lets a candidate index remove trusted evidence', () => {
+      const f = fixture()
+      const inputs = resolveAt(f, f.write({ schemaVersion: 1, modules: {} }))
+      expect(inputs.derivedIndexAccepted).toBe(true)
+      expect(createAffectedTestPlan(inputs.changes, graph, inputs.manifest).testFiles).toContain(
+        'src/main/sample.test.ts'
+      )
+    })
+
+    it('drops trusted evidence for a test the head revision deleted', () => {
+      const f = fixture()
+      const head = f.write({ schemaVersion: 1, modules: {} })
+      const inputs = resolveAt(f, head, { schemaVersion: 1, modules: { sample: [derivedTest] } })
+      expect(inputs.derivedIndexAccepted).toBe(true)
+      expect(createAffectedTestPlan(inputs.changes, graph, inputs.manifest).testFiles).toContain(
+        derivedTest
+      )
+
+      const deleted = fixture()
+      rmSync(join(deleted.cwd, derivedTest))
+      const removed = deleted.write({ schemaVersion: 1, modules: {} })
+      const pruned = resolveAt(deleted, removed, {
+        schemaVersion: 1,
+        modules: { sample: [derivedTest] }
+      })
+      expect(pruned.derivedIndexAccepted).toBe(true)
+      expect(
+        createAffectedTestPlan(pruned.changes, graph, pruned.manifest).testFiles
+      ).not.toContain(derivedTest)
+    })
+
+    it.each([
+      ['malformed JSON', '{"schemaVersion":1,'],
+      ['an unknown module', { schemaVersion: 1, modules: { other: [derivedTest] } }],
+      ['an unsafe path', { schemaVersion: 1, modules: { sample: ['../outside.test.ts'] } }],
+      ['a non-test path', { schemaVersion: 1, modules: { sample: ['src/main/derived.ts'] } }],
+      ['an unexpected key', { schemaVersion: 1, modules: {}, policy: true }]
+    ])('keeps global routing for %s', (_, value) => {
+      const f = fixture()
+      const inputs = resolveAt(f, f.write(value))
+      expect(inputs.derivedIndexAccepted).toBeUndefined()
+      expect(inputs.changes).toEqual(changes)
+      expect(
+        classifyChanges(inputs.changes, undefined, { moduleManifest: inputs.manifest }).mode
+      ).toBe('full')
+    })
+
+    it.each(['added', 'deleted', 'renamed', 'type-changed'])(
+      'keeps global routing when the index is %s',
+      (status) => {
+        const f = fixture()
+        const head = f.write({ schemaVersion: 1, modules: { sample: [derivedTest] } })
+        const candidate = [changes[0], { path: index, status }]
+        expect(resolveAt(f, head, undefined, candidate).changes).toEqual(candidate)
+      }
+    )
+
+    it('keeps other CI inputs global beside an accepted index', () => {
+      const f = fixture()
+      const head = f.write({ schemaVersion: 1, modules: { sample: [derivedTest] } })
+      const candidate = [...changes, { path: 'scripts/ci/other.mjs', status: 'modified' }]
+      const inputs = resolveAt(f, head, undefined, candidate)
+      expect(createAffectedTestPlan(inputs.changes, graph, inputs.manifest).mode).toBe('full')
+    })
+
+    it('ignores candidate tests that do not exist at head', () => {
+      const f = fixture()
+      const inputs = resolveAt(
+        f,
+        f.write({ schemaVersion: 1, modules: { sample: ['src/main/missing.test.ts'] } })
+      )
+      expect(
+        createAffectedTestPlan(inputs.changes, graph, inputs.manifest).testFiles
+      ).not.toContain('src/main/missing.test.ts')
+    })
+  })
 
   it('reads committed blobs and fails closed on unsafe revisions without executing candidate code', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'module input '))

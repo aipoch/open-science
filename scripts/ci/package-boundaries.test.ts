@@ -676,7 +676,6 @@ it('keeps provider units upstream of host adapters and selects real downstream c
         'packages/providers/src/protocols/messages/conversion.test.ts',
         'packages/providers/src/protocols/chat-completions/stream.test.ts',
         'src/main/settings/classification-settings.test.ts',
-        'src/main/literature/pdf-translation/local.test.ts',
         'src/main/settings/responses-to-chat-completions-bridge.test.ts',
         'src/main/settings/provider-transport-owner.test.ts',
         'src/main/literature/pdf-translation/api-target.test.ts',
@@ -692,8 +691,8 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     ).toEqual([])
   }
   for (const [path, test] of [
-    ['src/shared/pdf-text.ts', 'src/main/literature/pdf-translation/text-generation.test.ts'],
-    ['src/shared/fuzzy-match.ts', 'src/main/literature/pdf-translation/text-generation.test.ts'],
+    ['src/shared/pdf-text.ts', 'src/shared/pdf-text.test.ts'],
+    ['src/shared/fuzzy-match.ts', 'src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts'],
     [
       'src/main/settings/responses-to-chat-completions-bridge.ts',
       'src/main/settings/responses-to-chat-completions-bridge.test.ts'

@@ -1,3 +1,7 @@
+import { RXNORM_TOOLS } from './rxnorm'
+import { DAILYMED_TOOLS } from './dailymed'
+import { BIOSAMPLES_TOOLS } from './biosamples'
+import { WIKIPATHWAYS_TOOLS } from './wikipathways'
 import { createConnectorRegistry } from '@aipoch/connector-core'
 import { ALLIANCE_TOOLS } from './alliance'
 import { BIOMART_TOOLS } from './biomart'
@@ -24,6 +28,7 @@ import { HMMER_TOOLS } from './hmmer'
 import { IEDB_TOOLS } from './iedb'
 import { INTERPROSCAN_TOOLS } from './interproscan'
 import { LITERATURE_TOOLS } from './literature'
+import { ORPHADATA_TOOLS } from './orphadata'
 import { MONARCH_TOOLS } from './monarch'
 import { MOLECULE_TOOLS } from './molecule'
 import { OMICS_ARCHIVES_TOOLS } from './omics-archives'
@@ -40,6 +45,11 @@ import { ZINC_TOOLS } from './zinc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...RXNORM_TOOLS,
+  ...DAILYMED_TOOLS,
+  ...BIOSAMPLES_TOOLS,
+  ...WIKIPATHWAYS_TOOLS,
+
   ...ALLIANCE_TOOLS,
   ...BIOMART_TOOLS,
   ...BIORXIV_TOOLS,
@@ -65,6 +75,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...INTERPROSCAN_TOOLS,
   ...LITERATURE_TOOLS,
   ...MONARCH_TOOLS,
+  ...ORPHADATA_TOOLS,
   ...MOLECULE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
   ...PATHWAY_COMMONS_TOOLS,

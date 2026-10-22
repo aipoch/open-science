@@ -7,6 +7,8 @@ export const MANAGED_PREVIEW_LOAD_ERROR = 'open-science-preview-load-error'
 type ManagedPreviewPresentation = {
   mimeType?: string
   maxBytes?: number
+  // Opt into bounded display bytes; raw resource consumers keep original-byte semantics.
+  imagePreview?: boolean
 }
 
 type AcquireManagedVersionPreviewRequest = ManagedPreviewPresentation & {
@@ -33,7 +35,7 @@ export type ManagedPreviewResource = {
   // Optional SHA-256 from the main-owned immutable content lease, never a PDF.js fingerprint.
   // Transient evidence for this acquired resource; older responses may omit it.
   sourceChecksum?: string
-  // Pixel dimensions for image resources, probed from the file header at acquire time.
+  // Original, oriented pixel dimensions, even when display bytes are downsampled.
   // Absent for non-images and for images whose header could not be parsed.
   width?: number
   height?: number

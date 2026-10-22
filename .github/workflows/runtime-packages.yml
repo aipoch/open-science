@@ -6,7 +6,15 @@ on:
       distribution:
         type: string
         default: archive
-        description: archive for standalone Release downloads, npm for the deferred npm dry-run.
+        description: archive for standalone Release downloads, npm for packaging dry-runs.
+      include_npm:
+        type: boolean
+        default: false
+        description: Also prepare and verify npm tarballs from the archive backend; never publish.
+      source_sha:
+        type: string
+        default: ''
+        description: Certified stable source commit for npm builds; empty uses the caller revision.
       desktop_run_id:
         type: string
         default: ''
@@ -37,13 +45,17 @@ jobs:
       - id: plan
         env:
           DISTRIBUTION: ${{ inputs.distribution }}
+          INCLUDE_NPM: ${{ inputs.include_npm }}
           TARGET: ${{ inputs.target }}
           NIGHTLY: ${{ inputs.nightly }}
           DESKTOP_RUN: ${{ inputs.desktop_run_id }}
           VERIFY_DESKTOP_ONLY: ${{ inputs.verify_desktop_only }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
+          if (process.env.INCLUDE_NPM === 'true' && (process.env.DISTRIBUTION !== 'archive' || process.env.NIGHTLY === 'true' || process.env.VERIFY_DESKTOP_ONLY === 'true' || process.env.SOURCE_SHA)) throw new Error('Combined npm preparation requires stable archive verification');
+          if (process.env.SOURCE_SHA && (!/^[a-f0-9]{40}$/.test(process.env.SOURCE_SHA) || process.env.DISTRIBUTION !== 'npm' || process.env.DESKTOP_RUN || process.env.NIGHTLY === 'true')) throw new Error('Historical sources require an isolated stable npm build');
           if (process.env.NIGHTLY === 'true' && (process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID || process.env.DISTRIBUTION !== 'archive' || process.env.VERIFY_DESKTOP_ONLY === 'true' || !['schedule', 'workflow_dispatch'].includes(process.env.GITHUB_EVENT_NAME))) throw new Error('Nightly archives require same-run desktop artifacts and a Nightly build event');
           const verifyOnly = process.env.VERIFY_DESKTOP_ONLY === 'true';
           if (verifyOnly && (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || !/^[1-9][0-9]*$/.test(process.env.DESKTOP_RUN) || process.env.DISTRIBUTION !== 'archive')) throw new Error('Desktop verification requires manual archive dispatch and a source run');
@@ -79,6 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -133,16 +146,16 @@ jobs:
         if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'archive' }}
         run: npm run pack:runtime-archive
       - name: Pack ordinary Node runtime
-        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
+        if: ${{ !inputs.verify_desktop_only && (inputs.distribution == 'npm' || inputs.include_npm) }}
         run: npm run pack:npm-release
       - name: Verify npm publish input without publication
-        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
+        if: ${{ !inputs.verify_desktop_only && (inputs.distribution == 'npm' || inputs.include_npm) }}
         run: |
           for package in out/npm-artifacts/*.tgz; do
             npm publish "$package" --dry-run --access public --ignore-scripts
           done
       - name: Verify native npm installation
-        if: ${{ !inputs.verify_desktop_only && runner.os != 'Linux' && inputs.distribution == 'npm' }}
+        if: ${{ !inputs.verify_desktop_only && runner.os != 'Linux' && (inputs.distribution == 'npm' || inputs.include_npm) }}
         run: npm run test:npm-installed
       - name: Verify extracted standalone archive
         if: ${{ !inputs.verify_desktop_only && runner.os != 'Linux' && inputs.distribution == 'archive' }}
@@ -151,6 +164,7 @@ jobs:
         if: ${{ !inputs.verify_desktop_only && runner.os == 'Linux' }}
         env:
           DISTRIBUTION: ${{ inputs.distribution }}
+          INCLUDE_NPM: ${{ inputs.include_npm }}
         run: |
           # This disposable CI runner needs user namespaces for the real process sandbox.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -163,26 +177,27 @@ jobs:
             printf "npm-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
             if [ "$DISTRIBUTION" = archive ]; then
               npm run test:runtime-archive-installed
-            else
+            fi
+            if [ "$DISTRIBUTION" = npm ] || [ "$INCLUDE_NPM" = true ]; then
               npm run test:npm-installed
             fi
           '
       - name: Setup minimum supported Node
-        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
+        if: ${{ !inputs.verify_desktop_only && (inputs.distribution == 'npm' || inputs.include_npm) }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22.13.0
       - name: Verify installed native ABI on minimum Node
-        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
+        if: ${{ !inputs.verify_desktop_only && (inputs.distribution == 'npm' || inputs.include_npm) }}
         run: npm run test:npm-installed
       - name: Upload verified native npm tarballs
-        if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'npm' }}
+        if: ${{ !inputs.verify_desktop_only && (inputs.distribution == 'npm' || inputs.include_npm) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: npm-${{ matrix.id }}
           path: out/npm-artifacts/
           if-no-files-found: error
-          retention-days: 5
+          retention-days: 30
 
       - name: Upload verified CLI archive
         if: ${{ !inputs.verify_desktop_only && inputs.distribution == 'archive' }}
@@ -203,18 +218,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: inputs.distribution == 'archive'
         with:
-          pattern: ${{ inputs.distribution == 'archive' && 'cli-*' || 'npm-*' }}
+          pattern: cli-*
           path: out/distributions
-          merge-multiple: ${{ inputs.distribution == 'archive' }}
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: inputs.distribution == 'npm' || inputs.include_npm
+        with:
+          pattern: npm-*
+          path: out/npm-distributions
       - name: Verify complete npm version and integrity set without publication
-        if: inputs.distribution == 'npm'
-        run: npm run publish:npm-release -- out/distributions --dry-run
+        if: inputs.distribution == 'npm' || inputs.include_npm
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: GITHUB_SHA="$SOURCE_SHA" npm run publish:npm-release -- out/npm-distributions --dry-run
       - name: Verify all five standalone archives
         if: inputs.distribution == 'archive'
         run: npm run verify:runtime-archives -- out/distributions

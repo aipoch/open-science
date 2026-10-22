@@ -1,5 +1,5 @@
 import { parseHttpsSourceUrl } from '../../../shared/source-preview'
-import type { PreviewSourceItem } from '../stores/preview-workbench-store'
+import type { PreviewSourceItem } from '../stores/preview-workbench-contract'
 
 type SourcePreviewInput = {
   href: string

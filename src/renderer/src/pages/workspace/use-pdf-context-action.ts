@@ -12,9 +12,9 @@ import {
   pendingPdfContextBindingId,
   pendingPdfContextSelections,
   createPendingPdfContext,
-  usePreviewWorkbenchStore,
-  type PreviewFileItem
+  usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import { useSessionStore } from '@/stores/session-store'
 import { parseLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import { parseNotebookInputPreviewKey } from '../../../../shared/notebook'

@@ -1,5 +1,6 @@
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { McpServer } from '@agentclientprotocol/sdk'
 import type { AgentFramework, SessionSetup } from '../agent-framework/types'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
@@ -188,12 +189,14 @@ class AcpSessionPresentationPolicy {
   }
 
   buildSessionSetup(input: AcpSessionSetupPresentationInput): AcpSessionSetupPresentation {
+    const runtime = input.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
+      { mainAllowedNames?: string[] } | undefined
     const skillWhitelist =
       input.specialistSkills?.kind === 'specialist'
         ? [...input.specialistSkills.frameworkNames]
         : input.specialistSkills?.kind === 'unavailable'
           ? []
-          : undefined
+          : runtime?.mainAllowedNames
     const skillRuntimeScope =
       input.role && input.role !== 'primary' ? undefined : (skillWhitelist ?? 'all')
     const sessionSpecificSystemPromptAppends =

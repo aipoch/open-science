@@ -1,5 +1,6 @@
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 type StringListUpdater = (update: (current: string[]) => string[]) => void
 

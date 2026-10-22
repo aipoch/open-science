@@ -115,14 +115,20 @@ describe('compute store', () => {
     expect(useComputeStore.getState().loadError).toBe('db down')
   })
 
-  it('loads ssh aliases and degrades to empty on failure', async () => {
+  it('distinguishes SSH alias failures from an empty configuration and retries', async () => {
     setComputeApi({ sshConfigAliases: vi.fn().mockResolvedValue(['biowulf', 'lab-gpu']) })
     await useComputeStore.getState().loadSshAliases()
     expect(useComputeStore.getState().sshAliases).toEqual(['biowulf', 'lab-gpu'])
 
     setComputeApi({ sshConfigAliases: vi.fn().mockRejectedValue(new Error('no file')) })
     await useComputeStore.getState().loadSshAliases()
+    expect(useComputeStore.getState().sshAliases).toEqual(['biowulf', 'lab-gpu'])
+    expect(useComputeStore.getState().sshAliasesLoadFailed).toBe(true)
+    expect(useComputeStore.getState().isLoadingSshAliases).toBe(false)
+    setComputeApi({ sshConfigAliases: vi.fn().mockResolvedValue([]) })
+    await useComputeStore.getState().loadSshAliases()
     expect(useComputeStore.getState().sshAliases).toEqual([])
+    expect(useComputeStore.getState().sshAliasesLoadFailed).toBe(false)
   })
 
   it('creates a host and merges it into the cache', async () => {

@@ -8,6 +8,9 @@ import { NotebookDependencyAnalyzer } from './analysis-test-support'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import cells from './reported-venn-font-recovery.fixture.json'
+// Owned keys can still dispatch xtfrm; unproven ordering keeps effects partial.
+// Known paths and producer/consumer evidence remain checked independently.
+
 const corrected = readFileSync(join(__dirname, 'reported-venn-font-recovery.R'), 'utf8')
 const run = (script: string, index: number): NotebookRunRecord => ({
   runId: String(index),
@@ -29,14 +32,14 @@ it.each([cells[0]!.script, corrected])(
   'captures ordinary formatting and the Venn workflow: %#',
   async (script) => {
     const { facts } = await analyzeRNotebookSource(script)
-    expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual([
-      'external-state'
-    ])
+    expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual(
+      script === corrected ? ['external-state', 'opaque-call'] : ['external-state']
+    )
     expect(facts.rOptionWrites).toEqual(['scipen'])
     expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete',
+      readState: script === corrected ? 'partial' : 'complete',
+      writeState: script === corrected ? 'partial' : 'complete',
+      externalState: script === corrected ? 'partial' : 'complete',
       reads: ['inputs/set-membership-111111111111.xlsx']
     })
   }
@@ -112,8 +115,11 @@ it('recovers the corrected script in a fresh kernel after failed font attempts',
       repository: { readSessionRuns: async () => runs }
     }).project({ projectId: 'p', sessionId: 's', throughRunId: '6' })
     expect(projection.stalenessByRunId['5']?.state).toBe('unknown')
-    expect(projection.stalenessByRunId['6']).toEqual({ state: 'clear' })
-    expect(projection.dependenciesByRunId?.['6']).toEqual([])
+    expect(projection.stalenessByRunId['6']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
+    expect(projection.dependenciesByRunId?.['6']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }

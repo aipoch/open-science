@@ -54,7 +54,12 @@ const test = base.extend<{ stageApp: ElectronApplication }>({
     }
   },
   page: async ({ stageApp }, provide) => {
-    await provide(await stageApp.firstWindow())
+    const page = await stageApp.firstWindow()
+    page.on('pageerror', (error) => console.error('Replay fixture page error:', error))
+    page.on('console', (message) => {
+      if (message.type() === 'error') console.error('Replay fixture console error:', message.text())
+    })
+    await provide(page)
   }
 })
 test.beforeAll(async () => {
@@ -71,7 +76,10 @@ test.beforeAll(async () => {
         '@aipoch/diagnostics',
         '@aipoch/skills/document',
         '@aipoch/notebook-analysis/contracts',
-        '@aipoch/environment/contracts'
+        '@aipoch/environment/contracts',
+        '@aipoch/providers',
+        '@aipoch/providers/errors',
+        '@aipoch/providers/transport'
       ]
     },
     server: { host: '127.0.0.1', port: 0, watch: null, hmr: false }

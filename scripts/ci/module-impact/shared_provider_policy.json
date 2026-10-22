@@ -1,0 +1,55 @@
+{
+  "ownerPaths": [
+    "src/shared/reasoning-effort.ts",
+    "src/shared/provider-reasoning-effort.ts",
+    "src/shared/model-preference-contract.ts",
+    "src/shared/provider-model-policy.ts",
+    "src/shared/provider-bridge-policy.ts",
+    "src/shared/provider-error.ts",
+    "src/shared/configured-model-catalog.ts",
+    "src/shared/local-models.ts",
+    "src/shared/classification.ts",
+    "src/shared/reasoning-effort.test.ts",
+    "src/shared/provider-reasoning-effort.test.ts",
+    "src/shared/provider-model-policy.test.ts",
+    "src/shared/configured-model-catalog.test.ts",
+    "src/shared/provider-presentation-policy.test.ts",
+    "src/shared/reasoning-effort-presets.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/reasoning-effort.ts",
+    "src/shared/provider-reasoning-effort.ts",
+    "src/shared/model-preference-contract.ts",
+    "src/shared/provider-model-policy.ts",
+    "src/shared/provider-bridge-policy.ts",
+    "src/shared/provider-error.ts",
+    "src/shared/configured-model-catalog.ts",
+    "src/shared/local-models.ts",
+    "src/shared/classification.ts"
+  ],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": [
+      "src/shared/reasoning-effort.test.ts",
+      "src/shared/provider-reasoning-effort.test.ts",
+      "src/shared/provider-model-policy.test.ts",
+      "src/shared/configured-model-catalog.test.ts",
+      "src/shared/provider-presentation-policy.test.ts",
+      "src/shared/reasoning-effort-presets.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "scripts/build-backend.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

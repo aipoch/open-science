@@ -12,6 +12,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CloseConfirmModal } from './CloseConfirmModal'
+import {
+  WorkspaceMessageQueueOwner,
+  registerWorkspaceQueueExitGuard
+} from '@/pages/workspace/workspace-message-queue-owner'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -392,6 +396,25 @@ describe('CloseConfirmModal', () => {
       requestId: 'r-persistence',
       choice: 'retry'
     })
+  })
+
+  it('explains the unsent queue count instead of suggesting that Retry saving can preserve it', async () => {
+    const owner = new WorkspaceMessageQueueOwner()
+    vi.spyOn(owner, 'pendingUserCount').mockReturnValue(2)
+    const unregister = registerWorkspaceQueueExitGuard(owner)
+    try {
+      render()
+      act(() => emit({ requestId: 'r-queue', variant: 'persistence-failed', sessions: [] }))
+      await findByText(/Queued messages have not been sent/)
+      expect(document.body.textContent).toContain('Unsent messages: 2.')
+      expect(document.body.textContent).not.toContain('Retry saving')
+      const review = await findButtonByName(/^Review queued messages$/)
+      act(() => review.click())
+      expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-queue', choice: 'cancel' })
+    } finally {
+      act(() => unregister())
+      owner.dispose()
+    }
   })
 
   it('requires an explicit destructive action to force quit after an unfinished save', async () => {

@@ -36,7 +36,7 @@
       "src/renderer/src/stores/session-details-claim.test.ts",
       "src/renderer/src/stores/session-details-fallback.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/session-persistence/usage-regressions.test.ts",
       "src/main/specialist/application-commands.test.ts",
@@ -459,13 +459,7 @@
       "src/renderer/src/stores/theme-store.test.ts",
       "src/renderer/src/stores/update-store.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
-      "src/main/ipc-surfaces/desktop-utilities.test.ts",
-      "src/main/runtime-electron-wiring.test.ts",
-      "src/main/settings-window-ipc.test.ts",
-      "src/main/windows.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
   "capabilityOverlays": [],

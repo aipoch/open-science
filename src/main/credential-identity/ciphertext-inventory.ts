@@ -5,6 +5,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { withReadOnlySqliteSnapshot as database } from './sqlite-snapshot'
 import { CredentialIdentityError } from './selection'
+import {
+  CredentialInventoryFailure,
+  credentialSystemCode,
+  type InventoryDiagnostic
+} from './diagnostic'
 
 const PROTECTED_PREFIX = 'open-science:protected:v1:'
 const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
@@ -16,6 +21,11 @@ export const readCredentialCiphertexts = (options: {
   profilePath: string
 }): Buffer[] => {
   const values: Buffer[] = []
+  let source: InventoryDiagnostic['source'] = 'configuration'
+  let stage: InventoryDiagnostic['stage'] = 'read-files'
+  function fail(reason: InventoryDiagnostic['reason'], message: string): never {
+    throw new CredentialInventoryFailure(stage, reason, message)
+  }
   const record = (value: unknown): Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
@@ -26,7 +36,7 @@ export const readCredentialCiphertexts = (options: {
     const encoded = value.slice(prefix.length)
     const bytes = Buffer.from(encoded, 'base64')
     if (!bytes.length || bytes.toString('base64') !== encoded)
-      throw new Error('Invalid ciphertext reference')
+      fail('invalid-ciphertext', 'Invalid ciphertext reference')
     values.push(bytes)
   }
   const collectDocument = (contents: string, name: string): void => {
@@ -99,24 +109,36 @@ export const readCredentialCiphertexts = (options: {
     if (existsSync(options.configRoot)) {
       const entries = readdirSync(options.configRoot)
       for (const name of ['settings.json', 'credentials.json']) {
+        source = name === 'settings.json' ? 'settings' : 'credentials'
+        stage = 'read-files'
         if (entries.some((entry) => entry.startsWith(`${name}.`) && entry.endsWith('.tmp')))
-          throw new Error('Pending credential document requires recovery')
+          fail('pending-document', 'Pending credential document requires recovery')
         const path = join(options.configRoot, name)
         if (!existsSync(path)) continue
         try {
           if (statSync(path).size > MAX_DOCUMENT_BYTES)
-            throw new Error('Credential document is too large')
-          collectDocument(readFileSync(path, 'utf8'), name)
+            fail('too-large', 'Credential document is too large')
+          const contents = readFileSync(path, 'utf8')
+          stage = 'parse-document'
+          collectDocument(contents, name)
         } catch (cause) {
           if (name === 'settings.json')
             throw settingsDocumentReadError(
               path,
               cause instanceof SyntaxError ? new Error('Invalid JSON.') : cause
             )
+          if (cause instanceof CredentialInventoryFailure) throw cause
+          if (stage === 'parse-document')
+            fail(
+              cause instanceof SyntaxError ? 'invalid-json' : 'invalid-document',
+              'Invalid credential document'
+            )
           throw cause
         }
       }
     }
+    source = 'application-database'
+    stage = 'read-database'
     database(join(options.configRoot, 'open-science.db'), (db) => {
       const tables = new Set(
         db
@@ -126,7 +148,8 @@ export const readCredentialCiphertexts = (options: {
       )
       if (tables.has('ComputeCredential')) {
         for (const row of db.prepare('SELECT ciphertext FROM ComputeCredential').iterate()) {
-          if (!(row.ciphertext instanceof Uint8Array)) throw new Error('Invalid compute ciphertext')
+          if (!(row.ciphertext instanceof Uint8Array))
+            fail('invalid-ciphertext', 'Invalid compute ciphertext')
           values.push(Buffer.from(row.ciphertext))
         }
       }
@@ -147,7 +170,7 @@ export const readCredentialCiphertexts = (options: {
             fingerprint[0] !== 1 ||
             typeof fingerprint[1] !== 'string'
           )
-            throw new Error('Invalid compute credential fingerprint')
+            fail('invalid-ciphertext', 'Invalid compute credential fingerprint')
           collectRef(`enc:${fingerprint[1]}`)
         }
       }
@@ -155,21 +178,25 @@ export const readCredentialCiphertexts = (options: {
     // Electron stores persistent partitions alongside its default profile. Opening either in
     // Chromium before this check can discard cookies which the newly selected key cannot decrypt.
     const profiles = [options.profilePath]
+    source = 'browser-profile'
+    stage = 'inspect-profile'
     const partitions = join(options.profilePath, 'Partitions')
     if (existsSync(partitions)) {
       for (const entry of readdirSync(partitions, { withFileTypes: true })) {
-        if (entry.isSymbolicLink()) throw new Error('Unverifiable profile partition')
+        if (entry.isSymbolicLink()) fail('unsupported-file', 'Unverifiable profile partition')
         if (entry.isDirectory()) profiles.push(join(partitions, entry.name))
       }
     }
     for (const profile of profiles) {
       for (const relative of ['Cookies', 'Network/Cookies']) {
+        source = 'cookies'
+        stage = 'read-database'
         database(join(profile, relative), (db) => {
           for (const row of db
             .prepare('SELECT encrypted_value FROM cookies WHERE length(encrypted_value) > 0')
             .iterate()) {
             if (!(row.encrypted_value instanceof Uint8Array))
-              throw new Error('Invalid encrypted cookie')
+              fail('invalid-ciphertext', 'Invalid encrypted cookie')
             values.push(Buffer.from(row.encrypted_value))
           }
         })
@@ -178,7 +205,14 @@ export const readCredentialCiphertexts = (options: {
     return values
   } catch (error) {
     if (error instanceof Error && error.name === 'SettingsDocumentReadError') throw error
-    throw new CredentialIdentityError('ciphertext-inventory-unavailable')
+    const failure = error instanceof CredentialInventoryFailure ? error : undefined
+    throw new CredentialIdentityError('ciphertext-inventory-unavailable', undefined, {
+      code: 'inventory-failed',
+      source,
+      stage: failure?.stage ?? stage,
+      reason: failure?.reason ?? 'operation-failed',
+      systemCode: failure?.systemCode ?? credentialSystemCode(error)
+    })
   }
 }
 

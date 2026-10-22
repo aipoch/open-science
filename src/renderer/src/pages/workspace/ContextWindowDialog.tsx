@@ -16,7 +16,7 @@ import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import { cn } from '@/lib/utils'
 import { SettingsSegmentedControl } from '@/pages/settings/SettingsSegmentedControl'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
   Activity,

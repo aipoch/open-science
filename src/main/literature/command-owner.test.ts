@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { literatureRecordImportRequestSchema } from '@aipoch/literature-library/contracts'
 
 vi.mock('../renderer-broadcast', () => ({ broadcastToRenderers: vi.fn() }))
 vi.mock('../storage/migration-state', () => ({
@@ -207,5 +208,117 @@ it('maps package style errors to the existing application command error envelope
     code: 'csl-undefined-macro',
     message: 'Unknown macro',
     parameters: { macro: 'missing' }
+  })
+})
+
+describe('selected reference import', () => {
+  it('imports explicitly selected rows in source order and maps preview diagnostics to source indices', async () => {
+    const { owner, formatter, catalog } = fixture()
+    const items = [{ title: 'First' }, { title: 'Conflicting' }, { title: 'Last' }]
+    const entries = items.map((item, index) => ({
+      index,
+      item,
+      status: index === 1 ? 'conflict' : 'ready'
+    }))
+    formatter.parseReferences.mockResolvedValue({ items, errors: [], warnings: [] })
+    catalog.inspectImportItems.mockResolvedValue([entries[0], { ...entries[2], index: 1 }])
+    catalog.importItems.mockResolvedValue({
+      itemIds: ['first', 'last'],
+      createdCount: 2,
+      reusedCount: 0
+    })
+    const result = await owner.importRecords({
+      mode: 'commit',
+      content: 'source',
+      selectedItemIndexes: [2, 0],
+      collectionId: 'collection',
+      duplicatePolicy: 'reuse'
+    })
+    expect(catalog.importItems).toHaveBeenCalledWith([items[0], items[2]], 'collection', 'reuse')
+    expect(result.entries).toEqual([entries[0], entries[2]])
+    expect(result.items).toEqual(items)
+    expect(result.imported?.itemIds).toEqual(['first', 'last'])
+  })
+
+  it('previews only selected identities and maps conflicts and invalid rows back to source indices', async () => {
+    const { owner, formatter, catalog } = fixture()
+    const items = [{ title: 'Excluded' }, { title: 'First selected' }, { title: 'Second selected' }]
+    const errors = [{ preview: 'Invalid', error: 'Invalid input' }]
+    formatter.parseReferences.mockResolvedValue({
+      items,
+      errors,
+      warnings: [[], ['missing-year'], []]
+    })
+    catalog.inspectImportItems.mockResolvedValue([
+      { index: 0, item: items[1], status: 'ready', warnings: ['missing-year'] },
+      {
+        index: 1,
+        item: items[2],
+        status: 'conflict',
+        conflict: { identifiers: [], matches: [{ inputIndex: 0, title: 'First selected' }] }
+      },
+      { index: 2, status: 'invalid', error: 'Invalid input' }
+    ])
+    const result = await owner.importRecords({
+      mode: 'preview',
+      content: 'source',
+      selectedItemIndexes: [2, 1]
+    })
+    expect(catalog.inspectImportItems).toHaveBeenCalledWith([items[1], items[2]], errors, [
+      ['missing-year'],
+      []
+    ])
+    expect(result.items).toEqual(items)
+    expect(result.entries.map((entry) => entry.index)).toEqual([1, 2, 3])
+    expect(result.entries[1].conflict?.matches).toEqual([
+      { inputIndex: 1, title: 'First selected' }
+    ])
+    expect(catalog.importItems).not.toHaveBeenCalled()
+  })
+
+  it.each([[], [0, 0], [-1], [1.5], [1]].map((indexes) => ({ indexes })))(
+    'rejects invalid selections %j before any write',
+    async ({ indexes: selectedItemIndexes }) => {
+      const { owner, catalog } = fixture()
+      await expect(
+        owner.importRecords({ mode: 'commit', content: 'source', selectedItemIndexes })
+      ).rejects.toThrow('Import selection is invalid')
+      expect(catalog.importItems).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps selected identity conflicts authoritative at commit', async () => {
+    const { owner, catalog } = fixture()
+    catalog.importItems.mockRejectedValue(new Error('conflicting identifiers'))
+    await expect(
+      owner.importRecords({ mode: 'commit', content: 'source', selectedItemIndexes: [0] })
+    ).rejects.toThrow('conflicting identifiers')
+  })
+
+  it('accepts legacy whole-file requests and validates the optional selection at the transport boundary', () => {
+    const request = { mode: 'commit', content: 'source' }
+    expect(literatureRecordImportRequestSchema.parse(request)).toEqual(request)
+    expect(
+      literatureRecordImportRequestSchema.parse({ ...request, selectedItemIndexes: [0, 2] })
+    ).toEqual({ ...request, selectedItemIndexes: [0, 2] })
+    for (const indexes of [
+      [],
+      [-1],
+      [0, 0],
+      [0.1],
+      Array.from({ length: 1001 }, (_, index) => index)
+    ]) {
+      expect(
+        literatureRecordImportRequestSchema.safeParse({ ...request, selectedItemIndexes: indexes })
+          .success
+      ).toBe(false)
+    }
+    expect(
+      literatureRecordImportRequestSchema.safeParse({
+        mode: 'preview',
+        content: 'source',
+        selectedItemIndexes: [0]
+      }).success
+    ).toBe(true)
   })
 })

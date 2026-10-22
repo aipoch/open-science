@@ -108,6 +108,7 @@ import {
   reportApplicationStartupFailure
 } from './diagnostics/startup'
 import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
+import { ensureWindowsProtocolRegistration } from './windows-protocol-registration'
 import {
   createRendererFailureReporter,
   registerRendererDiagnosticsIpc
@@ -401,6 +402,8 @@ async function startDesktop(): Promise<void> {
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
+  if (!ensureWindowsProtocolRegistration(app))
+    bootstrapLog.warn('Windows open-science protocol association could not be repaired')
   if (process.platform === 'win32')
     prefetchSystemBootIdentity().catch((error: unknown) =>
       bootstrapLog.warn('boot identity prefetch failed', { error: String(error) })
@@ -1321,6 +1324,17 @@ async function startDesktop(): Promise<void> {
         disconnectedQuit = undefined
         recovery.setClosing(false)
       }))
+  const handleDisconnectedQuit = (): boolean => {
+    if (
+      updateCommitted ||
+      runtimeStopped ||
+      plannedRelaunch ||
+      recovery.state().phase === 'connected'
+    )
+      return false
+    void quitDisconnected().catch(reportError)
+    return true
+  }
   ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, (event) => {
     requireRecoveryFrame(event)
     if (
@@ -1707,8 +1721,11 @@ async function startDesktop(): Promise<void> {
         recovery!.setClosing(false)
         if (!runtimeStopped && client!.ownsRuntime() && ready)
           void client!.lifecycle({ operation: 'release' }).catch((error) => {
-            // Rollback is best effort during OS-owned exit; a native modal must not prevent exit.
-            if (currentApplicationShutdownTrigger() === 'system')
+            // Disconnected quit owns one decision; rollback errors must not stack native modals.
+            if (
+              currentApplicationShutdownTrigger() === 'system' ||
+              recovery.state().phase !== 'connected'
+            )
               bootstrapLog.error('quit admission release failed', {
                 error: projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
               })
@@ -1751,9 +1768,10 @@ async function startDesktop(): Promise<void> {
     log: diagnostics.log,
     flushLogs,
     requireCleanBackendShutdown: true,
+    handleDisconnectedQuit,
     onQuitError: (error) => {
       recovery!.setClosing(false)
-      reportError(error)
+      if (!handleDisconnectedQuit()) reportError(error)
     },
     shutdownBackends: async () => {
       if (!runtimeStopped) retainShutdownLease(await client!.quit())
@@ -1841,7 +1859,12 @@ void startDesktop().catch(async (error: unknown) => {
     ...diagnosticErrorFields(error),
     phase: bootstrapPhase,
     ...(error instanceof CredentialIdentityError
-      ? { recoveryReason: error.reason, validationDiagnostic: error.diagnostic }
+      ? {
+          recoveryReason: error.reason,
+          // Inventory context is transient UI data, not an additional persisted diagnostic.
+          validationDiagnostic:
+            error.diagnostic?.code === 'inventory-failed' ? undefined : error.diagnostic
+        }
       : {})
   }
   bootstrapLog.error('desktop startup failed', failureFields)

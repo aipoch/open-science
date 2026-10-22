@@ -2,7 +2,8 @@ import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspac
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
-import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
+import { projectSessionActionability } from '@/stores/session-actionability'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { hasCurrentRunningDelegatedAttempt } from '../../../shared/delegated-work-projection'
 
 export const sessionPackageExportAvailable = (): boolean =>

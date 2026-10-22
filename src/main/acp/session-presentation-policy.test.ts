@@ -123,6 +123,45 @@ describe('ACP Session presentation policy', () => {
     })
   })
 
+  it.each([claudeCodeFramework, codexFramework])(
+    'isolates Main and Specialist sessions sharing the same %s backend',
+    (framework) => {
+      const sessionOptions = {
+        openScienceSkillRuntime: {
+          command: '/node',
+          entryPath: '/main.js',
+          root: '/shared',
+          skillsDirectory: '/shared/skills',
+          mainAllowedNames: ['mcp-genes']
+        }
+      }
+      const input = {
+        framework,
+        sessionOptions,
+        tooling: { artifacts: false, notebook: false, skillImport: false }
+      }
+      const main = policy.buildSessionSetup(input)
+      const specialist = policy.buildSessionSetup({
+        ...input,
+        specialistSkills: {
+          kind: 'specialist',
+          skillIds: [],
+          frameworkNames: ['mcp-orphadata'],
+          missingSkillIds: []
+        }
+      })
+      expect(JSON.stringify(main)).toContain('mcp-genes')
+      expect(JSON.stringify(main)).not.toContain('mcp-orphadata')
+      expect(JSON.stringify(specialist)).toContain('mcp-orphadata')
+      expect(JSON.stringify(specialist)).not.toContain('mcp-genes')
+      expect(policy.buildSessionSetup(input)).toEqual(main)
+      if (framework.id === 'claude-code') {
+        expect(JSON.stringify(main.metaArg)).toContain('"skills":["mcp-genes"]')
+        expect(JSON.stringify(specialist.metaArg)).toContain('"skills":["mcp-orphadata"]')
+      }
+    }
+  )
+
   it('returns the exact application appends in stable order when every tool is available', () => {
     const appends = policy.applicationSystemPromptAppends({
       artifacts: true,

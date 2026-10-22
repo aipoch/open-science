@@ -28,6 +28,7 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import { bindResumeRequestToProject } from './session-project-binding'
 import { installAgentShutdownGuard } from './shutdown-guard'
+import { withAgentAuthenticationRecovery } from './prompt-error'
 
 type AcpIpcSessionAdmission = {
   withSessionAvailableById<Result>(
@@ -65,10 +66,12 @@ const registerAcpIpcHandlerSet = (
   )
   ipcMainHandle('acp:disconnect', () => stateCommand(runtime.disconnect()))
   ipcMainHandle('acp:create-session', (_event, request: AcpCreateSessionRequest) =>
-    workflows.createSession(request)
+    withAgentAuthenticationRecovery(() => workflows.createSession(request))
   )
   ipcMainHandle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
-    workflows.resumeSession(await withDurableMemoryPreference(request, resolveMemoryEnabled))
+    withAgentAuthenticationRecovery(async () =>
+      workflows.resumeSession(await withDurableMemoryPreference(request, resolveMemoryEnabled))
+    )
   )
   ipcMainHandle(
     'acp:continue-interrupted-turn',
@@ -76,11 +79,13 @@ const registerAcpIpcHandlerSet = (
       stateCommand(workflows.continueInterruptedTurn(request))
   )
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
-    sessionAdmission.withSessionAvailableById(request.sessionId, async (projectId) =>
-      runtime.resetSessionContext(
-        await withDurableMemoryPreference(
-          bindResumeRequestToProject(request, projectId),
-          resolveMemoryEnabled
+    withAgentAuthenticationRecovery(() =>
+      sessionAdmission.withSessionAvailableById(request.sessionId, async (projectId) =>
+        runtime.resetSessionContext(
+          await withDurableMemoryPreference(
+            bindResumeRequestToProject(request, projectId),
+            resolveMemoryEnabled
+          )
         )
       )
     )

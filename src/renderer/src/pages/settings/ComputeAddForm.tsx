@@ -28,6 +28,8 @@ import {
   ComputeAuthenticationIntroduction,
   ComputeAuthenticationSection
 } from './ComputeAuthenticationSection'
+import type { SettingsEditorLeaveState } from './SettingsLayout'
+import { isHostConnectionPortValid } from '@aipoch/compute'
 import { ComputeExecutionModeField } from './ComputeExecutionModeField'
 
 type ComputeAddFormProps = {
@@ -35,12 +37,19 @@ type ComputeAddFormProps = {
   // host detail shell).
   onCreated: (providerId: string) => void
   onCancel: () => void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }
 
-export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): React.JSX.Element {
+export function ComputeAddForm({
+  onCreated,
+  onCancel,
+  onLeaveStateChange
+}: ComputeAddFormProps): React.JSX.Element {
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
   const sshAliases = useComputeStore((state) => state.sshAliases)
+  const isLoadingSshAliases = useComputeStore((state) => state.isLoadingSshAliases)
+  const sshAliasesLoadFailed = useComputeStore((state) => state.sshAliasesLoadFailed)
   const loadSshAliases = useComputeStore((state) => state.loadSshAliases)
   const createHost = useComputeStore((state) => state.createHost)
   const createPasswordHost = useComputeStore((state) => state.createPasswordHost)
@@ -51,6 +60,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [user, setUser] = useState('')
   const [port, setPort] = useState('')
+  const [portTouched, setPortTouched] = useState(false)
   const [identityFile, setIdentityFile] = useState('')
   const [authenticationMode, setAuthenticationMode] =
     useState<ComputeAuthenticationMode>('ssh_config')
@@ -81,6 +91,27 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         setPasswordCapability({ available: false, reason: 'secure_storage_unavailable' })
       )
   }, [loadSshAliases])
+
+  const dirty = Boolean(
+    alias ||
+    detailsDoc ||
+    user ||
+    port ||
+    identityFile ||
+    password ||
+    authenticationMode !== 'ssh_config' ||
+    executionMode !== 'direct_ssh'
+  )
+  useLayoutEffect(() => {
+    onLeaveStateChange?.({ dirty, busy: isSubmitting })
+  }, [dirty, isSubmitting, onLeaveStateChange])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
+  const portValid =
+    authenticationMode === 'password'
+      ? port.trim().length > 0 && isHostConnectionPortValid(port)
+      : isHostConnectionPortValid(port)
+  const portError =
+    portTouched && !portValid ? t('Enter a whole number from 1 to 65535.') : undefined
 
   const detailsTooLong = detailsDoc.length > DETAILS_DOC_MAX_LENGTH
   const authenticationValues: ComputeAuthenticationValues = {
@@ -119,6 +150,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
       // Leaving does not cancel creation, but the old form no longer owns navigation.
       if (mounted.current) {
         setPassword('')
+        onLeaveStateChange?.(null)
         onCreated(host.providerId)
       }
       // Fire-and-forget: errors are captured as probeResult.ok=false and surfaced in the detail UI.
@@ -142,12 +174,18 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
           <Select
             value={alias}
             onValueChange={(value) => setAlias(value)}
-            disabled={sshAliases.length === 0}
+            disabled={isLoadingSshAliases || sshAliases.length === 0}
           >
             <SelectTrigger aria-label={t('Pick a host from ~/.ssh/config')}>
               <SelectValue
                 placeholder={
-                  sshAliases.length === 0 ? t('No hosts in ~/.ssh/config') : t('Pick a host…')
+                  isLoadingSshAliases
+                    ? t('Loading…')
+                    : sshAliasesLoadFailed
+                      ? t('Host list unavailable')
+                      : sshAliases.length === 0
+                        ? t('No hosts in ~/.ssh/config')
+                        : t('Pick a host…')
                 }
               />
             </SelectTrigger>
@@ -159,6 +197,20 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
               ))}
             </SelectContent>
           </Select>
+          {sshAliasesLoadFailed ? (
+            <InlineNotice level="error" role="alert">
+              <p>{t('Could not read SSH hosts. Retry or type a host alias below.')}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isLoadingSshAliases}
+                onClick={() => void loadSshAliases()}
+              >
+                {t('Retry')}
+              </Button>
+            </InlineNotice>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -227,6 +279,8 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
               password={password}
               onUserChange={setUser}
               onPortChange={setPort}
+              onPortBlur={() => setPortTouched(true)}
+              portError={portError}
               onIdentityFileChange={setIdentityFile}
               onPasswordChange={setPassword}
             />
@@ -242,6 +296,8 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
             onOpenChange={setAdvancedOpen}
             onUserChange={setUser}
             onPortChange={setPort}
+            onPortBlur={() => setPortTouched(true)}
+            portError={portError}
             onIdentityFileChange={setIdentityFile}
             onPasswordChange={setPassword}
           />
@@ -254,15 +310,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
         ) : null}
 
         <div className="flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              setPassword('')
-              onCancel()
-            }}
-            disabled={isSubmitting}
-          >
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={isSubmitting}>
             {tCommon('Cancel')}
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>

@@ -1,4 +1,9 @@
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
+import {
+  InvalidClientError,
+  InvalidGrantError,
+  UnauthorizedClientError
+} from '@modelcontextprotocol/sdk/server/auth/errors.js'
 import { McpToolCallError } from '@aipoch/connector-mcp-client'
 import type { CustomMcpServerConfig } from '@aipoch/connector-mcp-client'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
@@ -12,19 +17,17 @@ import { hasAmbiguousCustomMcpCredentialNames } from '@aipoch/connector-mcp-clie
 export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
 
 export const classifyCustomMcpFailure = (error: unknown): CustomMcpFailureAvailability => {
+  // Tool result text belongs to the tool's business operation, not the transport's OAuth account.
+  if (error instanceof McpToolCallError) return 'unavailable'
+  if (error instanceof InvalidClientError || error instanceof UnauthorizedClientError)
+    return 'unavailable'
+  if (error instanceof InvalidGrantError) return 'unauthenticated'
   if (error instanceof UnauthorizedError) return 'unauthenticated'
   if (!(error instanceof Error)) return 'unavailable'
   const status =
     (error as Error & { status?: number; code?: number }).status ??
     (error as Error & { code?: number }).code
   if (status === 401 || /^401 Unauthorized\b/i.test(error.message)) return 'unauthenticated'
-  if (
-    error instanceof McpToolCallError &&
-    /(?:not (?:logged|signed) in|sign[ -]?in (?:is )?required|authentication (?:is )?required|invalid_token)/i.test(
-      error.message
-    )
-  )
-    return 'unauthenticated'
   return 'unavailable'
 }
 

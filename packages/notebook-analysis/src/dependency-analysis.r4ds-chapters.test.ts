@@ -39,8 +39,8 @@ it.each([
 ])('analyzes tidyr callback options: %s', async (call) => {
   const source = `data <- data.frame(x=1:2,y=3:4); result <- tidyr::${call}`
   expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
-    readState: 'complete',
-    externalState: 'complete'
+    readState: call.includes('mean') ? 'partial' : 'complete',
+    externalState: call.includes('mean') ? 'partial' : 'complete'
   })
 })
 

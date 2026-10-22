@@ -23,6 +23,11 @@
     MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried."
     Abort
     notebookSandboxCleanupComplete:
+    # A second installation may now own the scheme. Never remove its association.
+    ReadRegStr $0 HKCU "Software\Classes\open-science\shell\open\command" ""
+    ${if} $0 == '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
+      DeleteRegKey HKCU "Software\Classes\open-science"
+    ${endif}
   ${endif}
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-runtime-cache-uninstall.ps1"'
 !macroend
@@ -424,6 +429,17 @@ FunctionEnd
 !macroend
 
 !macro customInstall
+  # NSIS does not consume electron-builder's protocols option. Run after the old uninstaller
+  # and file publication on EVERY install, including silent and in-app updates.
+  ClearErrors
+  WriteRegStr HKCU "Software\Classes\open-science" "" "URL:Open-Science"
+  WriteRegStr HKCU "Software\Classes\open-science" "URL Protocol" ""
+  WriteRegStr HKCU "Software\Classes\open-science\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
+  WriteRegStr HKCU "Software\Classes\open-science\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
+  ${if} ${Errors}
+    DetailPrint "Open-Science protocol registration failed."
+    !insertmacro quitFailedUpdate
+  ${endif}
   Push "installed"
   Call writeUpdateReceipt
 !macroend

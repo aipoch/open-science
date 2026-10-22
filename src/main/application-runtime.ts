@@ -1,4 +1,4 @@
-import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import {
   BackendShutdownOutcomeError,
   QUIT_SHUTDOWN_BUDGET_MS,
@@ -214,10 +214,10 @@ class RuntimeModuleBuilder implements ApplicationModuleBuilder {
       throw new Error('Application runtime composition is already complete.')
     }
 
-    const module = await factory(dependencies)
-    this.modules.push(module)
-    await module.start?.()
-    return module.capability
+    const applicationModule = await factory(dependencies)
+    this.modules.push(applicationModule)
+    await applicationModule.start?.()
+    return applicationModule.capability
   }
 
   complete(): void {
@@ -232,17 +232,24 @@ class RuntimeModuleBuilder implements ApplicationModuleBuilder {
 
   private async disposeModules(mode: 'runtime' | 'rollback'): Promise<void> {
     const failures: unknown[] = []
-    for (const [index, module] of [...this.modules].reverse().entries()) {
+    for (const [index, applicationModule] of [...this.modules].reverse().entries()) {
       try {
-        const dispose = mode === 'rollback' ? (module.rollback ?? module.dispose) : module.dispose
+        const dispose =
+          mode === 'rollback'
+            ? (applicationModule.rollback ?? applicationModule.dispose)
+            : applicationModule.dispose
         if (dispose) {
           await this.disposeModule(
-            module.name ?? `module-${this.modules.length - index}`,
+            applicationModule.name ?? `module-${this.modules.length - index}`,
             dispose,
-            module.disposeTimeoutMs ?? APPLICATION_MODULE_DISPOSAL_BUDGET_MS
+            applicationModule.disposeTimeoutMs ?? APPLICATION_MODULE_DISPOSAL_BUDGET_MS
           )
         }
       } catch (error) {
+        createLogger('application-runtime').error('module disposal failed', {
+          module: applicationModule.name ?? `module-${this.modules.length - index}`,
+          ...diagnosticErrorFields(error)
+        })
         failures.push(error)
       }
     }

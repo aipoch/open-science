@@ -182,18 +182,54 @@ export const createLiteratureCommandOwner = ({
     const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(
       request.content
     )
-    const entries = await literatureCatalog.inspectImportItems(
-      parsed.items,
-      parsed.errors,
-      warnings
+    const indexes = request.selectedItemIndexes
+    if (
+      indexes &&
+      (indexes.length === 0 ||
+        new Set(indexes).size !== indexes.length ||
+        indexes.some(
+          (index) => !Number.isInteger(index) || index < 0 || index >= parsed.items.length
+        ))
     )
+      throw new Error('Import selection is invalid. Preview the file again.')
+    // Preserve source order and recheck selected identities in the existing write transaction.
+    const selected = indexes ? new Set(indexes) : undefined
+    const items = selected ? parsed.items.filter((_, index) => selected.has(index)) : parsed.items
+    const sourceIndexes = parsed.items
+      .map((_, index) => index)
+      .filter((index) => !selected || selected.has(index))
+    const inspected = await literatureCatalog.inspectImportItems(
+      items,
+      parsed.errors,
+      sourceIndexes.map((index) => warnings?.[index] ?? [])
+    )
+    const entries = selected
+      ? inspected.map((entry) => ({
+          ...entry,
+          ...(entry.conflict
+            ? {
+                conflict: {
+                  ...entry.conflict,
+                  matches: entry.conflict.matches.map((match) =>
+                    typeof match.inputIndex === 'number'
+                      ? { ...match, inputIndex: sourceIndexes[match.inputIndex]! }
+                      : match
+                  )
+                }
+              }
+            : {}),
+          index: entry.item
+            ? sourceIndexes[entry.index]!
+            : parsed.items.length + entry.index - items.length
+        }))
+      : inspected
     if (request.mode === 'preview') return { ...parsed, entries }
-    if (parsed.items.length === 0) throw new Error('No valid references were found.')
+    if (items.length === 0) throw new Error('No valid references were found.')
     return {
       ...parsed,
       entries,
       imported: await literatureCatalog.importItems(
-        parsed.items,
+        items,
         request.collectionId,
         request.duplicatePolicy
       )

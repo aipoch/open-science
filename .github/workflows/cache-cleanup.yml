@@ -1,0 +1,51 @@
+name: Clean up closed PR caches
+
+on:
+  # This privileged workflow definition comes from main, never a PR's modified YAML.
+  workflow_run:
+    workflows: [PR Gate]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List eligible caches without deleting them
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: closed-pr-cache-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'merge_group') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Checkout trusted cleanup code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+          sparse-checkout: scripts/ci/cleanup-pr-caches.mjs
+          sparse-checkout-cone-mode: false
+      - name: Clean up closed PR caches
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        with:
+          script: |
+            const { cleanupPrCaches } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/cleanup-pr-caches.mjs`)
+            await cleanupPrCaches({
+              github,
+              repo: context.repo,
+              dryRun: process.env.DRY_RUN === 'true',
+              log: core.info
+            })

@@ -149,6 +149,8 @@ const SpecialistCapabilitiesSection = ({
   const connectorSearchRef = useRef<HTMLInputElement>(null)
   const [skillPopoverOpen, setSkillPopoverOpen] = useState(false)
   const [connectorPopoverOpen, setConnectorPopoverOpen] = useState(false)
+  // Keep these non-modal pickers inside the owning dialog's scroll-lock boundary.
+  const [popoverContainer, setPopoverContainer] = useState<HTMLElement | null>(null)
   useSettingsSearchShortcut(skillSearchRef, skillPopoverOpen && !isFullAccess)
   useSettingsSearchShortcut(connectorSearchRef, connectorPopoverOpen && !isFullAccess)
   const fullAccessRef = useRef<HTMLButtonElement>(null)
@@ -463,7 +465,12 @@ const SpecialistCapabilitiesSection = ({
                   onOpenChange={(open) => {
                     setSkillPopoverOpen(open)
                     composingRef.current = false
-                    if (open) setSkillSearchQuery('')
+                    if (open) {
+                      setPopoverContainer(
+                        selectionRef.current?.closest<HTMLElement>('[role="dialog"]') ?? null
+                      )
+                      setSkillSearchQuery('')
+                    }
                   }}
                 >
                   <PopoverTrigger asChild>
@@ -476,6 +483,7 @@ const SpecialistCapabilitiesSection = ({
                     </button>
                   </PopoverTrigger>
                   <PopoverContent
+                    container={popoverContainer}
                     aria-label={t('＋ Add a skill')}
                     align="end"
                     className="flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card p-0 text-foreground shadow-md"
@@ -552,7 +560,12 @@ const SpecialistCapabilitiesSection = ({
                   onOpenChange={(open) => {
                     setConnectorPopoverOpen(open)
                     composingRef.current = false
-                    if (open) setConnectorSearchQuery('')
+                    if (open) {
+                      setPopoverContainer(
+                        selectionRef.current?.closest<HTMLElement>('[role="dialog"]') ?? null
+                      )
+                      setConnectorSearchQuery('')
+                    }
                   }}
                 >
                   <PopoverTrigger asChild>
@@ -565,6 +578,7 @@ const SpecialistCapabilitiesSection = ({
                     </button>
                   </PopoverTrigger>
                   <PopoverContent
+                    container={popoverContainer}
                     aria-label={t('＋ Add a connector')}
                     align="end"
                     className="flex max-h-[260px] w-[240px] flex-col overflow-y-auto rounded-lg border border-border bg-card p-0 text-foreground shadow-md"

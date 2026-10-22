@@ -26,7 +26,9 @@
     "src/renderer/src/components/use-settings-undo-portal.test.tsx",
     "src/renderer/src/components/use-settings-undo-portal.tsx",
     "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
-    "src/renderer/src/components/DeferredPresentationOwner.tsx"
+    "src/renderer/src/components/DeferredPresentationOwner.tsx",
+    "src/renderer/src/components/FileDropZone.tsx",
+    "src/renderer/src/components/FileDropZone.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ActionToast.tsx",
@@ -47,7 +49,8 @@
     "src/renderer/src/components/error-notice.tsx",
     "src/renderer/src/components/flask-logo.tsx",
     "src/renderer/src/components/notice.tsx",
-    "src/renderer/src/components/use-settings-undo-portal.tsx"
+    "src/renderer/src/components/use-settings-undo-portal.tsx",
+    "src/renderer/src/components/FileDropZone.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -69,9 +72,15 @@
       "src/renderer/src/components/open-science-logo-motion.test.ts",
       "src/renderer/src/components/use-settings-undo-portal.test.tsx",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
-      "src/renderer/src/components/DeferredPresentationOwner.test.tsx"
+      "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
+      "src/renderer/src/components/FileDropZone.test.tsx"
     ],
-    "contract": [],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/assets/diff-colors.test.ts",
+      "src/renderer/src/assets/pdf-text-layer.test.ts",
+      "src/renderer/src/assets/provider-icons.packaging.test.ts"
+    ],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
@@ -355,15 +364,10 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
-      "src/main/ipc-surfaces/desktop-utilities.test.ts",
-      "src/main/runtime-electron-wiring.test.ts",
-      "src/main/settings-window-ipc.test.ts",
-      "src/main/windows.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The reusable file intake component expands the reviewed renderer presentation boundary; retain complete validation until the expanded boundary is reviewed and reclassified."
 }

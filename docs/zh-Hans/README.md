@@ -51,7 +51,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 
 已完成的研究会话还可以导出为可移植的 `.science` 包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
 
-> 💡 **AIPOCH Open-Science v1.0.0** _（2026 年 10 月更新）_。这一里程碑汇集本地优先的科研工作区、科学智能体、Python/R Notebook 执行、文献工具和可移植的 `.science` 包。有关 v0.37.2 之后的改进及 CLI 升级变化，请查看 [1.0.0 发行说明](../../release-notes/1.0.0/zh-Hans.md)。下载仍以[最新已发布版本](https://github.com/aipoch/open-science/releases/latest)为准。
+> 💡 **AIPOCH Open-Science v1.0.2** _（2026 年 10 月更新）_。本次补丁新增五个科学连接器及更深入的 GDC 和 Ensembl 支持、回答卡片上准确的单选/多选标签、保持稳定不抖动的会话包对话框、更快的会话加载速度，以及一批会话、Notebook 和凭据恢复修复，此外还包含 Node 运行时安全补丁和 CLI 首次发布到 npm。详情请查看 [1.0.2 发行说明](../../release-notes/1.0.2/zh-Hans.md)。下载仍以[最新已发布版本](https://github.com/aipoch/open-science/releases/latest)为准。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -101,6 +101,16 @@ brew install aipoch/tap/open-science
 ```
 
 该 Formula 自带 Node，无需启动桌面应用；其版本可能与桌面 Cask 不同。前提条件与升级方式见[独立运行时指南](../standalone-runtime.md)。
+
+如需独立 CLI 和 Web 界面，可使用 **Node.js 22.13.0 或更高版本**安装已发布的 [npm 软件包](https://www.npmjs.com/package/@aipoch/open-science)：
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+打开输出的 URL 完成配置，或按照[命令行配置指南](../../packages/open-science/CLI.md#first-run-setup-codex)操作。npm 支持 macOS ARM64/x64、使用 glibc 的 Linux ARM64/x64 和 Windows x64，无需安装桌面应用。请保留 npm 可选依赖，并查看 [Linux 前置条件和升级说明](../standalone-runtime.md#install-from-npm)。该 URL 包含身份验证令牌，请勿分享。
 
 Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重置工具](../../scripts/windows-reset/README.md)，确认后会永久删除本地数据。
 
@@ -331,7 +341,7 @@ npm run pack:backend
 
 Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`npm run dev:web` 和 `npm run dev:headless` 会构建并启动后端及 Web 界面，不启动桌面或托盘。`OPEN_SCIENCE_WEB_PORT` 选择端口（默认 `44100`）；Ctrl+C 正常关闭前台服务。
 
-源码开发需要 Node.js 24。独立 npm 软件包需要 Node >=22.13.0，轻量 CLI/SDK 需要 Node >=22.5。Release 压缩包、Homebrew Formula 和桌面命令启动器自带运行时。
+源码开发需要 Node.js 24。已发布的 npm 软件包和本地构建的独立 tarball 均需要 Node.js >=22.13.0。Release 压缩包、Homebrew Formula 和桌面命令启动器自带运行时。
 
 桌面与浏览器共享同一服务。退出桌面只会停止它自行启动的后端；若连接的是 CLI 启动的服务，则只断开桌面连接。
 

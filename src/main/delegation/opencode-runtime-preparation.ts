@@ -75,7 +75,7 @@ const prepareOpenCodeRuntime = async (
   const sourceRoot = admitted.env.XDG_CONFIG_HOME
     ? join(admitted.env.XDG_CONFIG_HOME, 'opencode')
     : configRoot
-  const env = {
+  const env: Record<string, string> = {
     ...admitted.env,
     XDG_CONFIG_HOME: configHome,
     XDG_DATA_HOME: join(runtimeHome, 'data'),
@@ -114,21 +114,41 @@ const prepareOpenCodeRuntime = async (
   if (!admitted.opencodeConfigFiles && admitted.persistentSystemPrompt) {
     config.instructions = [join(sourceRoot, 'instructions', 'open-science.md')]
   }
-  if (Array.isArray(config.instructions)) {
-    config.instructions = config.instructions.map((value: unknown) => {
-      if (typeof value !== 'string' || !isAbsolute(value)) return value
-      const instructionPath = relative(join(sourceRoot, 'instructions'), value)
-      if (
-        instructionPath === '..' ||
-        instructionPath.startsWith(`..${sep}`) ||
-        isAbsolute(instructionPath)
+  const remapInstruction = (value: unknown): unknown => {
+    if (typeof value !== 'string' || !isAbsolute(value)) return value
+    const instructionPath = relative(join(sourceRoot, 'instructions'), value)
+    if (
+      instructionPath === '..' ||
+      instructionPath.startsWith(`..${sep}`) ||
+      isAbsolute(instructionPath)
+    )
+      return value
+    if (!sourceFiles.some((file) => file.path === value))
+      throw new Error('OpenCode delegated instruction is missing from its config snapshot.')
+    return join(configRoot, relativeConfigPath(sourceRoot, value))
+  }
+  if (Array.isArray(config.instructions))
+    config.instructions = config.instructions.map(remapInstruction)
+  if (env.OPENCODE_CONFIG_CONTENT) {
+    const overlay = parseConfig(env.OPENCODE_CONFIG_CONTENT)
+    const remap = (value: string): string => {
+      const path = relative(sourceRoot, value)
+      return path && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path)
+        ? join(configRoot, path)
+        : value
+    }
+    if (Array.isArray(overlay.instructions))
+      overlay.instructions = overlay.instructions.map(remapInstruction)
+    const permission = overlay.permission as Record<string, unknown> | undefined
+    const external = permission?.external_directory
+    if (external && typeof external === 'object' && !Array.isArray(external))
+      permission!.external_directory = Object.fromEntries(
+        Object.entries(external).map(([path, rule]) => [
+          isAbsolute(path) ? remap(path) : path,
+          rule
+        ])
       )
-        return value
-      if (!sourceFiles.some((file) => file.path === value)) {
-        throw new Error('OpenCode delegated instruction is missing from its config snapshot.')
-      }
-      return join(configRoot, relativeConfigPath(sourceRoot, value))
-    })
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(overlay)
   }
   const configFiles = sourceFiles.map((file) => ({
     ...file,

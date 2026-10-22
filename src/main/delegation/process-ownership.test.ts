@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
+import * as fs from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,11 @@ import { terminateProcessTree } from '../process-tree'
 import { createProductionFrameWorkspace } from './frame-workspace'
 import { createDeterministicDelegateExecution } from './deterministic-execution'
 import { DelegatedProcessOwnership } from './process-ownership'
+
+// Keep the real filesystem implementation while allowing a scoped procfs inventory in the live test.
+vi.mock('node:fs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs')>())
+}))
 
 const scope = {
   projectId: 'project-a',
@@ -426,10 +432,14 @@ describe('durable delegated process ownership', () => {
         [
           '-e',
           `
-          require('node:child_process').spawn(process.execPath, ['-e',
+          // Reap the descendant before exiting; orphan zombies otherwise depend on PID 1.
+          const { once } = require('node:events')
+          const keepAlive = setInterval(() => {}, 1000)
+          const stopped = once(process, 'SIGTERM')
+          const descendant = require('node:child_process').spawn(process.execPath, ['-e',
             'process.stdout.write(String(process.pid)); setInterval(() => {}, 1000)'
           ], { stdio: ['ignore', 'inherit', 'inherit'] })
-          setInterval(() => {}, 1000)
+          Promise.all([stopped, once(descendant, 'exit')]).then(() => clearInterval(keepAlive))
         `
         ],
         { stdio: 'pipe', env: process.env, windowsHide: true }
@@ -445,6 +455,16 @@ describe('durable delegated process ownership', () => {
         ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)'],
         { stdio: 'pipe' }
       )
+      const readDirectory = fs.readdirSync
+      // The fixture owns these three processes. Ambient CI daemons can be unreadable, in which
+      // case production correctly refuses cold recovery; that boundary is covered in process-tree.test.
+      const fixturePids = new Set([child.pid!, descendantPid, unrelated.pid!].map(String))
+      const scan = vi.spyOn(fs, 'readdirSync').mockImplementation((path, options) => {
+        const entries = readDirectory(path, options)
+        return path === '/proc'
+          ? entries.filter((entry) => fixturePids.has(String(entry)))
+          : entries
+      })
       try {
         await once(unrelated.stdout, 'data')
         const cold = new DelegatedProcessOwnership(directory!)
@@ -458,6 +478,7 @@ describe('durable delegated process ownership', () => {
         }
         expect(process.kill(unrelated.pid!, 0)).toBe(true)
       } finally {
+        scan.mockRestore()
         const closed = once(unrelated, 'close')
         unrelated.kill('SIGKILL')
         await closed

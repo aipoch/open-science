@@ -20,6 +20,17 @@ import {
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
+const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: diagnosticLogs.info,
+    warn: vi.fn(),
+    error: diagnosticLogs.error
+  })
+}))
+
 const permissionProfile: SessionPermissionProfileState = {
   selectedProfile: 'ask',
   effectiveProfile: 'ask',
@@ -103,6 +114,7 @@ type ResumerHarness = {
   assertCurrentConnection: ReturnType<typeof vi.fn>
   attachSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
+  registerSessionSpecialist: ReturnType<typeof vi.fn>
   clearLivePermissionProfile: ReturnType<typeof vi.fn>
   clearTimer: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
@@ -119,6 +131,7 @@ type ResumerHarness = {
   release: ReturnType<typeof vi.fn>
   backend: AcpBackendGenerationView
   request: ReturnType<typeof vi.fn>
+  releaseForTransfer: () => Promise<string | undefined>
   reconfigure: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   sessionSetupAppends: string[][]
@@ -194,6 +207,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     return providerSession
   })
   const connection = { agent: { request, attachSession } } as unknown as ClientConnection
+  const registerSessionSpecialist = vi.fn()
   const commit = vi.fn(() => order.push('capability commit'))
   const release = vi.fn(() => {
     order.push('capability release')
@@ -329,6 +343,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     ...(options.specialistSkills
       ? { resolveSpecialistSkills: vi.fn(async () => options.specialistSkills!) }
       : {}),
+    registerSessionSpecialist,
     resolveProjectAgentContext: options.projectAgentContextError
       ? vi.fn(async () => {
           throw options.projectAgentContextError
@@ -375,6 +390,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     attachSession,
     backend: capturingBackend,
     commit,
+    registerSessionSpecialist,
     clearLivePermissionProfile,
     clearTimer,
     configure,
@@ -390,6 +406,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     registry,
     release,
     request,
+    releaseForTransfer: () => resumer.releaseForTransfer('stable-app-session'),
     reconfigure,
     resume,
     sessionSetupAppends,
@@ -399,6 +416,236 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('coalesces overlapping releases of the same provider writer', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const second = h.releaseForTransfer()
+    expect(h.request).toHaveBeenCalledOnce()
+    finish()
+    await expect(first).resolves.toBe('provider-session')
+    await expect(second).resolves.toBe('provider-session')
+    expect(h.providerSession.dispose).toHaveBeenCalledOnce()
+  })
+
+  it.each([codexResponsesBackend, codexBridgeBackend, codexResponsesCompatibilityBackend])(
+    'closes only the provider writer and retains resume identity for $modelRoute',
+    async (initialBackend) => {
+      const h = createHarness({ attached: true, initialBackend })
+      await expect(h.releaseForTransfer()).resolves.toBe('provider-session')
+      expect(h.request).toHaveBeenCalledExactlyOnceWith(
+        acp.methods.agent.session.close,
+        { sessionId: 'provider-session' },
+        { cancellationSignal: expect.any(AbortSignal) }
+      )
+      expect(h.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+      expect(h.registry.lookup('stable-app-session')?.aggregate.snapshot().projectId).toBe(
+        'old-project'
+      )
+      expect(h.providerSession.dispose).toHaveBeenCalledOnce()
+      expect(h.disconnectTimedOutConnection).not.toHaveBeenCalled()
+      await expect(h.releaseForTransfer()).resolves.toBeUndefined()
+      expect(h.request).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('preserves the attachment when closing the writer fails', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    h.request.mockRejectedValueOnce(new Error('close failed'))
+    await expect(h.releaseForTransfer()).rejects.toThrow('close failed')
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeDefined()
+    expect(h.providerSession.dispose).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)(
+    'serializes release retries after timeout until late %s',
+    async (outcome) => {
+      const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+      let finish!: () => void
+      let fail!: (error: Error) => void
+      h.request.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      const first = h.releaseForTransfer()
+      const rejection = expect(first).rejects.toThrow('timed out')
+      h.fireTimeout()
+      await rejection
+      const retry = h.releaseForTransfer()
+      expect(h.request).toHaveBeenCalledOnce()
+      expect(h.request.mock.calls[0][2].cancellationSignal.aborted).toBe(false)
+      if (outcome === 'success') {
+        finish()
+        await expect(retry).resolves.toBe('provider-session')
+        expect(h.providerSession.dispose).toHaveBeenCalledOnce()
+      } else {
+        const rejected = expect(retry).rejects.toThrow('close failed')
+        fail(new Error('close failed'))
+        await rejected
+        await expect(h.releaseForTransfer()).resolves.toBe('provider-session')
+        expect(h.request).toHaveBeenCalledTimes(2)
+      }
+    }
+  )
+
+  it('keeps a late successful release discoverable until retry consumes it', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const rejected = expect(first).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejected
+    finish()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeDefined()
+    await expect(h.releaseForTransfer()).resolves.toBe('provider-session')
+    expect(h.request).toHaveBeenCalledOnce()
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+  })
+
+  it.each([codexResponsesBackend, codexBridgeBackend, codexResponsesCompatibilityBackend])(
+    'blocks reconfiguration until a timed-out writer release is recovered for $modelRoute',
+    async (initialBackend) => {
+      const h = createHarness({
+        attached: true,
+        initialBackend: { ...initialBackend, providerContinuityToken: 'same-provider' },
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+      let finish!: () => void
+      h.request.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+      const release = h.releaseForTransfer()
+      const timedOut = expect(release).rejects.toThrow('timed out')
+      h.fireTimeout()
+      await timedOut
+      await expect(h.reconfigure()).rejects.toThrow('Resume the Session first')
+      expect(h.request).toHaveBeenCalledOnce()
+      expect(h.providerSession.dispose).not.toHaveBeenCalled()
+      finish()
+      await Promise.resolve()
+      await expect(h.reconfigure()).rejects.toThrow('Resume the Session first')
+      expect(h.request).toHaveBeenCalledOnce()
+      const recovery = {
+        previousFrameworkId: 'codex',
+        previousBackendId: initialBackend.backendId,
+        providerContinuityToken: 'same-provider'
+      } as const
+      await h.resume(recovery)
+      expect(
+        h.request.mock.calls.filter(([method]) => method === acp.methods.agent.session.close)
+      ).toHaveLength(1)
+      await expect(h.reconfigure(recovery)).resolves.toMatchObject({
+        sessionId: 'stable-app-session'
+      })
+    }
+  )
+
+  it('waits for a timed-out close before resuming the original attached model', async () => {
+    const h = createHarness({
+      attached: true,
+      initialBackend: codexResponsesBackend,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const rejected = expect(first).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejected
+    const resumed = h.resume({
+      previousFrameworkId: 'codex',
+      previousBackendId: codexResponsesBackend.backendId
+    })
+    await Promise.resolve()
+    expect(h.request).toHaveBeenCalledOnce()
+    h.request.mockRejectedValueOnce(new Error('provider unavailable'))
+    const failed = expect(resumed).rejects.toThrow('provider unavailable')
+    finish()
+    await failed
+    await h.resume({
+      previousFrameworkId: 'codex',
+      previousBackendId: codexResponsesBackend.backendId
+    })
+    expect(h.request.mock.calls.map(([method]) => method)).toEqual([
+      acp.methods.agent.session.close,
+      acp.methods.agent.session.resume,
+      acp.methods.agent.session.resume
+    ])
+  })
+
+  it('discards stale release confirmation without detaching a replacement', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const rejected = expect(first).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejected
+    finish()
+    await Promise.resolve()
+    const old = h.registry.lookup('stable-app-session')!.attachment!
+    h.registry.detach(old, 'connection')
+    const successor = h.registry.reserve({
+      sessionIds: ['stable-app-session', h.successorSession.sessionId],
+      blockStartup: false
+    })
+    if (successor.collision) throw successor.collision
+    h.registry.publish(successor.reservation, 'stable-app-session', {
+      session: h.successorSession,
+      projectId: 'old-project',
+      cwd: '/workspace',
+      frameworkId: 'codex',
+      backendId: 'codex',
+      permissionProfile
+    })
+    successor.reservation.release()
+    await expect(h.releaseForTransfer()).rejects.toThrow('superseded')
+    expect(h.successorSession.dispose).not.toHaveBeenCalled()
+    await expect(h.releaseForTransfer()).resolves.toBe('successor-provider-session')
+    expect(h.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not disconnect sibling Sessions when writer close times out', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    h.request.mockImplementationOnce(() => new Promise(() => undefined))
+    const release = h.releaseForTransfer()
+    const rejection = expect(release).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejection
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeDefined()
+    expect(h.disconnectTimedOutConnection).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['Responses', false, codexResponsesBackend],
     ['Chat', false, codexBridgeBackend],
@@ -512,6 +759,46 @@ describe('AcpProviderSessionResumer', () => {
   })
 
   it.each([
+    ['claude-code', backend, {}],
+    ['opencode', opencodeBackend, {}],
+    ['codex-response', codexResponsesBackend, {}],
+    [
+      'codex-bridge',
+      { ...codexBridgeBackend, providerContinuityToken: 'bridge-token' },
+      { providerContinuityToken: 'bridge-token' }
+    ]
+  ] as const)(
+    'registers the restored %s Specialist under the stable app identity',
+    async (_route, initialBackend, request) => {
+      const harness = createHarness({
+        initialBackend,
+        specialistIdentity: { append: 'identity', prefix: 'specialist' },
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+      await harness.resume({
+        specialistId: 'specialist-1',
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        previousFrameworkId: initialBackend.framework.id,
+        previousBackendId: initialBackend.backendId,
+        ...request
+      })
+      expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
+        'stable-app-session',
+        'specialist-1'
+      )
+      expect(harness.registerSessionSpecialist.mock.invocationCallOrder[0]).toBeGreaterThan(
+        harness.commit.mock.invocationCallOrder[0]
+      )
+      harness.registerSessionSpecialist.mockClear()
+      await harness.resume({ specialistId: 'specialist-1' })
+      expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
+        'stable-app-session',
+        'specialist-1'
+      )
+    }
+  )
+
+  it.each([
     ['claude-code', backend],
     ['opencode', opencodeBackend],
     ['codex-response', codexResponsesBackend],
@@ -548,6 +835,13 @@ describe('AcpProviderSessionResumer', () => {
       })
 
       expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+      expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
+        'stable-app-session',
+        undefined
+      )
+      expect(harness.registerSessionSpecialist.mock.invocationCallOrder[0]).toBeGreaterThan(
+        harness.commit.mock.invocationCallOrder[0]
+      )
       if (initialBackend.framework.id === 'codex') {
         expect(harness.request.mock.calls.map((call) => call[0])).toEqual([
           acp.methods.agent.session.close,
@@ -560,6 +854,49 @@ describe('AcpProviderSessionResumer', () => {
       expect(harness.adopt).not.toHaveBeenCalled()
     }
   )
+
+  it('records a fixed missing-rollout reason without retaining the provider payload', async () => {
+    diagnosticLogs.info.mockClear()
+    diagnosticLogs.error.mockClear()
+    const secret = 'private-research-credential-and-path'
+    const resumeError = Object.assign(new Error('Internal error'), {
+      code: -32603,
+      data: {
+        details: 'no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        prompt: secret,
+        credential: secret
+      },
+      stack: secret
+    })
+    const harness = createHarness({
+      attached: true,
+      initialBackend: codexResponsesBackend,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      resumeError
+    })
+
+    await expect(harness.reconfigure()).rejects.toBe(resumeError)
+
+    expect(diagnosticLogs.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'acp-provider-resume-rejection',
+        frameworkId: 'codex',
+        modelRoute: 'codex-responses',
+        reason: 'codex-rollout-not-found',
+        disposition: 'adoptable',
+        contextReplacementAllowed: false,
+        errorCategory: 'request'
+      })
+    )
+    const logs = JSON.stringify([
+      ...diagnosticLogs.info.mock.calls,
+      ...diagnosticLogs.error.mock.calls
+    ])
+    expect(logs).not.toContain(secret)
+    expect(logs).not.toContain('019fb8c8-6c66-7f22-9653-17b5b287dbbb')
+    expect(harness.adopt).not.toHaveBeenCalled()
+  })
 
   it('does not silently adopt a fresh context when capability reconfiguration cannot resume', async () => {
     const harness = createHarness({
@@ -781,6 +1118,7 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.registry.currentSessionId).toBe('stable-app-session')
     expect(harness.assertCurrentConnection).not.toHaveBeenCalled()
     expect(harness.order).toEqual([])
+    expect(harness.registerSessionSpecialist).not.toHaveBeenCalled()
   })
 
   it('does not commit attached metadata when the connection is superseded', async () => {

@@ -11,11 +11,13 @@ import { useTagStore } from '@/stores/tag-store'
 import type { LiteratureJobRequest, LiteratureJobView } from '@aipoch/literature-discovery/jobs'
 import {
   literatureItemInputSchema,
+  type LiteratureItemView,
   type LiteratureCatalogCommand
 } from '@aipoch/literature-library/contracts'
 import { createRoot } from 'react-dom/client'
 
 initI18n('en')
+const mode = new URLSearchParams(location.search).get('mode')
 const parent = {
   id: 'parent',
   revision: 1,
@@ -55,12 +57,96 @@ const job: LiteratureJobView = {
   ]
 }
 Object.assign(window, { literatureRecovery: { commands, job } })
+let fileItem: LiteratureItemView = {
+  id: 'drop-reference',
+  metadataRevision: 1,
+  item: literatureItemInputSchema.parse({
+    title: 'A reference with supporting PDFs',
+    itemType: 'journalArticle',
+    abstract: 'Original paper, translation, and supplementary material.'
+  }),
+  attachments: [
+    {
+      id: 'original',
+      kind: 'fullText',
+      title: '',
+      sortOrder: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      versions: [
+        {
+          id: 'original-v1',
+          versionNumber: 1,
+          filename: 'original.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 2048,
+          checksum: 'a'.repeat(64),
+          pageCount: 1,
+          availability: 'available',
+          createdAt: 1
+        }
+      ]
+    }
+  ],
+  projectIds: [],
+  collectionIds: [],
+  createdAt: 1,
+  updatedAt: 1
+}
+const fileRequests: object[] = []
+Object.assign(window, { literatureFiles: { requests: fileRequests } })
 window.api = {
   platform: 'darwin',
+  saveManagedFile: async (request: object) => {
+    fileRequests.push(request)
+    return { saved: true }
+  },
+  uploads: {
+    stageLocalFile: async (file: File) => ({
+      id: file.name,
+      sessionId: '.pending',
+      name: file.name,
+      originalName: file.name,
+      path: `/managed/${file.name}`,
+      mimeType: 'application/pdf',
+      size: file.size
+    }),
+    claimLocalFile: async () => {},
+    deleteUpload: async () => {},
+    abortTransfer: async () => {}
+  },
   literature: {
+    get: async () => fileItem,
+    importPdf: async (request: { itemId: string; attachment: { name: string } }) => {
+      fileRequests.push(request)
+      const name = request.attachment.name
+      fileItem = {
+        ...fileItem,
+        attachments: [
+          ...fileItem.attachments,
+          {
+            ...fileItem.attachments[0],
+            id: name,
+            versions: [{ ...fileItem.attachments[0].versions[0], id: name, filename: name }]
+          }
+        ]
+      }
+      return { item: fileItem }
+    },
+    importRecords: async (request: object) => {
+      fileRequests.push(request)
+      return { mode: 'preview', format: 'nbib', items: [fileItem.item], warnings: [] }
+    },
     onChanged: () => () => {},
     search: async (request: { scope: string }) => ({
-      entries: request.scope === 'collections' ? collections : []
+      entries:
+        request.scope === 'collections'
+          ? mode === 'files'
+            ? []
+            : collections
+          : mode === 'files' && request.scope === 'library'
+            ? [fileItem]
+            : []
     }),
     transact: async (command: LiteratureCatalogCommand) => {
       commands.push(command)
@@ -92,10 +178,12 @@ window.api = {
     onChanged: () => () => {}
   }
 } as unknown as typeof window.api
-useNavigationStore.setState({ view: 'library', pendingLiteratureCollectionId: 'parent' })
+useNavigationStore.setState({
+  view: 'library',
+  pendingLiteratureCollectionId: mode === 'files' ? undefined : 'parent'
+})
 useProjectStore.setState({ projects: [], isLoaded: true })
 useTagStore.setState({ status: 'ready', revision: 1, tags: [], assignments: [] })
-const mode = new URLSearchParams(location.search).get('mode')
 createRoot(document.getElementById('root')!).render(
   <LiteratureRendererProvider host={literatureRendererHost}>
     {mode === 'batch' ? (

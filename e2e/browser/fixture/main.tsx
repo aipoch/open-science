@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { initI18n } from '@/i18n'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { HomePage } from '@/pages/home/HomePage'
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -90,6 +92,32 @@ if (new URLSearchParams(location.search).has('search-shortcuts')) {
         selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] }
       }
     ]
+  })
+}
+
+if (new URLSearchParams(location.search).has('capability-scroll')) {
+  useSettingsStore.setState({
+    skills: Array.from({ length: 40 }, (_, index) => ({
+      id: `scroll-skill-${index}`,
+      name: `Scroll skill ${String(index).padStart(2, '0')}`,
+      displayName: `Scroll skill ${String(index).padStart(2, '0')}`,
+      description: '',
+      enabled: true,
+      available: true,
+      source: 'personal',
+      updatedAt: '2026-10-20T00:00:00.000Z'
+    })),
+    connectors: Array.from({ length: 40 }, (_, index) => ({
+      id: `scroll-connector-${index}`,
+      name: `scroll-connector-${index}`,
+      displayName: `Scroll connector ${String(index).padStart(2, '0')}`,
+      description: '',
+      enabled: true,
+      sources: [],
+      requiresNcbi: false,
+      autoAllow: false,
+      group: 'featured'
+    }))
   })
 }
 
@@ -183,4 +211,8 @@ export function Fixture(): React.JSX.Element {
     </TooltipProvider>
   )
 }
-createRoot(document.getElementById('root')!).render(<Fixture />)
+createRoot(document.getElementById('root')!).render(
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    <Fixture />
+  </LiteratureRendererProvider>
+)

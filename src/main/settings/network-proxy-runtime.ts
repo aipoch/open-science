@@ -1,4 +1,4 @@
-import type { ProxyConfig } from 'electron'
+import type { RuntimeProxyConfig } from '../runtime-network'
 
 import {
   DEFAULT_NETWORK_PROXY_SETTINGS,
@@ -14,7 +14,7 @@ import {
 
 type NetworkProxyRuntimeOptions = Readonly<{
   environment?: NodeJS.ProcessEnv
-  setProxy: (config: ProxyConfig) => Promise<void>
+  setProxy: (config: RuntimeProxyConfig) => Promise<void>
 }>
 
 const captureProxyEnvironment = (environment: NodeJS.ProcessEnv): SystemProxyEnvironment => {
@@ -63,7 +63,7 @@ const manualProxyEnvironment = (settings: NetworkProxySettings): SystemProxyEnvi
 const manualProxyConfig = (
   settings: NetworkProxySettings,
   environment: SystemProxyEnvironment
-): ProxyConfig => ({
+): RuntimeProxyConfig => ({
   mode: 'fixed_servers',
   proxyRules: settings.server,
   proxyBypassRules: ['<local>', environment.NO_PROXY].filter(Boolean).join(',')
@@ -75,7 +75,7 @@ const manualProxyConfig = (
 export class NetworkProxyRuntime {
   private readonly environment: NodeJS.ProcessEnv
   private readonly inheritedEnvironment: SystemProxyEnvironment
-  private readonly setProxy: (config: ProxyConfig) => Promise<void>
+  private readonly setProxy: (config: RuntimeProxyConfig) => Promise<void>
   private childProcessEnvironment: SystemProxyEnvironment | undefined
   private settings: NetworkProxySettings = DEFAULT_NETWORK_PROXY_SETTINGS
 

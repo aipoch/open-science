@@ -103,6 +103,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,
+    registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
     peekClaudeReplay: (sessionId) => base.handoffContinuity.peekClaudeReplay(sessionId),
     updateCwd,
     emitState,
@@ -120,8 +121,8 @@ const composeAcpRuntimeProviderSessionOwners = (
       reserveIdentity(undefined, [sessionId], publishedAppSessionId),
     adopter: providerSessionAdopter,
     reconfigureSession: (request) => providerSessionResumer.reconfigure(request),
-    assertSkillScopeRefreshSupported: () =>
-      providerSessionResumer.assertSkillScopeRefreshSupported(),
+    assertSkillScopeRefreshSupported: (sessionId) =>
+      providerSessionResumer.assertSkillScopeRefreshSupported(sessionId),
     permission: session.permissionContext,
     elicitation: session.elicitationOwner,
     clearUserChoiceProvenanceForSession: runtime.clearUserChoiceProvenanceForSession,
@@ -180,6 +181,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,
+    registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
     updateCwd,
     pushEvent: (event) => session.publication.pushEvent(event),
     emitState,

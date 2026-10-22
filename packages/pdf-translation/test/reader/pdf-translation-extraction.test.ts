@@ -635,6 +635,71 @@ describe('extractPdfTranslationSource', () => {
       )
     ).toBeNull()
   })
+  it.each([11, -37, 137])(
+    'retains a proved slanted native label independently at %s degrees',
+    async (angle) => {
+      const radians = (angle * Math.PI) / 180,
+        a = 10 * Math.cos(radians),
+        b = 10 * Math.sin(radians)
+      const items = [
+        text('Original prose.'),
+        { ...text('Graph label'), width: 40, transform: [a, b, -b, a, 300, 400] }
+      ]
+      const fixture = setup(items)
+      fixture.page.getTextContent.mockResolvedValue({
+        items,
+        styles: { body: { vertical: false, ascent: 0.8, descent: -0.2 } }
+      })
+      const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+      expect(coverage).toMatchObject({ includedItemCount: 2, excludedItemCount: 0 })
+      expect(source.units[0].sourceOnly).toBeUndefined()
+      expect(source.units[1]).toMatchObject({
+        id: 'rot-p1-i1',
+        source: 'Graph label',
+        sourceOnly: true
+      })
+      expect(source.units[1].fragments[0].items).toEqual([{ index: 1, text: 'Graph label' }])
+      const r = source.units[1].fragments[0].rect
+      expect([r.x, r.y, r.width, r.height].every(Number.isFinite)).toBe(true)
+      expect(r.x + r.width).toBeLessThan(1)
+      expect(r.y + r.height).toBeLessThan(1)
+    }
+  )
+  it.each([
+    'missing-style',
+    'missing-ascent',
+    'missing-descent',
+    'unknown-vertical',
+    'vertical',
+    'shear',
+    'reflection',
+    'outside-page'
+  ])('does not recover a slanted label without complete navigation evidence: %s', async (fault) => {
+    const items = [{ ...text('Graph label'), width: 40, transform: [8, 6, -6, 8, 300, 400] }]
+    const fixture = setup(items),
+      style: { vertical?: boolean; ascent?: number; descent?: number } = {
+        vertical: false,
+        ascent: 0.8,
+        descent: -0.2
+      }
+    if (fault === 'missing-ascent') delete style.ascent
+    if (fault === 'missing-descent') delete style.descent
+    if (fault === 'unknown-vertical') delete style.vertical
+    if (fault === 'vertical') style.vertical = true
+    if (fault === 'shear') items[0].transform[2] = -5
+    if (fault === 'reflection') {
+      items[0].transform[2] = 6
+      items[0].transform[3] = -8
+    }
+    if (fault === 'outside-page') items[0].transform[4] = 599
+    fixture.page.getTextContent.mockResolvedValue({
+      items,
+      styles: fault === 'missing-style' ? {} : { body: style }
+    })
+    const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+    expect(source.units).toHaveLength(0)
+    expect(coverage.excludedItemCount).toBe(1)
+  })
   it('keeps individual table symbols with zero font metrics and does not merge rows', async () => {
     const fixture = setup(
       ['56', '⋅', '6', '−'].map((str, index) => ({

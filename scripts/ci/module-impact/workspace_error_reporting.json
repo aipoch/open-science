@@ -15,7 +15,7 @@
       "src/renderer/src/pages/workspace/ReportErrorDialog.interaction.test.tsx",
       "src/renderer/src/pages/workspace/error-report.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",

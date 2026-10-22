@@ -4,7 +4,8 @@ import {
   getActivityGroupTitleFromToolEvent,
   isActivityGroupToolEvent
 } from '../../../../shared/activity-groups'
-import type { ChatSession, SessionStoreApi, ToolActivity } from '../../stores/session-store'
+import type { ChatSession, ToolActivity } from '../../stores/session-store-contract'
+import type { SessionStoreApi } from '../../stores/session-store'
 import {
   createRuntimeStreamId,
   getAcpRuntimeEventImage,

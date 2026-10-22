@@ -1,4 +1,4 @@
-import type { PreviewToolItem } from '@/stores/preview-workbench-store'
+import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 
 export const loadSessionDiscussionContext = async (

@@ -36,7 +36,16 @@ type SaveSessionArtifactFile = {
   suggestedName: string
 }
 
+type ArtifactSaveOperationRequest = { operationId: string }
+
+type ArtifactSaveProgress = {
+  phase: 'preparing' | 'running' | 'cancelling'
+  completedFiles: number
+  totalFiles: number
+}
+
 type SaveSessionArtifactsRequest = {
+  operationId?: string
   projectId: string
   sessionId: string
   files: SaveSessionArtifactFile[]
@@ -47,7 +56,14 @@ type SaveSessionArtifactFailure = SaveSessionArtifactFile & {
 }
 
 type SaveSessionArtifactsResult =
-  { saved: false } | { saved: true; filePaths: string[]; failures?: SaveSessionArtifactFailure[] }
+  | { saved: false; cancelled?: true }
+  | {
+      saved: true
+      filePaths: string[]
+      failures?: SaveSessionArtifactFailure[]
+      cancelled?: true
+      completedFileIds?: string[]
+    }
 
 type SaveProjectArtifactFile = {
   source: 'artifact' | 'upload'
@@ -58,6 +74,7 @@ type SaveProjectArtifactFile = {
 }
 
 type SaveProjectArtifactsRequest = {
+  operationId?: string
   projectId: string
   // Presentation-only filename seed prepared by the renderer. Project identity stays with projectId.
   suggestedArchiveName: string
@@ -70,10 +87,13 @@ type SaveProjectArtifactFailure = SaveProjectArtifactFile & {
 
 // filePath is absent when every file fails after Save As confirmation: no archive is written.
 type SaveProjectArtifactsResult =
-  { saved: false } | { saved: true; filePath?: string; failures?: SaveProjectArtifactFailure[] }
+  | { saved: false; cancelled?: true }
+  | { saved: true; filePath?: string; failures?: SaveProjectArtifactFailure[] }
 
 export { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME }
 export type {
+  ArtifactSaveOperationRequest,
+  ArtifactSaveProgress,
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,

@@ -82,6 +82,14 @@ class ArtifactFinalizationExecutionError extends Error {
   }
 }
 
+const errorCode = (error: unknown): string | undefined =>
+  typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined
+
+const errorName = (error: unknown): string | undefined =>
+  error instanceof Error ? error.name : undefined
+
 const artifactFinalizationFailureResult = (
   error: unknown
 ): Extract<FinalizeRunArtifactsResult, { ok: false }> | undefined =>
@@ -550,6 +558,8 @@ const finalizeRunArtifacts = async (
     logger.error('artifact finalization attempt failed', {
       stage,
       failureKind,
+      ...(errorCode(error) ? { failureCode: errorCode(error) } : {}),
+      ...(errorName(error) ? { failureName: errorName(error) } : {}),
       ...(error instanceof ArtifactFinalizationProofError
         ? { proofFailureReason: error.reasonCode }
         : {}),

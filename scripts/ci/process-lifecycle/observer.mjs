@@ -124,6 +124,8 @@ export class LifecycleObserver {
       while (changed) {
         changed = false
         for (const item of table) {
+          // A baseline process can retain a parent PID later reused by this workload.
+          if (this.baseline.has(identityKey(item))) continue
           if (live.has(item.pid) || live.has(item.parentPid)) {
             if (item.unknown || !Number.isFinite(item.created))
               throw new Error('process-identity-unreadable')
@@ -131,8 +133,7 @@ export class LifecycleObserver {
               live.add(item.pid)
               changed = true
             }
-            if (!this.baseline.has(identityKey(item)))
-              this.seen.set(identityKey(item), { ...item, root: key, ownership: root.ownership })
+            this.seen.set(identityKey(item), { ...item, root: key, ownership: root.ownership })
           }
         }
       }

@@ -46,7 +46,7 @@
       "src/renderer/src/pages/settings/SettingsPage.architecture.test.ts",
       "src/renderer/src/pages/settings/SettingsPage.render.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/notebook/mirror-probe.test.ts",
       "src/main/session-persistence/usage-regressions.test.ts",

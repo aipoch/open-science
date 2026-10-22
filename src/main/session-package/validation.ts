@@ -1,14 +1,12 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { SessionPackageManifest } from '../../shared/session-package'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { decodeReviewScopeSnapshot } from '../artifacts/provenance-snapshot-decoder'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
-import { copyFileWithinBudget } from '../bounded-file-io'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { assertPackageCapacity } from './capacity'
+import { createPackageMaterializer } from './materialize'
 import { executionEvidenceKeys } from './execution-evidence'
 import { validatePackageLiterature } from './literature'
 import {
@@ -116,14 +114,15 @@ export const validatePackageRecords = async (
   const root = await mkdtemp(join(temporaryRoot, 'open-science-package-validation-'))
   let client: ReturnType<typeof createProjectDbClient> | undefined
   try {
-    await assertPackageCapacity(
+    const materialize = await createPackageMaterializer(
+      directory,
       root,
-      [...files.values()].reduce((sum, entry) => sum + entry.sizeBytes, 0)
+      [...files.values()],
+      signal,
+      nativeStorageKeys(records)
     )
     for (const [key, entry] of files) {
-      const target = resolveStorageKey(root, key)
-      await mkdir(dirname(target), { recursive: true })
-      await copyFileWithinBudget(join(directory, entry.path), target, entry.sizeBytes, signal)
+      await materialize(entry, key)
     }
     await installPackageReproducibility(root, records, excluded)
     await validatePackageReproducibility(root, records, manifest, sourceIdentity)

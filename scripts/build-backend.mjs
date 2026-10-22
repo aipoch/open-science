@@ -1,18 +1,27 @@
 import { windowsSigningBuildDefines } from './windows-signing-policy.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { assertBackendImports } from './backend-dependencies.mjs'
+import { assertBackendImports, desktopBundledDependencies } from './backend-dependencies.mjs'
 import { context } from 'esbuild'
 import { fileURLToPath } from 'node:url'
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
 
 export async function createBackendBuilder({
   root = resolve(import.meta.dirname, '..'),
-  development = false
+  development = false,
+  desktop = false
 } = {}) {
-  const out = join(root, 'out/backend')
+  const out = join(root, desktop ? 'out/desktop-backend-build' : 'out/backend')
+  const require = createRequire(join(root, 'package.json'))
+  // Only this audited, resource-free CJS implementation is inlined. New versions remain
+  // external until their runtime behavior and dependency graph have been checked again.
+  const inlineI18next =
+    desktop &&
+    JSON.parse(await readFile(require.resolve('i18next/package.json'), 'utf8')).version ===
+      '25.10.10'
   await mkdir(out, { recursive: true })
   const workers = new Map()
   const contexts = new Map()
@@ -45,6 +54,10 @@ export async function createBackendBuilder({
           {
             name: 'open-science-node-resources',
             setup(plugin) {
+              if (inlineI18next)
+                plugin.onResolve({ filter: /^i18next$/ }, () => ({
+                  path: require.resolve('i18next')
+                }))
               plugin.onResolve({ filter: /^@aipoch\/notebook-network-sandbox$/ }, () => ({
                 path: join(root, 'packages/notebook-network-sandbox/src/index.ts')
               }))
@@ -94,6 +107,15 @@ export async function createBackendBuilder({
       metadata,
       JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).dependencies
     )
+    if (desktopBundledDependencies(metadata).has('i18next')) {
+      await mkdir(join(out, 'third-party-licenses'), { recursive: true })
+      await writeFile(
+        join(out, 'third-party-licenses/i18next-LICENSE'),
+        await readFile(join(require.resolve('i18next/package.json'), '..', 'LICENSE'))
+      )
+    } else if (desktop) {
+      await rm(join(out, 'third-party-licenses/i18next-LICENSE'), { force: true })
+    }
     await mkdir(join(out, 'native-locales'), { recursive: true })
     for (const file of await readdir(join(root, 'src/shared/i18n/locales'))) {
       if (!file.endsWith('.json')) continue
@@ -113,7 +135,8 @@ export async function createBackendBuilder({
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const builder = await createBackendBuilder({
-    development: process.argv.includes('--development')
+    development: process.argv.includes('--development'),
+    desktop: process.argv.includes('--desktop')
   })
   try {
     const workers = await builder.rebuild()

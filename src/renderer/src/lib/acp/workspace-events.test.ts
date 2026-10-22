@@ -12,6 +12,7 @@ import {
 } from '../../../../shared/artifacts'
 import {
   SessionRevisionConflictError,
+  rearmUnacceptedElicitationContinuations,
   type PersistedChatSession,
   type SaveSessionOptions
 } from '../../../../shared/session-persistence'
@@ -181,6 +182,253 @@ describe('workspace runtime events', () => {
       content: 'Summarize this',
       projectId: 'default-project'
     })
+  })
+
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'discloses a current %s continuation failure without changing the durable transcript',
+    async (target) => {
+      useSessionStore.getState().upsertToolActivity({
+        sessionId: 'transport-session-1',
+        toolCallId: 'question',
+        eventId: 'pending-choice',
+        status: 'in_progress',
+        elicitation: {
+          message: 'Continue?',
+          fields: [],
+          state: 'pending',
+          durable: { kind: 'agent-user-choice', requestId: 'choice' }
+        }
+      })
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          runtimeTranscriptOwner: 'main',
+          agentFrameworkId: target.startsWith('codex')
+            ? 'codex'
+            : (target as 'claude-code' | 'opencode'),
+          agentBackendId: target
+        }))
+      }))
+      const before = useSessionStore.getState().sessions[0]
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          kind: 'error',
+          level: 'error',
+          promptMessageId: before.messages[0].id,
+          title: 'Could not continue the Agent task',
+          text: 'Continuation admission failed'
+        })
+      )
+      expect(useWorkspaceOperationErrors.getState().errors).toEqual({
+        [before.id]: 'Continuation admission failed'
+      })
+      expect(useSessionStore.getState().sessions[0]).toEqual(before)
+    }
+  )
+
+  it.each([
+    'older-prompt',
+    'inactive-branch',
+    'missing-prompt',
+    'terminal',
+    'commit-failure'
+  ] as const)(
+    'does not disclose a %s error as the current continuation failure',
+    async (scenario) => {
+      const sessionId = 'transport-session-1'
+      const originalPrompt = useSessionStore.getState().sessions[0].messages[0].id
+      useSessionStore.getState().upsertToolActivity({
+        sessionId,
+        toolCallId: 'question',
+        eventId: 'pending-choice',
+        promptMessageId: originalPrompt,
+        status: 'in_progress',
+        elicitation: {
+          message: 'Continue?',
+          fields: [],
+          state: 'pending',
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice',
+            promptMessageId: originalPrompt
+          }
+        }
+      })
+      useSessionStore.getState().finishRun(sessionId)
+      if (scenario === 'inactive-branch') {
+        useSessionStore.getState().truncateSessionFromMessage(sessionId, originalPrompt)
+      }
+      if (scenario === 'older-prompt' || scenario === 'inactive-branch') {
+        useSessionStore.getState().appendUserMessage({ sessionId, content: 'A different task' })
+      }
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({ ...session, runtimeTranscriptOwner: 'main' }))
+      }))
+      const before = useSessionStore.getState().sessions[0]
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          kind: 'error',
+          level: 'error',
+          promptMessageId: scenario === 'missing-prompt' ? undefined : originalPrompt,
+          title: scenario === 'terminal' ? 'Prompt failed' : 'Could not continue the Agent task',
+          terminalCommitFailure: scenario === 'commit-failure' ? 'storage' : undefined,
+          text: 'Failure belongs elsewhere'
+        })
+      )
+      expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      expect(useSessionStore.getState().sessions[0]).toEqual(before)
+    }
+  )
+
+  it.each(['accepted', 'unaccepted', 'rearmed'] as const)(
+    'does not duplicate a durable provider failure (%s)',
+    async (phase) => {
+      const unaccepted = phase !== 'accepted'
+      const sessionId = `provider-failure-${phase}`
+      useSessionStore.setState(createInitialSessionState())
+      useSessionStore.getState().appendUserMessage({ sessionId, content: 'Continue the task' })
+      const promptMessageId = useSessionStore.getState().sessions[0].activeRun!.promptMessageId
+      useSessionStore.getState().upsertToolActivity({
+        sessionId,
+        toolCallId: 'question',
+        eventId: 'consumed-answer',
+        status: 'completed',
+        elicitation: {
+          message: 'Continue?',
+          fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+          state: 'answered',
+          durable: { kind: 'agent-user-choice', requestId: 'choice', promptMessageId },
+          continuationPending: unaccepted || undefined,
+          respondedAt: Date.now(),
+          answers: [{ fieldId: 'choice', value: 'continue' }]
+        }
+      })
+      const source = useSessionStore.getState().sessions[0]
+      const graph = source.conversationGraph!
+      const durable = toPersistedSession(source)
+      if (unaccepted) {
+        for (const activity of [...durable.activities!, ...durable.conversationGraph!.activities]) {
+          if (activity.elicitation) activity.elicitation.continuationPending = true
+        }
+      }
+      const failed = applyRuntimeSessionEvents(
+        durable,
+        {
+          agentFrameId: graph.rootFrameId,
+          messageBranchId: graph.branches[0].id,
+          runtimeSegmentId: graph.runtimeSegments[0].id,
+          promptMessageId
+        },
+        [
+          {
+            ...createEvent({
+              kind: 'error',
+              level: 'error',
+              title: 'Prompt failed',
+              text: 'Provider failed',
+              sessionId,
+              timestamp: Date.now() + 1,
+              promptMessageId
+            }),
+            publicationOwner: 'main'
+          }
+        ]
+      )
+      expect(failed.error).toBe('Provider failed')
+      const failedProjection: PersistedChatSession = {
+        ...failed,
+        runtimeTranscriptOwner: 'main',
+        revision: 1
+      }
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session:
+          phase === 'rearmed'
+            ? rearmUnacceptedElicitationContinuations(failedProjection, promptMessageId)
+            : failedProjection,
+        mode: 'runtime-transcript-authority'
+      })
+      const before = useSessionStore.getState().sessions[0]
+      expect(before.messages.find(({ id }) => id === promptMessageId)?.turnOutcome).toMatchObject({
+        kind: 'failed',
+        error: 'Provider failed'
+      })
+      if (phase === 'rearmed') {
+        expect(before.status).toBe('waiting-for-user')
+        expect(before.activities![0].elicitation).toMatchObject({ state: 'pending' })
+        expect(before.activities![0].elicitation?.respondedAt).toBeUndefined()
+      } else {
+        expect(before.error).toBe('Provider failed')
+        if (unaccepted) expect(before.activities![0].elicitation?.continuationPending).toBe(true)
+      }
+      await applyWorkspaceRuntimeEvent(
+        createEvent({
+          kind: 'error',
+          level: 'error',
+          sessionId,
+          promptMessageId,
+          title: 'Could not continue the Agent task',
+          text: 'Provider failed'
+        })
+      )
+      expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      expect(useSessionStore.getState().sessions[0]).toEqual(before)
+    }
+  )
+
+  it('ignores a prior question branch failure even when the human prompt is shared', async () => {
+    const sessionId = 'transport-session-1'
+    const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().upsertToolActivity({
+      sessionId,
+      toolCallId: 'question',
+      eventId: 'answered-choice',
+      status: 'completed',
+      elicitation: {
+        message: 'Continue?',
+        fields: [],
+        state: 'answered',
+        durable: { kind: 'agent-user-choice', requestId: 'choice', promptMessageId },
+        answers: []
+      }
+    })
+    useSessionStore.getState().finishRun(sessionId)
+    const oldFrame = useSessionStore.getState().sessions[0].conversationGraph!.frames[0]
+    const activityId = useSessionStore.getState().sessions[0].activities![0].id
+    expect(useSessionStore.getState().reviseSessionFromElicitation(sessionId, activityId)).toBe(
+      true
+    )
+    useSessionStore.getState().upsertToolActivity({
+      sessionId,
+      toolCallId: 'revised-question',
+      eventId: 'revised-choice',
+      promptMessageId,
+      status: 'in_progress',
+      elicitation: {
+        message: 'Continue?',
+        fields: [],
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'revised-choice', promptMessageId }
+      }
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, runtimeTranscriptOwner: 'main' }))
+    }))
+    const before = useSessionStore.getState().sessions[0]
+    expect(before.messages[0].id).toBe(promptMessageId)
+    expect(before.conversationGraph!.frames[0].activeBranchId).not.toBe(oldFrame.activeBranchId)
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        kind: 'error',
+        level: 'error',
+        promptMessageId,
+        agentFrameId: oldFrame.id,
+        messageBranchId: oldFrame.activeBranchId,
+        title: 'Could not continue the Agent task',
+        text: 'Previous branch failed'
+      })
+    )
+    expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
   })
 
   it.each(

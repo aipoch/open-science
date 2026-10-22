@@ -12,6 +12,31 @@ const { associateTableNotes } = await import(
 const { associateFigures, associateTableCaptions } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
+it('keeps a native line continuing an open external figure reference in its paragraph', () => {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [],
+    lines: [
+      'The preceding measurements are given in the cited experiment (see',
+      'Figure 6 therein and the accompanying correction [9]). In that example, each',
+      'curve includes several independently measured components.'
+    ].map((text, n) => ({ text, x: 50, y: 100 + n * 16, width: 450, height: 12, fontSize: 12 }))
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
+  for (const change of ['closed sentence', 'detached title', 'separator', 'different font']) {
+    const other = structuredClone(page)
+    if (change === 'closed sentence')
+      other.lines[0].text = 'The preceding measurements are described in the cited experiment.'
+    if (change === 'detached title') other.lines[0].y = 70
+    if (change === 'different font') other.lines[0].fontSize = 10
+    const rules = change === 'separator' ? new Map([[1, [[40, 114, 520, 114]]]]) : new Map()
+    expect(findCaptionCandidates([other], rules).some((c) => c.page === 1)).toBe(true)
+  }
+})
 
 const multilineFigureCaption = (title: string): ReturnType<typeof JSON.parse> => ({
   pageNumber: 1,
@@ -27,6 +52,92 @@ const multilineFigureCaption = (title: string): ReturnType<typeof JSON.parse> =>
     fontSize: 10
   })),
   graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 50 / 800, 350 / 600, 235 / 800] }]
+})
+
+function leftCaptionStack(): ReturnType<typeof JSON.parse> {
+  const captions = [80, 190, 300].map((y, n) => ({
+    page: 1,
+    lines: [`Table ${n + 1}. Independent measurements.`],
+    rect: [50, y, 200, y + 10]
+  }))
+  const tables = [100, 210, 320].map((y) => ({ rect: [50, y + 13, 450, y + 79] }))
+  const rules = [100, 210, 320].flatMap((y) =>
+    [y, y + 20, y + 80].map((edge) => [50, edge, 450, edge])
+  )
+  const lines = [100, 210, 320].flatMap((y) =>
+    ['Method Score', 'A 12 14', 'B 23 25', 'C 34 36'].map((text, n) => ({
+      text,
+      x: 60,
+      y: y + 5 + n * 20,
+      width: 250,
+      height: 10,
+      fontSize: 10
+    }))
+  )
+  lines.push(
+    ...captions.map((c) => ({
+      text: c.lines[0],
+      x: 50,
+      y: c.rect[1],
+      width: 150,
+      height: 10,
+      fontSize: 10
+    }))
+  )
+  return {
+    page: {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [],
+      lines
+    },
+    tables,
+    captions,
+    rules
+  }
+}
+
+it('reserves short flush-left titles for complete consecutive native table frames', () => {
+  const f = leftCaptionStack(),
+    before = structuredClone(f)
+  expect(
+    associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+  ).toEqual(f.captions)
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'nonconsecutive',
+  'missing-opening',
+  'missing-separator',
+  'foreign-corridor',
+  'duplicate-title',
+  'offset-left'
+])('requires independent complete left-caption stack evidence: %s', (change) => {
+  const f = leftCaptionStack()
+  if (change === 'nonconsecutive') f.captions[1].lines[0] = 'Table 9. Independent measurements.'
+  if (change === 'missing-opening') f.rules = f.rules.filter((_: unknown, i: number) => i % 3 !== 0)
+  if (change === 'missing-separator')
+    f.rules = f.rules.filter((_: unknown, i: number) => i % 3 !== 1)
+  if (change === 'foreign-corridor')
+    f.page.lines.push({
+      text: 'Independent prose',
+      x: 60,
+      y: 92,
+      width: 100,
+      height: 5,
+      fontSize: 5
+    })
+  if (change === 'duplicate-title') f.captions.push(structuredClone(f.captions[0]))
+  if (change === 'offset-left') {
+    f.captions[0].rect[0] += 20
+    f.captions[0].rect[2] += 20
+  }
+  expect(
+    associateTableCaptions(f.page, f.tables, f.captions, f.rules).map((c) => c.caption)
+  ).not.toEqual(f.captions.slice(0, 3))
 })
 
 it('reserves the footer of an independently closed missed plate before matching two native numeric tables', () => {
@@ -1763,6 +1874,91 @@ it('resolves equally close legends above stacked images using the lower image', 
   expect(result[1].rect).toEqual([78, 384, 522, 536])
 })
 
+const dividedCaptionPanels = (): ReturnType<typeof JSON.parse> => ({
+  page: {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [
+      [100, 80, 250, 114],
+      [300, 80, 450, 114],
+      [270, 200, 330, 230],
+      [190, 280, 250, 310],
+      [350, 280, 410, 310],
+      [190, 360, 250, 390],
+      [350, 360, 410, 390],
+      [270, 440, 330, 470],
+      [220, 240, 380, 420]
+    ].map((rect) => ({
+      kind: 'path',
+      normalizedRect: rect.map((v, i) => v / (i % 2 ? 800 : 600))
+    }))
+  },
+  captions: [
+    { page: 1, lines: ['Figure 1. Two related panels.'], rect: [60, 135, 530, 155] },
+    { page: 1, lines: ['Figure 2. Relationships.'], rect: [200, 510, 400, 530] }
+  ]
+})
+
+it.each([false, true])(
+  'keeps a complete later diagram after an exclusively owned panel bundle (reverse=%s)',
+  (reverse) => {
+    const { page, captions } = dividedCaptionPanels()
+    if (reverse) page.graphicsBounds.reverse()
+    const before = structuredClone({ page, captions })
+    const figures = associateFigures(page, captions)
+    expect(figures[0].rect).toEqual([100, 80, 450, (114 / 800) * 800])
+    expect(figures[1].rect).toEqual([190, 200, 410, 470])
+    expect(figures.map((figure: { caption: unknown }) => figure.caption)).toEqual(captions)
+    expect(figures.every((figure: { sourceItems?: unknown }) => !figure.sourceItems)).toBe(true)
+    expect({ page, captions }).toEqual(before)
+  }
+)
+
+it.each([
+  'insufficient-area',
+  'nested-area-inflation',
+  'overlapping',
+  'unaligned',
+  'foreign-prose',
+  'independent-caption'
+])('does not infer prior panel ownership from %s', (reason) => {
+  const { page, captions } = dividedCaptionPanels()
+  if (reason === 'insufficient-area' || reason === 'nested-area-inflation') {
+    for (const graphic of page.graphicsBounds.slice(0, 2)) graphic.normalizedRect[3] = 110 / 800
+    if (reason === 'nested-area-inflation') {
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [110 / 600, 80 / 800, 240 / 600, 110 / 800]
+      })
+    }
+  }
+  if (reason === 'overlapping')
+    page.graphicsBounds[1].normalizedRect = [110 / 600, 80 / 800, 260 / 600, 114 / 800]
+  if (reason === 'unaligned')
+    page.graphicsBounds[1].normalizedRect = [300 / 600, 85 / 800, 450 / 600, 119 / 800]
+  if (reason === 'foreign-prose')
+    page.lines.push({
+      text: 'Independent prose crosses the space between the panels.',
+      x: 255,
+      y: 90,
+      width: 40,
+      height: 10,
+      fontSize: 10
+    })
+  if (reason === 'independent-caption')
+    captions.push({ page: 1, lines: ['Figure 3. Independent.'], rect: [300, 118, 450, 130] })
+  expect(associateFigures(page, captions)[1].rect).toEqual([190, 360, 410, 470])
+})
+
+it.each(['Independent', '7'])('rejects an unowned native inter-panel run: %s', (text) => {
+  const { page, captions } = dividedCaptionPanels()
+  const tokens = [{ text, rect: [260, 90, 290, 100], height: 10, baseline: 100, horizontal: true }]
+  expect(associateFigures(page, captions, [], [], [], tokens)[1].rect).toEqual([190, 360, 410, 470])
+})
+
 it('keeps a captioned neighboring panel from making a raster legend ambiguous', () => {
   const page = {
     pageNumber: 1,
@@ -2056,7 +2252,7 @@ it('retains a raised unit exponent whose ascent differs by less than two points'
 })
 
 it('associates an explicitly labeled unnumbered table title without inventing a number', () => {
-  // 39145953.pdf, PDF page 3: the article has a single table, titled "Table.".
+  // A single-table document may use the unnumbered title "Table.".
   const text = 'Table. Clinicopathologic Characteristics of Patients in SOFT'
   const page = {
     pageNumber: 3,

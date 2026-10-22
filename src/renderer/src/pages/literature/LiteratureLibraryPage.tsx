@@ -1,3 +1,5 @@
+import { FileDropZone } from '@/components/FileDropZone'
+import { ErrorNotice } from '@/components/error-notice'
 import type { LiteraturePreviewItem } from './renderer-host'
 import { useLiteratureHost } from './renderer-host'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
@@ -647,15 +649,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     },
     [detailController, reloadEntries]
   )
-  const {
-    isAddingPdf,
-    addingPdfRef,
-    pdfError,
-    setPdfError,
-    addPdf,
-    isDraggingPdf,
-    pdfDropZoneProps
-  } = useLiteratureAttachments({ detailController, pdfStaging, loadEntries })
+  const { isAddingPdf, addingPdfRef, pdfError, setPdfError, addPdfs, pdfProgress } =
+    useLiteratureAttachments({ detailController, pdfStaging, loadEntries })
   const resolveSelectedItemIds = async (): Promise<string[]> => {
     const { allMatchingSelected, excludedMatchingIds, selectedIds } = selectionStore.getSnapshot()
     if (!allMatchingSelected) return [...selectedIds]
@@ -1205,6 +1200,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     beginPdfImport,
     closeItemEditor,
     previewRecordImport,
+    previewRecordSelection,
     commitRecordImport,
     trackNewMetadataDirty,
     beginManualImport,
@@ -1224,6 +1220,44 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setPdfError,
     requestMetadataExit
   })
+
+  const [fileImportError, setFileImportError] = useState<string>()
+  const receiveImportFiles = (files: File[]): void => {
+    if (
+      !files.length ||
+      detailController.getSnapshot().open ||
+      isCreatingItem ||
+      recordImport ||
+      pdfBatch ||
+      previewItem
+    )
+      return
+    setFileImportError(undefined)
+    const pdfs = files.filter((file) => /\.pdf$/iu.test(file.name))
+    const records = files.filter((file) => /\.(bib|bibtex|ris|nbib|txt)$/iu.test(file.name))
+    const unsupported = files.filter((file) => !pdfs.includes(file) && !records.includes(file))
+    if (unsupported.length) {
+      setFileImportError(
+        t('Unsupported files: {{names}}', {
+          names: unsupported.map((file) => file.name).join(', ')
+        })
+      )
+    } else if ((pdfs.length && records.length) || records.length > 1) {
+      setFileImportError(
+        t('Import PDFs together, or one reference file at a time. No files were added.')
+      )
+    } else if (pdfs.length > 1) {
+      setPdfBatch({
+        files: pdfs,
+        destination: {
+          name: selectedProject?.name ?? selectedCollection?.name ?? t('All references'),
+          projectId,
+          collectionId
+        }
+      })
+    } else if (pdfs[0]) beginPdfImport(pdfs[0])
+    else if (records[0]) void previewRecordImport(records[0])
+  }
 
   const pendingPdfImport = useNavigationStore((state) => state.pendingLiteraturePdfImport)
   useEffect(() => {
@@ -1541,7 +1575,15 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   return (
     <SmartDecisionPendingContext.Provider value={pendingDecisions.size > 0}>
-      <main className="flex h-svh min-h-0 overflow-hidden bg-bg-10 text-text-000">
+      <main
+        className="flex h-svh min-h-0 overflow-hidden bg-bg-10 text-text-000"
+        onDragOver={(event) => {
+          if (Array.from(event.dataTransfer.types ?? []).includes('Files')) event.preventDefault()
+        }}
+        onDrop={(event) => {
+          if (Array.from(event.dataTransfer.types ?? []).includes('Files')) event.preventDefault()
+        }}
+      >
         <LiteratureLibrarySidebar
           navigation={{
             section,
@@ -1625,7 +1667,23 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onStylesChange={updateCitationStyles}
             />
           ) : null}
-          <div
+          <FileDropZone
+            data-slot="literature-import-drop-zone"
+            onFiles={receiveImportFiles}
+            dropLabel={t('Drop PDFs or reference files to import')}
+            disabled={
+              section !== 'library' ||
+              Boolean(
+                selectedCollection?.smart ||
+                citationStylesOpen ||
+                journalsOpen ||
+                duplicatesOpen ||
+                isCreatingItem ||
+                recordImport ||
+                pdfBatch ||
+                previewItem
+              )
+            }
             className={cn(
               'flex h-full min-h-0 w-full max-w-none flex-col px-4 py-6 lg:px-6 lg:py-8',
               (citationStylesOpen || journalsOpen || duplicatesOpen) && 'hidden'
@@ -1643,12 +1701,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               startLiteratureReviewConversation={startLiteratureReviewConversation}
               setShouldCueLiteratureReview={setShouldCueLiteratureReview}
               importPdfInputRef={importPdfInputRef}
-              setPdfBatch={setPdfBatch}
-              projectId={projectId}
-              collectionId={collectionId}
-              beginPdfImport={beginPdfImport}
+              onImportFiles={receiveImportFiles}
               importRecordsInputRef={importRecordsInputRef}
-              previewRecordImport={previewRecordImport}
               beginManualImport={beginManualImport}
               query={query}
               searchResetRevision={searchResetRevision}
@@ -1663,6 +1717,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               exportCurrentScope={exportCurrentScope}
             />
 
+            {fileImportError ? (
+              <ErrorNotice inline role="alert" tone="amber" description={fileImportError} />
+            ) : null}
             {selectedCollection?.smart && (
               <SmartCollectionPanel
                 key={selectedCollection.id}
@@ -2429,7 +2486,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 </div>
               </div>
             </div>
-          </div>
+          </FileDropZone>
         </section>
 
         <LiteratureMergeDialog
@@ -2475,7 +2532,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             onClose={() => {
               closeRecordImport()
             }}
-            onImport={() => void commitRecordImport()}
+            onPreviewSelection={previewRecordSelection}
+            onImport={(indexes) => void commitRecordImport(indexes)}
           />
         ) : null}
 
@@ -2561,12 +2619,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               changeDetailMode={changeDetailMode}
               isAddingPdf={isAddingPdf}
               pdfInputRef={pdfInputRef}
-              addPdf={addPdf}
+              addPdfs={addPdfs}
               pdfError={pdfError}
               detailController={detailController}
               setPreviewItem={setPreviewItem}
-              pdfDropZoneProps={pdfDropZoneProps}
-              isDraggingPdf={isDraggingPdf}
+              pdfProgress={pdfProgress}
             />
           )}
         />

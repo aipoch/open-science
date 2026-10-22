@@ -163,6 +163,157 @@ describe('ConnectorDetailView', () => {
       })
     }
   })
+  it.each(
+    ['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'].flatMap((locale) => [
+      {
+        locale,
+        connectorId: 'gdc',
+        methods: [
+          'gdc_list_cases',
+          'gdc_search_files',
+          'gdc_list_projects',
+          'gdc_get_file',
+          'gdc_get_manifest'
+        ],
+        copy: [
+          'List GDC cases, samples and aliquots.',
+          'Find GDC files by case, sample type and analysis workflow.',
+          'List GDC projects and their case and file counts.',
+          'Retrieve GDC file metadata and sample associations without downloading data.',
+          'Create a GDC file manifest without downloading data.'
+        ]
+      },
+      {
+        locale,
+        connectorId: 'genomes',
+        methods: ['ensembl_vep_variant', 'ensembl_sequence', 'ensembl_lookup'],
+        copy: [
+          'Predict variant consequences with Ensembl VEP using variant IDs, genomic coordinates or HGVS notation.',
+          'Retrieve Ensembl nucleotide or protein sequences.',
+          'Look up Ensembl genes, transcripts or proteins by identifier, or genes by symbol.'
+        ]
+      },
+      {
+        locale,
+        connectorId: 'clinical-trials',
+        methods: ['get_trial_results', 'search_by_eligibility'],
+        copy: [
+          'Retrieve posted clinical trial results, including outcomes, participant flow and adverse events.',
+          'Find clinical trials by patient age, sex and recruitment status.'
+        ]
+      },
+      {
+        locale,
+        connectorId: 'variants',
+        methods: [
+          'clinvar_get_submissions',
+          'mitochondrial_variants',
+          'gene_variants',
+          'region_variants'
+        ],
+        copy: [
+          'Retrieve individual ClinVar submission evidence for a variant.',
+          'Find mitochondrial variants and heteroplasmy data in gnomAD.',
+          'Retrieve gnomAD variants for a gene and reference genome.',
+          'Retrieve gnomAD variants for a genomic region and reference genome.'
+        ]
+      },
+      {
+        locale,
+        connectorId: 'chembl',
+        methods: ['get_assay', 'get_bioactivity'],
+        copy: [
+          'Retrieve ChEMBL assay methods, biological context and target assignments.',
+          'Find ChEMBL bioactivity measurements with filters and pagination.'
+        ]
+      },
+      {
+        locale,
+        connectorId: 'omics-archives',
+        methods: ['arrayexpress_get_experiment_samples', 'metabolights_get_studies'],
+        copy: [
+          'Retrieve ArrayExpress sample, assay and file relationships.',
+          'Retrieve MetaboLights study, sample and assay metadata.'
+        ]
+      },
+      {
+        locale,
+        connectorId: 'genes',
+        methods: ['get_uniprot_entries', 'map_reactome_pathways'],
+        copy: [
+          'Retrieve UniProt protein entries, resolving secondary accessions.',
+          'Map gene symbols or UniProt accessions to Reactome pathways in a selected species.'
+        ]
+      },
+      {
+        locale,
+        connectorId: 'protein-annotation',
+        methods: ['get_string_network'],
+        copy: ['Retrieve STRING protein interaction networks and report unmapped genes.']
+      },
+      {
+        locale,
+        connectorId: 'cancer-models',
+        methods: ['cbioportal_mutation_frequency'],
+        copy: ['Calculate cBioPortal mutation frequencies using samples profiled for the gene.']
+      }
+    ])
+  )(
+    'localizes $connectorId tools in $locale without changing permission identities',
+    async ({ locale, connectorId, methods, copy }) => {
+      const connector: ConnectorDetail = {
+        ...detail,
+        id: connectorId,
+        displayName: connectorId,
+        sources: [connectorId],
+        tools: methods.map((method) => ({
+          id: `${connectorId}/${method}`,
+          method,
+          description: 'API contract',
+          permission: 'allow'
+        }))
+      }
+      vi.mocked(window.api.settings.getConnectorDetail).mockResolvedValue(connector)
+      const setToolPermission = vi.fn().mockResolvedValue({
+        ...connector,
+        tools: connector.tools.map((tool, index) =>
+          index === 0 ? { ...tool, permission: 'block' } : tool
+        )
+      })
+      useSettingsStore.setState({ setToolPermission })
+      try {
+        await act(async () => {
+          await i18next.changeLanguage(locale)
+          root.render(<ConnectorDetailView id={connectorId} />)
+        })
+        for (const method of methods) {
+          const button = Array.from(container.querySelectorAll('button')).find((item) =>
+            item.textContent?.includes(method)
+          )!
+          await act(async () => button.click())
+          expect(container.textContent).toContain(method)
+        }
+        for (const english of copy) {
+          expect(i18next.getResource(locale, 'renderer', english)).toBeTruthy()
+          expect(container.textContent).toContain(i18next.t(english))
+          expect(container.textContent).not.toContain(english)
+        }
+        expect(container.textContent).not.toContain('API contract')
+        expect(container.querySelectorAll('[role="radiogroup"]')).toHaveLength(methods.length)
+        const firstGroup = container.querySelector('[role="radiogroup"]')!
+        const block = Array.from(
+          firstGroup.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+        ).find((item) => item.getAttribute('aria-label') === i18next.t('Block'))!
+        await act(async () => block.click())
+        expect(setToolPermission).toHaveBeenCalledWith(`${connectorId}/${methods[0]}`, 'block')
+      } finally {
+        await act(async () => {
+          await i18next.changeLanguage('en')
+        })
+      }
+    }
+  )
+
   it('labels the linked users as Connector availability', async () => {
     await act(async () => {
       root.render(<ConnectorDetailView id="ensembl" onOpenSpecialist={vi.fn()} />)

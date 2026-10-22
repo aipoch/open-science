@@ -1,0 +1,32 @@
+{
+  "ownerPaths": [
+    "src/shared/update.ts",
+    "src/shared/download-progress.ts",
+    "src/shared/app-config.ts",
+    "src/shared/update.test.ts",
+    "src/shared/download-progress.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/update.ts",
+    "src/shared/download-progress.ts",
+    "src/shared/app-config.ts"
+  ],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": ["src/shared/update.test.ts", "src/shared/download-progress.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "scripts/build-backend.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

@@ -8,6 +8,7 @@ import { createServer, type Server } from 'node:http'
 import { connect, createServer as createTcpServer, type Server as TcpServer } from 'node:net'
 import { createServer as createHttpsServer } from 'node:https'
 import { webcrypto } from 'node:crypto'
+import { brotliCompressSync } from 'node:zlib'
 import { X509CertificateGenerator, SubjectAlternativeNameExtension } from '@peculiar/x509'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createNodeRuntimeNetwork } from './runtime-network-node'
@@ -39,6 +40,33 @@ const network = (environment = {}): ReturnType<typeof createNodeRuntimeNetwork> 
 }
 
 describe('ordinary Node HTTP transport', () => {
+  it('decodes Brotli responses', async () => {
+    const body = 'Compressed backend response'
+    const port = await listen(
+      createServer((_request, response) => {
+        response.writeHead(200, { 'content-encoding': 'br' })
+        response.end(brotliCompressSync(body))
+      })
+    )
+    expect(await (await network().fetch(`http://127.0.0.1:${port}`)).text()).toBe(body)
+  })
+  it('rejects excessive encodings on a truncated response without an unhandled stream error', async () => {
+    // GHSA-xjj6-f33q-929c: even a caught fetch rejection previously left an orphaned body stream.
+    const port = await listen(
+      createTcpServer((socket) => {
+        socket.once('data', () => {
+          socket.end(
+            'HTTP/1.1 200 OK\r\n' +
+              'Content-Encoding: gzip, gzip, gzip, gzip, gzip, gzip\r\n' +
+              'Content-Length: 1\r\nConnection: close\r\n\r\n'
+          )
+        })
+      })
+    )
+    const transport = network()
+    await expect(transport.fetch(`http://127.0.0.1:${port}`)).rejects.toThrow()
+    await transport.close()
+  })
   it('preserves manual redirects and cancellation', async () => {
     const port = await listen(
       createServer((request, response) => {

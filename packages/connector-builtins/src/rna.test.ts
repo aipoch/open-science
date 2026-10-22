@@ -18,9 +18,11 @@ const textRes = (body: string): Response =>
 const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
 
 describe('rna / rfam', () => {
-  it('exposes exactly the 9 upstream tool ids', () => {
+  it('exposes the Rfam and RNAcentral tool ids', () => {
     expect(RNA_TOOLS.map((t) => t.id).sort()).toEqual(
       [
+        'get_rnacentral_record',
+        'get_rnacentral_xrefs',
         'accession_to_id',
         'get_covariance_model',
         'get_family',

@@ -20,7 +20,7 @@
       "src/renderer/src/components/action-menu/ActionMenuProvider.test.tsx",
       "src/renderer/src/components/action-menu/action-menu-model.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
@@ -98,13 +98,7 @@
       "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
-      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
-      "src/main/ipc-surfaces/desktop-utilities.test.ts",
-      "src/main/runtime-electron-wiring.test.ts",
-      "src/main/settings-window-ipc.test.ts",
-      "src/main/windows.test.ts"
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
     ]
   },
   "capabilityOverlays": [],

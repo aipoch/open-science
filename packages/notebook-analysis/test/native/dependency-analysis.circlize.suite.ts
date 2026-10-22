@@ -109,22 +109,11 @@ it.each([
     let replayScript = caseScript
     if (caseName === 'package-replay') {
       const projection = await project(packageReplayCells)
-      const required = new Set(['run-6'])
-      const addDependencies = (runId: string): void => {
-        for (const dependency of projection.dependenciesByRunId?.[runId] ?? []) {
-          if (required.has(dependency)) continue
-          required.add(dependency)
-          addDependencies(dependency)
-        }
-      }
-      addDependencies('run-6')
-      expect([...required].sort()).toEqual(['run-2', 'run-6'])
-      // Fix RNG at each test cell boundary: circlize can choose random colors.
-      // Dependency-selected source replay is the subject here, not implicit RNG-state replay.
-      replayScript = packageReplayCells
-        .filter((_, index) => required.has(`run-${index}`))
-        .map((source) => `set.seed(42)\n${source}`)
-        .join('\n')
+      expect(projection.stalenessByRunId['run-6']).toMatchObject({ state: 'unknown' })
+      expect(projection.dependenciesByRunId?.['run-6']).toBeUndefined()
+      // Unproved scientific inputs require full source replay. Fix RNG at cell
+      // boundaries so the fallback still reproduces circlize's random colors.
+      replayScript = packageReplayCells.map((source) => `set.seed(42)\n${source}`).join('\n')
     }
     try {
       for (const name of ['original', 'replay']) {
@@ -148,7 +137,13 @@ it.each([
           await writeFile(join(dataRoot, 'chord_diagram.pdf'), 'previous generation')
         }
         const analysis = await analyzeNotebookSourceFileAccess('r', script)
-        expect(analysis).toMatchObject({ readState: 'complete', writeState: 'complete' })
+        // R ordering may dispatch xtfrm; known paths do not prove complete file effects.
+        expect(analysis).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial',
+          reasonCodes: ['source-analysis-unsupported-call']
+        })
         expect(analysis.reads).toEqual(['inputs/edge-weights-222222222222.xlsx'])
         expect(analysis.writes.slice().sort()).toEqual(filenames.slice().sort())
         // The native oracle owns no app device lifecycle. An implicit Rplots.pdf is
