@@ -1622,7 +1622,6 @@
     "Cancel upload": "Отменить загрузку",
     "Keep this window open until the upload finishes or is cancelled.": "Не закрывайте это окно до завершения или отмены загрузки.",
     "PDF upload cancelled. The reference was kept.": "Загрузка PDF отменена. Ссылка на литературу сохранена.",
-    "Choose one PDF at a time. No files were added.": "Выбирайте по одному PDF. Файлы не были добавлены.",
     "Unsupported files: {{names}}": "Неподдерживаемые файлы: {{names}}",
     "PDF could not be added.": "Не удалось добавить PDF.",
     "Filter connectors by group": "Фильтровать коннекторы по группе",
@@ -7904,6 +7903,15 @@
     "Retrieve an RNAcentral sequence record.": "Получить запись последовательности из RNAcentral.",
     "Map RNAcentral identifiers to source databases, one page at a time.": "Сопоставить идентификаторы RNAcentral с исходными базами данных постранично.",
     "Retrieve rare-disease gene associations from Orphadata.": "Получить связи редких заболеваний с генами из Orphadata.",
-    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Получить фенотипы редких заболеваний и их частоты из Orphadata."
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Получить фенотипы редких заболеваний и их частоты из Orphadata.",
+    "Folders cannot be added. Choose files instead.": "Папки добавить нельзя. Выберите файлы.",
+    "Only PDF files can be attached. No files were added. Unsupported files: {{names}}": "Можно прикреплять только PDF-файлы. Файлы не добавлены. Неподдерживаемые файлы: {{names}}",
+    "Adding {{fileName}} ({{current}}/{{total}})…": "Добавление {{fileName}} ({{current}}/{{total}})…",
+    "Not added: {{names}}": "Не добавлены: {{names}}",
+    "Drop PDFs to attach to this reference": "Перетащите PDF, чтобы прикрепить их к этому источнику",
+    "Add PDFs": "Добавить PDF",
+    "Drop PDFs here to attach to this reference, or choose files.": "Перетащите PDF сюда, чтобы прикрепить их к этому источнику, или выберите файлы.",
+    "Import PDFs together, or one reference file at a time. No files were added.": "Импортируйте PDF вместе или по одному файлу библиографических записей. Файлы не добавлены.",
+    "Drop PDFs or reference files to import": "Перетащите PDF или файлы библиографических записей для импорта"
   }
 }

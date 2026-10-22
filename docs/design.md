@@ -1303,3 +1303,10 @@ This protection does not add cross-restart autosave, a persisted draft format or
 - Group the heading, research starters and composer in one bounded start surface without a separate logo. Keep it visible while editing or staging files; place package import below as a secondary action.
 - Research starters use a native horizontal rail with circular arrows over faded edges, without reserving side columns. Hide each arrow at its boundary; a keyboard-focused arrow remains visible and aria-disabled until focus leaves. Use scroll padding to reveal focused items clear of the overlays. They prepare or append an editable prompt, never submit it. Preserve references, attachments and Reading context.
 - The first user message creates the active conversation and docks the same mounted editor at the bottom. Animate its position with a 200ms transform only; reduced motion docks immediately. Existing conversations remain docked. File staging and failed validation do not change the layout.
+
+### File intake areas
+
+- Use `FileDropZone` for inline file selection and file drops. It composes `useFileDropZone`, `FileDropOverlay`, and the shared Button; callers own file validation, destinations, and persistence.
+- Keep a compact picker/drop strip visible above existing attachments. Highlight the owning region during file drags without shifting layout. Use explicit action copy to distinguish importing references from attaching PDFs to one reference.
+- File drops must not bubble into another intake region or navigate the browser. Portaled content, covered surfaces, and busy operations must not start an underlying import.
+- Selecting files and dropping files use the same admission rules. Reject folders and unsupported combinations explicitly; never silently take only the first file. Keep successful attachments when another file fails, name the failure, and stop remaining files when a batch is cancelled.

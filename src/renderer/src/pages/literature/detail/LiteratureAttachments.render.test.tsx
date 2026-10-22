@@ -67,17 +67,82 @@ const makeItem = (count: number, missing = false): LiteratureItemView => ({
   ]
 })
 
+const saveManagedFile = vi.fn()
 const transact = vi.fn()
 beforeEach(() => {
+  saveManagedFile.mockReset().mockResolvedValue({ saved: true })
   transact.mockReset().mockResolvedValue({ state: 'unlinked' })
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { literature: { transact, get: vi.fn().mockResolvedValue(undefined) } }
+    value: { saveManagedFile, literature: { transact, get: vi.fn().mockResolvedValue(undefined) } }
   })
 })
 afterEach(cleanup)
 
 describe('Attachment safety and version access', () => {
+  it('downloads the latest attachment version directly from its menu without opening preview', async () => {
+    const preview = vi.fn()
+    render(
+      <LiteratureAttachments
+        item={makeItem(2)}
+        readItem={window.api.literature.get}
+        onPreview={preview}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v2.pdf' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Download' }))
+    await waitFor(() =>
+      expect(saveManagedFile).toHaveBeenCalledWith({
+        source: 'literature',
+        path: 'literature-attachment-version:version-2',
+        suggestedName: 'paper-v2.pdf'
+      })
+    )
+    expect(preview).not.toHaveBeenCalled()
+    expect(transact).not.toHaveBeenCalled()
+  })
+
+  it('disables download for unavailable attachments', async () => {
+    render(
+      <LiteratureAttachments
+        item={makeItem(1, true)}
+        readItem={window.api.literature.get}
+        onPreview={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v1.pdf' }))
+    expect(
+      (await screen.findByRole('menuitem', { name: 'Download' })).getAttribute(
+        'aria-disabled'
+      )
+    ).toBe('true')
+    expect(saveManagedFile).not.toHaveBeenCalled()
+  })
+
+  it('shows download failure inline and allows retry; cancelling the save is not an error', async () => {
+    saveManagedFile
+      .mockRejectedValueOnce(new Error('permission denied'))
+      .mockResolvedValueOnce({ saved: false })
+    render(
+      <LiteratureAttachments
+        item={makeItem(1)}
+        readItem={window.api.literature.get}
+        onPreview={vi.fn()}
+      />
+    )
+    const download = async (): Promise<void> => {
+      fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v1.pdf' }))
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Download' }))
+    }
+    await download()
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Download failed for paper-v1.pdf'
+    )
+    await download()
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(saveManagedFile).toHaveBeenCalledTimes(2)
+  })
+
   it('refreshes permission failures in the attachment and history views, then recovers on retry', async () => {
     const available = makeItem(2)
     const unavailable = structuredClone(available)

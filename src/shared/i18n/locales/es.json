@@ -1626,7 +1626,6 @@
     "Cancel upload": "Cancelar carga",
     "Keep this window open until the upload finishes or is cancelled.": "Mantenga esta ventana abierta hasta que la carga finalice o se cancele.",
     "PDF upload cancelled. The reference was kept.": "Se canceló la carga del PDF. Se conservó la referencia.",
-    "Choose one PDF at a time. No files were added.": "Seleccione un solo PDF cada vez. No se añadió ningún archivo.",
     "Unsupported files: {{names}}": "Archivos no admitidos: {{names}}",
     "PDF could not be added.": "No se pudo añadir el PDF.",
     "Filter connectors by group": "Filtrar conectores por grupo",
@@ -7765,6 +7764,15 @@
     "Retrieve an RNAcentral sequence record.": "Consultar un registro de secuencia de RNAcentral.",
     "Map RNAcentral identifiers to source databases, one page at a time.": "Mapear identificadores de RNAcentral a bases de datos de origen, una página a la vez.",
     "Retrieve rare-disease gene associations from Orphadata.": "Consultar asociaciones de genes con enfermedades raras en Orphadata.",
-    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Consultar fenotipos y frecuencias de enfermedades raras en Orphadata."
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Consultar fenotipos y frecuencias de enfermedades raras en Orphadata.",
+    "Folders cannot be added. Choose files instead.": "No se pueden añadir carpetas. Seleccione archivos.",
+    "Only PDF files can be attached. No files were added. Unsupported files: {{names}}": "Solo se pueden adjuntar archivos PDF. No se ha añadido ningún archivo. Archivos no compatibles: {{names}}",
+    "Adding {{fileName}} ({{current}}/{{total}})…": "Añadiendo {{fileName}} ({{current}}/{{total}})…",
+    "Not added: {{names}}": "No añadidos: {{names}}",
+    "Drop PDFs to attach to this reference": "Soltar los PDF para adjuntarlos a esta referencia",
+    "Add PDFs": "Añadir PDF",
+    "Drop PDFs here to attach to this reference, or choose files.": "Arrastre los PDF aquí para adjuntarlos a esta referencia o seleccione archivos.",
+    "Import PDFs together, or one reference file at a time. No files were added.": "Importe los PDF juntos o un archivo de referencias cada vez. No se ha añadido ningún archivo.",
+    "Drop PDFs or reference files to import": "Soltar PDF o archivos de referencias para importarlos"
   }
 }

@@ -4890,7 +4890,8 @@
         "src/renderer/src/components/open-science-logo-motion.ts",
         "src/renderer/src/components/use-notice-countdown.ts",
         "src/renderer/src/components/use-settings-undo-portal.tsx",
-        "src/renderer/src/components/DeferredPresentationOwner.tsx"
+        "src/renderer/src/components/DeferredPresentationOwner.tsx",
+        "src/renderer/src/components/FileDropZone.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -4908,7 +4909,8 @@
         "src/renderer/src/components/open-science-logo-motion.ts": "presentation-adapter",
         "src/renderer/src/components/use-notice-countdown.ts": "presentation-adapter",
         "src/renderer/src/components/use-settings-undo-portal.tsx": "presentation-adapter",
-        "src/renderer/src/components/DeferredPresentationOwner.tsx": "presentation-adapter"
+        "src/renderer/src/components/DeferredPresentationOwner.tsx": "presentation-adapter",
+        "src/renderer/src/components/FileDropZone.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -4933,7 +4935,8 @@
         "src/main/host-layer-dependencies.architecture.test.ts",
         "src/renderer/src/assets/diff-colors.test.ts",
         "src/renderer/src/assets/pdf-text-layer.test.ts",
-        "src/renderer/src/assets/provider-icons.packaging.test.ts"
+        "src/renderer/src/assets/provider-icons.packaging.test.ts",
+        "src/renderer/src/components/FileDropZone.test.tsx"
       ],
       "externalImports": ["lucide-react", "react", "react-dom", "react-i18next"],
       "resourceImports": [

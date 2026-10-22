@@ -1655,7 +1655,6 @@
     "Cancel upload": "取消上传",
     "Keep this window open until the upload finishes or is cancelled.": "请保持此窗口打开，直到上传完成或取消。",
     "PDF upload cancelled. The reference was kept.": "PDF 上传已取消。文献已保留。",
-    "Choose one PDF at a time. No files were added.": "每次请选择一个 PDF。未添加任何文件。",
     "Unsupported files: {{names}}": "不支持的文件：{{names}}",
     "PDF could not be added.": "无法添加 PDF。",
     "Filter connectors by group": "按分组筛选连接器",
@@ -7437,6 +7436,15 @@
     "Retrieve an RNAcentral sequence record.": "获取 RNAcentral 序列记录。",
     "Map RNAcentral identifiers to source databases, one page at a time.": "逐页查询 RNAcentral 标识符到来源数据库的映射。",
     "Retrieve rare-disease gene associations from Orphadata.": "获取 Orphadata 罕见病关联基因。",
-    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "获取 Orphadata 罕见病表型及频率。"
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "获取 Orphadata 罕见病表型及频率。",
+    "Folders cannot be added. Choose files instead.": "无法添加文件夹。请选择文件。",
+    "Only PDF files can be attached. No files were added. Unsupported files: {{names}}": "只能添加 PDF 附件。未添加任何文件。不支持的文件：{{names}}",
+    "Adding {{fileName}} ({{current}}/{{total}})…": "正在添加 {{fileName}}（{{current}}/{{total}}）…",
+    "Not added: {{names}}": "未添加：{{names}}",
+    "Drop PDFs to attach to this reference": "松开以将 PDF 添加到此文献",
+    "Add PDFs": "添加 PDF",
+    "Drop PDFs here to attach to this reference, or choose files.": "将 PDF 拖到此处添加到此文献，或选择文件。",
+    "Import PDFs together, or one reference file at a time. No files were added.": "请批量导入 PDF，或每次导入一个参考文献文件。未添加任何文件。",
+    "Drop PDFs or reference files to import": "松开以导入 PDF 或参考文献文件"
   }
 }

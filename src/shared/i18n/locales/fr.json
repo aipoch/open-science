@@ -1624,7 +1624,6 @@
     "Cancel upload": "Annuler le téléversement",
     "Keep this window open until the upload finishes or is cancelled.": "Gardez cette fenêtre ouverte jusqu’à la fin ou l’annulation du téléversement.",
     "PDF upload cancelled. The reference was kept.": "Téléversement du PDF annulé. La référence a été conservée.",
-    "Choose one PDF at a time. No files were added.": "Sélectionnez un seul PDF à la fois. Aucun fichier n’a été ajouté.",
     "Unsupported files: {{names}}": "Fichiers non pris en charge : {{names}}",
     "PDF could not be added.": "Le PDF n’a pas pu être ajouté.",
     "Filter connectors by group": "Filtrer les connecteurs par groupe",
@@ -7765,6 +7764,15 @@
     "Retrieve an RNAcentral sequence record.": "Récupérer un enregistrement de séquence RNAcentral.",
     "Map RNAcentral identifiers to source databases, one page at a time.": "Associer les identifiants RNAcentral aux bases de données sources, une page à la fois.",
     "Retrieve rare-disease gene associations from Orphadata.": "Récupérer les associations entre maladies rares et gènes dans Orphadata.",
-    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Récupérer les phénotypes et fréquences des maladies rares dans Orphadata."
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Récupérer les phénotypes et fréquences des maladies rares dans Orphadata.",
+    "Folders cannot be added. Choose files instead.": "Les dossiers ne peuvent pas être ajoutés. Sélectionnez des fichiers.",
+    "Only PDF files can be attached. No files were added. Unsupported files: {{names}}": "Seuls les fichiers PDF peuvent être joints. Aucun fichier n’a été ajouté. Fichiers non pris en charge : {{names}}",
+    "Adding {{fileName}} ({{current}}/{{total}})…": "Ajout de {{fileName}} ({{current}}/{{total}})…",
+    "Not added: {{names}}": "Non ajoutés : {{names}}",
+    "Drop PDFs to attach to this reference": "Déposez les PDF pour les joindre à cette référence",
+    "Add PDFs": "Ajouter des PDF",
+    "Drop PDFs here to attach to this reference, or choose files.": "Déposez des PDF ici pour les joindre à cette référence, ou sélectionnez des fichiers.",
+    "Import PDFs together, or one reference file at a time. No files were added.": "Importez les PDF ensemble, ou un seul fichier de références à la fois. Aucun fichier n’a été ajouté.",
+    "Drop PDFs or reference files to import": "Déposez des PDF ou des fichiers de références pour les importer"
   }
 }
