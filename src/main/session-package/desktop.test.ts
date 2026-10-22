@@ -1980,9 +1980,9 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           expect(finished).toBe(true)
         }
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(256 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         expect(desktop.operations.snapshot?.ioBytesPerSecond).toBe(16 * 1024 ** 2)
-        for (const rate of [128, 256]) {
+        for (const rate of [128, 256, 512, 1024]) {
           desktop.respond({
             action: 'set-speed',
             operationId: desktop.operations.snapshot!.id,
@@ -1995,9 +1995,9 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           operationId: desktop.operations.snapshot!.id,
           bytesPerSecond: null
         })
-        expect(desktop.operations.transferBytesPerSecond).toBe(256 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(256 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         return result
       })
     )

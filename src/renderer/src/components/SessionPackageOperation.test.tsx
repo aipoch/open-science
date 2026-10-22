@@ -361,8 +361,15 @@ it('keeps speed settings collapsed and changes the current operation budget', as
   })
   expect(document.body.textContent).toContain('128.0 MiB/s')
   expect(document.body.textContent).toContain('256.0 MiB/s')
+  expect(document.body.textContent).toContain('512.0 MiB/s')
+  expect(document.body.textContent).toContain('1.0 GiB/s')
+  for (const rate of ['4.0 MiB/s', '16.0 MiB/s', '64.0 MiB/s']) {
+    expect(
+      [...document.querySelectorAll('[role="option"]')].some((item) => item.textContent === rate)
+    ).toBe(false)
+  }
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-    (item) => item.textContent === '4.0 MiB/s'
+    (item) => item.textContent === '1.0 GiB/s'
   )!
   expect(option).toBeDefined()
   await act(async () => {
@@ -371,7 +378,7 @@ it('keeps speed settings collapsed and changes the current operation budget', as
   expect(packageOperation).toHaveBeenCalledWith({
     action: 'set-speed',
     operationId: operation.id,
-    bytesPerSecond: 4 * 1024 ** 2
+    bytesPerSecond: 1024 ** 3
   })
 })
 

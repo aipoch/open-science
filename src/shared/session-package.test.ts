@@ -147,3 +147,17 @@ it('weights import stages using completed work and reserves 100 percent for succ
     })
   ).toThrow()
 })
+
+it('accepts faster transfer budgets while retaining existing numeric requests', () => {
+  const request = (bytesPerSecond: number | null): Record<string, unknown> => ({
+    action: 'set-speed',
+    operationId: 'operation',
+    bytesPerSecond
+  })
+  for (const rate of [null, 4 * 1024 ** 2, 64 * 1024 ** 2, 512 * 1024 ** 2, 1024 ** 3]) {
+    expect(packageOperationRequestSchema.parse(request(rate))).toEqual(request(rate))
+  }
+  for (const rate of [0, -1, NaN, Infinity, 1024 ** 3 + 1]) {
+    expect(packageOperationRequestSchema.safeParse(request(rate)).success).toBe(false)
+  }
+})
