@@ -58,7 +58,7 @@ it('keeps multiple unselected editions available and disables switching with a r
   fireEvent.keyDown(screen.getByRole('combobox', { name: 'Saved translations' }), {
     key: 'ArrowDown'
   })
-  fireEvent.click(screen.getByRole('option', { name: /^#2 Chinese/ }))
+  fireEvent.click(screen.getByRole('option', { name: /^#1 Chinese/ }))
   expect(onSelect).toHaveBeenCalledWith('second')
   rerender(
     <PdfTranslationEditions

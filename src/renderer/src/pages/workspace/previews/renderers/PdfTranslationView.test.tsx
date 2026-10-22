@@ -760,6 +760,44 @@ it('withholds unknown PDF placement counts until validation and keeps a verified
   expect(screen.getByRole('button', { name: '0 Not in PDF' })).toBeTruthy()
 })
 
+it.each([
+  [
+    'document-structure',
+    'The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.'
+  ],
+  [
+    'unsupported-layout',
+    'These source pages were kept in their original form because their text direction or layout could not be reflowed safely.'
+  ],
+  [
+    'annotations',
+    'These source pages were kept in their original form because their links could not be remapped safely.'
+  ]
+] as const)(
+  'explains retained source pages for %s without hiding the accepted translation',
+  async (code, description) => {
+    render(
+      <PdfTranslationSidebar
+        translation={translation}
+        retainedUnitIds={['accepted']}
+        unfilledUnitIds={['accepted']}
+        layoutFailures={{
+          accepted: { code, phase: 'planning', pageNumbers: [1, 2], fragmentCount: 2 }
+        }}
+        query=""
+        onQueryChange={() => undefined}
+        onSelect={() => undefined}
+        onCollapse={() => undefined}
+      />
+    )
+    expect(screen.getAllByText('完整段落跨页。').length).toBeGreaterThan(0)
+    fireEvent.focus(screen.getByRole('img', { name: 'Text kept in original layout' }))
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent).toContain(description)
+    expect(tooltip.textContent).toContain('Source pages: 1, 2')
+  }
+)
+
 it('keeps every long-document row reachable while mounting only the selected paragraph body', async () => {
   vi.useFakeTimers()
   const units = Array.from({ length: 768 }, (_, index) => {

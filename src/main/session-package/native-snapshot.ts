@@ -684,6 +684,7 @@ export const prepareNativeImport = async (
     await materialize(entry, remapStorageKey(entry.storageKey, identities), (bytes) =>
       onProgress?.({
         phase: 'importing',
+        importStage: 'import-files',
         completedBytes: completedBytes + bytes,
         totalBytes,
         completedFiles,
@@ -729,7 +730,7 @@ export const prepareNativeImport = async (
   }
   // Byte totals describe copying only. Derived evidence still needs validation after the last
   // file, so discard counters before the unmeasurable work rather than leaving the UI at 100%.
-  onProgress?.({ phase: 'validating' })
+  onProgress?.({ phase: 'validating', importStage: 'import-files', stageProgress: 1 })
   const mapped = projectIncludedHeads(mapReferences(records, identities) as PackageRecords)
   for (const row of mapped.tables.ArtifactMessageSnapshot) {
     if (typeof row.storageKey !== 'string') throw new Error('Invalid Message snapshot storage key.')

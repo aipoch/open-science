@@ -121,12 +121,19 @@ describe('SessionPackageOperation', () => {
     const completion = deferred()
     const run = owner.run('import', undefined, () => completion.promise)
     const id = owner.snapshot!.id
-    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
     owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 4 * 1024 ** 2 })
     expect(owner.transferBytesPerSecond).toBe(4 * 1024 ** 2)
     expect(owner.snapshot).toMatchObject({ id, state: 'running' })
     expect(() =>
       owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 0 })
+    ).toThrow('Invalid')
+    for (const rate of [512 * 1024 ** 2, 1024 ** 3]) {
+      owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: rate })
+      expect(owner.transferBytesPerSecond).toBe(rate)
+    }
+    expect(() =>
+      owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 1024 ** 3 + 1 })
     ).toThrow('Invalid')
     completion.resolve()
     await run
@@ -135,16 +142,16 @@ describe('SessionPackageOperation', () => {
     ).toThrow('no longer active')
   })
 
-  it('adapts the default budget to sustained disk throughput and can return to Auto', async () => {
+  it('starts at the full default budget without mistaking processing pauses for slow storage', async () => {
     vi.useFakeTimers()
     const owner = new SessionPackageOperation()
     const completion = deferred()
     const run = owner.run('import', undefined, () => completion.promise)
-    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
 
     await vi.advanceTimersByTimeAsync(2_000)
     owner.reportIo(16 * 1024 ** 2)
-    expect(owner.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
 
     owner.respond({
       action: 'set-speed',
@@ -153,7 +160,7 @@ describe('SessionPackageOperation', () => {
     })
     expect(owner.transferBytesPerSecond).toBe(64 * 1024 ** 2)
     owner.respond({ action: 'set-speed', operationId: owner.snapshot!.id, bytesPerSecond: null })
-    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
 
     completion.resolve()
     await run
@@ -348,4 +355,27 @@ it('retains the failed import retry state when cancellation leaves publication r
   expect(owner.snapshot).toMatchObject({ state: 'failed', error: failure.message })
   expect(owner.snapshot?.result?.recovery).toBeUndefined()
   expect(owner.active).toBe(false)
+})
+
+it('keeps weighted import progress monotonic through stage changes and resets for a new operation', async () => {
+  const owner = new SessionPackageOperation()
+  await owner.run('import', undefined, async () => {
+    owner.report({
+      phase: 'validating',
+      importStage: 'prepare-preview',
+      completedBytes: 5,
+      totalBytes: 10
+    })
+    expect(owner.snapshot?.progress.overallPercent).toBe(21)
+    owner.report({ phase: 'validating', importStage: 'read-archive', stageProgress: 0.5 })
+    expect(owner.snapshot?.progress.overallPercent).toBe(21)
+    owner.report({ phase: 'importing' })
+    expect(owner.snapshot?.progress.overallPercent).toBe(21)
+    owner.report({ phase: 'importing', importStage: 'publish', stageProgress: 1 })
+    expect(owner.snapshot?.progress.overallPercent).toBe(99)
+  })
+  await owner.run('import', undefined, async () => {
+    owner.report({ phase: 'validating', importStage: 'read-archive', stageProgress: 0.5 })
+    expect(owner.snapshot?.progress.overallPercent).toBe(4)
+  })
 })

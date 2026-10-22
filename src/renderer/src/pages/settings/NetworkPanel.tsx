@@ -400,6 +400,7 @@ const NetworkPanel = ({
                 <Input
                   id="mirror-conda-channel"
                   aria-label={t('Conda channel mirror')}
+                  disabled={isSaving}
                   value={draft.condaChannel ?? ''}
                   placeholder={t('https://mirrors.example.com/conda-forge/')}
                   onChange={(event) =>
@@ -415,6 +416,7 @@ const NetworkPanel = ({
                 <Input
                   id="mirror-pypi-index"
                   aria-label={t('Python package index (pip)')}
+                  disabled={isSaving}
                   value={draft.pypiIndex ?? ''}
                   placeholder={t('https://mirrors.example.com/pypi/simple')}
                   onChange={(event) =>
@@ -431,6 +433,7 @@ const NetworkPanel = ({
                 <Input
                   id="mirror-ca-bundle"
                   aria-label={t('CA bundle path')}
+                  disabled={isSaving}
                   value={draft.caBundle ?? ''}
                   placeholder={t('/path/to/corp-ca-bundle.pem')}
                   onChange={(event) =>

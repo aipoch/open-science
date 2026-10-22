@@ -51,7 +51,9 @@ import type {
 import { PackageFileSelection } from './PackageFileSelection'
 import {
   formatPackageBytes as bytes,
-  PACKAGE_IO_RATE_OPTIONS
+  PACKAGE_IO_RATE_OPTIONS,
+  PACKAGE_IMPORT_STAGES,
+  packageImportPercent
 } from '../../../shared/session-package'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -245,12 +247,84 @@ const PackageProgressMeter = ({
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
   const { waiting, phase } = operationStatus(operation, t)
-  if (operation.state !== 'running' || waiting) return null
-  const { completedBytes, totalBytes } = operation.progress
+  const importPercent =
+    operation.kind === 'import' && !operation.browserReceiptOnly
+      ? (operation.progress.overallPercent ?? packageImportPercent(operation.progress))
+      : undefined
+  if ((operation.state !== 'running' && operation.state !== 'succeeded') || waiting) return null
+  const { completedBytes, totalBytes, completedFiles, totalFiles, importStage } = operation.progress
+  if (importPercent !== undefined && operation.progress.phase !== 'cleaning') {
+    const percent = operation.state === 'succeeded' ? 100 : Math.min(99, Math.floor(importPercent))
+    const labels = {
+      'read-archive': t('Reading package…'),
+      'verify-archive': t('Verifying package files…'),
+      'prepare-preview': t('Preparing package preview…'),
+      'validate-preview': t('Checking package relationships…'),
+      'import-files': t('Importing files…'),
+      'verify-files': t('Verifying imported files…'),
+      'prepare-validation': t('Preparing final validation…'),
+      'validate-import': t('Checking imported relationships…'),
+      publish: t('Finishing import…')
+    }
+    const stageLabel =
+      operation.state === 'succeeded'
+        ? t('Session imported')
+        : importStage
+          ? labels[importStage]
+          : phase
+    return (
+      <div className="space-y-2">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-xs text-muted-foreground">{stageLabel}</span>
+          <span className={`${compact ? 'text-sm' : 'text-xl'} font-semibold tabular-nums`}>
+            {percent}%
+          </span>
+        </div>
+        <div
+          role="progressbar"
+          aria-label={t('Overall import progress (estimated)')}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          aria-valuetext={`${stageLabel}: ${percent}%`}
+          className="h-2 w-full overflow-hidden rounded-full bg-muted"
+        >
+          <div
+            aria-hidden="true"
+            style={{ width: `${percent}%` }}
+            className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out motion-reduce:transition-none"
+          />
+        </div>
+        {!compact ? (
+          <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
+            <span>{t('Overall import progress (estimated)')}</span>
+            {importStage ? (
+              <span>
+                {t('Stage {{current}} of {{total}}', {
+                  current: Object.keys(PACKAGE_IMPORT_STAGES).indexOf(importStage) + 1,
+                  total: Object.keys(PACKAGE_IMPORT_STAGES).length
+                })}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+  if (operation.state !== 'running') return null
   if (isImportCheck(operation))
     return (
       <div className="space-y-2 text-xs text-muted-foreground">
-        <p>{phase}</p>
+        <p>
+          {totalBytes !== undefined && operation.progress.phase === 'validating'
+            ? t('Reading package…')
+            : totalFiles !== undefined
+              ? t('Checking {{completed}} of {{total}} files…', {
+                  completed: completedFiles ?? 0,
+                  total: totalFiles
+                })
+              : phase}
+        </p>
         {completedBytes !== undefined && totalBytes !== undefined ? (
           <p className="tabular-nums">
             {bytes(completedBytes)} / {bytes(totalBytes)}
@@ -873,7 +947,11 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 aria-label={t('Disk activity limit')}
                 className="w-36 shrink-0 tabular-nums"
               >
-                <SelectValue />
+                <SelectValue>
+                  {operation.transferBytesPerSecond === undefined
+                    ? t('Auto')
+                    : t('{{speed}}/s', { speed: bytes(operation.transferBytesPerSecond) })}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="auto">{t('Auto')}</SelectItem>
