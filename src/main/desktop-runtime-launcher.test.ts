@@ -9,8 +9,11 @@ import {
   DesktopRuntimeStoppingError
 } from './desktop-runtime-launcher'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
+const recoveryMocks = vi.hoisted(() => ({ connect: vi.fn() }))
+vi.mock('./desktop-runtime-client', () => ({ connectDesktopRuntime: recoveryMocks.connect }))
 const directories: string[] = []
 afterEach(async () => {
+  recoveryMocks.connect.mockReset()
   vi.unstubAllGlobals()
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true })
@@ -62,6 +65,56 @@ async function fixture() {
   return { root, owner, fetcher }
 }
 describe('desktop backend discovery', () => {
+  it('silently retires a verified old desktop service while borrowed CLI work is active', async () => {
+    const { root } = await fixture()
+    const release = vi.fn()
+    const stopRuntime = vi.fn(async () => ({ release }))
+    const lifecycle = vi.fn(async () => ({
+      sessions: [{ id: 'borrowed-cli-work' }],
+      fingerprint: 'work',
+      migrationActive: false,
+      packageTransferActive: false
+    }))
+    recoveryMocks.connect.mockResolvedValue({
+      runtimeInfo: () => ({
+        startupOptions: { configRoot: root },
+        entryPath: '/fixture/backend.cjs',
+        launch: 'desktop',
+        control: 'granted'
+      }),
+      lifecycle,
+      stopRuntime,
+      close: vi.fn()
+    })
+    await expect(
+      discoverDesktopBackend(root, 'new', undefined, '/fixture/backend.cjs')
+    ).resolves.toBeUndefined()
+    expect(stopRuntime).toHaveBeenCalledWith(undefined, { requireCleanExit: false })
+    expect(lifecycle).toHaveBeenCalledWith({ operation: 'prepare', fingerprint: 'work' })
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it.each(['cli', 'held', 'unknown'])(
+    'requires consent for old service with %s origin or control',
+    async (kind) => {
+      const { root } = await fixture()
+      const stopRuntime = vi.fn()
+      recoveryMocks.connect.mockResolvedValue({
+        runtimeInfo: () => ({
+          startupOptions: { configRoot: root },
+          entryPath: '/fixture/backend.cjs',
+          launch: kind === 'cli' ? 'cli' : 'desktop',
+          control: kind === 'held' ? 'held' : kind === 'unknown' ? undefined : 'granted'
+        }),
+        stopRuntime,
+        close: vi.fn()
+      })
+      await expect(
+        discoverDesktopBackend(root, 'new', undefined, '/fixture/backend.cjs')
+      ).rejects.toMatchObject({ issue: { canStop: true } })
+      expect(stopRuntime).not.toHaveBeenCalled()
+    }
+  )
   it('authenticates the recorded generation before returning its private attachment', async () => {
     const { root, owner, fetcher } = await fixture()
     await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(owner.desktop)
@@ -127,7 +180,9 @@ describe('desktop backend discovery', () => {
     fetcher.mockImplementation(async () => new Response(JSON.stringify(legacyProof(owner))))
     const error = await discoverDesktopBackend(root, 'different', {
       selfPid: -1,
+      proveOwner: async () => true,
       inspect: async () => ({
+        birthToken: 'test-birth',
         commandLine: '/r/node /r/backend/out/backend/index.cjs --desktop',
         parentPid: 1
       }),
@@ -156,6 +211,7 @@ describe('desktop backend discovery', () => {
     fetcher.mockImplementation(async () => new Response(JSON.stringify(legacyProof(owner))))
     const error = await discoverDesktopBackend(root, 'different', {
       selfPid: -1,
+      proveOwner: async () => true,
       inspect: async () => ({ commandLine: '/usr/bin/other', parentPid: 1 }),
       lockHeld: () => true,
       signal: async (_pid, mode) => void signals.push(mode)
@@ -180,7 +236,9 @@ describe('desktop backend discovery', () => {
     const signals: string[] = []
     const error = await discoverDesktopBackend(root, 'test', {
       selfPid: -1,
+      proveOwner: async () => true,
       inspect: async () => ({
+        birthToken: 'test-birth',
         commandLine: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
         parentPid: 1
       }),

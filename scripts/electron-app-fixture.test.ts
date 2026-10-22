@@ -1,6 +1,7 @@
-import { readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { EventEmitter } from 'node:events'
-import { resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { execFileSync } from 'node:child_process'
 import { runInNewContext } from 'node:vm'
@@ -8,12 +9,90 @@ import type { ElectronApplication } from 'playwright'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('electron', () => ({ app: {} }))
+
 import {
   closeElectronApplicationForCleanup,
+  disconnectFixtureServiceConnection,
+  hasFixtureReconnected,
   launchEnvironment,
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
+
+describe('fixture service connection evidence', () => {
+  it('disconnects only the unique ws-owned Desktop service pipe', () => {
+    const unrelated = {
+      readable: true,
+      writable: true,
+      _handle: { constructor: { name: 'Pipe' } },
+      destroy: vi.fn()
+    }
+    const socket = { ...unrelated, destroyed: false, destroy: vi.fn() }
+    socket.destroy.mockImplementation(() => {
+      socket.destroyed = true
+    })
+    Object.assign(socket, {
+      [Symbol('websocket')]: { _socket: socket, url: 'ws://localhost/desktop', readyState: 1 }
+    })
+    const target = process as NodeJS.Process & { _getActiveHandles(): unknown[] }
+    const handles = vi.spyOn(target, '_getActiveHandles').mockReturnValue([unrelated, socket])
+    let result: ReturnType<typeof disconnectFixtureServiceConnection>
+    try {
+      result = disconnectFixtureServiceConnection()
+    } finally {
+      handles.mockRestore()
+    }
+    expect(result!).toEqual({ url: 'ws://localhost/desktop', destroyed: true })
+    expect(socket.destroy).toHaveBeenCalledOnce()
+    expect(unrelated.destroy).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unrelated pipe instead of pretending the service was disconnected', () => {
+    const destroy = vi.fn()
+    const target = process as NodeJS.Process & { _getActiveHandles(): unknown[] }
+    const handles = vi
+      .spyOn(target, '_getActiveHandles')
+      .mockReturnValue([
+        { readable: true, writable: true, _handle: { constructor: { name: 'Pipe' } }, destroy }
+      ])
+    try {
+      expect(() => disconnectFixtureServiceConnection()).toThrow('found 0')
+    } finally {
+      handles.mockRestore()
+    }
+    expect(destroy).not.toHaveBeenCalled()
+  })
+
+  it('requires a newer connected epoch of the same service rather than old connected or a no-op', () => {
+    const before = { phase: 'connected', epoch: 4 }
+    expect(hasFixtureReconnected(before, before, 'generation-A', 'generation-A')).toBe(false)
+    expect(
+      hasFixtureReconnected(
+        before,
+        { phase: 'reconnecting', epoch: 5 },
+        'generation-A',
+        'generation-A'
+      )
+    ).toBe(false)
+    expect(
+      hasFixtureReconnected(
+        before,
+        { phase: 'connected', epoch: 5 },
+        'generation-A',
+        'generation-B'
+      )
+    ).toBe(false)
+    expect(
+      hasFixtureReconnected(
+        before,
+        { phase: 'connected', epoch: 5 },
+        'generation-A',
+        'generation-A'
+      )
+    ).toBe(true)
+  })
+})
 
 it('keeps the Linux test desktop session while isolating home and provider credentials', () => {
   const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
@@ -37,6 +116,157 @@ it('keeps the Linux test desktop session while isolating home and provider crede
   })
   expect(environment.OPENAI_API_KEY).toBeUndefined()
 })
+
+it('isolates credentials, preload options, home and installation state by default', () => {
+  const storageRoot = resolve('fixture/storage')
+  const environment = launchEnvironment(storageRoot, undefined, {
+    PATH: '/os/bin',
+    HOME: '/operator',
+    USERPROFILE: '/operator',
+    OPENAI_API_KEY: 'operator-secret',
+    NODE_OPTIONS: '--require=/operator/preload.cjs',
+    OPEN_SCIENCE_CONFIG_ROOT: '/operator/config',
+    OPEN_SCIENCE_INSTALLATION_STATE_ROOT: '/operator/installations',
+    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build'
+  })
+  expect(environment).toMatchObject({
+    PATH: '/os/bin',
+    HOME: resolve('fixture/isolated home'),
+    USERPROFILE: resolve('fixture/isolated home'),
+    OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
+    OPEN_SCIENCE_INSTALLATION_STATE_ROOT: resolve('fixture/storage/installation-state'),
+    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build'
+  })
+  expect(environment.OPENAI_API_KEY).toBeUndefined()
+  expect(environment.NODE_OPTIONS).toBeUndefined()
+})
+
+it('keeps Windows system tools while excluding host PowerShell modules and credentials', () => {
+  const platform = process.platform
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+      SystemRoot: 'C:\\Windows',
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files',
+      PSModulePath: 'C:\\operator\\custom-modules',
+      OPENAI_API_KEY: 'operator-secret',
+      USERPROFILE: 'C:\\operator'
+    })
+    expect(environment).toMatchObject({
+      SystemRoot: 'C:\\Windows',
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files',
+      PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      USERPROFILE: resolve('fixture/isolated home')
+    })
+    expect(environment.OPENAI_API_KEY).toBeUndefined()
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform })
+  }
+})
+
+it('keeps Windows system tools in case-sensitive environment snapshots', () => {
+  const platform = process.platform
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+      SYSTEMROOT: 'C:\\Windows',
+      PROGRAMFILES: 'C:\\Program Files',
+      'PROGRAMFILES(X86)': 'C:\\Program Files (x86)',
+      PROGRAMW6432: 'C:\\Program Files',
+      PSMODULEPATH: 'C:\\operator\\custom-modules'
+    })
+    expect(environment).toMatchObject({
+      SYSTEMROOT: 'C:\\Windows',
+      PROGRAMFILES: 'C:\\Program Files',
+      'PROGRAMFILES(X86)': 'C:\\Program Files (x86)',
+      PROGRAMW6432: 'C:\\Program Files',
+      PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules'
+    })
+    expect(environment.PSMODULEPATH).toBeUndefined()
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform })
+  }
+})
+
+it.skipIf(process.platform !== 'win32')(
+  'runs real PowerShell identity and compiler queries inside the isolated launch environment',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fixture-powershell-'))
+    try {
+      const environment = launchEnvironment(join(root, 'storage'))
+      for (const path of [environment.USERPROFILE, environment.APPDATA, environment.LOCALAPPDATA])
+        await mkdir(path, { recursive: true })
+      // This smoke verifies system-tool availability in a fresh isolated profile, not a startup
+      // latency SLA. Production identity reads still stop after 2s and may report unknown.
+      const query = (module: string, script: string, timeout: number): string =>
+        execFileSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `[Console]::Error.WriteLine('fixture-powershell: command started'); ` +
+              `Import-Module "$PSHOME\\Modules\\${module}\\${module}.psd1" -ErrorAction Stop; ${script}`
+          ],
+          { env: environment, encoding: 'utf8', timeout, windowsHide: true }
+        ).trim()
+      expect(
+        query(
+          'Microsoft.PowerShell.Management',
+          `$p = Get-Process -Id ${process.pid} -ErrorAction Stop; $p.StartTime.ToUniversalTime().ToFileTimeUtc()`,
+          15_000
+        )
+      ).toMatch(/^\d+$/)
+      expect(
+        query(
+          'Microsoft.PowerShell.Utility',
+          "Add-Type -TypeDefinition 'public class FixtureProbe { public static int Value() { return 17; } }'; [FixtureProbe]::Value()",
+          30_000
+        )
+      ).toBe('17')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  60_000
+)
+
+it.each([undefined, 'enabled'])(
+  'initializes Electron OS paths for default isolated launches (micromamba events: %s)',
+  async (micromambaEvents) => {
+    const source = await readFile('e2e/fixtures/node-runtime-preload.cjs', 'utf8')
+    const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+      OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS: micromambaEvents
+    })
+    const created = new Set<string>()
+    const setPath = vi.fn((_key: string, value: string) => {
+      // Electron requires the target directory to exist before accepting the override.
+      expect(created.has(value)).toBe(true)
+    })
+    runInNewContext(source, {
+      require: (name: string) => {
+        if (name === 'electron') return { app: { isPackaged: false, setPath } }
+        if (name === 'node:path') return { dirname, join, resolve, sep }
+        if (name === 'node:fs')
+          return { readFileSync: vi.fn(), mkdirSync: (path: string) => created.add(path) }
+        if (name === 'node:module') return { _load: vi.fn() }
+        throw new Error(`Unexpected module: ${name}`)
+      },
+      process: { platform: 'win32', versions: { electron: 'test' }, env: environment },
+      __dirname: resolve('e2e/fixtures')
+    })
+    expect(setPath.mock.calls).toEqual([
+      ['home', environment.USERPROFILE],
+      ['appData', environment.APPDATA],
+      ['cache', environment.LOCALAPPDATA],
+      ['downloads', join(environment.USERPROFILE, 'Downloads')]
+    ])
+  }
+)
 
 it.each([true, false])(
   'requires an explicit Linux test vault before restoring it: %s',

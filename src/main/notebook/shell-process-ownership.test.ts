@@ -50,39 +50,56 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 })
 
 describe('Shell process ownership receipt lifecycle', () => {
-  it('preserves the receipt and reports a redacted identity-query timeout', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'shell-query-timeout-'))
-    roots.push(root)
-    const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
-      runId: 'timeout',
-      projectId: 'project',
-      sessionId: 'session',
-      platform: 'win32',
-      hosted: true
-    }).host!
-    await rename(
-      host.pendingPath,
-      join(root, 'shell-process-ownership', `timeout.active.12345.${host.receiptId}.json`)
-    )
-    vi.mocked(spawnSync).mockReturnValueOnce({
-      pid: 0,
-      output: [null, '', 'private-command-line'],
-      stdout: '',
-      stderr: 'private-command-line',
-      status: null,
-      signal: 'SIGTERM',
-      error: Object.assign(new Error('query timed out'), { code: 'ETIMEDOUT' })
-    })
-    const restarted = new ShellProcessOwnershipRegistry(root, { processExists: () => true })
-    await expect(restarted.recover()).rejects.toMatchObject({
-      code: 'SHELL_PROCESS_RECOVERY_BLOCKED',
-      cause: {
-        message:
-          'Windows host identity query failed: status=null, code=ETIMEDOUT, receiptMatched=false'
-      }
-    })
-    expect(restarted.hasReceipts()).toBe(true)
-  })
+  it.each([
+    { name: 'timeout', status: null, signal: 'SIGTERM', code: 'ETIMEDOUT' },
+    { name: 'module import failure', status: 1, signal: null, code: undefined }
+  ] as const)(
+    'preserves the receipt and redacts identity-query $name',
+    async ({ status, signal, code }) => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-query-timeout-'))
+      roots.push(root)
+      const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
+        runId: 'timeout',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: 'win32',
+        hosted: true
+      }).host!
+      await rename(
+        host.pendingPath,
+        join(root, 'shell-process-ownership', `timeout.active.12345.${host.receiptId}.json`)
+      )
+      vi.mocked(spawnSync).mockReturnValueOnce({
+        pid: 0,
+        output: [null, '', 'private-command-line'],
+        stdout: '',
+        stderr: 'private-command-line',
+        status,
+        signal,
+        error: code ? Object.assign(new Error('query timed out'), { code }) : undefined
+      })
+      const restarted = new ShellProcessOwnershipRegistry(root, { processExists: () => true })
+      await expect(restarted.recover()).rejects.toMatchObject({
+        code: 'SHELL_PROCESS_RECOVERY_BLOCKED',
+        cause: {
+          message: `Windows host identity query failed: status=${status}, code=${code ?? 'none'}, receiptMatched=false`
+        }
+      })
+      expect(restarted.hasReceipts()).toBe(true)
+      expect(vi.mocked(spawnSync)).toHaveBeenLastCalledWith(
+        expect.any(String),
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop; ' +
+            '(Get-CimInstance Win32_Process -Filter "ProcessId = 12345" -ErrorAction Stop).CommandLine'
+        ],
+        { encoding: 'utf8', windowsHide: true, timeout: 5000 }
+      )
+    }
+  )
 
   it('preserves every original after interrupted historical backup and requires renewed consent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-backup-retry-'))

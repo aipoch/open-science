@@ -1,3 +1,16 @@
+import { terminateVerifiedService } from './verified-service-stop'
+import {
+  recoverStoppedServiceProcesses,
+  StoppedServiceProcessRecoveryError
+} from './service-process-recovery'
+import {
+  readServiceLifetime,
+  serviceStopDeadline,
+  LOCAL_SERVICE_STOP_ESCALATION_MS,
+  type ServiceLifetimeSnapshot,
+  type ServiceStopOptions
+} from './local-service-lifetime'
+import { DesktopRuntimeDisconnectedError } from '../shared/desktop-runtime-recovery'
 import { randomUUID } from 'node:crypto'
 import { desktopRuntimeInfoSchema, type DesktopRuntimeInfo } from './desktop-runtime-info'
 import { waitForRuntimeStopped } from './runtime-stop-confirmation'
@@ -117,8 +130,15 @@ export type DesktopRuntimeClient = Readonly<{
   ownsRuntime(): boolean
   runtimeInfo(): DesktopRuntimeInfo
   refreshControl(): Promise<DesktopRuntimeInfo>
-  waitForStopped(): Promise<RuntimeDirectoryLease>
-  stopRuntime(): Promise<RuntimeDirectoryLease>
+  waitForStopped(
+    signal?: AbortSignal,
+    requireCleanExit?: boolean,
+    timeoutMs?: number
+  ): Promise<RuntimeDirectoryLease>
+  stopRuntime(
+    reason?: 'restart' | 'update',
+    options?: ServiceStopOptions
+  ): Promise<RuntimeDirectoryLease>
   lifecycle(request: DesktopLifecycleRequest): Promise<unknown>
   loadSessionForEvent(request: { projectId: string; sessionId: string }): Promise<unknown>
   invokeHost(channel: string, args?: readonly unknown[]): Promise<unknown>
@@ -127,7 +147,7 @@ export type DesktopRuntimeClient = Readonly<{
   notificationAction(token: string, action: 'clicked' | 'closed'): void
   notificationView(reason: 'view' | 'focus' | 'window-created', visibleSessionId?: string): void
   close(): void
-  quit(): Promise<RuntimeDirectoryLease | undefined>
+  quit(options?: ServiceStopOptions): Promise<RuntimeDirectoryLease | undefined>
 }>
 
 // No business state lives here. In-flight mutations are never automatically retried after a
@@ -149,6 +169,7 @@ export async function connectDesktopRuntime(options: {
 }): Promise<DesktopRuntimeClient> {
   const socket = await connectToDesktopEndpoint(options.endpoint, options.signal)
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>()
+  const expiredRequests = new Set<number>()
   const native = new Map<number, AbortController>()
   let highestNativeId = 0
   const payloadClients = new Map<
@@ -229,7 +250,7 @@ export async function connectDesktopRuntime(options: {
     }
     for (const request of pending.values())
       request.reject(
-        new Error(
+        new DesktopRuntimeDisconnectedError(
           'Desktop connection lost. The result of a submitted operation is unknown; it will not be retried.',
           { cause: error }
         )
@@ -249,7 +270,9 @@ export async function connectDesktopRuntime(options: {
   timer.unref()
   const send = (message: unknown, onSent?: () => void): void => {
     if (closed || socket.readyState !== WebSocket.OPEN)
-      throw new Error('Desktop runtime is disconnected.', { cause: disconnectCause })
+      throw new DesktopRuntimeDisconnectedError('Desktop runtime is disconnected.', {
+        cause: disconnectCause
+      })
     const serialized = stringifyRpcJson(message)
     if (socket.bufferedAmount + Buffer.byteLength(serialized) > 16 * 1024 * 1024) {
       throw new Error('Desktop runtime request exceeds the transport byte budget.')
@@ -272,6 +295,30 @@ export async function connectDesktopRuntime(options: {
       }
     })
     return { id, response }
+  }
+  const boundedRequest = async (
+    frame: Record<string, unknown>,
+    deadlineAt: number
+  ): Promise<unknown> => {
+    const operation = request(frame)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        operation.response,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => {
+              pending.delete(operation.id)
+              expiredRequests.add(operation.id)
+              reject(new Error('Desktop lifecycle acknowledgement timed out.'))
+            },
+            Math.max(0, deadlineAt - Date.now())
+          )
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
   }
   const deliver = (failure: DesktopDeliveryFailure, callback: () => void): void => {
     try {
@@ -487,6 +534,7 @@ export async function connectDesktopRuntime(options: {
         failureReason = 'invalid-response'
         const response = responseSchema.parse(body)
         failureReason = 'response-identity'
+        if (typeof id === 'number' && expiredRequests.delete(id)) return
         if (typeof id !== 'number' || !pending.has(id))
           throw new Error('Unexpected desktop response identity.')
         const request = pending.get(id)!
@@ -528,13 +576,15 @@ export async function connectDesktopRuntime(options: {
   })
   socket.once('close', (code, reason) =>
     fail(
-      new Error('Desktop runtime connection closed.'),
+      new DesktopRuntimeDisconnectedError('Desktop runtime connection closed.'),
       'transport-close',
       code,
       code === 1008 ? classifyPolicyReason(reason.toString()) : undefined
     )
   )
-  socket.once('error', (error) => fail(error, 'socket-error'))
+  socket.once('error', (error) =>
+    fail(new DesktopRuntimeDisconnectedError(error.message, { cause: error }), 'socket-error')
+  )
   try {
     send({ kind: 'bootstrap', desktopInstanceId: options.desktopInstanceId ?? desktopInstanceId })
   } catch (error) {
@@ -552,33 +602,130 @@ export async function connectDesktopRuntime(options: {
     initialized = false
     fail(new Error('Desktop runtime client closed.'), 'client-close')
   }
-  const waitForStopped = (signal?: AbortSignal): Promise<RuntimeDirectoryLease> =>
-    waitForRuntimeStopped({
+  const waitForStoppedEvidence = (
+    signal?: AbortSignal,
+    requireCleanExit = !runtimeInfo.lifetime,
+    timeoutMs = runtimeInfo.lifetime ? 20_000 : 15_000,
+    deadlineAt = Date.now() + timeoutMs
+  ): Promise<RuntimeDirectoryLease> => {
+    return waitForRuntimeStopped({
       configRoot: runtimeInfo.startupOptions.configRoot,
       generation: runtimeInfo.generation,
       pid: runtimePid,
       signal,
+      timeoutMs,
+      requireCleanExit,
       socketClosed: () => socket.readyState === WebSocket.CLOSED
+    }).then(async (lease) => {
+      if (!runtimeInfo.lifetime) return lease
+      try {
+        await recoverStoppedServiceProcesses({
+          configRoot: runtimeInfo.startupOptions.configRoot,
+          dataRoot: runtimeInfo.startupOptions.dataRoot,
+          lease,
+          deadlineAt
+        })
+        return lease
+      } catch (error) {
+        if (
+          error instanceof StoppedServiceProcessRecoveryError &&
+          error.code === 'service-process-recovery-incomplete'
+        ) {
+          logger.warn('Stopped local service has unresolved process receipts', {
+            generation: runtimeInfo.generation,
+            code: error.code
+          })
+          return lease
+        }
+        if (error instanceof StoppedServiceProcessRecoveryError && error.settlement)
+          void error.settlement.then(() => lease.release())
+        else lease.release()
+        throw error
+      }
     })
+  }
+  const waitForStopped = async (
+    signal?: AbortSignal,
+    requireCleanExit = !runtimeInfo.lifetime,
+    timeoutMs = runtimeInfo.lifetime ? 20_000 : 15_000
+  ): Promise<RuntimeDirectoryLease> => {
+    if (!runtimeInfo.lifetime) return waitForStoppedEvidence(signal, requireCleanExit, timeoutMs)
+    const deadlineAt = serviceStopDeadline(Date.now() + timeoutMs)
+    try {
+      return await waitForStoppedEvidence(
+        signal,
+        requireCleanExit,
+        Math.max(1, deadlineAt - Date.now() - LOCAL_SERVICE_STOP_ESCALATION_MS),
+        deadlineAt
+      )
+    } catch (error) {
+      signal?.throwIfAborted()
+      if (!(
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'runtime-stop-timeout'
+      ))
+        throw error
+      // Observing an existing stop never creates permission to stop a running service. Only the
+      // authenticated generation's durable grant authorizes this bounded escalation.
+      await terminateVerifiedService({
+        configRoot: runtimeInfo.startupOptions.configRoot,
+        generation: runtimeInfo.generation,
+        pid: runtimePid,
+        birthToken: runtimeInfo.birthToken,
+        deadlineAt,
+        signal
+      })
+      signal?.throwIfAborted()
+      return waitForStoppedEvidence(
+        signal,
+        requireCleanExit,
+        Math.max(1, deadlineAt - Date.now()),
+        deadlineAt
+      )
+    }
+  }
   const ownsRuntime = (): boolean =>
-    runtimeInfo.launch === 'desktop' && runtimeInfo.control === 'granted'
+    runtimeInfo.lifetime
+      ? !runtimeInfo.lifetime.explicit && runtimeInfo.lifetime.apps <= 1
+      : runtimeInfo.control === 'granted' && runtimeInfo.launch === 'desktop'
+  let quitAttempt: { attemptId: string; deadlineAt: number } | undefined
   let stopPromise: Promise<RuntimeDirectoryLease> | undefined
-  const runStop = async (): Promise<RuntimeDirectoryLease> => {
+  const runStop = async (
+    reason?: 'restart' | 'update',
+    stopOptions: ServiceStopOptions = {}
+  ): Promise<RuntimeDirectoryLease> => {
     if (runtimeInfo.control !== 'granted')
       throw new Error('This Desktop does not control the Runtime.')
     quitting = true
     const confirmation = new AbortController()
     let stopped: Promise<RuntimeDirectoryLease> | undefined
+    const requestedDeadline = stopOptions.deadlineAt ?? quitAttempt?.deadlineAt
+    const deadlineAt = runtimeInfo.lifetime
+      ? serviceStopDeadline(requestedDeadline)
+      : Math.min(requestedDeadline ?? Infinity, Date.now() + 15_000)
+    const requireCleanExit = stopOptions.requireCleanExit ?? !runtimeInfo.lifetime
     try {
       // Start the total stop budget before waiting for the command acknowledgement. A
       // lost reply is ambiguous, so actual process/lock/exit-record evidence is authoritative.
-      stopped = waitForStopped(confirmation.signal)
+      stopped = waitForStoppedEvidence(
+        confirmation.signal,
+        requireCleanExit,
+        Math.max(
+          1,
+          deadlineAt - Date.now() - (runtimeInfo.lifetime ? LOCAL_SERVICE_STOP_ESCALATION_MS : 0)
+        ),
+        deadlineAt
+      )
       const rejected = new Promise<never>((_resolve, reject) => {
         if (!closed) {
           void request({
             kind: 'shutdown',
             generation: runtimeInfo.generation,
-            pid: runtimePid
+            pid: runtimePid,
+            ...(runtimeInfo.lifetime ? { deadlineAt } : {}),
+            ...(reason && runtimeInfo.lifetime ? { reason } : {})
           }).response.catch((error) => {
             if (!closed) reject(error)
           })
@@ -594,12 +741,29 @@ export async function connectDesktopRuntime(options: {
         () => undefined
       )
       if (
+        runtimeInfo.lifetime &&
         error &&
         typeof error === 'object' &&
         'code' in error &&
         error.code === 'runtime-stop-timeout'
-      )
-        fail(new Error('Runtime stop confirmation timed out.'), 'client-close')
+      ) {
+        await terminateVerifiedService({
+          configRoot: runtimeInfo.startupOptions.configRoot,
+          generation: runtimeInfo.generation,
+          pid: runtimePid,
+          birthToken: runtimeInfo.birthToken,
+          deadlineAt
+        })
+        const lease = await waitForStoppedEvidence(
+          undefined,
+          false,
+          Math.max(1, deadlineAt - Date.now()),
+          deadlineAt
+        )
+        close()
+        return lease
+      }
+      if (!closed) fail(new Error('Runtime stop confirmation timed out.'), 'client-close')
       notifyDisconnect()
       throw error
     } finally {
@@ -608,8 +772,11 @@ export async function connectDesktopRuntime(options: {
     }
   }
 
-  const stopRuntime = (): Promise<RuntimeDirectoryLease> =>
-    (stopPromise ??= runStop().catch((error) => {
+  const stopRuntime = (
+    reason?: 'restart' | 'update',
+    stopOptions?: ServiceStopOptions
+  ): Promise<RuntimeDirectoryLease> =>
+    (stopPromise ??= runStop(reason, stopOptions).catch((error) => {
       stopPromise = undefined
       throw error
     }))
@@ -649,7 +816,34 @@ export async function connectDesktopRuntime(options: {
     runtimeInfo: () => runtimeInfo,
     waitForStopped,
     stopRuntime,
-    lifecycle: async (operation) => request({ kind: 'lifecycle', request: operation }).response,
+    lifecycle: async (operation) => {
+      if (operation.operation === 'prepare')
+        quitAttempt ??= {
+          attemptId: randomUUID(),
+          deadlineAt: serviceStopDeadline(operation.deadlineAt)
+        }
+      const attempt = quitAttempt
+      try {
+        const wireOperation =
+          runtimeInfo.lifetime &&
+          attempt &&
+          (operation.operation === 'prepare' || operation.operation === 'abort')
+            ? {
+                ...operation,
+                attemptId: attempt.attemptId,
+                ...(operation.operation === 'prepare' ? { deadlineAt: attempt.deadlineAt } : {})
+              }
+            : operation
+        return await boundedRequest(
+          { kind: 'lifecycle', request: wireOperation },
+          operation.operation === 'prepare'
+            ? (attempt?.deadlineAt ?? serviceStopDeadline()) - LOCAL_SERVICE_STOP_ESCALATION_MS
+            : Date.now() + 2000
+        )
+      } finally {
+        if (operation.operation === 'abort' && quitAttempt === attempt) quitAttempt = undefined
+      }
+    },
     notificationView: (reason, visibleSessionId) => {
       if (!closed)
         send(
@@ -717,9 +911,85 @@ export async function connectDesktopRuntime(options: {
     },
     close,
     // Called only after desktop confirmation and durability barriers; ordinary detach never stops.
-    quit: () =>
+    quit: (stopOptions = {}) =>
       (quitPromise ??= (
-        ownsRuntime() ? stopRuntime() : Promise.resolve(close()).then(() => undefined)
+        runtimeInfo.lifetime
+          ? (async () => {
+              quitting = true
+              try {
+                const deadline = serviceStopDeadline(
+                  stopOptions.deadlineAt ?? quitAttempt?.deadlineAt
+                )
+                let outcome: ServiceLifetimeSnapshot | undefined
+                try {
+                  outcome = (await boundedRequest(
+                    {
+                      kind: 'app-exit',
+                      generation: runtimeInfo.generation,
+                      ...(quitAttempt ? { attemptId: quitAttempt.attemptId } : {}),
+                      deadlineAt: deadline
+                    },
+                    Math.min(Date.now() + 2000, deadline - LOCAL_SERVICE_STOP_ESCALATION_MS)
+                  )) as ServiceLifetimeSnapshot
+                } catch (error) {
+                  // A lost reply cannot undo a committed stop. Consult the exact generation's
+                  // durable intent, then use process exit and the directory lock as evidence.
+                  const intent = await readServiceLifetime(runtimeInfo.startupOptions.configRoot)
+                  if (intent?.generation !== runtimeInfo.generation || !intent.stopping) throw error
+                  outcome = { ...intent, apps: 0 }
+                }
+                if (outcome.stopping) {
+                  let lease: RuntimeDirectoryLease
+                  try {
+                    lease = await waitForStoppedEvidence(
+                      undefined,
+                      false,
+                      Math.max(1, deadline - LOCAL_SERVICE_STOP_ESCALATION_MS - Date.now()),
+                      deadline
+                    )
+                  } catch (error) {
+                    if (!(
+                      error &&
+                      typeof error === 'object' &&
+                      'code' in error &&
+                      error.code === 'runtime-stop-timeout'
+                    ))
+                      throw error
+                    await terminateVerifiedService({
+                      configRoot: runtimeInfo.startupOptions.configRoot,
+                      generation: runtimeInfo.generation,
+                      pid: runtimePid,
+                      birthToken: runtimeInfo.birthToken,
+                      deadlineAt: deadline
+                    })
+                    lease = await waitForStoppedEvidence(
+                      undefined,
+                      false,
+                      Math.max(1, deadline - Date.now()),
+                      deadline
+                    )
+                  }
+                  close()
+                  return lease
+                }
+                close()
+                return undefined
+              } catch (error) {
+                // A desktop may leave even when the residual service cannot be identified safely.
+                // Verified termination itself requires the exact durable stop intent.
+                logger.warn('App exited with an unresolved local service', {
+                  generation: runtimeInfo.generation,
+                  message: error instanceof Error ? error.message : String(error)
+                })
+                close()
+                return undefined
+              } finally {
+                quitting = false
+              }
+            })()
+          : ownsRuntime()
+            ? stopRuntime(undefined, stopOptions)
+            : Promise.resolve(close()).then(() => undefined)
       ).catch((error) => {
         quitPromise = undefined
         throw error

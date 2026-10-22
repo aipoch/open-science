@@ -1038,6 +1038,8 @@ jobs:
           src/main/process-tree.windows.integration.test.ts
           src/main/delegation/process-ownership.test.ts
           src/main/delegation/production-composition.test.ts
+          src/main/acp/main-agent-process-ownership.test.ts
+          src/main/service-process-recovery.test.ts
           --maxWorkers=1
           --testTimeout=30000
           --hookTimeout=30000
@@ -1071,6 +1073,7 @@ jobs:
         run: >-
           npx vitest run
           scripts/ci/run-windows-browser-diagnostics.test.ts
+          scripts/electron-app-fixture.test.ts
           scripts/windows-updater-certification.test.ts
           build/packaging.test.ts
           scripts/windows-update-handoff-uninstall.test.ts
@@ -1096,6 +1099,14 @@ jobs:
           packages/specialists/src/repository.test.ts
           packages/environment/src/micromamba-cache-powershell.test.ts
           packages/environment/src/micromamba-cache-acl.integration.test.ts
+          src/main/local-service-lifetime.test.ts
+          src/main/node-fatal-errors.test.ts
+          src/main/desktop-runtime-recovery.test.ts
+          src/main/desktop-runtime-stop-deadline.integration.test.ts
+          src/main/update/installation-occupancy.test.ts
+          src/main/verified-service-stop.test.ts
+          packages/open-science/runtime-control.test.ts
+          src/main/local-service-stop-intent.integration.test.ts
       - name: Test scheduled Windows validation regressions
         id: windows_regressions
         continue-on-error: true
@@ -1142,6 +1153,7 @@ jobs:
           src/main/notebook/windows-shell.integration.test.ts
           src/main/notebook/powershell-search-parser.windows.integration.test.ts
           src/main/notebook/shell-search-scope.test.ts
+          src/main/notebook/shell-process-ownership.test.ts
       - name: Test Windows notebook shell service timeout
         id: windows_service_timeout
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_service_timeout')) }}

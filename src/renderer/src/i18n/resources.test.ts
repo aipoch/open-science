@@ -680,9 +680,8 @@ describe('process catalog boundaries', () => {
     const sharedCloseConfirmKeys = [
       "Don't ask again",
       'Minimize to tray',
-      'Return to tasks',
-      'Subagents are still running',
-      'Work is still running and will be interrupted if you quit.'
+      'Stop tasks and quit',
+      'Stopping the local service may interrupt App, CLI and Web tasks and lose unsaved progress. The list shows known tasks only.'
     ]
 
     for (const locale of TRANSLATED) {

@@ -1038,3 +1038,41 @@ it.each([false, true])(
     expect(disposed).toBe(true)
   }
 )
+
+it('closes new work across all transports while preserving cancellation and final saves', async () => {
+  const composition = createApplicationCommandComposition(dependencies())
+  composition.beginStopping()
+  for (const view of [
+    composition.desktop,
+    composition.localWeb,
+    composition.remoteWeb,
+    composition.task
+  ]) {
+    await expect(view.invoke('acp:prompt', invocation())).rejects.toMatchObject({
+      code: 'command-unavailable',
+      message: 'The local service is stopping.'
+    })
+  }
+  // The existing owner still receives settlement requests. Missing fixture methods may reject,
+  // but the admission fence must not substitute its stop error for the owner's result.
+  await expect(
+    composition.desktop
+      .invoke('sessions:save-session', invocation())
+      .catch((error) => error.message)
+  ).resolves.not.toBe('The local service is stopping.')
+  for (const command of [
+    'acp:cancel',
+    'acp:get-state',
+    'notebook:background-run',
+    'notebook:abort-code-cell',
+    'sessions:stage-task-completion',
+    'sessions:settle-task-completion',
+    'sessions:fail-task-run',
+    'artifacts:finalize-run'
+  ]) {
+    await expect(
+      composition.desktop.invoke(command, invocation()).catch((error) => error.message)
+    ).resolves.not.toBe('The local service is stopping.')
+  }
+  await composition.dispose()
+})

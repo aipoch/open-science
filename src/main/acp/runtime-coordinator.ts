@@ -559,11 +559,14 @@ class AcpRuntimeCoordinator {
     if (sessionIds.length === 0 && !this.delegatedWork) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {
-      const delegatedStop = this.delegatedWork?.stopAll() ?? Promise.resolve()
-      await Promise.allSettled(
-        sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
-      )
-      await delegatedStop
+      // Observe both branches immediately: delegated stop may reject while a root cancellation
+      // is still waiting for its terminal response. Keep that rejection as the final outcome.
+      await Promise.all([
+        this.delegatedWork?.stopAll() ?? Promise.resolve(),
+        Promise.allSettled(
+          sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
+        )
+      ])
       await Promise.all(
         sessionIds.map((sessionId) => this.waitForSessionInteractionRelease(sessionId))
       )

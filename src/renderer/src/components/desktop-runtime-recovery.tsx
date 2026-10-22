@@ -1,8 +1,6 @@
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Unplug, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import * as AlertDialog from '@/components/ui/alert-dialog'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   useDesktopRuntimeRecoveryStore,
@@ -14,14 +12,24 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { flushComposerDrafts } from '@/pages/workspace/composer-draft-storage'
+import { useSessionStore } from '@/stores/session-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { Button } from '@/components/ui/button'
 
 /** Keeps the application mounted: recovery must never discard editors or composer drafts. */
-export function DesktopRuntimeRecovery(): React.JSX.Element | null {
+export function DesktopRuntimeRecovery({
+  saveDiagnostics
+}: {
+  saveDiagnostics: (text: string) => void
+}): React.JSX.Element | null {
   const { t } = useTranslation()
   const state = useDesktopRuntimeRecoveryStore()
   const updating = useUpdateStore((store) => store.status.state === 'applying')
-  const contentRef = useRef<HTMLDivElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
+  const beforeRecovery = useRef(new Map<string, string | undefined>())
+  const announcedGeneration = useRef<string | undefined>(undefined)
+  const [interrupted, setInterrupted] = useState<{ id: string; projectId: string }[]>([])
+  const [diagnosticResult, setDiagnosticResult] = useState<'downloaded' | 'failed' | undefined>()
   useEffect(() => {
     const api = window.api.desktopRuntime
     if (!api) return
@@ -35,6 +43,11 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
         // Recovery subscribers can disable the composer and blur it before the dialog mounts.
         previousFocus.current =
           document.activeElement instanceof HTMLElement ? document.activeElement : null
+        beforeRecovery.current = new Map(
+          useSessionStore
+            .getState()
+            .sessions.map((session) => [session.id, session.resumeRecovery?.promptMessageId])
+        )
       }
       if (next.phase !== 'connected') flushComposerDrafts()
       useDesktopRuntimeRecoveryStore.setState(next)
@@ -86,81 +99,167 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
       live = false
     }
   }, [state.epoch, state.phase])
-  // The update dialog owns planned shutdown; an aborted/failed update restores recovery here.
-  if (state.phase === 'connected' || (state.closing && updating)) return null
+  useEffect(() => {
+    if (state.phase !== 'connected') return
+    if (state.restartedGeneration && announcedGeneration.current !== state.restartedGeneration) {
+      announcedGeneration.current = state.restartedGeneration
+      // Only synchronized, durable app-restart recovery records prove interruption. A new
+      // process or a failed request alone cannot distinguish interruption from completed work.
+      setInterrupted(
+        useSessionStore
+          .getState()
+          .sessions.filter(
+            (session) =>
+              session.resumeRecovery?.cause === 'app-restart' &&
+              (!beforeRecovery.current.has(session.id) ||
+                beforeRecovery.current.get(session.id) !== session.resumeRecovery.promptMessageId)
+          )
+          .map(({ id, projectId }) => ({ id, projectId }))
+      )
+    }
+    // Restore only a focus lost to disabling a service control. Do not override user navigation.
+    if (document.activeElement === document.body && previousFocus.current?.isConnected)
+      previousFocus.current.focus()
+    previousFocus.current = null
+  }, [state.phase, state.restartedGeneration])
+  if (state.closing && updating) return null
+  if (
+    state.phase === 'connected' &&
+    !state.shutdownProgress &&
+    !interrupted.length &&
+    !diagnosticResult
+  )
+    return null
   const busy = state.phase === 'reconnecting' || state.phase === 'reconciling'
+  const connected = state.phase === 'connected'
+  const title = state.shutdownProgress
+    ? t('Closing Open-Science…')
+    : connected
+      ? interrupted.length
+        ? t('Local service restarted')
+        : t('Diagnostics')
+      : state.reason === 'crash-limit'
+        ? t('Local service keeps stopping')
+        : state.reason === 'recovery-timeout'
+          ? t('Unable to restore the local service connection')
+          : state.reason === 'service-stopped'
+            ? t('Local service stopped')
+            : busy && state.reason === 'process-exited'
+              ? t('Restarting local service…')
+              : busy
+                ? t('Restoring local service connection…')
+                : t('Local service connection lost')
   return (
-    <AlertDialog.Root open>
-      <AlertDialog.Portal>
-        <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content
-          ref={contentRef}
-          onOpenAutoFocus={(event) => {
-            // This programmatic dialog has no Radix Trigger or Cancel to own focus.
-            event.preventDefault()
-            previousFocus.current ??=
-              document.activeElement instanceof HTMLElement ? document.activeElement : null
-            contentRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault()
-            if (previousFocus.current?.isConnected) previousFocus.current.focus()
-            previousFocus.current = null
-          }}
-          className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] p-4')}
-        >
-          <AlertDialog.Title className="sr-only">{t('Desktop connection lost')}</AlertDialog.Title>
-          <AlertDialog.Description className="sr-only">
-            {t(
-              'Your local drafts remain open. Submitted operations may have completed; they will not be retried.'
-            )}
-          </AlertDialog.Description>
-          <ErrorNotice
-            inline
-            icon={busy ? LoaderCircle : Unplug}
-            iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
-            tone="amber"
-            role="status"
-            title={busy ? t('Restoring desktop connection…') : t('Desktop connection lost')}
-            description={
-              state.phase === 'unavailable'
+    <div
+      className="fixed bottom-4 right-4 z-50 w-[min(520px,calc(100vw-2rem))] rounded-lg border bg-background p-4 shadow-lg"
+      data-testid="local-service-recovery"
+    >
+      <ErrorNotice
+        inline
+        icon={busy || state.shutdownProgress ? LoaderCircle : Unplug}
+        iconClassName={
+          busy || state.shutdownProgress ? 'animate-spin motion-reduce:animate-none' : undefined
+        }
+        tone={
+          state.reason === 'crash-limit' || state.reason === 'recovery-timeout' ? 'red' : 'amber'
+        }
+        role="status"
+        title={title}
+        description={
+          state.shutdownProgress
+            ? t(
+                'Stopping the local service. Unfinished tasks, including CLI tasks, may be interrupted.'
+              )
+            : connected
+              ? interrupted.length
+                ? t('Some tasks were interrupted. Open them to resume.')
+                : undefined
+              : state.reason === 'crash-limit'
                 ? t(
-                    'The connection cannot be restored. Quit and reopen the app, then check your tasks. Submitted operations may have completed and will not be retried automatically.'
+                    'Automatic recovery has stopped. Save diagnostics, then retry or quit. Your projects and saved records are kept.'
                   )
-                : t(
-                    'Your local drafts remain open. Submitted operations may have completed; they will not be retried.'
-                  )
-            }
-            secondaryButton={
-              state.phase !== 'unavailable' && !busy
-                ? {
-                    label: t('Quit', { context: 'verb', ns: 'common' }),
-                    disabled: state.closing,
-                    onClick: () => {
-                      void window.api.desktopRuntime?.quit()
-                    }
+                : state.reason === 'service-stopped'
+                  ? t(
+                      'Your windows and drafts are kept. The local service will not restart automatically. Reconnect to check task status.'
+                    )
+                  : t(
+                      'Your local drafts remain open. Submitted operations may have completed; they will not be retried.'
+                    )
+        }
+        dismissButton={
+          connected && !state.shutdownProgress
+            ? {
+                label: t('Dismiss'),
+                onClick: () => {
+                  setInterrupted([])
+                  setDiagnosticResult(undefined)
+                }
+              }
+            : undefined
+        }
+        secondaryButton={
+          !connected && !state.shutdownProgress
+            ? {
+                label: t('Quit', { context: 'verb', ns: 'common' }),
+                onClick: () => {
+                  void window.api.desktopRuntime?.quit()
+                }
+              }
+            : undefined
+        }
+        primaryButton={
+          connected && interrupted.length && !state.shutdownProgress
+            ? {
+                label: t('View tasks'),
+                onClick: () => {
+                  const session = interrupted[0]!
+                  useNavigationStore.getState().openSession(session.projectId, session.id, 'user')
+                }
+              }
+            : !connected && !busy && !state.shutdownProgress
+              ? {
+                  label: t('Reconnect'),
+                  onClick: () => {
+                    void window.api.desktopRuntime?.reconnect()
                   }
-                : undefined
-            }
-            primaryButton={
-              !busy
-                ? {
-                    label:
-                      state.phase === 'unavailable'
-                        ? t('Quit', { context: 'verb', ns: 'common' })
-                        : t('Reconnect'),
-                    variant: 'default',
-                    disabled: state.closing,
-                    onClick: () => {
-                      if (state.phase === 'unavailable') void window.api.desktopRuntime?.quit()
-                      else void window.api.desktopRuntime?.reconnect()
-                    }
-                  }
-                : undefined
-            }
-          />
-        </AlertDialog.Content>
-      </AlertDialog.Portal>
-    </AlertDialog.Root>
+                }
+              : undefined
+        }
+      >
+        {!connected && !state.shutdownProgress ? (
+          <details className="mt-3 text-sm">
+            <summary>{t('Diagnostics')}</summary>
+            <pre className="my-2 max-h-36 overflow-auto whitespace-pre-wrap break-all text-xs">
+              {state.diagnostics ??
+                JSON.stringify(
+                  { phase: state.phase, reason: state.reason, epoch: state.epoch },
+                  null,
+                  2
+                )}
+            </pre>
+            <Button
+              variant="outline"
+              onClick={() => {
+                try {
+                  saveDiagnostics(state.diagnostics ?? JSON.stringify(state, null, 2))
+                  setDiagnosticResult('downloaded')
+                } catch {
+                  setDiagnosticResult('failed')
+                }
+              }}
+            >
+              {t('Save diagnostics')}
+            </Button>
+          </details>
+        ) : null}
+        {diagnosticResult ? (
+          <p className="mt-2 text-sm">
+            {diagnosticResult === 'downloaded'
+              ? t('Diagnostics download started.')
+              : t('Could not save diagnostics.')}
+          </p>
+        ) : null}
+      </ErrorNotice>
+    </div>
   )
 }

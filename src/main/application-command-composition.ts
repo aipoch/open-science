@@ -1,3 +1,4 @@
+import { allowedDuringServiceStop } from './service-command-admission'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
@@ -532,6 +533,7 @@ const createApplicationCommandComposition = (
   const router = createApplicationCommandRouter(onDiagnostic)
   const installations: CommandModuleInstallation[] = []
   let disposal: Promise<void> | undefined
+  let stopping = false
 
   try {
     for (const module of modules) installations.push(module.install(router.registrar))
@@ -566,6 +568,11 @@ const createApplicationCommandComposition = (
     return Object.freeze({
       commandNames: (): readonly string[] => names,
       invoke: (commandName, invocation): Promise<unknown> => {
+        if (stopping && !allowedDuringServiceStop(commandName)) {
+          return Promise.reject(
+            new ApplicationCommandError('command-unavailable', 'The local service is stopping.')
+          )
+        }
         if (rejected.has(commandName)) {
           return Promise.reject(
             new ApplicationCommandError(
@@ -609,6 +616,9 @@ const createApplicationCommandComposition = (
     localWeb,
     remoteWeb,
     task,
+    beginStopping: (): void => {
+      stopping = true
+    },
     bindRemoteAccess: remoteAccess.bind,
     dispose: (): Promise<void> => {
       if (disposal) return disposal

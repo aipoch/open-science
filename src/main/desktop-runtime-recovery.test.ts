@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
+import {
+  assertDesktopRuntimeRestartAllowed,
+  createDesktopRuntimeRecovery
+} from './desktop-runtime-recovery'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
+import type { ServiceLifetimeRecord } from './local-service-lifetime'
 
 vi.mock('./runtime-stop-confirmation', () => ({ isRuntimeProcessAlive: vi.fn(() => true) }))
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
@@ -157,16 +161,16 @@ describe('same-backend desktop recovery', () => {
     const old = client()
     const next = client()
     const hydration = deferred<void>()
+    const activate = vi.fn(() => hydration.promise)
     const recovery = createDesktopRuntimeRecovery({
       client: old,
       connect: async () => next,
-      activate: () => hydration.promise,
+      activate,
       onState: vi.fn()
     })
     recovery.disconnect(old)
     const result = recovery.reconnect()
-    await Promise.resolve()
-    await Promise.resolve()
+    await vi.waitFor(() => expect(activate).toHaveBeenCalledOnce())
     recovery.setClosing(true)
     await result
     expect(next.close).toHaveBeenCalledOnce()
@@ -259,5 +263,364 @@ describe('reconciliation event buffer', () => {
       channel: 'project:created',
       payload: { id: 'p' }
     })
+  })
+})
+
+describe('automatic recovery rounds', () => {
+  it.each([false, true])(
+    'never authorizes a stop committed after reconnecting a live generation (quit canceled: %s)',
+    async (cancelQuit) => {
+      vi.useFakeTimers()
+      const original = client()
+      const next = {
+        ...client(8),
+        runtimeInfo: () => ({ generation: 'replacement-b' })
+      } as unknown as DesktopRuntimeClient
+      let alive = true
+      vi.mocked(isRuntimeProcessAlive).mockImplementation(() => alive)
+      const lifetime = { intent: undefined as ServiceLifetimeRecord | undefined }
+      const pendingReview = deferred<ServiceLifetimeRecord | undefined>()
+      const reviewRestart = vi.fn(() => pendingReview.promise)
+      const connection = deferred<DesktopRuntimeClient>()
+      const launch = vi.fn(async () => {
+        alive = true
+        return next
+      })
+      const recovery = createDesktopRuntimeRecovery({
+        client: original,
+        automatic: true,
+        reviewRestart,
+        connect: () => connection.promise,
+        restart: async (_signal, authorization) => {
+          assertDesktopRuntimeRestartAllowed(lifetime.intent, authorization, false)
+          return launch()
+        },
+        activate: async () => undefined,
+        onState: vi.fn()
+      })
+      recovery.disconnect(original)
+      const first = recovery.reconnect()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(reviewRestart).not.toHaveBeenCalled()
+      lifetime.intent = {
+        version: 1,
+        generation: 'test-generation',
+        explicit: false,
+        stopping: true,
+        reason: 'user-stop'
+      }
+      alive = false
+      if (cancelQuit) recovery.setClosing(true)
+      connection.resolve(original)
+      pendingReview.resolve(lifetime.intent)
+      await first
+      if (cancelQuit) recovery.setClosing(false)
+      await vi.advanceTimersByTimeAsync(300)
+      expect(launch).not.toHaveBeenCalled()
+      expect(recovery.state()).toMatchObject({ phase: 'unavailable', reason: 'service-stopped' })
+      await recovery.reconnect()
+      expect(reviewRestart).toHaveBeenCalledWith('test-generation')
+      expect(launch).toHaveBeenCalledOnce()
+      expect(recovery.state().phase).toBe('connected')
+      recovery.setClosing(true)
+    }
+  )
+
+  it('does not renew a manual restart authorization after the replacement is force-stopped during hydration', async () => {
+    vi.useFakeTimers()
+    const original = client(7)
+    const replacement = {
+      ...client(8),
+      runtimeInfo: () => ({ generation: 'replacement-b' })
+    } as unknown as DesktopRuntimeClient
+    const later = {
+      ...client(9),
+      runtimeInfo: () => ({ generation: 'replacement-c' })
+    } as unknown as DesktopRuntimeClient
+    const alive = new Set<number>()
+    vi.mocked(isRuntimeProcessAlive).mockImplementation((pid) => alive.has(pid))
+    let intent: ServiceLifetimeRecord = {
+      version: 1,
+      generation: 'test-generation',
+      explicit: false,
+      stopping: true,
+      reason: 'user-stop'
+    }
+    const readIntent = vi.fn(async () => ({ ...intent }))
+    const reviewRestart = vi.fn(async (generation: string) => {
+      const reviewed = await readIntent()
+      return reviewed.stopping && reviewed.generation === generation ? reviewed : undefined
+    })
+    const launch = vi.fn(async () => {
+      const candidate = launch.mock.calls.length === 1 ? replacement : later
+      alive.add(candidate.processId())
+      return candidate
+    })
+    const hydration = deferred<void>()
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      reviewRestart,
+      connect: async () => replacement,
+      restart: async (_signal, authorization) => {
+        assertDesktopRuntimeRestartAllowed(await readIntent(), authorization, false)
+        return launch()
+      },
+      activate: async (candidate, _signal, announce) => {
+        announce()
+        if (candidate === replacement) await hydration.promise
+      },
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    const first = recovery.reconnect()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(recovery.state().phase).toBe('reconciling')
+    intent = { ...intent, generation: 'replacement-b' }
+    alive.delete(8)
+    recovery.disconnect(replacement)
+    await first
+    await vi.advanceTimersByTimeAsync(300)
+    expect(recovery.state()).toMatchObject({ phase: 'unavailable', reason: 'service-stopped' })
+    expect(launch).toHaveBeenCalledOnce()
+    expect(reviewRestart.mock.calls).toEqual([['test-generation']])
+    // Only a second explicit click can review B's new stop record and authorize C.
+    await recovery.reconnect()
+    expect(reviewRestart.mock.calls).toEqual([['test-generation'], ['replacement-b']])
+    expect(launch).toHaveBeenCalledTimes(2)
+    expect(recovery.state()).toMatchObject({
+      phase: 'connected',
+      restartedGeneration: 'replacement-c'
+    })
+    recovery.setClosing(true)
+    hydration.resolve()
+  })
+
+  it('rejects a changed stop or committed update at the final launch check', () => {
+    const reviewed: ServiceLifetimeRecord = {
+      version: 1,
+      generation: 'a',
+      explicit: false,
+      stopping: true,
+      reason: 'user-stop'
+    }
+    expect(() => assertDesktopRuntimeRestartAllowed(reviewed, { ...reviewed }, false)).not.toThrow()
+    expect(() =>
+      assertDesktopRuntimeRestartAllowed({ ...reviewed, generation: 'b' }, reviewed, false)
+    ).toThrow('intentionally stopped')
+    expect(() => assertDesktopRuntimeRestartAllowed(reviewed, reviewed, true)).toThrow(
+      'intentionally stopped'
+    )
+  })
+
+  it('bounds an unanswered manual stop review and never launches from its late result', async () => {
+    vi.useFakeTimers()
+    vi.mocked(isRuntimeProcessAlive).mockReturnValue(false)
+    const original = client()
+    const review = deferred<ServiceLifetimeRecord | undefined>()
+    const restart = vi.fn()
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      timeoutMs: 100,
+      reviewRestart: () => review.promise,
+      restart,
+      connect: vi.fn(),
+      activate: vi.fn(),
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    const result = recovery.reconnect()
+    await vi.advanceTimersByTimeAsync(100)
+    await result
+    expect(recovery.state().phase).toBe('unavailable')
+    review.resolve({
+      version: 1,
+      generation: 'test-generation',
+      explicit: false,
+      stopping: true,
+      reason: 'user-stop'
+    })
+    await Promise.resolve()
+    expect(restart).not.toHaveBeenCalled()
+  })
+
+  it('does not reset the recovery deadline when a socket connects but synchronization hangs', async () => {
+    vi.useFakeTimers()
+    const original = client()
+    const connect = vi.fn(async () => client())
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      timeoutMs: 1000,
+      connect,
+      activate: async (_candidate, _signal, announce) => {
+        announce()
+        await new Promise(() => undefined)
+      },
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(recovery.state().phase).not.toBe('connected')
+    const attempts = connect.mock.calls.length
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(connect).toHaveBeenCalledTimes(attempts)
+    recovery.setClosing(true)
+  })
+
+  it('stops automatic restarts after the third proven process death', async () => {
+    vi.useFakeTimers()
+    const original = client()
+    let latest = original
+    let alive = true
+    vi.mocked(isRuntimeProcessAlive).mockImplementation(() => alive)
+    const restart = vi.fn(async () => {
+      alive = true
+      latest = {
+        ...client(),
+        runtimeInfo: () => ({ generation: `generation-${restart.mock.calls.length}` })
+      } as unknown as DesktopRuntimeClient
+      return latest
+    })
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      restart,
+      connect: async () => latest,
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    for (let index = 0; index < 3; index++) {
+      alive = false
+      recovery.disconnect(latest)
+      await vi.advanceTimersByTimeAsync(300)
+    }
+    expect(restart).toHaveBeenCalledTimes(2)
+    expect(recovery.state()).toMatchObject({ phase: 'unavailable', reason: 'crash-limit' })
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(restart).toHaveBeenCalledTimes(2)
+    // The crash-limit branch throws before its first await. Its settled Promise must not
+    // occupy the in-flight slot and prevent the user's new recovery round.
+    await recovery.reconnect()
+    expect(restart).toHaveBeenCalledTimes(3)
+    expect(recovery.state().phase).toBe('connected')
+    alive = false
+    recovery.disconnect(latest)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(restart).toHaveBeenCalledTimes(4)
+    recovery.setClosing(true)
+  })
+
+  it('bounds repeated synchronous connection failures and gives manual retry a new budget', async () => {
+    vi.useFakeTimers()
+    const original = client()
+    const connect = vi.fn<() => Promise<DesktopRuntimeClient>>(() => {
+      throw new Error('connection refused')
+    })
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      timeoutMs: 1000,
+      connect,
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(recovery.state()).toMatchObject({ phase: 'disconnected', reason: 'recovery-timeout' })
+    const count = connect.mock.calls.length
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(connect).toHaveBeenCalledTimes(count)
+    connect.mockImplementation(async () => client())
+    await recovery.reconnect()
+    expect(recovery.state().phase).toBe('connected')
+    recovery.setClosing(true)
+  })
+
+  it('resumes a canceled quit within the existing recovery budget', async () => {
+    vi.useFakeTimers()
+    const original = client()
+    let next = client()
+    const connect = vi.fn(async () => next)
+    let syncing = true
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      timeoutMs: 1000,
+      connect,
+      activate: async () => {
+        if (syncing) await new Promise(() => undefined)
+      },
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(300)
+    recovery.setClosing(true)
+    await vi.advanceTimersByTimeAsync(100)
+    syncing = false
+    next = client()
+    recovery.setClosing(false)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(recovery.state().phase).toBe('connected')
+    expect(connect).toHaveBeenCalledTimes(2)
+    recovery.setClosing(true)
+  })
+
+  it('does not grant a new deadline when quit cancellation comes after budget expiry', async () => {
+    vi.useFakeTimers()
+    const original = client()
+    const connect = vi.fn(async () => client())
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      timeoutMs: 1000,
+      connect,
+      activate: async () => new Promise(() => undefined),
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(300)
+    recovery.setClosing(true)
+    await vi.advanceTimersByTimeAsync(1000)
+    recovery.setClosing(false)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(recovery.state()).toMatchObject({ phase: 'disconnected', reason: 'recovery-timeout' })
+    expect(connect).toHaveBeenCalledTimes(1)
+    recovery.setClosing(true)
+  })
+
+  it('retains restart evidence until a later socket completes synchronization', async () => {
+    vi.useFakeTimers()
+    const original = client()
+    const next = {
+      ...client(8),
+      runtimeInfo: () => ({ generation: 'new-generation' })
+    } as unknown as DesktopRuntimeClient
+    let alive = false
+    vi.mocked(isRuntimeProcessAlive).mockImplementation(() => alive)
+    let syncFails = true
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      connect: async () => next,
+      restart: async () => {
+        alive = true
+        return next
+      },
+      activate: async () => {
+        if (syncFails) {
+          syncFails = false
+          throw new Error('snapshot failed')
+        }
+      },
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(recovery.state()).toMatchObject({
+      phase: 'connected',
+      restartedGeneration: 'new-generation'
+    })
+    recovery.setClosing(true)
   })
 })

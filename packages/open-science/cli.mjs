@@ -22,11 +22,16 @@ import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateBackend } from './locate-backend.mjs'
 import { protectInstallationStartup } from './installation-startup.cjs'
-import { requestExistingRuntimeWeb } from './runtime-control.mjs'
+import {
+  requestExistingRuntimeWeb,
+  requestServiceLifetime,
+  verifyServiceConfigRoot,
+  waitForServiceStopped
+} from './runtime-control.mjs'
 
 const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 30_000
-const STOP_TIMEOUT_MS = 15_000
+const STOP_TIMEOUT_MS = 22_000
 const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
@@ -36,9 +41,10 @@ Commands:
   help [command]  Show general or command help
   paths       Show local CLI, Node and configuration discovery paths
   init        Create the local CLI configuration directory
-  start       Start the headless backend and localhost web UI
-  stop        Gracefully stop the backend
-  status      Show backend status
+  start       Start or connect to the local service and keep it running after the App exits
+  stop        Revoke persistent running; stop if no App is connected (tasks may be interrupted)
+  stop --force  Stop the local service even with an App connected; running tasks may be interrupted
+  status      Show local service status, App sessions, and persistent running
   url         Print the authenticated web URL
   doctor --json  Inspect headless readiness
   runtime list          List detected Agent runtimes
@@ -115,7 +121,7 @@ Options:
   --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start only)
-  --force                Sign in again even when Codex credentials already exist
+  --force                Stop the local service even with an App connected; also supports codex login
   --json                 Emit one machine-readable result
   -v, --version          Print the local application version and exit
   -h, --help             Show this help`
@@ -452,7 +458,7 @@ export const parseCliArgs = (argv) => {
   if (command === 'runtime' && subcommand !== 'list' && subcommand !== 'install') {
     throw new CliUsageError(`Unknown command: runtime ${subcommand ?? ''}`.trimEnd())
   }
-  if (options.json && (command === 'start' || command === 'url')) {
+  if (options.json && command === 'url') {
     throw new CliUsageError(`--json is not supported for ${command}.`)
   }
   if (options.cwd !== undefined && !options.cwd.trim()) {
@@ -491,8 +497,8 @@ export const parseCliArgs = (argv) => {
   if (options.noSandbox && command !== 'start') {
     throw new CliUsageError('--no-sandbox requires start.')
   }
-  if (options.force && (command !== 'codex' || subcommand !== 'login')) {
-    throw new CliUsageError('--force requires codex login.')
+  if (options.force && command !== 'stop' && (command !== 'codex' || subcommand !== 'login')) {
+    throw new CliUsageError('--force requires stop or codex login.')
   }
   const isProjectCreate = command === 'project' && subcommand === 'create'
   const isProjectUpdate = command === 'project' && subcommand === 'update'
@@ -737,6 +743,9 @@ const openBrowser = (url) => {
 // pass nothing and get these.
 const DEFAULT_DEPS = {
   requestExistingRuntimeWeb,
+  requestServiceLifetime,
+  verifyServiceConfigRoot,
+  waitForServiceStopped,
   findServiceState: (options) => findServiceState(options),
   readWebToken: (configRoot) => readWebToken(configRoot),
   isAlive: isProcessAlive,
@@ -755,18 +764,6 @@ export const terminateDaemon = async (pid, opts) => {
   const deadline = now() + gracefulTimeoutMs
   while (now() < deadline && isAlive(pid)) await sleepFn(250)
   return !isAlive(pid)
-}
-
-// Waits for an attached web service (one riding on the desktop app) to stop responding after a graceful
-// shutdown request. Returns true once it is no longer healthy. Never kills the pid — that process is the
-// user's app, not a daemon this CLI owns, so if it refuses to stop we fail loudly rather than force it.
-const waitForWebServiceStopped = async (state, deps, timeoutMs) => {
-  const deadline = deps.now() + timeoutMs
-  while (deps.now() < deadline) {
-    if (!(await healthCheck(state, deps))) return true
-    await deps.sleep(250)
-  }
-  return false
 }
 
 const readLogTail = async (logPath) => {
@@ -804,10 +801,29 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
       throw new Error(
         'Open-Science is already running. Stop it before selecting a credential store.'
       )
+    const service = await (deps.requestServiceLifetime ?? requestServiceLifetime)(
+      existing.configRoot,
+      'start',
+      deps.fetch
+    )
     const url = await authenticatedUrl(existing, deps)
-    deps.log(`Open-Science is already running (PID ${existing.pid}).`)
+    if (options.json)
+      deps.log(
+        JSON.stringify({
+          result: 'already-running',
+          ...existing,
+          lifetime: service?.lifetime ?? 'unknown'
+        })
+      )
+    else {
+      deps.log(`Open-Science is already running (PID ${existing.pid}).`)
+      if (!service)
+        deps.warn(
+          'Persistent running could not be confirmed for this older service. Stop it from its App and start a compatible service when persistent running is needed.'
+        )
+    }
     if (options.open) openBrowser(url)
-    else deps.log('Run "open-science url" to print a browser login URL.')
+    else if (!options.json) deps.log('Run "open-science url" to print a browser login URL.')
     return { state: existing, started: false }
   }
 
@@ -819,9 +835,28 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   if (reusedRoot) {
     const state = await findCurrentState({ ...options, configRoot: reusedRoot }, deps)
     if (await healthCheck(state, deps)) {
-      deps.log(`Open-Science is already running (PID ${state.pid}).`)
+      const service = await (deps.requestServiceLifetime ?? requestServiceLifetime)(
+        state.configRoot,
+        'start',
+        deps.fetch
+      )
+      if (options.json)
+        deps.log(
+          JSON.stringify({
+            result: 'already-running',
+            ...state,
+            lifetime: service?.lifetime ?? 'unknown'
+          })
+        )
+      else {
+        deps.log(`Open-Science is already running (PID ${state.pid}).`)
+        if (!service)
+          deps.warn(
+            'Persistent running could not be confirmed for this older service. Stop it from its App and start a compatible service when persistent running is needed.'
+          )
+      }
       if (options.open) openBrowser(await authenticatedUrl(state, deps))
-      else deps.log('Run "open-science url" to print a browser login URL.')
+      else if (!options.json) deps.log('Run "open-science url" to print a browser login URL.')
       return { state, started: false }
     }
   }
@@ -881,9 +916,18 @@ export const startCommand = async (options, deps = DEFAULT_DEPS) => {
   }
   const state = startup.state
   const url = await authenticatedUrl(state, deps)
-  deps.log(`Open-Science started (PID ${state.pid}).`)
+  if (options.json) {
+    const service = await (deps.requestServiceLifetime ?? requestServiceLifetime)(
+      state.configRoot,
+      'status',
+      deps.fetch
+    )
+    deps.log(
+      JSON.stringify({ result: 'started', ...state, lifetime: service?.lifetime ?? 'unknown' })
+    )
+  } else deps.log(`Open-Science started (PID ${state.pid}).`)
   if (options.open) openBrowser(url)
-  else deps.log('Run "open-science url" to print a browser login URL.')
+  else if (!options.json) deps.log('Run "open-science url" to print a browser login URL.')
   return { state, started: true }
 }
 
@@ -912,13 +956,77 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     )
     return
   }
+  const service = await (deps.requestServiceLifetime ?? requestServiceLifetime)(
+    state.configRoot,
+    options.force ? 'force-stop' : 'stop',
+    deps.fetch
+  )
+  if (service) {
+    if (!service.lifetime.stopping) {
+      deps.log(
+        options.json
+          ? JSON.stringify({ result: 'keep-alive-revoked', ...service })
+          : 'Persistent running revoked. The local service remains running while an App is connected.'
+      )
+      return
+    }
+    if (!options.json) deps.log('Stopping the local service. Running tasks may be interrupted.')
+    const confirmation = await (deps.waitForServiceStopped ?? waitForServiceStopped)(service, {
+      isAlive: deps.isAlive,
+      sleep: deps.sleep,
+      now: deps.now,
+      timeoutMs: STOP_TIMEOUT_MS,
+      ...(deps.readServiceProcessBirth ? { readBirth: deps.readServiceProcessBirth } : {}),
+      ...(deps.readRuntimeOwner ? { readOwner: deps.readRuntimeOwner } : {})
+    })
+    if (!confirmation.stopped)
+      throw Object.assign(
+        new Error(
+          `Local service exit is not confirmed (PID ${service.pid}, generation ${service.lifetime.generation}; ${confirmation.reason}). Inspect the service logs before retrying.`
+        ),
+        { code: 'service_stop_unconfirmed' }
+      )
+    deps.log(
+      options.json
+        ? JSON.stringify({ result: 'stopped', ...service })
+        : 'Local service stopped. Cleanup details are available in the service logs.'
+    )
+    return
+  }
+  if (options.force)
+    throw new Error(
+      'This older service cannot record a force-stop intent. Stop it from its App or update it first.'
+    )
   const token = await deps.readWebToken(state.configRoot)
+  // Legacy shutdown has no lifetime intent. Authenticate its actual root before any mutation.
+  try {
+    const bootstrap = await deps.fetch(`http://127.0.0.1:${state.port}/api/bootstrap`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(1500),
+      redirect: 'error'
+    })
+    if (!bootstrap.ok) throw new Error(`HTTP ${bootstrap.status}`)
+    const boot = await bootstrap.json()
+    await (deps.verifyServiceConfigRoot ?? verifyServiceConfigRoot)(
+      state.configRoot,
+      boot.configRoot
+    )
+  } catch (cause) {
+    throw Object.assign(
+      new Error(
+        'The older service could not prove its Config Root. Stop it from its original App or use the correct --config-root.',
+        { cause }
+      ),
+      { code: 'service_identity_unverified' }
+    )
+  }
   let shutdownAccepted = false
   try {
     const response = await deps.fetch(`http://127.0.0.1:${state.port}/api/shutdown`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(3_000)
+      signal: AbortSignal.timeout(3_000),
+      redirect: 'error'
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     shutdownAccepted = true
@@ -933,50 +1041,69 @@ export const stopCommand = async (options, deps = DEFAULT_DEPS) => {
     )
   }
 
-  // Attached: the web service rides on the running desktop app. A graceful request stops only the web
-  // service; the app stays up, so observe service health instead of waiting for its pid to exit.
-  if (state.attached) {
-    const stopped = await waitForWebServiceStopped(state, deps, STOP_TIMEOUT_MS)
-    if (!stopped) {
-      throw new Error(
-        `Could not stop the Open-Science web service (PID ${state.pid}); the app is still serving.`
-      )
-    }
-    deps.log(
-      options.json
-        ? JSON.stringify({ result: 'web-service-stopped' })
-        : 'Open-Science web service stopped; the app is still running.'
-    )
-    return
-  }
-
-  const stopped = await terminateDaemon(state.pid, {
-    isAlive: deps.isAlive,
-    sleep: deps.sleep,
-    now: deps.now,
-    gracefulTimeoutMs: STOP_TIMEOUT_MS
-  })
-  // Only claim success (and drop the state file) once the process is confirmed gone; otherwise leave
-  // the state in place and fail loudly so the user isn't told it stopped when it didn't.
-  if (!stopped) {
-    throw new Error(
-      `Could not stop Open-Science (PID ${state.pid}); it is still running, so no process signal was sent.`
-    )
-  }
-  deps.log(options.json ? JSON.stringify({ result: 'daemon-stopped' }) : 'Open-Science stopped.')
+  const notice =
+    'Shutdown requested; completion is unconfirmed because this older service protocol cannot identify the exact stopped generation. Check its original App.'
+  deps.log(
+    options.json
+      ? JSON.stringify({ result: 'shutdown-requested', completionStatus: 'unconfirmed', notice })
+      : notice
+  )
+  if (deps.setExitCode) deps.setExitCode(1)
+  else process.exitCode = 1
 }
 
 export const statusCommand = async (options, deps = DEFAULT_DEPS) => {
   const state = await findCurrentState(options, deps)
   const running = await healthCheck(state, deps)
+  const unreachable = !running && state && deps.isAlive(state.pid)
+  const service = running
+    ? await (deps.requestServiceLifetime ?? requestServiceLifetime)(
+        state.configRoot,
+        'status',
+        deps.fetch
+      )
+    : undefined
   if (options.json) {
-    deps.log(JSON.stringify(running ? { running: true, ...state } : { running: false }, null, 2))
+    deps.log(
+      JSON.stringify(
+        running
+          ? {
+              running: true,
+              ...state,
+              pid: service?.pid ?? state.pid,
+              ...(service
+                ? {
+                    lifetime: service.lifetime,
+                    appVersion: service.identity?.version ?? state.appVersion
+                  }
+                : { lifetime: 'unknown' })
+            }
+          : unreachable
+            ? { ...state, running: null, status: 'unreachable', lifetime: 'unknown' }
+            : { running: false },
+        null,
+        2
+      )
+    )
   } else if (running) {
-    deps.log(`Open-Science is running (PID ${state.pid}, port ${state.port}).`)
+    deps.log(`Open-Science is running (PID ${service?.pid ?? state.pid}, port ${state.port}).`)
+    if (service?.identity?.version) deps.log(`Service version: ${service.identity.version}.`)
+    deps.log(
+      service
+        ? `App sessions: ${service.lifetime.apps}; persistent running: ${service.lifetime.explicit ? 'enabled' : 'disabled'}; state: ${service.lifetime.stopping ? 'stopping' : 'running'}. Known task activity: query run status; this is not an idle guarantee.`
+        : 'Service holds: unknown (older service).'
+    )
+  } else if (unreachable) {
+    deps.log(
+      `Local service status is unknown (PID ${state.pid}, port ${state.port}). The process is alive but did not respond. App sessions and persistent running are unknown.`
+    )
   } else {
     deps.log('Open-Science is not running.')
   }
-  if (!running) process.exitCode = 1
+  if (!running) {
+    if (deps.setExitCode) deps.setExitCode(1)
+    else process.exitCode = 1
+  }
 }
 
 export const urlCommand = async (options, deps = DEFAULT_DEPS) => {
@@ -1634,26 +1761,35 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!prompt) throw new CliUsageError('Prompt is required.')
     const runRef = { current: undefined, pending: [] }
     const abortController = new AbortController()
-    const eventStream =
-      options.wait && !options.json && typeof client.events === 'function'
-        ? client.events({ signal: abortController.signal })
-        : undefined
-    await eventStream?.ready
+    let eventStream
     // The event stream only renders progress; waitForRun remains authoritative for the final Run
     // state, so a mid-run stream failure must not fail an otherwise-successful command.
-    const eventTask = eventStream
-      ? streamRunEvents(eventStream, runRef, options, deps, abortController.signal).catch(
-          (error) => {
-            if (abortController.signal.aborted) return
-            const message = error instanceof Error ? error.message : String(error)
-            deps.warn(
-              `Run event stream stopped: ${message} Final Run state will still be read from Open-Science.`
-            )
-          }
+    const warnEventFailure = (error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      if (options.jsonl)
+        deps.warn(JSON.stringify({ warning: { code: 'event_stream_stopped', message } }))
+      else
+        deps.warn(
+          `Run event stream stopped: ${message} Final Run state will still be read from Open-Science.`
         )
-      : undefined
+    }
+    let eventTask
+    let submissionAttempted = false
     let result
     try {
+      eventStream =
+        options.wait && !options.json && typeof client.events === 'function'
+          ? client.events({ signal: abortController.signal })
+          : undefined
+      await eventStream?.ready
+      eventTask = eventStream
+        ? streamRunEvents(eventStream, runRef, options, deps, abortController.signal).catch(
+            (error) => {
+              if (!abortController.signal.aborted) warnEventFailure(error)
+            }
+          )
+        : undefined
+      submissionAttempted = true
       const started = await client.startRun({
         project: projectId,
         prompt,
@@ -1712,9 +1848,50 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         }
         throw error
       }
+    } catch (error) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        ((runRef.current && options.wait) ||
+          (submissionAttempted &&
+            (['daemon_unavailable', 'timeout'].includes(error.code) ||
+              error instanceof SyntaxError ||
+              (error instanceof TypeError && error.message === 'fetch failed') ||
+              ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'UND_ERR_SOCKET'].includes(
+                error.cause?.code
+              ))))
+      ) {
+        error.completionStatus = runRef.current ? 'unconfirmed' : 'submission-unconfirmed'
+        if (runRef.current) error.runId = runRef.current.runId
+        error.message += runRef.current
+          ? ` Completion status unconfirmed for run ${runRef.current.runId}. Query: open-science run status ${runRef.current.runId}. The run was not retried.`
+          : ' Submission result unconfirmed. No task ID was received; the request was not retried.'
+      }
+      throw error
     } finally {
       abortController.abort()
-      await eventTask
+      // Progress transports are advisory. An iterator ignoring abort must not trap CLI exit.
+      let timer
+      try {
+        await Promise.race([
+          Promise.resolve(eventTask)
+            .then(() => eventStream?.return?.())
+            .catch(warnEventFailure),
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, 1000)
+          })
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    if (!options.wait && !['completed', 'failed', 'cancelled'].includes(result.status)) {
+      result = {
+        ...result,
+        submissionStatus: 'submitted-not-completed',
+        notice: 'Submitted, not completed. Exiting the App may interrupt this work.',
+        next: ['run', 'status', result.id]
+      }
     }
     if (options.json || options.jsonl) outputValue(result, options, deps)
     else if (result.status === 'completed') deps.log(result.output || `Run completed: ${result.id}`)
@@ -1725,8 +1902,15 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       deps.log(
         `Run is waiting for Plan approval: open-science plan approve ${result.sessionId} --artifact-version ${plan.artifactVersionId} --revision ${plan.revision}`
       )
-    } else deps.log(`Run started: ${result.id} (session ${result.sessionId})`)
-    if (result.status === 'failed') deps.setExitCode(1)
+      if (!options.wait)
+        deps.log(
+          `Submitted, not completed: ${result.id}. Exiting the App may interrupt this work. Query: open-science run status ${result.id}`
+        )
+    } else
+      deps.log(
+        `Submitted, not completed: ${result.id} (session ${result.sessionId}). Exiting the App may interrupt this work. Query: open-science run status ${result.id}`
+      )
+    if (['failed', 'cancelled'].includes(result.status)) deps.setExitCode(1)
     return
   }
 
@@ -1753,7 +1937,17 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
         ? 4
         : 1)
   if (argv.includes('--json') || argv.includes('--jsonl')) {
-    deps.error(JSON.stringify({ error: { code, message }, exitCode }))
+    deps.error(
+      JSON.stringify({
+        error: {
+          code,
+          message,
+          ...(error?.completionStatus ? { completionStatus: error.completionStatus } : {}),
+          ...(error?.runId ? { runId: error.runId } : {})
+        },
+        exitCode
+      })
+    )
   } else {
     deps.error(message)
   }

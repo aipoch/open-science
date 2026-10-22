@@ -1168,8 +1168,9 @@ describe('App startup routing', () => {
     expect(document.querySelector('[data-testid="update-dialog"]')).not.toBeNull()
   })
 
-  it('keeps update presentation active through planned runtime shutdown', async () => {
+  it('retains the update owner through planned service shutdown and handoff failure while lifecycle sync stays paused', async () => {
     mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
     mocks.update.isDialogOpen = true
     mocks.update.status.state = 'applying'
     await render()
@@ -1183,11 +1184,18 @@ describe('App startup routing', () => {
 
     mocks.update.status.state = 'error'
     await act(async () => root.render(<App />))
-    expect(mocks.presentationProps.update?.active).toBe(false)
+    expect(mocks.presentationProps.update?.active).toBe(true)
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
+    expect(
+      container.querySelector('[data-testid="workspace-page"]')?.closest('[inert]')
+    ).not.toBeNull()
+    expect(mocks.update.closeDialog).not.toHaveBeenCalled()
   })
 
-  it('prioritizes unexpected runtime disconnection even while applying an update', async () => {
+  it('retains the update owner during unexpected service disconnection and resumes lifecycle sync only after recovery', async () => {
     mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
     mocks.update.isDialogOpen = true
     mocks.update.status.state = 'applying'
     await render()
@@ -1196,7 +1204,19 @@ describe('App startup routing', () => {
     await act(async () => {
       useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: false })
     })
-    expect(mocks.presentationProps.update?.active).toBe(false)
+    expect(mocks.presentationProps.update?.active).toBe(true)
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
+    expect(
+      container.querySelector('[data-testid="workspace-page"]')?.closest('[inert]')
+    ).not.toBeNull()
+    expect(mocks.update.closeDialog).not.toHaveBeenCalled()
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: true })
+    expect(mocks.presentationProps.update?.active).toBe(true)
   })
 
   it('closes the update dialog before underlying surfaces', async () => {
