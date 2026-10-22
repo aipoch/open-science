@@ -7671,6 +7671,24 @@
     "Check installation": "Installation prüfen",
     "Quit Open-Science and release file access before installing": "Open-Science vor der Installation beenden und Dateisperren aufheben",
     "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "Speichern Sie Ihre Arbeit und stoppen Sie laufende Aufgaben. Beenden Sie Open-Science vollständig und schließen Sie andere Instanzen oder stoppen Sie Dienste, die diese Installation verwenden, bevor Sie das Installationsprogramm ausführen. Eine manuelle Installation hebt bestehende Dateisperren nicht auf.",
-    "Verified installer": "Überprüftes Installationsprogramm"
+    "Verified installer": "Überprüftes Installationsprogramm",
+    "Content first": "Inhalt bevorzugen",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Fließtext und Beschriftungen einspaltig neu anordnen und Abbildungen, Tabellen, Formeln, Code und Literaturangaben möglichst beibehalten. Das Ergebnis hängt von der Qualität der PDF-Extraktion ab. Ohne Häkchen wird das ursprüngliche Layout möglichst beibehalten.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Textrichtung oder ihr Layout nicht sicher neu anordnen ließ.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Links nicht sicher auf die neuen Positionen übertragen ließen.",
+    "Source pages: {{pages}}": "Quellseiten: {{pages}}",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "Die Original-PDF wurde beibehalten, da ihre dokumentweiten Strukturen nicht sicher erhalten werden konnten. Lesen Sie die Übersetzung in der Seitenleiste.",
+    "Reading package…": "Paket wird gelesen…",
+    "Checking {{completed}} of {{total}} files…": "{{completed}} von {{total}} Dateien werden geprüft…",
+    "Verifying package files…": "Paketdateien werden überprüft…",
+    "Preparing package preview…": "Paketvorschau wird vorbereitet…",
+    "Checking package relationships…": "Beziehungen im Paket werden überprüft…",
+    "Importing files…": "Dateien werden importiert…",
+    "Verifying imported files…": "Importierte Dateien werden überprüft…",
+    "Preparing final validation…": "Abschließende Überprüfung wird vorbereitet…",
+    "Checking imported relationships…": "Importierte Beziehungen werden überprüft…",
+    "Finishing import…": "Import wird abgeschlossen…",
+    "Overall import progress (estimated)": "Gesamter Importfortschritt (geschätzt)",
+    "Stage {{current}} of {{total}}": "Phase {{current}} von {{total}}"
   }
 }

@@ -181,12 +181,15 @@ it('matches inline native validation and uses the parent pacing owner', async ()
   )
   let rateReads = 0
   const speeds: number[] = []
+  const progress = vi.fn()
   const preview = await withPackageTransfer(
     () =>
       createPackageInspector(createWorker)(
         archive,
         join(source.storageRoot, 'worker'),
-        new AbortController().signal
+        new AbortController().signal,
+        undefined,
+        progress
       ),
     () => {
       rateReads++
@@ -195,6 +198,29 @@ it('matches inline native validation and uses the parent pacing owner', async ()
     (speed) => speeds.push(speed)
   )
   expect(preview).toEqual(inline)
+  expect(progress).toHaveBeenCalledWith(
+    expect.objectContaining({ phase: 'validating', totalBytes: expect.any(Number) })
+  )
+  expect(progress).toHaveBeenCalledWith(
+    expect.objectContaining({
+      phase: 'validating',
+      completedFiles: expect.any(Number),
+      totalFiles: expect.any(Number)
+    })
+  )
+  expect(progress).toHaveBeenLastCalledWith({
+    phase: 'validating',
+    importStage: 'validate-preview',
+    stageProgress: 1
+  })
+  expect(progress.mock.calls.map(([value]) => value.importStage)).toEqual(
+    expect.arrayContaining([
+      'read-archive',
+      'verify-archive',
+      'prepare-preview',
+      'validate-preview'
+    ])
+  )
   expect(rateReads).toBeGreaterThan(1)
   expect(speeds.length).toBeGreaterThan(0)
   for (const root of validationRoots)

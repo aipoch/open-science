@@ -956,15 +956,14 @@ for (const width of [1280, 414]) {
     await expect(options).toBeVisible()
     await expect(options.getByRole('option')).toHaveText([
       'Auto',
-      '4.0 MiB/s',
-      '16.0 MiB/s',
-      '64.0 MiB/s',
       '128.0 MiB/s',
-      '256.0 MiB/s'
+      '256.0 MiB/s',
+      '512.0 MiB/s',
+      '1.0 GiB/s'
     ])
     await page.screenshot({ path: testInfo.outputPath('transfer-speed-menu.png') })
-    await page.getByRole('option', { name: '4.0 MiB/s', exact: true }).click()
-    await expect(speed).toHaveText('4.0 MiB/s')
+    await page.getByRole('option', { name: '1.0 GiB/s', exact: true }).click()
+    await expect(speed).toHaveText('1.0 GiB/s')
     await expect(dialog).toBeVisible()
     await expect(speed).toBeFocused()
     await speed.press('Enter')

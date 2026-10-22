@@ -7509,6 +7509,24 @@
     "Check installation": "설치 확인",
     "Quit Open-Science and release file access before installing": "설치하기 전에 Open-Science를 종료하고 파일 사용을 해제하세요",
     "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "작업을 저장하고 실행 중인 작업을 중지하세요. 설치 프로그램을 실행하기 전에 Open-Science를 완전히 종료하고 이 설치 경로를 사용하는 다른 인스턴스를 닫거나 관련 서비스를 중지하세요. 수동 설치는 사용 중인 파일을 해제하지 않습니다.",
-    "Verified installer": "검증된 설치 프로그램"
+    "Verified installer": "검증된 설치 프로그램",
+    "Content first": "내용 우선",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "본문과 캡션을 단일 열로 재배치하고 그림, 표, 수식, 코드와 참고문헌을 가능한 한 유지합니다. 결과는 PDF 추출 품질에 따라 달라집니다. 선택하지 않으면 원본 레이아웃을 가능한 한 유지합니다.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "텍스트 방향이나 레이아웃을 안전하게 재배치할 수 없어 해당 페이지를 PDF에 원본 그대로 유지했습니다.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "링크를 재배치된 위치에 안전하게 연결할 수 없어 해당 페이지를 PDF에 원본 그대로 유지했습니다.",
+    "Source pages: {{pages}}": "원문 페이지: {{pages}}",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "문서 수준 구조를 안전하게 보존할 수 없어 원본 PDF를 유지했습니다. 사이드바에서 번역문을 읽으세요.",
+    "Reading package…": "패키지 읽는 중…",
+    "Checking {{completed}} of {{total}} files…": "파일 {{total}}개 중 {{completed}}개 확인 중…",
+    "Verifying package files…": "패키지 파일 검증 중…",
+    "Preparing package preview…": "패키지 미리보기 준비 중…",
+    "Checking package relationships…": "패키지 내 관계 확인 중…",
+    "Importing files…": "파일 가져오는 중…",
+    "Verifying imported files…": "가져온 파일 검증 중…",
+    "Preparing final validation…": "최종 검증 준비 중…",
+    "Checking imported relationships…": "가져온 데이터의 관계 확인 중…",
+    "Finishing import…": "가져오기 마무리 중…",
+    "Overall import progress (estimated)": "전체 가져오기 진행률(예상)",
+    "Stage {{current}} of {{total}}": "단계 {{current}} / {{total}}"
   }
 }

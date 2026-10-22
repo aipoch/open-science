@@ -7839,6 +7839,24 @@
     "Check installation": "Comprobar la instalación",
     "Quit Open-Science and release file access before installing": "Cerrar Open-Science y liberar los archivos antes de instalar",
     "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "Guarde su trabajo y detenga las tareas en ejecución. Antes de ejecutar el instalador, cierre Open-Science por completo y cierre otras instancias o detenga los servicios que utilicen esta instalación. La instalación manual no libera los archivos que están en uso.",
-    "Verified installer": "Instalador verificado"
+    "Verified installer": "Instalador verificado",
+    "Content first": "Priorizar el contenido",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Redistribuir el texto y los pies de figura y tabla en una sola columna, conservando las figuras, tablas, fórmulas, código y referencias en la medida de lo posible. El resultado depende de la calidad de extracción del PDF. Dejar la opción desmarcada para conservar el diseño original en la medida de lo posible.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Estas páginas de origen se conservaron sin cambios en el PDF porque no fue posible reorganizar de forma fiable la dirección del texto o su diseño.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "Estas páginas de origen se conservaron sin cambios en el PDF porque no fue posible reasignar sus enlaces de forma fiable a las nuevas posiciones.",
+    "Source pages: {{pages}}": "Páginas de origen: {{pages}}",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "Se ha conservado el PDF original porque sus estructuras de documento no se podían preservar de forma segura. Lea la traducción en el panel lateral.",
+    "Reading package…": "Leyendo el paquete…",
+    "Checking {{completed}} of {{total}} files…": "Comprobando {{completed}} de {{total}} archivos…",
+    "Verifying package files…": "Verificando los archivos del paquete…",
+    "Preparing package preview…": "Preparando la vista previa del paquete…",
+    "Checking package relationships…": "Comprobando las relaciones del paquete…",
+    "Importing files…": "Importando archivos…",
+    "Verifying imported files…": "Verificando los archivos importados…",
+    "Preparing final validation…": "Preparando la validación final…",
+    "Checking imported relationships…": "Comprobando las relaciones importadas…",
+    "Finishing import…": "Finalizando la importación…",
+    "Overall import progress (estimated)": "Progreso total de la importación (estimado)",
+    "Stage {{current}} of {{total}}": "Etapa {{current}} de {{total}}"
   }
 }

@@ -7978,6 +7978,24 @@
     "Check installation": "Проверить установку",
     "Quit Open-Science and release file access before installing": "Перед установкой закройте Open-Science и освободите файлы",
     "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "Сохраните работу и остановите выполняющиеся задачи. Перед запуском установщика полностью закройте Open-Science и другие экземпляры приложения или остановите службы, использующие эту установленную копию. Ручная установка не освобождает занятые файлы.",
-    "Verified installer": "Проверенный установщик"
+    "Verified installer": "Проверенный установщик",
+    "Content first": "Приоритет содержимого",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Перекомпоновать основной текст и подписи в одну колонку, по возможности сохраняя рисунки, таблицы, формулы, код и библиографию. Результат зависит от качества извлечения содержимого PDF. Снимите флажок, чтобы по возможности сохранить исходную вёрстку.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Эти исходные страницы сохранены в PDF без изменений, поскольку направление текста или макет нельзя было безопасно переразместить.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "Эти исходные страницы сохранены в PDF без изменений, поскольку ссылки нельзя было безопасно сопоставить с новыми позициями.",
+    "Source pages: {{pages}}": "Исходные страницы: {{pages}}",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "Исходный PDF сохранён, поскольку не удалось безопасно сохранить его структуры уровня документа. Перевод доступен на боковой панели.",
+    "Reading package…": "Чтение пакета…",
+    "Checking {{completed}} of {{total}} files…": "Проверка файлов: {{completed}} из {{total}}…",
+    "Verifying package files…": "Проверка файлов пакета…",
+    "Preparing package preview…": "Подготовка предпросмотра пакета…",
+    "Checking package relationships…": "Проверка связей в пакете…",
+    "Importing files…": "Импорт файлов…",
+    "Verifying imported files…": "Проверка импортированных файлов…",
+    "Preparing final validation…": "Подготовка окончательной проверки…",
+    "Checking imported relationships…": "Проверка импортированных связей…",
+    "Finishing import…": "Завершение импорта…",
+    "Overall import progress (estimated)": "Общий ход импорта (оценка)",
+    "Stage {{current}} of {{total}}": "Этап {{current}} из {{total}}"
   }
 }

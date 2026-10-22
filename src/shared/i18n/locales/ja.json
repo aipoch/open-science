@@ -7511,6 +7511,24 @@
     "Check installation": "インストールを確認",
     "Quit Open-Science and release file access before installing": "インストール前に Open-Science を終了し、ファイルの使用を解除してください",
     "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "作業を保存し、実行中のタスクを停止してください。インストーラーを実行する前に、Open-Science を完全に終了し、このインストール先を使用している他のインスタンスを閉じるか、関連サービスを停止してください。手動インストールでは、使用中のファイルは解放されません。",
-    "Verified installer": "検証済みのインストーラー"
+    "Verified installer": "検証済みのインストーラー",
+    "Content first": "内容優先",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "本文とキャプションを1段組みに再配置し、図、表、数式、コード、参考文献を可能な限り保持します。結果は PDF の抽出品質に左右されます。チェックを外すと、元のレイアウトを可能な限り維持します。",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "文字の向きやレイアウトを安全に再配置できないため、これらのページは元の状態で PDF に保持されました。",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "リンクを再配置後の位置に安全に対応付けられないため、これらのページは元の状態で PDF に保持されました。",
+    "Source pages: {{pages}}": "原文のページ：{{pages}}",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "文書全体の構造を安全に保持できなかったため、元の PDF を保持しました。翻訳文はサイドバーでお読みください。",
+    "Reading package…": "パッケージを読み込み中…",
+    "Checking {{completed}} of {{total}} files…": "{{total}} ファイル中 {{completed}} ファイルを確認中…",
+    "Verifying package files…": "パッケージ内のファイルを検証中…",
+    "Preparing package preview…": "パッケージのプレビューを準備中…",
+    "Checking package relationships…": "パッケージ内の関連を確認中…",
+    "Importing files…": "ファイルをインポート中…",
+    "Verifying imported files…": "インポートしたファイルを検証中…",
+    "Preparing final validation…": "最終検証を準備中…",
+    "Checking imported relationships…": "インポート後の関連を確認中…",
+    "Finishing import…": "インポートの完了処理中…",
+    "Overall import progress (estimated)": "インポート全体の進捗（推定）",
+    "Stage {{current}} of {{total}}": "段階 {{current}} / {{total}}"
   }
 }

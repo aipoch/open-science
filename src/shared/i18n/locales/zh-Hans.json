@@ -7511,6 +7511,24 @@
     "Check installation": "检查安装",
     "Quit Open-Science and release file access before installing": "安装前请完全退出 Open-Science 并解除文件占用",
     "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "请保存工作并停止正在运行的任务。在运行安装程序之前，请完全退出 Open-Science，并关闭使用此安装目录的其他实例或停止相关服务。手动安装不会解除文件占用。",
-    "Verified installer": "已验证的安装程序"
+    "Verified installer": "已验证的安装程序",
+    "Content first": "内容优先",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "将正文和图注重排为单栏，尽量保留图表、公式、代码和参考文献。效果取决于 PDF 提取质量；不勾选时尽量保留原始布局。",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "这些原文页的文字方向或版式无法安全重排，因此在 PDF 中保留了原页。",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "这些原文页的链接无法安全映射到重排后的位置，因此在 PDF 中保留了原页。",
+    "Source pages: {{pages}}": "原文页码：{{pages}}",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "此 PDF 的文档级结构无法安全保留，因此保留了完整原始 PDF。请在侧栏阅读译文。",
+    "Reading package…": "正在读取包…",
+    "Checking {{completed}} of {{total}} files…": "正在检查文件：{{completed}} / {{total}}…",
+    "Verifying package files…": "正在验证包内文件…",
+    "Preparing package preview…": "正在准备包预览…",
+    "Checking package relationships…": "正在检查包内关联…",
+    "Importing files…": "正在导入文件…",
+    "Verifying imported files…": "正在验证已导入的文件…",
+    "Preparing final validation…": "正在准备最终校验…",
+    "Checking imported relationships…": "正在检查导入后的关联…",
+    "Finishing import…": "正在完成导入…",
+    "Overall import progress (estimated)": "整体导入进度（估算）",
+    "Stage {{current}} of {{total}}": "环节 {{current}} / {{total}}"
   }
 }
