@@ -36,6 +36,8 @@ export function checkBrowserImportAvailability(
 export type BrowserImportTransfer = {
   /** Contains a secret; never log or persist it. Browser policy may require a fresh user click. */
   readonly url: string
+  /** Abort requests and timers, invalidate this transfer, and best-effort cancel the receiver. */
+  cancel(): Promise<void>
   /** Acknowledges receipt only, independently of destination selection and final import consent.
    * Authenticated desktop cancellation throws code 'cancelled', terminal for this transfer.
    * Keep the Blob and explicitly prepare a new transfer; never automatically retry cancellation. */
@@ -46,16 +48,20 @@ export type BrowserImportTransfer = {
     onPhase?: (phase: BrowserImportPhase) => void
     /** Acknowledged bytes only; first callback follows the first successful chunk acknowledgment. */
     onProgress?: (progress: BrowserImportProgress) => void
-    /** Default attempts preserves the 1–5 attempt limit. wait-for-launch retries until the
+    /** Default attempts preserves the 1–30 attempt limit. wait-for-launch retries until the
      * overall deadline or cancellation; it observes only this transfer's authenticated handshake. */
     readinessMode?: BrowserImportReadinessMode
     /** Readiness only; defaults to 120,000 ms. Capped at 120,000 ms in wait-for-launch,
-     * 300,000 ms in attempts mode. Timeout permits another send() on the same live transfer. */
-    readyTimeoutMs?: number
-    /** 1–5 attempts with 1,000 ms gaps; defaults to 5. Ignored in wait-for-launch mode. */
+     * 300,000 ms in attempts mode. Set null only in attempts mode to stop by attempt count
+     * without an overall deadline (including across page suspension). Per-request timeouts
+     * still apply. Timeout/exhaustion permits another send() on the same live transfer. */
+    readyTimeoutMs?: number | null
+    /** 1–30 attempts with 1,000 ms gaps; defaults to 5. Ignored in wait-for-launch mode. */
     readinessAttempts?: number
+    /** Delay after each failed attempt; defaults to 1,000 ms. Range: 0–30,000 ms. */
+    readinessIntervalMs?: number
     /** Includes response body reads; defaults to 2,000 ms. Accepts up to 30,000 ms,
-     * clamped to 2,000 ms in wait-for-launch mode. Failed attempts have 1,000 ms gaps. */
+     * clamped to 2,000 ms in wait-for-launch mode. Failed attempts use readinessIntervalMs. */
     attemptTimeoutMs?: number
   }): Promise<{ received: true }>
 }
