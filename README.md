@@ -49,7 +49,7 @@ AIPOCH Open-Science supports computational and data-intensive research across di
 
 Completed research sessions can also be exported as portable `.science` packages for review, handoff, and archiving, with selected conversation branches, file versions, Notebook records, and verification evidence.
 
-> 💡 **AIPOCH Open-Science v1.0.1** _(updated October 2026)_. This patch adds one-click `.science` package imports from your browser, a clearer and more reliable in-app updater (especially on Windows), always-visible session wait states, security fixes for MCP OAuth credential handling, and a round of PDF, literature, and session-package fixes. See the [1.0.1 release notes](release-notes/1.0.1/en.md) for details. Downloads continue to follow the [latest published release](https://github.com/aipoch/open-science/releases/latest).
+> 💡 **AIPOCH Open-Science v1.0.2** _(updated October 2026)_. This patch adds five new Scientific Connectors plus deeper GDC and Ensembl support, honest single/multi-select labels on answer cards, a session package dialog that holds still, faster session loading, and a round of session, notebook, and credential-recovery fixes, plus Node runtime security patches and the CLI's first npm release. See the [1.0.2 release notes](release-notes/1.0.2/en.md) for details. Downloads continue to follow the [latest published release](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
@@ -100,6 +100,16 @@ brew install aipoch/tap/open-science
 ```
 
 This Formula includes Node and runs without the desktop app; its release may differ from the desktop Cask. See the [standalone runtime guide](docs/standalone-runtime.md) for prerequisites and upgrades.
+
+For the standalone CLI and Web UI, install the published [npm package](https://www.npmjs.com/package/@aipoch/open-science) with **Node.js 22.13.0 or later**:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Open the printed URL to complete setup, or follow the [terminal setup guide](packages/open-science/CLI.md#first-run-setup-codex). npm supports macOS ARM64/x64, glibc Linux ARM64/x64 and Windows x64; the desktop app is not required. Keep npm optional dependencies enabled and review the [Linux prerequisites and upgrade instructions](docs/standalone-runtime.md#install-from-npm). The URL contains an authentication token; keep it private.
 
 Windows reinstalls preserve research data. For a full cleanup, see the [data reset tool](scripts/windows-reset/README.md), which permanently deletes local data after confirmation.
 
@@ -329,7 +339,9 @@ npm run dev:web       # Build and run the Node backend + Web UI
 npm run pack:backend  # Build a target-specific standalone npm tarball
 ```
 
-Install the tarball, then run `open-science start --no-open` and `open-science url` to open the
+For a published installation, use `npm install --global @aipoch/open-science`; the commands above
+are for source development. Install the package or locally built tarball, then run
+`open-science start --no-open` and `open-science url` to open the
 existing UI. See the [standalone runtime guide](docs/standalone-runtime.md) for installation,
 secure credential storage, host capability boundaries and data compatibility. The desktop app and browser share that service. Quitting a desktop stops a server it started;
 quitting a desktop attached to a CLI-started server only disconnects the desktop.

@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const logs = vi.hoisted(() => ({ error: vi.fn() }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => ({ error: logs.error, warn: vi.fn(), info: vi.fn(), debug: vi.fn() })
+}))
+
 import {
   APPLICATION_MODULE_DISPOSAL_BUDGET_MS,
   APPLICATION_SURFACE_SHUTDOWN_BUDGET_MS,
@@ -140,6 +146,7 @@ describe('application runtime composition', () => {
         }
       }))
       await modules.add({}, () => ({
+        name: 'second',
         capability: {},
         dispose: () => {
           events.push('dispose:second')
@@ -149,10 +156,13 @@ describe('application runtime composition', () => {
       return {}
     })
 
+    logs.error.mockClear()
     const disposalError = await runtime.dispose().catch((error: unknown) => error)
     expect(disposalError).toMatchObject({
       errors: [secondFailure, firstFailure]
     })
+    // Named modules report their own name; unnamed ones fall back to their position.
+    expect(logs.error.mock.calls.map(([, fields]) => fields.module)).toEqual(['second', 'module-1'])
     await expect(runtime.dispose()).rejects.toBe(disposalError)
     expect(events).toEqual(['dispose:second', 'dispose:first'])
   })

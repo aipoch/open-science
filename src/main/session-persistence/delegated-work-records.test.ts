@@ -226,6 +226,33 @@ describe('delegated-work Session records', () => {
     ).toEqual(['running', 'cancelled'])
   })
 
+  it('refreshes a warm hydration cache after child admission and terminalization', async () => {
+    const { coordinator, durable } = createHarness()
+    await coordinator.loadAll()
+    await coordinator.createChildren(key, {
+      expectedRevision: 0,
+      parentFrameId: durable().conversationGraph!.rootFrameId,
+      originMessageId: rootPrompt.id,
+      children: [child(1)]
+    })
+    const running = await coordinator.loadAll()
+    expect(
+      running.sessions[0].runtimeContext?.delegatedWork?.records[0]?.attempts.at(-1)?.status
+    ).toBe('running')
+    await coordinator.transitionAttempt(key, {
+      expectedRevision: 1,
+      frameId: 'child-frame-1',
+      attemptId: 'attempt-1',
+      status: 'cancelled',
+      endedAt: 20,
+      cancellationReason: 'main_agent_stop'
+    })
+    const stopped = await coordinator.loadAll()
+    expect(
+      stopped.sessions[0].runtimeContext?.delegatedWork?.records[0]?.attempts.at(-1)?.status
+    ).toBe('cancelled')
+  })
+
   it('does not reverse a delegated commit when its Session publication callback throws', async () => {
     const { coordinator, durable } = createHarness(createRootSession(), () => {
       throw new Error('renderer lifecycle unavailable')

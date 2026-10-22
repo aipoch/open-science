@@ -3,7 +3,7 @@ import { closeSync, existsSync } from 'node:fs'
 import { Socket } from 'node:net'
 import { win32 } from 'node:path'
 
-import type { AgentProcessSpawner } from './agent-framework/types'
+import type { AgentProcessSpawner } from './node-process-host'
 
 type Binding = typeof import('@aipoch/process-tree-native')
 const nativeProcesses = new WeakMap<ChildProcess, object>()

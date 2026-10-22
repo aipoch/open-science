@@ -84,9 +84,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import {
   pendingPdfContextSelections,
-  usePreviewWorkbenchStore,
-  type PreviewFileSource
+  usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 import { useSessionStore } from '@/stores/session-store'
 import type { Annotation, PdfAnnotation } from '../../../../../../shared/annotation-contract'
 import { ANNOTATION_LIMITS, pdfAnnotationSourceIsFixed } from '../../../../../../shared/annotations'
@@ -2599,8 +2599,9 @@ export const PdfPreviewContent = ({
   const generation = usePreviewResourceGeneration(retainRecoveryViewport)
   const resourceRequestKey = `${requestKey}:${generation}`
   const pendingLinkRef = useRef<
-    { destination: PdfLinkDestination; translated: boolean } | undefined
+    { destination: PdfLinkDestination; translated: boolean; sourcePageNumber?: number } | undefined
   >(undefined)
+  const pendingAnnotationPageRef = useRef<number | undefined>(undefined)
   const [readingHistory, setReadingHistory] = useState<{
     key: string
     back: PdfReadingLocation[]
@@ -2610,6 +2611,7 @@ export const PdfPreviewContent = ({
     setReadingHistory({ key: resourceRequestKey, back: [], forward: [] })
   useLayoutEffect(() => {
     pendingLinkRef.current = undefined
+    pendingAnnotationPageRef.current = undefined
   }, [resourceRequestKey])
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -3449,7 +3451,7 @@ export const PdfPreviewContent = ({
     setSelectedOutline({ requestKey: resourceRequestKey, id: item.id })
   }
   const navigateToLink = useCallback(
-    (destination: PdfLinkDestination, translated: boolean): void => {
+    (destination: PdfLinkDestination, translated: boolean, sourcePageNumber?: number): void => {
       const anchor = readViewportAnchor(scrollRef.current)
       if (anchor)
         setReadingHistory((history) => ({
@@ -3458,7 +3460,7 @@ export const PdfPreviewContent = ({
           forward: []
         }))
       scrollToPage(destination.pageNumber)
-      pendingLinkRef.current = { destination, translated }
+      pendingLinkRef.current = { destination, translated, sourcePageNumber }
       scrollRef.current?.focus({ preventScroll: true })
     },
     [resourceRequestKey, zoom, rendition, scrollToPage]
@@ -3467,7 +3469,8 @@ export const PdfPreviewContent = ({
     (destination: PdfLinkDestination): void => {
       navigateToLink(
         { ...destination, pageNumber: viewPageForSource(destination.pageNumber) },
-        false
+        false,
+        destination.pageNumber
       )
     },
     [navigateToLink, viewPageForSource]
@@ -3664,7 +3667,7 @@ export const PdfPreviewContent = ({
       : row?.querySelector<HTMLElement>(
           pending.translated
             ? '[data-pdf-translated-page] [data-pdf-page-rotation]'
-            : '[data-pdf-page-rotation]'
+            : `[data-pdf-page-number="${pending.sourcePageNumber ?? pending.destination.pageNumber}"][data-pdf-page-rotation]`
         )
     if (!page || page.dataset.pdfPageReady !== 'true') return
     const bounds = page.getBoundingClientRect()
@@ -3799,6 +3802,13 @@ export const PdfPreviewContent = ({
     reflowPageNumbers
   ])
 
+  useLayoutEffect(() => {
+    const pageNumber = pendingAnnotationPageRef.current
+    if (pageNumber === undefined || effectiveRendition !== 'original') return
+    pendingAnnotationPageRef.current = undefined
+    scrollToPage(pageNumber)
+  }, [effectiveRendition, scrollToPage])
+
   useEffect(() => {
     const item = annotationProps?.item
     const scroll = scrollRef.current
@@ -3811,15 +3821,15 @@ export const PdfPreviewContent = ({
       ) {
         return
       }
+      const pageNumber = annotation.selector.pageNumber
+      if (!document || pageNumber < 1 || pageNumber > document.numPages) return
       setReadingMode('original')
-      scroll
-        .querySelector<HTMLElement>(`[data-page-number="${annotation.selector.pageNumber}"]`)
-        ?.scrollIntoView({
-          block: 'center',
-          behavior: annotationRevealScrollBehavior()
-        })
+      setRendition('original')
+      // Source page identities become row identities again after the rendition commits.
+      pendingAnnotationPageRef.current = effectiveRendition === 'original' ? undefined : pageNumber
+      scrollToPage(pageNumber)
     })
-  }, [annotationProps?.item])
+  }, [annotationProps?.item, document, effectiveRendition, scrollToPage])
 
   const zoomBy = (delta: number): void => updateZoom((current) => clampZoom(current + delta))
   const changeCursorMode = useCallback((mode: PdfCursorMode): void => {

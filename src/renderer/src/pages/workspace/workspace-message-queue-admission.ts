@@ -1,5 +1,12 @@
+import { useSettingsStore } from '@/stores/settings-store'
+import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
+import {
+  isAgentAuthenticationRequired,
+  sessionAuthenticationFailure,
+  isProviderAuthenticationRestored
+} from './agent-authentication-error'
 import { i18next } from '@/i18n'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 
 import type {
@@ -76,10 +83,41 @@ const queuedAdmissionFailure = (
     : 'The queued message was not admitted.'
 }
 
+const queueAuthenticationRequired = (
+  session: ChatSession,
+  configuration = session.agentConfiguration
+): boolean => {
+  const failure = sessionAuthenticationFailure(session)
+  const operation = useWorkspaceOperationErrors.getState()
+  const operationAuthenticationRequired = isAgentAuthenticationRequired(
+    operation.errors[session.id]
+  )
+  if (!failure && !operationAuthenticationRequired) return false
+  const operationProviderId = operation.providerTargets[session.id]?.providerId
+  const providerId = configuration?.providerId ?? operationProviderId ?? failure?.providerId
+  const provider = useSettingsStore.getState().providers.find(({ id }) => id === providerId)
+  if (provider?.needsKey) return true
+  if (
+    operationAuthenticationRequired &&
+    (!operationProviderId || operationProviderId === providerId) &&
+    !isProviderAuthenticationRestored(
+      provider,
+      operation.providerValidations[session.id]?.[providerId ?? ''] ?? 0,
+      configuration?.model
+    )
+  )
+    return true
+  if (!failure) return false
+  if (failure.providerId && failure.providerId !== providerId) return provider?.needsKey === true
+  return !isProviderAuthenticationRestored(provider, failure.at, configuration?.model)
+}
+
 const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
-  session: ChatSession
+  session: ChatSession,
+  configuration = session.agentConfiguration
 ): boolean =>
+  !queueAuthenticationRequired(session, configuration) &&
   !options.isPersistenceBlocked(session.id) &&
   session.archivedAt === undefined &&
   (options.isProjectActive?.(session.projectId) ?? true) &&
@@ -230,5 +268,6 @@ export {
   queueItemContextError,
   queueItemIsBusy,
   queuePermissionIsPending,
-  queueSessionIsSendable
+  queueSessionIsSendable,
+  queueAuthenticationRequired
 }

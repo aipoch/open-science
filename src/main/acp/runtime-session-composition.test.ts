@@ -9,6 +9,40 @@ import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 describe('ACP Runtime session composition', () => {
+  it.each([true, false])(
+    'publishes pending native questions and settlement to subscribers (incremental: %s)',
+    async (incremental) => {
+      const onStateChanged = vi.fn()
+      const options = {
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        callbacks: { onStateChanged, ...(incremental ? { onEvent: vi.fn() } : {}) }
+      }
+      const owners = composeAcpRuntimeSessionOwners(options, composeAcpRuntimeBaseOwners(options))
+      const answer = owners.elicitationOwner.request(
+        {
+          mode: 'form',
+          sessionId: 'provider-session',
+          toolCallId: 'question-tool',
+          message: 'Choose an approach',
+          requestedSchema: {
+            type: 'object',
+            properties: { approach: { type: 'string' } },
+            required: ['approach']
+          }
+        },
+        { sessionId: 'app-session' }
+      )
+      expect(onStateChanged.mock.lastCall?.[0].pendingElicitations).toEqual([
+        expect.objectContaining({ sessionId: 'app-session', toolCallId: 'question-tool' })
+      ])
+      const request = owners.elicitationOwner.getPendingRequests()[0]
+      owners.elicitationOwner.respond({ requestId: request.requestId, action: 'cancel' })
+      await expect(answer).resolves.toEqual({ action: 'cancel' })
+      expect(onStateChanged.mock.lastCall?.[0].pendingElicitations).toEqual([])
+    }
+  )
+
   it.each(['allow-once', 'always-allow', 'deny'])(
     'removes a cancelled network approval before another %s submission',
     async (optionId) => {

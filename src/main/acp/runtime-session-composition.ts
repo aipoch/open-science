@@ -105,6 +105,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         status: 'in_progress',
         elicitation: projection
       })
+      publication.emitState()
     }
   })
   const sessionRegistry: AcpSessionRegistry = new AcpSessionRegistry({

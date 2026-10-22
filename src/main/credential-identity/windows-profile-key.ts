@@ -3,7 +3,7 @@ import { readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { credentialSystemCode, type CredentialDiagnostic } from './diagnostic'
-import { CredentialIdentityError } from './selection'
+import { CredentialIdentityError } from './identity-contract'
 
 export type WindowsKeyValidation = {
   status: 'valid' | 'access-blocked' | 'error' | 'unsupported'

@@ -414,6 +414,10 @@ ${violations}
 
 ${(result.retiredConsumers ?? []).map((entry) => `- <code>${escapeHtml(entry)}</code>`).join('\n') || '- None'}
 
+### Dependency-model consumer retirements (opaque cones may remain)
+
+${(result.dependencyBasedRetirements ?? []).map((entry) => `- <code>${escapeHtml(entry)}</code>`).join('\n') || '- None'}
+
 ### Verified excluded package test retirements
 
 ${(result.retiredPackageTests ?? []).map((entry) => `- <code>${escapeHtml(entry)}</code>`).join('\n') || '- None'}
@@ -445,6 +449,7 @@ export function runCiIntegrityCli(arguments_ = process.argv.slice(2), environmen
   }
   result.legacyGaps = ownership.legacyGaps
   result.retiredConsumers = ownership.retiredConsumers
+  result.dependencyBasedRetirements = ownership.dependencyBasedRetirements
   result.retiredPackageTests = ownership.retiredPackageTests
   result.boundedOwnerSplits = ownership.boundedOwnerSplits
   result.ok = result.ok && ownership.ok && result.violations.length === 0

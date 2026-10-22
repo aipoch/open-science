@@ -27,7 +27,7 @@
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/components/session-package-import-menu-model.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",

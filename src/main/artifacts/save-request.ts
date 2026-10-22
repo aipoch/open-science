@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { artifactLiteratureRequestSchema } from '../../shared/artifact-literature'
-import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
+import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget-policy'
 
 export const artifactSaveRequestSchema = z.object({
   projectId: z.string().min(1),

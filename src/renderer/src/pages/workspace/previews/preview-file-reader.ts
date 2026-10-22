@@ -2,7 +2,7 @@ import type {
   ArtifactPreviewResult,
   ReadArtifactPreviewRequest
 } from '../../../../../shared/artifacts'
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 import type { AcquireManagedPreviewRequest } from '../../../../../shared/preview-resources'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 

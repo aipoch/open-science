@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionInfoPopover } from './SessionInfoPopover'
 

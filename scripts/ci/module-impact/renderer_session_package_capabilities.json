@@ -6,7 +6,10 @@
     "owner": [],
     "contract": [
       "src/renderer/src/components/session-package-import-menu-model.test.ts",
-      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/components/SessionPackageOperation.test.tsx",
+      "src/renderer/web/api-installer.test.ts"
     ],
     "consumer": [
       "src/renderer/src/App.test.tsx",

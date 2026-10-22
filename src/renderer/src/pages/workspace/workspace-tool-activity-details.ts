@@ -9,7 +9,7 @@ import {
   type NotebookCodeReview,
   type ToolSummary
 } from './notebook-tool-presentation'
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import { memoryAgentRememberResultSchema, memoryAgentResultSchema } from '../../../../shared/memory'
 import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {

@@ -269,3 +269,10 @@ that does not intersect any translated fragment. Retention extends across joined
 independent pages still reflow. This preserves visual content missing from OCR instead of silently
 discarding the scan. A verified large figure with a separate caption remains eligible for reflow.
 Accepted translations stay available in the sidebar; this adds no state or checkpoint fields.
+
+Original-side internal links retain their source page identity when multiple source pages share a
+reflow row. Revealing an annotation from a compared or translated view switches to the original
+rendition, scrolls to its source page after that view mounts, and uses the existing region/text
+highlight. Figure preparation releases each page's operator-list resources on completion, failure
+or cancellation; PDF.js defers cleanup while a shared page is rendering. These fixes introduce no
+new saved fields or diagnostic values.

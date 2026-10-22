@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { FileWarning } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-contract'
 import { resolveLocaleFromTags } from '../../../../../../shared/locale'
 import type {
   OfficePreviewErrorCode,

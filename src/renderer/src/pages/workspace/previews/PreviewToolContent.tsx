@@ -16,8 +16,10 @@ import {
   useReviewStore
 } from '@/stores/review-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { type PreviewToolItem, usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { type ChatSession, type SessionStore, useSessionStore } from '@/stores/session-store'
+import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { ChatSession } from '@/stores/session-store-contract'
+import { type SessionStore, useSessionStore } from '@/stores/session-store'
 
 import { NotebookPreview } from '../NotebookPreview'
 import type { NotebookPreviewItem } from '../NotebookPreview'

@@ -1,4 +1,4 @@
-import type { SessionActionabilityProjection } from '@/stores/session-store'
+import type { SessionActionabilityProjection } from '@/stores/session-actionability'
 
 type WorkspaceAgentControlAvailability = Readonly<{
   canChange: boolean

@@ -408,6 +408,33 @@ const request = (sessionId = 's1'): AcpPromptRequest => ({
   provenanceContext: { promptMessageId: 'message-1' }
 })
 
+describe('Skill scope preparation', () => {
+  it('passes the current immutable backend scope to turn authorization', async () => {
+    const harness = createHarness({
+      backend: {
+        ...backend,
+        session: {
+          ...backend.session,
+          options: {
+            openScienceSkillRuntime: {
+              nativeAllowedNames: ['mcp-orphadata'],
+              mainAllowedNames: ['mcp-genes']
+            }
+          }
+        }
+      }
+    })
+    await harness.workflow.run(request(), { kind: 'user' })
+    expect(harness.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frameworkId: 'opencode',
+        nativeSkillScope: ['mcp-orphadata'],
+        mainSkillScope: ['mcp-genes']
+      })
+    )
+  })
+})
+
 describe('Provider suspension for Session Plan review', () => {
   it('holds the logical task until review, resumes once, and accounts for both Provider turns', async () => {
     const review = deferred<{ content: string; accepted: () => Promise<void> }>()

@@ -13,10 +13,12 @@ const bodyOf = (
 ): { query: string; variables: unknown } =>
   JSON.parse((fetchImpl.mock.calls[i][1] as RequestInit).body as string)
 
-describe('clinical-genomics — has exactly the 20 upstream tools', () => {
-  it('exposes the ClinGen + CIViC + Open Targets ids', () => {
+describe('clinical-genomics tools', () => {
+  it('exposes the ClinGen + CIViC + Open Targets + DGIdb ids', () => {
     expect(CLINICAL_GENOMICS_TOOLS.map((t) => t.id).sort()).toEqual(
       [
+        'get_dgidb_gene_drugs',
+        'get_dgidb_drug_genes',
         'clingen_actionability',
         'clingen_dosage_sensitivity',
         'clingen_gene_validity',

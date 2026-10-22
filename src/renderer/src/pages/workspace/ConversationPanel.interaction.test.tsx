@@ -3363,14 +3363,22 @@ describe('ConversationPanel composer intake', () => {
 
   it.each(
     (['before-rearm', 'after-rearm'] as const).flatMap((order) =>
-      [false, true].map((previousFailure) => ({ order, previousFailure }))
+      [false, true].flatMap((previousFailure) =>
+        [false, true].map((authenticationRequired) => ({
+          order,
+          previousFailure,
+          authenticationRequired
+        }))
+      )
     )
   )(
-    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure)',
-    async ({ order, previousFailure }) => {
+    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure, authentication: $authenticationRequired)',
+    async ({ order, previousFailure, authenticationRequired }) => {
       // This tests failure disclosure, not the still-unknown cause of the reported
       // admission rejection. Feed the public event contract emitted by AcpRuntime.
-      const failure = 'Runtime Session turn is already owned by another execution.'
+      const failure = authenticationRequired
+        ? 'Authentication required'
+        : 'Runtime Session turn is already owned by another execution.'
       const answered = materializeSessionConversationGraph({
         id: `question-continuation-${order}-${previousFailure}`,
         projectId: 'project-a',
@@ -3470,7 +3478,9 @@ describe('ConversationPanel composer intake', () => {
       // Control: the existing error surface can display this failure beside a
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
-      expect(container.textContent).toContain(failure)
+      expect(container.textContent).toContain(
+        authenticationRequired ? 'Sign in to continue this conversation' : failure
+      )
       renderPanel({
         view: {
           ...view,
@@ -3478,14 +3488,40 @@ describe('ConversationPanel composer intake', () => {
         },
         elicitation: { requests: [] }
       })
-      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
       expect(
         current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
       ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
-      expect(
-        container.textContent,
-        'The retryable question must explain why confirmation did not continue the task'
-      ).toContain(failure)
+      if (authenticationRequired) {
+        expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+        expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+        expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()
+        expect(container.textContent).toContain('Sign in to continue this conversation')
+        expect(
+          [...container.querySelectorAll('button')].some(
+            (button) => button.textContent === 'Model settings'
+          )
+        ).toBe(true)
+        // Account recovery only restores the pending question; it neither answers nor replays it.
+        renderPanel({
+          view: {
+            ...view,
+            actionError: failure,
+            authenticationRecovery: { required: false, openSettings: vi.fn() }
+          },
+          elicitation: { requests: [] }
+        })
+        expect(container.textContent).not.toContain('Sign in to continue this conversation')
+        expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
+        expect(
+          current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
+        ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+      } else {
+        expect(
+          container.textContent,
+          'The retryable question must explain why confirmation did not continue the task'
+        ).toContain(failure)
+      }
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
     }
   )
 
@@ -8598,7 +8634,8 @@ describe('ConversationPanel error box + report affordance', () => {
       expect(openSettingsToPanel).toHaveBeenCalledExactlyOnceWith('model')
       expect(changeDoc).not.toHaveBeenCalled()
       expect(session).toEqual(snapshot)
-      expect(container.textContent).toContain('Keep my research draft')
+      expect(container.querySelector('[data-testid=ordinary-composer-form]')).toBeNull()
+      expect(doc).toEqual(docFromText('Keep my research draft'))
     }
   )
 

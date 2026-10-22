@@ -126,15 +126,17 @@ export function renderSkillDoc(
 // loads the matching connector. Keeping this document to conventions prevents every enabled connector
 // from consuming the initial context window while still steering calls through the approved host.mcp
 // path instead of raw HTTP.
-export function renderConnectorInstructions(skillNames: string[]): string {
-  const enabledSkillNames = [...new Set(skillNames.filter((name) => /^mcp-[a-z0-9-]+$/.test(name)))]
-  if (enabledSkillNames.length === 0) return ''
+export function renderConnectorInstructions(skillNames?: string[]): string {
+  const enabledSkillNames = [
+    ...new Set((skillNames ?? []).filter((name) => /^mcp-[a-z0-9-]+$/.test(name)))
+  ]
+  if (skillNames !== undefined && enabledSkillNames.length === 0) return ''
   const availableSkills = enabledSkillNames.map((name) => `\`${name}\``).join(', ')
 
   return (
     `# Open-Science data connector conventions\n\n` +
-    `Globally Enabled Connector Skills: ${availableSkills}.\n\n` +
-    'A Specialist session may narrow this catalog. When an `<open_science_specialist_skill_scope>` block is present, it is authoritative: do not load or call any `mcp-*` skill absent from that block.\n\n' +
+    (skillNames === undefined ? '' : `Available Connector Skills: ${availableSkills}.\n\n`) +
+    'Each Session has its own authorized Skill catalog. When an `<open_science_specialist_skill_scope>` block is present, it is authoritative: do not load or call any `mcp-*` skill absent from that block.\n\n' +
     `The matching \`mcp-*\` skill provides exact server/method names, schemas, return shapes, and examples. Load the matching \`mcp-*\` skill before the first \`host.mcp\` call. Never guess a connector server or method name; without that skill, do not call the connector.\n\n` +
     CONVENTIONS
   )

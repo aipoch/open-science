@@ -30,6 +30,44 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('CLI help', () => {
+  it.each([undefined, 'run', 'project', 'version', 'paths'])(
+    'makes help %s equivalent to the help flag',
+    async (command) => {
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+      try {
+        await runCli([...(command ? [command] : []), '--help'])
+        const expected = log.mock.calls.at(-1)?.[0]
+        await runCli(['help', ...(command ? [command] : [])])
+        expect(log).toHaveBeenLastCalledWith(expected)
+        await expect(runCli(['help', 'unknown-command'])).rejects.toThrow('Unknown command')
+      } finally {
+        log.mockRestore()
+      }
+    }
+  )
+
+  it.each([
+    ['--version', 'start'],
+    ['version', '--port', '44100'],
+    ['version', '--prompt', 'hello'],
+    ['paths', '--force'],
+    ['paths', 'extra'],
+    ['paths', '--jsonl'],
+    ['help', 'run', 'extra'],
+    ['help', '--json'],
+    ['start', '--version'],
+    ['run', '-v']
+  ])('rejects unrelated inputs to local commands: %j', (...argv) => {
+    expect(() => parseCliArgs(argv)).toThrow(CliUsageError)
+  })
+
+  it('preserves version-looking prompt values', () => {
+    expect(parseCliArgs(['run', '--project', 'demo', '--prompt', '--version'])).toMatchObject({
+      command: 'run',
+      options: { prompt: '--version' }
+    })
+  })
+
   it('omits the application update command while retaining resource updates', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     try {

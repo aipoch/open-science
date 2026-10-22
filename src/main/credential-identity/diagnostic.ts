@@ -18,7 +18,7 @@ const systemCodeSchema = z.enum([
   'UNKNOWN',
   'MODULE_NOT_FOUND'
 ])
-export const credentialDiagnosticSchema = z
+export const windowsCredentialDiagnosticSchema = z
   .object({
     code: z.enum([
       'profile-read-failed',
@@ -41,7 +41,66 @@ export const credentialDiagnosticSchema = z
     exitCode: z.number().int().min(-0x80000000).max(0xffffffff).optional()
   })
   .strict()
+
+// Transient inventory context only. This allowlist never carries paths, contents or raw errors.
+export const inventoryDiagnosticSchema = z
+  .object({
+    code: z.literal('inventory-failed'),
+    source: z.enum([
+      'configuration',
+      'settings',
+      'credentials',
+      'application-database',
+      'browser-profile',
+      'cookies'
+    ]),
+    stage: z.enum([
+      'read-files',
+      'parse-document',
+      'check-journal',
+      'copy-snapshot',
+      'read-database',
+      'cleanup-snapshot',
+      'inspect-profile'
+    ]),
+    reason: z.enum([
+      'operation-failed',
+      'invalid-json',
+      'invalid-document',
+      'pending-document',
+      'too-large',
+      'invalid-ciphertext',
+      'unsupported-file',
+      'source-changed',
+      'journal-incomplete',
+      'journal-invalid',
+      'super-journal',
+      'conflicting-journals',
+      'sqlite-unavailable'
+    ]),
+    systemCode: systemCodeSchema.optional()
+  })
+  .strict()
+export type InventoryDiagnostic = z.infer<typeof inventoryDiagnosticSchema>
+export const credentialDiagnosticSchema = z.union([
+  windowsCredentialDiagnosticSchema,
+  inventoryDiagnosticSchema
+])
 export type CredentialDiagnostic = z.infer<typeof credentialDiagnosticSchema>
+
+// Messages supplied here are fixed developer strings, never the original exception text.
+export class CredentialInventoryFailure extends Error {
+  readonly systemCode?: InventoryDiagnostic['systemCode']
+  constructor(
+    readonly stage: InventoryDiagnostic['stage'],
+    readonly reason: InventoryDiagnostic['reason'],
+    message: string,
+    error?: unknown
+  ) {
+    super(message)
+    this.systemCode = credentialSystemCode(error)
+  }
+}
 
 export function credentialSystemCode(error: unknown): CredentialDiagnostic['systemCode'] {
   const result = systemCodeSchema.safeParse(

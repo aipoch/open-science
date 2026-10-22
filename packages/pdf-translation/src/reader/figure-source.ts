@@ -234,12 +234,11 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
     signal.throwIfAborted()
     const units = source.units.filter((unit) => unit.fragments.some((f) => f.pageNumber === number))
     if (!units.length) continue
+    let page: PDFPageProxy | undefined
     try {
-      const {
-        images,
-        vectors,
-        rules = []
-      } = await graphicRegions(await document.getPage(number), operators, signal)
+      page = await document.getPage(number)
+      signal.throwIfAborted()
+      const { images, vectors, rules = [] } = await graphicRegions(page, operators, signal)
       const captions = units
         .filter(
           (unit) =>
@@ -278,6 +277,9 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
     } catch {
       // Missing/unusual graphics must not prevent ordinary text translation.
       signal.throwIfAborted()
+    } finally {
+      // PDF.js defers cleanup while a shared page is still rendering.
+      page?.cleanup()
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
   }

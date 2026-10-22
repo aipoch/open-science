@@ -23,6 +23,35 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('gates Orphadata calls before transport until explicit opt-in, with opt-out winning conflicts', async () => {
+    let settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      enabledConnectorIds: [] as string[],
+      disabledConnectorIds: [] as string[]
+    }
+    const call = vi.fn().mockResolvedValue({ source: 'Orphadata' })
+    const service = new ConnectorService({
+      registry: builtinConnectorRegistry,
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined,
+      engine: { call } as unknown as ParserEngine
+    })
+    await expect(
+      service.call('orphadata', 'get_disease_genes', { orphacode: 166024 }, internal)
+    ).rejects.toThrow(/disabled/)
+    expect(call).not.toHaveBeenCalled()
+    settings = { ...settings, enabledConnectorIds: ['orphadata'] }
+    await expect(
+      service.call('orphadata', 'get_disease_genes', { orphacode: 166024 }, internal)
+    ).resolves.toEqual({ source: 'Orphadata' })
+    settings = { ...settings, disabledConnectorIds: ['orphadata'] }
+    await expect(
+      service.call('orphadata', 'get_disease_genes', { orphacode: 166024 }, internal)
+    ).rejects.toThrow(/disabled/)
+    expect(call).toHaveBeenCalledTimes(1)
+  })
+
   it('dispatches only the injected descriptor set with the usual argument gate', async () => {
     const run = vi.fn(async () => ({ value: 42 }))
     const registry = createConnectorRegistry([
@@ -1869,7 +1898,7 @@ describe('ConnectorService', () => {
       expect(call).not.toHaveBeenCalled()
     })
 
-    it('records structured authentication failures for a host-managed OAuth connector', async () => {
+    it('does not invalidate host OAuth for a business-tool login failure', async () => {
       const call = vi.fn().mockRejectedValue(new McpToolCallError('Not logged in. Sign in again.'))
       const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
@@ -1896,13 +1925,16 @@ describe('ConnectorService', () => {
       })
 
       await expect(svc.call('oauth-server', 'lookup', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'connector_tool_error'
       )
       await expect(svc.call('oauth-server', 'lookup', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'connector_tool_error'
       )
-      expect(call).toHaveBeenCalledOnce()
-      expect(onCustomServerAvailabilityChanged).toHaveBeenCalledWith('oauth-1', 'unauthenticated')
+      expect(call).toHaveBeenCalledTimes(2)
+      expect(onCustomServerAvailabilityChanged).not.toHaveBeenCalledWith(
+        'oauth-1',
+        'unauthenticated'
+      )
     })
 
     it.each([

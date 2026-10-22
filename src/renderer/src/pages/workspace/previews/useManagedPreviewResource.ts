@@ -2,7 +2,7 @@ import { desktopRuntimeWritable } from '../../../stores/desktop-runtime-recovery
 import { useEffect, useState } from 'react'
 
 import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 
 import { usePreviewResourceKey } from './usePreviewResourceGeneration'
 import { createManagedPreviewRequest } from './preview-file-reader'

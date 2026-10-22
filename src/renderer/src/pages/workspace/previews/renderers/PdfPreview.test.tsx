@@ -1522,13 +1522,20 @@ describe('PdfPreviewContent', () => {
     }
   )
 
-  it.each([
-    { sourcePages: [[1], [1], [2]], expectedRow: 3 },
-    { sourcePages: [[1, 2]], expectedRow: 1 }
-  ])(
-    'finds original page two in reflow comparison row $expectedRow',
-    async ({ sourcePages, expectedRow }) => {
-      observe()
+  it.each(
+    [
+      { sourcePages: [[1], [1], [2]], expectedRow: 3 },
+      { sourcePages: [[1, 2]], expectedRow: 1 }
+    ].flatMap((mapping) =>
+      ['search', 'link', 'annotation-compare', 'annotation-translated'].map((action) => ({
+        ...mapping,
+        action
+      }))
+    )
+  )(
+    'reveals original page two via $action in reflow row $expectedRow',
+    async ({ sourcePages, expectedRow, action }) => {
+      const observer = observe()
       const highlights = new Map<string, Set<Range>>()
       vi.stubGlobal('CSS', { highlights })
       vi.stubGlobal(
@@ -1558,10 +1565,23 @@ describe('PdfPreviewContent', () => {
         }),
         destroy: vi.fn()
       } as never)
+      const revealSource = {
+        kind: 'upload-version' as const,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        versionId: 'version-1',
+        name: 'reflow-reveal.pdf',
+        path: 'upload-version:project-1/session-1/version-1',
+        checksum: 'a'.repeat(64)
+      }
       const props = {
-        path: 'reflow-search.pdf',
-        name: 'reflow-search.pdf',
-        source: 'local' as const
+        path: revealSource.path,
+        name: revealSource.name,
+        source: 'upload' as const,
+        projectId: revealSource.projectId,
+        sessionId: revealSource.sessionId,
+        managedFileId: 'upload-1',
+        selectedVersionId: revealSource.versionId
       }
       const source = createPdfTranslationSource({
         resourceRequestKey: `${createPreviewResourceKey(props)}:0`,
@@ -1616,6 +1636,22 @@ describe('PdfPreviewContent', () => {
             translationLayout="reflow"
             translationSource={source}
             translation={{ source, units: [result] }}
+            pdfRevealSource={revealSource}
+            annotationProps={{
+              item: {
+                id: 'upload:version-1',
+                type: 'file',
+                format: 'pdf',
+                source: 'upload',
+                projectId: revealSource.projectId,
+                sessionId: revealSource.sessionId,
+                path: revealSource.path,
+                name: revealSource.name,
+                title: revealSource.name,
+                mimeType: 'application/pdf'
+              },
+              activeAnnotations: []
+            }}
           />
         )
       )
@@ -1623,6 +1659,90 @@ describe('PdfPreviewContent', () => {
       await act(async () =>
         fireEvent.click(within(readingRenditionGroup()).getByRole('button', { name: 'Compare' }))
       )
+      if (action === 'link') {
+        for (const target of observer.targets) await observer.notify(target, true)
+        await waitFor(() =>
+          expect(vi.mocked(renderPdfNativeLinks).mock.calls.length).toBeGreaterThan(0)
+        )
+        const scroll = container.querySelector<HTMLElement>('[role="region"]')!,
+          row = container.querySelector<HTMLElement>(`[data-page-number="${expectedRow}"]`)!,
+          target = row.querySelector<HTMLElement>('[data-pdf-page-number="2"]')!
+        vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+          left: 0,
+          top: 0,
+          width: 800,
+          height: 600
+        } as DOMRect)
+        for (const outputRow of container.querySelectorAll<HTMLElement>('[data-page-number]'))
+          vi.spyOn(outputRow, 'getBoundingClientRect').mockReturnValue({
+            left: 0,
+            top: 0,
+            right: 800,
+            bottom: 1600,
+            width: 800,
+            height: 1600
+          } as DOMRect)
+        for (const page of container.querySelectorAll<HTMLElement>('[data-pdf-page-rotation]')) {
+          vi.spyOn(page, 'getBoundingClientRect').mockImplementation(
+            () =>
+              ({
+                left: 0,
+                top: (page === target ? 900 : 100) - scroll.scrollTop,
+                width: 600,
+                height: 800
+              }) as DOMRect
+          )
+        }
+        scroll.scrollTop = 0
+        const call = vi
+          .mocked(renderPdfNativeLinks)
+          .mock.calls.filter(([options]) => !options.host.closest('[data-pdf-translated-page]'))
+          .at(-1)!
+        await act(async () => call[0].onNavigate({ pageNumber: 2, x: 0.2, y: 0.5 }))
+        expect(scroll.scrollTop).toBeCloseTo(900 + 400 - 72)
+        expect(scroll.scrollLeft).toBeCloseTo(120)
+        return
+      }
+      if (action.startsWith('annotation-')) {
+        if (action === 'annotation-translated') {
+          await openReadingView()
+          await act(async () =>
+            fireEvent.click(
+              within(readingRenditionGroup()).getByRole('button', { name: 'Translation' })
+            )
+          )
+        }
+        for (const target of observer.targets) await observer.notify(target, false)
+        vi.mocked(Element.prototype.scrollIntoView).mockClear()
+        const annotation = {
+          id: 'reflow-reveal',
+          kind: 'pdf' as const,
+          target: 'agent' as const,
+          source: revealSource,
+          selector: {
+            kind: 'region' as const,
+            pageNumber: 2,
+            rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+            pageRotation: 0,
+            image: { mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 }
+          }
+        }
+        await act(async () => requestAnnotationReveal(annotation))
+        expect(container.querySelector('[data-pdf-translated-page]')).toBeNull()
+        const row = container.querySelector<HTMLElement>('[data-page-number="2"]')!,
+          target = row.querySelector<HTMLElement>('[data-pdf-page-number="2"]')!
+        expect(target).not.toBeNull()
+        expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(row)
+        await observer.notify(target, true)
+        await waitFor(() =>
+          expect(
+            target
+              .querySelector('[data-pdf-evidence-highlight="reflow-reveal"]')
+              ?.getAttribute('data-pdf-evidence-revealed')
+          ).toBe('true')
+        )
+        return
+      }
       // Supply PDF.js text layers while keeping canvas rendering outside this search regression.
       for (const page of container.querySelectorAll<HTMLElement>('[data-pdf-page-number]')) {
         const layer = document.createElement('div')

@@ -233,7 +233,10 @@ const createFakeService = (): FakeSettingsService => ({
   cancelClaudeIsolatedLogin: vi.fn(),
   logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   beginXaiOAuthLogin: vi.fn().mockResolvedValue({ userCode: 'XAI-1234' }),
-  waitXaiOAuthLogin: vi.fn().mockResolvedValue({ accountEmail: 'user@example.com' }),
+  waitXaiOAuthLogin: vi.fn().mockResolvedValue({
+    accountEmail: 'user@example.com',
+    validation: { ok: true, category: 'ok', applied: true }
+  }),
   cancelXaiOAuthLogin: vi.fn(),
   logoutXaiOAuth: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   refreshProviderModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),

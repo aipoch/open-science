@@ -8,7 +8,7 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import type {
   SessionReproducibilityBatch,
   SessionReproducibilityCommand

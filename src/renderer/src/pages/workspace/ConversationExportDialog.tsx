@@ -15,7 +15,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import {
   serializeConversationExportContent,
   hashConversationExportContent,

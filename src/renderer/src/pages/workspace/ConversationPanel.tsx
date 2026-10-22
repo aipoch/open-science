@@ -1,3 +1,4 @@
+import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import { isAgentAuthenticationRequired } from './agent-authentication-error'
 import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
@@ -46,11 +47,9 @@ import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import {
-  projectSessionActionability,
-  useSessionStore,
-  type ChatSession
-} from '@/stores/session-store'
+import { projectSessionActionability } from '@/stores/session-actionability'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
@@ -338,6 +337,7 @@ const formatAttachmentSize = (size: number): string => {
 
 type ConversationPanelView = {
   activeSession: ChatSession | undefined
+  authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
   persistenceBlocked?: boolean
@@ -994,12 +994,14 @@ const ConversationPanel = ({
   )
   const resumeDiagnostic =
     operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
-  const authenticationRequired = [
-    actionError,
-    composerError,
-    currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
-    showLegacyRunError ? legacyDisplayState?.error : undefined
-  ].some(isAgentAuthenticationRequired)
+  const authenticationRequired =
+    view.authenticationRecovery?.required ??
+    [
+      actionError,
+      composerError,
+      currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
+      showLegacyRunError ? legacyDisplayState?.error : undefined
+    ].some(isAgentAuthenticationRequired)
   const resolvedActionError = isAgentAuthenticationRequired(actionError)
     ? undefined
     : ((isClaudeCliCompatibilityError(actionError ?? '')
@@ -1163,7 +1165,9 @@ const ConversationPanel = ({
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
-  const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
+  const ordinaryComposerBlocked = Boolean(
+    blockingInteraction || packageLocked || authenticationRequired
+  )
 
   useEffect(() => {
     let tooltipEscape: KeyboardEvent | undefined
@@ -1292,7 +1296,7 @@ const ConversationPanel = ({
   }
 
   const handleSubmit = (): void => {
-    if (!canEditDraft || !effectiveCanSend) return
+    if (!canEditDraft || !effectiveCanSend || authenticationRequired) return
     if (docToText(draftDoc).trim() === '/setup-wsl') {
       void handleWslSetupCommand()
       return
@@ -1716,7 +1720,7 @@ const ConversationPanel = ({
                 {composerError && composerErrorDetail ? (
                   <DiagnosticDetails detail={composerErrorDetail} />
                 ) : null}
-                {showSessionRecovery ? (
+                {showSessionRecovery && !authenticationRequired ? (
                   <SessionInterruptedBanner
                     message={
                       hasUnsupportedCodexRunError
@@ -1726,19 +1730,6 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
-                  />
-                ) : null}
-                {authenticationRequired ? (
-                  <ErrorNotice
-                    className="mb-2"
-                    title={t('Sign in to continue this conversation')}
-                    description={t(
-                      'The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.'
-                    )}
-                    primaryButton={{
-                      label: t('Model settings'),
-                      onClick: () => openSettingsToPanel('model')
-                    }}
                   />
                 ) : null}
                 {activeSession?.compacting ? (
@@ -1993,7 +1984,8 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (packageLocked ||
+                      (authenticationRequired ||
+                        packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
                         pendingPlan ||
@@ -2042,7 +2034,7 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {ordinaryComposerBlocked ? (
+                  {ordinaryComposerBlocked && !authenticationRequired ? (
                     <div
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
@@ -2239,6 +2231,29 @@ const ConversationPanel = ({
                           </details>
                         ) : null}
                       </section>
+                    ) : authenticationRequired ? (
+                      <ErrorNotice
+                        icon={LockKeyhole}
+                        tone="amber"
+                        title={
+                          view.authenticationRecovery?.provider &&
+                          ['custom', 'official'].includes(view.authenticationRecovery.provider.type)
+                            ? t('Update credential')
+                            : t('Sign in to continue this conversation')
+                        }
+                        description={t(
+                          'Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.'
+                        )}
+                        primaryButton={{
+                          label: view.authenticationRecovery?.provider
+                            ? t('Open account settings')
+                            : t('Model settings'),
+                          onClick: () =>
+                            view.authenticationRecovery
+                              ? view.authenticationRecovery.openSettings()
+                              : openSettingsToPanel('model')
+                        }}
+                      />
                     ) : (
                       <form
                         ref={composerFormRef}
