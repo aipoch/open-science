@@ -442,7 +442,23 @@ for (const stalled of [false, true]) {
           .split('\n')
           .filter(Boolean)
           .map((line) => JSON.parse(line))
+      if (restartRecovery) {
+        // A running TaskRun is published before its first ACP prompt reaches the Agent. Wait for
+        // both original submissions so a delayed initial CLI prompt cannot look like restart replay.
+        await expect
+          .poll(async () => {
+            const prompts = await readProviderPrompts()
+            return ['App task A', 'CLI task B'].map(
+              (task) =>
+                prompts.filter((entry) =>
+                  entry.prompt.includes(`Hold the turn outcome fixture. ${task}`)
+                ).length
+            )
+          })
+          .toEqual([1, 1])
+      }
       const originalProviderPrompts = restartRecovery ? await readProviderPrompts() : []
+      if (restartRecovery) expect(originalProviderPrompts).toHaveLength(2)
       expect(processBirthIdentity(f.target.pid)).toBe(f.target.birthToken)
       const processTree = await readProcessTree(f.target.pid)
       expect(processTree.complete).toBe(true)
