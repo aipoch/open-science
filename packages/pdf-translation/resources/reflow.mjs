@@ -187,6 +187,64 @@ function readGraphics(native, page) {
   return objects
 }
 
+function planGraphics(objects, input, number, footerUnits) {
+  const dimensions = input.pages[number - 1]
+  const graphics = (input.originalRegions ?? [])
+    .filter((region) => region.pageNumber === number)
+    .map((region) => ({ ...region.rect }))
+  for (const object of objects) {
+    if (object.type === 1) continue
+    const [left, low, right, high] = object.bounds
+    if (
+      (right - left < 3 && high - low < 3) ||
+      right < left ||
+      high < low ||
+      ![left, low, right, high].every(Number.isFinite)
+    )
+      continue
+    const rect = graphicRect(object.bounds, dimensions)
+    if (rect.width * rect.height > 0.85) continue
+    // Merge connected diagram paths into one crop, retaining labels in place.
+    let merged = rect
+    for (let i = 0; i < graphics.length;) {
+      if (touches(merged, graphics[i], 0.006)) {
+        merged = union(merged, graphics.splice(i, 1)[0])
+        i = 0
+      } else i++
+    }
+    graphics.push(merged)
+  }
+  // Isolated rules/underlines are decoration, not separate figures. Join
+  // horizontally separated parts of a figure occupying the same rows.
+  for (let i = graphics.length - 1; i >= 0; i--)
+    if (graphics[i].width < 0.005 || graphics[i].height < 0.005) graphics.splice(i, 1)
+  for (let i = 0; i < graphics.length; i++)
+    for (let j = i + 1; j < graphics.length;) {
+      const a = graphics[i],
+        b = graphics[j]
+      if (a.y <= b.y + b.height + 0.01 && b.y <= a.y + a.height + 0.01) {
+        graphics[i] = union(a, b)
+        graphics.splice(j, 1)
+        j = i + 1
+      } else j++
+    }
+  // Match the rendering order and footer exclusions when expanding label crops.
+  const pageUnits = readingOrder(
+    input.units.flatMap((unit, unitIndex) => {
+      const fragments = unit.fragments.filter((fragment) => fragment.pageNumber === number)
+      return fragments.length && !footerUnits.has(unitIndex) ? [{ unit, fragments }] : []
+    })
+  )
+  for (const graphic of graphics)
+    for (const { unit, fragments } of pageUnits) {
+      if (/^(?:Table|Tab\.|Figure|Fig\.)\s*\d/iu.test(unit.source)) continue
+      for (const fragment of fragments)
+        if (fragment.rect.height < 0.045 && touches(graphic, fragment.rect, 0.003))
+          Object.assign(graphic, union(graphic, fragment.rect))
+    }
+  return graphics.sort((a, b) => a.y - b.y || a.x - b.x)
+}
+
 export async function generateReflow(input, retainedLinkPages = new Set()) {
   const document = await PDFDocument.create({ updateMetadata: false }),
     bytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url)),
@@ -401,7 +459,24 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       const nativePage = p.FPDF_LoadPage(source.doc, number - 1),
         dimensions = input.pages[number - 1]
       try {
-        for (const object of readGraphics(native, nativePage)) {
+        const objects = readGraphics(native, nativePage)
+        // Crops rasterize every mark in their rectangle, including source prose.
+        // Check the final unions, not individual paths, before emitting any page.
+        const scale = Math.min(2, 2400 / Math.max(dimensions.width, dimensions.height)),
+          pad =
+            1 / Math.min(Math.ceil(dimensions.width * scale), Math.ceil(dimensions.height * scale)),
+          translatedFragments = input.units
+            .filter((unit) => unit.source !== unit.translation)
+            .flatMap((unit) => unit.fragments.filter((fragment) => fragment.pageNumber === number))
+        if (
+          planGraphics(objects, input, number, footerUnits).some((graphic) =>
+            translatedFragments.some((fragment) => touches(graphic, fragment.rect, pad))
+          )
+        ) {
+          retainedPages.add(number)
+          continue
+        }
+        for (const object of objects) {
           if (object.type !== 3) continue
           const rect = graphicRect(object.bounds, dimensions)
           if (rect.width * rect.height <= 0.85) continue
@@ -525,45 +600,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
           cursor += drawHeight + 12
           return target
         }
-        const graphics = (input.originalRegions ?? [])
-          .filter((region) => region.pageNumber === number)
-          .map((region) => ({ ...region.rect }))
-        for (const object of objects) {
-          if (object.type === 1) continue
-          const [left, low, right, high] = object.bounds
-          if (
-            (right - left < 3 && high - low < 3) ||
-            right < left ||
-            high < low ||
-            ![left, low, right, high].every(Number.isFinite)
-          )
-            continue
-          const rect = graphicRect(object.bounds, dimensions)
-          if (rect.width * rect.height > 0.85) continue
-          // Merge connected diagram paths into one crop, retaining labels in place.
-          let merged = rect
-          for (let i = 0; i < graphics.length;) {
-            if (touches(merged, graphics[i], 0.006)) {
-              merged = union(merged, graphics.splice(i, 1)[0])
-              i = 0
-            } else i++
-          }
-          graphics.push(merged)
-        }
-        // Isolated rules/underlines are decoration, not separate figures. Join
-        // horizontally separated parts of a figure occupying the same rows.
-        for (let i = graphics.length - 1; i >= 0; i--)
-          if (graphics[i].width < 0.005 || graphics[i].height < 0.005) graphics.splice(i, 1)
-        for (let i = 0; i < graphics.length; i++)
-          for (let j = i + 1; j < graphics.length;) {
-            const a = graphics[i],
-              b = graphics[j]
-            if (a.y <= b.y + b.height + 0.01 && b.y <= a.y + a.height + 0.01) {
-              graphics[i] = union(a, b)
-              graphics.splice(j, 1)
-              j = i + 1
-            } else j++
-          }
+        const graphics = planGraphics(objects, input, number, footerUnits)
         const pageUnits = readingOrder(
           input.units.flatMap((unit, unitIndex) => {
             const fragments = unit.fragments.filter((f) => f.pageNumber === number)
@@ -574,15 +611,6 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
             return [{ unit, unitIndex, fragments }]
           })
         )
-        // Include protruding labels at the edge of a figure without capturing adjacent prose.
-        for (const graphic of graphics)
-          for (const { unit, fragments } of pageUnits)
-            for (const f of fragments) {
-              if (/^(?:Table|Tab\.|Figure|Fig\.)\s*\d/iu.test(unit.source)) continue
-              if (f.rect.height < 0.045 && touches(graphic, f.rect, 0.003))
-                Object.assign(graphic, union(graphic, f.rect))
-            }
-        graphics.sort((a, b) => a.y - b.y || a.x - b.x)
         const drawn = new Map()
         const originals = new Map(),
           originalDrawn = new Set()

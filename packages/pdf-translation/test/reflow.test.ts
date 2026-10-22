@@ -479,7 +479,12 @@ it('paginates all translated text while retaining a figure inside a page Form', 
         pages: [{ width: 400, height: 500 }],
         units: [
           { source: 'Original body.', translation, fragments: [fragment(1, 0.08)] },
-          { source: 'Figure label', translation: '图中标签', fragments: [fragment(1, 0.38)] },
+          // Labels remain in the figure crop; translating them separately would duplicate them.
+          {
+            source: 'Figure label',
+            translation: 'Figure label',
+            fragments: [{ pageNumber: 1, rect: { x: 0.125, y: 0.39, width: 0.2, height: 0.04 } }]
+          },
           {
             source: 'Failed original paragraph.',
             translation: 'Failed original paragraph.',
@@ -1804,3 +1809,171 @@ it('keeps the visible part of an off-page raster alongside translated text', asy
     await task.destroy()
   }
 })
+
+it.each([
+  'shading',
+  'border',
+  'explicit-region',
+  'nested-form',
+  'merged',
+  'label',
+  'pixel-edge',
+  'joined'
+] as const)(
+  'retains source pages when a final graphic crop includes translated prose (%s)',
+  async (mode) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500])
+    if (mode === 'merged') {
+      // Neither path intersects the body; their same-row crop union does.
+      for (const x of [10, 350])
+        page.drawRectangle({ x, y: 400, width: 30, height: 70, color: rgb(0.8, 0.8, 0.8) })
+    } else if (mode === 'pixel-edge') {
+      // The mathematical bounds stop short of the prose; raster rounding reaches it.
+      page.drawRectangle({ x: 49.8, y: 400, width: 30, height: 70, color: rgb(0.8, 0.8, 0.8) })
+    } else if (mode === 'label') {
+      page.drawRectangle({ x: 10, y: 400, width: 30, height: 70, color: rgb(0.8, 0.8, 0.8) })
+      page.drawText('Label', { font, x: 35, y: 405, size: 12 })
+    } else if (mode === 'nested-form') {
+      const inner = await PDFDocument.create(),
+        innerPage = inner.addPage([200, 250])
+      innerPage.drawRectangle({
+        x: 15,
+        y: 200,
+        width: 170,
+        height: 35,
+        color: rgb(0.8, 0.8, 0.8)
+      })
+      await inner.flush()
+      page.drawPage(await pdf.embedPage(innerPage), { x: 0, y: 0, xScale: 2, yScale: 2 })
+    } else if (mode !== 'explicit-region') {
+      page.drawRectangle({
+        x: 30,
+        y: 400,
+        width: 340,
+        height: 70,
+        ...(mode === 'border'
+          ? { borderColor: rgb(0, 0, 0), borderWidth: 1 }
+          : { color: rgb(0.8, 0.8, 0.8) })
+      })
+    }
+    page.drawText('Original callout body.', { font, x: 80, y: 440, size: 12 })
+    const joined = mode === 'joined',
+      independentPage = joined ? 3 : 2
+    if (joined)
+      pdf.addPage([400, 500]).drawText('Continued source.', { font, x: 40, y: 440, size: 12 })
+    pdf.addPage([400, 500]).drawText('Independent source.', { font, x: 40, y: 440, size: 12 })
+    const output = await generate(
+      pdf,
+      [
+        {
+          source: joined ? 'Original callout body. Continued source.' : 'Original callout body.',
+          translation: 'Translated callout body.',
+          fragments: [
+            { pageNumber: 1, rect: { x: 0.2, y: 0.08, width: 0.6, height: 0.05 } },
+            ...(joined ? [fragment(2, 0.08)] : [])
+          ]
+        },
+        ...(mode === 'label'
+          ? [
+              {
+                source: 'Label',
+                translation: 'Label',
+                // Protruding label expands the crop into the body column.
+                fragments: [
+                  { pageNumber: 1, rect: { x: 0.0875, y: 0.17, width: 0.2, height: 0.03 } }
+                ]
+              }
+            ]
+          : []),
+        {
+          source: 'Independent source.',
+          translation: 'Independent translation.',
+          fragments: [fragment(independentPage, 0.08)]
+        }
+      ],
+      mode === 'explicit-region'
+        ? {
+            originalRegions: [
+              { pageNumber: 1, rect: { x: 0.075, y: 0.06, width: 0.85, height: 0.14 } }
+            ]
+          }
+        : {}
+    )
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({
+        unitIndex: 0,
+        code: 'unsupported-layout',
+        pageNumbers: joined ? [1, 2] : [1]
+      })
+    ])
+    expect(output.reflow!.originalPageNumbers).toEqual(joined ? [1, 2] : [1])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        texts: string[] = []
+      expect(parsed.numPages).toBe(independentPage)
+      for (let number = 1; number <= parsed.numPages; number++) {
+        const current = await parsed.getPage(number),
+          content = await current.getTextContent()
+        texts.push(
+          content.items
+            .filter((item) => 'str' in item)
+            .map((item) => item.str)
+            .join(' ')
+        )
+        // Retention keeps vector content; no duplicate raster crop is appended.
+        expect(
+          (await current.getOperatorList()).fnArray.filter((op) => op === OPS.paintImageXObject)
+        ).toHaveLength(0)
+      }
+      expect(texts[0].match(/Original callout body\./gu)).toHaveLength(1)
+      expect(texts.join(' ')).not.toContain('Translated callout body.')
+      expect(texts.at(-1)).toContain('Independent translation.')
+      if (joined) expect(texts[1]).toContain('Continued source.')
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'reflows a separate vector figure and caption with full-page decoration=%s',
+  async (background) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500])
+    if (background)
+      page.drawRectangle({ x: 0, y: 0, width: 400, height: 500, color: rgb(0.95, 0.95, 0.95) })
+    page.drawRectangle({ x: 40, y: 200, width: 200, height: 150, color: rgb(0.2, 0.4, 0.6) })
+    page.drawText('Figure 1. Original caption.', { font, x: 40, y: 150, size: 12 })
+    const output = await generate(pdf, [
+      {
+        source: 'Figure 1. Original caption.',
+        translation: 'Figure 1. Translated caption.',
+        fragments: [fragment(1, 0.68)]
+      }
+    ])
+    expect(output.layoutFailures).toEqual([])
+    expect(output.reflow!.originalPageNumbers).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        first = await parsed.getPage(1),
+        content = await first.getTextContent()
+      expect(parsed.numPages).toBe(1)
+      expect(
+        (await first.getOperatorList()).fnArray.filter((op) => op === OPS.paintImageXObject)
+      ).toHaveLength(1)
+      expect(
+        content.items
+          .filter((item) => 'str' in item)
+          .map((item) => item.str)
+          .join(' ')
+      ).toContain('Figure 1. Translated caption.')
+    } finally {
+      await task.destroy()
+    }
+  }
+)

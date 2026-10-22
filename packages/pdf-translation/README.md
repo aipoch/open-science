@@ -276,3 +276,11 @@ rendition, scrolls to its source page after that view mounts, and uses the exist
 highlight. Figure preparation releases each page's operator-list resources on completion, failure
 or cancellation; PDF.js defers cleanup while a shared page is rendering. These fixes introduce no
 new saved fields or diagnostic values.
+
+Graphic crops are checked after connected paths, same-row regions and protruding labels have been
+combined. If the final crop (including a one-pixel rasterization margin) intersects a translated
+source fragment, the source page is retained with `unsupported-layout` instead of duplicating its
+body text as an image. This also applies to explicit original regions and nested vector Forms.
+Joined paragraphs retain all their source pages; independent pages continue reflowing. Separate
+figures and captions remain eligible, and full-page vector decoration alone does not trigger this
+fallback. This uses the existing diagnostics and saved format; regenerate old exports to apply it.
