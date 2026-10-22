@@ -159,11 +159,34 @@ it('keeps Windows system tools while excluding host PowerShell modules and crede
       ProgramFiles: 'C:\\Program Files',
       'ProgramFiles(x86)': 'C:\\Program Files (x86)',
       ProgramW6432: 'C:\\Program Files',
-      PSModulePath:
-        'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
       USERPROFILE: resolve('fixture/isolated home')
     })
     expect(environment.OPENAI_API_KEY).toBeUndefined()
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform })
+  }
+})
+
+it('keeps Windows system tools in case-sensitive environment snapshots', () => {
+  const platform = process.platform
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+      SYSTEMROOT: 'C:\\Windows',
+      PROGRAMFILES: 'C:\\Program Files',
+      'PROGRAMFILES(X86)': 'C:\\Program Files (x86)',
+      PROGRAMW6432: 'C:\\Program Files',
+      PSMODULEPATH: 'C:\\operator\\custom-modules'
+    })
+    expect(environment).toMatchObject({
+      SYSTEMROOT: 'C:\\Windows',
+      PROGRAMFILES: 'C:\\Program Files',
+      'PROGRAMFILES(X86)': 'C:\\Program Files (x86)',
+      PROGRAMW6432: 'C:\\Program Files',
+      PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules'
+    })
+    expect(environment.PSMODULEPATH).toBeUndefined()
   } finally {
     Object.defineProperty(process, 'platform', { value: platform })
   }
@@ -180,12 +203,16 @@ it.skipIf(process.platform !== 'win32')(
       // This smoke verifies system-tool availability in a fresh isolated profile, not a startup
       // latency SLA. Production identity reads still stop after 2s and may report unknown.
       const query = (script: string, timeout: number): string =>
-        execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-          env: environment,
-          encoding: 'utf8',
-          timeout,
-          windowsHide: true
-        }).trim()
+        execFileSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `[Console]::Error.WriteLine('fixture-powershell: command started'); ${script}`
+          ],
+          { env: environment, encoding: 'utf8', timeout, windowsHide: true }
+        ).trim()
       expect(
         query(
           `$p = Get-Process -Id ${process.pid} -ErrorAction Stop; $p.StartTime.ToUniversalTime().ToFileTimeUtc()`,

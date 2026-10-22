@@ -19,7 +19,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path'
 import {
   _electron as electron,
   type ElectronApplication,
@@ -437,6 +437,8 @@ const launchEnvironment = (
       'kde_full_session',
       'kde_session_version'
     ])
+    if (process.platform === 'win32')
+      for (const key of ['programfiles', 'programfiles(x86)', 'programw6432']) osInputs.add(key)
     for (const key of Object.keys(environment)) {
       if (
         !osInputs.has(key.toLowerCase()) &&
@@ -445,10 +447,26 @@ const launchEnvironment = (
       )
         delete environment[key]
     }
-    // PowerShell needs its system installation/module paths even when user state is isolated.
-    // The shared projection constructs PSModulePath from system directories, not host modules.
-    if (process.platform === 'win32')
+    // Retain OS installation inputs even when user state is isolated.
+    if (process.platform === 'win32') {
       Object.assign(environment, buildShellProcessEnvironment('win32', inheritedEnvironment))
+      // Plain environment snapshots (including worker copies) can have differently cased keys.
+      const systemPath = (name: string): string | undefined =>
+        Object.entries(environment).find(([key]) => key.toLowerCase() === name)?.[1]
+      const windowsRoot = systemPath('systemroot') ?? systemPath('windir')
+      // Fresh test profiles need built-in cmdlets, not the runner's AllUsers module collection.
+      if (windowsRoot) {
+        for (const key of Object.keys(environment))
+          if (key.toLowerCase() === 'psmodulepath') delete environment[key]
+        environment.PSModulePath = win32.join(
+          windowsRoot,
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'Modules'
+        )
+      }
+    }
     const fixtureHome = join(dirname(storageRoot), 'isolated home')
     environment.HOME = fixtureHome
     environment.USERPROFILE = fixtureHome
