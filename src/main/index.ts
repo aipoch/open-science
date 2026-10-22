@@ -675,6 +675,8 @@ async function startDesktop(): Promise<void> {
     'update:cancel',
     'update:apply',
     'update:recheck',
+    'update:get-manual-install',
+    'update:reveal-manual-installer',
     'update:recover'
   ])
   const recoveryReadChannels = new Set([
@@ -1412,7 +1414,16 @@ async function startDesktop(): Promise<void> {
       if (outcome !== 'completed')
         throw new UpdateLifecycleError(
           'install-failed',
-          'Your changes could not be saved. The update was stopped; keep the app open and try again.'
+          'Your changes could not be saved. The update was stopped; keep the app open and try again.',
+          {
+            phase: 'preparing',
+            runtime: 'running',
+            installation: 'unchanged',
+            canCancel: true,
+            canRetryInstall: false,
+            canRecover: false,
+            detail: 'save-failed'
+          }
         )
       rendererPreparedForUpdate = phase === 'final'
     },
@@ -1745,6 +1756,12 @@ async function startDesktop(): Promise<void> {
     },
     flushSessionPersistence: createElectronSessionPersistenceFlush(() => getMainWindow()),
     rendererPersistencePreparedForUpdate: () => rendererPreparedForUpdate && runtimeStopped,
+    shutdownTrigger: () => {
+      const trigger = currentApplicationShutdownTrigger()
+      // A user can quit from failed handoff recovery after the final save and clean stop.
+      // Keep that update shutdown proof; an ordinary quit after service recovery still saves.
+      return trigger === 'quit' && rendererPreparedForUpdate && runtimeStopped ? 'update' : trigger
+    },
     createConfirmClose: (getWindow) =>
       createElectronCloseConfirm(
         getWindow,

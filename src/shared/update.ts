@@ -16,6 +16,32 @@ export type UpdateManifest = {
 export type UpdateState =
   'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'applying' | 'error'
 
+export type ManualInstallerFormat = 'zip' | 'dmg' | 'nsis' | 'appimage' | 'deb'
+// Main owns eligibility and artifact identity. Renderer commands accept no path or trust claims.
+export type ManualInstallInfo = {
+  identity: string
+  platform: 'darwin' | 'win32' | 'linux'
+  arch: string
+  version?: string
+} & (
+  | {
+      kind: 'local'
+      format: ManualInstallerFormat
+      fileName: string
+      size: number
+      revealError?: boolean
+      // Instructions/file reveal only: quit this app and release installation occupancy first.
+      requiresQuitAndReleaseOccupancy?: true
+    }
+  | {
+      kind: 'website'
+      reason: 'download-failed' | 'unavailable' | 'not-standalone'
+      format?: ManualInstallerFormat
+      requiresQuitAndReleaseOccupancy?: true
+    }
+  | { kind: 'blocked' }
+)
+
 export type UpdateBlocker = 'agent' | 'delegated' | 'notebook' | 'reviewer' | 'settings-install'
 
 // Call intent stays transient and transport-neutral. Desktop callers omit these options; headless
@@ -62,6 +88,7 @@ export type UpdateStatus = {
   // How the renderer applies a ready update: open the downloaded installer (mac manual reinstall) or
   // restart into an in-place electron-updater install (win/linux). Set by the active strategy.
   applyKind?: 'installer' | 'restart'
+  manualInstall?: ManualInstallInfo
 }
 
 export type UpdateFailureReason =
@@ -92,6 +119,7 @@ export type UpdateRecoveryStatus = {
   canRetryInstall: boolean
   canRecover: boolean
   detail?:
+    | 'save-failed'
     | 'controller-held'
     | 'operation-pending'
     | 'other-runtime'

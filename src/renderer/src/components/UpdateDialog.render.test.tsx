@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { APP } from '../../../shared/app-config'
 import { UPDATE_INSTALLATION_REQUIRED } from '../../../shared/update'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -7,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { useUpdateStore } from '@/stores/update-store'
 import { UpdateDialog } from './UpdateDialog'
-import { APP } from '../../../shared/app-config'
 
 // Markdown rendering is covered by AgentMarkdown's own tests; stub it to a plain passthrough so this
 // render test stays deterministic and independent of the streamdown pipeline.
@@ -56,7 +56,14 @@ describe('UpdateDialog', () => {
         state: 'available',
         current: '0.2.0',
         latest: '0.3.0',
-        applyKind: 'installer'
+        applyKind: 'installer',
+        manualInstall: {
+          kind: 'website',
+          identity: 'missing',
+          platform: 'darwin',
+          arch: 'arm64',
+          reason: 'unavailable'
+        }
       }
     })
     act(() => root.render(<UpdateDialog />))
@@ -65,10 +72,10 @@ describe('UpdateDialog', () => {
       button.textContent?.includes('Download update')
     )
     expect.soft(downloadButton).toBeUndefined()
-    const manualLink = Array.from(document.body.querySelectorAll('a')).find((link) =>
-      link.textContent?.includes('Download manually')
+    const manualEntry = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Get the full installer…'
     )
-    expect.soft(manualLink?.getAttribute('href')).toBe(APP.update.downloadPage)
+    expect(manualEntry).toBeDefined()
     expect(document.body.textContent).toContain('An installer is not available for this platform.')
   })
 
@@ -284,13 +291,25 @@ describe('UpdateDialog', () => {
   it('offers a manual download fallback when the update errors', () => {
     useUpdateStore.setState({
       isDialogOpen: true,
-      status: { state: 'error', current: '0.1.0', latest: '0.2.0', error: 'Install failed' }
+      status: {
+        state: 'error',
+        current: '0.1.0',
+        latest: '0.2.0',
+        error: 'Download failed',
+        manualInstall: {
+          kind: 'website',
+          identity: 'failed',
+          platform: 'win32',
+          arch: 'x64',
+          reason: 'download-failed'
+        }
+      }
     })
     act(() => root.render(<UpdateDialog />))
-    expect(document.body.textContent).toContain('Install failed')
-    const link = document.body.querySelector(`a[href="${APP.update.downloadPage}"]`)
-    expect(link).not.toBeNull()
-    expect(link?.textContent).toContain('Download manually')
+    expect(document.body.textContent).toContain('Download failed')
+    expect(document.body.textContent).toContain('Download manually…')
+    expect(document.body.textContent).toContain('Retry download')
+    expect(document.body.querySelector('a[href*="/download"]')).toBeNull()
   })
 
   it('guides background-process shutdown failures to diagnostics and GitHub issues', () => {

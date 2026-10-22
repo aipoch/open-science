@@ -174,3 +174,30 @@ it('does not hide an unexpected disconnect just because an update is preparing',
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy()
   cleanup()
 })
+
+it.each(['ready', 'error'] as const)(
+  'keeps planned update recovery reachable after handoff (%s)',
+  (state) => {
+    window.api = {} as typeof window.api
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'unavailable', closing: true, epoch: 1 })
+    useUpdateStore.setState({
+      status: {
+        state,
+        current: '1',
+        recovery: {
+          phase: 'stopped',
+          runtime: 'stopped-clean',
+          installation: 'unchanged',
+          canCancel: true,
+          canRecover: true,
+          canRetryInstall: false
+        }
+      }
+    })
+    render(<DesktopRuntimeRecovery />)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    act(() => useDesktopRuntimeRecoveryStore.setState({ closing: false }))
+    expect(screen.getByRole('alertdialog')).toBeTruthy()
+    cleanup()
+  }
+)

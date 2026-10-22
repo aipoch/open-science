@@ -25,6 +25,7 @@ import {
   type InstallationUpdateRecord
 } from './update/installation-protection'
 import type { InstallReadiness } from './update/strategy'
+import { manualInstallRequiresQuit } from './update/manual-install'
 
 /** A cancelled read must not keep its caller or a subsequent recovery action waiting. */
 async function boundedRead<T>(read: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -72,6 +73,7 @@ export function createDesktopUpdateIntegration(options: {
   onProgress?(status: Partial<UpdateStatus>): void
 }): Pick<
   CreateStrategyOptions,
+  | 'inspectManualInstallSafety'
   | 'prepareInstall'
   | 'installGate'
   | 'beforeInstallHandoff'
@@ -81,9 +83,10 @@ export function createDesktopUpdateIntegration(options: {
   | 'releaseInstallHandoff'
 > {
   let record: InstallationUpdateRecord | undefined = inspectInstallationUpdate(options.location)
-  let legacy: { config: RuntimeStartupOptions; stopped: boolean } | undefined
+  let legacy: { config: RuntimeStartupOptions; stopped: boolean; stopping: boolean } | undefined
   let consent: { token: string; generation: string } | undefined
   let pending: Promise<unknown> | undefined
+  let actionRevision = 0
   let cancellation = new AbortController()
   let cancelRequested = false
   const checkCancellation = (): void => {
@@ -99,7 +102,16 @@ export function createDesktopUpdateIntegration(options: {
       }
     | undefined
   const recovery = (): ReturnType<typeof installationRecoveryStatus> | undefined =>
-    record && installationRecoveryStatus(record)
+    record
+      ? installationRecoveryStatus(record)
+      : legacy && {
+          phase: legacy.stopped ? 'stopped' : legacy.stopping ? 'stopping' : 'preparing',
+          runtime: legacy.stopped ? 'stopped-clean' : legacy.stopping ? 'unknown' : 'running',
+          installation: 'unchanged',
+          canCancel: true,
+          canRecover: legacy.stopping,
+          canRetryInstall: false
+        }
   const exclusive = async <T>(run: () => Promise<T>): Promise<T> => {
     if (pending)
       throw new UpdateLifecycleError(
@@ -107,6 +119,7 @@ export function createDesktopUpdateIntegration(options: {
         'An installation action is still running.',
         recovery()
       )
+    ++actionRevision
     const operation = run()
     pending = operation
     try {
@@ -143,15 +156,20 @@ export function createDesktopUpdateIntegration(options: {
         consent = undefined
         if (legacy) {
           const active = legacy
-          legacy = undefined
           try {
+            if (active.stopping && !active.stopped) {
+              options.retainLease(await options.client().waitForStopped())
+              active.stopped = true
+              options.onStopped()
+            }
             if (active.stopped) await options.restart(active.config)
             else await options.client().invokeHost('desktop:update-abort')
+            legacy = undefined
           } finally {
             options.setClosing(false)
           }
         }
-        return { ...reset, state: 'ready', outcome: 'cancelled' }
+        return { ...reset, state: 'ready', outcome: cancel ? 'cancelled' : 'recovered' }
       }
       options.onProgress?.({
         recovery: {
@@ -302,7 +320,7 @@ export function createDesktopUpdateIntegration(options: {
         .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
       if (!result.completed || !result.reaped) {
         options.setClosing(false)
-        return result
+        return { ...result, recovery: recovery() }
       }
       checkCancellation()
       await options.flushRenderer?.('final')
@@ -317,13 +335,15 @@ export function createDesktopUpdateIntegration(options: {
           canRetryInstall: false
         }
       })
+      active.stopping = true
       const lease = await options.client().stopRuntime()
       options.retainLease(lease)
       active.stopped = true
       options.onStopped()
-      return result
+      return { ...result, recovery: recovery() }
     } catch (error) {
-      if (!active.stopped) {
+      if (!active.stopped) options.setClosing(false)
+      if (!active.stopping) {
         await options
           .client()
           .invokeHost('desktop:update-abort')
@@ -338,16 +358,98 @@ export function createDesktopUpdateIntegration(options: {
             2
           )
         })
-        throw new UpdateLifecycleError(error.code, error.message, undefined, { cause: error })
+        throw new UpdateLifecycleError(error.code, error.message, recovery(), { cause: error })
+      }
+      if (active.stopping) {
+        // Filesystem/ownership failures also leave stop confirmation incomplete. Keep the original
+        // configuration and recovery action; an underlying I/O error is not permission to install.
+        throw new UpdateLifecycleError(
+          isRuntimeProcessAlive(options.client().processId())
+            ? 'runtime-stop-timeout'
+            : 'runtime-stop-unclean',
+          error instanceof Error ? error.message : 'Runtime shutdown could not be confirmed.',
+          recovery(),
+          { cause: error }
+        )
       }
       throw error
     }
   }
   return {
+    inspectManualInstallSafety: async () => {
+      if (pending) await pending.catch(() => undefined)
+      try {
+        const revision = actionRevision
+        const idle = (): boolean =>
+          revision === actionRevision &&
+          !pending &&
+          !pendingRestart &&
+          !record &&
+          !legacy &&
+          // The in-memory record was captured at construction. Another process may have since
+          // created an update-in-progress record, including an unresolved native installer.
+          !inspectInstallationUpdate(options.location)
+        if (!idle()) return false
+        const client = options.client()
+        const info = await client.refreshControl()
+        if (info.control !== 'granted') return false
+        options.validateConfiguration(info.startupOptions)
+        const pid = client.processId()
+        const inspectOccupancy = async (): Promise<boolean> => {
+          try {
+            await inspectInstallationAvailability({
+              ...options.location,
+              runtime: {
+                pid,
+                generation: info.generation,
+                configRoot: info.startupOptions.configRoot
+              },
+              allowedProcessIds: options.allowedProcessIds()
+            })
+            return false
+          } catch (error) {
+            if (
+              error instanceof UpdateLifecycleError &&
+              manualInstallRequiresQuit({
+                state: 'ready',
+                current: options.currentVersion,
+                reason: error.reason,
+                recovery: error.recovery
+              })
+            )
+              return true
+            throw error
+          }
+        }
+        let requiresQuit = await inspectOccupancy()
+        if (!idle()) return false
+        // Manual instructions also lead to quitting: prove renderer persistence before offering them.
+        await options.flushRenderer?.('preflight')
+        const readiness = (await client.invokeHost('desktop:update-inspect')) as InstallReadiness
+        if (readiness.reason || readiness.blockedBy?.length || readiness.completed !== true)
+          return false
+        const current = await client.refreshControl()
+        if (
+          current.control !== 'granted' ||
+          client.processId() !== pid ||
+          current.generation !== info.generation ||
+          JSON.stringify(current.startupOptions) !== JSON.stringify(info.startupOptions)
+        )
+          return false
+        // Recheck after saves/readiness/control awaits: neither an old occupancy exception nor an
+        // old task result may hide a newly pending operation or uncertain process inspection.
+        requiresQuit = (await inspectOccupancy()) || requiresQuit
+        if (!idle()) return false
+        return requiresQuit ? 'quit-required' : true
+      } catch {
+        return false
+      }
+    },
     prepareInstall: (status, apply = {}) =>
       exclusive(async () => {
         cancelRequested = false
         cancellation = new AbortController()
+        if (legacy?.stopping) return { reason: 'install-failed', recovery: recovery() }
         legacy = undefined
         if (pendingRestart)
           return {
@@ -451,7 +553,7 @@ export function createDesktopUpdateIntegration(options: {
             cancellation.signal
           )
           checkCancellation()
-          legacy = { config: info.startupOptions, stopped: false }
+          legacy = { config: info.startupOptions, stopped: false, stopping: false }
           return undefined
         }
         const targetManifest = await options.verifyArtifact(status, cancellation.signal)
@@ -591,6 +693,7 @@ export function createDesktopUpdateIntegration(options: {
           }
         })
         try {
+          if (legacy?.stopping) return { ...reset, reason: 'install-failed', recovery: recovery() }
           if (pendingRestart)
             return {
               reason: 'install-failed',
@@ -745,6 +848,12 @@ export function createDesktopUpdateIntegration(options: {
       }),
     releaseInstallHandoff: () => {
       if (legacy && !record) {
+        // A confirmed or uncertain stop is reversible only through the user's recovery action.
+        // Do not restart services automatically after a failed native handoff.
+        if (legacy.stopping) {
+          options.onProgress?.({ recovery: recovery() })
+          return
+        }
         const active = legacy
         legacy = undefined
         const release = exclusive(async () => {

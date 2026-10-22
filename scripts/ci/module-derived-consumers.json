@@ -17,7 +17,20 @@
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "cli_sdk": ["src/main/session-package/desktop.test.ts"],
+    "cli_sdk": [
+      "src/main/session-package/desktop.test.ts",
+      "src/main/update/create-strategy.test.ts",
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/ipc.test.ts",
+      "src/main/update/legacy-shell-recovery.integration.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/service.save-dialog.test.ts",
+      "src/main/update/service.test.ts",
+      "src/main/update/update-integrity-regressions.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
     "connector_core": [
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts"
@@ -31,8 +44,10 @@
       "src/main/update/create-strategy.test.ts",
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx"
     ],
     "environment_contracts": [
@@ -52,11 +67,34 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
-    "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_http_transport": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
+    "host_installation": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
+    "host_process_runtime": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
+    "host_runtime_lifecycle": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
+    "host_runtime_ports": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
     "host_value_guards": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "i18n_main_adapter": ["src/main/update/manual-install-strategy.test.ts"],
     "i18n_renderer_adapter": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
@@ -67,6 +105,7 @@
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
     "i18n_shared_runtime": [
+      "src/main/update/manual-install-strategy.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -104,6 +143,7 @@
     "main_database": ["src/main/session-package/materialize.test.ts"],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
     "main_storage": ["src/main/session-package/materialize.test.ts"],
+    "main_update": ["src/renderer/src/components/RuntimeUpdateDialog.test.tsx"],
     "managed_version_files": [
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
@@ -214,6 +254,18 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
+    "native_process_tree": [
+      "src/main/update/create-strategy.test.ts",
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/ipc.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/service.save-dialog.test.ts",
+      "src/main/update/service.test.ts",
+      "src/main/update/update-integrity-regressions.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
     "notebook_analysis": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -242,6 +294,7 @@
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -268,6 +321,7 @@
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -341,6 +395,7 @@
     "pdf_text": [
       "src/main/composition/session-packages.test.ts",
       "src/main/session-package/materialize.test.ts",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/agent-authentication-error.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
@@ -359,6 +414,7 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -393,6 +449,7 @@
     ],
     "renderer_desktop_recovery": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
@@ -401,6 +458,7 @@
     ],
     "renderer_diagnostics": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -462,6 +520,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_package_state": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -476,6 +535,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "renderer_preferences": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -492,6 +552,7 @@
     ],
     "renderer_preview_state": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -524,6 +585,7 @@
     ],
     "renderer_settings_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/lib/acp/workspace-events.test.ts",
@@ -551,6 +613,7 @@
     ],
     "renderer_settings_state": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/lib/acp/workspace-events.test.ts",
@@ -575,6 +638,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_state": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -583,6 +647,7 @@
     ],
     "renderer_storage_surfaces": ["src/renderer/src/components/SessionPackageOperation.test.tsx"],
     "renderer_streamdown": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -593,6 +658,7 @@
     ],
     "renderer_ui": [
       "src/renderer/src/components/FileDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
@@ -606,6 +672,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_update_state": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_upload_transfer": [
@@ -613,6 +680,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_utilities": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
@@ -626,6 +694,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "reproducibility_engine": ["src/main/session-package/materialize.test.ts"],
+    "resilient_download": ["src/main/update/manual-install-strategy.test.ts"],
     "reviewer_evidence": ["src/main/session-package/materialize.test.ts"],
     "reviewer_repository": ["src/main/session-package/materialize.test.ts"],
     "reviewer_tool_contracts": ["src/main/session-package/materialize.test.ts"],
@@ -633,6 +702,7 @@
     "session_persistence": ["src/main/session-details/owner.test.ts"],
     "session_renderer": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -847,6 +917,7 @@
       "src/renderer/src/components/UpdateDialog.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -1442,6 +1513,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -2009,6 +2081,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -2607,6 +2680,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -3764,6 +3838,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -4803,6 +4878,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -5061,6 +5137,8 @@
       "src/shared/session-persistence/turn-outcome.test.ts"
     ],
     "shared_promise_identity": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -5183,6 +5261,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -5777,6 +5856,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -6449,6 +6529,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -6990,6 +7071,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -7853,6 +7935,8 @@
       "src/main/update/installation-reboot-recovery.test.ts",
       "src/main/update/ipc.test.ts",
       "src/main/update/legacy-shell-recovery.integration.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
       "src/main/update/service.save-dialog.test.ts",
       "src/main/update/service.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
@@ -7883,6 +7967,7 @@
       "src/renderer/src/components/components-i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -8521,6 +8606,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -8987,6 +9073,7 @@
     ],
     "workspace_plan_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

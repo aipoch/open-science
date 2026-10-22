@@ -49,7 +49,10 @@
     "src/main/update/windows-update-handoff.ts",
     "src/main/update/windows-update-handoff.test.ts",
     "scripts/windows-install-publication.test.ts",
-    "scripts/windows-installer-extractor.test.ts"
+    "scripts/windows-installer-extractor.test.ts",
+    "src/main/update/manual-install.test.ts",
+    "src/main/update/manual-install.ts",
+    "src/main/update/manual-install-strategy.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -67,7 +70,8 @@
     "src/main/update/installation-protection.ts",
     "src/main/update/installation-reboot-recovery.ts",
     "src/main/update/verification-process.ts",
-    "src/main/update/windows-update-handoff.ts"
+    "src/main/update/windows-update-handoff.ts",
+    "src/main/update/manual-install.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -100,7 +104,9 @@
       "src/main/update/installation-preparation.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "scripts/windows-install-publication.test.ts",
-      "scripts/windows-installer-extractor.test.ts"
+      "scripts/windows-installer-extractor.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/manual-install-strategy.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

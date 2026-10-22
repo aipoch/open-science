@@ -2,6 +2,7 @@ import { RuntimeStopError } from './runtime-stop-confirmation'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { UpdateStatus } from '../shared/update'
+import { UpdateLifecycleError } from '../shared/update'
 import type { InstallationUpdateRecord } from './update/installation-protection'
 const state = vi.hoisted(() => ({
   record: undefined as InstallationUpdateRecord | undefined,
@@ -427,12 +428,35 @@ describe('legacy install for uncertified channels', () => {
     expect(state.begin).not.toHaveBeenCalled()
   })
 
-  it('aborts an unconfirmed stop and releases admission', async () => {
+  it('retains an unconfirmed stop for explicit proof and recovery', async () => {
     const { hooks, invoke, stop, setClosing } = setup('desktop', undefined, legacy)
     stop.mockRejectedValue(new RuntimeStopError('runtime-stop-timeout', {} as never))
     await hooks.prepareInstall!(status, {})
     await expect(hooks.installGate!({})).rejects.toMatchObject({ reason: 'runtime-stop-timeout' })
-    expect(invoke).toHaveBeenCalledWith('desktop:update-abort')
+    expect(invoke).not.toHaveBeenCalledWith('desktop:update-abort')
+    hooks.releaseInstallHandoff!()
+    expect(await hooks.prepareInstall!(status, {})).toMatchObject({
+      recovery: { runtime: 'unknown', canRecover: true }
+    })
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('preserves recovery after a real ownership/filesystem stop-proof error', async () => {
+    const { hooks, stop, restart, setClosing } = setup('desktop', undefined, legacy)
+    const failure = new Error('Unsafe runtime lock file: /tmp/config/.open-science-runtime.sqlite')
+    await hooks.prepareInstall!(status, {})
+    stop.mockRejectedValue(failure)
+    await expect(hooks.installGate!({})).rejects.toMatchObject({
+      reason: 'runtime-stop-unclean',
+      cause: failure,
+      recovery: { runtime: 'unknown', canRecover: true, canRetryInstall: false }
+    })
+    hooks.releaseInstallHandoff!()
+    await expect(hooks.recoverInstall!()).rejects.toBe(failure)
+    expect(restart).not.toHaveBeenCalled()
+    stop.mockResolvedValue({ release: vi.fn() })
+    await expect(hooks.recoverInstall!()).resolves.toMatchObject({ outcome: 'recovered' })
+    expect(restart).toHaveBeenCalledWith(config)
     expect(setClosing).toHaveBeenLastCalledWith(false)
   })
 
@@ -440,7 +464,11 @@ describe('legacy install for uncertified channels', () => {
     const { hooks, invoke, setClosing, stop } = setup('desktop', undefined, legacy)
     invoke.mockResolvedValue({ completed: false, reaped: false, blockedBy: ['agent'] })
     await hooks.prepareInstall!(status, {})
-    expect(await hooks.installGate!({})).toMatchObject({ completed: false, blockedBy: ['agent'] })
+    expect(await hooks.installGate!({})).toMatchObject({
+      completed: false,
+      blockedBy: ['agent'],
+      recovery: { runtime: 'running', canRecover: false }
+    })
     expect(setClosing).toHaveBeenLastCalledWith(false)
     expect(stop).not.toHaveBeenCalled()
   })
@@ -454,13 +482,46 @@ describe('legacy install for uncertified channels', () => {
     expect(setClosing).not.toHaveBeenCalledWith(true)
   })
 
-  it('restarts the runtime and releases admission when the installer cannot start', async () => {
-    const { hooks, restart, setClosing } = setup('desktop', undefined, legacy)
+  it('waits for the user to recover after the installer cannot start', async () => {
+    const { hooks, restart, setClosing, progress } = setup('desktop', undefined, legacy)
     await hooks.prepareInstall!(status, {})
     await hooks.installGate!({})
     hooks.releaseInstallHandoff!()
-    await vi.waitFor(() => expect(restart).toHaveBeenCalledWith(config))
+    expect(restart).not.toHaveBeenCalled()
+    expect(progress).toHaveBeenLastCalledWith({
+      recovery: expect.objectContaining({
+        runtime: 'stopped-clean',
+        canRecover: true
+      })
+    })
+    expect(await hooks.recoverInstall!()).toMatchObject({ state: 'ready', outcome: 'recovered' })
+    expect(restart).toHaveBeenCalledWith(config)
     expect(setClosing).toHaveBeenLastCalledWith(false)
+  })
+
+  it('keeps the original configuration available if explicit service recovery fails', async () => {
+    const { hooks, restart } = setup('desktop', undefined, legacy)
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    hooks.releaseInstallHandoff!()
+    restart.mockRejectedValueOnce(new Error('readiness failed'))
+    await expect(hooks.recoverInstall!()).rejects.toThrow('readiness failed')
+    await hooks.recoverInstall!()
+    expect(restart).toHaveBeenCalledTimes(2)
+    expect(restart).toHaveBeenLastCalledWith(config)
+  })
+
+  it('never restarts after a stop timeout until clean exit evidence becomes available', async () => {
+    const { hooks, stop, restart } = setup('desktop', undefined, legacy)
+    await hooks.prepareInstall!(status, {})
+    stop.mockRejectedValue(new RuntimeStopError('runtime-stop-timeout', {} as never))
+    await expect(hooks.installGate!({})).rejects.toThrow()
+    hooks.releaseInstallHandoff!()
+    await expect(hooks.recoverInstall!()).rejects.toThrow()
+    expect(restart).not.toHaveBeenCalled()
+    stop.mockResolvedValue({ release: vi.fn() })
+    await hooks.recoverInstall!()
+    expect(restart).toHaveBeenCalledWith(config)
   })
 
   it('releases admission when the legacy handoff release cannot abort the gate', async () => {
@@ -533,3 +594,101 @@ it.each([true, false])(
     }
   }
 )
+describe('manual installer live safety gate', () => {
+  const occupied = (): UpdateLifecycleError =>
+    new UpdateLifecycleError('installation-busy', 'Another runtime', {
+      phase: 'preparing',
+      runtime: 'running',
+      installation: 'unchanged',
+      canCancel: true,
+      canRetryInstall: false,
+      canRecover: false,
+      detail: 'other-runtime'
+    })
+  it('permits instructions only for exact live other-runtime occupancy after save and task checks', async () => {
+    const flushRenderer = vi.fn(async () => {})
+    const h = setup('desktop', undefined, () => true, { flushRenderer })
+    state.availability.mockRejectedValue(occupied())
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe('quit-required')
+    expect(state.availability).toHaveBeenCalledTimes(2)
+    expect(flushRenderer).toHaveBeenCalledWith('preflight')
+    expect(h.invoke).toHaveBeenCalledWith('desktop:update-inspect')
+    expect(h.stop).not.toHaveBeenCalled()
+    h.invoke.mockResolvedValue({ completed: false, blockedBy: ['notebook'] })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+  })
+  it('blocks a durable pending record created after integration construction or during readiness', async () => {
+    const h = setup()
+    state.record = { ...base, phase: 'handoff' }
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    state.record = undefined
+    state.availability.mockRejectedValue(occupied())
+    h.invoke.mockImplementationOnce(async () => {
+      state.record = { ...base, phase: 'handoff' }
+      return { completed: true }
+    })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    expect(h.stop).not.toHaveBeenCalled()
+  })
+  it('rejects uncertain occupancy or lost control discovered after the first occupancy exception', async () => {
+    const h = setup()
+    state.availability
+      .mockRejectedValueOnce(occupied())
+      .mockRejectedValueOnce(new Error('process inspection failed'))
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    state.availability.mockRejectedValue(occupied())
+    const control = { control: 'granted', generation: 'gen', startupOptions: config }
+    h.refresh
+      .mockResolvedValueOnce(control)
+      .mockResolvedValueOnce({ ...control, control: 'denied' })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+  })
+  it('rejects a concurrent prepare/cancel lifecycle even if it settles during the save await', async () => {
+    const h = setup('desktop', undefined, () => true)
+    h.invoke.mockImplementationOnce(async () => {
+      await h.hooks.prepareInstall!(status, {})
+      await h.hooks.cancelInstall!()
+      return { completed: true }
+    })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    expect(h.stop).not.toHaveBeenCalled()
+  })
+  it('checks current runtime control, installation occupancy and active work without stopping services', async () => {
+    const { hooks, invoke, stop } = setup()
+    // The real inspectDesktopUpdate contract reports reaped:false because it never stops Node.
+    invoke.mockResolvedValue({ completed: true, reaped: false, blockedBy: [] })
+    expect(await hooks.inspectManualInstallSafety!()).toBe(true)
+    expect(state.availability).toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledWith('desktop:update-inspect')
+    expect(stop).not.toHaveBeenCalled()
+    invoke.mockResolvedValue({ completed: false, reaped: true, blockedBy: ['agent'] })
+    expect(await hooks.inspectManualInstallSafety!()).toBe(false)
+  })
+  it('withholds manual instructions when renderer persistence cannot be confirmed', async () => {
+    const flushRenderer = vi.fn(async () => {
+      throw new Error('save failed')
+    })
+    const { hooks, stop } = setup('desktop', undefined, () => true, { flushRenderer })
+    expect(await hooks.inspectManualInstallSafety!()).toBe(false)
+    expect(flushRenderer).toHaveBeenCalledWith('preflight')
+    expect(stop).not.toHaveBeenCalled()
+  })
+  it('blocks unknown control, occupancy and pending installation recovery', async () => {
+    const { hooks, refresh } = setup()
+    refresh.mockResolvedValueOnce({ control: 'denied' })
+    expect(await hooks.inspectManualInstallSafety!()).toBe(false)
+    state.availability.mockRejectedValueOnce(new Error('occupancy unknown'))
+    expect(await hooks.inspectManualInstallSafety!()).toBe(false)
+    state.record = { ...base, phase: 'handoff', stoppedClean: true }
+    expect(await setup().hooks.inspectManualInstallSafety!()).toBe(false)
+  })
+  it('keeps legacy stopped or uncertain runtime recovery ahead of manual installation', async () => {
+    const { hooks, stop } = setup('desktop', undefined, () => true)
+    await hooks.prepareInstall!({ state: 'ready', current: '1', latest: '2' }, {})
+    stop.mockRejectedValueOnce(new RuntimeStopError('runtime-stop-timeout', {} as never))
+    await expect(hooks.installGate!()).rejects.toThrow()
+    expect(await hooks.inspectManualInstallSafety!()).toBe(false)
+    await hooks.recoverInstall!()
+    expect(await hooks.inspectManualInstallSafety!()).toBe(true)
+  })
+})

@@ -1597,8 +1597,17 @@ describe('Windows native installer handoff', () => {
     expect(await strategy.apply()).toMatchObject({
       state: 'error',
       reason: 'install-failed',
-      error: 'Handoff preparation failed'
+      error: 'Handoff preparation failed',
+      recovery: {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRetryInstall: false,
+        canRecover: false
+      }
     })
+    expect((await strategy.getManualInstall()).kind).toBe('website')
     expect(installGate).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(releaseInstallHandoff).toHaveBeenCalledOnce()

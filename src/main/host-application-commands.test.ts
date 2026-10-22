@@ -216,6 +216,18 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     dismissLegacyMovePrompt: vi.fn(async () => undefined)
   },
   update: {
+    getManualInstall: vi.fn(async () => ({
+      kind: 'blocked' as const,
+      identity: '',
+      platform: 'darwin' as const,
+      arch: 'arm64'
+    })),
+    revealManualInstaller: vi.fn(async () => ({
+      kind: 'blocked' as const,
+      identity: '',
+      platform: 'darwin' as const,
+      arch: 'arm64'
+    })),
     getAppInfo: vi.fn(() => ({ name: 'Open-Science', version: '1.0.0', copyright: 'Aipoch' })),
     getStatus: vi.fn(() => updateStatus),
     check: vi.fn(async () => updateStatus),
@@ -251,7 +263,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 80 desktop request channels in their existing capability groups', () => {
+  it('defines the exact 82 desktop request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -299,7 +311,7 @@ describe('Host application commands', () => {
       .find(({ capability }) => capability === 'notifications')!
       .channels.push('notifications:get-desktop-availability', 'notifications:send-test')
     for (const group of expected) group.channels.sort()
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(80)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(82)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -315,7 +327,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(80)
+    expect(router.dispatcher.commandNames()).toHaveLength(82)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -495,6 +507,13 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(hostApplicationCommands.update.getStatus, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.update.recheck, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.update.recover, invocation([]))
+    await router.dispatcher.invoke(hostApplicationCommands.update.getManualInstall, invocation([]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.update.revealManualInstaller,
+      invocation([])
+    )
+    expect(dependencies.update.getManualInstall).toHaveBeenCalledWith()
+    expect(dependencies.update.revealManualInstaller).toHaveBeenCalledWith()
 
     await router.dispatcher.invoke(
       hostApplicationCommands.locale.initialize,
@@ -698,7 +717,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(41)
+    expect(localOnlyChannels).toHaveLength(43)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

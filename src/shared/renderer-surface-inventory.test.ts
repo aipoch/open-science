@@ -346,7 +346,15 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-data-root-and-relaunch',
     'validate-data-root'
   ],
-  update: ['apply', 'cancel', 'download', 'recheck', 'recover'],
+  update: [
+    'apply',
+    'cancel',
+    'download',
+    'recheck',
+    'recover',
+    'get-manual-install',
+    'reveal-manual-installer'
+  ],
   uploads: ['stage-local-path']
 }
 

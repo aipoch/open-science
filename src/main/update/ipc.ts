@@ -17,6 +17,8 @@ export const registerUpdateIpcHandlers = (
       return listener(event, ...args)
     })
   }
+  handle('update:get-manual-install', () => owner.getManualInstall())
+  handle('update:reveal-manual-installer', () => owner.revealManualInstaller())
   handle('update:recheck', () => owner.recheck())
   handle('update:recover', () => owner.recover())
   handle('update:get-app-info', () => owner.getAppInfo())

@@ -1,12 +1,15 @@
 import { APP } from '../../shared/app-config'
 import type {
   AppInfo,
+  ManualInstallInfo,
   UpdateApplyOptions,
   UpdateDownloadOptions,
   UpdateStatus
 } from '../../shared/update'
 import type { UpdateStrategy } from './strategy'
 type UpdateCommandOwner = Readonly<{
+  getManualInstall: () => Promise<ManualInstallInfo>
+  revealManualInstaller: () => Promise<ManualInstallInfo>
   getAppInfo: () => AppInfo
   recheck: () => Promise<UpdateStatus>
   recover: () => Promise<UpdateStatus>
@@ -17,7 +20,18 @@ type UpdateCommandOwner = Readonly<{
   apply: (options?: UpdateApplyOptions) => Promise<UpdateStatus>
 }>
 
+const blocked = (strategy: UpdateStrategy): ManualInstallInfo => ({
+  kind: 'blocked',
+  identity: 'unavailable',
+  platform:
+    process.platform === 'darwin' || process.platform === 'win32' ? process.platform : 'linux',
+  arch: process.arch,
+  version: strategy.getStatus().latest
+})
 const createUpdateCommandOwner = (strategy: UpdateStrategy): UpdateCommandOwner => ({
+  getManualInstall: () => strategy.getManualInstall?.() ?? Promise.resolve(blocked(strategy)),
+  revealManualInstaller: () =>
+    strategy.revealManualInstaller?.() ?? Promise.resolve(blocked(strategy)),
   getAppInfo: (): AppInfo => ({
     name: APP.name,
     version: strategy.getStatus().current,

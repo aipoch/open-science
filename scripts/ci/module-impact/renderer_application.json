@@ -44,7 +44,9 @@
     "src/renderer/src/components/runtime-update-view.ts",
     "src/renderer/src/components/ApplicationStartup.tsx",
     "src/renderer/src/lib/literature-renderer-host.ts",
-    "src/renderer/src/lib/literature-renderer-host.test.ts"
+    "src/renderer/src/lib/literature-renderer-host.test.ts",
+    "src/renderer/src/components/manual-update-install.test.tsx",
+    "src/renderer/src/components/manual-update-install.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/app-shell-presentation-owner.ts",
@@ -120,9 +122,11 @@
     "src/renderer/src/components/runtime-update-outcome-notice.tsx",
     "src/renderer/src/components/runtime-update-view.ts",
     "src/renderer/src/components/ApplicationStartup.tsx",
-    "src/renderer/src/lib/literature-renderer-host.ts"
+    "src/renderer/src/lib/literature-renderer-host.ts",
+    "src/renderer/src/components/manual-update-install.tsx"
   ],
   "consumerModules": ["renderer_hooks"],
+  "fullTestReason": "Manual installer guidance adds a renderer source outside the reviewed dependency boundary; keep full-suite fallback until the extended boundary is reviewed.",
   "testFiles": {
     "owner": [
       "src/renderer/src/App.test.tsx",
@@ -139,7 +143,8 @@
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/components/runtime-startup-gate.test.tsx",
       "src/renderer/src/components/runtime-update-view.test.ts",
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
+      "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/components/manual-update-install.test.tsx"
     ],
     "contract": [
       "src/main/host-layer-dependencies.architecture.test.ts",

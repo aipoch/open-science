@@ -37,6 +37,8 @@ describe('registerUpdateIpcHandlers', () => {
     })
     registerUpdateIpcHandlers(strategy, undefined, validate)
     for (const channel of [
+      'update:get-manual-install',
+      'update:reveal-manual-installer',
       'update:apply',
       'update:cancel',
       'update:recover',
@@ -52,6 +54,8 @@ describe('registerUpdateIpcHandlers', () => {
   it('delegates IPC to an injected owner while returning the scheduler strategy', async () => {
     const strategy = createStrategy()
     const owner: UpdateCommandOwner = {
+      getManualInstall: vi.fn(),
+      revealManualInstaller: vi.fn(),
       getAppInfo: vi.fn(() => ({ name: 'Injected', version: '1.0.0', copyright: 'test' })),
       getStatus: vi.fn(() => status),
       recheck: vi.fn(),
@@ -79,6 +83,8 @@ describe('registerUpdateIpcHandlers', () => {
 
     expect(registerUpdateIpcHandlers(strategy)).toBe(strategy)
     expect([...handlers.keys()]).toEqual([
+      'update:get-manual-install',
+      'update:reveal-manual-installer',
       'update:recheck',
       'update:recover',
       'update:get-app-info',
@@ -110,3 +116,14 @@ describe('registerUpdateIpcHandlers', () => {
 await (
   await import('../../../test/runtime-host')
 ).configureTestElectronHost(await import('electron'))
+
+it('ignores renderer-supplied paths and trust claims for manual installer operations', async () => {
+  const strategy = createStrategy()
+  strategy.getManualInstall = vi.fn().mockResolvedValue({ kind: 'blocked' })
+  strategy.revealManualInstaller = vi.fn().mockResolvedValue({ kind: 'blocked' })
+  registerUpdateIpcHandlers(strategy)
+  await handlers.get('update:get-manual-install')?.({}, '/foreign/file', { verified: true })
+  await handlers.get('update:reveal-manual-installer')?.({}, '/foreign/file', { verified: true })
+  expect(strategy.getManualInstall).toHaveBeenCalledExactlyOnceWith()
+  expect(strategy.revealManualInstaller).toHaveBeenCalledExactlyOnceWith()
+})
