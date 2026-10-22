@@ -106,10 +106,12 @@ treated as small figures. This policy runs after cached table ownership is appli
 The same local detection also protects tables/images when regenerating historical Content first
 editions, without changing saved translations or paragraph indices. New snapshots record atomic
 original regions, so table borders, symbols and labels are emitted in one crop rather than as a
-list of paragraphs. Original table/figure text is intentionally excluded from reflow text checks.
-Content first always retains bibliography text in the source language, even if an older edition
-contains translations of it. Extracted formula and code ownership is stored explicitly; these
-regions retain original glyphs and code indentation rather than being reclassified as prose.
+list of paragraphs. Original table/figure text retained only in image crops is excluded from text
+checks; accepted translations of such content still undergo the normal output-text verification.
+Content first excludes bibliography text from new translation requests. Extracted formula and
+code ownership is stored explicitly; without an existing accepted translation these regions retain
+original glyphs and code indentation rather than being reclassified as prose. Previously accepted
+translations are still emitted when their source matches, even if current classification differs.
 Captioned pseudocode blocks with numbered/indented control flow use the same code policy.
 Inline mathematics stays under the existing identifier/order validation. Inference additionally
 requires literal numeric spelling, unit notation, URLs, DOI strings and inline code, and rejects
@@ -160,8 +162,9 @@ relationships, field values and editability rather than dropping them during ref
 Exported PDFs preserve the source bookmark titles, hierarchy, styles and expansion state.
 Bookmark destinations use the same mapping as internal links, including named destinations.
 FitR destinations retain their original target page and all four rectangle coordinates.
-Pages whose native bounds do not match the zero-origin viewport also retain their original
-content, including unlinked graphics.
+Nonzero CropBox and MediaBox origins are normalized against the visible page bounds, so text,
+graphics and links remain eligible for reflow. Mismatched viewport dimensions still retain the
+source content rather than guessing a coordinate transform.
 An ambiguous destination retains its original page; unsupported actions or malformed bookmark
 trees retain the complete original PDF. No nearest-paragraph destination is guessed.
 
@@ -277,10 +280,11 @@ highlight. Figure preparation releases each page's operator-list resources on co
 or cancellation; PDF.js defers cleanup while a shared page is rendering. These fixes introduce no
 new saved fields or diagnostic values.
 
-Graphic crops are checked after connected paths, same-row regions and protruding labels have been
-combined. If the final crop (including a one-pixel rasterization margin) intersects a translated
-source fragment, the source page is retained with `unsupported-layout` instead of duplicating its
-body text as an image. This also applies to explicit original regions and nested vector Forms.
-Joined paragraphs retain all their source pages; independent pages continue reflowing. Separate
-figures and captions remain eligible, and full-page vector decoration alone does not trigger this
-fallback. This uses the existing diagnostics and saved format; regenerate old exports to apply it.
+Accepted, source-matching translations take priority over locally re-derived figure/reference/code/
+literal classification. Classification still protects content with no valid accepted translation;
+it does not erase an existing translation when reopening or regenerating an edition. Graphic crops
+may include source prose when backgrounds, borders or neighboring paths are ambiguous. Such local
+overlap no longer rejects the page or propagates rejection across joined paragraphs: keep the crop
+and emit the accepted translation, tolerating local duplication instead of losing translated output.
+This policy changes no persisted fields or diagnostic enums; regenerate existing previews/exports
+to apply it, and successful layout reports replace prior failures for the same accepted translations.

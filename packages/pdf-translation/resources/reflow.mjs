@@ -116,18 +116,14 @@ function png(pixels, stride, x, y, w, h) {
 }
 
 // Use the visible page intersection for both background safety and graphic crops.
-function graphicRect([left, low, right, high], dimensions) {
+function graphicRect([left, low, right, high], { left: originX, top, width, height }) {
+  const x = Math.max(0, (left - originX) / width),
+    y = Math.max(0, (top - high) / height)
   return {
-    x: Math.max(0, left / dimensions.width),
-    y: Math.max(0, 1 - high / dimensions.height),
-    width: Math.max(
-      0,
-      Math.min(1, right / dimensions.width) - Math.max(0, left / dimensions.width)
-    ),
-    height: Math.max(
-      0,
-      Math.min(1, high / dimensions.height) - Math.max(0, low / dimensions.height)
-    )
+    x,
+    y,
+    width: Math.max(0, Math.min(1, (right - originX) / width) - x),
+    height: Math.max(0, Math.min(1, (top - low) / height) - y)
   }
 }
 
@@ -187,8 +183,8 @@ function readGraphics(native, page) {
   return objects
 }
 
-function planGraphics(objects, input, number, footerUnits) {
-  const dimensions = input.pages[number - 1]
+function planGraphics(objects, input, number, footerUnits, geometry) {
+  const dimensions = geometry[number - 1]
   const graphics = (input.originalRegions ?? [])
     .filter((region) => region.pageNumber === number)
     .map((region) => ({ ...region.rect }))
@@ -228,7 +224,7 @@ function planGraphics(objects, input, number, footerUnits) {
         j = i + 1
       } else j++
     }
-  // Match the rendering order and footer exclusions when expanding label crops.
+  // Expand crops to keep protruding labels with their figures.
   const pageUnits = readingOrder(
     input.units.flatMap((unit, unitIndex) => {
       const fragments = unit.fragments.filter((fragment) => fragment.pageNumber === number)
@@ -437,17 +433,6 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
           }))
         }
       }
-    for (const link of sourceLinks.links) {
-      const box = sourceLinks.geometry[link.pageNumber - 1]
-      // The graphic extractor currently assumes a zero-origin page. Keep links
-      // and content together when that assumption does not hold.
-      if (
-        link.unsupported ||
-        Math.abs(box.left) >= 0.001 ||
-        Math.abs(box.top - input.pages[link.pageNumber - 1].height) >= 0.001
-      )
-        retainedLinkPages.add(link.pageNumber)
-    }
     retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)
     const retainedPages = new Set(retainedLinkPages)
     for (const number of sourceLinks.unsafePages) retainedPages.add(number)
@@ -456,29 +441,12 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
     // Only an explicit, separate original region can establish that it is a figure.
     for (const number of changedPages) {
       if (retainedPages.has(number)) continue
-      const nativePage = p.FPDF_LoadPage(source.doc, number - 1),
-        dimensions = input.pages[number - 1]
+      const nativePage = p.FPDF_LoadPage(source.doc, number - 1)
       try {
         const objects = readGraphics(native, nativePage)
-        // Crops rasterize every mark in their rectangle, including source prose.
-        // Check the final unions, not individual paths, before emitting any page.
-        const scale = Math.min(2, 2400 / Math.max(dimensions.width, dimensions.height)),
-          pad =
-            1 / Math.min(Math.ceil(dimensions.width * scale), Math.ceil(dimensions.height * scale)),
-          translatedFragments = input.units
-            .filter((unit) => unit.source !== unit.translation)
-            .flatMap((unit) => unit.fragments.filter((fragment) => fragment.pageNumber === number))
-        if (
-          planGraphics(objects, input, number, footerUnits).some((graphic) =>
-            translatedFragments.some((fragment) => touches(graphic, fragment.rect, pad))
-          )
-        ) {
-          retainedPages.add(number)
-          continue
-        }
         for (const object of objects) {
           if (object.type !== 3) continue
-          const rect = graphicRect(object.bounds, dimensions)
+          const rect = graphicRect(object.bounds, sourceLinks.geometry[number - 1])
           if (rect.width * rect.height <= 0.85) continue
           const separateFigure = input.originalRegions?.some(
             (region) =>
@@ -600,7 +568,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
           cursor += drawHeight + 12
           return target
         }
-        const graphics = planGraphics(objects, input, number, footerUnits)
+        const graphics = planGraphics(objects, input, number, footerUnits, sourceLinks.geometry)
         const pageUnits = readingOrder(
           input.units.flatMap((unit, unitIndex) => {
             const fragments = unit.fragments.filter((f) => f.pageNumber === number)

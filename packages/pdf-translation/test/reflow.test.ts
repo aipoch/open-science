@@ -28,7 +28,7 @@ const fragment = (
 async function generate(
   pdf: PDFDocument,
   units: PdfTranslationPdfRequest['units'],
-  options: Pick<PdfTranslationPdfRequest, 'originalRegions'> = {}
+  options: Partial<Pick<PdfTranslationPdfRequest, 'originalRegions' | 'pages'>> = {}
 ): Promise<PdfTranslationPdfResult> {
   const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
   const caller = new TestCallerRegistry().acquire({ leaseId: 'reflow-safety', surface: 'electron' })
@@ -852,7 +852,7 @@ it('keeps two distinct URI identities when translated references change order', 
   }
 })
 
-it('retains CropBox coordinates and repairs the copied link target', async () => {
+it('retains source coordinates when supplied viewport dimensions mismatch the CropBox', async () => {
   const pdf = await PDFDocument.create(),
     font = await pdf.embedFont(StandardFonts.Helvetica)
   for (const label of ['Original reference.', 'Target.'])
@@ -867,8 +867,11 @@ it('retains CropBox coordinates and repairs the copied link target', async () =>
     },
     { source: 'Target.', translation: 'Translated target.', fragments: [fragment(2, 0.08)] }
   ])
-  // A nonzero crop origin conservatively retains the linked component.
-  expect(output.layoutFailures.map((f) => f.code)).toEqual(['annotations', 'annotations'])
+  // Only the mismatched source page is retained; its target can still reflow.
+  expect(output.layoutFailures).toEqual([
+    expect.objectContaining({ code: 'unsupported-layout', unitIndex: 0 })
+  ])
+  expect(output.reflow!.originalPageNumbers).toEqual([1])
   const task = getDocument({ data: output.data.slice() })
   try {
     const parsed = await task.promise,
@@ -1246,34 +1249,70 @@ it.each(['Text', 'Highlight', 'Widget', 'visible-form', 'hidden-form', 'xfa'])(
   }
 )
 
-it.each(['crop', 'media'])(
-  'retains an unlinked graphic page with an offset %s box',
-  async (kind) => {
+it.each([
+  { kind: 'crop', offset: 36.8504 },
+  { kind: 'media', offset: 36.8504 },
+  { kind: 'crop', offset: -36.8504 },
+  { kind: 'media', offset: -36.8504 }
+])(
+  'reflows translated text, a complete figure and links with $kind origin $offset',
+  async ({ kind, offset }) => {
     const pdf = await PDFDocument.create(),
       font = await pdf.embedFont(StandardFonts.Helvetica)
-    const page = pdf.addPage([400, 500])
-    if (kind === 'crop') page.setCropBox(20, 30, 360, 440)
-    else page.setMediaBox(20, 30, 400, 500)
-    page.drawText('Original.', { font, size: 12, x: 50, y: 440 })
-    page.drawRectangle({ x: 60, y: 100, width: 120, height: 80, color: rgb(1, 0, 0) })
-    const output = await generate(pdf, [
-      { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
-    ])
-    expect(output.reflow!.originalPageNumbers).toEqual([1])
-    expect(output.layoutFailures).toEqual([
-      expect.objectContaining({ code: 'unsupported-layout', unitIndex: 0 })
-    ])
-    const saved = await PDFDocument.load(output.data),
-      originalPage = saved.getPage(0)
-    expect(originalPage.getMediaBox()).toEqual(page.getMediaBox())
-    expect(originalPage.getCropBox()).toEqual(page.getCropBox())
+    const page = pdf.addPage([500, 600])
+    if (kind === 'crop') {
+      page.setMediaBox(offset - 20, offset - 20, 440, 540)
+      page.setCropBox(offset, offset, 400, 500)
+    } else page.setMediaBox(offset, offset, 400, 500)
+    page.drawText('Original.', { font, size: 12, x: offset + 40, y: offset + 440 })
+    page.drawRectangle({
+      x: offset + 60,
+      y: offset + 100,
+      width: 120,
+      height: 80,
+      color: rgb(1, 0, 0)
+    })
+    link(pdf, 1, [offset + 40, offset + 438, offset + 85, offset + 454], {
+      A: { S: 'URI', URI: PDFString.of('https://example.org/body') }
+    })
+    link(pdf, 1, [offset + 80, offset + 120, offset + 100, offset + 140], {
+      A: { S: 'URI', URI: PDFString.of('https://example.org/figure') }
+    })
+    const output = await generate(
+      pdf,
+      [{ source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }],
+      { pages: [{ width: 400, height: 500 }] }
+    )
+    expect(output.reflow!.originalPageNumbers).toEqual([])
+    expect(output.layoutFailures).toEqual([])
     const task = getDocument({ data: output.data.slice() })
     try {
       const parsed = await task.promise,
-        content = await (await parsed.getPage(1)).getTextContent()
+        first = await parsed.getPage(1),
+        content = await first.getTextContent()
+      expect(parsed.numPages).toBe(1)
       expect(content.items.map((item) => ('str' in item ? item.str : '')).join(' ')).toContain(
-        'Original.'
+        'Translated.'
       )
+      expect((await first.getAnnotations()).map((annotation) => annotation.url).sort()).toEqual([
+        'https://example.org/body',
+        'https://example.org/figure'
+      ])
+      const viewport = first.getViewport({ scale: 1 }),
+        canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height)),
+        context = canvas.getContext('2d')
+      await first.render({
+        canvasContext: context as unknown as CanvasRenderingContext2D,
+        viewport
+      }).promise
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+      let redPixels = 0
+      for (let i = 0; i < pixels.length; i += 4)
+        if (pixels[i] > 240 && pixels[i + 1] < 15 && pixels[i + 2] < 15) redPixels++
+      // A wrong crop origin clips the figure or copies the wrong source region.
+      // Allow a two-pixel antialiasing edge on the 120 x 80 point rectangle.
+      expect(redPixels).toBeGreaterThan(9200)
+      expect(redPixels).toBeLessThan(9900)
     } finally {
       await task.destroy()
     }
@@ -1820,7 +1859,7 @@ it.each([
   'pixel-edge',
   'joined'
 ] as const)(
-  'retains source pages when a final graphic crop includes translated prose (%s)',
+  'keeps accepted translations when a graphic crop also contains source prose (%s)',
   async (mode) => {
     const pdf = await PDFDocument.create(),
       font = await pdf.embedFont(StandardFonts.Helvetica),
@@ -1901,19 +1940,18 @@ it.each([
           }
         : {}
     )
-    expect(output.layoutFailures).toEqual([
-      expect.objectContaining({
-        unitIndex: 0,
-        code: 'unsupported-layout',
-        pageNumbers: joined ? [1, 2] : [1]
-      })
-    ])
-    expect(output.reflow!.originalPageNumbers).toEqual(joined ? [1, 2] : [1])
+    expect(output.layoutFailures).toEqual([])
+    expect(output.reflow!.originalPageNumbers).toEqual([])
+    expect(
+      output
+        .reflow!.units.find((unit) => unit.unitIndex === 0)
+        ?.fragments.map((f) => f.text)
+        .join('')
+    ).toBe('Translated callout body.')
     const task = getDocument({ data: output.data.slice() })
     try {
       const parsed = await task.promise,
         texts: string[] = []
-      expect(parsed.numPages).toBe(independentPage)
       for (let number = 1; number <= parsed.numPages; number++) {
         const current = await parsed.getPage(number),
           content = await current.getTextContent()
@@ -1923,15 +1961,15 @@ it.each([
             .map((item) => item.str)
             .join(' ')
         )
-        // Retention keeps vector content; no duplicate raster crop is appended.
-        expect(
-          (await current.getOperatorList()).fnArray.filter((op) => op === OPS.paintImageXObject)
-        ).toHaveLength(0)
       }
-      expect(texts[0].match(/Original callout body\./gu)).toHaveLength(1)
-      expect(texts.join(' ')).not.toContain('Translated callout body.')
-      expect(texts.at(-1)).toContain('Independent translation.')
-      if (joined) expect(texts[1]).toContain('Continued source.')
+      const text = texts.join(' ')
+      expect(text.match(/Translated callout body\./gu)).toHaveLength(1)
+      expect(text).toContain('Independent translation.')
+      expect(
+        (await (await parsed.getPage(1)).getOperatorList()).fnArray.filter(
+          (op) => op === OPS.paintImageXObject
+        )
+      ).toHaveLength(1)
     } finally {
       await task.destroy()
     }

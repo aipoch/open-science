@@ -166,14 +166,13 @@ export function readReflowLinks(native, source, input, originalDocument) {
         if (!p.FPDF_GetPageBoundingBox(page, at)) throw Error('Link page bounds')
         const [left, top, right, bottom] = m.HEAPF32.slice(at / 4, at / 4 + 4)
         geometry.push({ left, top, width: right - left, height: top - bottom })
-        // Graphic extraction uses the supplied zero-origin viewport even without links.
+        // CropBox/MediaBox origins need not be zero. All graphic and link
+        // coordinates are normalized against this visible-page geometry.
         if (
           [
-            left,
-            bottom,
-            right - input.pages[number - 1].width,
-            top - input.pages[number - 1].height
-          ].some((offset) => Math.abs(offset) >= 0.001)
+            right - left - input.pages[number - 1].width,
+            top - bottom - input.pages[number - 1].height
+          ].some((offset) => !Number.isFinite(offset) || Math.abs(offset) >= 0.001)
         )
           unsafePages.add(number)
         let text

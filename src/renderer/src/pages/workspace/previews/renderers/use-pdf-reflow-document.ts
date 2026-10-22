@@ -165,8 +165,10 @@ export function usePdfReflowDocument(
         const kinds = pdfReflowContentKinds(protectedSource)
         const requestUnits = protectedSource.units.map((u) => {
           const result = accepted.get(u.id)
+          // Recomputed visual ownership must not discard an already accepted translation,
+          // including historical code, references or labels newly classified as source-only.
           const translation =
-            !u.sourceOnly && result?.translationSource === u.source && result.translation.trim()
+            result?.translationSource === u.source && result.translation.trim()
               ? result.translation
               : u.source
           const retain = u.fragments.some((fragment) => retainedPages.has(fragment.pageNumber))
@@ -313,7 +315,12 @@ export function usePdfReflowDocument(
           originalUnitCount:
             retained.size +
             (results.failedUnitIds?.length ?? 0) +
-            protectedSource.units.filter((unit) => unit.figure).length,
+            protectedSource.units.filter(
+              (unit, index) =>
+                unit.figure &&
+                requestUnits[index].translation === unit.source &&
+                !retained.has(unit.id)
+            ).length,
           sourcePageNumbers: output.reflow.sourcePageNumbers,
           sourcePages: output.reflow.sourcePages,
           originalPageNumbers: output.reflow.originalPageNumbers,
