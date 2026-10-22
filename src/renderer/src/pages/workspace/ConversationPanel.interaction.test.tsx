@@ -7840,7 +7840,7 @@ describe('ConversationPanel fix loop lock', () => {
     }
   )
 
-  it('uses the running composer submit action to add the draft to the queue', () => {
+  it('moves queue submission into the running menu and preserves Enter queueing', () => {
     const onQueueMessage = vi.fn()
     const runningSession: ChatSession = {
       ...idleSession,
@@ -7862,8 +7862,64 @@ describe('ConversationPanel fix loop lock', () => {
       '[data-testid="composer-queue-submit"]'
     ) as HTMLButtonElement
     expect(queueSubmit.disabled).toBe(false)
+    expect(queueSubmit.textContent).toBe('Add message to queue')
+    const slot = container.querySelector('[data-testid="composer-running-control-slot"]')!
+    expect(slot.querySelector(':scope > button')?.getAttribute('aria-label')).toBe('Cancel run')
+    expect(queueSubmit.parentElement).not.toBe(slot)
+    expect(container.querySelector('[aria-label="Send message"]')).toBeNull()
     act(() => queueSubmit.click())
     expect(onQueueMessage).toHaveBeenCalledWith([])
+    act(() => {
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      )
+    })
+    expect(onQueueMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    { submit: false, submitMode: 'queue' as const },
+    { submit: true, submitMode: 'send' as const }
+  ])('disables queue submission when unavailable: %j', (availability) => {
+    const onQueueMessage = vi.fn()
+    renderPanel({
+      view: {
+        activeSession: {
+          ...idleSession,
+          status: 'running',
+          activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+        }
+      },
+      conversation: {
+        availability,
+        actions: { submit: { draft: routeDraftSubmit({ send: onQueueMessage }) } }
+      }
+    })
+    const queue = container.querySelector(
+      '[data-testid="composer-queue-submit"]'
+    ) as HTMLButtonElement
+    expect(queue.disabled).toBe(true)
+    act(() => queue.click())
+    expect(onQueueMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps the options menu enabled for queueing when side chat is unavailable', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...idleSession,
+          status: 'running',
+          activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+        },
+        sideChatDisabledReason: 'Side chat unavailable'
+      },
+      sideChat: { createDraft: undefined, retryHydration: undefined },
+      conversation: { availability: { submit: true, submitMode: 'queue' } }
+    })
+    const menu = container.querySelector(
+      '[data-testid="running-side-chat-menu-trigger"]'
+    ) as HTMLButtonElement
+    expect(menu.disabled).toBe(false)
   })
 
   it('keeps Send and branch-scoped Stop together after a timed Main turn settles', () => {
@@ -7982,6 +8038,7 @@ describe('ConversationPanel fix loop lock', () => {
   })
 
   it('shows cascade progress, prevents duplicate Stop, and restores the control after failure', async () => {
+    const onQueueMessage = vi.fn()
     let rejectStop!: (error: Error) => void
     const onCancelRun = vi.fn(
       () =>
@@ -8000,10 +8057,12 @@ describe('ConversationPanel fix loop lock', () => {
       },
       conversation: {
         availability: {
-          submit: false
+          submit: true,
+          submitMode: 'queue'
         },
         actions: {
-          cancel: onCancelRun
+          cancel: onCancelRun,
+          submit: { draft: routeDraftSubmit({ send: onQueueMessage }) }
         }
       }
     })
@@ -8018,6 +8077,18 @@ describe('ConversationPanel fix loop lock', () => {
     expect(cancelButton.disabled).toBe(true)
     expect(cancelButton.getAttribute('aria-label')).toBe('Stopping run and subagents')
 
+    const queue = container.querySelector(
+      '[data-testid="composer-queue-submit"]'
+    ) as HTMLButtonElement
+    expect(queue.disabled).toBe(true)
+    act(() => {
+      queue.click()
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onQueueMessage).not.toHaveBeenCalled()
+
     await act(async () => {
       rejectStop(new Error('cascade unavailable'))
       await Promise.resolve()
@@ -8025,6 +8096,7 @@ describe('ConversationPanel fix loop lock', () => {
 
     const retry = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     expect(retry.disabled).toBe(false)
+    expect(queue.disabled).toBe(false)
     expect(container.textContent).toContain('cascade unavailable')
   })
 
@@ -8141,7 +8213,7 @@ describe('ConversationPanel fix loop lock', () => {
       '[data-testid="composer-running-control-slot"]'
     ) as HTMLDivElement
     expect(slot.className.split(' ')).toEqual(
-      expect.arrayContaining(['w-24', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
+      expect.arrayContaining(['w-16', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
     )
     expect(slot.querySelector('[aria-label="Cancel run"]')).not.toBeNull()
   })

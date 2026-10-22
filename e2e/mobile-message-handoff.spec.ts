@@ -58,7 +58,7 @@ for (const queued of [false, true]) {
           phone,
           `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
         )
-        await expect(phone.getByTestId('composer-queue-submit')).toBeVisible()
+        await expect(phone.getByRole('button', { name: 'Cancel run', exact: true })).toBeVisible()
       }
       await phone.route(routePattern, async (route) => {
         const submitted = route.request().postDataJSON()?.args?.[0]
@@ -75,6 +75,7 @@ for (const queued of [false, true]) {
       })
       await phone.getByRole('textbox', { name: 'Ask anything' }).fill(text)
       if (queued) {
+        await phone.getByTestId('running-side-chat-menu-trigger').click()
         await phone.getByTestId('composer-queue-submit').click()
         await phone.getByTestId('composer-queue-trigger').click()
         await expect(phone.getByText(text, { exact: true })).toHaveCount(1)

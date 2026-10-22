@@ -57,6 +57,7 @@ import type { TFunction } from 'i18next'
 import {
   AlertTriangle,
   ArrowUp,
+  ListPlus,
   BookMarked,
   BookOpen,
   ChartNoAxesCombined,
@@ -1359,6 +1360,7 @@ const ConversationPanel = ({
       node.attachmentId ? ([[node.attachmentId, node]] as const) : []
     )
   )
+  const canQueueMessage = effectiveCanSend && submitMode === 'queue'
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const hasSideChatDraft = hasTextDraft || annotations.length > 0
   const openSideChatReason =
@@ -3226,22 +3228,8 @@ const ConversationPanel = ({
                               // reachable across the whole loop, not just the agent-fix running turn.
                               <div
                                 data-testid="composer-running-control-slot"
-                                className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                                className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                               >
-                                <button
-                                  type="button"
-                                  onClick={handleSubmit}
-                                  disabled={!effectiveCanSend || submitMode !== 'queue'}
-                                  className={composerIconButtonClassName}
-                                  aria-label={t('Add message to queue')}
-                                  data-testid="composer-queue-submit"
-                                >
-                                  <ArrowUp
-                                    className="size-4"
-                                    strokeWidth={2.2}
-                                    aria-hidden="true"
-                                  />
-                                </button>
                                 <button
                                   type="button"
                                   onClick={handleStop}
@@ -3290,6 +3278,7 @@ const ConversationPanel = ({
                                               type="button"
                                               className={composerIconButtonClassName}
                                               disabled={
+                                                !canQueueMessage &&
                                                 !canOpenSideChat &&
                                                 !canStartSideChat &&
                                                 !canRetrySideChatHydration
@@ -3306,11 +3295,25 @@ const ConversationPanel = ({
                                         </span>
                                       </TooltipTrigger>
                                       <TooltipContent side="top">
-                                        {sideChatDisabledReason ?? t('More send options')}
+                                        {canQueueMessage
+                                          ? t('More send options')
+                                          : (sideChatDisabledReason ?? t('More send options'))}
                                       </TooltipContent>
                                     </Tooltip>
                                   </>
                                   <DropdownMenuContent side="top" align="end" className="w-64">
+                                    <DropdownMenuItem
+                                      data-testid="composer-queue-submit"
+                                      disabled={!canQueueMessage}
+                                      onSelect={handleSubmit}
+                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                    >
+                                      <ListPlus
+                                        className="mr-2 size-4 text-text-300"
+                                        aria-hidden="true"
+                                      />
+                                      {t('Add message to queue')}
+                                    </DropdownMenuItem>
                                     {sideChatMenuItems}
                                   </DropdownMenuContent>
                                 </DropdownMenu>

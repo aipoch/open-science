@@ -852,6 +852,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Top tabs: `h-11 px-2`, active tab `h-8 rounded-md bg-accent`.
 - Activity stream: `ScrollArea className="min-w-0 flex-1"`.
 - Composer: fixed to the bottom of the activity stream and constrained to `max-w-4xl`, with the composer text track aligned to the message content.
+- The composer primary-action slot swaps Send for Stop while the root turn is busy. Keep the same two-control width (primary action and options) so the model picker and pointer targets do not shift. Queue submission belongs in the running options menu with an explicit label; Enter retains its queue behavior. Pending Stop shows progress and blocks duplicate cancellation and queue submission.
 - Right viewer area: `border-l border-border/20`.
 - Side chat headers follow Replay chrome: a compact title/information popover on the left and ghost icon actions for the main Session, full screen, and close on the right. The information popover identifies the owning Session; it does not represent the exact conversation context snapshot. Reuse tool-panel expansion so draft, transcript and running state survive layout changes; returning to the main Session collapses the expanded surface.
 - Desktop side-panel dividers reveal a centered, full-height 2px `text-200` line on hover,
