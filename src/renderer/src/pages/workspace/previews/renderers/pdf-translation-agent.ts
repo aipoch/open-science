@@ -81,6 +81,7 @@ const createPdfTranslationAgentExecutor = (
           : {}),
         batchShortSources: options.targetId !== LOCAL_TARGET.id,
         ...(options.concurrency !== undefined ? { concurrency: options.concurrency } : {}),
+        ...(options.contentFirst !== undefined ? { contentFirst: options.contentFirst } : {}),
         language: options.language,
         glossary: options.glossary,
         sources: source.units.filter((unit) => !unit.sourceOnly).map((unit) => unit.source),

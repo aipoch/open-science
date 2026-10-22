@@ -6,13 +6,14 @@ const snapshots = new WeakMap<PdfTranslationSource, PdfTranslationLayoutSnapshot
 
 export function rememberPdfTranslationExtraction(extraction: PdfTranslationExtraction): void {
   if (snapshots.has(extraction.source)) return
-  const { fingerprint, pages, units } = extraction.source
+  const { fingerprint, pages, units, originalRegions } = extraction.source
   snapshots.set(extraction.source, {
     version: 1,
     parserVersion: 'pdfjs-paragraph-layout-1',
     fingerprint,
     pages,
     units,
+    ...(originalRegions ? { originalRegions } : {}),
     coverage: extraction.coverage
   } as PdfTranslationLayoutSnapshot)
 }

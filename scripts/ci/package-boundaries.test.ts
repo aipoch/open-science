@@ -227,18 +227,13 @@ it('PDF workflow sources contain no application source taxonomy or database adap
 
 it('local module and affected plans obey the same downstream package direction as Ubuntu', async () => {
   const { createModuleTestPlan, createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  for (const id of [
-    'main_pdf_translation',
-    'workspace_previews',
-    'main_literature',
-    'page_literature'
-  ])
-    expect(
-      createModuleTestPlan(id).testFiles.filter((path) => path.startsWith('packages/'))
-    ).toEqual([])
+  for (const id of ['main_pdf_translation', 'main_literature', 'page_literature']) {
+    const plan = createModuleTestPlan(id)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles.filter((path) => path.startsWith('packages/'))).toEqual([])
+  }
   for (const path of [
     'src/main/literature/pdf-translation/index.ts',
-    'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
     'src/main/literature/command-owner.ts',
     'src/main/literature/journal-attributes.ts'
   ]) {
@@ -253,6 +248,39 @@ it('local module and affected plans obey the same downstream package direction a
   const plan = createModuleTestPlan('package_pdf_translation')
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-translation/'))).toBe(true)
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
+})
+
+it('runs unfiltered tests for reclassified workspace preview module and affected plans', async () => {
+  const { createModuleTestPlan, createAffectedTestPlan, executeModuleTestPlan } =
+    await import('./module-test-impact.mjs')
+  for (const plan of [
+    createModuleTestPlan('workspace_previews'),
+    createAffectedTestPlan(
+      [
+        {
+          path: 'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
+          status: 'modified'
+        }
+      ],
+      { status: 'unavailable', testFiles: ['packages/pdf-translation/test/checkpoints.test.ts'] }
+    )
+  ]) {
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains).toContainEqual(
+      expect.stringMatching(/^workspace_previews -> .+ -> full$/)
+    )
+    const invocations: string[][] = []
+    expect(
+      executeModuleTestPlan(plan, {
+        environment: { npm_execpath: '/fixture/npm-cli.js' },
+        spawn: (_command: string, args: string[]) => {
+          invocations.push(args)
+          return { status: 0 }
+        }
+      })
+    ).toBe(0)
+    expect(invocations).toEqual([['/fixture/npm-cli.js', 'test', '--']])
+  }
 })
 
 const hostBoundaryManifest = loadModuleImpactManifest()

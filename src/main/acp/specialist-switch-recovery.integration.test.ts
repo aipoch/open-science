@@ -26,11 +26,14 @@ import {
   type PersistedSessionSpecialistBinding
 } from '../specialist/session-reconfiguration'
 
-it
-  .runIf(Boolean(process.env.CODEX_ACP_PATH && process.env.CODEX_NATIVE_PATH))
-  .each(['codex-responses', 'codex-bridge'] as const)(
-  'applies consecutive Specialist selections before the first real %s prompt',
-  async (modelRoute) => {
+it.runIf(Boolean(process.env.CODEX_ACP_PATH && process.env.CODEX_NATIVE_PATH)).each([
+  ['codex-responses', 0],
+  ['codex-responses', 5000],
+  ['codex-bridge', 0],
+  ['codex-bridge', 5000]
+] as const)(
+  'applies consecutive Specialist selections before the first real %s prompt after %i ms idle',
+  async (modelRoute, idleMs) => {
     const root = await mkdtemp(join(tmpdir(), 'specialist-codex-unprompted-'))
     const cwd = join(root, 'project')
     await mkdir(cwd)
@@ -91,7 +94,7 @@ it
     })
     onTestFinished(async () => {
       await runtime.disconnect()
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
     })
     let persisted: PersistedSessionSpecialistBinding = {}
     const errors: unknown[] = []
@@ -118,6 +121,8 @@ it
       }
     })
     const first = await reconfiguration.requestSwitch('app-session', 'first')
+    // Waiting alone must not be mistaken for creating a restorable native rollout.
+    if (idleMs > 0) await new Promise((resolve) => setTimeout(resolve, idleMs))
     const second = await reconfiguration.requestSwitch('app-session', 'second')
     const retry = await reconfiguration.requestSwitch('app-session', 'second')
     expect(

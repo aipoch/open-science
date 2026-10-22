@@ -1,3 +1,4 @@
+import { verifiedPdfStructureRegions } from './structure-regions.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import type { TextItem, TextStyle } from 'pdfjs-dist/types/src/display/api.js'
@@ -1105,12 +1106,39 @@ export async function applyCachedPdfTableSources({
         ])
       })
     }
+    const originalRegions = verifiedPdfStructureRegions(
+      source,
+      results.flatMap((result) =>
+        result.elements.flatMap((element) => {
+          const tables =
+            element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
+          const keys = new Set(
+            tables.map((_, part) => `${result.extractionId}:${element.id}:${part}`)
+          )
+          return [
+            {
+              regions: element.regions,
+              owners: new Set(
+                [...claims].filter(([, claim]) => keys.has(claim.tableKey)).map(([key]) => key)
+              )
+            }
+          ]
+        })
+      ),
+      pages,
+      results.flatMap((result) =>
+        result.elements.flatMap((element) => element.caption?.regions ?? [])
+      )
+    )
     // Exact owners were consumed once above; only whole units move, so no text can disappear.
     return Object.freeze({
       ...extraction,
       coverage,
       source: createPdfTranslationSource({
         ...source,
+        ...(originalRegions.length
+          ? { originalRegions: [...(source.originalRegions ?? []), ...originalRegions] }
+          : {}),
         units: [...source.units.filter((u) => !removed.has(u.id)), ...replacements]
       })
     })
