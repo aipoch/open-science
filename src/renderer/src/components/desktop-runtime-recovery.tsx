@@ -15,10 +15,13 @@ import { flushComposerDrafts } from '@/pages/workspace/composer-draft-storage'
 import { useSessionStore } from '@/stores/session-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { Button } from '@/components/ui/button'
-import { saveRuntimeDiagnostics } from './save-runtime-diagnostics'
 
 /** Keeps the application mounted: recovery must never discard editors or composer drafts. */
-export function DesktopRuntimeRecovery(): React.JSX.Element | null {
+export function DesktopRuntimeRecovery({
+  saveDiagnostics
+}: {
+  saveDiagnostics: (text: string) => void
+}): React.JSX.Element | null {
   const { t } = useTranslation()
   const state = useDesktopRuntimeRecoveryStore()
   const updating = useUpdateStore((store) => store.status.state === 'applying')
@@ -238,7 +241,7 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
               variant="outline"
               onClick={() => {
                 try {
-                  saveRuntimeDiagnostics(state.diagnostics ?? JSON.stringify(state, null, 2))
+                  saveDiagnostics(state.diagnostics ?? JSON.stringify(state, null, 2))
                   setDiagnosticResult('downloaded')
                 } catch {
                   setDiagnosticResult('failed')

@@ -1255,7 +1255,6 @@
     "renderer_diagnostics": [
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
-      "src/renderer/src/components/runtime-startup-gate.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

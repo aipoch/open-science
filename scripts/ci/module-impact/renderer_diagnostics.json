@@ -1,13 +1,9 @@
 {
   "ownerPaths": [
     "src/renderer/src/renderer-diagnostics.test.ts",
-    "src/renderer/src/renderer-diagnostics.ts",
-    "src/renderer/src/components/save-runtime-diagnostics.ts"
+    "src/renderer/src/renderer-diagnostics.ts"
   ],
-  "interfacePaths": [
-    "src/renderer/src/renderer-diagnostics.ts",
-    "src/renderer/src/components/save-runtime-diagnostics.ts"
-  ],
+  "interfacePaths": ["src/renderer/src/renderer-diagnostics.ts"],
   "testFiles": {
     "owner": ["src/renderer/src/renderer-diagnostics.test.ts"],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],

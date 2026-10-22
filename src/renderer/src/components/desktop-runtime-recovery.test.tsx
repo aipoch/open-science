@@ -22,7 +22,6 @@ vi.mock('@/stores/session-store', () => ({
 vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: { getState: () => ({ openSession: sessionMocks.openSession }) }
 }))
-vi.mock('./save-runtime-diagnostics', () => ({ saveRuntimeDiagnostics: sessionMocks.save }))
 
 vi.mock('@/pages/workspace/composer-draft-storage', () => ({ flushComposerDrafts: vi.fn() }))
 vi.mock('@/stores/project-store', () => ({
@@ -65,7 +64,7 @@ describe('desktop recovery notice', () => {
     render(
       <>
         <textarea aria-label="draft" />
-        <DesktopRuntimeRecovery />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
       </>
     )
     const draft = screen.getByLabelText('draft')
@@ -87,7 +86,7 @@ describe('desktop recovery notice', () => {
     render(
       <>
         <textarea aria-label="draft" defaultValue="retained draft" />
-        <DesktopRuntimeRecovery />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
       </>
     )
     const draft = screen.getByLabelText('draft')
@@ -103,7 +102,7 @@ describe('desktop recovery notice', () => {
     render(
       <>
         <textarea aria-label="draft" />
-        <DesktopRuntimeRecovery />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
       </>
     )
     const draft = screen.getByLabelText('draft')
@@ -136,7 +135,7 @@ describe('desktop recovery notice', () => {
     render(
       <>
         <Background />
-        <DesktopRuntimeRecovery />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
       </>
     )
     const draft = screen.getByLabelText('draft')
@@ -152,7 +151,7 @@ describe('desktop recovery notice', () => {
     render(
       <>
         <textarea aria-label="draft" defaultValue="unsent work" />
-        <DesktopRuntimeRecovery />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
       </>
     )
     const draft = screen.getByLabelText('draft')
@@ -170,7 +169,7 @@ describe('desktop recovery notice', () => {
 
   it('announces confirmed interrupted tasks once after a new generation synchronizes', async () => {
     sessionMocks.sessions = [{ id: 's', projectId: 'p' }]
-    render(<DesktopRuntimeRecovery />)
+    render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
     await act(async () => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
     sessionMocks.sessions = [
       {
@@ -196,7 +195,7 @@ describe('desktop recovery notice', () => {
   })
 
   it('does not equate a new service process with interrupted tasks', async () => {
-    render(<DesktopRuntimeRecovery />)
+    render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
     await act(async () => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
     await act(async () =>
       publish({ phase: 'connected', epoch: 1, closing: false, restartedGeneration: 'new' })
@@ -205,7 +204,7 @@ describe('desktop recovery notice', () => {
   })
 
   it('keeps diagnostics download feedback visible after reconnection', async () => {
-    render(<DesktopRuntimeRecovery />)
+    render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
     await act(async () =>
       publish({
         phase: 'unavailable',
@@ -223,7 +222,7 @@ describe('desktop recovery notice', () => {
   })
 
   it('uses generic stop wording when no command-line provenance is known', async () => {
-    render(<DesktopRuntimeRecovery />)
+    render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
     await act(async () =>
       publish({ phase: 'unavailable', epoch: 1, closing: false, reason: 'service-stopped' })
     )
@@ -235,7 +234,7 @@ describe('desktop recovery notice', () => {
     render(
       <>
         <textarea aria-label="draft" />
-        <DesktopRuntimeRecovery />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
       </>
     )
     const draft = screen.getByLabelText('draft')
@@ -256,7 +255,7 @@ describe('desktop recovery notice', () => {
 it('offers retry and quit when automatic recovery is unavailable', async () => {
   useDesktopRuntimeRecoveryStore.setState({ phase: 'unavailable', epoch: 1, closing: false })
   window.api = {} as typeof window.api
-  render(<DesktopRuntimeRecovery />)
+  render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Quit' })).toBeTruthy()
   expect(screen.getByRole('status').textContent).toContain('may have completed')
@@ -266,7 +265,7 @@ it('leaves planned update shutdown to the update dialog, but exposes a failed ha
   window.api = {} as typeof window.api
   useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: true, epoch: 1 })
   useUpdateStore.setState({ status: { state: 'applying', current: '1' } })
-  render(<DesktopRuntimeRecovery />)
+  render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
   expect(screen.queryByRole('alertdialog')).toBeNull()
   act(() => useUpdateStore.setState({ status: { state: 'error', current: '1' } }))
   expect(screen.getByRole('status')).toBeTruthy()
@@ -277,7 +276,7 @@ it('does not hide an unexpected disconnect just because an update is preparing',
   window.api = {} as typeof window.api
   useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: false, epoch: 1 })
   useUpdateStore.setState({ status: { state: 'applying', current: '1' } })
-  render(<DesktopRuntimeRecovery />)
+  render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy()
   cleanup()
 })
