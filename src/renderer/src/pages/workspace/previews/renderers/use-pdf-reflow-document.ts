@@ -16,6 +16,10 @@ import {
 import { pdfTranslationCheckpointRequestSchema } from '../../../../../../shared/pdf-translation'
 import { pdfjsLib } from '../pdfjs'
 import type { PdfTranslationDocumentState } from './pdf-translation-document-state'
+import {
+  preparePdfTranslationStructure,
+  type PdfTranslationStructureContext
+} from './pdf-translation-structure'
 
 const textKey = (text: string): string => text.normalize('NFC').replace(/\s/gu, '')
 
@@ -26,7 +30,8 @@ export function usePdfReflowDocument(
   resourceRequestKey: string,
   enabled: boolean,
   beforeReady?: () => void,
-  translating = false
+  translating = false,
+  structureContext?: PdfTranslationStructureContext
 ): {
   state: PdfTranslationDocumentState
   ready: Extract<PdfTranslationDocumentState, { status: 'ready' }> | undefined
@@ -40,7 +45,11 @@ export function usePdfReflowDocument(
   registerDisposer: (dispose: () => void) => () => void
 } {
   const [revision, setRevision] = useState(0)
-  type Snapshot = { original: PDFDocumentProxy; results: PdfTranslationResults }
+  type Snapshot = {
+    original: PDFDocumentProxy
+    results: PdfTranslationResults
+    structureContext?: PdfTranslationStructureContext
+  }
   const [selection, setSelection] = useState<Snapshot>()
   const [displayed, setDisplayed] = useState<
     Snapshot & {
@@ -51,6 +60,7 @@ export function usePdfReflowDocument(
   const [stored, setStored] = useState<{
     original: PDFDocumentProxy
     results: PdfTranslationResults
+    structureContext?: PdfTranslationStructureContext
     state: PdfTranslationDocumentState
     failures: Record<string, PdfTranslationLayoutFailure>
   }>()
@@ -74,6 +84,7 @@ export function usePdfReflowDocument(
     Boolean(
       admitted &&
       snapshot?.original === original &&
+      snapshot.structureContext === structureContext &&
       latestResults &&
       snapshot.results.source === latestResults.source &&
       snapshot.results.checkpoint?.key === latestResults.checkpoint?.key
@@ -82,7 +93,7 @@ export function usePdfReflowDocument(
   // completion or an explicit refresh selects the newest accepted paragraphs.
   const results = sameContext(selection) ? selection?.results : undefined
   if (admitted && original && latestResults && !translating && results !== latestResults)
-    setSelection({ original, results: latestResults })
+    setSelection({ original, results: latestResults, structureContext })
   else if (!admitted && selection) setSelection(undefined)
   const canDisplay =
     sameContext(displayed) &&
@@ -104,7 +115,8 @@ export function usePdfReflowDocument(
     const controller = new AbortController()
     const failures: Record<string, PdfTranslationLayoutFailure> = {}
     const publish = (state: PdfTranslationDocumentState): void => {
-      if (!cancelled) setStored({ original, results, state, failures: { ...failures } })
+      if (!cancelled)
+        setStored({ original, results, structureContext, state, failures: { ...failures } })
     }
     const release = (): void => {
       if (released) return
@@ -149,13 +161,24 @@ export function usePdfReflowDocument(
             if (unit.fragments.some((fragment) => retainedPages.has(fragment.pageNumber)))
               for (const fragment of unit.fragments) retainedPages.add(fragment.pageNumber)
         } while (retainedPages.size !== previousSize)
-        // Derive visual ownership locally even for historical editions. Only the
-        // rendering request changes; saved source indices and translations do not.
+        // Verified native ownership can suppress historical table/figure label
+        // translations without rewriting the edition's source IDs or saved text.
+        const structure = await preparePdfTranslationStructure({
+          document: original,
+          extraction: { source: results.source, coverage },
+          context: structureContext,
+          preserveUnitIdentity: true,
+          signal: controller.signal
+        })
+        if (cancelled) return
+        const structureRetained = new Set(structure.retainedUnitIds)
+        // Geometric guesses remain advisory: only the verified IDs above can
+        // override an accepted translation. Uncertain prose must still be emitted.
         const protectedSource = applyPdfContentFirstPolicy(
           (
             await preservePdfFigureSources({
               document: original,
-              extraction: { source: results.source },
+              extraction: structure.extraction,
               operators: pdfjsLib.OPS,
               signal: controller.signal
             })
@@ -168,7 +191,9 @@ export function usePdfReflowDocument(
           // Recomputed visual ownership must not discard an already accepted translation,
           // including historical code, references or labels newly classified as source-only.
           const translation =
-            result?.translationSource === u.source && result.translation.trim()
+            !structureRetained.has(u.id) &&
+            result?.translationSource === u.source &&
+            result.translation.trim()
               ? result.translation
               : u.source
           const retain = u.fragments.some((fragment) => retainedPages.has(fragment.pageNumber))
@@ -209,7 +234,10 @@ export function usePdfReflowDocument(
         const placements = new Map(output.reflow.units.map((u) => [u.unitIndex, u.fragments]))
         if (placements.size !== output.reflow.units.length)
           throw new Error('Duplicate reflow units')
-        const retained = new Set(Object.keys(failures))
+        const retained = new Set([
+          ...Object.keys(failures),
+          ...structure.retainedUnitIds.filter((id) => accepted.has(id))
+        ])
         for (const { unitIndex, ...failure } of output.layoutFailures) {
           if (!units[unitIndex]) throw new Error('Invalid reflow failure')
           if (accepted.has(units[unitIndex].id)) {
@@ -326,7 +354,13 @@ export function usePdfReflowDocument(
           originalPageNumbers: output.reflow.originalPageNumbers,
           unitFragments
         }
-        setDisplayed({ original, results, state: ready, failures: { ...failures } })
+        setDisplayed({
+          original,
+          results,
+          structureContext,
+          state: ready,
+          failures: { ...failures }
+        })
         publish(ready)
       })().catch((error) => {
         release()
@@ -345,8 +379,12 @@ export function usePdfReflowDocument(
       void api.cancelPdf(id).catch(() => undefined)
       if (live.current?.release !== release) release()
     }
-  }, [admitted, original, results, revision, beforeReady, resourceRequestKey])
-  const current = admitted && stored?.original === original && stored.results === results
+  }, [admitted, original, results, revision, beforeReady, resourceRequestKey, structureContext])
+  const current =
+    admitted &&
+    stored?.original === original &&
+    stored.results === results &&
+    stored.structureContext === structureContext
   if (!admitted && stored) setStored(undefined)
   useEffect(() => {
     if (!canDisplay) {
@@ -357,9 +395,9 @@ export function usePdfReflowDocument(
   const ready = canDisplay ? displayed?.state : undefined
   const refresh = useCallback(() => {
     if (!admitted || !original || !latestResults) return
-    setSelection({ original, results: latestResults })
+    setSelection({ original, results: latestResults, structureContext })
     setRevision((value) => value + 1)
-  }, [admitted, original, latestResults])
+  }, [admitted, original, latestResults, structureContext])
   const unfilledUnitIds = useMemo(() => {
     const rendered = new Map((canDisplay ? displayed?.results.units : [])?.map((u) => [u.id, u]))
     const retained = new Set(ready?.retainedUnitIds)

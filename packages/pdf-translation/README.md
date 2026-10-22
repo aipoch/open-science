@@ -288,3 +288,13 @@ overlap no longer rejects the page or propagates rejection across joined paragra
 and emit the accepted translation, tolerating local duplication instead of losing translated output.
 This policy changes no persisted fields or diagnostic enums; regenerate existing previews/exports
 to apply it, and successful layout reports replace prior failures for the same accepted translations.
+
+Existing Figures & Tables results can also supply verified native text ownership. Preparation and
+regeneration read that cache through the existing application interface; they never start structure
+extraction, inspect model availability or download a model. Missing, invalid or unavailable results
+leave the ordinary translation path unchanged. Only complete table/figure units with independently
+verified native ownership and a safe original crop may replace accepted label translations with the
+original graphic. Crops are checked again after accommodating translation-fragment padding and
+must not consume neighboring prose or captions. Historical regeneration preserves saved unit IDs,
+ordering and translations; preparation retains its existing cell and whole-region diagnostics.
+No new cache format, persistence field, diagnostic enum or package dependency is introduced.

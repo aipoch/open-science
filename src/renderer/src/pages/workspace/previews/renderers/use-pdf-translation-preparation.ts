@@ -6,13 +6,15 @@ import {
   extractPdfTranslationSource,
   preservePdfFigureSources,
   type PdfTranslationExtraction,
-  applyCachedPdfTableSources,
-  applyCachedPdfFigureSources,
   type PdfTranslationSourceIdentity
 } from '@aipoch/pdf-translation/reader'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'
+import {
+  preparePdfTranslationStructure,
+  type PdfTranslationStructureContext
+} from './pdf-translation-structure'
 
 export type PdfPreparationState =
   | { status: 'idle' | 'cancelled' | 'error' }
@@ -27,13 +29,22 @@ export function usePdfTranslationPreparation(
   resourceRequestKey: string,
   attachmentVersionId?: string,
   sourceIdentity?: PdfTranslationSourceIdentity,
-  checkpoint?: PdfTranslationCheckpoint | null
+  checkpoint?: PdfTranslationCheckpoint | null,
+  context?: PdfTranslationStructureContext
 ): {
   state: PdfPreparationState
   start: () => void
   cancel: () => void
   reset: () => void
 } {
+  const structureContext = useMemo(
+    () =>
+      context ??
+      (attachmentVersionId && sourceIdentity
+        ? { source: { attachmentVersionId }, identity: sourceIdentity }
+        : undefined),
+    [context, attachmentVersionId, sourceIdentity]
+  )
   const run = useRef<AbortController | undefined>(undefined)
   const [stored, setStored] = useState<{
     document: Document
@@ -41,6 +52,7 @@ export function usePdfTranslationPreparation(
     checkpointKey?: string
     attachmentVersionId?: string
     sourceIdentity?: PdfTranslationSourceIdentity
+    structureContext?: PdfTranslationStructureContext
     value: PdfPreparationState
   }>()
   if (
@@ -49,6 +61,7 @@ export function usePdfTranslationPreparation(
       stored.key !== resourceRequestKey ||
       stored.attachmentVersionId !== attachmentVersionId ||
       stored.sourceIdentity !== sourceIdentity ||
+      stored.structureContext !== structureContext ||
       (checkpoint && stored.checkpointKey !== checkpoint.key))
   )
     setStored(undefined)
@@ -71,6 +84,7 @@ export function usePdfTranslationPreparation(
     stored.key === resourceRequestKey &&
     stored.attachmentVersionId === attachmentVersionId &&
     stored.sourceIdentity === sourceIdentity &&
+    stored.structureContext === structureContext &&
     (!checkpoint || stored.checkpointKey === checkpoint.key)
       ? stored.value
       : idle)
@@ -79,7 +93,7 @@ export function usePdfTranslationPreparation(
       run.current?.abort()
       run.current = undefined
     },
-    [document, resourceRequestKey, attachmentVersionId, sourceIdentity]
+    [document, resourceRequestKey, attachmentVersionId, sourceIdentity, structureContext]
   )
   const start = useCallback((): void => {
     if (!document || restored || (run.current && !run.current.signal.aborted)) return
@@ -93,6 +107,7 @@ export function usePdfTranslationPreparation(
           checkpointKey: checkpoint?.key,
           attachmentVersionId,
           sourceIdentity,
+          structureContext,
           value
         })
     }
@@ -104,28 +119,12 @@ export function usePdfTranslationPreparation(
       onProgress: (pagesRead) => publish({ status: 'running', pagesRead })
     })
       .then(async (extraction) => {
-        let prepared =
-          attachmentVersionId && sourceIdentity && window.api.pdfStructure?.readCached
-            ? await applyCachedPdfTableSources({
-                extraction,
-                document,
-                sourceId: attachmentVersionId,
-                sourceIdentity,
-                signal: controller.signal,
-                readCached: ({ sourceId, page }) =>
-                  window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
-              })
-            : extraction
-        if (attachmentVersionId && sourceIdentity && window.api.pdfStructure?.readCached)
-          prepared = await applyCachedPdfFigureSources({
-            extraction: prepared,
-            document,
-            sourceId: attachmentVersionId,
-            sourceIdentity,
-            signal: controller.signal,
-            readCached: ({ sourceId, page }) =>
-              window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
-          })
+        let { extraction: prepared } = await preparePdfTranslationStructure({
+          extraction,
+          document,
+          context: structureContext,
+          signal: controller.signal
+        })
         if (!checkpoint)
           prepared = await preservePdfFigureSources({
             document,
@@ -155,7 +154,15 @@ export function usePdfTranslationPreparation(
       .finally(() => {
         if (run.current === controller) run.current = undefined
       })
-  }, [attachmentVersionId, document, resourceRequestKey, sourceIdentity, checkpoint, restored])
+  }, [
+    attachmentVersionId,
+    document,
+    resourceRequestKey,
+    sourceIdentity,
+    checkpoint,
+    restored,
+    structureContext
+  ])
   const cancel = useCallback((): void => {
     if (!document || !run.current) return
     run.current.abort()
@@ -166,9 +173,17 @@ export function usePdfTranslationPreparation(
       checkpointKey: checkpoint?.key,
       attachmentVersionId,
       sourceIdentity,
+      structureContext,
       value: { status: 'cancelled' }
     })
-  }, [attachmentVersionId, document, resourceRequestKey, sourceIdentity, checkpoint?.key])
+  }, [
+    attachmentVersionId,
+    document,
+    resourceRequestKey,
+    sourceIdentity,
+    checkpoint?.key,
+    structureContext
+  ])
   const reset = useCallback((): void => {
     run.current?.abort()
     run.current = undefined

@@ -1116,6 +1116,10 @@ describe('cached PDF table source ownership', () => {
     expect(prepared.source.originalRegions).toEqual([
       {
         pageNumber: 1,
+        rect: { x: 0.05, y: 0.05, width: 0.7, height: 0.3 }
+      },
+      {
+        pageNumber: 1,
         rect: {
           x: 0.1,
           y: 0.6,

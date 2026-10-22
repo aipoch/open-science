@@ -3037,12 +3037,20 @@ export const PdfPreviewContent = ({
   const recoveryCheckpoint = recoverySuppressed ? undefined : recovery.checkpoint
   const recoveryLoading = recovery.selecting || (!recoverySuppressed && recovery.loading)
   const recoveryError = recoverySuppressed ? false : recovery.error
+  const translationStructureContext = useMemo(
+    () =>
+      figuresSource && sourceIdentity
+        ? { source: figuresSource, identity: sourceIdentity }
+        : undefined,
+    [figuresSource, sourceIdentity]
+  )
   const preparation = usePdfTranslationPreparation(
     preparationAvailable ? document : null,
     resourceRequestKey,
     attachmentVersionId,
     sourceIdentity,
-    recoveryCheckpoint
+    recoveryCheckpoint,
+    translationStructureContext
   )
   const preparedJobSource = useMemo(() => {
     if (preparation.state.status !== 'ready') return undefined
@@ -3219,7 +3227,8 @@ export const PdfPreviewContent = ({
     resourceRequestKey,
     captureViewportAnchor,
     outputLayout,
-    translationStatus === 'running'
+    translationStatus === 'running',
+    translationStructureContext
   )
   const pairedDocument = translatedDocument.ready
   const preparingFirstTranslationPdf =

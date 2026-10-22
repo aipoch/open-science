@@ -13,12 +13,220 @@ import {
   applyPdfContentFirstPolicy
 } from '@aipoch/pdf-translation/reader'
 import { usePdfTranslationDocument } from './use-pdf-translation-document'
+import * as structurePreparation from './pdf-translation-structure'
 
 vi.mock('../pdfjs', async () => {
   const core = await import('pdfjs-dist/legacy/build/pdf.mjs')
   return { pdfjsLib: { getDocument: core.getDocument, OPS: core.OPS } }
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+it.each([false, true])(
+  'regenerates a historical edition without loose verified table labels (confirmed=%s)',
+  async (confirmed) => {
+    vi.stubGlobal('Uint8Array', Object.getPrototypeOf(Buffer.prototype).constructor)
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500])
+    page.drawText('Body paragraph.', { font, x: 40, y: 440, size: 12 })
+    page.drawRectangle({ x: 40, y: 200, width: 250, height: 150, color: rgb(0.8, 0.8, 0.8) })
+    page.drawText('Age, %', { font, x: 50, y: 300, size: 12 })
+    const originalTask = getDocument({ data: await pdf.save() }),
+      original = await originalTask.promise,
+      source = createPdfTranslationSource({
+        resourceRequestKey: 'structure-reflow',
+        fingerprint: original.fingerprints[0]!,
+        pages: [{ width: 400, height: 500 }],
+        units: [
+          {
+            id: 'body',
+            source: 'Body paragraph.',
+            fragments: [
+              { pageNumber: 1, rect: { x: 0.1, y: 0.08, width: 0.6, height: 0.04 }, items: [] }
+            ]
+          },
+          {
+            id: 'label',
+            source: 'Age, %',
+            fragments: [
+              { pageNumber: 1, rect: { x: 0.125, y: 0.37, width: 0.2, height: 0.04 }, items: [] }
+            ]
+          }
+        ]
+      }),
+      results = {
+        source,
+        checkpoint: { key: 'historical', source: 'attachment' },
+        units: [
+          { id: 'body', translationSource: 'Body paragraph.', translation: '必须保留的正文译文。' },
+          { id: 'label', translationSource: 'Age, %', translation: '散排的表内标签。' }
+        ]
+      },
+      context = {
+        source: { attachmentVersionId: 'attachment' },
+        identity: { sourceChecksum: 'a'.repeat(64), sourceSizeBytes: 100 }
+      },
+      saved = JSON.stringify(results)
+    // This exercises generation's verified-ownership boundary. Native ownership
+    // validation and cache identity are covered by the reader and loader suites.
+    const prepare = vi
+      .spyOn(structurePreparation, 'preparePdfTranslationStructure')
+      .mockImplementation(async ({ extraction }) => ({
+        extraction: confirmed
+          ? {
+              ...extraction,
+              source: createPdfTranslationSource({
+                ...extraction.source,
+                originalRegions: [
+                  { pageNumber: 1, rect: { x: 0.1, y: 0.3, width: 0.625, height: 0.3 } }
+                ],
+                units: extraction.source.units.map((unit) =>
+                  unit.id === 'label' ? { ...unit, sourceOnly: true } : unit
+                )
+              })
+            }
+          : extraction,
+        retainedUnitIds: confirmed ? ['label'] : []
+      }))
+    const writer = new PdfTranslationWriter(() =>
+        resolve('packages/pdf-translation/resources/worker.mjs')
+      ),
+      generatePdf = vi.fn(
+        async (request: Parameters<PdfTranslationWriter['generateDetailed']>[0]) =>
+          writer.generateDetailed(
+            { ...request, data: new Uint8Array(request.data) },
+            {
+              leaseId: 'structure-reflow',
+              generation: 1,
+              signal: new AbortController().signal,
+              isCurrent: () => true
+            }
+          )
+      ),
+      recordLayout = vi.fn(async () => {})
+    vi.stubGlobal('api', {
+      pdfTranslation: { generatePdf, recordLayout, cancelPdf: vi.fn(async () => {}) }
+    })
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(
+        original,
+        results,
+        undefined,
+        'structure-reflow',
+        undefined,
+        'reflow',
+        false,
+        context
+      )
+    )
+    try {
+      await waitFor(() => expect(hook.result.current.ready).toBeDefined(), { timeout: 15000 })
+      expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ context }))
+      const ready = hook.result.current.ready!,
+        texts: string[] = []
+      for (let n = 1; n <= ready.document.numPages; n++)
+        texts.push(
+          (await (await ready.document.getPage(n)).getTextContent()).items
+            .map((item) => ('str' in item ? item.str : ''))
+            .join('')
+        )
+      expect(texts.join('')).toContain('必须保留的正文译文。')
+      expect(texts.join('').includes('散排的表内标签。')).toBe(!confirmed)
+      expect(ready.retainedUnitIds).toEqual(confirmed ? ['label'] : [])
+      expect(ready.originalPageNumbers).toEqual([])
+      expect(hook.result.current.layoutFailures).toEqual({})
+      expect(generatePdf.mock.calls[0][0].units.map((unit) => unit.source)).toEqual(
+        source.units.map((unit) => unit.source)
+      )
+      expect(recordLayout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          units: [
+            { sourceIndex: 0, source: 'Body paragraph.', translation: '必须保留的正文译文。' },
+            { sourceIndex: 1, source: 'Age, %', translation: '散排的表内标签。' }
+          ]
+        })
+      )
+      expect(JSON.stringify(results)).toBe(saved)
+    } finally {
+      hook.unmount()
+      await originalTask.destroy()
+    }
+  },
+  20000
+)
+
+it('ignores late cache evidence after switching document identity', async () => {
+  vi.stubGlobal('Uint8Array', Object.getPrototypeOf(Buffer.prototype).constructor)
+  const pdf = await PDFDocument.create()
+  pdf.addPage([400, 500]).drawText('Original.', { x: 40, y: 440, size: 12 })
+  const task = getDocument({ data: await pdf.save() }),
+    original = await task.promise
+  const source = createPdfTranslationSource({
+    resourceRequestKey: 'context-switch',
+    fingerprint: original.fingerprints[0]!,
+    pages: [{ width: 400, height: 500 }],
+    units: [
+      {
+        id: 'a',
+        source: 'Original.',
+        fragments: [
+          { pageNumber: 1, rect: { x: 0.1, y: 0.08, width: 0.4, height: 0.05 }, items: [] }
+        ]
+      }
+    ]
+  })
+  const results = {
+    source,
+    units: [{ id: 'a', translationSource: 'Original.', translation: 'Translated.' }]
+  }
+  type Prepared = Awaited<ReturnType<typeof structurePreparation.preparePdfTranslationStructure>>
+  const pending: { signal: AbortSignal; finish: () => void }[] = []
+  vi.spyOn(structurePreparation, 'preparePdfTranslationStructure').mockImplementation(
+    ({ extraction, signal }) =>
+      new Promise<Prepared>((resolve) => {
+        pending.push({ signal, finish: () => resolve({ extraction, retainedUnitIds: [] }) })
+      })
+  )
+  const generatePdf = vi.fn(async () => null)
+  vi.stubGlobal('api', { pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) } })
+  const context = {
+    source: { attachmentVersionId: 'attachment' },
+    identity: { sourceChecksum: 'a'.repeat(64), sourceSizeBytes: 100 }
+  }
+  const hook = renderHook(
+    ({ context }) =>
+      usePdfTranslationDocument(
+        original,
+        results,
+        undefined,
+        'context-switch',
+        undefined,
+        'reflow',
+        false,
+        context
+      ),
+    { initialProps: { context } }
+  )
+  try {
+    await waitFor(() => expect(pending).toHaveLength(1))
+    hook.rerender({
+      context: { ...context, identity: { ...context.identity, sourceChecksum: 'b'.repeat(64) } }
+    })
+    await waitFor(() => expect(pending).toHaveLength(2))
+    expect(pending[0].signal.aborted).toBe(true)
+    await act(async () => pending[0].finish())
+    expect(generatePdf).not.toHaveBeenCalled()
+    expect(hook.result.current.ready).toBeUndefined()
+    await act(async () => pending[1].finish())
+    await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(1))
+  } finally {
+    hook.unmount()
+    await task.destroy()
+  }
+})
 
 it.each(['figure', 'reference', 'code', 'literal', 'missing', 'mismatched', 'empty'] as const)(
   'keeps valid accepted translations ahead of derived protection: %s',

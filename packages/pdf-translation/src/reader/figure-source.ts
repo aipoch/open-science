@@ -4,6 +4,7 @@ import type { PdfTranslationExtraction } from './extraction.js'
 import { isPdfTranslationCaption } from './layout.js'
 import { createPdfTranslationSource, type PdfTranslationFragment } from './source.js'
 import type { PdfTranslationSourceIdentity } from './table-source.js'
+import { verifiedPdfStructureRegions } from './structure-regions.js'
 import { nativeLabelRegion } from './native-source-geometry.js'
 import { retainPdfWholeRegionSources } from './whole-region-retention.js'
 
@@ -471,9 +472,36 @@ export async function applyCachedPdfFigureSources({
         changed = true
         return { ...unit, sourceOnly: true as const }
       })
+      const originalRegions = verifiedPdfStructureRegions(
+        source,
+        elements
+          .filter((element) => element.kind === 'figure')
+          .map((element) => ({
+            regions: element.regions,
+            owners: new Set(
+              [...claims].filter(([, owner]) => owner === element).map(([key]) => key)
+            )
+          })),
+        new Map(
+          [...native].map(([number, content]) => [
+            number,
+            { content, viewport: viewports.get(number)! }
+          ])
+        ),
+        elements.flatMap((element) => element.caption?.regions ?? [])
+      )
       current()
-      return changed
-        ? Object.freeze({ ...extraction, source: createPdfTranslationSource({ ...source, units }) })
+      return changed || originalRegions.length
+        ? Object.freeze({
+            ...extraction,
+            source: createPdfTranslationSource({
+              ...source,
+              units,
+              ...(originalRegions.length
+                ? { originalRegions: [...(source.originalRegions ?? []), ...originalRegions] }
+                : {})
+            })
+          })
         : extraction
     })()
     return retainPdfWholeRegionSources({

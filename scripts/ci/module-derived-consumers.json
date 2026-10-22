@@ -659,6 +659,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
@@ -728,6 +729,7 @@
       "packages/pdf-translation/test/reader/pdf-translation-extraction.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-layout-left-prose.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-math-diagram.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-structure-source.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-whole-region-retention.test.ts",
       "packages/pdf-translation/test/spaced-script-roundtrip.test.ts",
       "packages/pdf-translation/test/structural-roundtrip.test.ts",
@@ -798,6 +800,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
@@ -6046,6 +6049,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-angle-delimiters.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-narrow-hat.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-numeric-token-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-supporting-links.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/scientific-preview.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",

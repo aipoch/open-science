@@ -18,6 +18,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'
 import { usePdfReflowDocument } from './use-pdf-reflow-document'
+import type { PdfTranslationStructureContext } from './pdf-translation-structure'
 import type {
   PdfTranslationDocumentState,
   PdfTranslationPageGeometry as Geometry
@@ -796,7 +797,8 @@ export function usePdfTranslationDocument(
   resourceRequestKey: string,
   beforeReady?: () => void,
   layout?: 'reflow',
-  translating = false
+  translating = false,
+  structureContext?: PdfTranslationStructureContext
 ): {
   state: State
   ready: Extract<State, { status: 'ready' }> | undefined
@@ -815,7 +817,8 @@ export function usePdfTranslationDocument(
     resourceRequestKey,
     layout === 'reflow',
     beforeReady,
-    translating
+    translating,
+    structureContext
   )
   const [request, setRequest] = useState<{
     failed?: {

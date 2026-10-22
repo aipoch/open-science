@@ -3,9 +3,7 @@ import {
   createPdfTranslationSource,
   getPdfTranslationLayoutSnapshot,
   extractPdfTranslationSource,
-  type PdfTranslationExtraction,
-  applyCachedPdfTableSources,
-  applyCachedPdfFigureSources
+  type PdfTranslationExtraction
 } from '@aipoch/pdf-translation/reader'
 
 // @vitest-environment jsdom
@@ -13,13 +11,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
+import {
+  preparePdfTranslationStructure,
+  type PdfTranslationStructureContext
+} from './pdf-translation-structure'
+vi.mock('./pdf-translation-structure', () => ({ preparePdfTranslationStructure: vi.fn() }))
 import { waitFor } from '@testing-library/react'
 
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/pdf-translation/reader')>()),
-  applyCachedPdfTableSources: vi.fn(),
-  applyCachedPdfFigureSources: vi.fn(),
   extractPdfTranslationSource: vi.fn()
 }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -63,13 +64,15 @@ describe('reader-owned PDF preparation', () => {
   let checkpoint: PdfTranslationCheckpoint | undefined
   const sourceIdentity = Object.freeze({ sourceChecksum: 'a'.repeat(64), sourceSizeBytes: 100 })
   let useTables = false
+  let context: PdfTranslationStructureContext | undefined
   function Harness({ owner, identity }: { owner: typeof document | null; identity: string }): null {
     current = usePdfTranslationPreparation(
       owner,
       identity,
       useTables ? 'version' : undefined,
       useTables ? sourceIdentity : undefined,
-      checkpoint
+      checkpoint,
+      context
     )
     return null
   }
@@ -79,10 +82,10 @@ describe('reader-owned PDF preparation', () => {
     root = createRoot(container)
     document = { numPages: 2, fingerprints: ['test'], getPage: vi.fn() }
     vi.mocked(extractPdfTranslationSource).mockReset()
-    vi.mocked(applyCachedPdfTableSources).mockReset()
-    vi.mocked(applyCachedPdfFigureSources)
+    vi.mocked(preparePdfTranslationStructure)
       .mockReset()
-      .mockImplementation(async ({ extraction }) => extraction)
+      .mockImplementation(async ({ extraction }) => ({ extraction, retainedUnitIds: [] }))
+    context = undefined
     useTables = false
     checkpoint = undefined
     window.api = {
@@ -157,6 +160,7 @@ describe('reader-owned PDF preparation', () => {
     await act(async () => current.start())
     expect(extractPdfTranslationSource).not.toHaveBeenCalled()
     expect(document.getPage).not.toHaveBeenCalled()
+    expect(preparePdfTranslationStructure).not.toHaveBeenCalled()
     await render({ ...document, fingerprints: ['changed-pdf'] })
     expect(current.state.status).toBe('error')
     expect(extractPdfTranslationSource).not.toHaveBeenCalled()
@@ -265,31 +269,50 @@ describe('reader-owned PDF preparation', () => {
     await act(async () => current.start())
     await waitFor(() => expect(current.state.status).toBe('ready'))
   })
-  it('publishes once after cached ownership verification and does not inspect later cache changes', async () => {
+  it('publishes after cached structure verification with the default attachment context', async () => {
     useTables = true
-    const deferred = Promise.withResolvers<PdfTranslationExtraction>()
+    const deferred =
+      Promise.withResolvers<Awaited<ReturnType<typeof preparePdfTranslationStructure>>>()
     vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
-    vi.mocked(applyCachedPdfTableSources).mockReturnValue(deferred.promise)
+    vi.mocked(preparePdfTranslationStructure).mockReturnValue(deferred.promise)
     await render()
-    expect(applyCachedPdfTableSources).not.toHaveBeenCalled()
+    expect(preparePdfTranslationStructure).not.toHaveBeenCalled()
     await act(async () => current.start())
     expect(current.state.status).toBe('running')
-    const request = vi.mocked(applyCachedPdfTableSources).mock.calls[0][0]
-    expect(request).toMatchObject({
+    expect(preparePdfTranslationStructure).toHaveBeenCalledWith({
       extraction: ready,
       document,
-      sourceId: 'version',
-      sourceIdentity
+      context: { source: { attachmentVersionId: 'version' }, identity: sourceIdentity },
+      signal: expect.any(AbortSignal)
     })
-    await request.readCached({ sourceId: 'version', page: 1 })
-    expect(window.api.pdfStructure.readCached).toHaveBeenCalledOnce()
-    await act(async () => deferred.resolve(ready))
+    await act(async () => deferred.resolve({ extraction: ready, retainedUnitIds: [] }))
     await render()
     await waitFor(() => expect(current.state).toEqual({ status: 'ready', extraction: ready }))
-    expect(applyCachedPdfTableSources).toHaveBeenCalledOnce()
-    expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+    expect(preparePdfTranslationStructure).toHaveBeenCalledOnce()
   })
-  it('publishes and pins figure ownership only after both cached stages complete', async () => {
+  it('accepts a managed structure context without changing existing positional arguments', async () => {
+    useTables = true
+    context = {
+      source: {
+        source: {
+          kind: 'managed',
+          projectId: 'project',
+          sourceKind: 'upload-version',
+          sourceFileId: 'file',
+          sourceVersionId: 'managed-version'
+        }
+      },
+      identity: sourceIdentity
+    }
+    vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
+    await render()
+    await act(async () => current.start())
+    expect(preparePdfTranslationStructure).toHaveBeenCalledWith(
+      expect.objectContaining({ context })
+    )
+    await waitFor(() => expect(current.state.status).toBe('ready'))
+  })
+  it('pins verified cached structure only after verification completes', async () => {
     useTables = true
     const verified = {
       ...ready,
@@ -298,57 +321,49 @@ describe('reader-owned PDF preparation', () => {
         units: ready.source.units.map((unit) => ({ ...unit, sourceOnly: true }))
       })
     }
-    const figure = Promise.withResolvers<PdfTranslationExtraction>()
+    const deferred =
+      Promise.withResolvers<Awaited<ReturnType<typeof preparePdfTranslationStructure>>>()
     const saveSnapshot = vi.fn().mockResolvedValue(undefined)
     checkpoint = { key: 'legacy', attachmentVersionId: 'version' } as PdfTranslationCheckpoint
     window.api.pdfTranslation = { saveSnapshot } as never
     vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
-    vi.mocked(applyCachedPdfTableSources).mockResolvedValue(ready)
-    vi.mocked(applyCachedPdfFigureSources).mockReturnValue(figure.promise)
+    vi.mocked(preparePdfTranslationStructure).mockReturnValue(deferred.promise)
     await render()
     await act(async () => current.start())
     expect(current.state.status).toBe('running')
     expect(saveSnapshot).not.toHaveBeenCalled()
-    expect(vi.mocked(applyCachedPdfFigureSources).mock.calls[0][0]).toMatchObject({
-      extraction: ready,
-      document,
-      sourceIdentity,
-      sourceId: 'version'
-    })
-    await act(async () => figure.resolve(verified))
+    await act(async () =>
+      deferred.resolve({ extraction: verified, retainedUnitIds: ['saved-unit'] })
+    )
     expect(current.state).toEqual({ status: 'ready', extraction: verified })
-    expect(saveSnapshot.mock.calls[0][0].snapshot.units[0].sourceOnly).toBe(true)
-    expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+    expect(saveSnapshot.mock.calls[0][0].snapshot.units[0]).toMatchObject({
+      id: 'saved-unit',
+      sourceOnly: true
+    })
   })
-  it('discards late figure verification after cancellation', async () => {
-    useTables = true
-    const figure = Promise.withResolvers<PdfTranslationExtraction>()
-    vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
-    vi.mocked(applyCachedPdfTableSources).mockResolvedValue(ready)
-    vi.mocked(applyCachedPdfFigureSources).mockReturnValue(figure.promise)
-    await render()
-    await act(async () => current.start())
-    const request = vi.mocked(applyCachedPdfFigureSources).mock.calls[0][0]
-    await act(async () => current.cancel())
-    expect(request.signal.aborted).toBe(true)
-    await act(async () => figure.resolve(ready))
-    expect(current.state.status).toBe('cancelled')
-  })
-  it.each(['cancel', 'switch', 'unmount'] as const)(
-    'ignores late table verification after %s',
+  it.each(['cancel', 'switch', 'unmount', 'source', 'identity'] as const)(
+    'ignores late structure verification after %s',
     async (kind) => {
-      useTables = true
-      const deferred = Promise.withResolvers<PdfTranslationExtraction>()
+      context = { source: { attachmentVersionId: 'version' }, identity: sourceIdentity }
+      const deferred =
+        Promise.withResolvers<Awaited<ReturnType<typeof preparePdfTranslationStructure>>>()
       vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
-      vi.mocked(applyCachedPdfTableSources).mockReturnValue(deferred.promise)
+      vi.mocked(preparePdfTranslationStructure).mockReturnValue(deferred.promise)
       await render()
       await act(async () => current.start())
-      const request = vi.mocked(applyCachedPdfTableSources).mock.calls[0][0]
+      const request = vi.mocked(preparePdfTranslationStructure).mock.calls[0][0]
       if (kind === 'cancel') await act(async () => current.cancel())
       if (kind === 'switch') await render(document, 'new-version')
       if (kind === 'unmount') await act(async () => root.render(null))
+      if (kind === 'source' || kind === 'identity') {
+        context =
+          kind === 'source'
+            ? { ...context, source: { attachmentVersionId: 'other-version' } }
+            : { ...context, identity: { ...sourceIdentity, sourceChecksum: 'b'.repeat(64) } }
+        await render()
+      }
       expect(request.signal.aborted).toBe(true)
-      await act(async () => deferred.resolve(ready))
+      await act(async () => deferred.resolve({ extraction: ready, retainedUnitIds: [] }))
       if (kind !== 'unmount')
         expect(current.state.status).toBe(kind === 'cancel' ? 'cancelled' : 'idle')
     }
