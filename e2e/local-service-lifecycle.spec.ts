@@ -728,7 +728,7 @@ for (const stalled of [false, true]) {
               .map(({ id, content }) => ({ id, content }))
           expect(userTurns(restored.messages)).toEqual(userTurns(session.messages))
           recovered.push({ sessionId: session.id, providerSessionId: originalProvider.sessionId })
-          await restarted.page.getByRole('button', { name: 'Back to Home', exact: true }).click()
+          await restarted.page.getByRole('button', { name: 'All projects', exact: true }).click()
         }
         await assertLegacyCleanupBlocked()
         for (const { path, source } of f.retainedReceipts.values())

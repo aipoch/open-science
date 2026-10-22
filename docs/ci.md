@@ -173,19 +173,38 @@ credential-free npm packaging dry-run. No npm token is needed for a GitHub Relea
 
 ### Publishing npm packages
 
-`npm-release.yml` publishes the shared CLI entry package and five platform packages after a
-successful stable Release. Manual runs can select a historical `release_run_id` and default to
-`dry_run=true`; use a single `target` for focused checks and `all` for publication. The existing
-`publish-npm.yml` dispatcher also supports historical npm dry-runs.
+Stable Release preparation creates npm tarballs alongside CLI archives from the same signed
+backend, without compiling it again. All five native installation checks, the minimum supported
+Node check and the complete-set gate must pass before Release publication. Nightly remains
+archive-only. npm tarballs and their existing integrity reports are retained as Actions artifacts
+for 30 days; they are not attached to the public GitHub Release.
 
-The workflow builds the certified Release source and verifies native installation on every
-platform before publishing. It checks source, version and integrity, publishes platform packages
-first, and rejects overwrites or `latest` downgrades. Retry a partial publication using the same
-run's artifacts rather than rebuilding already published versions.
+`npm-release.yml` runs independently after a successful stable Release. It downloads that exact
+Release run's verified npm artifacts without rebuilding or repacking. Manual dispatch requires
+`release_run_id` and defaults to `dry_run=true`, which validates the complete artifact set and
+registry preflight without writes or npm credentials. Old Release runs without npm artifacts,
+expired artifacts, mismatched bytes and `latest` downgrades fail closed; there is no rebuild fallback.
 
-Publishing runs from `main` through the `npm` environment using npm Trusted Publishing (OIDC).
-First publication requires explicit bootstrap credentials; remove them after configuring trust.
-Build jobs and dry-runs receive no npm credentials.
+The publisher checks source, version, all six packages and registry integrity before any write.
+It uploads missing platform packages concurrently and waits for all five exact versions and
+integrity values to be readable in the registry before publishing the shared CLI entry package.
+Any platform failure blocks the entry package and fails the job, while other in-flight uploads
+finish. Successful uploads remain published; retry using the same Release run's original artifacts.
+Matching published versions are skipped. An authentication failure still requires repairing that
+package's publishing authorization before retrying; concurrency does not repair credentials.
+
+Publishing stays on `main` through the `npm` environment using npm Trusted Publishing (OIDC).
+Registry failures do not undo or block the already published GitHub Release. First publication
+requires explicit bootstrap credentials; remove them after configuring trust. Build jobs and
+dry-runs receive no npm credentials. No application data, state enums or report schema changes
+are involved.
+
+For focused preparation checks, dispatch `publish-npm.yml` with `distribution=archive`,
+`include_npm=true` and a single `target`; select `all` to exercise the complete-set gate.
+This reuses the combined preparation path without publication. Leave `desktop_run_id` empty:
+that input remains an extraction-only check. The dispatcher also retains credential-free
+historical source packaging with `distribution=npm` and `release_run_id`, but those rebuilt
+artifacts must not replace the original bytes of a partially published version.
 
 #### Updating the npm package documentation
 

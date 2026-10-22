@@ -27,7 +27,7 @@ import { type LiteratureDetailSnapshot } from '@aipoch/literature-library/client
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { ArrowLeft, Download, MoreHorizontal, Pencil, Quote, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useSyncExternalStore } from 'react'
+import { useRef, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
 import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
@@ -117,6 +117,7 @@ export function LiteratureDetailDialog({
   renderOverview: (item: LiteratureItemView) => React.ReactNode
 }): React.JSX.Element | null {
   const { t } = useTranslation()
+  const backdropDismissedChildRef = useRef(false)
   return (
     <LiteratureDetailBoundary controller={detailController}>
       {({ item: selectedItem, open, generation }) => {
@@ -132,6 +133,10 @@ export function LiteratureDetailDialog({
                   data-state={open ? 'open' : 'closed'}
                   className={cn(dialogOverlayClassName, 'pointer-events-auto')}
                   onPointerDownCapture={(event) => {
+                    // A modal child makes the panel inert, so clicks inside its bounds hit this
+                    // scrim. Let Radix receive them, but do not close both layers on that click.
+                    backdropDismissedChildRef.current = hasLiteratureDetailChildLayer()
+                    if (backdropDismissedChildRef.current) return
                     const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
                     const pointInsideDialog = Boolean(
                       dialogBounds &&
@@ -147,6 +152,10 @@ export function LiteratureDetailDialog({
                     }
                   }}
                   onClick={(event) => {
+                    if (backdropDismissedChildRef.current) {
+                      backdropDismissedChildRef.current = false
+                      return
+                    }
                     const dialogBounds = selectedItemDialogRef.current?.getBoundingClientRect()
                     const pointInsideDialog = Boolean(
                       dialogBounds &&

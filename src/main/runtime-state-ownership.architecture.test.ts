@@ -370,7 +370,7 @@ describe('runtime state ownership architecture', () => {
     expect(source).not.toContain('applyModelTarget')
     expect(source).not.toContain('resumeSessionOperation')
     expect(source).toContain('return this.modelChanges.applyReasoningEffort(effort)')
-    expect(source).toContain('this.providerSessionResumer.resume(request)')
+    expect(source).toContain('this.providerSessionResumer.resume(request, writerTransfer)')
     expect(providerSessions).toContain(
       'const currentConnection = (): ClientConnection | undefined => base.connectionResources.connection'
     )

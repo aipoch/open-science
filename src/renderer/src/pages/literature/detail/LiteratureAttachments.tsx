@@ -1,5 +1,9 @@
+import { useLiteratureHost } from '../renderer-host'
+import { ErrorNotice } from '@/components/error-notice'
+import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
+import { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME } from '../../../../../shared/file-save'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import { FileText, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
+import { Download, FileText, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -32,13 +36,15 @@ import { AttachmentOperationStatus } from '../workflows/LiteratureAttachmentOper
 
 type Version = LiteratureItemView['attachments'][number]['versions'][number]
 type Attachment = LiteratureItemView['attachments'][number]
-type AttachmentMenuAction = AttachmentAction | 'history'
+type AttachmentMenuAction = AttachmentAction | 'history' | 'download'
 const attachmentActionCatalog: Record<AttachmentMenuAction, ActionMenuDefinition> = {
+  download: { labelKey: 'Download', icon: Download },
   history: { labelKey: 'Version history', icon: History },
   verify: { labelKey: 'Retry file verification', icon: RotateCcw },
   remove: { labelKey: 'Remove attachment', icon: Trash2, danger: true }
 }
 const attachmentActionRecipe: readonly ActionMenuRecipeEntry<AttachmentMenuAction>[] = [
+  { kind: 'action', action: 'download' },
   { kind: 'action', action: 'history' },
   { kind: 'action', action: 'verify' },
   { kind: 'separator' },
@@ -149,6 +155,12 @@ export const LiteratureAttachments = ({
   readItem: (id: string) => Promise<LiteratureItemView | undefined>
   onPreview: (version: Version) => void
 }): React.JSX.Element => {
+  const { api } = useLiteratureHost()
+  const [download, setDownload] = useState<{
+    attachmentId: string
+    pending: boolean
+    error?: string
+  }>()
   const useAttachmentOperations = useAttachmentOperationsStore()
 
   const { t, i18n } = useTranslation()
@@ -181,7 +193,8 @@ export const LiteratureAttachments = ({
   const dialogHistoryAttachment = useRetainedDialogValue(historyAttachment)
   const operations = useAttachmentOperations((state) => state.operations)
   const itemOperations = operations.filter((operation) => operation.itemId === item.id)
-  const pending = itemOperations.some((operation) => operation.pending)
+  const pending =
+    itemOperations.some((operation) => operation.pending) || Boolean(download?.pending)
   const run = (action: AttachmentAction, attachmentId: string, versionId?: string): Promise<void> =>
     useAttachmentOperations.getState().run(item, attachmentId, action, versionId, readItem)
   return (
@@ -220,6 +233,34 @@ export const LiteratureAttachments = ({
               recipe={attachmentActionRecipe}
               invocation={undefined}
               bindings={{
+                download: {
+                  disabled: pending || !version || version.availability === 'unavailable',
+                  execute: async () => {
+                    if (!version) return
+                    setDownload({ attachmentId: attachment.id, pending: true })
+                    try {
+                      await api.saveManagedFile({
+                        source: 'literature',
+                        path: createLiteratureAttachmentVersionReference(version.id),
+                        suggestedName: version.filename
+                      })
+                      setDownload(undefined)
+                    } catch (error) {
+                      setDownload({
+                        attachmentId: attachment.id,
+                        pending: false,
+                        error:
+                          error instanceof Error &&
+                          error.name === WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME
+                            ? t(
+                                "{{name}} exceeds this browser's 512 MB download limit. Use a browser that supports streaming file saves.",
+                                { name: version.filename }
+                              )
+                            : t('Download failed for {{name}}', { name: version.filename })
+                      })
+                    }
+                  }
+                },
                 verify: {
                   execute: () => run('verify', attachment.id, version?.id),
                   disabled: pending || !version
@@ -252,6 +293,23 @@ export const LiteratureAttachments = ({
                     title={title}
                     onPreview={onPreview}
                   />
+                  {download?.attachmentId === attachment.id ? (
+                    <div className="pb-2 pl-10 pr-3">
+                      {download.pending ? (
+                        <p role="status" className="text-xs text-muted-foreground">
+                          {t('Saving {{name}}', { name: title })}
+                        </p>
+                      ) : null}
+                      {download.error ? (
+                        <ErrorNotice
+                          inline
+                          role="alert"
+                          tone="amber"
+                          description={download.error}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
                   {showOperation ? (
                     <div className="pb-2 pl-10 pr-3">
                       <AttachmentOperationStatus operation={operation} />

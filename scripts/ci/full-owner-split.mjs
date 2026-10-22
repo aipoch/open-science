@@ -70,10 +70,11 @@ function dynamicMarkers(text, path) {
         /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*/.test(node.text)
       )
         markers.push(`name literal ${node.text}`)
-      // Every template segment counts: `domain:${id}` and `${id}:open` are channels too.
+      // A segment that is only a name next to the interpolation is a channel: `domain:${id}`,
+      // `${id}:open`, `a:${x}:b`. Prose such as `Error: ${x}` or `https://host/${x}` is not.
       if (
         (ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) &&
-        /[a-z][a-z0-9-]*:|:[a-z][a-z0-9-]*/.test(node.text)
+        /^(?:[a-z][a-z0-9-]*:|:[a-z][a-z0-9-]*:?)$/.test(node.text)
       )
         markers.push(`name template ${node.text}`)
     }

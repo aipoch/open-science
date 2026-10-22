@@ -1361,6 +1361,7 @@ const ConversationPanel = ({
       node.attachmentId ? ([[node.attachmentId, node]] as const) : []
     )
   )
+  const canQueueMessage = effectiveCanSend && submitMode === 'queue'
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const hasSideChatDraft = hasTextDraft || annotations.length > 0
   const openSideChatReason =
@@ -3220,7 +3221,7 @@ const ConversationPanel = ({
                             />
 
                             {rootTurnBusy ? (
-                              // Running sessions expose cancel instead of send to prevent overlapping turns.
+                              // A sendable draft replaces Stop with queue submission without starting another turn.
                               // Detached children can outlive a wait=false Main turn, so their durable
                               // running aggregate keeps the same root cascade reachable after Main settles.
                               // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
@@ -3228,32 +3229,35 @@ const ConversationPanel = ({
                               // reachable across the whole loop, not just the agent-fix running turn.
                               <div
                                 data-testid="composer-running-control-slot"
-                                className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                                className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                               >
                                 <button
                                   type="button"
-                                  onClick={handleSubmit}
-                                  disabled={!effectiveCanSend || submitMode !== 'queue'}
-                                  className={composerIconButtonClassName}
-                                  aria-label={t('Add message to queue')}
-                                  data-testid="composer-queue-submit"
-                                >
-                                  <ArrowUp
-                                    className="size-4"
-                                    strokeWidth={2.2}
-                                    aria-hidden="true"
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleStop}
+                                  onClick={canQueueMessage ? handleSubmit : handleStop}
                                   disabled={isStopping}
-                                  className={composerCancelButtonClassName}
+                                  data-testid={
+                                    canQueueMessage ? 'composer-queue-submit' : undefined
+                                  }
+                                  className={cn(
+                                    composerCancelButtonClassName,
+                                    canQueueMessage &&
+                                      'bg-primary text-primary-foreground hover:bg-primary/90'
+                                  )}
                                   aria-label={
-                                    isStopping ? t('Stopping run and subagents') : t('Cancel run')
+                                    canQueueMessage
+                                      ? t('Add message to queue')
+                                      : isStopping
+                                        ? t('Stopping run and subagents')
+                                        : t('Cancel run')
                                   }
                                 >
-                                  {isStopping ? (
+                                  {canQueueMessage ? (
+                                    <ArrowUp
+                                      className="size-4"
+                                      strokeWidth={2.2}
+                                      aria-hidden="true"
+                                    />
+                                  ) : isStopping ? (
                                     <Loader2
                                       className="size-3.5 animate-spin"
                                       strokeWidth={2.2}
@@ -3292,6 +3296,7 @@ const ConversationPanel = ({
                                               type="button"
                                               className={composerIconButtonClassName}
                                               disabled={
+                                                !canQueueMessage &&
                                                 !canOpenSideChat &&
                                                 !canStartSideChat &&
                                                 !canRetrySideChatHydration
@@ -3308,11 +3313,26 @@ const ConversationPanel = ({
                                         </span>
                                       </TooltipTrigger>
                                       <TooltipContent side="top">
-                                        {sideChatDisabledReason ?? t('More send options')}
+                                        {canQueueMessage
+                                          ? t('More send options')
+                                          : (sideChatDisabledReason ?? t('More send options'))}
                                       </TooltipContent>
                                     </Tooltip>
                                   </>
                                   <DropdownMenuContent side="top" align="end" className="w-64">
+                                    {canQueueMessage ? (
+                                      <DropdownMenuItem
+                                        onSelect={handleStop}
+                                        aria-label={t('Cancel run')}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <Square
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Cancel run')}
+                                      </DropdownMenuItem>
+                                    ) : null}
                                     {sideChatMenuItems}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
