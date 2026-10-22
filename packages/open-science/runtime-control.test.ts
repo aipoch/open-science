@@ -66,13 +66,15 @@ describe('authenticated CLI service lifetime responses', () => {
   })
 
   it('authenticates the generation and validates both the owner and mutation response', async () => {
+    const canonicalConfigRoot = await realpath(root)
     const fetch = vi
       .fn()
       .mockImplementation(async () => new Response(JSON.stringify(responseOwner)))
     expect(await requestServiceLifetime(root, 'start', fetch)).toEqual({
       ...responseOwner,
       identity: {
-        configRoot: await realpath(root),
+        configRoot:
+          process.platform === 'win32' ? canonicalConfigRoot.toLowerCase() : canonicalConfigRoot,
         pid: owner.pid,
         generation,
         serviceGeneration,

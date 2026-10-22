@@ -74,9 +74,7 @@
       "packages/environment/src/pip-wheel-evidence.test.ts",
       "packages/environment/src/pip-install-evidence.test.ts"
     ],
-    "paths": [
-      "packages/environment/"
-    ]
+    "paths": ["packages/environment/"]
   },
   "windows_shell": {
     "tests": [
@@ -84,22 +82,14 @@
       "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
       "src/main/notebook/shell-search-scope.test.ts"
     ],
-    "paths": [
-      "src/main/notebook/"
-    ]
+    "paths": ["src/main/notebook/"]
   },
   "windows_service_timeout": {
-    "tests": [
-      "src/main/notebook/runtime-service.test.ts"
-    ],
-    "paths": [
-      "src/main/notebook/"
-    ]
+    "tests": ["src/main/notebook/runtime-service.test.ts"],
+    "paths": ["src/main/notebook/"]
   },
   "windows_sandbox": {
-    "tests": [
-      "packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts"
-    ],
+    "tests": ["packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts"],
     "paths": [
       "packages/notebook-network-sandbox/",
       "packages/process-tree-native/",

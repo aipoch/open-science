@@ -451,6 +451,7 @@ const launchEnvironment = (
     environment.LOCALAPPDATA = join(fixtureHome, 'AppData', 'Local')
     environment.XDG_CONFIG_HOME = join(fixtureHome, '.config')
     environment.XDG_DATA_HOME = join(fixtureHome, '.local', 'share')
+    environment.OPEN_SCIENCE_E2E_ISOLATE_HOME = '1'
   }
   environment.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = join(storageRoot, 'installation-state')
   environment.OPEN_SCIENCE_CONFIG_ROOT = storageRoot
@@ -464,11 +465,6 @@ const launchEnvironment = (
       dirname(storageRoot),
       'outside-granted-roots.txt'
     )
-  }
-  if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
-    // The production runner caches resolved tools under LocalAppData. Keep the controlled process
-    // fixture isolated from any micromamba selected by an ordinary Open-Science session.
-    environment.LOCALAPPDATA = join(storageRoot, 'local-app-data')
   }
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (fakeRemoteItRoot) {

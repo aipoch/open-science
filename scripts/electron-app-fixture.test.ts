@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { EventEmitter } from 'node:events'
-import { resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { execFileSync } from 'node:child_process'
 import { runInNewContext } from 'node:vm'
@@ -139,6 +139,39 @@ it('isolates credentials, preload options, home and installation state by defaul
   expect(environment.OPENAI_API_KEY).toBeUndefined()
   expect(environment.NODE_OPTIONS).toBeUndefined()
 })
+
+it.each([undefined, 'enabled'])(
+  'initializes Electron OS paths for default isolated launches (micromamba events: %s)',
+  async (micromambaEvents) => {
+    const source = await readFile('e2e/fixtures/node-runtime-preload.cjs', 'utf8')
+    const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+      OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS: micromambaEvents
+    })
+    const created = new Set<string>()
+    const setPath = vi.fn((_key: string, value: string) => {
+      // Electron requires the target directory to exist before accepting the override.
+      expect(created.has(value)).toBe(true)
+    })
+    runInNewContext(source, {
+      require: (name: string) => {
+        if (name === 'electron') return { app: { isPackaged: false, setPath } }
+        if (name === 'node:path') return { dirname, join, resolve, sep }
+        if (name === 'node:fs')
+          return { readFileSync: vi.fn(), mkdirSync: (path: string) => created.add(path) }
+        if (name === 'node:module') return { _load: vi.fn() }
+        throw new Error(`Unexpected module: ${name}`)
+      },
+      process: { platform: 'win32', versions: { electron: 'test' }, env: environment },
+      __dirname: resolve('e2e/fixtures')
+    })
+    expect(setPath.mock.calls).toEqual([
+      ['home', environment.USERPROFILE],
+      ['appData', environment.APPDATA],
+      ['cache', environment.LOCALAPPDATA],
+      ['downloads', join(environment.USERPROFILE, 'Downloads')]
+    ])
+  }
+)
 
 it.each([true, false])(
   'requires an explicit Linux test vault before restoring it: %s',

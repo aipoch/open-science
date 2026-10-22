@@ -280,9 +280,7 @@
     "src/main/desktop-startup-recovery.ts",
     "src/main/desktop-update-integration.ts"
   ],
-  "consumerModules": [
-    "main_web_service"
-  ],
+  "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": [
       "src/main/composition/project-lifecycle.test.ts",
@@ -1238,10 +1236,6 @@
       "src/main/update/windows-update-handoff.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime"
 }
