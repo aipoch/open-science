@@ -1,4 +1,4 @@
-import type { AuthorizedDirectoryDiscovery } from '../local-fs/authorized-directories'
+import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type {
@@ -108,7 +108,7 @@ export type AcpRuntimeOptions = {
   // Resolves a granted local root and its current access level (backed by the GrantedLocalRoot
   // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
   // stay unavailable.
-  authorizedDirectories?: Pick<AuthorizedDirectoryDiscovery, 'prepareNotice'>
+  authorizedDirectories?: Pick<AuthorizedDirectoryNotices, 'initialize' | 'prepareNotice'>
   grantedRoots?: {
     list?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>

@@ -330,6 +330,10 @@
     ],
     "main_agents": ["src/main/notebook/authorized-directories.integration.test.ts"],
     "main_archive": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "main_database": [
+      "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "main_delegation": [
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"

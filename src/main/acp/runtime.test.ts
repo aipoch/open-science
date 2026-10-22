@@ -1,3 +1,4 @@
+import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
@@ -7294,7 +7295,14 @@ describe('ACP runtime session management', () => {
     resolveSessionUpload.mockClear()
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'summarize without context' })
 
-    expect(receivedPrompts).toEqual([[{ type: 'text', text: 'summarize without context' }]])
+    expect(receivedPrompts).toEqual([
+      [
+        {
+          type: 'text',
+          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.\n\nsummarize without context'
+        }
+      ]
+    ])
     expect(JSON.stringify(receivedPrompts)).not.toContain(ambientSecret)
     expect(finalizeUploads).not.toHaveBeenCalled()
     expect(resolveManagedUpload).not.toHaveBeenCalled()
@@ -12579,6 +12587,36 @@ describe('ACP runtime session management', () => {
       expect.stringMatching(/Current agent: Main Agent\.[\s\S]+summarize the results$/)
     ])
     expect(fakeAgent.prompts.every(({ text }) => !text.includes(persistentInstructions))).toBe(true)
+  })
+
+  it('initializes directory notice baselines on create and resume before the first user send', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['directory-session'], { supportsResume: true })
+    let revision = 'a'
+    const read = vi.fn(async () => ({ revision, directories: [] }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      authorizedDirectories: new AuthorizedDirectoryNotices(read),
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(read).toHaveBeenCalledOnce()
+    revision = 'b'
+    await runtime.sendPrompt({ sessionId: 'directory-session', text: 'find the data' })
+    expect(agent.prompts.at(-1)?.text).toContain('Local directory authorization has changed.')
+    await runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
+    expect(read).toHaveBeenCalledTimes(3)
+    await runtime.sendPrompt({ sessionId: 'restored-session', text: 'continue' })
+    expect(agent.prompts.at(-1)?.text).not.toContain('Local directory authorization has changed.')
+    revision = 'c'
+    await runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 'restored-session', text: 'find more data' })
+    expect(agent.prompts.at(-1)?.text).toContain('Local directory authorization has changed.')
   })
 
   it('keeps current granted roots in the sandbox context without exposing them in prompts', async () => {

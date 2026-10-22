@@ -96,29 +96,6 @@ describe('granted local roots repository', () => {
     expect(await repository.authorizedSnapshot()).toEqual(before)
   })
 
-  it('restores pending notices, query freshness and acknowledgement independently across restart', async () => {
-    const repository = await createRepository()
-    const before = await repository.discovery.query('one')
-    await repository.discovery.query('two')
-    await repository.upsertByPath(root('id-1', '/data/one', 'rw'))
-    const reopened = new GrantedLocalRootsRepository(async () => client!)
-    const pending = await reopened.discovery.prepareNotice('one')
-    expect(pending).toBeDefined()
-    await pending!.commit()
-    const after = await reopened.authorizedSnapshot()
-    const [receipt] = await client!.$queryRaw<
-      Array<{ queriedRevision: string; notifiedRevision: string }>
-    >`
-      SELECT "queriedRevision", "notifiedRevision" FROM "AuthorizedDirectoryDiscovery" WHERE "sessionId" = 'one'`
-    expect(receipt).toEqual({ queriedRevision: before.revision, notifiedRevision: after.revision })
-    const resumed = new GrantedLocalRootsRepository(async () => client!)
-    expect(await resumed.discovery.prepareNotice('one')).toBeUndefined()
-    expect(await resumed.discovery.prepareNotice('two')).toBeDefined()
-    expect(await resumed.discovery.query('one')).toEqual(after)
-    await resumed.setAccess('id-1', 'ro')
-    expect(await resumed.discovery.prepareNotice('one')).toBeDefined()
-  })
-
   it('starts empty on a fresh database', async () => {
     const repository = await createRepository()
 

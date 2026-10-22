@@ -851,7 +851,12 @@ class AcpRuntime {
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.providerSessionCreator.create(request))
+    return this.withOperationLease(async () => {
+      const created = await this.providerSessionCreator.create(request)
+      const session = this.activeSessionFor(created.sessionId)
+      if (session) await this.options.authorizedDirectories?.initialize(session)
+      return created
+    })
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
@@ -900,6 +905,8 @@ class AcpRuntime {
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
       const resumed = await this.providerSessionResumer.resume(request)
+      const session = this.activeSessionFor(request.sessionId)
+      if (session) await this.options.authorizedDirectories?.initialize(session)
       if (resumed.contextReset) {
         const contextResetSessionIds =
           this.restoredContinuationContextResetSessionIds ?? new Set<string>()

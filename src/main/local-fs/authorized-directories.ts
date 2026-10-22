@@ -16,81 +16,36 @@ export type AuthorizedDirectoriesSnapshot = {
   }>
 }
 
-export type ConversationDiscoveryRecord = {
-  initialRevision: string
-  queriedRevision?: string
-  notifiedRevision?: string
-}
+type NoticeState = { revision: string; issued: number; accepted: number }
 
-type ConversationDiscovery = ConversationDiscoveryRecord & { issued: number; accepted: number }
-type DiscoveryStore = {
-  load: (sessionId: string) => Promise<ConversationDiscoveryRecord | undefined>
-  save: (sessionId: string, state: ConversationDiscoveryRecord) => Promise<void>
-}
+// A live provider attachment owns its notice baseline; no query or durable state is kept.
+export class AuthorizedDirectoryNotices {
+  private readonly sessions = new WeakMap<object, NoticeState>()
 
-// Shared by the MCP bridge and prompt admission; receipts outlive provider/context restoration.
-export class AuthorizedDirectoryDiscovery {
-  private readonly conversations = new Map<string, ConversationDiscovery>()
-  private readonly pending = new Map<string, Promise<unknown>>()
+  constructor(private readonly read: () => Promise<AuthorizedDirectoriesSnapshot>) {}
 
-  constructor(
-    private readonly read: () => Promise<AuthorizedDirectoriesSnapshot>,
-    private readonly store?: DiscoveryStore
-  ) {}
-
-  // Serialize query/ack writes per conversation so a slow older write cannot clear newer state.
-  private withConversation<T>(
-    sessionId: string,
-    revision: string,
-    work: (state: ConversationDiscovery) => Promise<T>
-  ): Promise<T> {
-    const result = (this.pending.get(sessionId) ?? Promise.resolve())
-      .catch(() => {})
-      .then(async () => {
-        let state = this.conversations.get(sessionId)
-        if (!state) {
-          const saved = await this.store?.load(sessionId)
-          state = { ...(saved ?? { initialRevision: revision }), issued: 0, accepted: 0 }
-          if (!saved) await this.store?.save(sessionId, state)
-          this.conversations.set(sessionId, state)
-        }
-        return work(state)
-      })
-    this.pending.set(sessionId, result)
-    const clear = (): void => {
-      if (this.pending.get(sessionId) === result) this.pending.delete(sessionId)
-    }
-    void result.then(clear, clear)
-    return result
-  }
-
-  async query(sessionId: string): Promise<AuthorizedDirectoriesSnapshot> {
-    const result = await this.read()
-    await this.withConversation(sessionId, result.revision, async (state) => {
-      await this.store?.save(sessionId, { ...state, queriedRevision: result.revision })
-      state.queriedRevision = result.revision
-    })
-    return result
-  }
-
-  async prepareNotice(
-    sessionId: string
-  ): Promise<{ text: string; commit: () => Promise<void> } | undefined> {
+  async initialize(session: object): Promise<void> {
+    if (this.sessions.has(session)) return
     const { revision } = await this.read()
-    return this.withConversation(sessionId, revision, async (state) => {
-      if (revision === (state.notifiedRevision ?? state.initialRevision)) return undefined
-      const sequence = ++state.issued
-      return {
-        text: 'Local directory authorization has changed.',
-        commit: () =>
-          this.withConversation(sessionId, revision, async (current) => {
-            // Acknowledge this snapshot only. Query freshness is a separate receipt.
-            if (sequence <= current.accepted) return
-            await this.store?.save(sessionId, { ...current, notifiedRevision: revision })
-            current.accepted = sequence
-            current.notifiedRevision = revision
-          })
+    this.sessions.set(session, { revision, issued: 0, accepted: 0 })
+  }
+
+  async prepareNotice(session: object): Promise<{ text: string; commit: () => void } | undefined> {
+    const state = this.sessions.get(session)
+    const { revision } = await this.read()
+    if (!state) {
+      this.sessions.set(session, { revision, issued: 0, accepted: 0 })
+      return undefined
+    }
+    if (revision === state.revision) return undefined
+    const sequence = ++state.issued
+    return {
+      text: 'Local directory authorization has changed.',
+      commit: () => {
+        if (this.sessions.get(session) !== state || sequence <= state.accepted) return
+        state.accepted = sequence
+        state.revision = revision
       }
-    })
+    }
   }
 }

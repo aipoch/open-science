@@ -1,4 +1,3 @@
-import { authorizedDirectoryDiscoveryMigration } from './migrations/0051-authorized-directory-discovery'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -934,16 +933,6 @@ const MIGRATION_MANIFEST = [
       literatureTranslationMigration.statements,
       literatureTranslationMigration.verifiers,
       literatureTranslationMigration.operations
-    ),
-    backupOnApply: 'required',
-    backupRetention: 'retain'
-  },
-  {
-    ...authorizedDirectoryDiscoveryMigration,
-    checksum: checksumMigrationPayload(
-      authorizedDirectoryDiscoveryMigration.id,
-      authorizedDirectoryDiscoveryMigration.statements,
-      authorizedDirectoryDiscoveryMigration.verifiers
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

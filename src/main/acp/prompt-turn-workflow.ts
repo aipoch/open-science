@@ -1,4 +1,4 @@
-import type { AuthorizedDirectoryDiscovery } from '../local-fs/authorized-directories'
+import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -87,7 +87,7 @@ type AcpActivatedPromptTurn = Readonly<{
 }>
 
 type AcpPromptTurnEnvironment = Readonly<{
-  authorizedDirectories?: Pick<AuthorizedDirectoryDiscovery, 'prepareNotice'>
+  authorizedDirectories?: Pick<AuthorizedDirectoryNotices, 'prepareNotice'>
   connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
@@ -537,7 +537,7 @@ class AcpPromptTurnWorkflow {
       // Only an explicit user send carries the notice; continuations never consume it.
       const authorizationNotice =
         turn.mode.kind === 'user' && !request.continuation && !request.suppressUserMessage
-          ? await env.authorizedDirectories?.prepareNotice(sessionId)
+          ? await env.authorizedDirectories?.prepareNotice(session)
           : undefined
       prepared = await preparation.prepare({
         request: preparationRequest,
@@ -647,14 +647,7 @@ class AcpPromptTurnWorkflow {
             return interactions.captureTerminal(interaction, 'stop')
           },
           onAccepted: async () => {
-            try {
-              await authorizationNotice?.commit()
-            } catch (error) {
-              log.warn(
-                'authorization notice receipt failed after provider acceptance',
-                errorLogFields(error)
-              )
-            }
+            authorizationNotice?.commit()
             if (resumeAccepted) {
               const accept = resumeAccepted
               resumeAccepted = undefined

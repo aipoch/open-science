@@ -1,15 +1,10 @@
 import { createHash } from 'node:crypto'
-import {
-  AuthorizedDirectoryDiscovery,
-  type ConversationDiscoveryRecord,
-  type AuthorizedDirectoriesSnapshot
-} from './authorized-directories'
+import type { AuthorizedDirectoriesSnapshot } from './authorized-directories'
 import type { GrantedLocalRoot as PrismaGrantedLocalRoot, PrismaClient } from '@prisma/client'
 
 import type { GrantedLocalRoot, GrantedLocalRootAccess } from '../../shared/local-fs'
 
-// Grant records and conversation receipts share the application database.
-type GrantedLocalRootClient = Pick<PrismaClient, 'grantedLocalRoot' | '$queryRaw' | '$executeRaw'>
+type GrantedLocalRootClient = Pick<PrismaClient, 'grantedLocalRoot'>
 
 // Resolves the Prisma client on demand so a failed schema-ensure initialization is not held
 // forever (see projects/repository.ts).
@@ -41,34 +36,6 @@ const toRoot = (row: PrismaGrantedLocalRoot): GrantedLocalRoot => ({
 // repository is a plain table wrapper.
 class GrantedLocalRootsRepository {
   private migration: Promise<void> | undefined
-  readonly discovery = new AuthorizedDirectoryDiscovery(() => this.authorizedSnapshot(), {
-    load: async (sessionId) => {
-      const client = await this.getClient()
-      const [row] = await client.$queryRaw<
-        Array<{
-          initialRevision: string
-          queriedRevision: string | null
-          notifiedRevision: string | null
-        }>
-      >`SELECT "initialRevision", "queriedRevision", "notifiedRevision"
-           FROM "AuthorizedDirectoryDiscovery" WHERE "sessionId" = ${sessionId}`
-      return row
-        ? {
-            initialRevision: row.initialRevision,
-            queriedRevision: row.queriedRevision ?? undefined,
-            notifiedRevision: row.notifiedRevision ?? undefined
-          }
-        : undefined
-    },
-    save: async (sessionId, state: ConversationDiscoveryRecord) => {
-      const client = await this.getClient()
-      await client.$executeRaw`INSERT INTO "AuthorizedDirectoryDiscovery"
-        ("sessionId", "initialRevision", "queriedRevision", "notifiedRevision")
-        VALUES (${sessionId}, ${state.initialRevision}, ${state.queriedRevision ?? null}, ${state.notifiedRevision ?? null})
-        ON CONFLICT("sessionId") DO UPDATE SET
-          "queriedRevision" = excluded."queriedRevision", "notifiedRevision" = excluded."notifiedRevision"`
-    }
-  })
 
   constructor(
     private readonly getClient: GrantedLocalRootClientProvider,

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
+import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { opencodeFramework } from '../agent-framework/opencode'
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
@@ -86,6 +87,21 @@ const specialistSkillScope = (names: readonly string[]): string =>
   ].join('\n')
 
 describe('ACP Session presentation policy', () => {
+  it.each([claudeCodeFramework, codexFramework, opencodeFramework, codeBuddyFramework])(
+    'requires fresh directory discovery when creating or restoring a $id session',
+    (framework) => {
+      const setup = new AcpSessionPresentationPolicy().buildSessionSetup({
+        framework,
+        tooling: { artifacts: true, notebook: true, skillImport: false },
+        persistentSystemPrompt: 'Existing provider instructions.'
+      })
+      expect(setup.promptPrefix).toContain(
+        'Before the first local file operation after session creation or resume'
+      )
+      expect(setup.promptPrefix).toContain('restored history')
+    }
+  )
+
   const policy = new AcpSessionPresentationPolicy()
   it('keeps the Codex loader limited to the current primary Skill scope', () => {
     const input = {
@@ -426,7 +442,8 @@ describe('ACP Session presentation policy', () => {
       })
     ).toEqual({
       metaArg: {},
-      promptPrefix: 'One-off Session guidance.',
+      promptPrefix:
+        'One-off Session guidance.\n\nBefore the first local file operation after session creation or resume, call list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.',
       persistentSystemPrompt: 'Baked Codex developer instructions.'
     })
   })

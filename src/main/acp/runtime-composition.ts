@@ -1,3 +1,4 @@
+import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { LiteratureLatexBundle } from '@aipoch/literature-citations/documents'
@@ -155,7 +156,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   // resolver reads it fresh per resolution. Absent only in tests — linked-folder references then
   // fail closed (no root resolves).
   grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'> &
-    Partial<Pick<GrantedLocalRootsRepository, 'discovery'>>
+    Partial<Pick<GrantedLocalRootsRepository, 'authorizedSnapshot'>>
   permissionGrantRegistry?: PermissionGrantRegistry
   permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
   initializationBarrier?: Promise<unknown>
@@ -772,7 +773,9 @@ const createAcpRuntime = ({
             }
           : {}),
         ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
-        authorizedDirectories: grantedRootsRepository?.discovery,
+        authorizedDirectories: grantedRootsRepository?.authorizedSnapshot
+          ? new AuthorizedDirectoryNotices(() => grantedRootsRepository.authorizedSnapshot!())
+          : undefined,
         grantedRoots: grantedRootsRepository
           ? {
               list: () => grantedRootsRepository.list(),

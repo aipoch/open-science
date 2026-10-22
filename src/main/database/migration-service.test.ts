@@ -330,8 +330,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     expect(await client.literatureItem.findMany()).toEqual(before)
@@ -368,7 +367,7 @@ describe('application database migrations', () => {
     )
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0038_literature_search_text',
-      to: '0051_authorized_directory_discovery',
+      to: '0050_literature_translation',
       applied: [
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
@@ -381,15 +380,14 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     expect(await client.literatureMetadataCommitReceipt.count()).toBe(0)
     expect(await client.literatureItem.findMany()).toEqual(before)
     expect(
       await client.$queryRawUnsafe(
-        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0049_pascalcase_table_names', '0050_literature_translation', '0051_authorized_directory_discovery') ORDER BY id`
+        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0049_pascalcase_table_names', '0050_literature_translation') ORDER BY id`
       )
     ).toEqual(ledger)
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -780,11 +778,10 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ],
       from: null,
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -797,8 +794,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0051_authorized_directory_discovery',
-      to: '0051_authorized_directory_discovery'
+      from: '0050_literature_translation',
+      to: '0050_literature_translation'
     })
   })
 
@@ -840,11 +837,10 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ],
       from: '0033_compute_job_harvest_retry',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -970,8 +966,7 @@ describe('application database migrations', () => {
           '0047_session_replay',
           '0048_pdf_annotation_sharing',
           '0049_pascalcase_table_names',
-          '0050_literature_translation',
-          '0051_authorized_directory_discovery'
+          '0050_literature_translation'
         ]
       })
       await expect(
@@ -1077,8 +1072,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1123,7 +1117,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -1196,11 +1190,10 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -1301,11 +1294,10 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<
@@ -1428,7 +1420,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0051_authorized_directory_discovery'
+      migrationId: '0050_literature_translation'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1445,7 +1437,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0051_authorized_directory_discovery',
+      from: '0050_literature_translation',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1503,7 +1495,6 @@ describe('application database migrations', () => {
       { id: '0048_pdf_annotation_sharing' },
       { id: '0049_pascalcase_table_names' },
       { id: '0050_literature_translation' },
-      { id: '0051_authorized_directory_discovery' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1606,11 +1597,10 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     expect(backupEvents).toEqual([
       {
@@ -1714,8 +1704,7 @@ describe('application database migrations', () => {
       { id: '0047_session_replay' },
       { id: '0048_pdf_annotation_sharing' },
       { id: '0049_pascalcase_table_names' },
-      { id: '0050_literature_translation' },
-      { id: '0051_authorized_directory_discovery' }
+      { id: '0050_literature_translation' }
     ])
   })
 
@@ -1859,7 +1848,6 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
-        '0051_authorized_directory_discovery',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1997,7 +1985,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -2135,8 +2123,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     await expect(
@@ -2283,8 +2270,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -2383,8 +2369,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     await expect(
@@ -2486,8 +2471,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2623,8 +2607,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     await expect(
@@ -3150,8 +3133,7 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ]
     })
     expect(await client.session.findUnique({ where: { id: 'ordinary' } })).toEqual(session)
@@ -3215,8 +3197,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
+      'open-science.db.before-0049_pascalcase_table_names.backup',
       'open-science.db.before-0050_literature_translation.backup',
-      'open-science.db.before-0051_authorized_directory_discovery.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -3535,11 +3517,10 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3598,7 +3579,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3680,11 +3661,10 @@ describe('application database migrations', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation',
-        '0051_authorized_directory_discovery'
+        '0050_literature_translation'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0051_authorized_directory_discovery'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

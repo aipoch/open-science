@@ -1,4 +1,4 @@
-import type { AuthorizedDirectoryDiscovery } from '../local-fs/authorized-directories'
+import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import {
@@ -131,7 +131,7 @@ type NotebookLocalRpcServerOptions = {
   host?: string
   requestBytes?: number
   now?: () => number
-  authorizedDirectories?: Pick<AuthorizedDirectoryDiscovery, 'query'>
+  authorizedDirectories?: () => Promise<AuthorizedDirectoriesSnapshot>
   onSessionReleased?: (sessionId: string) => void
   isHostSkillsAvailable?: (sessionId: string) => boolean
   resolveSpecialistSkillIds?: (specialistId: string) => Promise<readonly string[]>
@@ -2949,7 +2949,7 @@ class NotebookLocalRpcServer {
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
       if (!sessionId)
         throw new RpcHttpError(403, 'Authorized directories require a session-bound token.')
-      return this.authorizedDirectories.query(sessionId)
+      return this.authorizedDirectories()
     }
 
     // mcpCall carries no runtime routing fields, so it bypasses assertSessionParams below. It does

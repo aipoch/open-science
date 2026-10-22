@@ -1,4 +1,4 @@
-import { AuthorizedDirectoryDiscovery } from '../local-fs/authorized-directories'
+import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { ActiveSession, PromptResponse } from '@agentclientprotocol/sdk'
 import { rmSync } from 'node:fs'
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -1559,11 +1559,13 @@ it('does not dispatch after cancellation is accepted during framework preparatio
 describe('authorization change notices at user prompt admission', () => {
   it('retries failed sends, coalesces changes, and retains a change during acceptance', async () => {
     let revision = 'a'
-    const discovery = new AuthorizedDirectoryDiscovery(async () => ({ revision, directories: [] }))
+    const discovery = new AuthorizedDirectoryNotices(async () => ({ revision, directories: [] }))
+    const session = {}
+    await discovery.initialize(session)
     let failure = false
     let changeDuringSend = false
     const harness = createHarness({
-      authorizedDirectories: discovery,
+      authorizedDirectories: { prepareNotice: () => discovery.prepareNotice(session) },
       finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome),
       execute: async (input) => {
         if (failure) throw new Error('send failed')

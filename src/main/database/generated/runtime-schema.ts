@@ -984,12 +984,6 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "ComputeAuthOperation_resultRevision_check" CHECK ("resultRevision" >= 1),
     CONSTRAINT "ComputeAuthOperation_operationKind_check" CHECK ("operationKind" IN ('create_password', 'reset_password', 'change_authentication'))
 );`,
-  `CREATE TABLE IF NOT EXISTS "AuthorizedDirectoryDiscovery" (
-    "sessionId" TEXT NOT NULL PRIMARY KEY,
-    "initialRevision" TEXT NOT NULL,
-    "queriedRevision" TEXT,
-    "notifiedRevision" TEXT
-);`,
   `CREATE TABLE IF NOT EXISTS "GrantedLocalRoot" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "path" TEXT NOT NULL,
@@ -1527,7 +1521,6 @@ const RUNTIME_SCHEMA_TABLES = [
   'ComputeHost',
   'ComputeCredential',
   'ComputeAuthOperation',
-  'AuthorizedDirectoryDiscovery',
   'GrantedLocalRoot',
   'Tag',
   'TagAssignment',

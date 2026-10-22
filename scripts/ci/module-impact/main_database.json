@@ -93,8 +93,7 @@
     "src/main/database/migrations/0050-literature-translation.ts",
     "src/main/database/literature-translation-migration.test.ts",
     "src/main/database/workspace-pdf-translation-migration.test.ts",
-    "scripts/database-migration-ledger-smoke.test.ts",
-    "src/main/database/migrations/0051-authorized-directory-discovery.ts"
+    "scripts/database-migration-ledger-smoke.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -533,6 +532,5 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime",
-  "fullTestReason": "Authorization discovery adds a durable receipt migration outside the trusted source boundary; retain full validation until that boundary is reviewed."
+  "fallbackCapability": "main_runtime"
 }

@@ -212,6 +212,11 @@ class AcpSessionPresentationPolicy {
         ...this.systemPromptAppends(input),
         ...sessionSpecificSystemPromptAppends
       ],
+      turnPromptReminders: input.tooling.notebook
+        ? [
+            'Before the first local file operation after session creation or resume, call list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.'
+          ]
+        : [],
       sessionOptions: input.sessionOptions,
       skillRuntimeScope,
       ...(skillWhitelist !== undefined ? { skillWhitelist } : {})

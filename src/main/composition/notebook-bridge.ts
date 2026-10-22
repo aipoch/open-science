@@ -209,7 +209,7 @@ export async function composeNotebookBridge({
   bindNotebookApprovals(notebookService, () => runtimeRef.current)
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
-      authorizedDirectories: grantedRootsRepository.discovery,
+      authorizedDirectories: () => grantedRootsRepository.authorizedSnapshot(),
       // The Notebook REPL runs in a process sandbox whose only TCP egress is the approval gateway.
       // Keep its privileged Host SDK channel on an explicitly shared local socket instead.
       transport: 'pipe',
