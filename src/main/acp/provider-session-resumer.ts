@@ -71,6 +71,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
   // session resume.
@@ -266,6 +267,7 @@ export class AcpProviderSessionResumer {
         this.deps.registry.select(request.sessionId)
         this.deps.updateCwd(cwd)
         current.aggregate.updateLocation(cwd, projectId)
+        this.registerSessionSpecialist(request.sessionId)
         this.deps.emitState()
 
         const responseBackend = this.deps.currentBackend()
@@ -718,7 +720,19 @@ export class AcpProviderSessionResumer {
     }
   }
 
+  private registerSessionSpecialist(sessionId: string): void {
+    try {
+      this.deps.registerSessionSpecialist?.(
+        sessionId,
+        this.deps.registry.lookup(sessionId)?.aggregate.snapshot().specialistId
+      )
+    } catch (error) {
+      this.safeLogError('register resumed session specialist failed', error, sessionId)
+    }
+  }
+
   private publish(sessionId: string, cwd: string): void {
+    this.registerSessionSpecialist(sessionId)
     this.deps.updateCwd(cwd)
     try {
       this.deps.pushEvent({

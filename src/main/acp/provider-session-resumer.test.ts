@@ -103,6 +103,7 @@ type ResumerHarness = {
   assertCurrentConnection: ReturnType<typeof vi.fn>
   attachSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
+  registerSessionSpecialist: ReturnType<typeof vi.fn>
   clearLivePermissionProfile: ReturnType<typeof vi.fn>
   clearTimer: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
@@ -194,6 +195,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     return providerSession
   })
   const connection = { agent: { request, attachSession } } as unknown as ClientConnection
+  const registerSessionSpecialist = vi.fn()
   const commit = vi.fn(() => order.push('capability commit'))
   const release = vi.fn(() => {
     order.push('capability release')
@@ -329,6 +331,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     ...(options.specialistSkills
       ? { resolveSpecialistSkills: vi.fn(async () => options.specialistSkills!) }
       : {}),
+    registerSessionSpecialist,
     resolveProjectAgentContext: options.projectAgentContextError
       ? vi.fn(async () => {
           throw options.projectAgentContextError
@@ -375,6 +378,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     attachSession,
     backend: capturingBackend,
     commit,
+    registerSessionSpecialist,
     clearLivePermissionProfile,
     clearTimer,
     configure,
@@ -512,6 +516,46 @@ describe('AcpProviderSessionResumer', () => {
   })
 
   it.each([
+    ['claude-code', backend, {}],
+    ['opencode', opencodeBackend, {}],
+    ['codex-response', codexResponsesBackend, {}],
+    [
+      'codex-bridge',
+      { ...codexBridgeBackend, providerContinuityToken: 'bridge-token' },
+      { providerContinuityToken: 'bridge-token' }
+    ]
+  ] as const)(
+    'registers the restored %s Specialist under the stable app identity',
+    async (_route, initialBackend, request) => {
+      const harness = createHarness({
+        initialBackend,
+        specialistIdentity: { append: 'identity', prefix: 'specialist' },
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+      await harness.resume({
+        specialistId: 'specialist-1',
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        previousFrameworkId: initialBackend.framework.id,
+        previousBackendId: initialBackend.backendId,
+        ...request
+      })
+      expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
+        'stable-app-session',
+        'specialist-1'
+      )
+      expect(harness.registerSessionSpecialist.mock.invocationCallOrder[0]).toBeGreaterThan(
+        harness.commit.mock.invocationCallOrder[0]
+      )
+      harness.registerSessionSpecialist.mockClear()
+      await harness.resume({ specialistId: 'specialist-1' })
+      expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
+        'stable-app-session',
+        'specialist-1'
+      )
+    }
+  )
+
+  it.each([
     ['claude-code', backend],
     ['opencode', opencodeBackend],
     ['codex-response', codexResponsesBackend],
@@ -548,6 +592,13 @@ describe('AcpProviderSessionResumer', () => {
       })
 
       expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+      expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
+        'stable-app-session',
+        undefined
+      )
+      expect(harness.registerSessionSpecialist.mock.invocationCallOrder[0]).toBeGreaterThan(
+        harness.commit.mock.invocationCallOrder[0]
+      )
       if (initialBackend.framework.id === 'codex') {
         expect(harness.request.mock.calls.map((call) => call[0])).toEqual([
           acp.methods.agent.session.close,
@@ -781,6 +832,7 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.registry.currentSessionId).toBe('stable-app-session')
     expect(harness.assertCurrentConnection).not.toHaveBeenCalled()
     expect(harness.order).toEqual([])
+    expect(harness.registerSessionSpecialist).not.toHaveBeenCalled()
   })
 
   it('does not commit attached metadata when the connection is superseded', async () => {
