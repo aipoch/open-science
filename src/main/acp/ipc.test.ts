@@ -96,6 +96,7 @@ const {
       }),
       resetSessionContext,
       requestProviderReconnect,
+      hasPendingSessionWriterRelease: vi.fn(() => false),
       resumeSession,
       sendAppContinuation: (request: AcpPromptRequest, promptAttemptId?: string) => {
         const prompting = sendAppContinuation(request, promptAttemptId)
