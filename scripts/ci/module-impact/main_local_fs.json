@@ -75,5 +75,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Authorization discovery adds persistent per-session state outside the trusted source boundary; retain full validation until that boundary is reviewed."
 }
