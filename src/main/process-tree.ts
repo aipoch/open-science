@@ -1257,6 +1257,108 @@ const scanForOwnedDescendants = async (
 // 'gone' is positive proof that the recorded tree no longer exists, 'blocked' retains ownership.
 export type PosixLeaderRecoveryOutcome = 'gone' | 'blocked'
 
+// Cold receipts have no live kernel handle. Re-read birth identity in the synchronous turn that
+// sends each signal, rather than carrying a numeric PID/PGID across an asynchronous observation.
+const currentRecordedPosixIdentity = (pid: number): PosixProcessIdentity | undefined => {
+  try {
+    if (process.platform === 'linux')
+      return parseLinuxProcStat(readFileSync(`/proc/${pid}/stat`, 'utf8'))
+    if (process.platform === 'darwin') {
+      const current = loadDarwinProcessBinding()?.getDarwinProcess(pid)
+      if (current?.uniqueId && current.uniqueId !== '0') return normalizeDarwinProcess(current)
+    }
+  } catch {
+    // Missing or unreadable identity is never permission to signal the numeric process id.
+  }
+  return undefined
+}
+
+const signalRecordedPosixGroup = (
+  leader: PosixProcessIdentity,
+  signal: NodeJS.Signals
+): boolean => {
+  const current = currentRecordedPosixIdentity(leader.pid)
+  if (
+    !current ||
+    !samePosixIdentity(leader, current) ||
+    current.pgid !== leader.pid ||
+    current.sid !== leader.pid
+  )
+    return false
+  signalProcessGroup(leader.pid, signal)
+  return true
+}
+
+const signalRecordedPosixProcesses = (
+  identities: readonly PosixProcessIdentity[],
+  signal: NodeJS.Signals
+): void => {
+  for (const identity of identities) {
+    if (samePosixIdentity(identity, currentRecordedPosixIdentity(identity.pid)))
+      signalPids([identity.pid], signal)
+  }
+}
+
+const terminateRecordedPosixTree = async (
+  leader: PosixProcessIdentity,
+  initial: PosixProcessTable,
+  signal: NodeJS.Signals | undefined,
+  log: ProcessTreeLogger | undefined
+): Promise<ProcessTreeKillResult> => {
+  const tracker: PosixProcessTracker = {
+    leaderPid: leader.pid,
+    leaderIdentity: leader,
+    identities: new Map([[leader.pid, leader]]),
+    ambiguousIdentities: new Map(),
+    complete: true,
+    ownershipToken: undefined
+  }
+  captureTrackedDescendants(tracker, initial)
+  const beforeTerm = await collectPosixProcessTable()
+  if (!beforeTerm.complete || !samePosixIdentity(leader, beforeTerm.processes.get(leader.pid)))
+    return { reaped: false }
+  captureTrackedDescendants(tracker, beforeTerm)
+  const identities = [...tracker.identities.values()]
+  if (identities.some(({ birthToken }) => birthToken === undefined)) return { reaped: false }
+  const descendants = identities.filter(({ pid }) => pid !== leader.pid)
+  const exactProcessesGone = (): boolean =>
+    !isProcessGroupAlive(leader.pid) &&
+    identities.every((identity) => {
+      const current = currentRecordedPosixIdentity(identity.pid)
+      return current ? !samePosixIdentity(identity, current) : !isProcessAlive(identity.pid)
+    })
+  const gracefulSignal = signal ?? 'SIGTERM'
+  if (!signalRecordedPosixGroup(leader, gracefulSignal)) return { reaped: false }
+  signalRecordedPosixProcesses(descendants, gracefulSignal)
+  if (await waitUntil(exactProcessesGone, TERMINATE_GRACE_MS)) return { reaped: true }
+
+  const beforeForce = await collectPosixProcessTable()
+  if (!beforeForce.complete) return { reaped: false }
+  const survivingLeader = beforeForce.processes.get(leader.pid)
+  // A leaderless/reused group is not an ownership handle. Preserve the receipt instead of
+  // escalating against a group that may now belong to an unrelated process epoch.
+  if (
+    isProcessGroupAlive(leader.pid) &&
+    (!survivingLeader ||
+      !samePosixIdentity(leader, survivingLeader) ||
+      survivingLeader.pgid !== leader.pid ||
+      survivingLeader.sid !== leader.pid)
+  )
+    return { reaped: false }
+  log?.error(
+    `recorded process tree ${leader.pid} did not exit after ${gracefulSignal}; escalating exact identities to SIGKILL`
+  )
+  if (samePosixIdentity(leader, survivingLeader) && !signalRecordedPosixGroup(leader, 'SIGKILL'))
+    return { reaped: false }
+  signalRecordedPosixProcesses(
+    descendants.filter((identity) =>
+      samePosixIdentity(identity, beforeForce.processes.get(identity.pid))
+    ),
+    'SIGKILL'
+  )
+  return { reaped: await waitUntil(exactProcessesGone, SIGKILL_GRACE_MS) }
+}
+
 // Cold recovery for a leader recorded by a previous, crashed application instance. There is no
 // ChildProcess handle and no live tracker, so the only admissible evidence is the kernel's own
 // birth identity for the recorded pid, read from a COMPLETE process snapshot.
@@ -1339,14 +1441,10 @@ export const proveRecordedPosixLeaderGone = async (
   }
   // Its detached group is still addressable by the persisted id, so terminate it and require
   // confirmed exit before releasing ownership.
-  const result = await terminateOwnedPosixProcessGroup(
-    { kind: 'owned-posix-process-group', id: leader.pid },
-    signal,
-    log
-  )
+  const result = await terminateRecordedPosixTree(recorded, snapshot, signal, log)
   if (!result.reaped) return 'blocked'
   const confirmation = await collectPosixProcessTable()
-  if (!confirmation.complete) return 'blocked'
+  if (!confirmation.complete || isProcessGroupAlive(leader.pid)) return 'blocked'
   // Leader and group are confirmed gone. Before returning 'gone', scan for escaped descendants
   // that may have daemonized into a new session before teardown but still carry the marker.
   // In the live-teardown path (we actively signaled the group), a clean marker scan after
@@ -1359,7 +1457,10 @@ export const proveRecordedPosixLeaderGone = async (
     // Clean scan after live teardown: sufficient proof
   }
   // No marker or clean scan: leader confirmation as final check
-  return samePosixIdentity(recorded, confirmation.processes.get(leader.pid)) ? 'blocked' : 'gone'
+  return samePosixIdentity(recorded, confirmation.processes.get(leader.pid)) ||
+    isProcessGroupAlive(leader.pid)
+    ? 'blocked'
+    : 'gone'
 }
 
 const terminateTrackedPosixProcessTree = async (

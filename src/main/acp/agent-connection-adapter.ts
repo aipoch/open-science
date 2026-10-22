@@ -1,3 +1,4 @@
+import { mainAgentProcessSpawner } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
   AuthenticateRequest,
@@ -181,7 +182,8 @@ class AcpAgentConnectionAdapter {
             executablePath: backend.executablePath,
             env: backend.env,
             args: backend.args ?? [],
-            proxyEnvironmentMode: backend.proxyEnvironmentMode
+            proxyEnvironmentMode: backend.proxyEnvironmentMode,
+            spawnProcess: mainAgentProcessSpawner(framework)
           })
       hooks.onProcessSpawned(framework)
       if (input.isShuttingDown() || !input.isCurrent()) {

@@ -1,0 +1,788 @@
+import { test, expect } from '@playwright/test'
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { basename, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { spawn, execFile } from 'node:child_process'
+import type { ElectronApplication } from 'playwright'
+import { promisify } from 'node:util'
+import {
+  closeElectronApplicationForCleanup,
+  disconnectFixtureServiceConnection,
+  hasFixtureReconnected,
+  launchOpenScience,
+  launchEnvironment,
+  removeTreeForCleanup
+} from './fixtures/electron-app'
+import {
+  captureFixtureAgents,
+  captureFixtureProcess,
+  captureFixtureRoot,
+  captureFixtureService,
+  cleanupFixtureAgent,
+  cleanupFixtureProcess,
+  cleanupFixtureService,
+  runFixtureCleanup,
+  remainingFixtureAgentReceipts,
+  makeCapturedFixtureDirectoriesWritable,
+  type CapturedFixtureAgent,
+  type CapturedFixtureProcess,
+  type CapturedService
+} from './fixtures/local-service-cleanup'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
+import { isRuntimeProcessAlive } from '../src/main/runtime-stop-confirmation'
+import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
+import { processBirthIdentity } from '../src/main/process-birth-identity'
+import { readProcessTree } from '../scripts/performance/process-snapshot'
+
+const evidence = resolve('.scratch/local-service-lifecycle-implementation/e2e')
+const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+async function launchFixture(stalled = false) {
+  const baseline = process.env.OPEN_SCIENCE_E2E_BASELINE?.trim()
+  const buildId = process.env.OPEN_SCIENCE_E2E_BUILD_ID?.trim()
+  if (
+    !baseline ||
+    !/^[a-f\d]{40}$/i.test(baseline) ||
+    !buildId ||
+    ['unrecorded', 'unknown'].includes(buildId)
+  )
+    throw new Error(
+      'Lifecycle acceptance requires an exact OPEN_SCIENCE_E2E_BASELINE and OPEN_SCIENCE_E2E_BUILD_ID before launching any process.'
+    )
+  await mkdir(evidence, { recursive: true })
+  const root = await mkdtemp(join(tmpdir(), 'open-science-lifecycle-acceptance-'))
+  const capturedRoot = await captureFixtureRoot(root)
+  const roots = {
+    storageRoot: join(root, 'config'),
+    userDataRoot: join(root, 'profile'),
+    fakeAgentBinRoot: join(root, 'bin'),
+    fakeRemoteItRoot: join(root, 'remote'),
+    fakeRemoteItState: join(root, 'remote.json')
+  }
+  await mkdir(roots.storageRoot)
+  await mkdir(roots.fakeAgentBinRoot)
+  const launcher = join(
+    roots.fakeAgentBinRoot,
+    process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
+  )
+  await writeFile(
+    launcher,
+    process.platform === 'win32'
+      ? `@echo off\r\n"${process.execPath}" "${resolve('e2e/fixtures/fake-opencode.mjs')}" %*\r\n`
+      : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(resolve('e2e/fixtures/fake-opencode.mjs'))} "$@"\n`
+  )
+  await chmod(launcher, 0o755)
+  await writeFile(
+    join(roots.storageRoot, 'settings.json'),
+    JSON.stringify({
+      version: 1,
+      opencodePath: launcher,
+      opencodeVersion: '1.0.0',
+      agentFramework: 'opencode',
+      localePreference: 'en',
+      sessionDetailsModel: { mode: 'disabled' }
+    })
+  )
+  let app: ElectronApplication | undefined
+  let desktopProcess: CapturedFixtureProcess | undefined
+  let target: CapturedService | undefined
+  const processes: CapturedFixtureProcess[] = []
+  const agents: CapturedFixtureAgent[] = []
+  const trackAgents = (service: CapturedService): CapturedFixtureAgent[] => {
+    const captured = captureFixtureAgents(service)
+    for (const agent of captured)
+      if (!agents.some((entry) => entry.pid === agent.pid && entry.birthToken === agent.birthToken))
+        agents.push(agent)
+    return captured
+  }
+  const trackProcess = (child: ReturnType<typeof spawn>): CapturedFixtureProcess | undefined => {
+    const captured = captureFixtureProcess(child)
+    if (captured) processes.push(captured)
+    return captured
+  }
+  const cleanup = async (failure?: unknown): Promise<void> => {
+    let current: CapturedService | undefined
+    let cleanupFailure: unknown
+    const original: { pid: number; birthToken: string; alive: boolean; sameIdentity: boolean }[] =
+      []
+    let remainingReceipts: ReturnType<typeof remainingFixtureAgentReceipts> = []
+    let receiptEvidence: 'unknown' | 'unresolved' | 'clear' = 'unknown'
+    const rememberOriginal = (): void => {
+      for (const { pid, birthToken } of [...processes, ...agents])
+        if (!original.some((entry) => entry.pid === pid && entry.birthToken === birthToken))
+          original.push({
+            pid,
+            birthToken,
+            alive: isRuntimeProcessAlive(pid),
+            sameIdentity: processBirthIdentity(pid) === birthToken
+          })
+    }
+    try {
+      await runFixtureCleanup(
+        [
+          async () => {
+            current = await captureFixtureService(roots.storageRoot)
+            if (current ?? target) trackAgents((current ?? target)!)
+          },
+          async () => {
+            rememberOriginal()
+          },
+          async () => {
+            if (
+              !app ||
+              !desktopProcess ||
+              desktopProcess.child.exitCode !== null ||
+              desktopProcess.child.signalCode !== null
+            )
+              return
+            await closeElectronApplicationForCleanup(
+              {
+                close: () => app!.close(),
+                forceClose: () => cleanupFixtureProcess(desktopProcess)
+              },
+              { gracefulTimeoutMs: 5000, forcedTimeoutMs: 25_000 }
+            )
+          },
+          () => cleanupFixtureService(current),
+          () => cleanupFixtureService(target),
+          async () => {
+            if (current ?? target) trackAgents((current ?? target)!)
+            rememberOriginal()
+          },
+          () => runFixtureCleanup(agents.map((entry) => () => cleanupFixtureAgent(entry))),
+          ...processes.map((entry) => () => cleanupFixtureProcess(entry)),
+          async () => {
+            remainingReceipts = remainingFixtureAgentReceipts(roots.storageRoot)
+            receiptEvidence = remainingReceipts.length ? 'unresolved' : 'clear'
+            if (remainingReceipts.length)
+              throw new Error(
+                'Fixture agent tree/Job cleanup remains unconfirmed; preserve the root and receipts.'
+              )
+          }
+        ],
+        failure
+      )
+    } catch (error) {
+      cleanupFailure = error
+    }
+    await runFixtureCleanup(
+      [
+        async () => {
+          await writeFile(
+            join(evidence, `${basename(root)}-cleanup.json`),
+            JSON.stringify(
+              {
+                root,
+                baseline,
+                buildId,
+                remainingReceipts,
+                receiptEvidence,
+                original,
+                cleanupComplete: cleanupFailure === undefined,
+                after: [...processes, ...agents].map(({ pid, birthToken }) => ({
+                  pid,
+                  birthToken,
+                  alive: isRuntimeProcessAlive(pid),
+                  sameIdentity: processBirthIdentity(pid) === birthToken
+                }))
+              },
+              null,
+              2
+            )
+          )
+        }
+      ],
+      cleanupFailure
+    )
+    if (cleanupFailure !== undefined) throw cleanupFailure
+    if (failure === undefined) {
+      await makeCapturedFixtureDirectoriesWritable(capturedRoot)
+      await removeTreeForCleanup(root)
+    }
+  }
+  try {
+    if (stalled) {
+      const server = spawn(
+        process.execPath,
+        [resolve('out/backend/index.cjs'), '--development', '--desktop', '--serve=0'],
+        {
+          env: {
+            ...launchEnvironment(roots.storageRoot, roots.fakeAgentBinRoot),
+            OPEN_SCIENCE_USER_DATA: roots.userDataRoot,
+            NODE_OPTIONS: [
+              ...(process.platform === 'darwin'
+                ? [resolve('e2e/fixtures/mock-node-credentials.cjs')]
+                : []),
+              resolve('e2e/fixtures/runtime-relaunch-stall.cjs')
+            ]
+              .map((path) => `--require=${JSON.stringify(path)}`)
+              .join(' ')
+          },
+          stdio: 'ignore'
+        }
+      )
+      server.on('error', () => undefined)
+      trackProcess(server)
+      await expect
+        .poll(
+          async () => {
+            if (server.exitCode !== null)
+              throw new Error(`Fixture backend exited ${server.exitCode}: ${root}`)
+            try {
+              const state = JSON.parse(
+                await readFile(join(roots.storageRoot, 'web-service.json'), 'utf8')
+              )
+              const token = (await readFile(join(roots.storageRoot, 'web-token'), 'utf8')).trim()
+              return (
+                await fetch(`http://127.0.0.1:${state.port}/api/bootstrap`, {
+                  headers: { authorization: `Bearer ${token}` },
+                  signal: AbortSignal.timeout(1000)
+                })
+              ).ok
+            } catch {
+              return false
+            }
+          },
+          { timeout: 30000 }
+        )
+        .toBe(true)
+    }
+    app = await launchOpenScience(roots, true, false, roots.fakeRemoteItRoot, 'normal', false)
+    desktopProcess = trackProcess(app.process())
+    if (!desktopProcess) throw new Error('Fixture desktop child was not captured')
+    const page = await app.firstWindow({ timeout: 30_000 })
+    await expect
+      .poll(() => page.evaluate(() => window.api.databaseStartup.getState()))
+      .toMatchObject({ phase: 'ready' })
+    target = await captureFixtureService(roots.storageRoot)
+    if (!target) throw new Error(`Missing service identity: ${root}`)
+    await app.evaluate(({ dialog }) => {
+      const errors: string[] = []
+      Object.assign(globalThis, { lifecycleErrors: errors })
+      dialog.showErrorBox = (_title, message) => {
+        errors.push(message)
+      }
+    })
+    await page.evaluate(async () => {
+      await window.api.settings.markOnboardingComplete()
+      const snapshot = await window.api.settings.upsertProvider({
+        type: 'custom',
+        name: 'Lifecycle fixture',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'http://127.0.0.1:9/v1',
+        model: 'e2e-model',
+        key: 'e2e-key'
+      })
+      const provider = snapshot.providers.find((entry) => entry.name === 'Lifecycle fixture')!
+      await window.api.settings.setActiveProvider({ id: provider.id, model: 'e2e-model' })
+      await window.api.settings.setAgentFramework({ id: 'opencode' })
+    })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await createProjectViaUi(page, 'Local service acceptance')
+    const env = {
+      ...launchEnvironment(roots.storageRoot),
+      OPEN_SCIENCE_USER_DATA: roots.userDataRoot
+    }
+    const cli = (...args: string[]): Promise<{ stdout: string; stderr: string }> =>
+      promisify(execFile)(
+        process.execPath,
+        [resolve('cli/index.mjs'), ...args, '--config-root', roots.storageRoot],
+        { env, timeout: 40_000 }
+      )
+    const build = await app.evaluate(({ app }) => ({
+      applicationVersion: app.getVersion(),
+      executable: process.execPath,
+      appPath: app.getAppPath()
+    }))
+    return {
+      app,
+      desktopProcess: desktopProcess.child,
+      page,
+      root,
+      roots,
+      target,
+      env,
+      cli,
+      trackProcess,
+      trackAgents,
+      cleanup,
+      build: {
+        baseline,
+        buildId,
+        ...build
+      }
+    }
+  } catch (error) {
+    await cleanup(error)
+    throw error
+  }
+}
+
+for (const stalled of [false, true]) {
+  test(`last App quit interrupts App and CLI tasks and releases the service directory (stalled=${stalled})`, async () => {
+    test.setTimeout(150_000)
+    test.skip(
+      stalled && Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
+      'Shutdown fault preload exercises the source Node entry.'
+    )
+    const acceptanceStartedAt = Date.now()
+    const f = await launchFixture(stalled)
+    let failure: unknown
+    try {
+      await submitPromptViaUi(f.page, 'Hold the turn outcome fixture. App task A')
+      await expect(
+        f.page.getByText('Turn outcome cancellation checkpoint.', { exact: false })
+      ).toBeVisible()
+      const project = (await f.page.evaluate(() => window.api.projects.list()))[0]
+      const readRuns = async (): Promise<{ id: string; projectId: string; status: string }[]> => {
+        const source = await readFile(join(f.roots.storageRoot, 'task-runs.json'), 'utf8').catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return '{"runs":[]}'
+            throw error
+          }
+        )
+        return JSON.parse(source).runs
+      }
+      const existingRuns = new Set((await readRuns()).map((run) => run.id))
+      const control = f.trackProcess(
+        spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+          env: f.env,
+          stdio: 'ignore'
+        })
+      )
+      if (!control) throw new Error('Control process failed to start')
+      let spawnFailure: Error | undefined
+      const cli = spawn(
+        process.execPath,
+        [
+          resolve('cli/index.mjs'),
+          'run',
+          '--project',
+          project.id,
+          '--prompt',
+          'Hold the turn outcome fixture. CLI task B',
+          '--wait',
+          '--json',
+          '--config-root',
+          f.roots.storageRoot
+        ],
+        { env: f.env, stdio: ['ignore', 'pipe', 'pipe'] }
+      )
+      cli.on('error', (error) => {
+        spawnFailure = error
+      })
+      f.trackProcess(cli)
+      let stdout = ''
+      let stderr = ''
+      cli.stdout.on('data', (chunk) => {
+        stdout += chunk.toString()
+      })
+      cli.stderr.on('data', (chunk) => {
+        stderr += chunk.toString()
+      })
+      let cliRunId: string | undefined
+      await expect
+        .poll(async () => {
+          if (spawnFailure) throw spawnFailure
+          if (cli.exitCode !== null || cli.signalCode !== null)
+            throw new Error(
+              `CLI exited before the wait scenario was established (code=${cli.exitCode}, signal=${cli.signalCode}).`
+            )
+          const runs = (await readRuns()).filter(
+            (run) =>
+              !existingRuns.has(run.id) && run.projectId === project.id && run.status === 'running'
+          )
+          if (runs.length === 1) cliRunId = runs[0].id
+          return runs.length
+        })
+        .toBe(1)
+      const agents = f.trackAgents(f.target)
+      expect(processBirthIdentity(f.target.pid)).toBe(f.target.birthToken)
+      const processTree = await readProcessTree(f.target.pid)
+      expect(processTree.complete).toBe(true)
+      const knownProcesses = processTree.processes.map(({ pid, parentPid, kind }) => {
+        const birthToken = processBirthIdentity(pid)
+        if (!birthToken)
+          throw new Error(`Known fixture process identity is unreadable (PID ${pid}).`)
+        return { pid, parentPid, kind, birthToken }
+      })
+      await f.page.screenshot({
+        animations: 'disabled',
+        path: join(evidence, `active-app-cli-tasks-${stalled}.png`)
+      })
+      let activeShutdownStartedAt: number | undefined
+      const shutdownStates: { observedAt: number; epoch: number; phase: string }[] = []
+      await f.page.exposeFunction(
+        'recordLifecycleShutdownProgress',
+        (state: { epoch: number; phase: string }) => {
+          const observedAt = Date.now()
+          activeShutdownStartedAt ??= observedAt
+          shutdownStates.push({ observedAt, epoch: state.epoch, phase: state.phase })
+        }
+      )
+      await f.page.evaluate(() => {
+        const record = (
+          window as unknown as {
+            recordLifecycleShutdownProgress(state: { epoch: number; phase: string }): Promise<void>
+          }
+        ).recordLifecycleShutdownProgress
+        window.api.desktopRuntime!.onStateChanged((state) => {
+          if (state.shutdownProgress)
+            void record({ epoch: state.epoch, phase: state.phase }).catch(() => undefined)
+        })
+      })
+      const quitRequestedAt = Date.now()
+      await f.app.evaluate(({ app }) => app.quit())
+      await expect(
+        f.page.getByRole('button', { name: 'Stop tasks and quit', exact: true })
+      ).toBeVisible()
+      await f.page.screenshot({
+        animations: 'disabled',
+        path: join(evidence, `whole-service-quit-confirmation-${stalled}.png`)
+      })
+      const started = Date.now()
+      const confirmedAt = started
+      await f.page.getByRole('button', { name: 'Stop tasks and quit', exact: true }).click()
+      if (stalled) {
+        await expect(f.page.getByText('Closing Open-Science…', { exact: true })).toBeVisible({
+          timeout: 5000
+        })
+        await f.page.screenshot({
+          animations: 'disabled',
+          path: join(evidence, 'stalled-active-shutdown-progress.png')
+        })
+      }
+      await expect
+        .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
+          timeout: 30_000
+        })
+        .toBe(true)
+      const desktopExitObservedAt = Date.now()
+      await expect.poll(() => isRuntimeProcessAlive(f.target.pid), { timeout: 25_000 }).toBe(false)
+      const serviceExitObservedAt = Date.now()
+      acquireRuntimeDirectorySync(f.roots.storageRoot).release()
+      await expect
+        .poll(() => cli.exitCode !== null || cli.signalCode !== null, { timeout: 35_000 })
+        .toBe(true)
+      if (spawnFailure) throw spawnFailure
+      expect(cli.signalCode).toBeNull()
+      const code = cli.exitCode
+      const cliExitObservedAt = Date.now()
+      const processEvidence = knownProcesses.map((entry) => {
+        const alive = isRuntimeProcessAlive(entry.pid)
+        const birthToken = alive ? processBirthIdentity(entry.pid) : undefined
+        const state = !alive
+          ? 'exited'
+          : !birthToken
+            ? 'unknown'
+            : birthToken === entry.birthToken
+              ? 'running'
+              : 'replaced'
+        return { ...entry, state, exited: state === 'exited' || state === 'replaced' }
+      })
+      const residualReceipts = remainingFixtureAgentReceipts(f.roots.storageRoot)
+      const controlAlive =
+        isRuntimeProcessAlive(control.pid) &&
+        processBirthIdentity(control.pid) === control.birthToken
+      await writeFile(
+        join(evidence, `app-cli-quit-${stalled}.json`),
+        JSON.stringify(
+          {
+            root: f.root,
+            build: f.build,
+            stalled,
+            target: f.target,
+            cliRunId,
+            agents,
+            residualReceipts,
+            knownProcesses: processEvidence,
+            unrelatedControl: {
+              pid: control.pid,
+              birthToken: control.birthToken,
+              alive: controlAlive
+            },
+            timings: {
+              acceptanceStartedAt,
+              quitRequestedAt,
+              confirmedAt,
+              desktopExitObservedAt,
+              serviceExitObservedAt,
+              cliExitObservedAt,
+              preflightAndConfirmationMs: confirmedAt - quitRequestedAt,
+              confirmationToServiceExitMs: serviceExitObservedAt - confirmedAt,
+              confirmationToCliExitMs: cliExitObservedAt - confirmedAt,
+              activeShutdownStartedAt: activeShutdownStartedAt ?? null,
+              activeShutdownTimingEvidence:
+                activeShutdownStartedAt === undefined
+                  ? 'missing'
+                  : 'renderer-state.shutdownProgress observed by Node Date.now',
+              confirmationToActiveStartMs:
+                activeShutdownStartedAt === undefined
+                  ? null
+                  : activeShutdownStartedAt - confirmedAt,
+              activeToDesktopExitMs:
+                activeShutdownStartedAt === undefined
+                  ? null
+                  : desktopExitObservedAt - activeShutdownStartedAt,
+              activeToServiceExitMs:
+                activeShutdownStartedAt === undefined
+                  ? null
+                  : serviceExitObservedAt - activeShutdownStartedAt,
+              shutdownStates,
+              totalMs: cliExitObservedAt - acceptanceStartedAt
+            },
+            elapsedMs: Date.now() - started,
+            cliExit: code,
+            stdout,
+            stderr,
+            processExited: true,
+            directoryLockReleased: true
+          },
+          null,
+          2
+        )
+      )
+      expect(code).not.toBe(0)
+      expect(f.build.buildId).not.toBe('unrecorded')
+      expect(
+        Math.max(desktopExitObservedAt, serviceExitObservedAt, cliExitObservedAt) - confirmedAt
+      ).toBeLessThan(27_000)
+      expect(residualReceipts).toEqual([])
+      if (activeShutdownStartedAt !== undefined)
+        expect(
+          Math.max(desktopExitObservedAt, serviceExitObservedAt) - activeShutdownStartedAt
+        ).toBeLessThan(22_000)
+      if (stalled) expect(activeShutdownStartedAt).toBeDefined()
+      expect(controlAlive).toBe(true)
+      expect(processEvidence.every((entry) => entry.exited)).toBe(true)
+      // Node may emit environment warnings on stderr before the CLI JSON result.
+      const channel = stdout.trim().startsWith('{') ? stdout : stderr
+      const output = JSON.parse(channel.slice(channel.indexOf('{')))
+      expect(output.error?.runId ?? output.id).toBe(cliRunId)
+      expect(output.error?.completionStatus ?? output.status).toMatch(
+        /unconfirmed|cancelled|failed/
+      )
+      if (stalled) {
+        expect(
+          await readFile(join(f.roots.storageRoot, 'relaunch-control-close-stalled'), 'utf8')
+        ).toBe('stalled')
+        expect(Date.now() - started).toBeGreaterThan(15_000)
+        expect(Date.now() - started).toBeLessThan(27_000)
+      }
+    } catch (error) {
+      failure = error
+      throw error
+    } finally {
+      await f.cleanup(failure)
+    }
+  })
+}
+
+test('repeated disconnects preserve drafts; force stop never automatically revives the service', async () => {
+  test.setTimeout(150_000)
+  const f = await launchFixture()
+  let failure: unknown
+  try {
+    const composer = f.page.getByRole('textbox', { name: 'Ask anything' })
+    await composer.fill('Unsent lifecycle acceptance draft')
+    const reconnectTransitions: {
+      beforeEpoch: number
+      afterEpoch: number
+      generation: string
+      pipe: { url: string; destroyed: boolean }
+    }[] = []
+    for (let round = 0; round < 3; round++) {
+      const before = await f.page.evaluate(() => window.api.desktopRuntime!.getState())
+      expect(before.phase).toBe('connected')
+      const serviceBefore = await captureFixtureService(f.roots.storageRoot)
+      expect(serviceBefore?.generation).toBe(f.target.generation)
+      await composer.focus()
+      const pipe = await f.app.evaluate(disconnectFixtureServiceConnection)
+      expect(pipe).toMatchObject({ url: 'ws://localhost/desktop', destroyed: true })
+      await expect
+        .poll(
+          async () => {
+            const after = await f.page.evaluate(() => window.api.desktopRuntime!.getState())
+            const current = await captureFixtureService(f.roots.storageRoot)
+            return hasFixtureReconnected(before, after, f.target.generation, current?.generation)
+          },
+          { timeout: 18_000 }
+        )
+        .toBe(true)
+      const after = await f.page.evaluate(() => window.api.desktopRuntime!.getState())
+      const current = await captureFixtureService(f.roots.storageRoot)
+      expect(hasFixtureReconnected(before, after, f.target.generation, current?.generation)).toBe(
+        true
+      )
+      reconnectTransitions.push({
+        beforeEpoch: before.epoch,
+        afterEpoch: after.epoch,
+        generation: current!.generation,
+        pipe
+      })
+      await expect(composer).toHaveText('Unsent lifecycle acceptance draft')
+      await expect(composer).toBeFocused()
+      expect(
+        await f.app.evaluate(
+          () => (globalThis as unknown as { lifecycleErrors: string[] }).lifecycleErrors
+        )
+      ).toEqual([])
+    }
+    const start = await f.cli('start', '--no-open')
+    const status = await f.cli('status', '--json')
+    expect(JSON.parse(status.stdout).lifetime.explicit).toBe(true)
+    const revoke = await f.cli('stop', '--json')
+    expect(JSON.parse(revoke.stdout).result).toBe('keep-alive-revoked')
+    expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+    f.trackAgents(f.target)
+    const force = await f.cli('stop', '--force', '--json')
+    await expect(f.page.getByTestId('local-service-recovery')).toBeVisible()
+    await expect(f.page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible({
+      timeout: 18_000
+    })
+    await f.page.screenshot({
+      animations: 'disabled',
+      path: join(evidence, 'force-stop-recovery-notice.png')
+    })
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1500))
+    expect(isRuntimeProcessAlive(f.target.pid)).toBe(false)
+    expect(await f.page.evaluate(() => window.api.desktopRuntime!.getState())).toMatchObject({
+      phase: 'unavailable'
+    })
+    await writeFile(
+      join(evidence, 'disconnect-force-stop.json'),
+      JSON.stringify(
+        {
+          root: f.root,
+          build: f.build,
+          target: f.target,
+          reconnects: reconnectTransitions.length,
+          reconnectTransitions,
+          nativeErrors: await f.app.evaluate(
+            () => (globalThis as unknown as { lifecycleErrors: string[] }).lifecycleErrors
+          ),
+          start,
+          status,
+          revoke,
+          force,
+          processExited: true
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await f.cleanup(failure)
+  }
+})
+
+test('restarts after proven service exit and stops automatic recovery on the third crash', async () => {
+  test.setTimeout(150_000)
+  const f = await launchFixture()
+  let failure: unknown
+  try {
+    const composer = f.page.getByRole('textbox', { name: 'Ask anything' })
+    await composer.fill('Draft kept across service restart')
+    const generations: string[] = []
+    const restartTransitions: {
+      fromGeneration: string
+      toGeneration: string
+      pid: number
+      beforeEpoch: number
+      afterEpoch: number
+    }[] = []
+    for (let crash = 1; crash <= 3; crash++) {
+      const target = await captureFixtureService(f.roots.storageRoot)
+      if (!target) throw new Error('Fixture service disappeared before crash injection')
+      generations.push(target.generation)
+      const before = await f.page.evaluate(() => window.api.desktopRuntime!.getState())
+      expect(before.phase).toBe('connected')
+      await composer.focus()
+      expect(processBirthIdentity(target.pid)).toBe(target.birthToken)
+      f.trackAgents(target)
+      process.kill(target.pid, 'SIGKILL')
+      await expect.poll(() => isRuntimeProcessAlive(target.pid)).toBe(false)
+      if (crash < 3) {
+        let replacement: CapturedService | undefined
+        await expect
+          .poll(
+            async () => {
+              const next = await captureFixtureService(f.roots.storageRoot)
+              if (!next || next.generation === target.generation) return false
+              replacement = next
+              return true
+            },
+            { timeout: 20000 }
+          )
+          .toBe(true)
+        if (!replacement) throw new Error('New fixture service was not captured after crash')
+        const next = replacement
+        let after = before
+        await expect
+          .poll(
+            async () => {
+              after = await f.page.evaluate(() => window.api.desktopRuntime!.getState())
+              return (
+                after.phase === 'connected' &&
+                after.epoch > before.epoch &&
+                after.restartedGeneration === next.generation
+              )
+            },
+            { timeout: 20000 }
+          )
+          .toBe(true)
+        expect((await captureFixtureService(f.roots.storageRoot))?.generation).toBe(next.generation)
+        restartTransitions.push({
+          fromGeneration: target.generation,
+          toGeneration: next.generation,
+          pid: next.pid,
+          beforeEpoch: before.epoch,
+          afterEpoch: after.epoch
+        })
+      } else {
+        await expect(f.page.getByTestId('local-service-recovery')).toBeVisible()
+        await expect
+          .poll(() => f.page.evaluate(() => window.api.desktopRuntime!.getState()), {
+            timeout: 20000
+          })
+          .toMatchObject({ phase: 'unavailable' })
+        await new Promise((resolveWait) => setTimeout(resolveWait, 1500))
+        expect(await captureFixtureService(f.roots.storageRoot)).toBeUndefined()
+      }
+      await expect(composer).toHaveText('Draft kept across service restart')
+      await expect(composer).toBeFocused()
+    }
+    await f.page.screenshot({
+      animations: 'disabled',
+      path: join(evidence, 'third-crash-recovery.png')
+    })
+    const nativeErrors = await f.app.evaluate(
+      () => (globalThis as unknown as { lifecycleErrors: string[] }).lifecycleErrors
+    )
+    expect(nativeErrors).toEqual([])
+    await writeFile(
+      join(evidence, 'crash-recovery.json'),
+      JSON.stringify(
+        {
+          root: f.root,
+          build: f.build,
+          generations,
+          restarts: restartTransitions.length,
+          restartTransitions,
+          nativeErrors
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await f.cleanup(failure)
+  }
+})

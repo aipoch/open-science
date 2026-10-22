@@ -292,24 +292,24 @@ describe('createCloseConfirm', () => {
     await expect(h.confirm('persistence-failed', [])).resolves.toBe('cancel')
   })
 
-  it('cannot force quit delegated work through a renderer or native fallback choice', async () => {
+  it('accepts whole-service quit confirmation for delegated work', async () => {
     const delegated = { ...session, kind: 'delegated' as const }
     const rendererHarness = makeHarness()
     const pending = rendererHarness.confirm('quit', [delegated])
     rendererHarness.ack()
     rendererHarness.choose('quit')
-    await expect(pending).resolves.toBe('cancel')
+    await expect(pending).resolves.toBe('quit')
 
     const nativeHarness = makeHarness({ isRendererAvailable: () => false })
-    await expect(nativeHarness.confirm('quit', [delegated])).resolves.toBe('cancel')
+    await expect(nativeHarness.confirm('quit', [delegated])).resolves.toBe('quit')
     expect(nativeHarness.nativeFallback).toHaveBeenCalledWith('quit', [delegated])
   })
 
-  it('turns a saved quit preference into a safe minimize while delegated work is running', async () => {
+  it('honors a saved quit preference when delegated work is running', async () => {
     const delegated = { ...session, kind: 'delegated' as const }
     const h = makeHarness({ getClosePreference: async () => 'quit' })
 
-    await expect(h.confirm('close-to-tray', [delegated])).resolves.toBe('minimize')
+    await expect(h.confirm('close-to-tray', [delegated])).resolves.toBe('quit')
     expect(h.sent).toHaveLength(0)
   })
 
@@ -786,7 +786,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
 
     expect(electronMocks.showMessageBox).toHaveBeenCalledTimes(1)
     const [options] = electronMocks.showMessageBox.mock.calls[0] as [Record<string, unknown>]
-    expect(options.buttons).toEqual(['Cancel', 'Quit'])
+    expect(options.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
     expect(options.defaultId).toBe(0)
     expect(options.cancelId).toBe(0)
     expect(options.message).toBe('Quit Open-Science?')
@@ -822,7 +822,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     expect(options.detail).toMatch(/risk losing recent changes/i)
   })
 
-  it('offers no force-quit action in the native fallback for delegated work', async () => {
+  it('offers whole-service interruption in the native fallback for delegated work', async () => {
     getWindow.mockReturnValue(undefined)
     electronMocks.showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false })
     const confirm = createElectronCloseConfirm(
@@ -834,9 +834,9 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     await expect(confirm('quit', [delegated])).resolves.toBe('cancel')
 
     const [options] = electronMocks.showMessageBox.mock.calls[0] as [Record<string, unknown>]
-    expect(options.buttons).toEqual(['Return to tasks'])
-    expect(options.message).toBe('Subagents are still running')
-    expect(options.detail).toMatch(/stop their subagents before quitting/i)
+    expect(options.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
+    expect(options.message).toBe('Quit Open-Science?')
+    expect(options.detail).toMatch(/App, CLI and Web tasks/)
   })
 
   it('offers Minimize/Quit for close-to-tray with a "remember" checkbox', async () => {
@@ -887,7 +887,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
       Record<string, unknown>
     ]
     expect(parentArg).toBe(window)
-    expect(optionsArg.buttons).toEqual(['Cancel', 'Quit'])
+    expect(optionsArg.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
   })
 
   it('falls back to a windowless dialog when the window has been destroyed', async () => {
@@ -905,7 +905,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     const [onlyArg] = electronMocks.showMessageBox.mock.calls[0] as unknown as [
       Record<string, unknown>
     ]
-    expect(onlyArg.buttons).toEqual(['Cancel', 'Quit'])
+    expect(onlyArg.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
     expect(electronMocks.showMessageBox.mock.calls[0]).toHaveLength(1)
   })
 })

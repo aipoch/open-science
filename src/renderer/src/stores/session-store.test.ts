@@ -7500,6 +7500,7 @@ describe('session store public contract', () => {
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
       'src/renderer/src/components/SessionPackageOperation.tsx',
+      'src/renderer/src/components/desktop-runtime-recovery.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/components/job-binding-utils.ts',
       'src/renderer/src/components/notification-inbox-presentation.ts',

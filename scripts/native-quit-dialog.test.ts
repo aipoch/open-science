@@ -78,16 +78,18 @@ test('captures the live native translator through the source preload with an arb
       [
         'ru',
         {
-          buttons: ['Отмена', 'Выйти'],
-          detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
+          buttons: ['Отмена', 'Остановить задачи и выйти'],
+          detail:
+            'Остановка локального сервиса может прервать задачи приложения, CLI и веб-интерфейса и привести к потере несохранённых данных. В списке показаны только известные задачи.',
           message: 'Выйти из Open-Science?'
         }
       ],
       [
         'de',
         {
-          buttons: ['Abbrechen', 'Beenden'],
-          detail: 'Die Arbeit läuft noch und wird beim Beenden unterbrochen.',
+          buttons: ['Abbrechen', 'Aufgaben stoppen und beenden'],
+          detail:
+            'Das Stoppen des lokalen Dienstes kann Aufgaben in App, CLI und Web unterbrechen und ungespeicherten Fortschritt verlieren. Die Liste zeigt nur bekannte Aufgaben.',
           message: 'Open-Science beenden?'
         }
       ]

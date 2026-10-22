@@ -121,7 +121,6 @@ const useApplicationEventBindings = ({
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const hydrateNonTerminalJobs = useSessionJobStore((state) => state.hydrateNonTerminal)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
-  const isApplyingUpdate = useUpdateStore((state) => state.status.state === 'applying')
   const isFilePreviewOpen = usePreviewWorkbenchStore((state) => state.fileDialogItem !== undefined)
   const isExpandedPreviewOpen = usePreviewWorkbenchStore(
     (state) => state.panelState === 'open' && state.expandedToolItemId === state.activeItemId
@@ -143,8 +142,6 @@ const useApplicationEventBindings = ({
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
   })
   const desktopRecoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
-  const desktopClosing = useDesktopRuntimeRecoveryStore((state) => state.closing)
-  const plannedUpdateShutdown = desktopClosing && isApplyingUpdate
   const lifecycle = useLifecycleSync({
     // Keep incoming changes queued while a catalog reload can still replace the store snapshot.
     isSessionPersistenceHydrated:
@@ -167,9 +164,7 @@ const useApplicationEventBindings = ({
         view,
         presentations: {
           closeConfirmation: isCloseConfirmOpen,
-          webEventRecovery:
-            webEventConnectionPhase !== 'live' ||
-            (desktopRecoveryPhase !== 'connected' && !plannedUpdateShutdown),
+          webEventRecovery: webEventConnectionPhase !== 'live',
           dataRootRecovery: hasDataRootRecovery,
           legacyDataMove: hasLegacyDataMove,
           update: isUpdateDialogOpen,
@@ -198,8 +193,6 @@ const useApplicationEventBindings = ({
       sessionPersistence.isLoading,
       startupView,
       webEventConnectionPhase,
-      desktopRecoveryPhase,
-      plannedUpdateShutdown,
       view
     ]
   )

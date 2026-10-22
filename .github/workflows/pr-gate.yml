@@ -1089,6 +1089,8 @@ jobs:
           src/main/process-tree.windows.integration.test.ts
           src/main/delegation/process-ownership.test.ts
           src/main/delegation/production-composition.test.ts
+          src/main/acp/main-agent-process-ownership.test.ts
+          src/main/service-process-recovery.test.ts
           --maxWorkers=1
           --testTimeout=30000
           --hookTimeout=30000
@@ -1147,6 +1149,14 @@ jobs:
           packages/specialists/src/repository.test.ts
           packages/environment/src/micromamba-cache-powershell.test.ts
           packages/environment/src/micromamba-cache-acl.integration.test.ts
+          src/main/local-service-lifetime.test.ts
+          src/main/node-fatal-errors.test.ts
+          src/main/desktop-runtime-recovery.test.ts
+          src/main/desktop-runtime-stop-deadline.integration.test.ts
+          src/main/update/installation-occupancy.test.ts
+          src/main/verified-service-stop.test.ts
+          packages/open-science/runtime-control.test.ts
+          src/main/local-service-stop-intent.integration.test.ts
       - name: Test scheduled Windows validation regressions
         id: windows_regressions
         continue-on-error: true

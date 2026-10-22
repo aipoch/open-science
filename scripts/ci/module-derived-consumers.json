@@ -1,7 +1,26 @@
 {
   "schemaVersion": 1,
   "modules": {
-    "acp_runtime": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "acp_runtime": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "acp_session_policy": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "artifact_content_contracts": [
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -16,6 +35,7 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "artifact_reproducibility_contract": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
@@ -97,8 +117,11 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "cli_sdk": ["src/main/session-package/desktop.test.ts"],
+    "cli_sdk": [
+      "src/main/session-package/desktop.test.ts"
+    ],
     "compute_domain_contracts": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
@@ -135,12 +158,50 @@
       "src/renderer/src/pages/workspace/composer/ArtifactMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
-    "connector_core": ["packages/connector-builtins/src/scientific-expansion.test.ts"],
+    "connector_core": [
+      "packages/connector-builtins/src/scientific-expansion.test.ts"
+    ],
     "delegation_execution_contracts": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "durable_files": [
+      "src/main/app-lifecycle.test.ts",
+      "src/main/app-startup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-lifecycle.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
       "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-lifetime.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/create-strategy.test.ts",
@@ -148,12 +209,26 @@
       "src/main/update/electron-updater-strategy.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
+      "src/main/verified-service-stop.test.ts",
+      "src/main/window-close-confirm.test.ts",
       "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "environment_contracts": [
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
@@ -185,41 +260,170 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "environment_engine": [
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "framework_installation": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "framework_process_launch": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
     ],
     "host_bounded_io": [
       "src/main/image-preview-resize.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "host_command_runtime": [
+      "src/main/local-service-stop-intent.integration.test.ts"
+    ],
     "host_file_publisher": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "host_http_transport": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "host_process_runtime": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
-    "host_rpc_transport": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
-    "host_runtime_lifecycle": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "host_rpc_transport": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "host_runtime_lifecycle": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/main/verified-service-stop.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "host_runtime_ports": [
+      "scripts/local-service-cleanup.test.ts",
       "src/main/cli-install/launcher.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "host_value_guards": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "host_websocket_transport": [
+      "src/main/local-service-stop-intent.integration.test.ts"
     ],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
@@ -269,18 +473,70 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
     "main_agent_framework": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "main_archive": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
-    "main_database": ["src/main/session-package/materialize.test.ts"],
-    "main_delegation": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "main_agents": [
+      "src/main/local-service-stop-intent.integration.test.ts"
+    ],
+    "main_archive": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "main_database": [
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "main_delegation": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "main_managed_file_versions": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "main_remote_access": [
+      "src/main/local-service-stop-intent.integration.test.ts"
+    ],
     "main_storage": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "main_web_service": [
+      "src/main/local-service-stop-intent.integration.test.ts"
     ],
     "managed_version_files": [
       "src/main/compute/agent-compute-service.test.ts",
@@ -399,9 +655,26 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "native_process_tree": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/legacy-service-termination.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/runtime-control.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/main/verified-service-stop.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "notebook_analysis": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
@@ -438,6 +711,25 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "notebook_execution": [
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "notebook_execution_model": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
@@ -458,6 +750,7 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "package_journal_catalog": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
@@ -470,6 +763,10 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_citations": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
@@ -484,6 +781,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_discovery": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
@@ -498,6 +796,10 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_library": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
@@ -518,6 +820,7 @@
       "src/main/settings/codex-bridge-tools.test.ts"
     ],
     "package_literature_screening": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
@@ -604,14 +907,19 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
-    "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
+    "page_literature": [
+      "src/renderer/src/pages/literature/renderer-host.test.tsx"
+    ],
+    "pdf_annotation_repository": [
+      "src/main/session-package/materialize.test.ts"
+    ],
     "pdf_annotations": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "pdf_document_source": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
@@ -731,13 +1039,19 @@
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
     "pdf_text": [
+      "scripts/local-service-cleanup.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx"
     ],
-    "project_database": ["src/main/session-package/materialize.test.ts"],
+    "project_database": [
+      "src/main/session-package/materialize.test.ts"
+    ],
     "project_file_mentions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -745,8 +1059,46 @@
     "project_files_repository": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "project_files_view": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "provider_credentials": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
+    "provider_transport": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "providers_package": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/desktop-recovery-readiness.test.ts",
       "src/main/desktop-runtime-adoption.integration.test.ts",
@@ -758,12 +1110,16 @@
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/deb-gate-recovery.test.ts",
       "src/main/update/deb-systemd-gate.test.ts",
       "src/main/update/installation-artifact.test.ts",
       "src/main/update/installation-executor.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
       "src/main/update/installation-formats.test.ts",
       "src/main/update/installation-occupancy.test.ts",
       "src/main/update/installation-preparation.test.ts",
@@ -809,8 +1165,12 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_app_icons": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
-    "renderer_assets": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "renderer_app_icons": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "renderer_assets": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "renderer_compute": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -829,6 +1189,7 @@
     ],
     "renderer_diagnostics": [
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
+      "src/renderer/src/components/runtime-startup-gate.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
@@ -850,7 +1211,9 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_job_surfaces": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "renderer_job_surfaces": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "renderer_model_selection": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -882,7 +1245,9 @@
     "renderer_package_transport": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "renderer_permission_state": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "renderer_permission_state": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "renderer_preferences": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -899,10 +1264,13 @@
     ],
     "renderer_preview_state": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_review_card": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "renderer_review_card": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "renderer_runtime_errors": [
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -954,12 +1322,16 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_storage_surfaces": ["src/renderer/src/components/SessionPackageOperation.test.tsx"],
+    "renderer_storage_surfaces": [
+      "src/renderer/src/components/SessionPackageOperation.test.tsx"
+    ],
     "renderer_streamdown": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "renderer_tag_state": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "renderer_tag_state": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "renderer_ui": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -1062,6 +1434,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "reproducibility_contracts": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
@@ -1100,6 +1473,11 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "resilient_download": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1130,12 +1508,16 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "reviewer_evidence": ["src/main/session-package/materialize.test.ts"],
+    "reviewer_evidence": [
+      "src/main/session-package/materialize.test.ts"
+    ],
     "reviewer_orchestrator": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "reviewer_repository": ["src/main/session-package/materialize.test.ts"],
+    "reviewer_repository": [
+      "src/main/session-package/materialize.test.ts"
+    ],
     "session_diagnostic_contracts": [
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
@@ -1226,8 +1608,12 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
-    "session_diagnostics": ["src/main/session-package/desktop.test.ts"],
-    "session_persistence": ["src/main/session-details/owner.test.ts"],
+    "session_diagnostics": [
+      "src/main/session-package/desktop.test.ts"
+    ],
+    "session_persistence": [
+      "src/main/session-details/owner.test.ts"
+    ],
     "session_renderer": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1242,6 +1628,22 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "settings_backend_resolution": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
+      "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "settings_extension_presentation": [
@@ -1261,19 +1663,50 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
+    "settings_proxy_runtime": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "settings_record_contracts": [
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/text-generation.test.ts"
     ],
-    "settings_repository": ["src/main/settings/workflows/local-shell.test.ts"],
-    "shared_fuzzy_match": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "settings_repository": [
+      "src/main/settings/workflows/local-shell.test.ts"
+    ],
+    "shared_fuzzy_match": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "shared_promise_identity": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "skill_package": [
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1300,7 +1733,32 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "skill_runtime_transport": [
+      "scripts/electron-app-fixture.test.ts",
+      "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/desktop-recovery-readiness.test.ts",
+      "src/main/desktop-runtime-adoption.integration.test.ts",
+      "src/main/desktop-runtime-client-diagnostics.test.ts",
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-electron-adapter.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/desktop-runtime-recovery.integration.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/main/desktop-startup-recovery.test.ts",
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "specialist_package": [
+      "src/main/local-service-stop-intent.integration.test.ts",
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1423,11 +1881,15 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_environment_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_environment_controls": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "workspace_environment_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_error_reporting": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_error_reporting": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "workspace_file_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1440,7 +1902,9 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "workspace_folder_access": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_folder_access": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "workspace_job_presentation": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1473,7 +1937,9 @@
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
     ],
-    "workspace_pdf_reading_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_pdf_reading_controls": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "workspace_permissions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1509,7 +1975,9 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_reproducibility_surfaces": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_reproducibility_surfaces": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "workspace_run_marks": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -1536,7 +2004,9 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_skill_document": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_skill_document": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ],
     "workspace_tool_blocks": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx"
@@ -1554,6 +2024,8 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_version_workflow": ["src/renderer/src/lib/literature-renderer-host.test.ts"]
+    "workspace_version_workflow": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts"
+    ]
   }
 }

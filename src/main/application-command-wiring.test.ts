@@ -457,11 +457,12 @@ describe('production application command wiring', () => {
     const returnedViews = compact(
       between(ipcSource, '    applicationCommands: {', '    applicationEvents,')
     )
+    expect(returnedViews).toContain('beginStopping: applicationCommandComposition.beginStopping')
     expect(returnedViews).toContain('localWeb: applicationCommandComposition.localWeb')
     expect(returnedViews).toContain('remoteWeb: applicationCommandComposition.remoteWeb')
     expect(returnedViews).toContain('task: applicationCommandComposition.task')
     expect(returnedViews).toContain('desktop: applicationCommandComposition.desktop')
-    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(4)
+    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(5)
   })
 
   it('shares one Electron page preview resolver with the production Reviewer owner', () => {

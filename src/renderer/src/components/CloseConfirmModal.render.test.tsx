@@ -372,7 +372,7 @@ describe('CloseConfirmModal', () => {
         sessions: [{ projectId: 'p', sessionId: 'x', kind: 'notebook' }]
       })
     })
-    const quitButton = await findButtonByName(/^quit$/i)
+    const quitButton = await findButtonByName(/^Stop tasks and quit$/i)
     act(() => quitButton.click())
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r3', choice: 'quit' })
   })
@@ -432,7 +432,7 @@ describe('CloseConfirmModal', () => {
     })
   })
 
-  it('blocks quitting for delegated work and only acknowledges by staying in the app', async () => {
+  it('confirms interruption of the whole service including delegated work', async () => {
     render()
     act(() => {
       emit({
@@ -442,12 +442,11 @@ describe('CloseConfirmModal', () => {
       })
     })
 
-    await findByText(/Subagents are still running/)
-    expect(document.body.textContent).toMatch(/stop their subagents before quitting/i)
-    expect(document.body.textContent).not.toMatch(/\bQuit\b/)
-    const returnButton = await findButtonByName(/Return to tasks/)
-    act(() => returnButton.click())
-    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-delegated', choice: 'cancel' })
+    await findByText(/Quit Open-Science/)
+    expect(document.body.textContent).toMatch(/App, CLI and Web tasks/)
+    const quitButton = await findButtonByName(/Stop tasks and quit/)
+    act(() => quitButton.click())
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-delegated', choice: 'quit' })
   })
 
   it('renders null and does not throw when the desktop bridge is absent (web build)', () => {

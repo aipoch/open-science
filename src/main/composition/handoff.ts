@@ -123,7 +123,8 @@ export async function composeHandoff({
         holdSideChatAdmission: true,
         legacyShellRecoveryToken: options?.legacyShellRecoveryToken
       }),
-    () => confirmRendererDurability()
+    () => confirmRendererDurability(),
+    true
   )
   const detectResearchBlockers = (): UpdateBlocker[] => {
     const blockers: UpdateBlocker[] = detectActiveSessions({

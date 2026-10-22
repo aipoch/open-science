@@ -216,14 +216,14 @@ export class DelegatedProcessOwnership {
   private readonly reconciling = new Map<string, Promise<void>>()
   private readonly gates = new Set<{ scope: Selection; done: Promise<void> }>()
 
-  constructor(dataRoot: string) {
+  constructor(dataRoot: string, directoryName = 'delegation-process-ownership') {
     let base = resolve(dataRoot)
     try {
       base = realpathSync(base)
     } catch (error) {
       if (!missing(error)) throw error
     }
-    this.root = join(base, 'delegation-process-ownership')
+    this.root = join(base, segment(directoryName))
   }
 
   private directory(path: string, create = false): boolean {
@@ -500,7 +500,11 @@ export class DelegatedProcessOwnership {
       receipt.phase = 'owned'
       this.write(receipt)
     } catch (error) {
-      void terminateProcessTree(child)
+      void terminateProcessTree(child).catch((cleanupError) => {
+        log.error('process cleanup after ownership publication failed', {
+          error: String(cleanupError)
+        })
+      })
       throw error
     }
     return child

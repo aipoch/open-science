@@ -243,11 +243,15 @@ class RuntimeModuleBuilder implements ApplicationModuleBuilder {
           )
         }
       } catch (error) {
-        createLogger('application-runtime').error('module disposal failed', {
-          module: module.name ?? `module-${this.modules.length - index}`,
-          ...diagnosticErrorFields(error)
-        })
         failures.push(error)
+        try {
+          createLogger('application-runtime').error('module disposal failed', {
+            module: module.name ?? `module-${this.modules.length - index}`,
+            ...diagnosticErrorFields(error)
+          })
+        } catch {
+          // Continue disposal even when diagnostics fail; retain the original failure above.
+        }
       }
     }
     if (failures.length > 0) {

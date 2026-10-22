@@ -20,13 +20,13 @@ function fixture(options: { disconnectWaitMs?: number } = {}) {
   return { deps, release, owner: createDesktopRuntimeLifecycle(deps, options) }
 }
 describe('Node desktop quit coordination', () => {
-  it('revalidates the observed work before stopping any producer', async () => {
+  it('revalidates installation transactions before stopping producers', async () => {
     const { owner, deps, release } = fixture()
     const observed = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
     deps.getActiveSettingsInstallId.mockReturnValue('new-install')
     await expect(
       owner.request({ operation: 'prepare', fingerprint: observed.fingerprint })
-    ).rejects.toThrow('changed after quit confirmation')
+    ).rejects.toThrow('settings installation')
     expect(deps.prepareForQuit).not.toHaveBeenCalled()
     expect(deps.holdSettingsInstallAdmission).not.toHaveBeenCalled()
     const current = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
@@ -134,4 +134,26 @@ describe('Node desktop quit coordination', () => {
     expect(deps.abortQuitPreparation).toHaveBeenCalledOnce()
     expect(release).toHaveBeenCalledOnce()
   })
+})
+
+it('bounds prepare without committing service exit before the final renderer save', async () => {
+  vi.useFakeTimers()
+  try {
+    const { owner, deps, release } = fixture()
+    deps.prepareForQuit.mockImplementationOnce(() => new Promise<never>(() => {}))
+    const work = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
+    const pending = owner.request({
+      operation: 'prepare',
+      fingerprint: work.fingerprint,
+      deadlineAt: Date.now() + 5000
+    })
+    await vi.advanceTimersByTimeAsync(1500)
+    await expect(pending).resolves.toBe('timeout')
+    expect(release).not.toHaveBeenCalled()
+    await owner.request({ operation: 'abort' })
+    expect(deps.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+  } finally {
+    vi.useRealTimers()
+  }
 })

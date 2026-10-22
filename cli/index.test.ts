@@ -9,12 +9,16 @@ import { describe, expect, it } from 'vitest'
 import { isProcessAlive, parseCliArgs } from './index.mjs'
 
 describe('CLI argument parsing', () => {
-  it.each(['start', 'url'])(
-    'rejects unsupported --json for %s instead of ignoring it',
-    (command) => {
-      expect(() => parseCliArgs([command, '--json'])).toThrow('--json is not supported')
-    }
-  )
+  it('parses machine-readable start output', () => {
+    expect(parseCliArgs(['start', '--json'])).toEqual({
+      command: 'start',
+      options: { open: true, json: true }
+    })
+  })
+
+  it('rejects unsupported --json for url instead of ignoring it', () => {
+    expect(() => parseCliArgs(['url', '--json'])).toThrow('--json is not supported')
+  })
 
   it('parses start options', () => {
     expect(

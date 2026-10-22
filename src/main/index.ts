@@ -1,3 +1,5 @@
+import { readServiceLifetime } from './local-service-lifetime'
+import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
 import type { PackageOperationSnapshot } from '../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import {
@@ -29,7 +31,11 @@ import { DesktopBackendStartupError } from './backend-startup'
 import { recoverDesktopBackendStartup } from './backend-startup-recovery'
 import { createDesktopRecoveryEventBuffer } from './desktop-recovery-event-buffer'
 import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
-import { DESKTOP_RUNTIME_RECOVERY_CHANNELS } from '../shared/desktop-runtime-recovery'
+import {
+  DESKTOP_RUNTIME_RECOVERY_CHANNELS,
+  DesktopRuntimeDisconnectedError,
+  isDesktopRuntimeConnectionError
+} from '../shared/desktop-runtime-recovery'
 import { deliverDesktopEvent } from './desktop-event-delivery'
 import {
   app,
@@ -397,7 +403,9 @@ async function startDesktop(): Promise<void> {
     bootstrapLog.error('desktop operation failed', {
       error: projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
     })
-    dialog.showErrorBox(APP_NAME, error instanceof Error ? error.message : String(error))
+    const message = error instanceof Error ? error.message : String(error)
+    if (isDesktopRuntimeConnectionError(error)) return
+    dialog.showErrorBox(APP_NAME, message)
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
@@ -1042,7 +1050,12 @@ async function startDesktop(): Promise<void> {
       onNativeRequest: async (request, signal) => {
         signal.throwIfAborted()
         if (request.request.operation === 'runtime-relaunch') {
-          if (attached !== client || !attached.ownsRuntime() || plannedRelaunch) return false
+          if (
+            attached !== client ||
+            attached.runtimeInfo().control !== 'granted' ||
+            plannedRelaunch
+          )
+            return false
           plannedRelaunch = true
           recovery?.setClosing(true)
           return true
@@ -1093,16 +1106,23 @@ async function startDesktop(): Promise<void> {
       },
       onDisconnect: () => {
         if (attached !== client || !attached) return
-        if (!ready) reportError(new Error('Desktop connection was lost during startup.'))
+        if (!ready)
+          reportError(
+            new DesktopRuntimeDisconnectedError('Desktop connection was lost during startup.')
+          )
         preview?.dispose()
         notifications.dispose()
-        reconcileWait?.reject(new Error('Desktop disconnected during recovery.'))
+        reconcileWait?.reject(
+          new DesktopRuntimeDisconnectedError('Desktop disconnected during recovery.')
+        )
         if (plannedRelaunch && !relaunchConfirmation) {
           plannedRelaunch = false
           recovery?.setClosing(false)
           recovery?.disconnect(attached)
           reportError(
-            new Error('The Runtime disconnected before its relaunch response could be delivered.')
+            new DesktopRuntimeDisconnectedError(
+              'The Runtime disconnected before its relaunch response could be delivered.'
+            )
           )
         } else if (!plannedRelaunch && !runtimeStopped && !updateCommitted)
           recovery?.disconnect(attached)
@@ -1130,8 +1150,54 @@ async function startDesktop(): Promise<void> {
     createDesktopRuntimeRecovery({
       client: client!,
       startedProcess: launch.startedProcess,
+      automatic: true,
+      reviewRestart: async (generation) => {
+        // Manual reconnect may authorize only the already-observed stop of this generation.
+        // A later stop/update or a replacement owner must still defeat this launch.
+        const intent = await readServiceLifetime(configRoot)
+        return intent?.stopping && intent.generation === generation ? intent : undefined
+      },
+      restart: async (signal, authorization) => {
+        const verifyRestartIntent = async (): Promise<void> => {
+          signal.throwIfAborted()
+          const intent = await readServiceLifetime(configRoot)
+          assertDesktopRuntimeRestartAllowed(
+            intent,
+            authorization,
+            updateCommitted || plannedRelaunch
+          )
+          signal.throwIfAborted()
+        }
+        await verifyRestartIntent()
+        const config = client!.runtimeInfo().startupOptions
+        launch = await startOrAttachDesktopBackend({
+          configRoot,
+          profilePath,
+          version: app.getVersion(),
+          ...initialBackendPaths,
+          packaged: app.isPackaged,
+          signal,
+          beforeLaunch: verifyRestartIntent,
+          timeoutMs: 10_000,
+          args: [
+            `--credential-store=${config.credentialStore}`,
+            `--serve=${config.port}`,
+            ...(config.passwordStore ? [`--password-store=${config.passwordStore}`] : [])
+          ]
+        })
+        signal.throwIfAborted()
+        startedBackend = launch.startedProcess
+        return attach(signal)
+      },
       connect: attach,
       activate: async (candidate, signal, readyForSnapshots) => {
+        // A restarted process may publish its endpoint before business/database startup finishes.
+        // Keep the existing renderer tree intact until the candidate can satisfy snapshots.
+        while (candidate.startupState().phase !== 'ready') {
+          signal.throwIfAborted()
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        signal.throwIfAborted()
         preview?.dispose()
         notifications.dispose()
         client = candidate
@@ -1285,56 +1351,11 @@ async function startDesktop(): Promise<void> {
       if (waiting.pending.size === 0) waiting.resolve()
     }
   )
-  let disconnectedQuit: Promise<void> | undefined
-  const quitDisconnected = (): Promise<void> =>
-    (disconnectedQuit ??= Promise.resolve()
-      .then(async () => {
-        recovery.setClosing(true)
-        const result = await dialog.showMessageBox({
-          type: 'warning',
-          buttons: [translate('Cancel'), translate('Quit app')],
-          defaultId: 0,
-          cancelId: 0,
-          message: translate('Quit while disconnected?'),
-          detail: translate(
-            'Unsaved changes may be lost. Submitted operations may have completed. The backend will not be stopped.'
-          )
-        })
-        if (result.response !== 1) {
-          // Match ordinary quit cancellation: a no-tray desktop must retain a reachable window.
-          if (process.platform !== 'darwin' && !tray && getMainWindow()?.isDestroyed())
-            showMainWindow?.()
-          return
-        }
-        client?.close()
-        app.exit(0)
-      })
-      .finally(() => {
-        disconnectedQuit = undefined
-        recovery.setClosing(false)
-      }))
-  const handleDisconnectedQuit = (): boolean => {
-    if (
-      updateCommitted ||
-      runtimeStopped ||
-      plannedRelaunch ||
-      recovery.state().phase === 'connected'
-    )
-      return false
-    void quitDisconnected().catch(reportError)
-    return true
-  }
   ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, (event) => {
     requireRecoveryFrame(event)
-    if (
-      !disconnectedQuit &&
-      recovery.state().phase === 'connected' &&
-      !staleWindows.has(event.sender.id)
-    ) {
-      app.quit()
-      return
-    }
-    return quitDisconnected().catch(reportError)
+    // The normal lifecycle owns local save checks, unsent-message consent and final persistence,
+    // even when its remote service is unreachable.
+    app.quit()
   })
   cleanupStartupClient = async () => {
     retainShutdownLease(await client!.quit())
@@ -1620,21 +1641,6 @@ async function startDesktop(): Promise<void> {
   let work: DesktopShutdownWork | undefined
   let admission: Promise<unknown> = Promise.resolve()
   app.removeListener('before-quit', holdStartupQuit)
-  app.on('before-quit', (event) => {
-    // Preserve committed teardown; an idle disconnected shell must also be quittable without a window.
-    if (updateCommitted || runtimeStopped || plannedRelaunch) return
-    const state = recovery.state()
-    if (currentApplicationShutdownTrigger() === 'system' && state.phase !== 'connected') {
-      // OS shutdown cannot wait for consent or an unreachable backend, including an open quit dialog.
-      event.preventDefault()
-      client?.close()
-      app.exit(0)
-      return
-    }
-    if (!disconnectedQuit && (state.phase === 'connected' || state.closing)) return
-    event.preventDefault()
-    void quitDisconnected().catch(reportError)
-  })
   const finishedStartupWindow = startupWindow
   startupWindow = undefined
   const lifecycle = installAppLifecycle({
@@ -1670,9 +1676,15 @@ async function startDesktop(): Promise<void> {
     isMigrationInProgress: () => false,
     refreshQuitState: async () => {
       if (runtimeStopped) return false
-      if (recovery!.state().phase !== 'connected')
-        throw new Error('Use the connection notice to quit while disconnected.')
-      if (!client!.ownsRuntime() || !ready) return false
+      if (recovery!.state().phase !== 'connected') {
+        work = undefined
+        return false
+      }
+      await client!.refreshControl()
+      if ((!client!.runtimeInfo().lifetime && !client!.ownsRuntime()) || !ready) {
+        work = undefined
+        return false
+      }
       let next = (await client!.lifecycle({ operation: 'inspect' })) as DesktopShutdownWork
       if (next.migrationActive) {
         const confirmed =
@@ -1703,12 +1715,23 @@ async function startDesktop(): Promise<void> {
     getActiveSettingsInstallId: () => work?.settingsInstallId,
     holdSettingsInstallAdmission: () => {
       recovery!.setClosing(true)
-      if (!runtimeStopped && client!.ownsRuntime() && ready)
+      if (
+        !runtimeStopped &&
+        recovery.state().phase === 'connected' &&
+        (client!.runtimeInfo().lifetime || client!.ownsRuntime()) &&
+        ready
+      )
         admission = client!.lifecycle({ operation: 'hold' })
+      else admission = Promise.resolve()
       void admission.catch(() => undefined)
       return () => {
         recovery!.setClosing(false)
-        if (!runtimeStopped && client!.ownsRuntime() && ready)
+        if (
+          !runtimeStopped &&
+          recovery.state().phase === 'connected' &&
+          (client!.runtimeInfo().lifetime || client!.ownsRuntime()) &&
+          ready
+        )
           void client!.lifecycle({ operation: 'release' }).catch((error) => {
             // Disconnected quit owns one decision; rollback errors must not stack native modals.
             if (
@@ -1722,18 +1745,30 @@ async function startDesktop(): Promise<void> {
           })
       }
     },
-    prepareForQuit: async () => {
+    prepareForQuit: async (deadlineAt) => {
       await admission
-      if (!runtimeStopped && client!.ownsRuntime() && ready && work)
+      if (
+        !runtimeStopped &&
+        recovery.state().phase === 'connected' &&
+        (client!.runtimeInfo().lifetime || client!.ownsRuntime()) &&
+        ready &&
+        work
+      )
         return (await client!.lifecycle({
           operation: 'prepare',
-          fingerprint: work.fingerprint
+          fingerprint: work.fingerprint,
+          deadlineAt
         })) as 'completed' | 'timeout' | 'failed'
       return undefined
     },
     abortQuitPreparation: async (reason) => {
       try {
-        if (!runtimeStopped && client!.ownsRuntime() && ready)
+        if (
+          !runtimeStopped &&
+          recovery.state().phase === 'connected' &&
+          (client!.runtimeInfo().lifetime || client!.ownsRuntime()) &&
+          ready
+        )
           await client!.lifecycle({ operation: 'abort' })
       } finally {
         recovery!.setClosing(false)
@@ -1746,7 +1781,10 @@ async function startDesktop(): Promise<void> {
       createElectronCloseConfirm(
         getWindow,
         {
-          get: async () => (ready ? (await settings()).closePreference : undefined),
+          get: async () =>
+            ready && recovery.state().phase === 'connected'
+              ? (await settings()).closePreference
+              : undefined,
           set: async (preference) => {
             await client!.invokeHost('settings:set-close-preference', [preference])
           }
@@ -1756,14 +1794,16 @@ async function startDesktop(): Promise<void> {
     onAppearanceChanged: (appearance) => icons?.setAppearance(appearance),
     log: diagnostics.log,
     flushLogs,
-    requireCleanBackendShutdown: true,
-    handleDisconnectedQuit,
+    requireCleanBackendShutdown: false,
+    onShutdownProgress: (active) => recovery.setShutdownProgress(active),
     onQuitError: (error) => {
       recovery!.setClosing(false)
-      if (!handleDisconnectedQuit()) reportError(error)
+      reportError(error)
     },
-    shutdownBackends: async () => {
-      if (!runtimeStopped) retainShutdownLease(await client!.quit())
+    shutdownBackends: async (deadlineAt) => {
+      if (!runtimeStopped && recovery.state().phase === 'connected')
+        retainShutdownLease(await client!.quit({ deadlineAt }))
+      else client?.close()
       preview?.dispose()
       notifications.dispose()
       visibility.dispose()

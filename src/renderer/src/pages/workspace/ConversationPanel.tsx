@@ -340,6 +340,7 @@ type ConversationPanelView = {
   activeSession: ChatSession | undefined
   composerFocusKey?: string
   canEditDraft: boolean
+  canEditLocalDraft?: boolean
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
@@ -527,6 +528,7 @@ const ConversationPanel = ({
     activeSession,
     composerFocusKey,
     canEditDraft,
+    canEditLocalDraft = canEditDraft,
     persistenceBlocked,
     actionError,
     sideChatDisabledReason,
@@ -2849,7 +2851,7 @@ const ConversationPanel = ({
                               onLocatePastedText={handleLocatePastedText}
                               onUndo={onUndo}
                               onRedo={onRedo}
-                              disabled={!canEditDraft}
+                              disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
                                 {

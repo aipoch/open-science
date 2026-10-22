@@ -8,12 +8,90 @@ import type { ElectronApplication } from 'playwright'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('electron', () => ({ app: {} }))
+
 import {
   closeElectronApplicationForCleanup,
+  disconnectFixtureServiceConnection,
+  hasFixtureReconnected,
   launchEnvironment,
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
+
+describe('fixture service connection evidence', () => {
+  it('disconnects only the unique ws-owned Desktop service pipe', () => {
+    const unrelated = {
+      readable: true,
+      writable: true,
+      _handle: { constructor: { name: 'Pipe' } },
+      destroy: vi.fn()
+    }
+    const socket = { ...unrelated, destroyed: false, destroy: vi.fn() }
+    socket.destroy.mockImplementation(() => {
+      socket.destroyed = true
+    })
+    Object.assign(socket, {
+      [Symbol('websocket')]: { _socket: socket, url: 'ws://localhost/desktop', readyState: 1 }
+    })
+    const target = process as NodeJS.Process & { _getActiveHandles(): unknown[] }
+    const handles = vi.spyOn(target, '_getActiveHandles').mockReturnValue([unrelated, socket])
+    let result: ReturnType<typeof disconnectFixtureServiceConnection>
+    try {
+      result = disconnectFixtureServiceConnection()
+    } finally {
+      handles.mockRestore()
+    }
+    expect(result!).toEqual({ url: 'ws://localhost/desktop', destroyed: true })
+    expect(socket.destroy).toHaveBeenCalledOnce()
+    expect(unrelated.destroy).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unrelated pipe instead of pretending the service was disconnected', () => {
+    const destroy = vi.fn()
+    const target = process as NodeJS.Process & { _getActiveHandles(): unknown[] }
+    const handles = vi
+      .spyOn(target, '_getActiveHandles')
+      .mockReturnValue([
+        { readable: true, writable: true, _handle: { constructor: { name: 'Pipe' } }, destroy }
+      ])
+    try {
+      expect(() => disconnectFixtureServiceConnection()).toThrow('found 0')
+    } finally {
+      handles.mockRestore()
+    }
+    expect(destroy).not.toHaveBeenCalled()
+  })
+
+  it('requires a newer connected epoch of the same service rather than old connected or a no-op', () => {
+    const before = { phase: 'connected', epoch: 4 }
+    expect(hasFixtureReconnected(before, before, 'generation-A', 'generation-A')).toBe(false)
+    expect(
+      hasFixtureReconnected(
+        before,
+        { phase: 'reconnecting', epoch: 5 },
+        'generation-A',
+        'generation-A'
+      )
+    ).toBe(false)
+    expect(
+      hasFixtureReconnected(
+        before,
+        { phase: 'connected', epoch: 5 },
+        'generation-A',
+        'generation-B'
+      )
+    ).toBe(false)
+    expect(
+      hasFixtureReconnected(
+        before,
+        { phase: 'connected', epoch: 5 },
+        'generation-A',
+        'generation-A'
+      )
+    ).toBe(true)
+  })
+})
 
 it('keeps the Linux test desktop session while isolating home and provider credentials', () => {
   const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
@@ -36,6 +114,30 @@ it('keeps the Linux test desktop session while isolating home and provider crede
     OPEN_SCIENCE_CONFIG_ROOT: resolve('fixture/storage')
   })
   expect(environment.OPENAI_API_KEY).toBeUndefined()
+})
+
+it('isolates credentials, preload options, home and installation state by default', () => {
+  const storageRoot = resolve('fixture/storage')
+  const environment = launchEnvironment(storageRoot, undefined, {
+    PATH: '/os/bin',
+    HOME: '/operator',
+    USERPROFILE: '/operator',
+    OPENAI_API_KEY: 'operator-secret',
+    NODE_OPTIONS: '--require=/operator/preload.cjs',
+    OPEN_SCIENCE_CONFIG_ROOT: '/operator/config',
+    OPEN_SCIENCE_INSTALLATION_STATE_ROOT: '/operator/installations',
+    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build'
+  })
+  expect(environment).toMatchObject({
+    PATH: '/os/bin',
+    HOME: resolve('fixture/isolated home'),
+    USERPROFILE: resolve('fixture/isolated home'),
+    OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
+    OPEN_SCIENCE_INSTALLATION_STATE_ROOT: resolve('fixture/storage/installation-state'),
+    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build'
+  })
+  expect(environment.OPENAI_API_KEY).toBeUndefined()
+  expect(environment.NODE_OPTIONS).toBeUndefined()
 })
 
 it.each([true, false])(

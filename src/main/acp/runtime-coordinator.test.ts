@@ -1835,6 +1835,50 @@ describe('AcpRuntimeCoordinator', () => {
     expect(delegated.stopAll).toHaveBeenCalledOnce()
   })
 
+  it('observes delegated rejection before a pending root cancellation settles', async () => {
+    const cancellation = createDeferred<void>()
+    const delegated = {
+      pendingPermissions: () => [],
+      subscribe: () => () => undefined,
+      respondToPermission: async () => false,
+      setPermissionProfile: async () => undefined,
+      stopSession: async () => undefined,
+      stopAll: vi.fn(async () => {
+        throw new Error('delegated stop failed')
+      }),
+      shutdown: async () => undefined,
+      shutdownForQuit: async () => undefined,
+      shutdownForUpdateGate: async () => undefined,
+      deleteSession: async () => undefined,
+      deleteProject: async () => undefined
+    }
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks }).runtime,
+      {},
+      '',
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      delegated
+    )
+    vi.spyOn(coordinator, 'getSnapshot').mockReturnValue({
+      ...coordinator.getSnapshot(),
+      promptInFlightSessionIds: ['session-1']
+    })
+    vi.spyOn(coordinator, 'cancelPrompt').mockImplementation(async () => {
+      await cancellation.promise
+      return coordinator.getState()
+    })
+    const preparing = coordinator.prepareForQuit(1000)
+    // Cross an event-loop turn while cancellation is unresolved; Vitest reports any unhandled rejection.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await expect(preparing).resolves.toBe('failed')
+    cancellation.resolve()
+  })
+
   it.each([
     ['prepareForQuit', 'stopAll'],
     ['disconnect', 'stopAll'],
