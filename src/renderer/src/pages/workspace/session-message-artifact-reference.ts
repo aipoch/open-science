@@ -1,4 +1,4 @@
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { createCodeFenceTracker } from '@/components/streamdown/code-fence'
 import { Lexer, type Token, type Tokens } from 'marked'
 

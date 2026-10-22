@@ -21474,12 +21474,13 @@ describe('ACP runtime session management', () => {
   })
 
   it.each([
-    ['Claude Code', claudeCodeFramework, 200_000],
-    ['OpenCode', opencodeFramework, 128_000],
-    ['Codex bridge', codexFramework, 258_400]
+    ['Claude Code', claudeCodeFramework, 200_000, 1_000_000],
+    ['OpenCode', opencodeFramework, 128_000, 1_000_000],
+    ['Codex native default', codexFramework, 258_400, 258_400],
+    ['Codex native override', codexFramework, 828_400, 828_400]
   ] as const)(
-    'uses the selected model context window instead of the %s adapter window',
-    async (_name, framework, adapterWindow) => {
+    'preserves %s context-window authority',
+    async (_name, framework, adapterWindow, expectedWindow) => {
       const process = new FakeAgentProcess()
       startFakeAgent(process, ['s1'], {
         modes:
@@ -21506,7 +21507,7 @@ describe('ACP runtime session management', () => {
       })
 
       expect(runtime.getSnapshot().contextUsageBySession).toMatchObject({
-        s1: { used: 15, size: 1_000_000 }
+        s1: { used: 15, size: expectedWindow }
       })
     }
   )
@@ -26546,7 +26547,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       historyPreamble: 'earlier conversation'
     })
 
-    expect(hooks.catalogForCodexHome).toHaveBeenCalledWith('/data/codex')
+    expect(hooks.catalogForCodexHome).toHaveBeenCalledWith('/data/codex', undefined)
     expect(selectSkills).toHaveBeenCalledWith(
       '用 PubMed 搜索肿瘤免疫文章',
       catalog,

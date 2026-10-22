@@ -1,4 +1,4 @@
-import { CONNECTOR_CATALOG } from '../connectors/catalog'
+import { CONNECTOR_CATALOG, isBundledConnectorEnabled } from '../connectors/catalog'
 import { createSettingsExportFiles, createSettingsFileCommands } from '../settings/file-commands'
 import { createBackgroundResultActivityOwner } from '../background-result-delivery/ipc'
 import {
@@ -121,7 +121,9 @@ export async function composeSettingsEffects({
             autoAllowIds: stored?.autoAllowIds,
             blockedToolIds: stored?.blockedToolIds,
             askToolIds: stored?.askToolIds,
-            disabledConnectorIds: stored?.disabledConnectorIds,
+            disabledConnectorIds: ALL_CONNECTOR_IDS.filter(
+              (id) => !isBundledConnectorEnabled(id, stored)
+            ),
             bundledConnectorIds: ALL_CONNECTOR_IDS,
             bundledConnectorNames: Object.fromEntries(
               CONNECTOR_CATALOG.map(({ id, displayName }) => [id, displayName])

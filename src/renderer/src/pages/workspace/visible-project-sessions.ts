@@ -1,4 +1,4 @@
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 // Only sessions belonging to the active project are visible in this workspace.
 const visibleProjectSessions = (sessions: ChatSession[], projectId: string): ChatSession[] => {

@@ -743,10 +743,10 @@ const createAcpRuntime = ({
             const names = new Set(await settingsService.skillNudgeNamesForIds(ids))
             return preparedSkills.catalog.filter((entry) => names.has(entry.name))
           },
-          catalogForCodexHome: async (codexHome) =>
-            preparedSkills?.catalog ?? settingsService.codexSkillCatalog(codexHome),
-          catalogForCodeBuddyRoot: async (root) =>
-            preparedSkills?.catalog ?? settingsService.codeBuddySkillCatalog(root)
+          catalogForCodexHome: async (codexHome, allowedNames) =>
+            preparedSkills?.catalog ?? settingsService.codexSkillCatalog(codexHome, allowedNames),
+          catalogForCodeBuddyRoot: async (root, allowedNames) =>
+            preparedSkills?.catalog ?? settingsService.codeBuddySkillCatalog(root, allowedNames)
         },
         ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
           ? {

@@ -1,3 +1,4 @@
+import type { ProviderValidationSnapshot } from '@/lib/provider-validation-snapshot'
 import {
   useCallback,
   useEffect,
@@ -287,6 +288,7 @@ type WorkspaceComposerController = {
     transfers: ComposerUploadTransfer[]
     error: string | null
     errorDetail?: string
+    errorProviderValidations?: ProviderValidationSnapshot
     historyStatus: string
     isHistoryBrowsing: boolean
     isUploading: boolean
@@ -596,7 +598,8 @@ const useWorkspaceComposerController = ({
     automaticReadingEnabledRef,
     setActiveAutomaticReadingEnabled
   })
-  const { attachments, transfers, error, errorDetail, isUploading } = uploadController.view
+  const { attachments, transfers, error, errorDetail, errorProviderValidations, isUploading } =
+    uploadController.view
   const {
     changeDoc,
     stageFiles,
@@ -1918,6 +1921,7 @@ const useWorkspaceComposerController = ({
       transfers,
       error,
       errorDetail,
+      errorProviderValidations,
       historyStatus,
       isHistoryBrowsing: historyBrowsingKey === currentDraftKey,
       isUploading,

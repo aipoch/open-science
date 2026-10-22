@@ -1359,6 +1359,9 @@ class AcpRuntime {
           const backend: ResolvedAgentBackend | undefined = this.options.resolveBackend
             ? await this.options.resolveBackend({
                 forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
+                ...(this.turnSkills.backendPreparation().skillWhitelist
+                  ? { skillWhitelist: [...this.turnSkills.backendPreparation().skillWhitelist!] }
+                  : {}),
                 systemPromptAppends: [
                   ...(await this.sessionEnvironment.backendSystemPromptAppends()),
                   ...(grantedRootsAppend ? [grantedRootsAppend] : [])

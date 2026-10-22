@@ -35,10 +35,11 @@ import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../sh
 import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
 import {
   pendingPdfContextSelections,
-  usePreviewWorkbenchStore,
-  type PendingPdfContext
+  usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
-import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import type { PendingPdfContext } from '../../stores/preview-workbench-contract'
+import { useSessionStore } from '../../stores/session-store'
+import type { ChatSession } from '../../stores/session-store-contract'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { isRuntimeWriter } from './runtime-writer-client'
 import { useAcpRuntime } from './useAcpRuntime'

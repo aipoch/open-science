@@ -38,7 +38,7 @@
       "src/renderer/src/assets/pdf-text-layer.test.ts",
       "src/renderer/src/assets/provider-icons.packaging.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/WindowsTitleBar.test.tsx",

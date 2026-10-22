@@ -16,6 +16,27 @@ const connectors = (overrides: Partial<StoredConnectors> = {}): StoredConnectors
 })
 
 describe('ConnectorRuntimeSettingsProjection', () => {
+  it('prepares bundled source definitions independently of Main opt-in and opt-out', async () => {
+    let stored = connectors()
+    const syncBundledSkillDocs = vi.fn().mockResolvedValue(undefined)
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: async () => stored,
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn() },
+      syncBundledSkillDocs,
+      syncCustomSkillDocs: async () => ({ materializedNames: [], failures: [] })
+    })
+    await projection.refresh()
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).toContain('orphadata')
+    stored = connectors({ enabledConnectorIds: ['orphadata'], disabledConnectorIds: ['genes'] })
+    await projection.refresh()
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).toContain('orphadata')
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).toContain('genes')
+    stored = connectors({ enabledConnectorIds: ['orphadata'], disabledConnectorIds: ['orphadata'] })
+    await projection.refresh()
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).toContain('orphadata')
+  })
+
   it.each([
     ['all', false],
     ['targeted', false],
@@ -236,7 +257,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(projection.current()).toBe(stored)
     expect(syncBundledSkillDocs).toHaveBeenCalledWith(
       '/config/skills',
-      expect.not.arrayContaining(['chemistry']),
+      expect.arrayContaining(['chemistry', 'orphadata']),
       expect.any(AbortSignal)
     )
     expect(syncCustomSkillDocs).toHaveBeenCalledWith(

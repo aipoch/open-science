@@ -71,7 +71,12 @@
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx"
     ],
-    "contract": [],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/assets/diff-colors.test.ts",
+      "src/renderer/src/assets/pdf-text-layer.test.ts",
+      "src/renderer/src/assets/provider-icons.packaging.test.ts"
+    ],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",

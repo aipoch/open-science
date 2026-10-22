@@ -13,7 +13,7 @@ import {
 import { errorDetail } from '@/lib/error-detail'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type {
   ManagedFileIdentity,
   ManagedFileVersionErrorCode,

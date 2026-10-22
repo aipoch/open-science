@@ -22,7 +22,7 @@
       "src/preload/find-overlay.test.ts",
       "src/preload/index.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx",
       "src/renderer/web/api-installer.test.ts",

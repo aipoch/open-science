@@ -236,7 +236,105 @@ describe('provider completion races', () => {
     expect.soft(await validation).toMatchObject({ ok: true, applied: false })
     const stored = (await repository.getSettings()).providers[0]
     expect(tryDecryptKey(stored.keyRef)).toBe('new-refresh')
+    expect(stored.lastValidatedAt).toEqual(expect.any(Number))
+    expect(stored.lastValidatedTarget).toMatchObject({
+      endpoint: 'responses',
+      model: original.model
+    })
+  })
+
+  it.each([200, 401, 429])(
+    'validates the new xAI login before publishing recovery metadata (HTTP %s)',
+    async (status) => {
+      await accounts.upsertProvider({ type: 'xai-subscription' })
+      const original = (await repository.getSettings()).providers[0]
+      await repository.upsertProvider({
+        ...original,
+        lastValidatedAt: 10,
+        lastValidationFailure: { at: 20, category: 'auth' }
+      })
+      const probe = vi.fn(async () =>
+        Response.json(status === 200 ? {} : { error: { message: 'Provider rejected probe' } }, {
+          status
+        })
+      )
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('openid-configuration')) return Response.json(discovery)
+          if (url === discovery.device_authorization_endpoint)
+            return Response.json({
+              device_code: 'device',
+              user_code: 'ABCD',
+              verification_uri: 'https://auth.x.ai/activate',
+              interval: 1,
+              expires_in: 900
+            })
+          if (url === discovery.token_endpoint)
+            return Response.json({ access_token: 'new-access', refresh_token: 'new-refresh' })
+          if (url === discovery.userinfo_endpoint)
+            return Response.json({ email: 'test@example.com' })
+          expect(url).toBe('https://api.x.ai/v1/responses')
+          expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer new-access')
+          return probe()
+        })
+      )
+      await accounts.beginXaiOAuthLogin()
+      await expect(accounts.waitXaiOAuthLogin()).resolves.toMatchObject({
+        validation: { ok: status === 200, applied: true },
+        accountEmail: 'test@example.com'
+      })
+      expect(probe).toHaveBeenCalledOnce()
+      const stored = (await repository.getSettings()).providers[0]
+      expect(tryDecryptKey(stored.keyRef)).toBe('new-refresh')
+      expect(JSON.stringify(stored)).not.toContain('new-access')
+      if (status === 200) {
+        expect(stored.lastValidatedAt).toBeGreaterThan(20)
+        expect(stored.lastValidatedTarget).toMatchObject({
+          model: original.model,
+          endpoint: 'responses'
+        })
+        expect(stored.lastValidationFailure).toBeUndefined()
+      } else {
+        expect(stored.lastValidatedAt).toBeUndefined()
+        expect(stored.lastValidationFailure).toMatchObject({ status })
+      }
+    }
+  )
+
+  it('does not publish xAI login validation after logout while its probe is pending', async () => {
+    await accounts.upsertProvider({ type: 'xai-subscription' })
+    const entered = deferred<void>()
+    const probe = deferred<Response>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('openid-configuration')) return Response.json(discovery)
+        if (url === discovery.device_authorization_endpoint)
+          return Response.json({
+            device_code: 'device',
+            user_code: 'ABCD',
+            verification_uri: 'https://auth.x.ai/activate',
+            interval: 1,
+            expires_in: 900
+          })
+        if (url === discovery.token_endpoint)
+          return Response.json({ access_token: 'new-access', refresh_token: 'new-refresh' })
+        if (url === discovery.userinfo_endpoint) return Response.json({})
+        entered.resolve()
+        return probe.promise
+      })
+    )
+    await accounts.beginXaiOAuthLogin()
+    const pending = accounts.waitXaiOAuthLogin()
+    await entered.promise
+    await accounts.logoutXaiOAuth()
+    probe.resolve(Response.json({}))
+    await expect(pending).resolves.toMatchObject({ validation: { applied: false } })
+    const stored = (await repository.getSettings()).providers[0]
+    expect(stored.keyRef).toBeUndefined()
     expect(stored.lastValidatedAt).toBeUndefined()
+    expect(stored.lastValidationFailure).toBeUndefined()
   })
 
   it('M03: normal xAI refresh rotation applies the catalog it reports as loaded', async () => {

@@ -1054,9 +1054,13 @@ class SettingsRepository {
     return this.guardSkillMutation ? this.guardSkillMutation(update) : update()
   }
 
-  // Adds or removes a bundled connector id from the disabled set (default-on model).
+  // Persist an explicit bundled choice atomically, retaining the legacy opt-out representation.
   async setConnectorDisabled(id: string, disabled: boolean): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
+      const enabled = new Set(connectors.enabledConnectorIds ?? [])
+      if (disabled) enabled.delete(id)
+      else enabled.add(id)
+      connectors.enabledConnectorIds = enabled.size > 0 ? [...enabled] : undefined
       const set = new Set(connectors.disabledConnectorIds ?? [])
       if (disabled) set.add(id)
       else set.delete(id)

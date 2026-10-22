@@ -5,7 +5,7 @@ import { usePreviewResourceGeneration } from './usePreviewResourceGeneration'
 
 import type { ArtifactPreviewResult } from '../../../../../shared/artifacts'
 import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 
 import { createManagedPreviewRequest } from './preview-file-reader'
 import { isManagedFilePublicationPendingError, isUnavailableFileError } from './preview-errors'

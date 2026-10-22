@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Check, CircleCheck, CircleAlert, FileArchive, LoaderCircle, X } from 'lucide-react'
+import { Check, LoaderCircle, X } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -311,11 +311,13 @@ export const SessionDiagnosticsDialog = ({
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           className={dialogPanelClassName(
-            'flex max-h-[80vh] w-[min(560px,calc(100vw-2rem))] flex-col p-0'
+            'flex max-h-[min(760px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
           )}
           onInteractOutside={(event) => event.preventDefault()}
         >
-          <div className={`${dialogHeaderClassName} flex-col items-stretch`}>
+          <div
+            className={`${dialogHeaderClassName} flex-col items-stretch [@media(max-height:480px)]:py-2`}
+          >
             <div className="flex w-full items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <Dialog.Title className={dialogTitleClassName}>
@@ -352,14 +354,96 @@ export const SessionDiagnosticsDialog = ({
               )}
             </Dialog.Description>
           </div>
-          <div className={`${dialogBodyClassName} min-h-0 overflow-auto`}>
-            {busy && (
-              <p role="status" className="flex items-center gap-2">
-                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                {t('Preparing diagnostics…')}
-              </p>
-            )}
-            <div className="mt-3 space-y-7">
+          {(busy || result || error) && (
+            <div
+              data-testid="diagnostics-feedback"
+              className="shrink-0 space-y-3 border-b border-border-300/90 px-5 py-3.5 [@media(max-height:480px)]:py-2"
+            >
+              {busy && (
+                <ErrorNotice
+                  inline
+                  level="info"
+                  role="status"
+                  icon={LoaderCircle}
+                  iconClassName="animate-spin motion-reduce:animate-none"
+                  title={t('Preparing diagnostics…')}
+                />
+              )}
+              {result && (
+                <ErrorNotice
+                  inline
+                  level={
+                    result.status === 'exported'
+                      ? 'success'
+                      : result.status === 'partial'
+                        ? 'warning'
+                        : result.status === 'failed'
+                          ? 'error'
+                          : 'info'
+                  }
+                  role="status"
+                  title={
+                    result.status === 'exported'
+                      ? t('Diagnostic package exported successfully.')
+                      : result.status === 'partial'
+                        ? t('Diagnostic package partially exported.')
+                        : result.status === 'cancelled'
+                          ? t('Export cancelled.')
+                          : t('Diagnostic export failed.')
+                  }
+                  description={
+                    result.status === 'partial'
+                      ? t('Some selected material could not be included in full.')
+                      : undefined
+                  }
+                  primaryButton={
+                    revealPath && window.api.compute?.revealInFolder
+                      ? {
+                          label: t('Show in folder'),
+                          variant: 'outline',
+                          onClick: () => {
+                            void window.api.compute
+                              .revealInFolder(revealPath)
+                              .catch(() => setError(t('Could not show the exported file.')))
+                          }
+                        }
+                      : undefined
+                  }
+                  secondaryButton={
+                    result.report
+                      ? {
+                          label: reportCopied ? t('Copied') : t('Copy report'),
+                          variant: 'outline',
+                          onClick: async () => {
+                            try {
+                              await navigator.clipboard.writeText(result.report!)
+                              if (mounted.current) setReportCopied(true)
+                            } catch {
+                              if (mounted.current) setError(t('Could not copy report'))
+                            }
+                          }
+                        }
+                      : undefined
+                  }
+                >
+                  {revealPath && (
+                    <code
+                      tabIndex={0}
+                      className="block max-h-10 overflow-y-auto rounded-sm text-xs leading-5 text-muted-foreground select-text [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    >
+                      {revealPath}
+                    </code>
+                  )}
+                </ErrorNotice>
+              )}
+              {error && <ErrorNotice inline role="alert" title={t('Error')} description={error} />}
+            </div>
+          )}
+          <div
+            data-testid="diagnostics-sources"
+            className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto [@media(max-height:480px)]:py-2`}
+          >
+            <div className="space-y-7">
               {sections
                 .filter((section) => section.choices.length > 0)
                 .map((section, sectionIndex) => (
@@ -568,79 +652,11 @@ export const SessionDiagnosticsDialog = ({
                 )}
               </p>
             )}
-            {result && (
-              <div className="mt-5 space-y-3 rounded-2xl bg-bg-100/60 p-4">
-                <div role="status">
-                  <p
-                    className={`flex items-start gap-2 text-sm font-medium leading-6 ${
-                      result.status === 'exported' || result.status === 'partial'
-                        ? 'text-primary'
-                        : 'text-text-100'
-                    }`}
-                  >
-                    {result.status === 'exported' || result.status === 'partial' ? (
-                      <CircleCheck className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-                    ) : (
-                      <CircleAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-                    )}
-                    {result.status === 'exported' || result.status === 'partial'
-                      ? t('Diagnostic package exported successfully.')
-                      : result.status === 'cancelled'
-                        ? t('Export cancelled.')
-                        : t('Diagnostic export failed.')}
-                  </p>
-                  {result.status === 'partial' && (
-                    <p className="text-xs leading-5 text-text-200">
-                      {t('Some selected material could not be included in full.')}
-                    </p>
-                  )}
-                </div>
-                {revealPath && (
-                  <div className="flex items-start gap-2.5 rounded-xl bg-bg-000/80 px-3 py-2.5">
-                    <FileArchive
-                      className="mt-0.5 size-4 shrink-0 text-text-300"
-                      aria-hidden="true"
-                    />
-                    <p className="min-w-0 select-text break-all font-mono text-xs leading-5 text-text-200">
-                      {revealPath}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-            {error && <ErrorNotice inline role="alert" title={t('Error')} description={error} />}
           </div>
-          <div className={dialogFooterClassName}>
+          <div className={`${dialogFooterClassName} [@media(max-height:480px)]:py-2`}>
             <Button variant="outline" onClick={() => void close()}>
               {busy ? t('Cancel') : t('Close')}
             </Button>
-            {revealPath && window.api.compute?.revealInFolder && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  void window.api.compute
-                    .revealInFolder(revealPath)
-                    .catch(() => setError(t('Could not show the exported file.')))
-                }}
-              >
-                {t('Show in folder')}
-              </Button>
-            )}
-            {result?.report && (
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(result.report!)
-                    if (mounted.current) setReportCopied(true)
-                  } catch {
-                    if (mounted.current) setError(t('Could not copy report'))
-                  }
-                }}
-              >
-                {reportCopied ? t('Copied') : t('Copy report')}
-              </Button>
-            )}
             <Button disabled={busy} onClick={() => void exportSelected()}>
               {t('Export')}
             </Button>

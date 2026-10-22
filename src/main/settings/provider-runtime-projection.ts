@@ -1,5 +1,6 @@
 import {
   type ModelProtocol,
+  getOfficialVendor,
   isVendorModelMultimodal,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
@@ -270,7 +271,9 @@ class ProviderRuntimeProjectionOwner {
           ? /\[1m\]$/i.test(model ?? '')
             ? 1_000_000
             : resolveModelContextWindow('anthropic', model)
-          : undefined
+          : isCodexSubscriptionProvider(provider.type)
+            ? getOfficialVendor('openai')?.models.find((entry) => entry.id === model)?.contextWindow
+            : undefined
     return {
       type: provider.type,
       ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),

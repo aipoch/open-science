@@ -226,7 +226,8 @@ describe('Side chat OpenCode instruction isolation', () => {
       }
       const assertMainInstructions = async (): Promise<void> => {
         const configFile = main!.configFiles!.find((file) => file.path.endsWith('opencode.json'))!
-        const paths = JSON.parse(configFile.content).instructions as string[]
+        expect(JSON.parse(configFile.content).instructions ?? []).toEqual([])
+        const paths = JSON.parse(main!.env!.OPENCODE_CONFIG_CONTENT!).instructions as string[]
         expect(paths).toHaveLength(1)
         const delivered = (await Promise.all(paths.map((path) => readFile(path, 'utf8')))).join(
           '\n\n'

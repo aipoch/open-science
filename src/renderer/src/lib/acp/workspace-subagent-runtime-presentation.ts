@@ -12,10 +12,10 @@ import type {
 } from '../../../../shared/session-persistence'
 import {
   createSessionStore,
-  type ChatSession,
   type SessionStoreApi,
   type StreamingMessageContentByMessageId
 } from '../../stores/session-store'
+import type { ChatSession } from '../../stores/session-store-contract'
 import {
   projectConversationMessage,
   resolveMessageBranchPath

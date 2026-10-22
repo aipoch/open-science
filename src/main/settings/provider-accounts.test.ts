@@ -1846,6 +1846,10 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('owns the single xAI OAuth provider lifecycle without persisting an access token', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({}))
+    )
     await module.upsertProvider({ type: 'xai-subscription' })
     const stored = (await repository.getSettings()).providers[0]
 
@@ -1858,7 +1862,8 @@ describe('ProviderAccountsModule', () => {
     })
     expect(stored.keyRef).toBeUndefined()
     await expect(module.beginXaiOAuthLogin()).resolves.toMatchObject({ userCode: 'GROK-1234' })
-    await expect(module.waitXaiOAuthLogin()).resolves.toEqual({
+    await expect(module.waitXaiOAuthLogin()).resolves.toMatchObject({
+      validation: { ok: true },
       accountEmail: 'researcher@example.com'
     })
     await expect(module.getXaiOAuthAccessToken()).resolves.toBe('access-token')

@@ -1,4 +1,4 @@
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type { ImagePointAnnotation } from '../../../../../shared/annotation-contract'
 import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'

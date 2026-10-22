@@ -1122,10 +1122,8 @@ class SettingsService {
     return this.skills.listSpecialistSkillCatalog(options)
   }
 
-  // Returns the mcp-<id> skill names for connectors provisioned at the Main Agent level (enabled
-  // bundled connectors + enabled custom MCP servers). Specialist sessions merge these into their
-  // skill whitelist so the agent can discover connector tools; the per-call ConnectorService gate
-  // still enforces the specialist's own connector access config.
+  // Source definitions available for Specialist authorization, independent of Main toggles.
+  // Each Specialist filters this list through its own Connector access configuration.
   async provisionedConnectorSkillNames(): Promise<string[]> {
     return this.connectors.provisionedConnectorSkillNames()
   }
@@ -1136,39 +1134,74 @@ class SettingsService {
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
-    return this.skills.skillsNeedingForceLoad(forcedIds)
+    const [managed, connectors] = await Promise.all([
+      this.skills.skillsNeedingForceLoad(forcedIds),
+      this.connectors.getConnectors()
+    ])
+    const enabled = new Set(this.connectors.enabledConnectorIds(connectors))
+    return [
+      ...managed,
+      ...forcedIds.filter(
+        (id) =>
+          id.startsWith('mcp-') &&
+          ALL_CONNECTOR_IDS.includes(id.slice(4)) &&
+          !enabled.has(id.slice(4))
+      )
+    ]
   }
 
   // Resolves picker ids to the names the agent's Skill tool accepts. Bundled skills use their
   // manifest id as frontmatter name, while personal/imported ids have an app-owned source prefix and
   // must use the frontmatter name kept in the user skill catalog.
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
-    return this.skills.skillNudgeNamesForIds(ids)
+    const connectorNames = new Set(await this.connectors.provisionedConnectorSkillNames())
+    return [
+      ...(await this.skills.skillNudgeNamesForIds(ids)),
+      ...ids.filter((id) => connectorNames.has(id))
+    ]
   }
 
   async codexSkillDescriptorsForIds(
     ids: string[],
     codexHome: string | undefined
   ): Promise<Array<{ name: string; path: string }>> {
-    return this.skills.codexSkillDescriptorsForIds(ids, codexHome)
+    const [managed, connectors] = await Promise.all([
+      this.skills.codexSkillDescriptorsForIds(ids, codexHome),
+      this.codexSkillCatalog(
+        codexHome,
+        ids.filter((id) => id.startsWith('mcp-'))
+      )
+    ])
+    return [...managed, ...connectors.filter(({ name }) => ids.includes(name))]
   }
 
-  async codexSkillCatalog(codexHome: string | undefined): Promise<SkillCatalogEntry[]> {
-    return this.skills.codexSkillCatalog(codexHome, (settings) =>
-      this.connectors.connectorSkillCatalogEntries(settings.connectors)
+  async codexSkillCatalog(
+    codexHome: string | undefined,
+    allowedNames?: readonly string[]
+  ): Promise<SkillCatalogEntry[]> {
+    return this.skills.codexSkillCatalog(
+      codexHome,
+      (settings) => this.connectors.connectorSkillCatalogEntries(settings.connectors, allowedNames),
+      allowedNames
     )
   }
 
-  async codeBuddySkillCatalog(runtimeRoot: string | undefined): Promise<SkillCatalogEntry[]> {
-    return this.skills.codeBuddySkillCatalog(runtimeRoot, (settings) =>
-      this.connectors.connectorSkillCatalogEntries(settings.connectors)
+  async codeBuddySkillCatalog(
+    runtimeRoot: string | undefined,
+    allowedNames?: readonly string[]
+  ): Promise<SkillCatalogEntry[]> {
+    return this.skills.codeBuddySkillCatalog(
+      runtimeRoot,
+      (settings) => this.connectors.connectorSkillCatalogEntries(settings.connectors, allowedNames),
+      allowedNames
     )
   }
 
   // Attempt-owned projection: never changes Main toggles or the admitted provider/model.
   async prepareDelegatedSkills(
     configRoot: string,
-    skillIds: readonly string[]
+    skillIds: readonly string[],
+    connectorSkillNames?: readonly string[]
   ): Promise<{
     skillIds: string[]
     catalog: SkillCatalogEntry[]
@@ -1182,12 +1215,13 @@ class SettingsService {
         await this.repository.getSettings(),
         configRoot,
         forced,
-        { directoryLayout: 'agent-facing' }
+        { directoryLayout: 'agent-facing', ...(connectorSkillNames ? { connectorSkillNames } : {}) }
       )
       const catalog = await this.skills.delegatedSkillCatalog(
         join(configRoot, 'skills'),
         forced,
-        (settings) => this.connectors.connectorSkillCatalogEntries(settings.connectors)
+        (settings) =>
+          this.connectors.connectorSkillCatalogEntries(settings.connectors, connectorSkillNames)
       )
       const names = new Set(catalog.map((entry) => entry.name))
       const prepared = (await this.skills.listSpecialistSkillCatalog())
@@ -1208,10 +1242,10 @@ class SettingsService {
 
   // Resolves a renderable SKILL.md document by canonical invocation name across every source the
   // runtime can load from. The permission card and transcript rows need this because connector
-  // skills (mcp-<id> for enabled bundled connectors, materialized custom MCP server skills) are
+  // skills (mcp-<id> for bundled connectors, materialized custom MCP server skills) are
   // invocable through load_skill but are NOT part of the renderer's managed catalog. Sources, in
   // order: the managed catalog (an enabled entry wins a name collision, mirroring the renderer's
-  // own rule), enabled bundled connectors (document rendered on the fly), then materialized custom
+  // own rule), bundled connectors (document rendered on the fly), then materialized custom
   // server skills (read from the provisioned source dir, gated by the provisioned-name projection
   // so arbitrary directories are never served). Returns null when no source provides the name.
   async resolveSkillDocument(
@@ -1237,10 +1271,6 @@ class SettingsService {
 
     const bundledId = /^mcp-(.+)$/.exec(name)?.[1]
     if (bundledId && ALL_CONNECTOR_IDS.includes(bundledId)) {
-      const settings = await this.repository.getSettings()
-      if (!this.connectors.enabledConnectorIds(settings.connectors).includes(bundledId)) {
-        return null
-      }
       const meta = CONNECTOR_CATALOG.find((connector) => connector.id === bundledId)
       const { fields, body } = parseFrontmatter(renderSkillDoc(bundledId))
       return {

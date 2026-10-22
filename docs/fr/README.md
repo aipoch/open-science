@@ -102,6 +102,16 @@ brew install aipoch/tap/open-science
 
 Cette formule inclut Node et fonctionne sans l’application de bureau ; sa version peut différer du Cask de bureau. Voir les prérequis et mises à niveau dans le [guide du runtime autonome](../standalone-runtime.md).
 
+Pour le CLI autonome et l’interface Web, installez le [paquet npm publié](https://www.npmjs.com/package/@aipoch/open-science) avec **Node.js 22.13.0 ou ultérieur** :
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Ouvrez l’URL affichée pour terminer la configuration, ou suivez le [guide de configuration du terminal](../../packages/open-science/CLI.md#first-run-setup-codex). npm prend en charge macOS ARM64/x64, Linux ARM64/x64 avec glibc et Windows x64 ; l’application de bureau n’est pas nécessaire. Conservez les dépendances facultatives npm et consultez les [prérequis Linux et les instructions de mise à jour](../standalone-runtime.md#install-from-npm). L’URL contient un jeton d’authentification ; gardez-la privée.
+
 Sous Windows, une réinstallation conserve les données de recherche. Pour tout effacer, consultez l’[outil de réinitialisation](../../scripts/windows-reset/README.md), qui supprime définitivement les données locales après confirmation.
 
 ### 2. Terminer la configuration initiale
@@ -331,7 +341,7 @@ npm run pack:backend
 
 L’interface Web fonctionne avec un backend Node ordinaire, sans Electron ni affichage graphique. `npm run dev:web` et `npm run dev:headless` construisent et démarrent le backend et l’interface Web, sans bureau ni icône de notification. `OPEN_SCIENCE_WEB_PORT` choisit le port (`44100` par défaut) ; Ctrl+C arrête proprement le service au premier plan.
 
-Le développement nécessite Node.js 24. Le tarball npm autonome exige Node >=22.13.0 ; le CLI/SDK léger exige Node >=22.5. Les archives Release, la formule Homebrew et le lanceur du bureau incluent leur propre runtime.
+Le développement nécessite Node.js 24. Le paquet npm publié et le tarball autonome construit localement exigent Node.js >=22.13.0. Les archives Release, la formule Homebrew et le lanceur du bureau incluent leur propre runtime.
 
 Le bureau et le navigateur partagent le même service. Quitter le bureau arrête seulement le backend qu’il a démarré ; une connexion à un service lancé par le CLI est simplement détachée.
 

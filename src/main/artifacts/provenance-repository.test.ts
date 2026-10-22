@@ -615,7 +615,7 @@ describe('artifact provenance repository', () => {
     }
   )
 
-  it('removes a stale orphaned staging directory that has no SQLite lifecycle row', async () => {
+  it.each([false, true])('cleans orphan staging (startup: %s)', async (startup) => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-orphan-staging-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -641,9 +641,30 @@ describe('artifact provenance repository', () => {
     await utimes(stagingDirectory, staleTime, staleTime)
 
     await expect(
-      repository.reconcileSession('project-1', 'session-1', undefined, {
-        removeOrphanStaging: true
-      })
+      repository.reconcileSession(
+        'project-1',
+        'session-1',
+        startup
+          ? {
+              id: 'session-1',
+              projectId: 'project-1',
+              title: 'Idle',
+              cwd: '/workspace',
+              status: 'idle',
+              messages: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          : undefined,
+        {
+          removeOrphanStaging: true,
+          ...(startup
+            ? {
+                projectReconciliation: await repository.prepareProjectReconciliation('project-1')
+              }
+            : {})
+        }
+      )
     ).resolves.toEqual({
       recoveredVersionIds: [],
       quarantinedVersionIds: [],
@@ -4973,7 +4994,7 @@ describe('artifact provenance repository', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('reconstructs a missing finalized SQLite Version only from exact Message-snapshot ownership', async () => {
+  it.each([false, true])('recovers unindexed finalized Version (startup: %s)', async (startup) => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-row-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -5121,7 +5142,18 @@ describe('artifact provenance repository', () => {
     await client.artifactVersion.delete({ where: { id: version.versionId } })
 
     await expect(
-      repository.reconcileSession(request.projectId, request.appSessionId)
+      repository.reconcileSession(
+        request.projectId,
+        request.appSessionId,
+        startup ? session : undefined,
+        startup
+          ? {
+              projectReconciliation: await repository.prepareProjectReconciliation(
+                request.projectId
+              )
+            }
+          : undefined
+      )
     ).resolves.toEqual({
       recoveredVersionIds: [version.versionId],
       quarantinedVersionIds: [],

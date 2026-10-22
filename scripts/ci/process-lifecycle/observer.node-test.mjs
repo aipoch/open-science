@@ -66,13 +66,17 @@ test('PID reuse, unreadable evidence and missing execution fail closed', async (
   const output = await mkdtemp(join(tmpdir(), 'lifecycle-identity-'))
   const unrelated = { pid: 1, parentPid: 0, created: 1, status: 'running' }
   const original = { pid: 999999, parentPid: 1, created: 10, status: 'running' }
-  let table = [unrelated]
+  // Windows retains a parent's PID after exit; the owned root can later reuse that PID.
+  const baselineChild = { pid: 2, parentPid: original.pid, created: 2, status: 'running' }
+  const unrelatedChild = { pid: 3, parentPid: baselineChild.pid, created: 11, status: 'running' }
+  let table = [unrelated, baselineChild]
   const observer = new LifecycleObserver('identity-test', { output, readTable: async () => table })
   try {
     await observer.start()
     await assert.rejects(observer.checkpoint('not-executed', { timeoutMs: 0 }), /blocked/)
-    table = [unrelated, original]
+    table = [unrelated, baselineChild, original, unrelatedChild]
     await observer.observe(original.pid)
+    assert.equal(observer.seen.size, 1, 'do not adopt descendants through a baseline process')
     table = [unrelated, { ...original, created: 11 }]
     assert.equal(isSameProcess(original, table[1]), false)
     await observer.checkpoint('reused-is-not-original', { timeoutMs: 0 })

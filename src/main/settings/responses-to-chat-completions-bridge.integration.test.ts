@@ -1020,3 +1020,182 @@ it.runIf(runLiveContract)(
     }
   }
 )
+
+// Uses the real adapter and CLI with synthetic Responses traffic, never subscription credentials.
+// The pinned native catalog caps Astra at 872k; model_context_window is a request, not that cap.
+it.runIf(runLiveContract).each([
+  { type: 'official', contextWindow: undefined, expectedSize: 258_400 },
+  { type: 'official', contextWindow: 1_050_000, expectedSize: 828_400 },
+  { type: 'codex-isolated', contextWindow: 1_050_000, expectedSize: 828_400 },
+  { type: 'codex-shared', contextWindow: 1_050_000, expectedSize: 828_400 },
+  {
+    type: 'codex-isolated',
+    contextWindow: 1_050_000,
+    expectedSize: 828_400,
+    nextModel: 'gpt-5.5',
+    nextSize: 258_400
+  }
+] as const)(
+  'applies $type window $contextWindow through native config and reports $expectedSize (case %#)',
+  async (testCase) => {
+    const { type, contextWindow, expectedSize } = testCase
+    const inputTokens = 'nextModel' in testCase ? 100_000 : 300_000
+    const root = await mkdtemp(join(tmpdir(), 'codex-context-window-'))
+    const upstream = vi.fn(async () =>
+      responsesSse([
+        { type: 'response.created', response: { id: 'context-probe' } },
+        {
+          type: 'response.output_item.done',
+          item: {
+            type: 'message',
+            id: 'context-message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'CONTEXT_OK' }]
+          }
+        },
+        {
+          type: 'response.completed',
+          response: {
+            id: 'context-probe',
+            usage: { input_tokens: inputTokens, output_tokens: 3, total_tokens: inputTokens + 3 }
+          }
+        }
+      ])
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://vendor.invalid/v1', model: 'gpt-6-astra' },
+      upstream
+    )
+    const connection = await proxy.start()
+    const config = createCodexFramework().prepareModelConfig(
+      {
+        type,
+        ...(type === 'official' ? { vendorId: 'openai' as const } : {}),
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-6-astra',
+        contextWindow
+      },
+      {
+        storageRoot: root,
+        executablePath: adapterPath!,
+        nativeVersion: CODEX_VERSION,
+        responsesConnection: connection
+      }
+    )
+    expect(JSON.parse(config.env!.CODEX_CONFIG)).not.toHaveProperty('model_catalog_json')
+    const codexHome = config.env!.CODEX_HOME!
+    await mkdir(codexHome, { recursive: true })
+    // A stale on-disk limit must not win over the app's per-session configuration.
+    await writeFile(
+      join(codexHome, 'config.toml'),
+      (contextWindow
+        ? 'model_context_window = 128000\nmodel_auto_compact_token_limit = 100000\n'
+        : '') + '[features]\nplugins = false\n'
+    )
+    const child = spawnAdapter(root, {
+      ...process.env,
+      ...config.env,
+      CODEX_PATH: nativeCodexPath!,
+      OPENAI_API_KEY: '',
+      CODEX_API_KEY: '',
+      NO_PROXY: '127.0.0.1,localhost',
+      no_proxy: '127.0.0.1,localhost'
+    })
+    const stderr: string[] = []
+    child.stderr.on('data', (chunk) => stderr.push(String(chunk)))
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    let stage = 'initialize'
+    try {
+      const updates = await Promise.race([
+        acp
+          .client({ name: 'context-window-contract' })
+          .connectWith(
+            acp.ndJsonStream(
+              Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+              Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+            ),
+            async (ctx) => {
+              await ctx.request(acp.methods.agent.initialize, {
+                protocolVersion: acp.PROTOCOL_VERSION,
+                clientCapabilities: {}
+              })
+              stage = 'provider configuration'
+              await ctx.request(acp.methods.agent.providers.set, {
+                providerId: 'openai',
+                apiType: 'openai',
+                baseUrl: connection.baseUrl,
+                headers: { authorization: `Bearer ${connection.token}` }
+              })
+              stage = 'session creation'
+              return ctx
+                .buildSession({ cwd: root, mcpServers: [] })
+                .withSession(async (session) => {
+                  const notifications: acp.SessionNotification[] = []
+                  const turnCount = 'nextModel' in testCase ? 3 : contextWindow ? 2 : 1
+                  for (let turn = 0; turn < turnCount; turn++) {
+                    if (turn > 0 && 'nextModel' in testCase) {
+                      const model = turn === 1 ? testCase.nextModel : 'gpt-6-astra'
+                      await ctx.request(acp.methods.agent.session.setConfigOption, {
+                        sessionId: session.sessionId,
+                        configId: 'model',
+                        value: model
+                      })
+                      proxy.setModelTarget({ model })
+                    }
+                    stage = `prompt ${turn + 1}`
+                    const turnUpdates: acp.SessionNotification[] = []
+                    session.prompt('Reply with CONTEXT_OK.')
+                    for (;;) {
+                      const update = await session.nextUpdate()
+                      if (update.kind === 'stop') break
+                      notifications.push(update.notification)
+                      turnUpdates.push(update.notification)
+                    }
+                    expect(turnUpdates.map(({ update }) => update)).toContainEqual(
+                      expect.objectContaining({
+                        sessionUpdate: 'usage_update',
+                        size:
+                          turn === 1 && 'nextSize' in testCase ? testCase.nextSize : expectedSize,
+                        used: inputTokens
+                      })
+                    )
+                  }
+                  return notifications
+                })
+            }
+          ),
+        new Promise<never>((_resolve, reject) => {
+          deadline = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Native context probe timed out at ${stage}; requests: ${upstream.mock.calls.length}`
+                )
+              ),
+            20_000
+          )
+        })
+      ])
+      expect(updates.map(({ update }) => update)).toContainEqual(
+        expect.objectContaining({
+          sessionUpdate: 'usage_update',
+          size: expectedSize,
+          used: inputTokens
+        })
+      )
+      // A retained 100k/244.8k compaction threshold would issue an extra request before turn two.
+      // Each model switch performs a native compaction request before the next prompt.
+      expect(upstream).toHaveBeenCalledTimes('nextModel' in testCase ? 5 : contextWindow ? 2 : 1)
+      expect(stderr.join('')).not.toContain('Model metadata for gpt-6-astra not found')
+    } catch (error) {
+      throw new Error(`${String(error)}\n${stderr.join('')}`)
+    } finally {
+      clearTimeout(deadline)
+      await terminate(child)
+      await proxy.close()
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  },
+  30_000
+)

@@ -6,6 +6,17 @@ const PAGINATION_NOTE =
   ' Pagination is limited to 10000 pages. next_page is null when no further matches are reported, the total is unknown, or the page limit is reached; it does not by itself prove that all matches were retrieved. Narrow the filters when the page limit is reached with more matches remaining.'
 const UUID =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+const SAMPLE_FIELDS = [
+  'sample_id',
+  'submitter_id',
+  'sample_type',
+  'tissue_type',
+  'tumor_descriptor',
+  'portions.portion_id',
+  'portions.analytes.analyte_id',
+  'portions.analytes.aliquots.aliquot_id',
+  'portions.analytes.aliquots.submitter_id'
+]
 const FILE_FIELDS = [
   'file_id',
   'file_name',
@@ -16,7 +27,14 @@ const FILE_FIELDS = [
   'data_category',
   'access',
   'state',
-  'cases.project.project_id'
+  'cases.project.project_id',
+  'cases.case_id',
+  'cases.submitter_id',
+  ...SAMPLE_FIELDS.map((field) => `cases.samples.${field}`),
+  'analysis.analysis_id',
+  'analysis.workflow_type',
+  'analysis.workflow_version',
+  'analysis.workflow_link'
 ].join(',')
 
 type Obj = Record<string, unknown>
@@ -60,6 +78,40 @@ type Access = 'open' | 'controlled' | 'unknown'
 const access = (value: unknown): Access =>
   value === 'open' || value === 'controlled' ? value : 'unknown'
 
+const objects = (value: unknown, name: string): Obj[] =>
+  value == null
+    ? []
+    : array(value, `Invalid GDC ${name}`).map((item) => object(item, `Invalid GDC ${name} entry`))
+
+const sampleSummaries = (value: unknown): Obj[] =>
+  objects(value, 'samples').map((sample) => ({
+    sample_id: text(sample.sample_id),
+    submitter_id: text(sample.submitter_id),
+    sample_type: text(sample.sample_type),
+    tissue_type: text(sample.tissue_type),
+    tumor_descriptor: text(sample.tumor_descriptor),
+    aliquots: objects(sample.portions, 'portions').flatMap((portion) =>
+      objects(portion.analytes, 'analytes').flatMap((analyte) =>
+        objects(analyte.aliquots, 'aliquots').map((aliquot) => ({
+          aliquot_id: text(aliquot.aliquot_id),
+          submitter_id: text(aliquot.submitter_id),
+          portion_id: text(portion.portion_id),
+          analyte_id: text(analyte.analyte_id)
+        }))
+      )
+    )
+  }))
+
+// Only traverse relationships returned on the file itself. Never join all samples
+// from a related /cases response: a case can contain unrelated normal/tumor samples.
+const fileCases = (file: Obj): Obj[] =>
+  objects(file.cases, 'file cases').map((item) => ({
+    case_id: text(item.case_id),
+    submitter_id: text(item.submitter_id),
+    project_id: nestedText(item, 'project', 'project_id'),
+    samples: sampleSummaries(item.samples)
+  }))
+
 const fileSummary = (raw: unknown): Obj => {
   const file = object(raw, 'Invalid GDC response: expected a file object')
   const fileId = text(file.file_id) ?? text(file.id)
@@ -83,6 +135,16 @@ const fileSummary = (raw: unknown): Obj => {
       text(file['cases.project.project_id']) ??
       text(file.project_id) ??
       nestedText(file, 'cases', 'project', 'project_id'),
+    cases: fileCases(file),
+    analysis:
+      file.analysis == null
+        ? null
+        : {
+            analysis_id: nestedText(file, 'analysis', 'analysis_id'),
+            workflow_type: nestedText(file, 'analysis', 'workflow_type'),
+            workflow_version: nestedText(file, 'analysis', 'workflow_version'),
+            workflow_link: nestedText(file, 'analysis', 'workflow_link')
+          },
     download_url: fileAccess === 'open' ? `${GDC_API}/data/${fileId}` : null,
     download_requires_authentication: downloadRequiresAuthentication,
     download_status:
@@ -206,7 +268,8 @@ const listCases = async (ctx: ToolContext, args: Record<string, unknown>): Promi
       'project.name',
       'disease_type',
       'primary_site',
-      'state'
+      'state',
+      ...SAMPLE_FIELDS.map((field) => `samples.${field}`)
     ].join(','),
     format: 'JSON',
     from,
@@ -220,7 +283,8 @@ const listCases = async (ctx: ToolContext, args: Record<string, unknown>): Promi
     project_name: text(item['project.name']) ?? nestedText(item, 'project', 'name'),
     disease_type: textOrList(item.disease_type),
     primary_site: textOrList(item.primary_site),
-    state: text(item.state)
+    state: text(item.state),
+    samples: sampleSummaries(item.samples)
   }))
   return { ...pagination(payload, page, pageSize, records.length), cases: records }
 }
@@ -230,6 +294,14 @@ const searchFiles = async (ctx: ToolContext, args: Record<string, unknown>): Pro
   const filters: Obj[] = []
   const projectIds = values(args.project_ids)
   if (projectIds.length) filters.push(filter('cases.project.project_id', projectIds))
+  for (const [arg, field] of [
+    ['case_ids', 'cases.case_id'],
+    ['sample_types', 'cases.samples.sample_type'],
+    ['workflow_types', 'analysis.workflow_type']
+  ]) {
+    const selected = values(args[arg])
+    if (selected.length) filters.push(filter(field, selected))
+  }
   if (args.access != null && args.access !== 'all')
     filters.push(filter('files.access', [String(args.access)]))
   if (args.data_category != null)
@@ -316,7 +388,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
     credentialKeys: [],
     id: 'gdc_list_cases',
     description:
-      'List GDC cases (sample donors) with project and disease metadata. Results identify cases and do not expose or download controlled data.',
+      'List GDC cases (sample donors) with project, disease and biospecimen metadata (samples and aliquots). Results identify cases and do not expose or download controlled data.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -344,7 +416,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
       }
     },
     returns:
-      '`{ page, page_size, returned, total, total_relation, next_page, cases: [{ case_id, submitter_id, project_id, project_name, disease_type, primary_site, state }] }`. Case metadata is returned without file contents.' +
+      '`{ page, page_size, returned, total, total_relation, next_page, cases: [{ case_id, submitter_id, project_id, project_name, disease_type, primary_site, state, samples }] }`. Each sample includes sample_id, submitter_id, sample_type, tissue_type, tumor_descriptor and aliquots (aliquot_id, submitter_id, portion_id, analyte_id). These are case-level biospecimens, not evidence that every sample contributed to a particular file. Missing samples/aliquots are empty arrays; file contents are not returned.' +
       PAGINATION_NOTE,
     exampleArgs: { project_ids: ['TCGA-BRCA'], page_size: 5 },
     run: listCases
@@ -354,7 +426,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
     credentialKeys: [],
     id: 'gdc_search_files',
     description:
-      'Search the GDC file inventory and explicitly label each file as open or controlled access. Metadata discovery does not grant download access; controlled files require appropriate GDC authorization.',
+      'Search the GDC file inventory by project, case UUID, sample type and analysis workflow type (OR within each filter, AND across filters), and explicitly label each file as open or controlled access. Metadata discovery does not grant download access; controlled files require appropriate GDC authorization.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -363,6 +435,39 @@ export const GDC_TOOLS: ToolDescriptor[] = [
           anyOf: [
             { type: 'string', minLength: 1 },
             { type: 'array', items: { type: 'string', minLength: 1 }, minItems: 1, maxItems: 100 }
+          ]
+        },
+        case_ids: {
+          anyOf: [
+            { type: 'string', minLength: 1, maxLength: 200 },
+            {
+              type: 'array',
+              items: { type: 'string', minLength: 1, maxLength: 200 },
+              minItems: 1,
+              maxItems: 100
+            }
+          ]
+        },
+        sample_types: {
+          anyOf: [
+            { type: 'string', minLength: 1, maxLength: 200 },
+            {
+              type: 'array',
+              items: { type: 'string', minLength: 1, maxLength: 200 },
+              minItems: 1,
+              maxItems: 100
+            }
+          ]
+        },
+        workflow_types: {
+          anyOf: [
+            { type: 'string', minLength: 1, maxLength: 200 },
+            {
+              type: 'array',
+              items: { type: 'string', minLength: 1, maxLength: 200 },
+              minItems: 1,
+              maxItems: 100
+            }
           ]
         },
         access: { type: 'string', enum: ['all', 'open', 'controlled'], default: 'all' },
@@ -375,9 +480,15 @@ export const GDC_TOOLS: ToolDescriptor[] = [
       }
     },
     returns:
-      '`{ page, page_size, returned, total, total_relation, next_page, access_summary: { open, controlled, unknown }, controlled_files_require_authorization, files: [{ file_id, file_name, file_size_bytes, md5sum, data_format, data_type, data_category, access, state, project_id, download_url, download_requires_authentication, download_status }], download_note }`. Open files expose a public data URL; controlled files deliberately expose no downloadable URL and are marked `requires_authorization`. No file bytes are downloaded. access_summary and controlled_files_require_authorization describe only the returned page. project_id is a single related-project summary; nested cases use the first case, not a complete list of related projects.' +
+      '`{ page, page_size, returned, total, total_relation, next_page, access_summary: { open, controlled, unknown }, controlled_files_require_authorization, files: [{ file_id, file_name, file_size_bytes, md5sum, data_format, data_type, data_category, access, state, project_id, cases, analysis, download_url, download_requires_authentication, download_status }], download_note }`. Open files expose a public data URL; controlled files deliberately expose no downloadable URL and are marked `requires_authorization`. No file bytes are downloaded. access_summary and controlled_files_require_authorization describe only the returned page. project_id is a single related-project summary; nested cases use the first case, not a complete list of related projects. cases preserves every file-linked case and its samples with sample_id, submitter_id, sample_type, tissue_type, tumor_descriptor and aliquots (aliquot_id, submitter_id, portion_id, analyte_id). Relationships come only from /files cases.samples, never from all biospecimens under /cases. Missing relationships are empty arrays and do not prove absence of biological sources. Sample-type filtering selects files; it does not remove other linked samples (e.g. a paired normal). analysis is null when absent, otherwise contains analysis_id, workflow_type, workflow_version and workflow_link; workflow metadata does not identify tumor/normal roles.' +
       PAGINATION_NOTE,
-    exampleArgs: { project_ids: ['TCGA-BRCA'], access: 'open', page_size: 10 },
+    exampleArgs: {
+      project_ids: ['TCGA-BRCA'],
+      sample_types: 'Primary Tumor',
+      workflow_types: 'STAR - Counts',
+      access: 'open',
+      page_size: 10
+    },
     run: searchFiles
   },
   {
@@ -393,7 +504,7 @@ export const GDC_TOOLS: ToolDescriptor[] = [
       required: ['file_id']
     },
     returns:
-      '`{ file: { file_id, file_name, file_size_bytes, md5sum, data_format, data_type, data_category, access, state, project_id, download_url, download_requires_authentication, download_status }, download_note }`. `download_url` is only returned for open-access files; controlled-access files require authorization and an `X-Auth-Token` outside this metadata call. project_id is a single related-project summary; nested cases use the first case, not a complete list of related projects.',
+      '`{ file: { file_id, file_name, file_size_bytes, md5sum, data_format, data_type, data_category, access, state, project_id, cases, analysis, download_url, download_requires_authentication, download_status }, download_note }`. `download_url` is only returned for open-access files; controlled-access files require authorization and an `X-Auth-Token` outside this metadata call. project_id is a single related-project summary; nested cases use the first case, not a complete list of related projects. cases preserves every file-linked case and its samples with sample_id, submitter_id, sample_type, tissue_type, tumor_descriptor and aliquots (aliquot_id, submitter_id, portion_id, analyte_id). Relationships come only from /files cases.samples, never from all biospecimens under /cases. Missing relationships are empty arrays and do not prove absence of biological sources. Sample-type filtering selects files; it does not remove other linked samples (e.g. a paired normal). analysis is null when absent, otherwise contains analysis_id, workflow_type, workflow_version and workflow_link; workflow metadata does not identify tumor/normal roles.',
     exampleArgs: { file_id: 'cb92f61d-041c-4424-a3e9-891b7545f351' },
     url: (args) =>
       `${GDC_API}/files/${encodeURIComponent(String(args.file_id))}?fields=${encodeURIComponent(FILE_FIELDS)}`,

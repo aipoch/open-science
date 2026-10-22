@@ -5,6 +5,9 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'orphadata') {
+    return t('Rare-disease genes, phenotypes and frequency evidence from Orphadata.')
+  }
   if (connector.id === 'encori') {
     return t('RNA interactions, regulatory evidence and bulk datasets from ENCORI.')
   }
@@ -76,6 +79,27 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'genes/get_hgnc_gene':
+      return t('Retrieve HGNC gene names and aliases.')
+    case 'genes/resolve_hgnc_alias':
+      return t('Resolve an HGNC gene alias without discarding ambiguous matches.')
+    case 'pubmed/get_pubtator_annotations':
+      return t('Retrieve PubTator 3 annotations for published articles.')
+    case 'pubmed/search_pubtator':
+      return t('Search PubTator 3 entities and relations, one page at a time.')
+    case 'clinical-genomics/get_dgidb_gene_drugs':
+      return t('Find drugs associated with a gene in DGIdb, retaining source evidence.')
+    case 'clinical-genomics/get_dgidb_drug_genes':
+      return t('Find genes associated with a drug in DGIdb, retaining source evidence.')
+    case 'rna/get_rnacentral_record':
+      return t('Retrieve an RNAcentral sequence record.')
+    case 'rna/get_rnacentral_xrefs':
+      return t('Map RNAcentral identifiers to source databases, one page at a time.')
+    case 'orphadata/get_disease_genes':
+      return t('Retrieve rare-disease gene associations from Orphadata.')
+    case 'orphadata/get_disease_phenotypes':
+      return t('Retrieve rare-disease phenotypes and frequencies from Orphadata.')
+
     case 'encori/query_mirna_targets':
       return t('Query miRNA target evidence.')
     case 'encori/query_rna_rna_interactions':
@@ -96,6 +120,40 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('List bulk datasets without downloading.')
     case 'encori/download_bulk_dataset':
       return t('Download and verify one bulk dataset.')
+
+    case 'gdc/gdc_list_projects':
+      return t('List GDC projects and their case and file counts.')
+    case 'gdc/gdc_get_file':
+      return t('Retrieve GDC file metadata and sample associations without downloading data.')
+    case 'gdc/gdc_get_manifest':
+      return t('Create a GDC file manifest without downloading data.')
+
+    case 'gdc/gdc_list_cases':
+      return t('List GDC cases, samples and aliquots.')
+    case 'gdc/gdc_search_files':
+      return t('Find GDC files by case, sample type and analysis workflow.')
+
+    case 'genomes/ensembl_sequence':
+      return t('Retrieve Ensembl nucleotide or protein sequences.')
+    case 'genomes/ensembl_lookup':
+      return t('Look up Ensembl genes, transcripts or proteins by identifier, or genes by symbol.')
+
+    case 'genomes/ensembl_vep_variant':
+      return t(
+        'Predict variant consequences with Ensembl VEP using variant IDs, genomic coordinates or HGVS notation.'
+      )
+    case 'clinical-trials/search_by_eligibility':
+      return t('Find clinical trials by patient age, sex and recruitment status.')
+
+    case 'clinical-trials/get_trial_results':
+      return t(
+        'Retrieve posted clinical trial results, including outcomes, participant flow and adverse events.'
+      )
+
+    case 'chembl/get_assay':
+      return t('Retrieve ChEMBL assay methods, biological context and target assignments.')
+    case 'chembl/get_bioactivity':
+      return t('Find ChEMBL bioactivity measurements with filters and pagination.')
 
     case 'pdc/pdc_search_studies':
       return t('Search PDC studies and versions by name or identifier.')
@@ -165,6 +223,15 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Retrieve a specific dataset version.')
     case 'cellxgene-discover/list_dataset_files':
       return t('List dataset file formats, sizes and download URLs without downloading files.')
+    case 'variants/clinvar_get_submissions':
+      return t('Retrieve individual ClinVar submission evidence for a variant.')
+    case 'variants/mitochondrial_variants':
+      return t('Find mitochondrial variants and heteroplasmy data in gnomAD.')
+    case 'variants/gene_variants':
+      return t('Retrieve gnomAD variants for a gene and reference genome.')
+    case 'variants/region_variants':
+      return t('Retrieve gnomAD variants for a genomic region and reference genome.')
+
     case 'variants/mavedb_search_score_sets':
       return t('Search public MaveDB functional score sets.')
     case 'variants/mavedb_get_score_set':
@@ -186,6 +253,9 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Run a bounded Bgee SPARQL expression query.')
     case 'expression/bgee_download_links':
       return t('Build official Bgee expression download links.')
+    case 'cancer-models/cbioportal_mutation_frequency':
+      return t('Calculate cBioPortal mutation frequencies using samples profiled for the gene.')
+
     case 'cancer-models/cbioportal_get_samples':
       return t('List cBioPortal samples in a study.')
     case 'cancer-models/cbioportal_get_patients':
@@ -200,6 +270,11 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Count matching FAERS adverse-event reports by selected buckets.')
     case 'drug-regulatory/search_drug_recalls':
       return t('Search FDA drug enforcement and recall reports.')
+    case 'omics-archives/arrayexpress_get_experiment_samples':
+      return t('Retrieve ArrayExpress sample, assay and file relationships.')
+    case 'omics-archives/metabolights_get_studies':
+      return t('Retrieve MetaboLights study, sample and assay metadata.')
+
     case 'omics-archives/mgnify_get_analysis_files':
       return t('List result-file metadata and download URLs for an MGnify analysis.')
     case 'pathway-commons/pathway_commons_search':
@@ -272,6 +347,11 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Find datasets and software by topic or related DOI.')
     case 'literature/datacite_get_record':
       return t('Retrieve dataset metadata, rights and publication relationships by DOI.')
+    case 'genes/get_uniprot_entries':
+      return t('Retrieve UniProt protein entries, resolving secondary accessions.')
+    case 'genes/map_reactome_pathways':
+      return t('Map gene symbols or UniProt accessions to Reactome pathways in a selected species.')
+
     case 'genes/search_uniprot_entries':
       return t('Discover UniProt proteins with cursor pagination.')
     case 'genes/submit_uniprot_id_mapping':
@@ -326,6 +406,9 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('List sequence names and UCSC, RefSeq and GenBank aliases for an NCBI assembly.')
     case 'genomes/ucsc_conservation':
       return t('Summarize UCSC conservation scores for a genomic region.')
+    case 'protein-annotation/get_string_network':
+      return t('Retrieve STRING protein interaction networks and report unmapped genes.')
+
     case 'protein-annotation/get_string_ppi_enrichment':
       return t(
         'Test whether a protein set has more interactions than expected in STRING, with an optional background set.'

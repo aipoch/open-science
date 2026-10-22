@@ -131,6 +131,7 @@ const DOCX_MAX_SCALE = 1
 const DOCX_MIN_ZOOM = 0.5
 const DOCX_MAX_ZOOM = 2
 const DOCX_ZOOM_STEP = 0.25
+// Page-level content-visibility/contain: style isolates docx-preview's wrapper-owned list counters.
 const DOCX_FIT_STYLE = `
 .docx-wrapper {
   background: transparent;
@@ -138,8 +139,6 @@ const DOCX_FIT_STYLE = `
 }
 .docx-wrapper > section.docx {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  content-visibility: auto;
-  contain-intrinsic-size: auto 1123px;
   zoom: var(${DOCX_SCALE_PROPERTY}, 1);
   transform-origin: top center;
 }

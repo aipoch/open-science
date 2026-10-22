@@ -135,6 +135,7 @@ type SessionPersistenceStateOwnerOptions = {
   notifyRuntimeContextSessionUpdated(session: PersistedChatSession): void
   notifyRuntimeTranscriptSessionUpdated?(session: PersistedChatSession): void
   notifyDelegationPolicyUpdated?(session: PersistedChatSession): void
+  onSessionStateChanged?(): void
   // Schedules abandoned-preparation release on the Session's operation lane.
   releaseAbandonedPreparation?(scope: { projectId: string; sessionId: string }): void
   provenance?: SessionStateProvenance
@@ -394,6 +395,7 @@ class SessionPersistenceStateOwner {
     this.isSessionMetadataComplete = isComplete
   }
   replaceProjectMetadata(projectId: string, sessions: readonly SessionMetadata[]): void {
+    this.options.onSessionStateChanged?.()
     const nextMetadata = new Map(this.sessionMetadata)
     for (const [sessionId, metadata] of nextMetadata) {
       if (metadata.projectId === projectId) nextMetadata.delete(sessionId)
@@ -415,6 +417,7 @@ class SessionPersistenceStateOwner {
     this.sessionMetadata = nextMetadata
   }
   recordSession(session: PersistedChatSession): void {
+    this.options.onSessionStateChanged?.()
     this.promptPreparations.observe(session)
     // Clear stale live release facts when durable state settles or a newer execution takes over.
     const event = this.runtimeTerminalFailures.get(session.id)?.event
@@ -435,12 +438,14 @@ class SessionPersistenceStateOwner {
     this.isSessionMetadataComplete = false
   }
   removeSession(projectId: string, sessionId: string): void {
+    this.options.onSessionStateChanged?.()
     this.promptPreparations.forget(projectId, sessionId)
     this.clearRuntimeTerminalFailure(projectId, sessionId)
     this.sessionMetadata.delete(sessionId)
     this.invalidateBindingTopology(projectId, sessionId)
   }
   removeProject(projectId: string, sessionIds: readonly string[]): void {
+    this.options.onSessionStateChanged?.()
     this.promptPreparations.forget(projectId)
     for (const { event } of this.runtimeTerminalFailures.values()) {
       if (event.terminalScope?.projectId === projectId && event.sessionId)

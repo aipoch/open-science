@@ -15,7 +15,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 type DeleteSessionDialogProps = {
   session: ChatSession | undefined

@@ -20,7 +20,7 @@ import type {
   ActionMenuDefinition,
   ActionMenuRecipeEntry
 } from '@/components/action-menu'
-import type { ChatSession, SessionStatus } from '@/stores/session-store'
+import type { ChatSession, SessionStatus } from '@/stores/session-store-contract'
 import { projectPresentedSessionActionability } from './session-wait-reason'
 
 export type SessionActionId =

@@ -140,7 +140,11 @@ describe('trusted supplemental selection', () => {
       graph
     )
     expect(modules.mode).toBe('selective')
-    expect(modules.modules).toContain('settings_backend_resolution')
+    // Reviewed boundaries route consumers for capabilities only, not their test inventories.
+    expect(modules.modules).not.toContain('settings_backend_resolution')
+    expect(modules.reasonChains).toContain(
+      'settings_provider_accounts -> settings_backend_resolution -> capability routing only'
+    )
     // Even a candidate with no supplemental lanes must gain its consumers' mandatory coverage.
     const candidate = classifyChanges(
       changesFor(['packages/connector-builtins/src/genes-ontology.ts'])

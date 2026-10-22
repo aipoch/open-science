@@ -43,7 +43,8 @@ import { i18next } from '../../i18n'
 import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
 import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
 import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
-import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import type { ChatMessage } from '../../stores/session-store-contract'
 import {
   confirmPendingDelegationPolicyAuthority,
   deleteSession,
@@ -215,8 +216,10 @@ const createSessionFailureMessage = (error: unknown): string =>
 const rejectPreparedPrompt = async (
   sessionId: string,
   message: string,
-  preparation?: WorkspacePromptPreparation,
-  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
+  preparation: WorkspacePromptPreparation | undefined,
+  rejected:
+    ((error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void) | undefined,
+  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined
 ): Promise<void> => {
   const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
   const prompt = preparation
@@ -234,7 +237,7 @@ const rejectPreparedPrompt = async (
       reported = describeWorkspacePromptRollbackFailure(message, failure)
     } else if (!rolledBack) return
   }
-  reportWorkspaceOperationError(sessionId, reported)
+  reportWorkspaceOperationError(sessionId, reported, { providerTarget })
   rejected?.(reported, sessionId, restoredAttachments)
 }
 const replayHistory = (
@@ -267,6 +270,7 @@ const ownsPrompt = (sessionId: string, messageId: string): boolean => {
 }
 
 type PromptDispatch = {
+  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined
   sessionId: string
   messageId: string
   content: string
@@ -378,7 +382,8 @@ const dispatchPrompt = (
           request.sessionId,
           message,
           request.preparation,
-          request.rejected
+          request.rejected,
+          request.providerTarget
         )
       }
       resolveAdmission(false)
@@ -619,7 +624,9 @@ const pendingPromptSeed = (
 const rejectUnboundPendingPrompt = async (
   pending: SendWorkspaceMessageResult,
   message: string,
-  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
+  rejected:
+    ((error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void) | undefined,
+  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined
 ): Promise<void> => {
   const source = useSessionStore.getState().sessions.find(({ id }) => id === pending.sessionId)
   if (source?.isPending) markPendingSessionRetryable(source.id)
@@ -648,7 +655,7 @@ const rejectUnboundPendingPrompt = async (
       )
     }))
   }
-  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected)
+  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected, providerTarget)
 }
 
 const discardUnboundSeedSession = async (
@@ -711,7 +718,8 @@ const startPendingPrompt = (
         await rejectUnboundPendingPrompt(
           pending,
           createSessionFailureMessage(error),
-          request.onPreparationRejected
+          request.onPreparationRejected,
+          request.agentConfiguration
         )
       }
       return undefined
@@ -721,7 +729,8 @@ const startPendingPrompt = (
       await rejectUnboundPendingPrompt(
         pending,
         'Agent session could not be created.',
-        request.onPreparationRejected
+        request.onPreparationRejected,
+        request.agentConfiguration
       )
       return undefined
     }
@@ -730,7 +739,8 @@ const startPendingPrompt = (
       await rejectUnboundPendingPrompt(
         pending,
         'Agent session did not return a workspace.',
-        request.onPreparationRejected
+        request.onPreparationRejected,
+        request.agentConfiguration
       )
       return undefined
     }
@@ -894,7 +904,8 @@ const startPendingPrompt = (
             created.sessionId,
             errorMessage(error),
             promptPreparation,
-            request.onPreparationRejected
+            request.onPreparationRejected,
+            request.agentConfiguration
           )
         return undefined
       }
@@ -913,7 +924,8 @@ const startPendingPrompt = (
           : `${message}\n\n${i18next.t('The unsent Session could not be removed ({{failure}}).', {
               failure: cleanupFailure
             })}`,
-        request.onPreparationRejected
+        request.onPreparationRejected,
+        request.agentConfiguration
       )
       return undefined
     }
@@ -939,7 +951,8 @@ const startPendingPrompt = (
         created.sessionId,
         errorMessage(error),
         promptPreparation,
-        request.onPreparationRejected
+        request.onPreparationRejected,
+        request.agentConfiguration
       )
       return undefined
     }
@@ -949,6 +962,7 @@ const startPendingPrompt = (
     }
     try {
       dispatchPrompt(runtime, {
+        providerTarget: request.agentConfiguration,
         sessionId: created.sessionId,
         messageId: boundMessageId,
         content: request.content,
@@ -975,7 +989,8 @@ const startPendingPrompt = (
           created.sessionId,
           errorMessage(error),
           promptPreparation,
-          request.onPreparationRejected
+          request.onPreparationRejected,
+          request.agentConfiguration
         )
       }
       return undefined
@@ -1147,7 +1162,8 @@ const performSendWorkspaceMessage = async (
       await rejectUnboundPendingPrompt(
         pendingPrompt,
         errorMessage(error),
-        input.onPreparationRejected
+        input.onPreparationRejected,
+        input.agentConfiguration
       )
       return undefined
     }
@@ -1158,7 +1174,8 @@ const performSendWorkspaceMessage = async (
       await rejectUnboundPendingPrompt(
         pendingPrompt,
         errorMessage(error),
-        input.onPreparationRejected
+        input.onPreparationRejected,
+        input.agentConfiguration
       )
       return undefined
     }
@@ -1200,7 +1217,12 @@ const performSendWorkspaceMessage = async (
       return preparation
     }
     void preparation.catch((error) =>
-      rejectUnboundPendingPrompt(pendingPrompt, errorMessage(error), input.onPreparationRejected)
+      rejectUnboundPendingPrompt(
+        pendingPrompt,
+        errorMessage(error),
+        input.onPreparationRejected,
+        input.agentConfiguration
+      )
     )
     return pendingPrompt
   }
@@ -1456,7 +1478,8 @@ const performSendWorkspaceMessage = async (
           sessionId,
           errorMessage(error),
           undefined,
-          input.onPreparationRejected
+          input.onPreparationRejected,
+          input.agentConfiguration
         )
         return undefined
       }
@@ -1475,7 +1498,8 @@ const performSendWorkspaceMessage = async (
         sessionId,
         errorMessage(error),
         undefined,
-        input.onPreparationRejected
+        input.onPreparationRejected,
+        input.agentConfiguration
       )
       return undefined
     }
@@ -1549,7 +1573,8 @@ const performSendWorkspaceMessage = async (
           sessionId,
           errorMessage(error),
           promptPreparation,
-          input.onPreparationRejected
+          input.onPreparationRejected,
+          input.agentConfiguration
         )
         return undefined
       }
@@ -1565,7 +1590,8 @@ const performSendWorkspaceMessage = async (
           sessionId,
           errorMessage(error),
           promptPreparation,
-          input.onPreparationRejected
+          input.onPreparationRejected,
+          input.agentConfiguration
         )
         return undefined
       }
@@ -1583,6 +1609,7 @@ const performSendWorkspaceMessage = async (
         : undefined
     try {
       const admission = dispatchPrompt(runtime, {
+        providerTarget: input.agentConfiguration,
         sessionId,
         messageId: appended.messageId,
         content,
@@ -1610,7 +1637,8 @@ const performSendWorkspaceMessage = async (
           sessionId,
           errorMessage(error),
           promptPreparation,
-          input.onPreparationRejected
+          input.onPreparationRejected,
+          input.agentConfiguration
         )
       }
       return undefined
@@ -1664,7 +1692,12 @@ const performSendWorkspaceMessage = async (
     return preparation
   }
   void preparation.catch((error) =>
-    rejectUnboundPendingPrompt(pending, errorMessage(error), input.onPreparationRejected)
+    rejectUnboundPendingPrompt(
+      pending,
+      errorMessage(error),
+      input.onPreparationRejected,
+      input.agentConfiguration
+    )
   )
   return pending
 }

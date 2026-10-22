@@ -2,7 +2,7 @@ import type {
   BrowserPackageTransfer,
   PackageOperationSnapshot
 } from '../../../shared/session-package'
-import { packageOperationActive } from '@/stores/package-operation-store'
+import { packageOperationActive } from '../../../shared/session-package'
 
 const unsettled = (transfer: BrowserPackageTransfer): boolean =>
   transfer.state !== 'cancelled' && transfer.state !== 'failed'

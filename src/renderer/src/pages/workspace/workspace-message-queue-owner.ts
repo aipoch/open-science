@@ -2,7 +2,7 @@ import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type { MessageAttribution } from '../../../../shared/session-message-contract'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import type {
   MessageQueueEditIntent,
   MessageQueueError,

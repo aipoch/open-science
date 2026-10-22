@@ -3,8 +3,13 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
-import { collectPackages, publishPlan } from './publish-npm-release.mjs'
+import { describe, expect, it } from 'vitest'
+import {
+  assertReleasePublisher,
+  collectPackages,
+  publishPlan,
+  releaseSource
+} from './publish-npm-release.mjs'
 import { releaseManifests } from './stage-npm-release.mjs'
 import { runtimeTargets } from '../packages/open-science/runtime-package.mjs'
 import { isMachO } from './verify-runtime-signatures.mjs'
@@ -88,4 +93,97 @@ it('recognizes executable formats without relying on filename extensions', () =>
   expect(isMachO(Buffer.from('cffaedfe00000000', 'hex'))).toBe(true)
   expect(isMachO(Buffer.from('cafebabe00000000', 'hex'))).toBe(true)
   expect(isMachO(Buffer.from('not an executable'))).toBe(false)
+})
+
+describe('certified historical Release source', () => {
+  const sha = 'a'.repeat(40)
+  function responses(): Record<string, unknown> {
+    return {
+      'actions/runs/42': {
+        id: 42,
+        path: '.github/workflows/release.yml',
+        event: 'push',
+        status: 'completed',
+        conclusion: 'success',
+        repository: { full_name: 'aipoch/open-science' },
+        head_repository: { full_name: 'aipoch/open-science' },
+        head_branch: 'v1.0.1',
+        head_sha: sha
+      },
+      'releases/tags/v1.0.1': {
+        tag_name: 'v1.0.1',
+        draft: false,
+        prerelease: false,
+        published_at: '2026-10-20T12:20:57Z'
+      },
+      'commits/v1.0.1': { sha },
+      [`compare/${sha}...main`]: { status: 'ahead' },
+      [`contents/package.json?ref=${sha}`]: {
+        encoding: 'base64',
+        content: Buffer.from('{"version":"1.0.1"}').toString('base64')
+      }
+    }
+  }
+  it('resolves the certified tag SHA rather than the publishing workflow revision', async () => {
+    const data = responses()
+    expect(await releaseSource('42', async (path: string) => data[path])).toEqual({
+      version: '1.0.1',
+      sourceSha: sha,
+      tag: 'v1.0.1'
+    })
+  })
+  it.each([
+    ['actions/runs/42', { id: 43 }],
+    ['actions/runs/42', { path: '.github/workflows/nightly.yml' }],
+    ['actions/runs/42', { event: 'workflow_dispatch' }],
+    ['actions/runs/42', { status: 'in_progress' }],
+    ['actions/runs/42', { conclusion: 'failure' }],
+    ['actions/runs/42', { head_branch: 'v1.0.1-beta.1' }],
+    ['actions/runs/42', { head_branch: 'main' }],
+    ['actions/runs/42', { repository: { full_name: 'fork/open-science' } }],
+    ['actions/runs/42', { head_repository: { full_name: 'fork/open-science' } }],
+    ['releases/tags/v1.0.1', { draft: true }],
+    ['releases/tags/v1.0.1', { prerelease: true }],
+    ['releases/tags/v1.0.1', { published_at: null }],
+    ['commits/v1.0.1', { sha: 'b'.repeat(40) }],
+    [`compare/${sha}...main`, { status: 'diverged' }],
+    [`compare/${sha}...main`, { status: 'behind' }],
+    [
+      `contents/package.json?ref=${sha}`,
+      { content: Buffer.from('{"version":"1.0.2"}').toString('base64') }
+    ]
+  ])('rejects uncertified source %s %j', async (path, overrides) => {
+    const data = responses()
+    data[path] = { ...Object(data[path]), ...overrides }
+    await expect(releaseSource('42', async (key: string) => data[key])).rejects.toThrow()
+  })
+  it('fails closed on malformed inputs and unavailable GitHub evidence', async () => {
+    for (const runId of ['', '../42', '42\n', '0']) {
+      await expect(releaseSource(runId, async () => null)).rejects.toThrow()
+    }
+    await expect(
+      releaseSource('42', async () => {
+        throw new Error('GitHub unavailable')
+      })
+    ).rejects.toThrow('GitHub unavailable')
+  })
+  it('only authorizes registry writes through the main npm workflow', () => {
+    const env = {
+      GITHUB_REPOSITORY: 'aipoch/open-science',
+      GITHUB_EVENT_NAME: 'workflow_dispatch',
+      GITHUB_REF: 'refs/heads/main',
+      GITHUB_WORKFLOW_REF: 'aipoch/open-science/.github/workflows/npm-release.yml@refs/heads/main'
+    }
+    expect(() => assertReleasePublisher(env)).not.toThrow()
+    expect(() =>
+      assertReleasePublisher({ ...env, GITHUB_EVENT_NAME: 'workflow_run' })
+    ).not.toThrow()
+    for (const overrides of [
+      { GITHUB_REPOSITORY: 'fork/open-science' },
+      { GITHUB_EVENT_NAME: 'pull_request' },
+      { GITHUB_REF: 'refs/heads/ci/npm-trusted-publishing' },
+      { GITHUB_WORKFLOW_REF: 'aipoch/open-science/.github/workflows/release.yml@refs/heads/main' }
+    ])
+      expect(() => assertReleasePublisher({ ...env, ...overrides })).toThrow()
+  })
 })
