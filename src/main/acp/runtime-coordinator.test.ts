@@ -409,6 +409,69 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it.each(['sendPrompt', 'sendApplicationPrompt'] as const)(
+    'blocks pinned %s from reacquiring a writer during adoption',
+    async (operation) => {
+      const adoption = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1'],
+          callbacks,
+          beforeResume: () => (target?.model === 'new' ? adoption.promise : Promise.resolve())
+        })
+        Object.assign(fake.runtime, {
+          releaseSessionForTransfer: vi.fn(async () => {
+            fake.setStateSilently({ sessionIds: [], sessionId: undefined })
+            return 'provider-thread-1'
+          })
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const target = {
+        frameworkId: 'codex',
+        providerId: 'provider',
+        model: 'old',
+        reasoningEffort: 'high'
+      } as const
+      await coordinator.createSession({ agentTarget: target })
+      const owner = created.at(-1)!
+      await coordinator.withActivity(
+        { session: { sessionId: 'thread-1', cwd: '/workspace', agentTarget: target } },
+        async (activity) => {
+          const resume = coordinator.resumeSession({
+            sessionId: 'thread-1',
+            cwd: '/workspace',
+            agentTarget: { ...target, model: 'new' }
+          })
+          await vi.waitFor(() => expect(created.at(-1)!.resumeSession).toHaveBeenCalledOnce())
+          try {
+            const request = { sessionId: 'thread-1', text: 'background correction' }
+            const prompt =
+              operation === 'sendPrompt'
+                ? activity.sendPrompt(request)
+                : activity.sendApplicationPrompt(request, {
+                    kind: 'application',
+                    feature: 'reviewer',
+                    purpose: 'correction',
+                    causeReviewId: 'review-1'
+                  })
+            await expect(prompt).rejects.toThrow('finish resuming')
+            expect(owner.resumeSession).not.toHaveBeenCalled()
+            expect(owner.sendPrompt).not.toHaveBeenCalled()
+            expect(owner.runtime.sendApplicationPrompt).not.toHaveBeenCalled()
+          } finally {
+            adoption.resolve()
+            await resume
+          }
+          expect(created.at(-1)!.resumeSession).toHaveBeenCalledOnce()
+        }
+      )
+    }
+  )
+
   it.each(['success', 'retry', 'reset'] as const)(
     'retains detached ownership during sibling updates until adoption settles (%s)',
     async (outcome) => {

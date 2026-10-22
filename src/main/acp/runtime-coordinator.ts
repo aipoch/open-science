@@ -635,6 +635,10 @@ class AcpRuntimeCoordinator {
     pinnedRuntime?: AcpRuntime
   ): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
+    // A pinned activity must not reacquire the prior writer while another runtime adopts it.
+    if (pinnedRuntime && this.pendingSessionAdoptions.has(request.sessionId)) {
+      throw new Error('ACP session must finish resuming before sending a prompt')
+    }
     const retainedProviderId = this.sessionWriterTransfers.get(request.sessionId)?.providerSessionId
     if (retainedProviderId) {
       request = { ...request, providerSessionId: retainedProviderId }
