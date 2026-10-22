@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 export type SideChatAction = 'open' | 'transfer' | 'send'
 export type SideChatBlock =

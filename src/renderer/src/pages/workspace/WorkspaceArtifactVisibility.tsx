@@ -2,7 +2,7 @@ import { useArtifactHiddenState } from './use-artifact-hidden-state'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS } from '../../../../shared/artifacts'
 import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
 import { type ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'

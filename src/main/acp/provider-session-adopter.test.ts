@@ -53,6 +53,7 @@ type AdopterHarness = {
     specialistBindingPending?: true
   ) => Promise<AcpCreateSessionResponse>
   commit: ReturnType<typeof vi.fn>
+  registerSessionSpecialist: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
   connection: ClientConnection
   order: string[]
@@ -136,6 +137,7 @@ const createHarness = (
     blockStartup: false
   })
   if (reservation.collision) throw reservation.collision
+  const registerSessionSpecialist = vi.fn()
   const commit = vi.fn(() => order.push('capability commit'))
   const release = vi.fn(() => {
     order.push('capability release')
@@ -191,6 +193,7 @@ const createHarness = (
     resolveSpecialistSkills: options.specialistSkills
       ? vi.fn(async () => options.specialistSkills as EffectiveSpecialistSkills)
       : undefined,
+    registerSessionSpecialist,
     resolveProjectAgentContext: options.projectAgentContextError
       ? vi.fn(async () => {
           throw options.projectAgentContextError
@@ -221,6 +224,7 @@ const createHarness = (
   return {
     adopt,
     commit,
+    registerSessionSpecialist,
     configure,
     connection,
     order,
@@ -505,6 +509,14 @@ describe('AcpProviderSessionAdopter', () => {
     })
 
     await harness.adopt('specialist-1')
+
+    expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
+      'stable-app-session',
+      'specialist-1'
+    )
+    expect(harness.registerSessionSpecialist.mock.invocationCallOrder[0]).toBeGreaterThan(
+      harness.commit.mock.invocationCallOrder[0]
+    )
 
     expect(harness.sessionSetupAppends.flat()).toEqual(
       expect.arrayContaining(['specialist identity append', 'staged handoff continuity'])

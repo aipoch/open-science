@@ -13,7 +13,7 @@ const ConnectorAuthToast = (): React.JSX.Element | null => {
   const notice = useSettingsStore((state) => state.connectorAuthNotice)
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const dismissConnectorAuthNotice = useSettingsStore((state) => state.dismissConnectorAuthNotice)
-  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
+  const openSettingsToConnector = useSettingsStore((state) => state.openSettingsToConnector)
 
   useEffect(() => {
     void loadConnectors().catch(() => undefined)
@@ -27,13 +27,13 @@ const ConnectorAuthToast = (): React.JSX.Element | null => {
       key={notice.id}
       title={t('{{name}} needs sign-in', { name: notice.displayName })}
       detail={t(
-        'Authorization expired or was revoked. Sign in again to keep this Connector available.'
+        'This Connector could not verify its credentials. Sign in again to restore access.'
       )}
       actionLabel={t('Open Connectors')}
       dismissLabel={t('Close')}
       onAction={() => {
         dismissConnectorAuthNotice()
-        openSettingsToPanel('connectors')
+        openSettingsToConnector(notice.id)
       }}
       onDismiss={dismissConnectorAuthNotice}
       autoDismissMs={AUTO_DISMISS_MS}

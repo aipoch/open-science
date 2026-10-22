@@ -51,7 +51,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 已完成的研究會話也可以匯出為可攜式 `.science` 包，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
 
-> 💡 **AIPOCH Open-Science v1.0.1** _（2026 年 10 月更新）_。這個修補版新增從瀏覽器一鍵匯入 `.science` 套件、更清晰可靠的站內更新程式（尤其是 Windows）、始終可見的工作階段等待狀態、MCP OAuth 憑證處理的安全性修正，以及一批 PDF、文獻和工作階段套件修正。詳情請參閱 [1.0.1 發行說明](../../release-notes/1.0.1/zh-Hant.md)。下載仍以[最新已發佈版本](https://github.com/aipoch/open-science/releases/latest)為準。
+> 💡 **AIPOCH Open-Science v1.0.2** _（2026 年 10 月更新）_。這個修補版新增五個全新科學連接器，並加強 GDC 與 Ensembl 支援、答案卡片上誠實的單選/多選標籤、不再跳動的工作階段套件對話框、更快的工作階段載入，以及一批工作階段、Notebook 與憑證復原修正，此外也包含 Node 執行環境安全性修補程式與 CLI 首次發行至 npm。詳情請參閱 [1.0.2 發行說明](../../release-notes/1.0.2/zh-Hant.md)。下載仍以[最新已發佈版本](https://github.com/aipoch/open-science/releases/latest)為準。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -101,6 +101,16 @@ brew install aipoch/tap/open-science
 ```
 
 此 Formula 內含 Node，無需啟動桌面應用程式；其版本可能與桌面 Cask 不同。前提條件與升級方式見[獨立執行環境指南](../standalone-runtime.md)。
+
+如需獨立 CLI 與 Web 介面，可使用 **Node.js 22.13.0 或更新版本**安裝已發布的 [npm 套件](https://www.npmjs.com/package/@aipoch/open-science)：
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+開啟輸出的 URL 完成設定，或依照[命令列設定指南](../../packages/open-science/CLI.md#first-run-setup-codex)操作。npm 支援 macOS ARM64/x64、使用 glibc 的 Linux ARM64/x64 與 Windows x64，無須安裝桌面應用程式。請保留 npm 選用相依套件，並參閱 [Linux 先決條件與升級說明](../standalone-runtime.md#install-from-npm)。該 URL 含有驗證權杖，請勿分享。
 
 Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資料重設工具](../../scripts/windows-reset/README.md)，確認後會永久刪除本機資料。
 
@@ -331,7 +341,7 @@ npm run pack:backend
 
 Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。`npm run dev:web` 與 `npm run dev:headless` 會建置並啟動後端及 Web 介面，不啟動桌面或系統匣。`OPEN_SCIENCE_WEB_PORT` 指定連接埠（預設 `44100`）；Ctrl+C 會正常關閉前景服務。
 
-原始碼開發需要 Node.js 24。獨立 npm 套件需要 Node >=22.13.0，輕量 CLI/SDK 需要 Node >=22.5。Release 壓縮檔、Homebrew Formula 與桌面命令啟動器均內含執行環境。
+原始碼開發需要 Node.js 24。已發布的 npm 套件與本機建置的獨立 tarball 均需要 Node.js >=22.13.0。Release 壓縮檔、Homebrew Formula 與桌面命令啟動器均內含執行環境。
 
 桌面與瀏覽器共用同一服務。結束桌面只會停止它自行啟動的後端；若連接的是 CLI 啟動的服務，則只中斷桌面連線。
 

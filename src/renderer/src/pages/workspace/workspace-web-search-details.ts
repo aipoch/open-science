@@ -1,6 +1,6 @@
 import type { ContentBlock, ToolCallContent } from '@agentclientprotocol/sdk'
 
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 
 type WebSearchResult = {
   title: string

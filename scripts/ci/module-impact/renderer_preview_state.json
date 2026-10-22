@@ -5,12 +5,14 @@
     "src/renderer/src/stores/preview-leave-guard.test.ts",
     "src/renderer/src/stores/preview-leave-guard.ts",
     "src/renderer/src/stores/preview-workbench-store.test.ts",
-    "src/renderer/src/stores/preview-workbench-store.ts"
+    "src/renderer/src/stores/preview-workbench-store.ts",
+    "src/renderer/src/stores/preview-workbench-contract.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/stores/preview-close-guard.ts",
     "src/renderer/src/stores/preview-leave-guard.ts",
-    "src/renderer/src/stores/preview-workbench-store.ts"
+    "src/renderer/src/stores/preview-workbench-store.ts",
+    "src/renderer/src/stores/preview-workbench-contract.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -19,7 +21,7 @@
       "src/renderer/src/stores/preview-leave-guard.test.ts",
       "src/renderer/src/stores/preview-workbench-store.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/session-persistence/usage-regressions.test.ts",
       "src/main/specialist/application-commands.test.ts",

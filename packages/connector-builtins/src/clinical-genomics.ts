@@ -1,3 +1,4 @@
+import { DGIDB_TOOLS } from './clinical-genomics-dgidb'
 import type { ToolContext, ToolDescriptor } from '@aipoch/connector-core'
 
 // Three clinical-genomics knowledge bases behind one connector (faithful port of the upstream
@@ -560,6 +561,7 @@ async function otQuery(
 // ---------------------------------------------------------------------------
 
 export const CLINICAL_GENOMICS_TOOLS: ToolDescriptor[] = [
+  ...DGIDB_TOOLS,
   // ------------------------------------------------------------- ClinGen --
   {
     id: 'clingen_gene_validity',

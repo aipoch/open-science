@@ -1,0 +1,23 @@
+{
+  "ownerPaths": ["src/shared/remote-fs.test.ts", "src/shared/remote-fs.ts"],
+  "interfacePaths": ["src/shared/remote-fs.ts"],
+  "consumerModules": [
+    "desktop_composition",
+    "host_command_runtime",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": ["src/shared/remote-fs.test.ts"],
+    "contract": [],
+    "consumer": [
+      "scripts/build-backend.integration.test.ts",
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "src/shared/renderer-contracts/definition.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

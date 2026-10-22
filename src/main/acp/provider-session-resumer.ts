@@ -11,7 +11,11 @@ import {
   normalizePermissionProfile
 } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  startDiagnosticOperation
+} from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
@@ -71,6 +75,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
   // session resume.
@@ -84,9 +89,20 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   diagnosticContext: () => Readonly<Record<string, unknown>>
 }>
 
+// In-process transfer receipt; identity survives retries, release validity ends on reacquisition.
+export type AcpSessionWriterTransfer = {
+  providerSessionId: string
+  writerReleased: boolean
+}
+
 export class AcpProviderSessionResumer {
   private readonly policy = new AcpSessionResumePolicy()
   private readonly presentation = new AcpSessionPresentationPolicy()
+  private readonly writerReleases = new Map<
+    string,
+    { attachment: AcpSessionAttachment; operation: Promise<string | undefined> }
+  >()
+  private readonly pendingResumeTransfers = new Map<string, AcpSessionWriterTransfer>()
   private readonly progressObservers = new Map<string, Set<() => void>>()
 
   constructor(private readonly deps: AcpProviderSessionResumerDependencies) {}
@@ -97,14 +113,87 @@ export class AcpProviderSessionResumer {
     for (const observer of observers) observer()
   }
 
-  async resume(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+  async resume(
+    request: AcpResumeSessionRequest,
+    writerTransfer?: AcpSessionWriterTransfer
+  ): Promise<AcpCreateSessionResponse> {
+    if (this.writerReleases.has(request.sessionId)) {
+      const providerSessionId = await this.releaseForTransfer(request.sessionId)
+      if (providerSessionId) {
+        request = { ...request, providerSessionId }
+        writerTransfer = { providerSessionId, writerReleased: true }
+        this.pendingResumeTransfers.set(request.sessionId, writerTransfer)
+      }
+    }
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
-    if (attached) return this.resumeAttached(request, attached)
+    if (attached) {
+      this.pendingResumeTransfers.delete(request.sessionId)
+      return this.resumeAttached(request, attached)
+    }
+    writerTransfer ??= this.pendingResumeTransfers.get(request.sessionId)
+    if (writerTransfer)
+      request = { ...request, providerSessionId: writerTransfer.providerSessionId }
+    const response = await this.resumeDetached(request, false, writerTransfer)
+    this.pendingResumeTransfers.delete(request.sessionId)
+    return response
+  }
 
-    return this.resumeDetached(request, false)
+  hasPendingWriterRelease(sessionId: string): boolean {
+    return this.writerReleases.has(sessionId)
+  }
+
+  async releaseForTransfer(sessionId: string): Promise<string | undefined> {
+    let release = this.writerReleases.get(sessionId)
+    if (!release) {
+      const attachment = this.deps.registry.lookup(sessionId)?.attachment
+      if (!attachment) return undefined
+      release = { attachment, operation: this.releaseWriter(sessionId) }
+      this.writerReleases.set(sessionId, release)
+      const current = release
+      void release.operation.catch(() => {
+        if (this.writerReleases.get(sessionId) === current) this.writerReleases.delete(sessionId)
+      })
+    }
+    // Keep ownership discoverable after a caller timeout. Only a caller consuming the confirmed
+    // release may detach it; otherwise sibling state updates could discard the retry identity.
+    const providerSessionId = await this.withTimeout(() => release.operation, [], {
+      preserveConnection: true
+    })
+    const current = this.deps.registry.lookup(sessionId)?.attachment
+    if (current === release.attachment) {
+      if (!this.deps.registry.detach(release.attachment, 'connection')) {
+        throw new Error('ACP session transfer was superseded.')
+      }
+      release.attachment.session.dispose()
+    } else if (current) {
+      if (this.writerReleases.get(sessionId) === release) this.writerReleases.delete(sessionId)
+      throw new Error('ACP session transfer was superseded.')
+    }
+    if (this.writerReleases.get(sessionId) === release) this.writerReleases.delete(sessionId)
+    return providerSessionId
+  }
+
+  private async releaseWriter(sessionId: string): Promise<string | undefined> {
+    const entry = this.deps.registry.lookup(sessionId)
+    const attachment = entry?.attachment
+    if (!attachment) return undefined
+    const connection = this.deps.currentConnection()
+    if (!connection || !this.deps.supportsSessionClose()) {
+      throw new Error('The provider cannot release this Session for a model change.')
+    }
+    // Close only this writer, preserving provider history and sibling Sessions. A failed close
+    // must not allow another generation to resume the same thread.
+    await connection.agent.request(
+      acp.methods.agent.session.close,
+      { sessionId: attachment.providerSessionId },
+      { cancellationSignal: new AbortController().signal }
+    )
+    this.deps.assertCurrentConnection(connection)
+    return attachment.providerSessionId
   }
 
   async reconfigure(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    this.assertNoPendingWriterRelease(request.sessionId)
     const entry = this.deps.registry.lookup(request.sessionId)
     const attachment = entry?.attachment
     const snapshot = entry?.aggregate.snapshot()
@@ -115,7 +204,7 @@ export class AcpProviderSessionResumer {
         true
       )
     }
-    this.assertSkillScopeRefreshSupported()
+    this.assertSkillScopeRefreshSupported(request.sessionId)
     this.deps.registry.detach(attachment, 'provider')
     try {
       const result = await this.resumeDetached(
@@ -174,7 +263,8 @@ export class AcpProviderSessionResumer {
 
   private async resumeDetached(
     request: AcpResumeSessionRequest,
-    compatibleOnly: boolean
+    compatibleOnly: boolean,
+    writerTransfer?: AcpSessionWriterTransfer
   ): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
@@ -195,7 +285,8 @@ export class AcpProviderSessionResumer {
             projectId,
             identity,
             compatibleOnly,
-            cancellationSignal
+            cancellationSignal,
+            writerTransfer
           ),
         this.progressSessionIds(request)
       )
@@ -266,6 +357,7 @@ export class AcpProviderSessionResumer {
         this.deps.registry.select(request.sessionId)
         this.deps.updateCwd(cwd)
         current.aggregate.updateLocation(cwd, projectId)
+        this.registerSessionSpecialist(request.sessionId)
         this.deps.emitState()
 
         const responseBackend = this.deps.currentBackend()
@@ -364,7 +456,8 @@ export class AcpProviderSessionResumer {
     projectId: string,
     identity: AcpPrimarySessionIdentityReservation,
     compatibleOnly: boolean,
-    cancellationSignal: AbortSignal
+    cancellationSignal: AbortSignal,
+    writerTransfer?: AcpSessionWriterTransfer
   ): Promise<AcpCreateSessionResponse> {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
@@ -389,7 +482,8 @@ export class AcpProviderSessionResumer {
         persistedProviderSessionId,
         true,
         true,
-        cancellationSignal
+        cancellationSignal,
+        writerTransfer
       )
     }
     const decision = this.policy.decide({
@@ -427,7 +521,8 @@ export class AcpProviderSessionResumer {
       decision.providerSessionId,
       persistedProviderSessionId !== undefined,
       compatibleOnly,
-      cancellationSignal
+      cancellationSignal,
+      writerTransfer
     )
   }
 
@@ -440,13 +535,14 @@ export class AcpProviderSessionResumer {
     providerSessionId: string,
     providerSessionIdPersisted: boolean,
     compatibleOnly: boolean,
-    cancellationSignal: AbortSignal
+    cancellationSignal: AbortSignal,
+    writerTransfer?: AcpSessionWriterTransfer
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
     try {
       let backend = this.deps.currentBackend()
-      this.assertSkillScopeRefreshSupported()
+      this.assertSkillScopeRefreshSupported(request.sessionId)
       capability = await this.deps.capabilities.provision({
         stableAppSessionId: request.sessionId,
         framework: backend.framework,
@@ -501,7 +597,11 @@ export class AcpProviderSessionResumer {
         specialistProjection.setup.mcpServers ?? []
       )
 
-      if (backend.framework.id === 'codex' && backend.session.options?.openScienceSkillRuntime) {
+      if (
+        backend.framework.id === 'codex' &&
+        backend.session.options?.openScienceSkillRuntime &&
+        !(writerTransfer?.writerReleased && writerTransfer.providerSessionId === providerSessionId)
+      ) {
         // Codex reuses the MCP processes of an already loaded thread on resume. Closing the live
         // thread first applies the new scope without deleting its persisted history or replaying it.
         await connection.agent.request(
@@ -509,6 +609,8 @@ export class AcpProviderSessionResumer {
           { sessionId: providerSessionId },
           { cancellationSignal }
         )
+        if (writerTransfer?.providerSessionId === providerSessionId)
+          writerTransfer.writerReleased = true
       }
 
       let resumeResponse: unknown
@@ -529,6 +631,17 @@ export class AcpProviderSessionResumer {
           currentModelRoute: backend.modelRoute,
           providerSessionIdPersisted
         })
+        startDiagnosticOperation(log, {
+          operation: 'acp-provider-resume-rejection',
+          fields: {
+            sessionId: request.sessionId,
+            frameworkId: backend.framework.id,
+            modelRoute: backend.modelRoute,
+            reason: failure.reason,
+            disposition: failure.disposition,
+            contextReplacementAllowed: !compatibleOnly
+          }
+        }).fail(error)
         if (failure.disposition !== 'adoptable' || compatibleOnly) throw error
         try {
           identity.assertCurrent()
@@ -541,7 +654,8 @@ export class AcpProviderSessionResumer {
         capability = undefined
         log.info('resumed session adopted after unrecoverable resume error', {
           sessionId: request.sessionId,
-          ...errorLogFields(error)
+          reason: failure.reason,
+          ...diagnosticErrorFields(error)
         })
         // Adoption now owns cleanup and releases identity even on failure. Do not catch its
         // rejection below: checking that released reservation would mask the provider error as
@@ -549,6 +663,9 @@ export class AcpProviderSessionResumer {
         return this.adopt(request, connection, cwd, projectId, identity)
       }
 
+      // A successful resume has reacquired the writer even if local configuration fails below.
+      if (writerTransfer?.providerSessionId === providerSessionId)
+        writerTransfer.writerReleased = false
       provisionalSession = (
         connection.agent as unknown as ClientContextSessionAttacher
       ).attachSession({ sessionId: providerSessionId, ...(resumeResponse as object) })
@@ -643,6 +760,33 @@ export class AcpProviderSessionResumer {
         ownsStableIdentity = false
       }
       capability?.release({ ownsStableIdentity })
+      if (
+        ownsStableIdentity &&
+        provisionalSession &&
+        writerTransfer?.providerSessionId === providerSessionId
+      ) {
+        // A failed local configuration must release the newly acquired writer before retirement or
+        // retry. Keep sibling Sessions connected and retain the original provider failure.
+        try {
+          this.deps.assertCurrentConnection(connection)
+          await this.withTimeout(
+            async (cleanupSignal) => {
+              await connection.agent.request(
+                acp.methods.agent.session.close,
+                { sessionId: provisionalSession!.sessionId },
+                { cancellationSignal: cleanupSignal }
+              )
+              cleanupSignal.throwIfAborted()
+              this.deps.assertCurrentConnection(connection)
+              writerTransfer.writerReleased = true
+            },
+            [],
+            { preserveConnection: true }
+          )
+        } catch (cleanupError) {
+          this.safeLogError('transferred writer cleanup failed', cleanupError, providerSessionId)
+        }
+      }
       this.disposeProvisional(provisionalSession, 'resumed startup session disposal failed')
       throw startupError
     }
@@ -667,7 +811,17 @@ export class AcpProviderSessionResumer {
     })
   }
 
-  assertSkillScopeRefreshSupported(): void {
+  private assertNoPendingWriterRelease(sessionId: string): void {
+    // A timed-out close can still terminate its writer. Only resume consumes its release receipt.
+    if (this.writerReleases.has(sessionId)) {
+      throw new Error(
+        'Cannot reconfigure a Session while its writer release is pending. Resume the Session first.'
+      )
+    }
+  }
+
+  assertSkillScopeRefreshSupported(sessionId: string): void {
+    this.assertNoPendingWriterRelease(sessionId)
     const backend = this.deps.currentBackend()
     if (backend.framework.id === 'codex' && backend.session.options?.openScienceSkillRuntime) {
       const missingMethod = !this.deps.supportsSessionClose()
@@ -718,7 +872,19 @@ export class AcpProviderSessionResumer {
     }
   }
 
+  private registerSessionSpecialist(sessionId: string): void {
+    try {
+      this.deps.registerSessionSpecialist?.(
+        sessionId,
+        this.deps.registry.lookup(sessionId)?.aggregate.snapshot().specialistId
+      )
+    } catch (error) {
+      this.safeLogError('register resumed session specialist failed', error, sessionId)
+    }
+  }
+
   private publish(sessionId: string, cwd: string): void {
+    this.registerSessionSpecialist(sessionId)
     this.deps.updateCwd(cwd)
     try {
       this.deps.pushEvent({

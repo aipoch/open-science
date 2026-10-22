@@ -1,3 +1,4 @@
+import { PUBTATOR_TOOLS } from './pubmed-pubtator'
 import { DOMParser } from '@xmldom/xmldom'
 import { ncbiEtiquette } from './ncbi'
 import type { ToolContext, ToolDescriptor } from '@aipoch/connector-core'
@@ -516,6 +517,7 @@ const eutilsUrl = (ctx: ToolContext, endpoint: string, params: string): string =
   `${EUTILS}/${endpoint}?${params}&tool=${TOOL}${ncbiEtiquette(ctx.credentials)}`
 
 export const PUBMED_TOOLS: ToolDescriptor[] = [
+  ...PUBTATOR_TOOLS,
   {
     id: 'search_articles',
     connector: 'pubmed',

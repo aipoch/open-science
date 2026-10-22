@@ -102,7 +102,7 @@ it('exports only selected available items, opts into historical logs and reports
     })
   )
   expect(document.querySelector('[role="status"]')?.textContent).toContain(
-    'Diagnostic package exported successfully.'
+    'Diagnostic package partially exported.'
   )
   expect(document.body.textContent).toContain(
     'Some selected material could not be included in full.'
@@ -436,4 +436,67 @@ it('keeps the report available when clipboard copying fails', async () => {
   await act(async () => fireEvent.click(button('Copy report')))
   expect(document.querySelector('[role="alert"]')?.textContent).toContain('Could not copy report')
   expect(button('Copy report')).toBeDefined()
+})
+
+it.each([
+  ['exported', 'success', 'Diagnostic package exported successfully.'],
+  ['partial', 'warning', 'Diagnostic package partially exported.'],
+  ['cancelled', 'info', 'Export cancelled.'],
+  ['failed', 'error', 'Diagnostic export failed.']
+])(
+  'keeps the %s outcome and its actions above the scrolling source list',
+  async (status, level, title) => {
+    exportDiagnostics.mockResolvedValue({ status, report: 'technical report' })
+    await render()
+    await act(async () => fireEvent.click(button('Export')))
+    const feedback = document.querySelector('[data-testid="diagnostics-feedback"]')!
+    const sources = document.querySelector('[data-testid="diagnostics-sources"]')!
+    expect(feedback.querySelector('[role="status"]')?.textContent).toContain(title)
+    expect(feedback.querySelector('[data-notice-level]')?.getAttribute('data-notice-level')).toBe(
+      level
+    )
+    expect(feedback.contains(button('Copy report'))).toBe(true)
+    expect(sources.contains(feedback)).toBe(false)
+    expect(feedback.nextElementSibling).toBe(sources)
+  }
+)
+
+it('keeps preparation and inspection errors outside the source list', async () => {
+  let finish!: (value: object) => void
+  inspectDiagnostics.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  await render()
+  const feedback = document.querySelector('[data-testid="diagnostics-feedback"]')!
+  expect(feedback.querySelector('[role="status"]')?.textContent).toContain('Preparing diagnostics…')
+  await act(async () => finish({ items: [], error: 'Diagnostic operation timed out.' }))
+  expect(feedback.querySelector('[role="alert"]')?.textContent).toContain(
+    'Diagnostic operation timed out.'
+  )
+  expect(feedback.nextElementSibling?.getAttribute('data-testid')).toBe('diagnostics-sources')
+})
+
+it.each([
+  '/Users/researcher/Downloads/diagnostics.tar.gz',
+  'C:\\Users\\researcher\\Downloads\\diagnostics.tar.gz',
+  '/home/researcher/' + 'long-directory/'.repeat(30) + 'diagnostics.tar.gz'
+])('preserves the full saved path and reveal action: %s', async (path) => {
+  const revealInFolder = vi.fn().mockRejectedValue(new Error('Folder unavailable'))
+  Object.assign(window.api, { compute: { revealInFolder } })
+  exportDiagnostics.mockResolvedValue({ status: 'exported', path })
+  await render()
+  await act(async () => fireEvent.click(button('Export')))
+  const feedback = document.querySelector('[data-testid="diagnostics-feedback"]')!
+  const savedPath = feedback.querySelector('code')!
+  expect(savedPath.textContent).toBe(path)
+  expect(savedPath.tabIndex).toBe(0)
+  expect(feedback.contains(button('Show in folder'))).toBe(true)
+  expect(feedback.querySelector('[role="status"]')?.textContent).not.toContain(path)
+  await act(async () => fireEvent.click(button('Show in folder')))
+  expect(revealInFolder).toHaveBeenCalledWith(path)
+  expect(feedback.querySelector('[role="alert"]')?.textContent).toContain(
+    'Could not show the exported file.'
+  )
 })

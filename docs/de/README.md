@@ -51,7 +51,7 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 
 Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pakete zur Prüfung, Übergabe und Archivierung exportiert werden, einschließlich ausgewählter Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz.
 
-> 💡 **AIPOCH Open-Science v1.0.1** _(aktualisiert im Oktober 2026)_. Dieser Patch ergänzt den Ein-Klick-Import von `.science`-Paketen aus dem Browser, ein klareres und zuverlässigeres In-App-Update (insbesondere unter Windows), dauerhaft sichtbare Wartezustände von Sitzungen, Sicherheitsfixes für den Umgang mit MCP-OAuth-Anmeldedaten sowie eine Reihe von Korrekturen für PDF, Literatur und Sitzungspakete. Details finden Sie in den [Versionshinweisen zu 1.0.1](../../release-notes/1.0.1/de.md). Downloads entsprechen weiterhin der [neuesten veröffentlichten Version](https://github.com/aipoch/open-science/releases/latest).
+> 💡 **AIPOCH Open-Science v1.0.2** _(aktualisiert im Oktober 2026)_. Dieser Patch ergänzt fünf neue Scientific Connectors sowie tiefere GDC- und Ensembl-Unterstützung, ehrliche Single-/Multi-Select-Kennzeichnungen auf Antwortkarten, einen Sitzungspaket-Dialog, der stillhält, schnelleres Laden von Sitzungen und eine Runde von Korrekturen für Sitzungen, Notebooks und die Anmeldedaten-Wiederherstellung, zusätzlich Node-Laufzeit-Sicherheitspatches und die erste npm-Veröffentlichung der CLI. Details finden Sie in den [Versionshinweisen zu 1.0.2](../../release-notes/1.0.2/de.md). Downloads entsprechen weiterhin der [neuesten veröffentlichten Version](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
@@ -102,6 +102,16 @@ brew install aipoch/tap/open-science
 ```
 
 Die Formula enthält Node und benötigt keine laufende Desktop-App; ihre Version kann vom Desktop-Cask abweichen. Voraussetzungen und Upgrades stehen im [Leitfaden zur eigenständigen Laufzeit](../standalone-runtime.md).
+
+Für die eigenständige CLI und Web-Oberfläche installieren Sie das veröffentlichte [npm-Paket](https://www.npmjs.com/package/@aipoch/open-science) mit **Node.js 22.13.0 oder neuer**:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Öffnen Sie die ausgegebene URL, um die Einrichtung abzuschließen, oder folgen Sie der [Terminal-Einrichtungsanleitung](../../packages/open-science/CLI.md#first-run-setup-codex). npm unterstützt macOS ARM64/x64, glibc-Linux ARM64/x64 und Windows x64; die Desktop-App ist nicht erforderlich. Lassen Sie optionale npm-Abhängigkeiten aktiviert und beachten Sie die [Linux-Voraussetzungen und Aktualisierungshinweise](../standalone-runtime.md#install-from-npm). Die URL enthält ein Authentifizierungstoken; halten Sie sie geheim.
 
 Unter Windows bleiben Forschungsdaten bei einer Neuinstallation erhalten. Für eine vollständige Bereinigung nutzen Sie das [Werkzeug zum Zurücksetzen](../../scripts/windows-reset/README.md), das lokale Daten nach Bestätigung dauerhaft löscht.
 
@@ -332,7 +342,7 @@ npm run pack:backend
 
 Die Web-Oberfläche läuft mit einem gewöhnlichen Node-Backend, ohne Electron oder grafische Anzeige. `npm run dev:web` und `npm run dev:headless` bauen und starten Backend und Web-Oberfläche; sie starten weder Desktop noch Infobereich. `OPEN_SCIENCE_WEB_PORT` wählt den Port (Standard `44100`); Strg+C beendet den Vordergrunddienst geordnet.
 
-Quellentwicklung benötigt Node.js 24. Ein lokal gebautes eigenständiges npm-Tarball benötigt Node >=22.13.0; das leichte CLI/SDK benötigt Node >=22.5. Release-Archive, Homebrew-Formula und Desktop-Befehlsstarter enthalten ihre eigene Laufzeit.
+Quellentwicklung benötigt Node.js 24. Das veröffentlichte npm-Paket und das lokal gebaute eigenständige npm-Tarball benötigen Node.js >=22.13.0. Release-Archive, Homebrew-Formula und Desktop-Befehlsstarter enthalten ihre eigene Laufzeit.
 
 Desktop und Browser teilen denselben Dienst. Beim Beenden stoppt der Desktop nur ein selbst gestartetes Backend; bei einem CLI-Dienst trennt er lediglich die Verbindung.
 

@@ -228,22 +228,23 @@ browser-held Blob/File; it performs no network request. `filename` defaults to a
 `origin` defaults to the page origin and must match it. It returns `{ readonly url, send }`.
 `send()` accepts:
 
-| Option              | Contract                                                                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `readinessMode`     | `attempts` (default) or explicit `wait-for-launch`.                                                                                                                       |
-| `readinessAttempts` | Integer 1–5, default 5 in `attempts` mode. Ignored in `wait-for-launch`.                                                                                                  |
-| `attemptTimeoutMs`  | Default 2,000 ms; accepts positive values up to 30,000 ms. In `wait-for-launch`, values above 2,000 ms are clamped to 2,000 ms. Includes headers and response body reads. |
-| `readyTimeoutMs`    | Default 120,000 ms. Capped at 120,000 ms in `wait-for-launch`, 300,000 ms in `attempts`. Smaller positive budgets are supported.                                          |
-| `signal`            | Cancels waiting or transfer; rejection preserves the caller's abort reason.                                                                                               |
-| `onPhase`           | Optional callback with `waiting-for-receiver` or `transferring`.                                                                                                          |
-| `onProgress`        | Optional callback with `{ sentBytes, totalBytes }`, after each authenticated chunk acknowledgment.                                                                        |
+| Option                | Contract                                                                                                                                                                                       |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readinessMode`       | `attempts` (default) or explicit `wait-for-launch`.                                                                                                                                            |
+| `readinessAttempts`   | Integer 1–30, default 5 in `attempts` mode. Ignored in `wait-for-launch`.                                                                                                                      |
+| `attemptTimeoutMs`    | Default 2,000 ms; accepts positive values up to 30,000 ms. In `wait-for-launch`, values above 2,000 ms are clamped to 2,000 ms. Includes headers and response body reads.                      |
+| `readyTimeoutMs`      | Default 120,000 ms. Capped at 120,000 ms in `wait-for-launch`, 300,000 ms in `attempts`. Smaller positive budgets are supported. `null` disables the overall deadline only in `attempts` mode. |
+| `readinessIntervalMs` | Delay after a failed attempt: 0–30,000 ms, default 1,000 ms.                                                                                                                                   |
+| `signal`              | Cancels waiting or transfer; rejection preserves the caller's abort reason.                                                                                                                    |
+| `onPhase`             | Optional callback with `waiting-for-receiver` or `transferring`.                                                                                                                               |
+| `onProgress`          | Optional callback with `{ sentBytes, totalBytes }`, after each authenticated chunk acknowledgment.                                                                                             |
 
 Default `attempts` mode is unchanged: five stalled two-second attempts and four one-second gaps
 can take about **14 seconds**. Increasing `readyTimeoutMs` alone does not increase that attempt
 count. Opt into `wait-for-launch` when a user may need more time to respond to the browser's
 external-protocol prompt. It retries until this transfer's identity proof succeeds, the caller
 cancels, an identity/compatibility error occurs, or the total readiness budget expires. It is not
-cut off after five requests. Every failed request is followed by a 1,000 ms gap, unless the overall
+cut off after five requests. Every failed request is followed by `readinessIntervalMs` (default 1,000 ms), unless the overall
 budget or cancellation stops that gap. All readiness timers are cleared on completion or failure.
 
 The browser's **Open application** permission prompt exposes no display, accept or cancel callback
@@ -252,8 +253,25 @@ Only the current transfer's secret-bound handshake proves readiness. A generic `
 is insufficient. Display waiting copy until that handshake succeeds; a timeout means only that
 verified readiness was not reached in budget, not that the user rejected the prompt.
 
-The overall budget covers request headers, response body reads and retry gaps. Browser suspension
-can delay timer delivery; a late proof is rejected against the readiness deadline. These budgets
+For count-only polling that survives page suspension:
+
+```js
+await transfer.send({
+  readinessMode: 'attempts',
+  readinessAttempts: 30,
+  readinessIntervalMs: 3000,
+  attemptTimeoutMs: 3000,
+  readyTimeoutMs: null,
+  signal
+})
+```
+
+This makes at most 30 attempts, with three-second request timeouts and failure gaps.
+Suspension extends elapsed time without discarding remaining attempts. A verified handshake,
+identity/protocol error, or cancellation stops polling. Numeric budgets and defaults are unchanged.
+
+When enabled, the overall budget covers request headers, response body reads and retry gaps. Browser suspension
+can delay timer delivery; a late proof is rejected when a readiness deadline is enabled. These budgets
 stop at readiness and **do not limit subsequent whole-file transfer**. Each transport request still
 has its own timeout. Waiting never opens the protocol automatically: launch once from a click,
 then wait. After timeout, call `send()` again with the **same transfer** and a fresh, non-aborted
@@ -297,11 +315,11 @@ Transfer recovery rules:
   Stop retrying this transfer; subsequent `send()` calls reject with the same code without network
   activity. Keep the Blob if the user wants to explicitly prepare and launch a new transfer. This
   requires the updated SDK; older SDKs do not recognize this error contract.
-- Caller cancellation: waiting requests/gaps stop immediately. Before identity verification the SDK
-  sends no DELETE to an untrusted port; an abandoned receiver expires normally. After verification
-  it attempts authenticated cleanup (up to two seconds). Discard the cancelled transfer and create
-  a new one from the retained Blob; the SDK does not automatically recreate/relaunch it or enforce
-  a permanent object tombstone. An already-aborted signal rejects again before network activity.
+- Caller cancellation: abort the signal or call `await transfer.cancel()`. Requests, retry gaps,
+  and timers stop; a secret-authenticated DELETE is attempted even before readiness (up to two
+  seconds). `cancel()` is idempotent and invalidates the transfer. Retain the Blob and explicitly
+  prepare a new transfer; the SDK never downloads or relaunches automatically. Cancellation after
+  receipt does not undo the desktop queue.
 - Concurrent `send()` calls on one transfer are rejected. Sequential calls with a cached receipt
   return `{ received: true }` without another upload; this is not a new import. A new transfer may
   create a separate queued import, so reconnect first when a completion acknowledgment was lost.

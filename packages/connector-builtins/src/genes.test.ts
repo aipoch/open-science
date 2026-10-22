@@ -19,7 +19,9 @@ const EXPECTED_IDS = [
   'list_enrichment_sources',
   'enrich_gene_set',
   'list_enrichr_libraries',
-  'enrich_gene_set_enrichr'
+  'enrich_gene_set_enrichr',
+  'get_hgnc_gene',
+  'resolve_hgnc_alias'
 ]
 
 describe('genes / aggregate', () => {

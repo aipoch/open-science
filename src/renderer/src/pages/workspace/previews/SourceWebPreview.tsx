@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { PreviewSourceItem } from '@/stores/preview-workbench-store'
+import type { PreviewSourceItem } from '@/stores/preview-workbench-contract'
 
 const INITIAL_PROGRESS = 0.08
 const MAX_LOADING_PROGRESS = 0.9

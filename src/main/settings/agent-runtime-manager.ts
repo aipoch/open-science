@@ -50,7 +50,9 @@ import {
   syncMaterializedCustomServerSkillDocs
 } from '../connectors/provision'
 import { createLogger } from '@aipoch/diagnostics/node'
-import type { SkillDirectoryLayout } from '@aipoch/skills/projection'
+import { OS_SKILL_PREFIX, type SkillDirectoryLayout } from '@aipoch/skills/projection'
+import { isSkillEffectivelyEnabled } from '@aipoch/skills/document'
+import { ALL_CONNECTOR_IDS } from '../connectors/registry'
 import { writeAgentConfigFiles } from './agent-config-files'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import {
@@ -1008,15 +1010,72 @@ export class AgentRuntimeManager {
     settings: StoredSettings,
     configRoot: string,
     forcedSkillIds: ReadonlySet<string>,
-    options: Readonly<{ directoryLayout?: SkillDirectoryLayout }> = {}
+    options: Readonly<{
+      directoryLayout?: SkillDirectoryLayout
+      connectorSkillNames?: readonly string[]
+    }> = {}
   ): Promise<string[]> {
     return this.materializeSkillProjection(
       settings,
       configRoot,
       forcedSkillIds,
-      this.connectors.enabledConnectorIds(settings.connectors),
+      options.connectorSkillNames === undefined
+        ? this.connectors.enabledConnectorIds(settings.connectors)
+        : ALL_CONNECTOR_IDS.filter((id) => options.connectorSkillNames!.includes(`mcp-${id}`)),
       options
     )
+  }
+
+  async prepareAgentSkillDiscovery(
+    settings: StoredSettings,
+    configRoot: string,
+    _forcedSkillIds: ReadonlySet<string>,
+    allowedNames?: readonly string[],
+    options: Readonly<{ directoryLayout?: SkillDirectoryLayout }> = {}
+  ): Promise<{
+    connectorSkillNames: string[]
+    allowedNames: string[]
+    mainAllowedNames: string[]
+    allowedPaths: string[]
+  }> {
+    // A parallel instance must never remove a document another instance is authorized to use.
+    const connectorNames = await this.materializeSkillProjection(
+      { ...settings, disabledSkillIds: [] },
+      configRoot,
+      new Set(),
+      [...ALL_CONNECTOR_IDS],
+      options
+    )
+    const skills = await this.skills.listHostSkills()
+    const disabled = new Set(settings.disabledSkillIds ?? [])
+    const mainConnectorNames = new Set(this.connectors.connectorSkillNames(settings.connectors))
+    const entries = [
+      ...skills.map((skill) => ({
+        name: skill.name,
+        path: join(
+          configRoot,
+          'skills',
+          options.directoryLayout === 'agent-facing' ? skill.name : `${OS_SKILL_PREFIX}${skill.id}`,
+          'SKILL.md'
+        ),
+        enabled: isSkillEffectivelyEnabled(skill, disabled)
+      })),
+      ...connectorNames.map((name) => ({
+        name,
+        path: join(configRoot, 'skills', name, 'SKILL.md'),
+        enabled: mainConnectorNames.has(name)
+      }))
+    ]
+    const admitted = (entry: (typeof entries)[number]): boolean =>
+      allowedNames === undefined ? entry.enabled : allowedNames.includes(entry.name)
+    return {
+      connectorSkillNames: connectorNames.filter((name) =>
+        allowedNames === undefined ? mainConnectorNames.has(name) : allowedNames.includes(name)
+      ),
+      allowedNames: entries.filter(admitted).map(({ name }) => name),
+      mainAllowedNames: entries.filter(({ enabled }) => enabled).map(({ name }) => name),
+      allowedPaths: entries.filter(admitted).map(({ path }) => path)
+    }
   }
 
   private async materializeSkillProjection(
@@ -1055,9 +1114,11 @@ export class AgentRuntimeManager {
     settings: StoredSettings,
     forcedSkillIds: ReadonlySet<string> = new Set(),
     modelConfig?: ClaudeRuntimeModelConfig | null,
-    includeSkillAndConnectorContext = true
-  ): Promise<ClaudeRuntimeAssets> {
-    return provisionClaudeRuntime({
+    includeSkillAndConnectorContext = true,
+    allowedNames?: readonly string[]
+  ): Promise<ClaudeRuntimeAssets & { mainAllowedNames: string[] }> {
+    let mainAllowedNames: string[] = []
+    const assets = await provisionClaudeRuntime({
       storageRoot: this.configRoot,
       provisionPrivateProfile: (privateProfileDir) =>
         provisionAppClaudePrivateProfile(privateProfileDir, modelConfig),
@@ -1067,16 +1128,17 @@ export class AgentRuntimeManager {
           await mkdir(join(claudeProjectConfigRoot, 'skills'), { recursive: true })
           return
         }
-        const connectors = await this.connectors.getConnectors()
-        await this.materializeSkillProjection(
+        const discovery = await this.prepareAgentSkillDiscovery(
           settings,
           claudeProjectConfigRoot,
           forcedSkillIds,
-          this.connectors.enabledConnectorIds(connectors),
+          allowedNames,
           { directoryLayout: 'agent-facing' }
         )
+        mainAllowedNames = discovery.mainAllowedNames
       }
     })
+    return { ...assets, mainAllowedNames }
   }
 
   async resolveClaudeExecutable(storedPath: string | undefined): Promise<string> {

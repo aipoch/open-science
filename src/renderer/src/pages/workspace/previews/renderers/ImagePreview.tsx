@@ -1,4 +1,4 @@
-import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-contract'
 import { ImageOff } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'

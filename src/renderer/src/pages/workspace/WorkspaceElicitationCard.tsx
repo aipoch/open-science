@@ -30,7 +30,7 @@ import {
   type ElicitationValue,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
-import type { ElicitationEditDraft } from '@/stores/session-store'
+import type { ElicitationEditDraft } from '@/stores/session-store-contract'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { ChoiceKindChip } from './ChoiceKindChip'

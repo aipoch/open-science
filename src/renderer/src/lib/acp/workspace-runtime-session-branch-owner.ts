@@ -17,7 +17,8 @@ import {
   saveSessionInOrder
 } from '../session-persistence/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
-import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import type { ChatMessage } from '../../stores/session-store-contract'
 import type { useAcpRuntime } from './useAcpRuntime'
 
 export type BranchWorkspaceSessionFromMessageIntent = {

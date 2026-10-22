@@ -15,7 +15,7 @@
       "src/renderer/src/components/LanguageControls.render.test.tsx",
       "src/renderer/src/components/ThemeControls.render.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",

@@ -208,6 +208,7 @@ it('aborts an in-flight readiness request without another attempt or remaining t
   let requestSignal: AbortSignal | undefined
   let attempts = 0
   vi.stubGlobal('fetch', (_url: string, init: RequestInit) => {
+    if (init.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }))
     attempts++
     requestSignal = init.signal!
     return new Promise((_resolve, reject) =>
@@ -547,6 +548,7 @@ it.each(['headers', 'body', 'gap'])(
       const controller = new AbortController()
       const reason = { action: 'user-cancelled' }
       const fetch = vi.fn(async (_input: string, init: RequestInit) => {
+        if (init.method === 'DELETE') return new Response(null, { status: 204 })
         if (stage === 'gap') throw new TypeError('Connection refused')
         const stalled = (): Promise<never> =>
           new Promise((_resolve, reject) => {
@@ -565,7 +567,7 @@ it.each(['headers', 'body', 'gap'])(
       expect(await result).toBe(reason)
       expect(vi.getTimerCount()).toBe(0)
       await vi.advanceTimersByTimeAsync(120000)
-      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(fetch).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }
@@ -728,5 +730,135 @@ it.each(['', '{invalid'])(
     })
     await expect(transfer.send()).rejects.toMatchObject({ code: 'incompatible' })
     expect(requests).toBe(2)
+  }
+)
+
+it.each(['headers', 'body', 'gap'])(
+  'preserves all 30 count-only attempts across page suspension during %s',
+  async (stage) => {
+    vi.useFakeTimers()
+    try {
+      const { transfer } = waitingTransfer()
+      const starts: number[] = []
+      vi.stubGlobal('fetch', async (_input: string, init: RequestInit) => {
+        starts.push(Date.now())
+        if (stage === 'gap') throw new TypeError('Connection refused')
+        const stalled = (): Promise<never> =>
+          new Promise((_resolve, reject) => {
+            init.signal!.throwIfAborted()
+            init.signal!.addEventListener('abort', () => reject(init.signal!.reason), {
+              once: true
+            })
+          })
+        return stage === 'headers' ? stalled() : { ok: true, json: stalled }
+      })
+      let settled = false
+      const result = transfer
+        .send({
+          readinessMode: 'attempts',
+          readinessAttempts: 30,
+          readinessIntervalMs: 3000,
+          attemptTimeoutMs: 3000,
+          readyTimeoutMs: null
+        })
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true
+        })
+      await vi.advanceTimersByTimeAsync(7000)
+      expect(settled).toBe(false)
+      const before = starts.length
+      // Move wall time as if the page slept; retain outstanding timer callbacks.
+      vi.setSystemTime(Date.now() + 600000)
+      await vi.advanceTimersByTimeAsync(180000)
+      expect(await result).toMatchObject({ code: 'readiness-exhausted' })
+      expect(before).toBeGreaterThan(1)
+      expect(starts).toHaveLength(30)
+      expect(
+        starts
+          .slice(1)
+          .map((time, i) => time - starts[i])
+          .filter((gap) => gap < 600000)
+      ).toEqual(Array(28).fill(stage === 'gap' ? 3000 : 6000))
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(600000)
+      expect(starts).toHaveLength(30)
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
+it('rejects a count-only deadline in wait-for-launch mode', async () => {
+  const { transfer } = waitingTransfer()
+  await expect(
+    transfer.send({ readinessMode: 'wait-for-launch', readyTimeoutMs: null })
+  ).rejects.toThrow('Invalid receiver timeout.')
+})
+
+it.each(['headers', 'body', 'gap'])(
+  'cancel is idempotent and clears count-only polling during %s',
+  async (stage) => {
+    vi.useFakeTimers()
+    try {
+      const { transfer, sign } = waitingTransfer()
+      const fetch = vi.fn(async (_input: string, init: RequestInit) => {
+        if (init.method === 'DELETE') {
+          return new Response(null, { status: 204 })
+        }
+        if (stage === 'gap') throw new TypeError('Connection refused')
+        const stalled = (): Promise<never> =>
+          new Promise((_resolve, reject) => {
+            init.signal!.throwIfAborted()
+            init.signal!.addEventListener('abort', () => reject(init.signal!.reason), {
+              once: true
+            })
+          })
+        return stage === 'headers' ? stalled() : { ok: true, json: stalled }
+      })
+      vi.stubGlobal('fetch', fetch)
+      const result = transfer
+        .send({
+          readyTimeoutMs: null,
+          readinessAttempts: 30,
+          attemptTimeoutMs: 3000,
+          readinessIntervalMs: 3000
+        })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(1)
+      await Promise.all([transfer.cancel(), transfer.cancel()])
+      expect(await result).toMatchObject({ code: 'cancelled' })
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(new Headers(fetch.mock.calls[1][1].headers).get('Authorization')).toBe(
+        `HMAC ${sign('DELETE\n/v1/import\n')}`
+      )
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(600000)
+      await expect(transfer.send()).rejects.toMatchObject({ code: 'cancelled' })
+      expect(fetch).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
+it.each(['ready', 'identity', 'protocol'])(
+  'stops count-only polling after %s even when wall time jumps',
+  async (outcome) => {
+    const { transfer, ready } = waitingTransfer()
+    const start = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => start + 600000)
+    const fetch = vi.fn(async (input: string) => {
+      if (outcome === 'ready') return ready(input)
+      const value = await ready(input).json()
+      if (outcome === 'identity') value.proof = 'invalid'
+      else value.chunkBytes = 1
+      return Response.json(value)
+    })
+    vi.stubGlobal('fetch', fetch)
+    const result = transfer.send({ readyTimeoutMs: null, readinessAttempts: 30 })
+    if (outcome === 'ready') await expect(result).resolves.toEqual({ received: true })
+    else await expect(result).rejects.toMatchObject({ code: 'incompatible' })
+    expect(fetch).toHaveBeenCalledTimes(1)
   }
 )

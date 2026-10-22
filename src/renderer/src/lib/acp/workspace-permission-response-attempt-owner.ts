@@ -6,7 +6,7 @@ import {
   type AcpRuntimeEvent
 } from '../../../../shared/acp'
 import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
-import type { ChatSession } from '../../stores/session-store'
+import type { ChatSession } from '../../stores/session-store-contract'
 
 type PermissionResponseAttempt = {
   accepted: boolean

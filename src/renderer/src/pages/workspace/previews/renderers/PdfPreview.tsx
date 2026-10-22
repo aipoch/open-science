@@ -84,9 +84,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import {
   pendingPdfContextSelections,
-  usePreviewWorkbenchStore,
-  type PreviewFileSource
+  usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 import { useSessionStore } from '@/stores/session-store'
 import type { Annotation, PdfAnnotation } from '../../../../../../shared/annotation-contract'
 import { ANNOTATION_LIMITS, pdfAnnotationSourceIsFixed } from '../../../../../../shared/annotations'

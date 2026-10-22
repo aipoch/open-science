@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, it } from 'vitest'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
-import { loadDerivedConsumers } from './module-derived-consumers.mjs'
+import { loadDerivedConsumers } from './module-graph/policy.mjs'
 import { createModuleTestPlan, modulesForPath } from './module-test-impact.mjs'
 import suite from './notebook-analysis-native/suite.json'
 

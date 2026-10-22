@@ -51,7 +51,9 @@ class AcpContextUsagePolicy {
         ...(persistentSystemPrompt ? { persistentSystemPrompt: [persistentSystemPrompt] } : {}),
         ...(persistentSections.length > 0 ? { persistentSections } : {})
       }),
-      ...(selectionConfirmed && backend.context.window
+      // Codex caps the requested window using native model metadata and reserves input headroom.
+      // Its usage updates carry the effective capacity; the requested window must not replace it.
+      ...(selectionConfirmed && backend.framework.id !== 'codex' && backend.context.window
         ? { selectedWindow: backend.context.window }
         : {})
     })

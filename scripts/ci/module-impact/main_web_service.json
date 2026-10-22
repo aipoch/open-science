@@ -49,7 +49,8 @@
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
-      "src/shared/renderer-contract-catalog.test.ts"
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/main/acp/runtime-coordinator.test.ts",
@@ -74,18 +75,18 @@
       "src/main/settings/bootstrap.integration.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/session-persistence/ipc.test.ts",
-      "src/main/composition/notebook-environment.test.ts",
-      "src/main/composition/reviewer.test.ts",
       "src/main/runtime-control.integration.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/ipc-surfaces/settings.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/desktop-runtime-controller.integration.test.ts"
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/ipc-surfaces/settings.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

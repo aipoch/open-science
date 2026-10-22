@@ -3363,14 +3363,22 @@ describe('ConversationPanel composer intake', () => {
 
   it.each(
     (['before-rearm', 'after-rearm'] as const).flatMap((order) =>
-      [false, true].map((previousFailure) => ({ order, previousFailure }))
+      [false, true].flatMap((previousFailure) =>
+        [false, true].map((authenticationRequired) => ({
+          order,
+          previousFailure,
+          authenticationRequired
+        }))
+      )
     )
   )(
-    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure)',
-    async ({ order, previousFailure }) => {
+    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure, authentication: $authenticationRequired)',
+    async ({ order, previousFailure, authenticationRequired }) => {
       // This tests failure disclosure, not the still-unknown cause of the reported
       // admission rejection. Feed the public event contract emitted by AcpRuntime.
-      const failure = 'Runtime Session turn is already owned by another execution.'
+      const failure = authenticationRequired
+        ? 'Authentication required'
+        : 'Runtime Session turn is already owned by another execution.'
       const answered = materializeSessionConversationGraph({
         id: `question-continuation-${order}-${previousFailure}`,
         projectId: 'project-a',
@@ -3470,7 +3478,9 @@ describe('ConversationPanel composer intake', () => {
       // Control: the existing error surface can display this failure beside a
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
-      expect(container.textContent).toContain(failure)
+      expect(container.textContent).toContain(
+        authenticationRequired ? 'Sign in to continue this conversation' : failure
+      )
       renderPanel({
         view: {
           ...view,
@@ -3478,14 +3488,40 @@ describe('ConversationPanel composer intake', () => {
         },
         elicitation: { requests: [] }
       })
-      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
       expect(
         current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
       ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
-      expect(
-        container.textContent,
-        'The retryable question must explain why confirmation did not continue the task'
-      ).toContain(failure)
+      if (authenticationRequired) {
+        expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+        expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+        expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()
+        expect(container.textContent).toContain('Sign in to continue this conversation')
+        expect(
+          [...container.querySelectorAll('button')].some(
+            (button) => button.textContent === 'Model settings'
+          )
+        ).toBe(true)
+        // Account recovery only restores the pending question; it neither answers nor replays it.
+        renderPanel({
+          view: {
+            ...view,
+            actionError: failure,
+            authenticationRecovery: { required: false, openSettings: vi.fn() }
+          },
+          elicitation: { requests: [] }
+        })
+        expect(container.textContent).not.toContain('Sign in to continue this conversation')
+        expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
+        expect(
+          current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
+        ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+      } else {
+        expect(
+          container.textContent,
+          'The retryable question must explain why confirmation did not continue the task'
+        ).toContain(failure)
+      }
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
     }
   )
 
@@ -7804,7 +7840,7 @@ describe('ConversationPanel fix loop lock', () => {
     }
   )
 
-  it('uses the running composer submit action to add the draft to the queue', () => {
+  it('replaces Stop with queue submission for a sendable draft and preserves Enter queueing', () => {
     const onQueueMessage = vi.fn()
     const runningSession: ChatSession = {
       ...idleSession,
@@ -7826,8 +7862,73 @@ describe('ConversationPanel fix loop lock', () => {
       '[data-testid="composer-queue-submit"]'
     ) as HTMLButtonElement
     expect(queueSubmit.disabled).toBe(false)
+    expect(queueSubmit.getAttribute('aria-label')).toBe('Add message to queue')
+    const slot = container.querySelector('[data-testid="composer-running-control-slot"]')!
+    expect(slot.querySelector(':scope > button')).toBe(queueSubmit)
+    expect(queueSubmit.parentElement).toBe(slot)
+    expect(container.querySelector('[aria-label="Send message"]')).toBeNull()
     act(() => queueSubmit.click())
     expect(onQueueMessage).toHaveBeenCalledWith([])
+    act(() => {
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      )
+    })
+    expect(onQueueMessage).toHaveBeenCalledTimes(2)
+    renderPanel({
+      view: { activeSession: runningSession },
+      composer: { view: { doc: { nodes: [] } } },
+      conversation: { availability: { submit: false, submitMode: 'queue' } }
+    })
+    expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+    expect(slot.querySelector(':scope > button')).toBe(queueSubmit)
+    expect(queueSubmit.getAttribute('aria-label')).toBe('Cancel run')
+  })
+
+  it.each([
+    { submit: false, submitMode: 'queue' as const },
+    { submit: true, submitMode: 'send' as const }
+  ])(
+    'keeps Stop as the primary action when queue submission is unavailable: %j',
+    (availability) => {
+      const onQueueMessage = vi.fn()
+      renderPanel({
+        view: {
+          activeSession: {
+            ...idleSession,
+            status: 'running',
+            activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+          }
+        },
+        conversation: {
+          availability,
+          actions: { submit: { draft: routeDraftSubmit({ send: onQueueMessage }) } }
+        }
+      })
+      expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+      const slot = container.querySelector('[data-testid="composer-running-control-slot"]')!
+      expect(slot.querySelector(':scope > button')?.getAttribute('aria-label')).toBe('Cancel run')
+      expect(onQueueMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the options menu enabled to stop with a draft when side chat is unavailable', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...idleSession,
+          status: 'running',
+          activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+        },
+        sideChatDisabledReason: 'Side chat unavailable'
+      },
+      sideChat: { createDraft: undefined, retryHydration: undefined },
+      conversation: { availability: { submit: true, submitMode: 'queue' } }
+    })
+    const menu = container.querySelector(
+      '[data-testid="running-side-chat-menu-trigger"]'
+    ) as HTMLButtonElement
+    expect(menu.disabled).toBe(false)
   })
 
   it('keeps Send and branch-scoped Stop together after a timed Main turn settles', () => {
@@ -7946,6 +8047,7 @@ describe('ConversationPanel fix loop lock', () => {
   })
 
   it('shows cascade progress, prevents duplicate Stop, and restores the control after failure', async () => {
+    const onQueueMessage = vi.fn()
     let rejectStop!: (error: Error) => void
     const onCancelRun = vi.fn(
       () =>
@@ -7964,14 +8066,19 @@ describe('ConversationPanel fix loop lock', () => {
       },
       conversation: {
         availability: {
-          submit: false
+          submit: true,
+          submitMode: 'queue'
         },
         actions: {
-          cancel: onCancelRun
+          cancel: onCancelRun,
+          submit: { draft: routeDraftSubmit({ send: onQueueMessage }) }
         }
       }
     })
 
+    const queue = container.querySelector(
+      '[data-testid="composer-queue-submit"]'
+    ) as HTMLButtonElement
     const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     act(() => {
       cancelButton.click()
@@ -7979,8 +8086,19 @@ describe('ConversationPanel fix loop lock', () => {
     })
 
     expect(onCancelRun).toHaveBeenCalledOnce()
-    expect(cancelButton.disabled).toBe(true)
-    expect(cancelButton.getAttribute('aria-label')).toBe('Stopping run and subagents')
+    const stopping = container.querySelector(
+      '[aria-label="Stopping run and subagents"]'
+    ) as HTMLButtonElement
+    expect(stopping.disabled).toBe(true)
+    expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+    expect(queue.disabled).toBe(true)
+    act(() => {
+      queue.click()
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onQueueMessage).not.toHaveBeenCalled()
 
     await act(async () => {
       rejectStop(new Error('cascade unavailable'))
@@ -7989,6 +8107,7 @@ describe('ConversationPanel fix loop lock', () => {
 
     const retry = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     expect(retry.disabled).toBe(false)
+    expect(queue.disabled).toBe(false)
     expect(container.textContent).toContain('cascade unavailable')
   })
 
@@ -8105,7 +8224,7 @@ describe('ConversationPanel fix loop lock', () => {
       '[data-testid="composer-running-control-slot"]'
     ) as HTMLDivElement
     expect(slot.className.split(' ')).toEqual(
-      expect.arrayContaining(['w-24', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
+      expect.arrayContaining(['w-16', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
     )
     expect(slot.querySelector('[aria-label="Cancel run"]')).not.toBeNull()
   })
@@ -8598,7 +8717,8 @@ describe('ConversationPanel error box + report affordance', () => {
       expect(openSettingsToPanel).toHaveBeenCalledExactlyOnceWith('model')
       expect(changeDoc).not.toHaveBeenCalled()
       expect(session).toEqual(snapshot)
-      expect(container.textContent).toContain('Keep my research draft')
+      expect(container.querySelector('[data-testid=ordinary-composer-form]')).toBeNull()
+      expect(doc).toEqual(docFromText('Keep my research draft'))
     }
   )
 

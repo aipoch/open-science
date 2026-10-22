@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 
 import { createPreviewRequestScope, getPreviewFileReader } from './preview-file-reader'
 import { isUnavailableFileError } from './preview-errors'

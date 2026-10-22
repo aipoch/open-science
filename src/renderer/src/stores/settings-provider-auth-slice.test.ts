@@ -119,7 +119,7 @@ const createCommands = (): CommandMocks => ({
     expiresAt: Date.now() + 60_000,
     intervalSeconds: 5
   }),
-  waitXaiOAuthLogin: vi.fn().mockResolvedValue({}),
+  waitXaiOAuthLogin: vi.fn().mockResolvedValue({ validation: { ok: true, category: 'ok' } }),
   cancelXaiOAuthLogin: vi.fn().mockResolvedValue(undefined),
   logoutXaiOAuth: vi.fn().mockResolvedValue(snapshot()),
   refreshProviderModels: vi
@@ -170,6 +170,20 @@ const createHarness = (): {
 }
 
 describe('provider auth slice: persistence and validation', () => {
+  it('returns the xAI login validation after reconciling settings without probing again', async () => {
+    const { store, commands, reconcileSnapshot, refreshPreflight } = createHarness()
+    const result = {
+      accountEmail: 'test@example.com',
+      validation: { ok: false, category: 'network', applied: true }
+    }
+    commands.waitXaiOAuthLogin.mockResolvedValue(result)
+    await expect(store.getState().waitXaiOAuthLogin()).resolves.toEqual(result)
+    expect(commands.waitXaiOAuthLogin).toHaveBeenCalledOnce()
+    expect(commands.validateProvider).not.toHaveBeenCalled()
+    expect(reconcileSnapshot).toHaveBeenCalledOnce()
+    expect(refreshPreflight).toHaveBeenCalledOnce()
+  })
+
   it('keeps saved configuration when prospective validation fails without reconciling or writing', async () => {
     const { store, commands, reconcileSnapshot, refreshPreflight } = createHarness()
     const existing = provider('saved')

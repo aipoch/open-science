@@ -1,0 +1,132 @@
+name: Publish npm packages
+
+# workflow_run also fires for Releases created with GITHUB_TOKEN; release.published does not.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Successful stable Release push run containing verified npm artifacts.
+        type: string
+        required: true
+      dry_run:
+        description: Verify the complete Release artifact set without registry writes or npm credentials.
+        type: boolean
+        default: true
+      bootstrap:
+        description: Explicitly use the temporary npm environment token for first publication.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+# Never interleave versions or cancel an in-flight immutable registry write.
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  source:
+    if: >-
+      github.repository == 'aipoch/open-science' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      version: ${{ steps.source.outputs.version }}
+      release_run_id: ${{ steps.inputs.outputs.release_run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - id: inputs
+        env:
+          NPM_RELEASE_RUN_ID: ${{ github.event.workflow_run.id || inputs.release_run_id }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { appendFileSync } from 'node:fs';
+          import { assertReleasePublisher } from './scripts/publish-npm-release.mjs';
+          assert.match(process.env.NPM_RELEASE_RUN_ID, /^[1-9]\d*$/);
+          if (process.env.DRY_RUN !== 'true') {
+            assertReleasePublisher(process.env);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `release_run_id=${process.env.NPM_RELEASE_RUN_ID}\n`);
+          JS
+      - id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_RELEASE_RUN_ID: ${{ steps.inputs.outputs.release_run_id }}
+        run: node scripts/publish-npm-release.mjs --plan-release
+
+  verify:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: npm-*
+          path: out/distributions
+          run-id: ${{ needs.source.outputs.release_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify certified source and complete artifact set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_RELEASE_RUN_ID: ${{ needs.source.outputs.release_run_id }}
+        run: npm run publish:npm-release -- out/distributions --verify-release
+
+  publish:
+    needs: [source, verify]
+    if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install OIDC-capable npm
+        run: npm install --global npm@11.20.0 --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: npm-*
+          path: out/distributions
+          run-id: ${{ needs.source.outputs.release_run_id }}
+          github-token: ${{ github.token }}
+      - name: Publish verified packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_RELEASE_RUN_ID: ${{ needs.source.outputs.release_run_id }}
+          BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap }}
+          NODE_AUTH_TOKEN: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && secrets.NPM_BOOTSTRAP_TOKEN || '' }}
+        run: |
+          if [ "$BOOTSTRAP" = true ] && [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo 'Bootstrap requires the npm environment NPM_BOOTSTRAP_TOKEN secret.' >&2
+            exit 1
+          fi
+          npm run publish:npm-release -- out/distributions --publish-release

@@ -135,3 +135,13 @@ test('persistent catalog recovery leaves the Settings control reachable', async 
   await recovery.getByTestId('session-persistence-retry').click()
   await expect(page.getByTestId('retry-count')).toHaveText('2')
 })
+
+for (const fixture of ['error-surfaces.html?toasts', 'notice-styles.html?']) {
+  test(`connector recovery remains localized in ${fixture}`, async ({ page }) => {
+    await page.goto(`/${fixture}&locale=zh-Hans`)
+    await expect(
+      page.getByText('此连接器无法验证凭证。请重新登录以恢复访问。', { exact: true })
+    ).toBeVisible()
+    await expect(page.getByRole('button', { name: '打开连接器', exact: true })).toBeVisible()
+  })
+}

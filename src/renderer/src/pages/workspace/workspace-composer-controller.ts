@@ -1,3 +1,4 @@
+import type { ProviderValidationSnapshot } from '@/lib/provider-validation-snapshot'
 import {
   useCallback,
   useEffect,
@@ -287,6 +288,7 @@ type WorkspaceComposerController = {
     transfers: ComposerUploadTransfer[]
     error: string | null
     errorDetail?: string
+    errorProviderValidations?: ProviderValidationSnapshot
     historyStatus: string
     isHistoryBrowsing: boolean
     isUploading: boolean
@@ -596,7 +598,8 @@ const useWorkspaceComposerController = ({
     automaticReadingEnabledRef,
     setActiveAutomaticReadingEnabled
   })
-  const { attachments, transfers, error, errorDetail, isUploading } = uploadController.view
+  const { attachments, transfers, error, errorDetail, errorProviderValidations, isUploading } =
+    uploadController.view
   const {
     changeDoc,
     stageFiles,
@@ -662,9 +665,11 @@ const useWorkspaceComposerController = ({
       if (draftProject && !deletedDraftKeysRef.current.has(draftKey))
         writeComposerDraft(draftProject, draftKey, draft)
     }
-    if (composerDraftStorageFailed())
-      setError(t('Draft storage is unavailable. Copy your draft before leaving this page.'))
-  }, [captureDraftAttachments, deletedDraftKeysRef, draftsRef, setError, t])
+    if (composerDraftStorageFailed()) {
+      const message = t('Draft storage is unavailable. Copy your draft before leaving this page.')
+      if (error !== message) setError(message)
+    }
+  }, [captureDraftAttachments, deletedDraftKeysRef, draftsRef, error, setError, t])
   useLayoutEffect(() => {
     persistDraftsRef.current = persistDrafts
     persistDrafts()
@@ -1918,6 +1923,7 @@ const useWorkspaceComposerController = ({
       transfers,
       error,
       errorDetail,
+      errorProviderValidations,
       historyStatus,
       isHistoryBrowsing: historyBrowsingKey === currentDraftKey,
       isUploading,

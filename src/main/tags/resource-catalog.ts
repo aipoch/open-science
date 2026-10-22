@@ -1,4 +1,4 @@
-import type { TagResourceRef, TagResourceType } from '../../shared/tags'
+import type { TagResourceRef } from '../../shared/tags'
 
 type CatalogEntry = Readonly<{ id: string; available?: boolean }>
 type ConnectorCatalog = Readonly<{
@@ -14,7 +14,7 @@ type TagResourceCatalogDependencies = Readonly<{
   listLiteratureItems(): Promise<readonly CatalogEntry[]>
 }>
 
-type TagResourceCatalogSnapshot = Readonly<Record<TagResourceType, ReadonlySet<string>>>
+import type { TagResourceCatalogSnapshot } from './resource-contract'
 
 class TagResourceCatalog {
   constructor(private readonly dependencies: TagResourceCatalogDependencies) {}

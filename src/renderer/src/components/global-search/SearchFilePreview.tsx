@@ -11,7 +11,7 @@ import {
   type PreviewCapabilityId
 } from '@/pages/workspace/preview-actions/preview-action-model'
 import { PreviewFileContent } from '@/pages/workspace/previews/PreviewFileContent'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 
 export const SearchFilePreview = ({
   item,

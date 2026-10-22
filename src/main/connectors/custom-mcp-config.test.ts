@@ -1,3 +1,8 @@
+import { McpToolCallError } from '@aipoch/connector-mcp-client'
+import {
+  InvalidClientError,
+  InvalidGrantError
+} from '@modelcontextprotocol/sdk/server/auth/errors.js'
 import { describe, it, expect } from 'vitest'
 import {
   classifyCustomMcpFailure,
@@ -418,9 +423,23 @@ describe('selectEnabledCustomServers', () => {
 })
 
 it('does not infer authentication from authorization failures or unrelated prose', () => {
+  expect(classifyCustomMcpFailure(new InvalidGrantError('refresh rejected'))).toBe(
+    'unauthenticated'
+  )
+  expect(classifyCustomMcpFailure(new InvalidClientError('client registration rejected'))).toBe(
+    'unavailable'
+  )
   expect(classifyCustomMcpFailure(new Error('403 Forbidden'))).toBe('unavailable')
   expect(classifyCustomMcpFailure(new Error('Query contains 401 records'))).toBe('unavailable')
   expect(
     classifyCustomMcpFailure(Object.assign(new Error('HTTP request failed'), { status: 401 }))
   ).toBe('unauthenticated')
+})
+
+it('keeps business-tool authentication errors separate from MCP transport credentials', () => {
+  expect(
+    classifyCustomMcpFailure(
+      new McpToolCallError('Authentication required: sign in to the data source')
+    )
+  ).toBe('unavailable')
 })

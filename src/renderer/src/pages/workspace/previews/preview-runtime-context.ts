@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 
 type PreviewDownloadVersionContext = {
   versionId: string

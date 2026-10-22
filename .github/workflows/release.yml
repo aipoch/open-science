@@ -176,6 +176,7 @@ jobs:
       actions: read
     with:
       desktop_run_id: ${{ format('{0}', github.run_id) }}
+      include_npm: true
 
   linux-cli-packages:
     needs: cli-artifacts
@@ -218,6 +219,8 @@ jobs:
       - name: Download all build artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
+          # npm reports share target filenames with CLI reports; keep them isolated.
+          pattern: '!npm-*'
           path: artifacts
           merge-multiple: true # flatten every platform's files into one directory
 

@@ -1,0 +1,34 @@
+{
+  "ownerPaths": [
+    "src/shared/claude-runtime.ts",
+    "src/shared/codex-runtime.ts",
+    "src/shared/run-error-classification.ts",
+    "src/shared/media-overflow.ts",
+    "src/shared/run-error-classification.test.ts",
+    "src/shared/media-overflow.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/claude-runtime.ts",
+    "src/shared/codex-runtime.ts",
+    "src/shared/run-error-classification.ts",
+    "src/shared/media-overflow.ts"
+  ],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": ["src/shared/run-error-classification.test.ts", "src/shared/media-overflow.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "scripts/build-backend.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

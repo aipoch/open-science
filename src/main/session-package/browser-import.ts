@@ -315,6 +315,7 @@ export class BrowserPackageImport {
   }
 
   private releaseSource(t: Transfer): void {
+    if (t.consumed) return
     t.consumed = true
     // Keep the receipt endpoint alive briefly so a lost completion response can be retried.
     t.sourceCleanup = this.cleanupSource(t)
@@ -568,6 +569,7 @@ export class BrowserPackageImport {
     await t.io?.catch(() => undefined)
     // Admission may have completed while removal was waiting for the in-flight request.
     if (!this.closed && (retain || t.accepted) && !t.consumed) return
+    await t.sourceCleanup?.catch(() => undefined)
     t.removed = true
     await t.file?.close().catch(() => undefined)
     t.file = undefined

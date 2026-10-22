@@ -487,3 +487,6 @@ export const sessionPackageCommandContracts = {
     validationCodec(sessionPackageRequestSchema.nullable())
   )
 }
+
+export const packageOperationActive = (operation: PackageOperationSnapshot | null): boolean =>
+  operation !== null && ['running', 'awaiting-selection', 'cancelling'].includes(operation.state)

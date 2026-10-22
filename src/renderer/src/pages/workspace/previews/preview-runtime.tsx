@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useRef, useState } from 'react'
 
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 
 import { createPreviewResourceKey } from './preview-resource-key'
 import { PreviewRuntimeContext } from './preview-runtime-context'

@@ -178,9 +178,33 @@ export function prepareBrowserImport(file, options = {}) {
   let sending = false
   let received = false
   let cancelled
+  const lifetime = new AbortController()
+  let cancellation
+  // Cancel this secret-bound receiver even while readiness is still pending.
+  const cancel = () => {
+    if (received) return Promise.resolve()
+    if (cancellation) return cancellation
+    cancelled = new BrowserImportError('cancelled', 'The transfer was cancelled.')
+    lifetime.abort(cancelled)
+    cancellation = bounded(undefined, 2000, async (signal) => {
+      const headers = await authorize('DELETE', '')
+      signal.throwIfAborted()
+      await fetch(base, {
+        method: 'DELETE',
+        mode: 'cors',
+        credentials: 'omit',
+        redirect: 'error',
+        headers,
+        signal,
+        targetAddressSpace: 'loopback'
+      })
+    }).catch(() => undefined)
+    return cancellation
+  }
 
   return Object.freeze({
     url,
+    cancel,
     async send({
       signal,
       onProgress,
@@ -188,18 +212,23 @@ export function prepareBrowserImport(file, options = {}) {
       readinessMode = 'attempts',
       readyTimeoutMs = 120_000,
       readinessAttempts = 5,
+      readinessIntervalMs = 1000,
       attemptTimeoutMs = 2000
     } = {}) {
       if (!['attempts', 'wait-for-launch'].includes(readinessMode))
         throw new Error('Invalid readiness mode.')
       const waitingForLaunch = readinessMode === 'wait-for-launch'
-      if (!Number.isFinite(readyTimeoutMs) || readyTimeoutMs <= 0)
+      const countOnly = !waitingForLaunch && readyTimeoutMs === null
+      if (!countOnly && (!Number.isFinite(readyTimeoutMs) || readyTimeoutMs <= 0))
         throw new Error('Invalid receiver timeout.')
       if (
         (!waitingForLaunch &&
           (!Number.isInteger(readinessAttempts) ||
             readinessAttempts < 1 ||
-            readinessAttempts > 5)) ||
+            readinessAttempts > 30)) ||
+        !Number.isFinite(readinessIntervalMs) ||
+        readinessIntervalMs < 0 ||
+        readinessIntervalMs > 30_000 ||
         !Number.isFinite(attemptTimeoutMs) ||
         attemptTimeoutMs <= 0 ||
         attemptTimeoutMs > 30_000
@@ -208,49 +237,54 @@ export function prepareBrowserImport(file, options = {}) {
       if (sending) throw new Error('This browser transfer is already running.')
       if (cancelled) throw cancelled
       if (received) return { received: true }
-      signal?.throwIfAborted()
+      signal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
+      signal.throwIfAborted()
       sending = true
       let verified = false
-      const request = async (path, init = {}) => {
-        const response = await fetch(base + path, {
-          mode: 'cors',
-          credentials: 'omit',
-          cache: 'no-store',
-          redirect: 'error',
-          targetAddressSpace: 'loopback',
-          ...init,
-          signal: AbortSignal.any(
-            [signal, init.signal ?? AbortSignal.timeout(30_000)].filter(Boolean)
-          )
-        })
-        if (response.status === 410) {
-          const value = await response.json().catch(() => {
-            throw new BrowserImportError(
-              'incompatible',
-              'Could not verify the local receiver identity.'
-            )
+      const request = async (path, init = {}) =>
+        bounded(signal, 30_000, async (requestSignal) => {
+          const response = await fetch(base + path, {
+            mode: 'cors',
+            credentials: 'omit',
+            cache: 'no-store',
+            redirect: 'error',
+            targetAddressSpace: 'loopback',
+            ...init,
+            signal: AbortSignal.any([requestSignal, init.signal].filter(Boolean))
           })
-          if (value?.code !== 'cancelled' || value.proof !== (await sign('cancelled')))
-            throw new BrowserImportError(
-              'incompatible',
-              'Could not verify the local receiver identity.'
+          const value = await response.json().catch((error) => {
+            if (response.status === 410) {
+              throw new BrowserImportError(
+                'incompatible',
+                'Could not verify the local receiver identity.'
+              )
+            }
+            throw error
+          })
+          if (response.status === 410) {
+            if (value?.code !== 'cancelled' || value.proof !== (await sign('cancelled')))
+              throw new BrowserImportError(
+                'incompatible',
+                'Could not verify the local receiver identity.'
+              )
+            cancelled = new BrowserImportError(
+              'cancelled',
+              'The transfer was cancelled in Open-Science. Prepare a new transfer to try again.'
             )
-          cancelled = new BrowserImportError(
-            'cancelled',
-            'The transfer was cancelled in Open-Science. Prepare a new transfer to try again.'
-          )
-          throw cancelled
-        }
-        return response
-      }
+            throw cancelled
+          }
+          return { ok: response.ok, status: response.status, value }
+        })
       try {
         onPhase?.('waiting-for-receiver')
-        // Browser protocol prompts have no observable completion event. Only this secret's proof
-        // ends launch waiting; the bounded deadline covers requests, body reads and retry gaps.
-        const budget = Math.min(readyTimeoutMs, waitingForLaunch ? 120_000 : 300_000)
+        // Count-only polling survives page suspension without consuming an overall deadline.
+        // Numeric/default budgets retain the legacy deadline across requests, bodies and gaps.
+        const budget = countOnly
+          ? null
+          : Math.min(readyTimeoutMs, waitingForLaunch ? 120_000 : 300_000)
         const attemptBudget = waitingForLaunch ? Math.min(attemptTimeoutMs, 2000) : attemptTimeoutMs
-        const deadline = Date.now() + budget
-        const ready = await bounded(signal, budget, async (readySignal) => {
+        const deadline = budget === null ? null : Date.now() + budget
+        const poll = async (readySignal) => {
           for (let attempt = 0; waitingForLaunch || attempt < readinessAttempts; attempt++) {
             readySignal.throwIfAborted()
             try {
@@ -259,7 +293,7 @@ export function prepareBrowserImport(file, options = {}) {
                 const response = await request(`/ready?challenge=${challenge}`, {
                   signal: attemptSignal
                 })
-                const value = await response.json()
+                const value = response.value
                 if (
                   !value ||
                   typeof value !== 'object' ||
@@ -277,7 +311,7 @@ export function prepareBrowserImport(file, options = {}) {
                   `open-science-import-v1:${challenge}:${value.offset}:${value.accepted ? 1 : 0}`
                 )
                 attemptSignal.throwIfAborted()
-                if (Date.now() >= deadline)
+                if (deadline !== null && Date.now() >= deadline)
                   throw new BrowserImportError(
                     'timeout',
                     'Open-Science did not become ready in time.'
@@ -297,14 +331,16 @@ export function prepareBrowserImport(file, options = {}) {
                   'incompatible',
                   'Could not verify the local receiver identity.'
                 )
-              if (waitingForLaunch || attempt + 1 < readinessAttempts) await wait(1000, readySignal)
+              if (waitingForLaunch || attempt + 1 < readinessAttempts)
+                await wait(readinessIntervalMs, readySignal)
             }
           }
           throw new BrowserImportError(
             'readiness-exhausted',
             'Open-Science did not become ready. Open the app, allow local network access, and retry.'
           )
-        })
+        }
+        const ready = budget === null ? await poll(signal) : await bounded(signal, budget, poll)
         verified = true
         if (
           !Number.isSafeInteger(ready.offset) ||
@@ -338,7 +374,7 @@ export function prepareBrowserImport(file, options = {}) {
               }
             })
             if (!chunk.ok) throw new Error(`Local package transfer failed (${chunk.status}).`)
-            const result = await chunk.json()
+            const result = chunk.value
             if (
               result.offset !== offset + bytes.byteLength ||
               result.proof !== (await sign(`offset:${result.offset}`))
@@ -351,7 +387,7 @@ export function prepareBrowserImport(file, options = {}) {
             method: 'POST',
             headers: await authorize('POST', '/complete')
           })
-          const receipt = await complete.json()
+          const receipt = complete.value
           if (
             complete.status !== 202 ||
             receipt.received !== true ||
@@ -362,17 +398,7 @@ export function prepareBrowserImport(file, options = {}) {
         received = true
         return { received: true }
       } catch (error) {
-        if (verified && signal?.aborted) {
-          await fetch(base, {
-            method: 'DELETE',
-            mode: 'cors',
-            credentials: 'omit',
-            redirect: 'error',
-            headers: await authorize('DELETE', ''),
-            signal: AbortSignal.timeout(2000),
-            targetAddressSpace: 'loopback'
-          }).catch(() => undefined)
-        }
+        if (signal?.aborted) await cancel()
         signal?.throwIfAborted()
         if (error.code === 'cancelled' || error.code === 'incompatible') throw error
         if (verified)

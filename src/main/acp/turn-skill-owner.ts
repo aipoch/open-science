@@ -24,8 +24,14 @@ type AcpTurnSkillHooks = Readonly<{
     ids: string[],
     codexHome: string | undefined
   ) => Promise<ResponsesSkillInput[]>
-  catalogForCodexHome?: (codexHome: string | undefined) => Promise<ResponsesSkillCandidate[]>
-  catalogForCodeBuddyRoot?: (root: string | undefined) => Promise<ResponsesSkillCandidate[]>
+  catalogForCodexHome?: (
+    codexHome: string | undefined,
+    allowedNames?: readonly string[]
+  ) => Promise<ResponsesSkillCandidate[]>
+  catalogForCodeBuddyRoot?: (
+    root: string | undefined,
+    allowedNames?: readonly string[]
+  ) => Promise<ResponsesSkillCandidate[]>
 }>
 type TurnSkillOutcome = 'completed' | 'failed' | 'cancelled' | 'reload-restored'
 type ProviderPreparationInput = Readonly<{
@@ -94,6 +100,9 @@ class AcpTurnSkillOwner {
     }>
   ) {}
   authorize(input: {
+    frameworkId?: AgentFrameworkId
+    nativeSkillScope?: readonly string[]
+    mainSkillScope?: readonly string[]
     role?: SessionCapabilityPolicy['role']
     specialistId?: string
     selectedSkillIds?: readonly string[]
@@ -115,7 +124,12 @@ class AcpTurnSkillOwner {
         }
       }
       const runtimeSkillIds = [
-        ...new Set([...selected, ...(scope?.kind === 'specialist' ? scope.skillIds : [])])
+        ...new Set([
+          ...selected,
+          ...(scope?.kind === 'specialist'
+            ? [...scope.skillIds, ...scope.frameworkNames.filter((name) => name.startsWith('mcp-'))]
+            : [])
+        ])
       ]
       const create = (disabled: string[]): TurnSkillHandle => {
         if (scope?.kind === 'main') {
@@ -125,7 +139,17 @@ class AcpTurnSkillOwner {
           }
         }
         disabled = disabled.filter((id) => !this.options.skills?.preparedSkillIds?.includes(id))
-        const needsReload = disabled.length > 0 && !input.signal?.aborted
+        // Connector definitions are already prepared independently of Main's authorization.
+        if (scope?.kind === 'specialist') disabled = disabled.filter((id) => !id.startsWith('mcp-'))
+        const requested = scope?.kind === 'specialist' ? scope.frameworkNames : input.mainSkillScope
+        const native = new Set(input.nativeSkillScope)
+        const target = new Set(requested)
+        const scopeChanged =
+          input.frameworkId === 'opencode' &&
+          input.nativeSkillScope !== undefined &&
+          requested !== undefined &&
+          (native.size !== target.size || [...target].some((name) => !native.has(name)))
+        const needsReload = (disabled.length > 0 || scopeChanged) && !input.signal?.aborted
         const state: Authorization = {
           selectedSkillIds: selected,
           forcedSkillIds: Object.freeze([...disabled]),
@@ -156,9 +180,15 @@ class AcpTurnSkillOwner {
       )
       .then(finish)
   }
-  backendPreparation(): Readonly<{ forcedSkillIds: readonly string[] }> {
+  backendPreparation(): Readonly<{
+    forcedSkillIds: readonly string[]
+    skillWhitelist?: readonly string[]
+  }> {
     return Object.freeze({
-      forcedSkillIds: Object.freeze([...(this.forced?.forcedSkillIds ?? [])])
+      forcedSkillIds: Object.freeze([...(this.forced?.forcedSkillIds ?? [])]),
+      ...(this.forced?.scope?.kind === 'specialist'
+        ? { skillWhitelist: Object.freeze([...this.forced.scope.frameworkNames]) }
+        : {})
     })
   }
   // Mid-turn inject must not force-load disabled Skills: that reconnects the session. Main still
@@ -232,7 +262,7 @@ class AcpTurnSkillOwner {
     state.outcome = outcome
     if (this.forced !== state) return
     this.forced = undefined
-    if (reload) this.options.requestSkillsReload()
+    if (reload && (state.forcedSkillIds?.length ?? 0) > 0) this.options.requestSkillsReload()
   }
   private async prepareProvider(
     state: Authorization,
@@ -359,7 +389,10 @@ class AcpTurnSkillOwner {
     }
     let catalog: ResponsesSkillCandidate[]
     try {
-      catalog = await this.options.skills.catalogForCodeBuddyRoot(codebuddy.root)
+      catalog = await this.options.skills.catalogForCodeBuddyRoot(
+        codebuddy.root,
+        state.scope?.kind === 'specialist' ? state.scope.frameworkNames : undefined
+      )
     } catch {
       return this.selectionFailed('catalog-error', 'CodeBuddy')
     }
@@ -411,7 +444,10 @@ class AcpTurnSkillOwner {
     if (!codex?.bridgeSkillsAvailable || !this.options.skills?.catalogForCodexHome) return []
     let catalog: ResponsesSkillCandidate[]
     try {
-      catalog = await this.options.skills.catalogForCodexHome(codex.home)
+      catalog = await this.options.skills.catalogForCodexHome(
+        codex.home,
+        state.scope?.kind === 'specialist' ? state.scope.frameworkNames : undefined
+      )
     } catch {
       return this.selectionFailed('catalog-error', 'Codex')
     }

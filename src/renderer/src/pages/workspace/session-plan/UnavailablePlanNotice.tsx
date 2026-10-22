@@ -4,7 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 import type { PlanResponseIdentity } from '../../../../../shared/session-plan/contract'
 import { ErrorNotice } from '@/components/error-notice'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 const UnavailablePlanNotice = ({ session }: { session: ChatSession }): React.JSX.Element => {
   const { t } = useTranslation()

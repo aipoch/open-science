@@ -1,3 +1,4 @@
+import { HGNC_TOOLS } from './genes-hgnc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 import { GENES_PROTEINS_TOOLS } from './genes-proteins'
 import { GENES_UNIPROT_MAPPING_TOOLS } from './genes-uniprot-mapping'
@@ -36,6 +37,7 @@ const ORDER = [
   'enrich_gene_set_enrichr'
 ]
 
-export const GENES_TOOLS: ToolDescriptor[] = ORDER.map(
-  (id) => POOL.find((t) => t.id === id) as ToolDescriptor
-)
+export const GENES_TOOLS: ToolDescriptor[] = [
+  ...ORDER.map((id) => POOL.find((t) => t.id === id) as ToolDescriptor),
+  ...HGNC_TOOLS
+]

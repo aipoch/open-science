@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { RequestError } from '@agentclientprotocol/sdk'
 
 import {
   describePromptError,
   isProviderPromptError,
-  isOpenCodeSessionServiceFailure
+  isOpenCodeSessionServiceFailure,
+  withAgentAuthenticationRecovery
 } from './prompt-error'
 
 // Builds an ACP RequestError-shaped value: an Error carrying the JSON-RPC code + data the agent attaches.
@@ -249,5 +251,68 @@ describe('OpenCode session failure classification', () => {
     expect(
       isOpenCodeSessionServiceFailure(agentError('session missing', { service: 'session' }))
     ).toBe(true)
+  })
+})
+
+describe('ACP authentication recovery boundary', () => {
+  it.each([
+    RequestError.authRequired(),
+    RequestError.authRequired({ reason: 'expired' }, 'Sign in again'),
+    agentError('Internal error', { details: 'workspace routing discovery unauthorized (401)' }),
+    agentError('Internal error: API Error: 401 Unauthorized', { errorKind: 'unknown' }),
+    Object.assign(new Error('Internal error: API Error: 401 Unauthorized'), {
+      name: 'RequestError',
+      code: -32603
+    }),
+    agentError('Provider rejected credentials', { errorName: 'APIError', statusCode: 401 }),
+    agentError('Provider rejected credentials', { codexErrorInfo: 'unauthorized' }),
+    agentError('Provider rejected credentials', {
+      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } }
+    })
+  ])('normalizes a protocol-owned authentication failure before transport', async (error) => {
+    expect(describePromptError(error)).toBe('Authentication required')
+    expect(isProviderPromptError(error)).toBe(true)
+    await expect(
+      withAgentAuthenticationRecovery(async () => {
+        throw error
+      })
+    ).rejects.toMatchObject({
+      message: 'Authentication required',
+      cause: error
+    })
+  })
+  it.each([
+    'Native Codex unavailable',
+    'permission failed',
+    'turn failed',
+    'Authentication requiredness'
+  ])('preserves generic -32000 errors: %s', async (message) => {
+    const error = new RequestError(-32000, message)
+    expect(describePromptError(error)).toBe(message)
+    expect(isProviderPromptError(error)).toBe(false)
+    await expect(
+      withAgentAuthenticationRecovery(async () => {
+        throw error
+      })
+    ).rejects.toBe(error)
+  })
+  it.each([
+    agentError('Forbidden', { errorName: 'APIError', statusCode: 403 }),
+    agentError('Rate limited', { errorName: 'APIError', statusCode: 429 }),
+    agentError('Server failed', { errorName: 'APIError', statusCode: 503 }),
+    agentError('Invalid client', { errorName: 'APIError', status: 401, error: 'invalid_client' }),
+    agentError('Forbidden', {
+      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 403 } }
+    }),
+    agentError('Usage limit exceeded', { codexErrorInfo: 'usageLimitExceeded' }),
+    agentError('Server overloaded', { codexErrorInfo: 'serverOverloaded' }),
+    agentError('Unrelated protocol error', { codexErrorInfo: 'unauthorized' }, -32002),
+    agentError('Malformed HTTP status', {
+      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: '401' } }
+    }),
+    agentError('Query returned 401 records', { details: '401' }),
+    Object.assign(new Error('unrelated RPC'), { code: -32000 })
+  ])('preserves other failures', (error) => {
+    expect(describePromptError(error)).toBe(error.message)
   })
 })

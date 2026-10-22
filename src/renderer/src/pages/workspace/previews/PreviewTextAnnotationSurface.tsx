@@ -14,7 +14,7 @@ import type {
 } from '../../../../../shared/pdf-annotations'
 
 import { ErrorNotice } from '@/components/error-notice'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type {
   Annotation,
   PdfAnnotation,

@@ -49,7 +49,9 @@ export function useLiteratureCollectionDeletion({
     if (!collectionPendingDelete) return undefined
     const promoted = collections.filter(({ parentId }) => parentId === collectionPendingDelete.id)
     const rootNames = new Set(
-      collections.filter(({ parentId }) => !parentId).map(({ name }) => name.toLowerCase())
+      collections
+        .filter(({ id, parentId }) => !parentId && id !== collectionPendingDelete.id)
+        .map(({ name }) => name.toLowerCase())
     )
     return {
       collection: collectionPendingDelete,

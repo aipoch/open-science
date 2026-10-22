@@ -1,6 +1,19 @@
 import { open } from 'node:fs/promises'
 
 import { strFromU8, unzipSync } from 'fflate'
+import {
+  MAX_SPREADSHEET_CELLS,
+  MAX_SPREADSHEET_COLUMNS,
+  MAX_SPREADSHEET_ROW_SPAN,
+  MAX_XLSX_ROWS
+} from './tool-input-contract'
+
+export {
+  MAX_SPREADSHEET_CELLS,
+  MAX_SPREADSHEET_COLUMNS,
+  MAX_SPREADSHEET_ROW_SPAN,
+  MAX_XLSX_ROWS
+} from './tool-input-contract'
 
 export type ArtifactReadTargets = {
   pages?: number[]
@@ -70,10 +83,6 @@ export type StructuredArtifactContent =
 
 const MAX_DEFAULT_ROWS = 100
 const MAX_DEFAULT_COLUMNS = 50
-export const MAX_SPREADSHEET_ROW_SPAN = 1_000
-export const MAX_SPREADSHEET_COLUMNS = 50
-export const MAX_SPREADSHEET_CELLS = 50_000
-export const MAX_XLSX_ROWS = 1_048_576
 const MAX_STRUCTURED_SOURCE_BYTES = 50 * 1024 * 1024
 const MAX_SELECTED_OFFICE_XML_BYTES = 16 * 1024 * 1024
 const MAX_OFFICE_ENTRIES = 4_000
