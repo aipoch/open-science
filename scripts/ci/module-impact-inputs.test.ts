@@ -491,6 +491,28 @@ describe('trusted additive module registrations', () => {
       )
     })
 
+    it('drops trusted evidence for a test the head revision deleted', () => {
+      const f = fixture()
+      const head = f.write({ schemaVersion: 1, modules: {} })
+      const inputs = resolveAt(f, head, { schemaVersion: 1, modules: { sample: [derivedTest] } })
+      expect(inputs.derivedIndexAccepted).toBe(true)
+      expect(createAffectedTestPlan(inputs.changes, graph, inputs.manifest).testFiles).toContain(
+        derivedTest
+      )
+
+      const deleted = fixture()
+      rmSync(join(deleted.cwd, derivedTest))
+      const removed = deleted.write({ schemaVersion: 1, modules: {} })
+      const pruned = resolveAt(deleted, removed, {
+        schemaVersion: 1,
+        modules: { sample: [derivedTest] }
+      })
+      expect(pruned.derivedIndexAccepted).toBe(true)
+      expect(
+        createAffectedTestPlan(pruned.changes, graph, pruned.manifest).testFiles
+      ).not.toContain(derivedTest)
+    })
+
     it.each([
       ['malformed JSON', '{"schemaVersion":1,'],
       ['an unknown module', { schemaVersion: 1, modules: { other: [derivedTest] } }],

@@ -125,11 +125,17 @@ function additiveDerivedIndex(trusted, change, { head, cwd, execute, manifest })
     const headFiles = new Set(
       git('ls-tree', '-r', '--name-only', '-z', head).split('\0').filter(Boolean)
     )
-    const modules = structuredClone(trusted.modules)
-    for (const [id, tests] of Object.entries(candidate.modules)) {
-      if (!manifest.modules[id]) return null
-      const added = tests.filter((test) => headFiles.has(test))
-      modules[id] = [...new Set([...(modules[id] ?? []), ...added])].sort()
+    for (const id of Object.keys(candidate.modules)) if (!manifest.modules[id]) return null
+    // Evidence only grows, but a test the head revision deleted cannot be selected from either side.
+    const modules = {}
+    for (const id of new Set([
+      ...Object.keys(trusted.modules),
+      ...Object.keys(candidate.modules)
+    ])) {
+      const tests = [...(trusted.modules[id] ?? []), ...(candidate.modules[id] ?? [])].filter(
+        (test) => headFiles.has(test)
+      )
+      if (tests.length) modules[id] = [...new Set(tests)].sort()
     }
     return validateDerivedConsumers({ schemaVersion: 1, modules }, manifest)
   } catch {
