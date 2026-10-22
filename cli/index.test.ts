@@ -144,7 +144,9 @@ describe('local CLI utilities', () => {
         const paths = invoke(entry, ['paths', '--json'])
         expect(paths.status).toBe(0)
         expect(paths.stderr).toBe('')
-        expect(JSON.parse(paths.stdout)).toEqual({
+        const reportedPaths = JSON.parse(paths.stdout)
+        // Windows may preserve an 8.3 temp path in import.meta.url; compare file identity.
+        expect({ ...reportedPaths, cliPath: await realpath(reportedPaths.cliPath) }).toEqual({
           cliPath: await realpath(entry),
           nodePath: process.execPath,
           startupConfigRoot: join(homedir(), '.open-science'),

@@ -629,6 +629,24 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('ordinary unsent message'))
   })
 
+  it('keeps a draft editable without republishing the same storage failure on every render', () => {
+    configureComposerDraftStorage('scope')
+    const hook = renderController()
+    mounted.push(hook)
+    using storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('Storage unavailable')
+    })
+    act(() => hook.result.current.actions.changeDoc(textDoc('unsent draft')))
+    expect(hook.result.current.view.error).toBe(
+      'Draft storage is unavailable. Copy your draft before leaving this page.'
+    )
+    expect(storage).toHaveBeenCalled()
+    const validationSnapshot = hook.result.current.view.errorProviderValidations
+    act(() => hook.result.current.actions.changeDoc(textDoc('updated draft')))
+    expect(hook.result.current.view.doc).toEqual(textDoc('updated draft'))
+    expect(hook.result.current.view.errorProviderValidations).toBe(validationSnapshot)
+  })
+
   it('restores an active scratch from a new provider after reload and removes sent drafts', () => {
     configureComposerDraftStorage('scope')
     const first = renderController(uploads(), undefined, [

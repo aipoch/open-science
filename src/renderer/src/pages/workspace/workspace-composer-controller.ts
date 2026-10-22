@@ -665,9 +665,11 @@ const useWorkspaceComposerController = ({
       if (draftProject && !deletedDraftKeysRef.current.has(draftKey))
         writeComposerDraft(draftProject, draftKey, draft)
     }
-    if (composerDraftStorageFailed())
-      setError(t('Draft storage is unavailable. Copy your draft before leaving this page.'))
-  }, [captureDraftAttachments, deletedDraftKeysRef, draftsRef, setError, t])
+    if (composerDraftStorageFailed()) {
+      const message = t('Draft storage is unavailable. Copy your draft before leaving this page.')
+      if (error !== message) setError(message)
+    }
+  }, [captureDraftAttachments, deletedDraftKeysRef, draftsRef, error, setError, t])
   useLayoutEffect(() => {
     persistDraftsRef.current = persistDrafts
     persistDrafts()

@@ -128,7 +128,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(policy.permission.skill).toEqual({ '*': 'deny', 'mcp-genes': 'ask' })
     expect(policy.permission.external_directory).toEqual({
       '*': 'deny',
-      '/data/opencode/config/opencode/skills/mcp-genes/*': 'allow'
+      [join('/data/opencode/config/opencode/skills/mcp-genes', '*')]: 'allow'
     })
     expect(JSON.stringify(policy)).not.toContain('orphadata')
     const other = JSON.parse(specialist.env!.OPENCODE_CONFIG_CONTENT!)

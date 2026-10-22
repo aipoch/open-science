@@ -137,7 +137,13 @@ it.each([
           await writeFile(join(dataRoot, 'chord_diagram.pdf'), 'previous generation')
         }
         const analysis = await analyzeNotebookSourceFileAccess('r', script)
-        expect(analysis).toMatchObject({ readState: 'complete', writeState: 'complete' })
+        // R ordering may dispatch xtfrm; known paths do not prove complete file effects.
+        expect(analysis).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial',
+          reasonCodes: ['source-analysis-unsupported-call']
+        })
         expect(analysis.reads).toEqual(['inputs/edge-weights-222222222222.xlsx'])
         expect(analysis.writes.slice().sort()).toEqual(filenames.slice().sort())
         // The native oracle owns no app device lifecycle. An implicit Rplots.pdf is
