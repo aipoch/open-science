@@ -524,5 +524,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Optional research providers expand the reviewed source boundary; retain complete validation until the expanded connector boundary is reviewed and reclassified."
 }
