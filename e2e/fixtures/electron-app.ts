@@ -4,6 +4,7 @@ import {
   runFixtureCleanup
 } from './local-service-cleanup'
 import { expect, test as base, type TestInfo } from '@playwright/test'
+import { buildShellProcessEnvironment } from '@aipoch/environment'
 import { spawn } from 'node:child_process'
 import {
   appendFile,
@@ -444,6 +445,10 @@ const launchEnvironment = (
       )
         delete environment[key]
     }
+    // PowerShell needs its system installation/module paths even when user state is isolated.
+    // The shared projection constructs PSModulePath from system directories, not host modules.
+    if (process.platform === 'win32')
+      Object.assign(environment, buildShellProcessEnvironment('win32', inheritedEnvironment))
     const fixtureHome = join(dirname(storageRoot), 'isolated home')
     environment.HOME = fixtureHome
     environment.USERPROFILE = fixtureHome

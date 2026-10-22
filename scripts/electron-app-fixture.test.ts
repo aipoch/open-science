@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { EventEmitter } from 'node:events'
 import { dirname, join, resolve, sep } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -139,6 +140,67 @@ it('isolates credentials, preload options, home and installation state by defaul
   expect(environment.OPENAI_API_KEY).toBeUndefined()
   expect(environment.NODE_OPTIONS).toBeUndefined()
 })
+
+it('keeps Windows system tools while excluding host PowerShell modules and credentials', () => {
+  const platform = process.platform
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  try {
+    const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+      SystemRoot: 'C:\\Windows',
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files',
+      PSModulePath: 'C:\\operator\\custom-modules',
+      OPENAI_API_KEY: 'operator-secret',
+      USERPROFILE: 'C:\\operator'
+    })
+    expect(environment).toMatchObject({
+      SystemRoot: 'C:\\Windows',
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      ProgramW6432: 'C:\\Program Files',
+      PSModulePath:
+        'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+      USERPROFILE: resolve('fixture/isolated home')
+    })
+    expect(environment.OPENAI_API_KEY).toBeUndefined()
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform })
+  }
+})
+
+it.skipIf(process.platform !== 'win32')(
+  'runs real PowerShell identity and compiler queries inside the isolated launch environment',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fixture-powershell-'))
+    try {
+      const environment = launchEnvironment(join(root, 'storage'))
+      for (const path of [environment.USERPROFILE, environment.APPDATA, environment.LOCALAPPDATA])
+        await mkdir(path, { recursive: true })
+      const query = (script: string, timeout: number): string =>
+        execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+          env: environment,
+          encoding: 'utf8',
+          timeout,
+          windowsHide: true
+        }).trim()
+      expect(
+        query(
+          `$p = Get-Process -Id ${process.pid} -ErrorAction Stop; $p.StartTime.ToUniversalTime().ToFileTimeUtc()`,
+          2000
+        )
+      ).toMatch(/^\d+$/)
+      expect(
+        query(
+          "Add-Type -TypeDefinition 'public class FixtureProbe { public static int Value() { return 17; } }'; [FixtureProbe]::Value()",
+          5000
+        )
+      ).toBe('17')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
 
 it.each([undefined, 'enabled'])(
   'initializes Electron OS paths for default isolated launches (micromamba events: %s)',

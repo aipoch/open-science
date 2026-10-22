@@ -18,6 +18,7 @@
   "windows_runtime": {
     "tests": [
       "scripts/ci/run-windows-browser-diagnostics.test.ts",
+      "scripts/electron-app-fixture.test.ts",
       "scripts/windows-updater-certification.test.ts",
       "build/packaging.test.ts",
       "scripts/windows-update-handoff-uninstall.test.ts",
