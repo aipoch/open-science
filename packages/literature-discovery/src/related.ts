@@ -179,6 +179,7 @@ export class LiteratureRelatedFinder {
       const item = await this.options.catalog.get(request.itemId)
       if (
         !item ||
+        item.id !== request.itemId ||
         item.deletedAt !== undefined ||
         item.metadataRevision !== request.expectedMetadataRevision
       )

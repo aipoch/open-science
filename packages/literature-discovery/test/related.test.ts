@@ -170,6 +170,23 @@ describe('single-paper Semantic Scholar discovery', () => {
     controller.abort()
     await expect(finder.run(request, controller.signal)).rejects.toThrow()
   })
+  it.each(['before', 'during'])(
+    'rejects references merged %s lookup even at the same revision',
+    async (when) => {
+      const { finder, catalog, fetcher } = fixture([
+        json(paper),
+        json({ offset: 0, data: [{ citedPaper: { ...paper, paperId: child } }] })
+      ])
+      if (when === 'during') catalog.get.mockResolvedValueOnce(reference())
+      catalog.get.mockResolvedValue({ ...reference(), id: 'survivor' })
+      expect(await finder.run(request)).toMatchObject({
+        state: 'unavailable',
+        issue: 'reference-changed',
+        records: []
+      })
+      expect(fetcher).toHaveBeenCalledTimes(when === 'before' ? 0 : 2)
+    }
+  )
   it('rejects expired resolution tokens and arbitrary URLs or keyword search inputs', async () => {
     const { finder, fetcher } = fixture([])
     expect(
