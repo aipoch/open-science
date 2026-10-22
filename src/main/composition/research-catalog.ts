@@ -4,6 +4,7 @@ import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/sty
 import {
   LiteratureBatchJobs,
   LiteratureFullTextFinder,
+  LiteratureSupplementFinder,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
@@ -20,6 +21,7 @@ import { discoveryJobOptions } from '../literature/discovery-adapters'
 import { LiteratureDocumentReader } from '../literature/document-reader'
 import { JournalAttributes } from '../literature/journal-attributes'
 import { LiteraturePdfImporter } from '../literature/pdf-importer'
+import { LiteratureSupplementAttachments } from '../literature/supplement-attachments'
 import { createLiteratureScreening } from '../literature/screening-adapter'
 import { MemoryRepository } from '../memory/repository'
 import { MemoryService } from '../memory/service'
@@ -78,6 +80,8 @@ export async function composeResearchCatalog({
   literatureCitationDocument: LiteratureCitationDocument
   literatureReferenceResolver: LiteratureReferenceResolver
   literatureMetadataEnricher: LiteratureMetadataEnricher<LiteratureItemView>
+  literatureSupplementAttachments: LiteratureSupplementAttachments
+  literatureSupplementFinder: LiteratureSupplementFinder
   literatureFullTextFinder: LiteratureFullTextFinder<LiteratureItemView>
   literaturePdfImporter: LiteraturePdfImporter
   literaturePdfAcquisition: AgentPdfAcquisition
@@ -165,7 +169,9 @@ export async function composeResearchCatalog({
     maxBytes,
     onProgress,
     _resolveProxy,
-    signal
+    signal,
+    _tunnel,
+    options
   ) =>
     downloadFullText(
       url,
@@ -176,8 +182,20 @@ export async function composeResearchCatalog({
         return environment.HTTPS_PROXY ?? environment.ALL_PROXY
       },
       signal,
-      (proxy, address, port, signal) => tunnelThroughProxy(proxy, address, port, undefined, signal)
+      (proxy, address, port, signal) => tunnelThroughProxy(proxy, address, port, undefined, signal),
+      options
     )
+  const literatureSupplementFinder = new LiteratureSupplementFinder({
+    catalog: literatureCatalog,
+    fetch: netFetchStandard
+  })
+  const literatureSupplementAttachments = new LiteratureSupplementAttachments({
+    finder: literatureSupplementFinder,
+    catalog: literatureCatalog,
+    content: contentRepository,
+    download: downloadLiteraturePdf,
+    pageCount: inspectPdfPageCount
+  })
   const literatureFullTextFinder = new LiteratureFullTextFinder({
     fetch: netFetchStandard,
     pageCount: inspectPdfPageCount,
@@ -240,6 +258,8 @@ export async function composeResearchCatalog({
     literatureReferenceResolver,
     literatureMetadataEnricher,
     literatureFullTextFinder,
+    literatureSupplementFinder,
+    literatureSupplementAttachments,
     literaturePdfImporter,
     literaturePdfAcquisition,
     literatureBatchJobs,

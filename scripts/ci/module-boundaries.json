@@ -1776,7 +1776,8 @@
         "src/main/literature/package-source.ts",
         "src/main/literature/full-text-index-storage.ts",
         "src/main/literature/full-text-index-schema.ts",
-        "src/main/literature/full-text-index-sqlite-fixture.ts"
+        "src/main/literature/full-text-index-sqlite-fixture.ts",
+        "src/main/literature/supplement-attachments.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -1820,7 +1821,8 @@
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/literature/supplement-attachments.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics/node",
@@ -1850,7 +1852,8 @@
         "node:path",
         "node:sqlite",
         "sharp",
-        "zod"
+        "zod",
+        "fflate"
       ]
     },
     "main_local_fs": {
@@ -3836,7 +3839,10 @@
         "packages/literature-discovery/test/checkpoint-fixture.ts",
         "packages/literature-discovery/test/packed-runtime.mjs",
         "packages/literature-discovery/tsconfig.json",
-        "packages/literature-discovery/vitest.config.ts"
+        "packages/literature-discovery/vitest.config.ts",
+        "packages/literature-discovery/src/supplement-contracts.ts",
+        "packages/literature-discovery/src/supplement-xml.ts",
+        "packages/literature-discovery/src/supplements.ts"
       ],
       "layer": "package",
       "sourceLayers": {},
@@ -3854,7 +3860,8 @@
         "packages/literature-discovery/test/provider-error.test.ts",
         "packages/literature-discovery/test/reference-resolver.test.ts",
         "packages/literature-discovery/test/scale.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "packages/literature-discovery/test/supplements.test.ts"
       ],
       "externalImports": [
         "@aipoch/literature-citations",
@@ -4046,7 +4053,9 @@
         "src/renderer/src/pages/literature/imports/LiteratureCreateItemDialog.tsx",
         "src/renderer/src/pages/literature/collections/LiteratureCollectionDeleteDialog.tsx",
         "src/renderer/src/pages/literature/workflows/LiteratureReadingProjectDialog.tsx",
-        "src/renderer/src/pages/literature/public/page.ts"
+        "src/renderer/src/pages/literature/public/page.ts",
+        "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx",
+        "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -4161,7 +4170,9 @@
         "src/renderer/src/pages/literature/imports/LiteratureCreateItemDialog.tsx": "presentation-adapter",
         "src/renderer/src/pages/literature/collections/LiteratureCollectionDeleteDialog.tsx": "presentation-adapter",
         "src/renderer/src/pages/literature/workflows/LiteratureReadingProjectDialog.tsx": "presentation-adapter",
-        "src/renderer/src/pages/literature/public/page.ts": "presentation-adapter"
+        "src/renderer/src/pages/literature/public/page.ts": "presentation-adapter",
+        "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx": "presentation-adapter",
+        "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -4201,7 +4212,8 @@
         "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
         "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
         "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx"
       ],
       "externalImports": [
         "@aipoch/journal-catalog/contracts",
@@ -4219,7 +4231,8 @@
         "radix-ui",
         "react",
         "react-i18next",
-        "zustand"
+        "zustand",
+        "@aipoch/literature-discovery/contracts"
       ]
     },
     "page_onboarding": {

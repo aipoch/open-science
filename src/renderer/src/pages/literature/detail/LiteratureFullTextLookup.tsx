@@ -1,6 +1,8 @@
 import { useLiteratureHost } from '../renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { noticeIconClassNames } from '@/components/ui/notice-chrome'
 import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
 import type {
   LiteratureFullTextCandidate,
@@ -12,7 +14,9 @@ import type {
 } from '@aipoch/literature-library/contracts'
 import {
   AlertCircle,
-  ChevronRight,
+  Circle,
+  CircleCheck,
+  TriangleAlert,
   Download,
   ExternalLink,
   FileUp,
@@ -23,7 +27,8 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { formatBytes } from '../../../../../shared/update'
+import { getFullTextFilename } from '@aipoch/literature-discovery/contracts'
+import { LiteratureDownloadFileRow } from './LiteratureDownloadFileRow'
 import { UnpaywallCredentialForm } from '../../settings/UnpaywallCredentialForm'
 import { LiteratureOpenAlexCredential } from './LiteratureOpenAlexCredential'
 
@@ -49,6 +54,10 @@ export const LiteratureFullTextLookup = ({
   const [adding, setAdding] = useState<string>()
   const [savingCredential, setSavingCredential] = useState(false)
   const [editingUnpaywall, setEditingUnpaywall] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [selectedSources, setSelectedSources] = useState<
+    Set<LiteratureFullTextCandidate['provider']>
+  >(new Set())
   const contactEmail = useSettingsStore((state) => state.ncbi.contactEmail)
   const [refreshingItem, setRefreshingItem] = useState(false)
   const [progress, setProgress] = useState<LiteratureFullTextProgress>()
@@ -248,6 +257,29 @@ export const LiteratureFullTextLookup = ({
     pmc: t('PubMed Central'),
     arxiv: t('arXiv')
   }
+  const sourceDescriptions = {
+    'europe-pmc': t('Biomedical full text via DOI, PMID or PMCID. No API key required.'),
+    openalex: t(
+      'Open-access PDFs from publishers and repositories. Requires a DOI and an API key.'
+    ),
+    unpaywall: t('Open-access PDFs via DOI. Requires a contact email; no API key needed.'),
+    pmc: t(
+      'Official NLM article PDFs, when available under the article license. No account or API key needed.'
+    ),
+    arxiv: t(
+      'Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.'
+    )
+  }
+  const sourceFailures = {
+    'europe-pmc': t('Europe PMC is unavailable. Results may be incomplete.'),
+    openalex: t('OpenAlex is unavailable. Results may be incomplete.'),
+    unpaywall: t('Unpaywall is unavailable. Results may be incomplete.'),
+    pmc: t('PubMed Central is unavailable. Results may be incomplete.')
+  }
+  const visibleCandidates =
+    result?.candidates.filter(
+      (candidate) => !selectedSources.size || selectedSources.has(candidate.provider)
+    ) ?? []
   const versions = {
     published: t('Published version'),
     accepted: t('Accepted manuscript'),
@@ -255,127 +287,168 @@ export const LiteratureFullTextLookup = ({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col text-sm">
-      <div className="min-h-0 overflow-y-auto px-5 py-4 sm:px-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
         <section aria-label={t('Search sources')}>
-          <details className="group">
-            <summary className="flex w-fit cursor-pointer list-none items-center gap-2 rounded py-1 text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
-              <ChevronRight
-                className="size-3.5 transition-transform group-open:rotate-90"
-                aria-hidden="true"
-              />
-              {t('Search sources')}
-            </summary>
-            <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-muted/30 px-4">
-              <div className="py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="font-medium">{t('Europe PMC')}</h4>
-                  <span className="text-xs text-muted-foreground">
-                    {sourceStatus('europe-pmc')}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t('Biomedical full text via DOI, PMID or PMCID. No API key required.')}
-                </p>
-                {europeUnavailable ? (
-                  <p className="mt-1 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                    {t('Europe PMC is unavailable. Results may be incomplete.')}
-                  </p>
-                ) : null}
-              </div>
-              <div className="py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="font-medium">{t('OpenAlex')}</h4>
-                  <span className="text-xs text-muted-foreground">{sourceStatus('openalex')}</span>
-                </div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t(
-                    'Open-access PDFs from publishers and repositories. Requires a DOI and an API key.'
-                  )}
-                </p>
-                {openAlexUnavailable ? (
-                  <p className="mt-1 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                    {t('OpenAlex is unavailable. Results may be incomplete.')}
-                  </p>
-                ) : null}
-                <LiteratureOpenAlexCredential
-                  disabled={Boolean(adding) || savingCredential}
-                  onSaved={retry}
-                  onBusyChange={setSavingCredential}
-                />
-              </div>
-              <div className="py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="font-medium">{t('Unpaywall')}</h4>
-                  <span className="text-xs text-muted-foreground">{sourceStatus('unpaywall')}</span>
-                </div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t('Open-access PDFs via DOI. Requires a contact email; no API key needed.')}
-                </p>
-                {unpaywallUnavailable ? (
-                  <p className="mt-1 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                    {t('Unpaywall is unavailable. Results may be incomplete.')}
-                  </p>
-                ) : null}
-                {editingUnpaywall ? (
-                  <div className="mt-3 border-t border-border pt-3">
-                    <UnpaywallCredentialForm
-                      disabled={Boolean(adding) || savingCredential}
-                      onBusyChange={setSavingCredential}
-                      onSaved={() => {
-                        setEditingUnpaywall(false)
-                        retry()
-                      }}
-                      onCancel={() => setEditingUnpaywall(false)}
-                    />
-                  </div>
-                ) : (
-                  <div className="mt-2 flex items-center gap-3">
-                    {contactEmail ? (
-                      <span className="text-xs text-muted-foreground">{t('Configured')}</span>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="link"
-                      size="sm"
-                      className="h-auto px-0 py-1 text-xs"
-                      disabled={Boolean(adding) || savingCredential}
-                      onClick={() => setEditingUnpaywall(true)}
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="font-medium">{t('Search sources')}</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5 text-xs"
+              aria-expanded={showSettings}
+              onClick={() => setShowSettings(!showSettings)}
+            >
+              <Settings2 className="size-3.5" aria-hidden="true" />
+              {t('Settings')}
+            </Button>
+          </div>
+          <TooltipProvider>
+            <div className="grid items-start gap-2 sm:grid-cols-3">
+              {(['europe-pmc', 'pmc', 'openalex', 'unpaywall', 'arxiv'] as const).map(
+                (provider) => {
+                  const applicable =
+                    provider === 'arxiv'
+                      ? hasArxiv
+                      : !missingIdentifiers &&
+                        hasBiomedicalIdentifier &&
+                        (!['openalex', 'unpaywall'].includes(provider) || hasDoi)
+                  const unavailable = result?.notices.some(
+                    (notice) => notice === `${provider}-unavailable`
+                  )
+                  const needsConfiguration =
+                    (provider === 'openalex' &&
+                      result?.notices.includes('openalex-not-configured')) ||
+                    (provider === 'unpaywall' &&
+                      result?.notices.includes('unpaywall-not-configured'))
+                  const loading = searching && applicable && provider !== 'arxiv'
+                  const warning = !applicable || needsConfiguration
+                  const StatusIcon = loading
+                    ? LoaderCircle
+                    : unavailable
+                      ? AlertCircle
+                      : warning
+                        ? TriangleAlert
+                        : result
+                          ? CircleCheck
+                          : Circle
+                  const status = sourceStatus(provider)
+                  const selected = selectedSources.has(provider)
+                  return (
+                    <section
+                      key={provider}
+                      aria-label={providerLabels[provider]}
+                      className={`relative flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2 transition-colors hover:bg-muted/50 ${selected ? 'border-primary bg-primary/10' : 'border-border bg-muted/20'}`}
                     >
-                      <Settings2 className="size-3.5" aria-hidden="true" />
-                      {contactEmail ? t('Edit') : t('Configure Unpaywall')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-              <div className="py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="font-medium">{t('PubMed Central')}</h4>
-                  <span className="text-xs text-muted-foreground">{sourceStatus('pmc')}</span>
-                </div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t(
-                    'Official NLM article PDFs, when available under the article license. No account or API key needed.'
-                  )}
-                </p>
-                {pmcUnavailable ? (
-                  <p className="mt-1 text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                    {t('PubMed Central is unavailable. Results may be incomplete.')}
-                  </p>
-                ) : null}
-              </div>
-              <div className="py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="font-medium">{t('arXiv')}</h4>
-                  <span className="text-xs text-muted-foreground">{sourceStatus('arxiv')}</span>
-                </div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t(
-                    'Latest PDF via arXiv identifier. No API key required. The file is checked when downloaded.'
-                  )}
-                </p>
-              </div>
+                      <button
+                        type="button"
+                        disabled={searching || !result}
+                        aria-pressed={selected}
+                        className="min-w-0 flex-1 cursor-pointer truncate rounded-sm text-left font-medium outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                        onClick={() =>
+                          setSelectedSources((previous) => {
+                            const next = new Set(previous)
+                            if (next.has(provider)) next.delete(provider)
+                            else next.add(provider)
+                            return next
+                          })
+                        }
+                      >
+                        {providerLabels[provider]}
+                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            role="status"
+                            tabIndex={0}
+                            className={`relative z-10 flex size-6 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${unavailable ? noticeIconClassNames.error : warning ? noticeIconClassNames.warning : 'text-muted-foreground'}`}
+                          >
+                            <StatusIcon
+                              className={
+                                loading
+                                  ? 'size-3.5 animate-spin motion-reduce:animate-none'
+                                  : 'size-3.5'
+                              }
+                              aria-hidden="true"
+                            />
+                            <span className="sr-only">{status}</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[calc(100vw-2rem)]">
+                          <p className="truncate">
+                            {unavailable && provider !== 'arxiv'
+                              ? sourceFailures[provider]
+                              : warning
+                                ? status
+                                : sourceDescriptions[provider]}
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                      {unavailable ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="relative z-10 h-6 shrink-0 cursor-pointer px-1.5 text-xs"
+                          disabled={searching || Boolean(adding) || savingCredential}
+                          onClick={retry}
+                          title={t('Search again')}
+                        >
+                          {t('Retry')}
+                        </Button>
+                      ) : null}
+                    </section>
+                  )
+                }
+              )}
             </div>
-          </details>
+          </TooltipProvider>
+          <div
+            hidden={!showSettings}
+            className={
+              showSettings
+                ? 'mt-3 grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-2'
+                : 'hidden'
+            }
+          >
+            <div className="[&>div]:mt-0">
+              <LiteratureOpenAlexCredential
+                disabled={Boolean(adding) || savingCredential}
+                onSaved={retry}
+                onBusyChange={setSavingCredential}
+              />
+            </div>
+            <div>
+              {editingUnpaywall ? (
+                <div className="mt-3 border-t border-border pt-3">
+                  <UnpaywallCredentialForm
+                    disabled={Boolean(adding) || savingCredential}
+                    onBusyChange={setSavingCredential}
+                    onSaved={() => {
+                      setEditingUnpaywall(false)
+                      retry()
+                    }}
+                    onCancel={() => setEditingUnpaywall(false)}
+                  />
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  {contactEmail ? (
+                    <span className="text-xs text-muted-foreground">{t('Configured')}</span>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="h-auto px-0 py-1 text-xs"
+                    disabled={Boolean(adding) || savingCredential}
+                    onClick={() => setEditingUnpaywall(true)}
+                  >
+                    <Settings2 className="size-3.5" aria-hidden="true" />
+                    {contactEmail ? t('Edit') : t('Configure Unpaywall')}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
         </section>
         <section
           className="py-5"
@@ -434,7 +507,11 @@ export const LiteratureFullTextLookup = ({
               </Button>
             </div>
           ) : result && result.candidates.length === 0 ? (
-            <div role="status" className="space-y-2 py-2">
+            <div
+              role="status"
+              className="flex min-h-48 flex-col items-center justify-center gap-2 text-center text-muted-foreground"
+            >
+              <Search className="size-8" aria-hidden="true" />
               <p className="font-medium">{t('No freely accessible full-text PDF was found.')}</p>
               <p className="text-xs leading-5 text-muted-foreground">
                 {t('Try another source or add a PDF from your device.')}
@@ -448,109 +525,65 @@ export const LiteratureFullTextLookup = ({
               )}
             </p>
           ) : null}
+          {!searching && Boolean(result?.candidates.length) && !visibleCandidates.length ? (
+            <div
+              role="status"
+              className="flex min-h-48 flex-col items-center justify-center gap-3 text-muted-foreground"
+            >
+              <Search className="size-8" aria-hidden="true" />
+              <p>{t('No results found')}</p>
+            </div>
+          ) : null}
           <div className="space-y-3">
-            {result?.candidates.map((candidate) => (
-              <section
-                key={candidate.id}
-                className="flex flex-col gap-4 rounded-lg border border-border p-4 sm:flex-row sm:items-start"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <h3 className="font-medium break-words">{candidate.source}</h3>
-                    <span className="break-all text-xs text-muted-foreground">
-                      {new URL(candidate.sourceUrl ?? candidate.url).hostname}
-                    </span>
+            {visibleCandidates.map((candidate) => (
+              <section key={candidate.id} className="space-y-3 rounded-lg border border-border p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                    <h3 className="break-words font-medium">{candidate.source}</h3>
+                    {candidate.version ? (
+                      <span className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground">
+                        {versions[candidate.version]}
+                      </span>
+                    ) : null}
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground break-words">
-                    {[
-                      candidate.source === providerLabels[candidate.provider]
-                        ? undefined
-                        : providerLabels[candidate.provider],
-                      candidate.version ? versions[candidate.version] : undefined,
-                      candidate.license
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
-                  {adding === candidate.id ? (
-                    <div role="status" className="mt-4 space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        {refreshingItem
-                          ? t('PDF added. Refreshing attachment details…')
-                          : progress?.phase === 'saving'
-                            ? t('Checking and saving PDF…')
-                            : t('Downloading PDF…')}
-                      </p>
-                      <progress
-                        className="block h-1.5 w-full overflow-hidden rounded-full appearance-none bg-muted [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary [&::-moz-progress-bar]:bg-primary"
-                        aria-label={t('Downloading PDF…')}
-                        max={100}
-                        value={
-                          progress?.totalBytes
-                            ? Math.min(100, (progress.receivedBytes / progress.totalBytes) * 100)
-                            : undefined
-                        }
-                      />
-                      {progress?.phase !== 'saving' ? (
-                        <p className="text-xs tabular-nums text-muted-foreground">
-                          {progress?.totalBytes
-                            ? t('{{downloaded}} of {{total}} · {{speed}}/s', {
-                                downloaded: formatBytes(progress.receivedBytes),
-                                total: formatBytes(progress.totalBytes),
-                                speed: formatBytes(Math.round(progress.bytesPerSecond))
-                              })
-                            : t('{{downloaded}} downloaded · {{speed}}/s', {
-                                downloaded: formatBytes(progress?.receivedBytes ?? 0),
-                                speed: formatBytes(Math.round(progress?.bytesPerSecond ?? 0))
-                              })}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 flex-col gap-2 sm:min-w-36">
-                  <Button
-                    size="sm"
-                    disabled={
-                      Boolean(adding) ||
-                      savingCredential ||
-                      (retryAfter[new URL(candidate.url).origin] ?? 0) > now
-                    }
-                    onClick={() => void attach(candidate)}
-                    aria-busy={Boolean(adding === candidate.id)}
-                  >
-                    <span key={String(adding === candidate.id)} className="button-feedback">
-                      {adding === candidate.id ? (
-                        <LoaderCircle
-                          className="size-4 animate-spin motion-reduce:animate-none"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <Download className="size-4" aria-hidden="true" />
-                      )}
-                      {adding === candidate.id
-                        ? t('Adding PDF…')
-                        : (retryAfter[new URL(candidate.url).origin] ?? 0) > now
-                          ? t('Retry in {{seconds}}s', {
-                              seconds: Math.ceil(
-                                (retryAfter[new URL(candidate.url).origin]! - now) / 1000
-                              )
-                            })
-                          : t('Add attachment')}
-                    </span>
-                  </Button>
                   <Button asChild variant="ghost" size="sm">
                     <a
                       href={candidate.sourceUrl ?? new URL(candidate.url).origin}
                       target="_blank"
-                      rel="noreferrer"
-                      title={candidate.sourceUrl ?? new URL(candidate.url).origin}
+                      rel="noopener noreferrer"
                     >
                       <ExternalLink className="size-3.5" aria-hidden="true" />
                       {t('Open source')}
                     </a>
                   </Button>
                 </div>
+                <LiteratureDownloadFileRow
+                  name={getFullTextFilename(candidate.url, item.item.title)}
+                  adding={adding === candidate.id}
+                  progress={adding === candidate.id ? progress : undefined}
+                  saving={refreshingItem && adding === candidate.id}
+                >
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="ml-auto h-7 shrink-0 text-xs"
+                    disabled={
+                      Boolean(adding) ||
+                      savingCredential ||
+                      (retryAfter[new URL(candidate.url).origin] ?? 0) > now
+                    }
+                    onClick={() => void attach(candidate)}
+                  >
+                    <Download className="size-3.5" aria-hidden="true" />
+                    {(retryAfter[new URL(candidate.url).origin] ?? 0) > now
+                      ? t('Retry in {{seconds}}s', {
+                          seconds: Math.ceil(
+                            (retryAfter[new URL(candidate.url).origin]! - now) / 1000
+                          )
+                        })
+                      : t('Add attachment')}
+                  </Button>
+                </LiteratureDownloadFileRow>
               </section>
             ))}
           </div>

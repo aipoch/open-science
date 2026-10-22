@@ -13,3 +13,5 @@ export type {
   CheckpointStorage,
   WriteAdmission
 } from './ports.js'
+
+export { LiteratureSupplementFinder } from './supplements.js'

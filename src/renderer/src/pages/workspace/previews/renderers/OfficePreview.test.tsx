@@ -99,6 +99,26 @@ describe('OfficePreviewRenderer', () => {
     })
   }
 
+  it('opens a literature DOCX without requiring a workspace project identity', async () => {
+    await renderPreview(
+      createItem({
+        source: 'literature',
+        projectId: undefined,
+        managedFileId: undefined,
+        path: 'literature-attachment-version:version'
+      })
+    )
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'literature',
+        path: 'literature-attachment-version:version',
+        extension: 'docx'
+      })
+    )
+    expect(container.querySelector('iframe')).not.toBeNull()
+    expect(container.textContent).not.toContain("This file type isn't supported")
+  })
+
   beforeEach(() => {
     previewActionSpies.currentOpenContextMenu = previewActionSpies.openContextMenu
     previewActionSpies.openContextMenu.mockClear()

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { FileTypeIcon } from '@/pages/workspace/file-type-icon'
 import { useSettingsStore } from '@/stores/settings-store'
 import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import { type LiteratureFullTextRequest } from '@aipoch/literature-discovery/contracts'
@@ -13,7 +14,8 @@ const { render } = createLiteratureTestRenderer({
   get api() {
     return window.api
   },
-  useSettingsStore
+  useSettingsStore,
+  FileTypeIcon
 })
 
 const fullText = vi.fn()
@@ -99,11 +101,8 @@ describe('LiteratureFullTextLookup', () => {
         transfer.mockResolvedValue(receipt)
         fireEvent.click(add)
       }
-      await waitFor(() =>
-        expect(
-          (screen.getByRole('button', { name: 'Adding PDF…' }) as HTMLButtonElement).disabled
-        ).toBe(true)
-      )
+      expect(await screen.findByText('Saving…')).not.toBeNull()
+      expect(screen.queryByRole('button', { name: 'Add attachment' })).toBeNull()
       const polls = transfer.mock.calls.length
       await waitFor(() => expect(transfer.mock.calls.length).toBeGreaterThan(polls))
       expect(screen.queryByText('PDF could not be added')).toBeNull()
@@ -180,7 +179,7 @@ describe('LiteratureFullTextLookup', () => {
     window.api.literature.fullText = fullText
     const first = render(<LiteratureFullTextLookup {...props} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Add attachment' }))
-    await screen.findByText('512 B of 1.0 KB · 256 B/s')
+    await screen.findByText('512 B / 1.0 KB · 256 B/s')
     first.unmount()
     const reopened = render(<LiteratureFullTextLookup {...props} />)
     try {
@@ -231,6 +230,33 @@ describe('LiteratureFullTextLookup', () => {
     expect(alert.classList.contains('border')).toBe(false)
   })
 
+  it('filters completed PDF results locally and toggles selection off', async () => {
+    fullText.mockResolvedValue({
+      mode: 'search',
+      notices: [],
+      candidates: [
+        {
+          id: 'one',
+          provider: 'europe-pmc',
+          source: 'First source',
+          url: 'https://europepmc.org/one.pdf'
+        },
+        {
+          id: 'two',
+          provider: 'pmc',
+          source: 'Second source',
+          url: 'https://pmc.ncbi.nlm.nih.gov/two.pdf'
+        }
+      ]
+    })
+    render(<LiteratureFullTextLookup {...props} />)
+    await screen.findByText('First source')
+    fireEvent.click(screen.getByRole('button', { name: 'Europe PMC' }))
+    expect(screen.queryByText('Second source')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Europe PMC' }))
+    expect(screen.getByText('Second source')).toBeTruthy()
+    expect(fullText).toHaveBeenCalledTimes(1)
+  })
   it('configures Unpaywall inline using shared contact email while preserving the NCBI key', async () => {
     fullText.mockResolvedValue({
       mode: 'search',
@@ -239,7 +265,7 @@ describe('LiteratureFullTextLookup', () => {
     })
     render(<LiteratureFullTextLookup {...props} />)
     await screen.findByText('No freely accessible full-text PDF was found.')
-    fireEvent.click(screen.getByText('Search sources'))
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     fireEvent.click(screen.getByRole('button', { name: 'Configure Unpaywall' }))
     fireEvent.change(screen.getByLabelText('Contact email'), {
       target: { value: 'research@lab.org' }
@@ -320,17 +346,52 @@ describe('LiteratureFullTextLookup', () => {
         }
       })
       const view = render(<LiteratureFullTextLookup {...props} />)
-      expect(view.container.querySelector('details')?.open).toBe(false)
+      expect(
+        within(view.container)
+          .getByRole('button', { name: 'Settings' })
+          .getAttribute('aria-expanded')
+      ).toBe('false')
       fireEvent.click(await screen.findByRole('button', { name: 'Add attachment' }))
       expect(
-        await screen.findByText(known ? '512 B of 1.0 KB · 256 B/s' : '512 B downloaded · 256 B/s')
+        await screen.findByText(known ? '512 B / 1.0 KB · 256 B/s' : '512 B · 256 B/s')
       ).not.toBeNull()
-      expect(screen.getByRole('progressbar').getAttribute('value')).toBe(known ? '50' : null)
+      expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe(
+        known ? '50' : null
+      )
       await act(async () => finish({ mode: 'attach', item }))
       expect(screen.queryByRole('progressbar')).toBeNull()
       expect(props.onAdded).toHaveBeenCalledWith(item)
     }
   )
+
+  it('shows source filenames and title fallbacks in the shared file row', async () => {
+    fullText.mockResolvedValue({
+      mode: 'search',
+      notices: [],
+      candidates: [
+        {
+          id: 'named',
+          provider: 'pmc',
+          source: 'PubMed Central',
+          url: 'https://pmc.ncbi.nlm.nih.gov/articles/PMC1/pdf/paper%20final.pdf',
+          license: 'CC BY-NC'
+        },
+        {
+          id: 'fallback',
+          provider: 'europe-pmc',
+          source: 'Europe PMC',
+          url: 'https://europepmc.org/articles/PMC1?pdf=render'
+        }
+      ]
+    })
+    const view = render(<LiteratureFullTextLookup {...props} />)
+    expect(await screen.findByText('paper final.pdf')).not.toBeNull()
+    expect(screen.getByText('Example paper.pdf')).not.toBeNull()
+    expect(screen.queryByText('CC BY-NC')).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Add attachment' })).toHaveLength(2)
+    expect(view.container.querySelectorAll('.lucide-file-type-corner')).toHaveLength(2)
+    expect(fullText).toHaveBeenCalledTimes(1)
+  })
 
   it('explains a missing main-process handler instead of suggesting provider retries', async () => {
     fullText.mockRejectedValue(new Error("No handler registered for 'literature:full-text'"))
@@ -339,7 +400,7 @@ describe('LiteratureFullTextLookup', () => {
       await screen.findByText('Restart Open-Science to enable full-text search.')
     ).not.toBeNull()
     expect(screen.queryByText('Full-text search failed. Try again.')).toBeNull()
-    fireEvent.click(screen.getByText('Search sources'))
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     fireEvent.click(screen.getByRole('button', { name: 'Configure OpenAlex' }))
     expect(screen.getByLabelText('OpenAlex API key')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Add PDF' })).toHaveProperty('disabled', false)
@@ -354,7 +415,7 @@ describe('LiteratureFullTextLookup', () => {
     render(<LiteratureFullTextLookup {...props} />)
     expect(await screen.findByRole('alert')).not.toBeNull()
     expect(screen.queryByText('No freely accessible full-text PDF was found.')).toBeNull()
-    fireEvent.click(screen.getByText('Search sources'))
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     fireEvent.click(screen.getByRole('button', { name: 'Configure OpenAlex' }))
     expect(screen.getByLabelText('OpenAlex API key')).not.toBeNull()
   })
@@ -367,7 +428,7 @@ describe('LiteratureFullTextLookup', () => {
     })
     render(<LiteratureFullTextLookup {...props} />)
     await screen.findByText('No freely accessible full-text PDF was found.')
-    fireEvent.click(screen.getByText('Search sources'))
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     fireEvent.click(screen.getByRole('button', { name: 'Configure OpenAlex' }))
     fireEvent.paste(screen.getByLabelText('OpenAlex API key'), {
       clipboardData: { getData: () => 'test-key' }
@@ -394,7 +455,7 @@ describe('LiteratureFullTextLookup', () => {
     fullText.mockResolvedValue({ mode: 'search', candidates: [], notices: [] })
     render(<LiteratureFullTextLookup {...props} />)
     await screen.findByText('No freely accessible full-text PDF was found.')
-    fireEvent.click(screen.getByText('Search sources'))
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     fireEvent.click(screen.getByRole('button', { name: 'Configure OpenAlex' }))
     fireEvent.paste(screen.getByLabelText('OpenAlex API key'), {
       clipboardData: { getData: () => 'bad-key' }
@@ -482,7 +543,7 @@ describe('LiteratureFullTextLookup', () => {
     expect(screen.getByRole('link', { name: 'Open source' }).getAttribute('href')).toBe(
       'https://arxiv.org/abs/2401.12345'
     )
-    fireEvent.click(screen.getByText('Search sources'))
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     const sources = within(screen.getByRole('region', { name: 'Search sources' }))
     expect(sources.getByText('Direct PDF link')).not.toBeNull()
     expect(sources.queryByText('Search completed')).toBeNull()

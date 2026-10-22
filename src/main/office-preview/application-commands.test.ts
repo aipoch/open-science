@@ -109,6 +109,18 @@ describe('shared Office preview owner', () => {
       )
     ).toThrow()
   })
+  it('opens literature Office files through the existing immutable attachment lease', async () => {
+    const { commands, resources } = setup()
+    const source = { source: 'literature' as const, path: 'literature-attachment-version:version' }
+    const result = await commands.open(
+      document().invoke([
+        { ...source, requestId: 'request', name: 'report.docx', extension: 'docx', attempt: 0 }
+      ])
+    )
+    expect(result.kind).toBe('started')
+    expect(resources.inspect).toHaveBeenCalledWith(source)
+    expect(resources.acquire).toHaveBeenCalledWith(expect.any(Number), source, expect.any(Object))
+  })
   it.each(['inspect', 'acquire'] as const)(
     'revokes an open cancelled while awaiting %s',
     async (phase) => {
