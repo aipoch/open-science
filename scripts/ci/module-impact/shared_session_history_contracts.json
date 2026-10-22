@@ -1,10 +1,9 @@
 {
   "ownerPaths": [
     "src/shared/session-history-replay.ts",
-    "src/shared/history-preamble.ts",
     "src/shared/session-history-replay.test.ts"
   ],
-  "interfacePaths": ["src/shared/session-history-replay.ts", "src/shared/history-preamble.ts"],
+  "interfacePaths": ["src/shared/session-history-replay.ts"],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {
     "owner": ["src/shared/session-history-replay.test.ts"],

@@ -53,7 +53,9 @@
     "src/shared/session-persistence/turn-anchor.ts",
     "src/shared/session-persistence/turn-anchor.test.ts",
     "src/shared/session-persistence/turn-outcome-codec.test.ts",
-    "src/shared/session-persistence/prompt-preparation.test.ts"
+    "src/shared/session-persistence/prompt-preparation.test.ts",
+    "src/shared/runtime-tool-identity.ts",
+    "src/shared/history-preamble.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -176,7 +178,9 @@
     "src/shared/web-event-connection.ts",
     "src/shared/web-rpc-contract.ts",
     "src/shared/window-controls.ts",
-    "src/shared/wsl-setup.ts"
+    "src/shared/wsl-setup.ts",
+    "src/shared/runtime-tool-identity.ts",
+    "src/shared/history-preamble.ts"
   ],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {

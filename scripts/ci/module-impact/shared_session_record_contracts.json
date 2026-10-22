@@ -9,7 +9,6 @@
     "src/shared/preview-state.test.ts",
     "src/shared/preview-state.ts",
     "src/shared/runtime-message-identity.ts",
-    "src/shared/runtime-tool-identity.ts",
     "src/shared/session-attention-contract.ts",
     "src/shared/session-message-contract.ts",
     "src/shared/session-pdf-contract.ts",
@@ -25,7 +24,6 @@
     "src/shared/permission-grants.ts",
     "src/shared/preview-state.ts",
     "src/shared/runtime-message-identity.ts",
-    "src/shared/runtime-tool-identity.ts",
     "src/shared/session-reproducibility.ts",
     "src/shared/side-chat.ts"
   ],
