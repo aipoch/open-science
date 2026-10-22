@@ -57,7 +57,6 @@ import type { TFunction } from 'i18next'
 import {
   AlertTriangle,
   ArrowUp,
-  ListPlus,
   BookMarked,
   BookOpen,
   ChartNoAxesCombined,
@@ -3220,7 +3219,7 @@ const ConversationPanel = ({
                             />
 
                             {rootTurnBusy ? (
-                              // Running sessions expose cancel instead of send to prevent overlapping turns.
+                              // A sendable draft replaces Stop with queue submission without starting another turn.
                               // Detached children can outlive a wait=false Main turn, so their durable
                               // running aggregate keeps the same root cascade reachable after Main settles.
                               // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
@@ -3232,14 +3231,31 @@ const ConversationPanel = ({
                               >
                                 <button
                                   type="button"
-                                  onClick={handleStop}
+                                  onClick={canQueueMessage ? handleSubmit : handleStop}
                                   disabled={isStopping}
-                                  className={composerCancelButtonClassName}
+                                  data-testid={
+                                    canQueueMessage ? 'composer-queue-submit' : undefined
+                                  }
+                                  className={cn(
+                                    composerCancelButtonClassName,
+                                    canQueueMessage &&
+                                      'bg-primary text-primary-foreground hover:bg-primary/90'
+                                  )}
                                   aria-label={
-                                    isStopping ? t('Stopping run and subagents') : t('Cancel run')
+                                    canQueueMessage
+                                      ? t('Add message to queue')
+                                      : isStopping
+                                        ? t('Stopping run and subagents')
+                                        : t('Cancel run')
                                   }
                                 >
-                                  {isStopping ? (
+                                  {canQueueMessage ? (
+                                    <ArrowUp
+                                      className="size-4"
+                                      strokeWidth={2.2}
+                                      aria-hidden="true"
+                                    />
+                                  ) : isStopping ? (
                                     <Loader2
                                       className="size-3.5 animate-spin"
                                       strokeWidth={2.2}
@@ -3302,18 +3318,19 @@ const ConversationPanel = ({
                                     </Tooltip>
                                   </>
                                   <DropdownMenuContent side="top" align="end" className="w-64">
-                                    <DropdownMenuItem
-                                      data-testid="composer-queue-submit"
-                                      disabled={!canQueueMessage}
-                                      onSelect={handleSubmit}
-                                      className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                    >
-                                      <ListPlus
-                                        className="mr-2 size-4 text-text-300"
-                                        aria-hidden="true"
-                                      />
-                                      {t('Add message to queue')}
-                                    </DropdownMenuItem>
+                                    {canQueueMessage ? (
+                                      <DropdownMenuItem
+                                        onSelect={handleStop}
+                                        aria-label={t('Cancel run')}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <Square
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Cancel run')}
+                                      </DropdownMenuItem>
+                                    ) : null}
                                     {sideChatMenuItems}
                                   </DropdownMenuContent>
                                 </DropdownMenu>

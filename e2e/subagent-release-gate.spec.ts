@@ -1425,7 +1425,6 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
       { requestId: 'e2e-fairness-b', status: 'queued' }
     ])
   await composer.fill(RELIABLE_FAIRNESS_USER_PROMPT)
-  await page.getByTestId('running-side-chat-menu-trigger').click()
   await page.getByTestId('composer-queue-submit').click()
   await expect(page.getByTestId('composer-queue-trigger')).toBeVisible()
   await writeFile(releaseFile, '')

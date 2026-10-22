@@ -75,7 +75,6 @@ for (const queued of [false, true]) {
       })
       await phone.getByRole('textbox', { name: 'Ask anything' }).fill(text)
       if (queued) {
-        await phone.getByTestId('running-side-chat-menu-trigger').click()
         await phone.getByTestId('composer-queue-submit').click()
         await phone.getByTestId('composer-queue-trigger').click()
         await expect(phone.getByText(text, { exact: true })).toHaveCount(1)
