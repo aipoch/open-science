@@ -13,6 +13,7 @@ import {
   playwrightReaderTests
 } from './classify-pr-changes.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 import {
   consumerDependencyGraph,
@@ -83,6 +84,8 @@ export function createDagTestPlan(
   }
   for (const change of changes) {
     const kind = classify([change])
+    // Registration data only describes layering and lanes; it never selects tests.
+    if (kind.roots?.includes('module_registration')) continue
     if (change.path === workflowContractTest) {
       selected.add(change.path)
       continue
@@ -152,7 +155,8 @@ export function compareTestPlans(legacy, dag, manifest) {
 }
 
 // One HEAD snapshot for every commit: both planners see the same graph and registrations, so
-// the difference isolates selection policy rather than repository drift.
+// the difference isolates selection policy rather than repository drift. Inputs resolve as the
+// PR Gate does, so an accepted derived index or registration-only diff is not a global input.
 export function compareRecentCommits({ count = 30, ref = 'HEAD', cwd = process.cwd() } = {}) {
   const git = (...args) =>
     execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
@@ -161,19 +165,46 @@ export function compareRecentCommits({ count = 30, ref = 'HEAD', cwd = process.c
     JSON.parse(readFileSync(`${cwd}/scripts/ci/module-runtime-consumers.json`, 'utf8'))
   )
   const { reverse } = consumerDependencyGraph(source, runtime)
-  const manifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
+  const derivedConsumers = loadDerivedConsumers()
+  const manifest = loadModuleImpactManifest()
   const noGraph = { status: 'not-used', testFiles: [] }
   return git('rev-list', '--first-parent', `--max-count=${count}`, ref)
     .trim()
     .split('\n')
     .map((commit) => {
-      const changes = parseNameStatus(git('diff', '--name-status', '-z', `${commit}^`, commit))
-      const legacy = createAffectedTestPlan(changes, noGraph, manifest)
-      const dag = createDagTestPlan(changes, { source, reverse })
+      const raw = parseNameStatus(git('diff', '--name-status', '-z', `${commit}^`, commit))
+      const inputs = resolveModuleImpactInputs(raw, {
+        base: `${commit}^`,
+        head: commit,
+        cwd,
+        manifest,
+        derivedConsumers
+      })
+      const effective = inputs.manifest ?? withDerivedConsumers(manifest, derivedConsumers)
+      const registration = {
+        moduleManifest: effective,
+        registrationModules: inputs.registrationModules,
+        registrationOnly: inputs.registrationOnly
+      }
+      const legacy = createAffectedTestPlan(
+        inputs.changes,
+        noGraph,
+        effective,
+        inputs.registrationModules,
+        inputs.registrationOnly
+      )
+      const dag = inputs.registrationOnly
+        ? { mode: 'selective', testFiles: [], unresolved: [], reasonChains: [] }
+        : createDagTestPlan(inputs.changes, {
+            source,
+            reverse,
+            classify: (changes) => classifyChanges(changes, undefined, registration)
+          })
       return {
         commit: commit.slice(0, 10),
         subject: git('log', '-1', '--format=%s', commit).trim(),
-        ...compareTestPlans(legacy, dag, manifest)
+        ...(inputs.derivedIndexAccepted && { derivedIndexAccepted: true }),
+        ...compareTestPlans(legacy, dag, effective)
       }
     })
 }

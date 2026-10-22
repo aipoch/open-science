@@ -26,8 +26,17 @@ const graph = (edges: Edges = []): Map<string, Set<string>> =>
   consumerDependencyGraph(source, edges).reverse
 const classify = (
   changes: { path: string }[]
-): { mode: string; lanes: string[]; bundles: string[]; reasonChains: string[] } => ({
+): {
+  mode: string
+  roots: string[]
+  lanes: string[]
+  bundles: string[]
+  reasonChains: string[]
+} => ({
   mode: changes.some(({ path }) => path === 'package.json') ? 'full' : 'selective',
+  roots: changes.every(({ path }) => path.startsWith('scripts/ci/module-impact/'))
+    ? ['module_registration']
+    : [],
   lanes: [],
   bundles: ['unit'],
   reasonChains: []
@@ -68,6 +77,12 @@ describe('createDagTestPlan', () => {
     expect(plan(['src/renderer/src/pages/Page.tsx']).testFiles).toEqual([
       'src/renderer/src/pages/Page.i18n.render.test.tsx',
       'src/renderer/src/pages/Page.test.tsx'
+    ])
+  })
+
+  it('never selects tests from registration data', () => {
+    expect(plan(['scripts/ci/module-impact/owner.json', 'src/main/owner.ts']).testFiles).toEqual([
+      'src/main/owner.test.ts'
     ])
   })
 
