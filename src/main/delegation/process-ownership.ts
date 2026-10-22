@@ -625,6 +625,73 @@ export class DelegatedProcessOwnership {
       throw new AggregateError(failures, 'Delegated process recovery is incomplete.')
   }
 
+  // Main-agent connections share a service-level receipt directory, not a deletable workspace.
+  // An unreadable historical candidate never established ownership. It must retain its cleanup
+  // debt, but need not disable every conversation once current leader/group/marker checks find
+  // no attributable live process. Counts alone cannot prove zero historical survivors (for example,
+  // a detached helper that execs with a cleared marker). This is NOT workspace or file-release proof:
+  // recover(), assertClear() and all destructive owners continue to see the unchanged receipts.
+  async admitMainAgentConnection(
+    spawnConnection: () => ChildProcessWithoutNullStreams
+  ): Promise<ChildProcessWithoutNullStreams> {
+    let recoveryFailure: unknown
+    try {
+      await this.recover()
+    } catch (error) {
+      recoveryFailure = error
+    }
+    const pendingReceipts = (): Receipt[] =>
+      this.receipts().filter(
+        (receipt) => !(this.live.has(receipt.receiptId) && receipt.phase === 'owned')
+      )
+    const pending = pendingReceipts()
+    if (pending.length === 0) {
+      if (recoveryFailure) throw recoveryFailure
+      return spawnConnection()
+    }
+    const before = JSON.stringify(pending)
+    const outcomes = await Promise.all(
+      pending.map(async (receipt) => {
+        const ownership = receipt.ownership
+        if (
+          this.live.has(receipt.receiptId) ||
+          receipt.phase !== 'cleanup-pending' ||
+          receipt.cleanupDiagnostics?.failureCategory !== 'ownership-candidate-unresolved' ||
+          receipt.cleanupDiagnostics.recovery !== 'stronger-ownership-proof-required' ||
+          ownership?.platform !== process.platform ||
+          ownership.platform === 'win32' ||
+          !ownership.token ||
+          !ownership.leader?.birthToken ||
+          !(
+            ownership.platform === 'darwin'
+              ? /^darwin-proc-uniqueid:[1-9]\d*$/u
+              : /^linux-proc-starttime:[1-9]\d*$/u
+          ).test(ownership.leader.birthToken)
+        )
+          return false
+        return (
+          (await proveRecordedPosixLeaderGone(
+            ownership.leader,
+            ownership.token,
+            receipt.createdAt,
+            undefined,
+            undefined,
+            { terminateLive: false }
+          )) === 'gone'
+        )
+      })
+    )
+    // Recheck durable evidence after the asynchronous scan, then invoke spawn in the same turn.
+    // Concurrent connections owned by this service do not invalidate one another's admission.
+    if (!outcomes.every(Boolean) || JSON.stringify(pendingReceipts()) !== before) {
+      throw (
+        recoveryFailure ??
+        new DelegateExecutionCleanupError('Main agent process admission remains blocked.')
+      )
+    }
+    return spawnConnection()
+  }
+
   protectExecution(
     execution: DelegateExecution,
     session: SessionKey,

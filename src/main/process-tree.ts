@@ -1075,7 +1075,8 @@ export const terminateOwnedPosixProcessGroupById = (
 // undefined to signal that descendants cannot be ruled out.
 const scanForOwnedDescendants = async (
   marker: string,
-  spawnedAt?: number
+  spawnedAt?: number,
+  leaderBirthToken?: string
 ): Promise<number[] | undefined> => {
   if (!marker || typeof marker !== 'string') return []
   const found: number[] = []
@@ -1229,7 +1230,11 @@ const scanForOwnedDescendants = async (
         // absence even if all listed processes lack the marker: an omitted descendant may exist.
         if (!table.complete) return undefined
 
+        const leaderGeneration = leaderBirthToken?.match(/^darwin-proc-uniqueid:(\d+)$/u)?.[1]
         for (const proc of table.processes) {
+          // A process born before our recorded leader cannot be its descendant. In particular,
+          // unreadable system daemons from earlier in this boot do not make every recovery fail.
+          if (leaderGeneration && BigInt(proc.uniqueId) <= BigInt(leaderGeneration)) continue
           const value = binding.getDarwinEnvironmentValue(proc.pid, PROCESS_TREE_OWNERSHIP_ENV)
           // Environment and identity reads are separate observations. Never use a replacement
           // process's environment as evidence that the snapshotted process had no ownership marker.
@@ -1378,7 +1383,8 @@ export const proveRecordedPosixLeaderGone = async (
   marker?: string,
   spawnedAt?: number,
   signal?: NodeJS.Signals,
-  log?: ProcessTreeLogger
+  log?: ProcessTreeLogger,
+  options?: { terminateLive?: boolean }
 ): Promise<PosixLeaderRecoveryOutcome> => {
   if (process.platform !== 'linux' && process.platform !== 'darwin') return 'blocked'
   if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) return 'blocked'
@@ -1420,7 +1426,7 @@ export const proveRecordedPosixLeaderGone = async (
     // Alternative (always block without reboot proof) would make workspaces unusable after clean
     // process termination, contradicting the recovery contract and practical requirements.
     if (marker) {
-      const descendants = await scanForOwnedDescendants(marker, spawnedAt)
+      const descendants = await scanForOwnedDescendants(marker, spawnedAt, leader.birthToken)
       // undefined means incomplete scan (permission denied for same-UID process, binding failed)
       if (descendants === undefined) return 'blocked'
       // Found descendants with marker → definitely blocked
@@ -1431,6 +1437,8 @@ export const proveRecordedPosixLeaderGone = async (
     // Leader and group confirmed absent, and complete marker scan found nothing (if marker provided)
     return 'gone'
   }
+  // Admission checks may inspect retained historical evidence, but must never signal a live tree.
+  if (options?.terminateLive === false) return 'blocked'
   // The exact recorded leader is still alive. Before signaling, verify it is still a process
   // group leader (pgid == pid). If the process called setpgid() after spawn, the numeric group
   // id we recorded may have been reused by an unrelated group; fail closed in that case.
@@ -1451,7 +1459,7 @@ export const proveRecordedPosixLeaderGone = async (
   // successful termination provides sufficient proof: we killed the recorded group and no
   // marked descendants remain visible.
   if (marker) {
-    const descendants = await scanForOwnedDescendants(marker, spawnedAt)
+    const descendants = await scanForOwnedDescendants(marker, spawnedAt, leader.birthToken)
     if (descendants === undefined) return 'blocked' // incomplete scan
     if (descendants.length > 0) return 'blocked' // found escaped descendants
     // Clean scan after live teardown: sufficient proof

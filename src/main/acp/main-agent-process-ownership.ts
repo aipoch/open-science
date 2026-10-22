@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
 type MainAgentProcessOwnership = {
+  admitMainAgentConnection(
+    spawnConnection: () => ChildProcessWithoutNullStreams
+  ): Promise<ChildProcessWithoutNullStreams>
   recover(
     selection?: { projectId?: string; sessionId?: string; frameId?: string; attemptId?: string },
     terminateLive?: boolean
@@ -19,7 +23,7 @@ type MainAgentProcessOwnership = {
 }
 
 let owner: MainAgentProcessOwnership | undefined
-let recoveryFailure: unknown
+let generation = 0
 let closed = false
 let closing: Promise<void> | undefined
 const scope = { projectId: 'main-agents', sessionId: 'service' }
@@ -30,14 +34,9 @@ export async function configureMainAgentProcessOwnership(
 ): Promise<void> {
   closed = false
   closing = undefined
+  generation++
   owner = ownership
-  try {
-    await owner.recover()
-    recoveryFailure = undefined
-  } catch (error) {
-    recoveryFailure = error
-    throw error
-  }
+  await owner.recover()
 }
 
 /** Stop the trees owned by this running service before releasing its directory ownership. */
@@ -46,19 +45,36 @@ export function closeMainAgentProcessOwnership(): Promise<void> {
   return (closing ??= owner?.recover({}, true) ?? Promise.resolve())
 }
 
-export function mainAgentProcessSpawner(frameworkId: string): AgentProcessSpawner | undefined {
+export async function spawnMainAgentProcess(
+  frameworkId: string,
+  spawnConnection: (spawnProcess: AgentProcessSpawner | undefined) => ChildProcessWithoutNullStreams
+): Promise<ChildProcessWithoutNullStreams> {
   const current = owner
-  if (recoveryFailure) throw recoveryFailure
+  const currentGeneration = generation
   if (closed) throw new Error('Main agent process ownership is closed.')
-  if (!current) return undefined
+  if (!current) return spawnConnection(undefined)
   const attemptId = randomUUID()
-  return (command, args, options) => {
-    if (closed || owner !== current) throw new Error('Main agent process ownership is closed.')
-    return current.spawn(
-      { ...scope, frameworkId, frameId: 'main-agent', attemptId },
-      command,
-      args,
-      options
-    )
+  const assertCurrent = (): void => {
+    if (closed || owner !== current || generation !== currentGeneration)
+      throw new Error('Main agent process ownership is closed.')
   }
+  return current.admitMainAgentConnection(() => {
+    assertCurrent()
+    let active = true
+    try {
+      return spawnConnection((command, args, options) => {
+        assertCurrent()
+        if (!active) throw new Error('Main agent process admission has expired.')
+        active = false
+        return current.spawn(
+          { ...scope, frameworkId, frameId: 'main-agent', attemptId },
+          command,
+          args,
+          options
+        )
+      })
+    } finally {
+      active = false
+    }
+  })
 }

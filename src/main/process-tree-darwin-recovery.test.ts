@@ -11,6 +11,7 @@ const probe = (
   second: { reaped: boolean; diagnostics?: { failureCategory: string } }
   environmentReads: number
   signals: number[]
+  admission?: string
 } => {
   const filename = join(__dirname, 'process-tree.ts')
   const script = `
@@ -22,23 +23,23 @@ const probe = (
     const scenario = process.argv[1]
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     const leader = { pid: 1000, ppid: process.pid, pgid: 1000, sid: 1000, uniqueId: '100', parentUniqueId: '50' }
-    const candidate = { pid: 2000, ppid: 1, pgid: 2000, sid: 2000, uniqueId: '200', parentUniqueId: scenario === 'reparented-exec' ? '1' : '150' }
+    const candidate = { pid: 2000, ppid: 1, pgid: 2000, sid: 2000, uniqueId: scenario === 'cold-older-unreadable' ? '50' : '200', parentUniqueId: scenario === 'reparented-exec' ? '1' : '150' }
     const processes = new Map([[1000, leader], [2000, candidate]])
     let environmentReads = 0
     let readable = false
-    let incomplete = scenario === 'history-gap'
+    let incomplete = ['history-gap', 'cold-incomplete'].includes(scenario)
     let race = false
     const binding = {
       getDarwinProcess: pid => processes.get(pid) ?? null,
       listDarwinProcesses: () => ({ processes: [...processes.values()], complete: !incomplete }),
       getDarwinEnvironmentValue: pid => {
         environmentReads++
-        if (!readable) return null
-        if (scenario === 'identity-race' && !race) {
+        if (!readable || scenario === 'cold-null') return null
+        if (['identity-race', 'cold-identity-race'].includes(scenario) && !race) {
           race = true
           processes.set(pid, { ...candidate, uniqueId: '201' })
         }
-        return ['owned', 'identity-race', 'reparented-exec'].includes(scenario) ? 'owner-token' : 'other-owner'
+        return ['owned', 'identity-race', 'reparented-exec', 'cold-marked'].includes(scenario) ? 'owner-token' : 'other-owner'
       }
     }
     const instance = new Module(filename, module)
@@ -52,6 +53,7 @@ const probe = (
     const tree = instance.exports
     const signals = []
     process.kill = (pid, signal) => {
+      if (scenario === 'cold-group-eperm' && pid === -1000) throw Object.assign(new Error('denied'), { code: 'EPERM' })
       const targets = [...processes.values()].filter(p => pid < 0 ? p.pgid === -pid : p.pid === pid)
       if (!targets.length) throw Object.assign(new Error('gone'), { code: 'ESRCH' })
       if (signal !== 0) {
@@ -62,6 +64,17 @@ const probe = (
     }
     const child = Object.assign(new EventEmitter(), { pid: 1000, exitCode: 0, signalCode: null, kill() { return true } })
     ;(async () => {
+      if (scenario.startsWith('cold-')) {
+        if (scenario !== 'cold-live') processes.delete(1000)
+        if (scenario === 'cold-group') processes.set(2000, { ...candidate, pgid: 1000, sid: 1000 })
+        readable = scenario !== 'cold-older-unreadable'
+        const admission = await tree.proveRecordedPosixLeaderGone(
+          { pid: 1000, birthToken: 'darwin-proc-uniqueid:100' }, 'owner-token', undefined,
+          undefined, undefined, { terminateLive: false }
+        )
+        process.stdout.write(JSON.stringify({ admission, environmentReads, signals }))
+        return
+      }
       tree.trackOwnedPosixProcessTree(child, 'owner-token')
       await new Promise(resolve => setImmediate(resolve))
       const first = await tree.terminateProcessTree(child)
@@ -120,4 +133,29 @@ describe('Darwin ownership evidence reconciliation', () => {
     expect(result.signals).not.toContain(2000)
     expect(result.signals).not.toContain(-2000)
   })
+})
+
+describe('read-only Darwin main-agent admission proof', () => {
+  it('accepts complete current evidence with an unrelated newer process', () => {
+    const result = probe('cold-gone')
+    expect(result.admission).toBe('gone')
+    expect(result.environmentReads).toBeGreaterThan(0)
+    expect(result.signals).toEqual([])
+  })
+
+  it('excludes an unreadable process born before the recorded leader', () => {
+    const result = probe('cold-older-unreadable')
+    expect(result.admission).toBe('gone')
+    expect(result.environmentReads).toBe(0)
+    expect(result.signals).toEqual([])
+  })
+
+  it.each(['live', 'group', 'group-eperm', 'marked', 'incomplete', 'null', 'identity-race'])(
+    'blocks %s evidence without signaling any process',
+    (scenario) => {
+      const result = probe(`cold-${scenario}`)
+      expect(result.admission).toBe('blocked')
+      expect(result.signals).toEqual([])
+    }
+  )
 })
