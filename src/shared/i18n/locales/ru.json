@@ -7924,6 +7924,9 @@
     "Add PDFs": "Добавить PDF",
     "Drop PDFs here to attach to this reference, or choose files.": "Перетащите PDF сюда, чтобы прикрепить их к этому источнику, или выберите файлы.",
     "Import PDFs together, or one reference file at a time. No files were added.": "Импортируйте PDF вместе или по одному файлу библиографических записей. Файлы не добавлены.",
-    "Drop PDFs or reference files to import": "Перетащите PDF или файлы библиографических записей для импорта"
+    "Drop PDFs or reference files to import": "Перетащите PDF или файлы библиографических записей для импорта",
+    "The Agent runtime could not apply the selected Specialist.": "Среде выполнения Агента не удалось применить выбранного Специалиста.",
+    "The Specialist was applied, but its completion state could not be saved.": "Специалист применён, но не удалось сохранить состояние завершения.",
+    "Your draft and queued messages are preserved.": "Ваш черновик и сообщения в очереди сохранены."
   }
 }

@@ -7457,6 +7457,9 @@
     "Add PDFs": "PDF を追加",
     "Drop PDFs here to attach to this reference, or choose files.": "ここに PDF をドロップしてこの文献に添付するか、ファイルを選択してください。",
     "Import PDFs together, or one reference file at a time. No files were added.": "PDF はまとめて、文献ファイルは一度に1つずつインポートしてください。ファイルは追加されませんでした。",
-    "Drop PDFs or reference files to import": "PDF または文献ファイルをドロップしてインポート"
+    "Drop PDFs or reference files to import": "PDF または文献ファイルをドロップしてインポート",
+    "The Agent runtime could not apply the selected Specialist.": "エージェントのランタイムが選択したスペシャリストを適用できませんでした。",
+    "The Specialist was applied, but its completion state could not be saved.": "スペシャリストは適用されましたが、完了状態を保存できませんでした。",
+    "Your draft and queued messages are preserved.": "下書きと送信待ちのメッセージは保持されています。"
   }
 }

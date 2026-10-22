@@ -7457,6 +7457,9 @@
     "Add PDFs": "添加 PDF",
     "Drop PDFs here to attach to this reference, or choose files.": "将 PDF 拖到此处添加到此文献，或选择文件。",
     "Import PDFs together, or one reference file at a time. No files were added.": "请批量导入 PDF，或每次导入一个参考文献文件。未添加任何文件。",
-    "Drop PDFs or reference files to import": "松开以导入 PDF 或参考文献文件"
+    "Drop PDFs or reference files to import": "松开以导入 PDF 或参考文献文件",
+    "The Agent runtime could not apply the selected Specialist.": "智能体运行时无法应用所选专家。",
+    "The Specialist was applied, but its completion state could not be saved.": "专家已应用，但无法保存完成状态。",
+    "Your draft and queued messages are preserved.": "你的草稿和排队消息已保留。"
   }
 }

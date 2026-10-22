@@ -732,6 +732,7 @@ const ConversationPanel = ({
   const specialistUnavailable = specialist.view.specialist.unavailable
   const specialistHasPendingSwitch = specialist.view.specialist.hasPendingSwitch
   const reconfigureError = specialist.view.specialist.reconfigureError
+  const specialistSwitchInFlight = specialist.view.specialist.barrierInFlight
   const onSpecialistChange = specialist.actions.selectSpecialist
   const onReconfigureChooseOther = specialist.actions.chooseOtherSpecialist
   const onReconfigureUseNone = specialist.actions.useMainAgent
@@ -1995,14 +1996,38 @@ const ConversationPanel = ({
                     )}
                   />
 
-                  {/* Reconfigure failure banner: shown directly above the composer when a pre-send
-                      specialist reconfigure failed. Draft is preserved; three recovery actions. */}
-                  {reconfigureError ? (
+                  {specialistSwitchInFlight ? (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      aria-atomic="true"
+                      data-testid="specialist-switch-loading"
+                      className="relative z-10 mb-2 flex min-w-0 items-center gap-2 px-1 py-1.5 text-sm text-muted-foreground"
+                    >
+                      <Loader2
+                        className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 [overflow-wrap:anywhere]">
+                        {t('Switching to {{target}}', {
+                          target:
+                            specialist.view.specialist.historyId === undefined
+                              ? t('Main Agent')
+                              : selectedSpecialist && selectedSpecialist.kind !== 'reviewer'
+                                ? (selectedSpecialist.displayName ?? selectedSpecialist.name)
+                                : t('Unavailable')
+                        })}
+                      </span>
+                    </div>
+                  ) : reconfigureError ? (
                     <div className="relative z-10 mb-2" data-testid="reconfigure-error-banner">
                       <ErrorNotice
                         role="alert"
+                        className="rounded-xl"
                         title={
-                          reconfigureError.committed
+                          reconfigureError.committed &&
+                          !reconfigureError.reason &&
+                          !reconfigureError.message
                             ? t('Specialist switch is pending for {{name}}', {
                                 name: reconfigureError.specialistName
                               })
@@ -2010,24 +2035,40 @@ const ConversationPanel = ({
                                 name: reconfigureError.specialistName
                               })
                         }
-                        description={
-                          reconfigureError.committed
-                            ? t(
-                                'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
-                              )
-                            : t(
-                                'The agent session could not be reconfigured. Your draft has been preserved.'
-                              )
+                        content={
+                          <>
+                            <p>
+                              {reconfigureError.reason === 'runtime-application-failed'
+                                ? t('The Agent runtime could not apply the selected Specialist.')
+                                : reconfigureError.reason === 'pending-state-clear-failed'
+                                  ? t(
+                                      'The Specialist was applied, but its completion state could not be saved.'
+                                    )
+                                  : reconfigureError.committed && !reconfigureError.message
+                                    ? t(
+                                        'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
+                                      )
+                                    : reconfigureError.message ||
+                                      t(
+                                        'The agent session could not be reconfigured. Your draft has been preserved.'
+                                      )}
+                            </p>
+                            {reconfigureError.reason || reconfigureError.message ? (
+                              <p className="text-xs">
+                                {t('Your draft and queued messages are preserved.')}
+                              </p>
+                            ) : null}
+                          </>
                         }
                       >
                         <div className="flex flex-wrap gap-2">
-                          <Button size="sm" variant="outline" onClick={onReconfigureRetry}>
+                          <Button size="sm" onClick={onReconfigureRetry}>
                             {t('Retry')}
                           </Button>
                           <Button size="sm" variant="outline" onClick={onReconfigureChooseOther}>
                             {t('Choose another specialist')}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={onReconfigureUseNone}>
+                          <Button size="sm" variant="ghost" onClick={onReconfigureUseNone}>
                             {t('Use None (Main Agent)')}
                           </Button>
                         </div>
