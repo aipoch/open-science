@@ -50,6 +50,7 @@ export function LiteratureDetailOverview({
   displayCollections,
   collectionLinkError,
   setCollectionLink,
+  onRelated,
   changeDetailMode,
   isAddingPdf,
   pdfInputRef,
@@ -86,6 +87,7 @@ export function LiteratureDetailOverview({
   displayCollections: LiteratureCollectionView[]
   collectionLinkError: string | undefined
   setCollectionLink: (targetCollectionId: string, included: boolean) => Promise<boolean>
+  onRelated: (direction: 'references' | 'citations') => void
   changeDetailMode: ReturnType<typeof useLiteratureMetadata>['changeMode']
   isAddingPdf: boolean
   pdfInputRef: React.RefObject<HTMLInputElement | null>
@@ -152,6 +154,30 @@ export function LiteratureDetailOverview({
         </section>
       )}
       <LiteratureBibliographicDetails selectedItem={selectedItem} itemTypeLabels={itemTypeLabels} />
+      <section className="space-y-2 py-4">
+        <h3 className="font-medium">{t('Citation discovery')}</h3>
+        <p className="text-xs text-muted-foreground">
+          {t('Find references and citing papers through Semantic Scholar.')}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            data-related-entry="references"
+            size="sm"
+            variant="outline"
+            onClick={() => onRelated('references')}
+          >
+            {t('References')}
+          </Button>
+          <Button
+            data-related-entry="citations"
+            size="sm"
+            variant="outline"
+            onClick={() => onRelated('citations')}
+          >
+            {t('Cited by')}
+          </Button>
+        </div>
+      </section>
       <div className="py-4">
         <ResourceTagSummary
           reference={{

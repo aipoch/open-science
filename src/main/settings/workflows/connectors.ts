@@ -1,3 +1,4 @@
+import type { SetSemanticScholarCredentialRequest } from '../../../shared/settings'
 import { mcpHostDependencies } from '../../connectors/mcp-host-dependencies'
 import { McpClientManager } from '@aipoch/connector-mcp-client'
 import {
@@ -44,6 +45,7 @@ type ConnectorSettingsWorkflowStore = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setSemanticScholarCredential'
   | 'setOpenAlexCredential'
   | 'validateOpenAlexCredential'
   | 'addCustomServer'
@@ -281,6 +283,12 @@ class ConnectorSettingsWorkflows {
     request: SetNcbiCredentialsRequest
   ): WorkflowResult<'setNcbiCredentials'> {
     return this.afterConnectorsChanged(() => this.settings.setNcbiCredentials(request))
+  }
+
+  async setSemanticScholarCredential(
+    request: SetSemanticScholarCredentialRequest
+  ): WorkflowResult<'setSemanticScholarCredential'> {
+    return this.afterConnectorsChanged(() => this.settings.setSemanticScholarCredential(request))
   }
 
   async setOpenAlexCredential(

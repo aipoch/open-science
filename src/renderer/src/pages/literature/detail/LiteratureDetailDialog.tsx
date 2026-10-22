@@ -1,3 +1,4 @@
+import { LiteratureRelatedLookup } from './LiteratureRelatedLookup'
 import { LiteratureSupplementLookup } from './LiteratureSupplementLookup'
 import type { LiteraturePreviewItem } from '../renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
@@ -85,6 +86,8 @@ export function LiteratureDetailDialog({
   citationStyles,
   setJournalsOpen,
   setCitationStylesOpen,
+  onOpenInbox,
+  relatedDirection,
   renderOverview
 }: {
   detailController: LiteratureDetailController
@@ -115,6 +118,8 @@ export function LiteratureDetailDialog({
   citationStyles: LiteratureCitationStyleView[] | undefined
   setJournalsOpen: React.Dispatch<React.SetStateAction<boolean>>
   setCitationStylesOpen: React.Dispatch<React.SetStateAction<boolean>>
+  onOpenInbox: () => void
+  relatedDirection: 'references' | 'citations'
   renderOverview: (item: LiteratureItemView) => React.ReactNode
 }): React.JSX.Element | null {
   const { t } = useTranslation()
@@ -195,7 +200,9 @@ export function LiteratureDetailDialog({
                   className={dialogPanelClassName(
                     cn(
                       'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
-                      metadata.mode === 'full-text' || metadata.mode === 'supplements'
+                      metadata.mode === 'full-text' ||
+                        metadata.mode === 'supplements' ||
+                        metadata.mode === 'related'
                         ? 'h-[min(720px,calc(100vh-2rem))]'
                         : 'h-[min(840px,calc(100vh-2rem))]'
                     )
@@ -226,7 +233,18 @@ export function LiteratureDetailDialog({
                           className="shrink-0"
                           aria-label={t('Back')}
                           disabled={metadata.saving}
-                          onClick={leaveMetadataEditor}
+                          onClick={() => {
+                            const fromRelated = metadata.mode === 'related'
+                            leaveMetadataEditor()
+                            if (fromRelated)
+                              requestAnimationFrame(() =>
+                                selectedItemDialogRef.current
+                                  ?.querySelector<HTMLButtonElement>(
+                                    `[data-related-entry="${relatedDirection}"]`
+                                  )
+                                  ?.focus()
+                              )
+                          }}
                         >
                           <ArrowLeft className="size-4" aria-hidden="true" />
                         </Button>
@@ -243,7 +261,9 @@ export function LiteratureDetailDialog({
                                     ? t('Find full-text PDF')
                                     : metadata.mode === 'supplements'
                                       ? t('Find supplementary materials')
-                                      : t('Citation')}
+                                      : metadata.mode === 'related'
+                                        ? t('Citation discovery')
+                                        : t('Citation')}
                             </Dialog.Title>
                             <Dialog.Description
                               className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
@@ -340,7 +360,15 @@ export function LiteratureDetailDialog({
                     </div>
                   </div>
                   {isAddingPdf ? pdfStaging.notice : null}
-                  {metadata.mode === 'supplements' ? (
+                  {metadata.mode === 'related' ? (
+                    <LiteratureRelatedLookup
+                      key={`${selectedItem.id}:${selectedItem.metadataRevision}:${generation}`}
+                      item={selectedItem}
+                      initialDirection={relatedDirection}
+                      onOpenInbox={onOpenInbox}
+                      onSaved={() => void loadEntries(true)}
+                    />
+                  ) : metadata.mode === 'supplements' ? (
                     <LiteratureSupplementLookup
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
                       item={selectedItem}

@@ -72,6 +72,23 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it('forwards citation relationship queries and caller cancellation without publishing changes', async () => {
+    const run = vi.fn().mockResolvedValue({ records: [] })
+    const owner = createLiteratureCommandOwner({
+      literatureRelatedFinder: { run }
+    } as unknown as Services)
+    const request = {
+      itemId: 'paper',
+      expectedMetadataRevision: 1,
+      direction: 'references' as const,
+      offset: 0
+    }
+    const signal = new AbortController().signal
+    await owner.related(request, signal)
+    expect(run).toHaveBeenCalledWith(request, signal)
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
   it('forwards supplement queries and caller cancellation without publishing changes', async () => {
     const run = vi.fn().mockResolvedValue({ records: [] })
     const owner = createLiteratureCommandOwner({

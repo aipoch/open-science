@@ -150,7 +150,9 @@
     "src/renderer/src/pages/literature/workflows/LiteratureReadingProjectDialog.tsx",
     "src/renderer/src/pages/literature/public/page.ts",
     "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
-    "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx"
+    "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -202,7 +204,8 @@
       "src/renderer/src/pages/literature/journals/JournalAlignment.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalColumnHeader.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
-      "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx"
+      "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",

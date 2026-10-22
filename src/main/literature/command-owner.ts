@@ -2,6 +2,7 @@ import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import type {
   LiteratureBatchJobs,
   LiteratureFullTextFinder,
+  LiteratureRelatedFinder,
   LiteratureSupplementFinder,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
@@ -31,6 +32,7 @@ type LiteratureCommandServices = Readonly<{
   >
   literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'resolve'>
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher<LiteratureItemView>, 'complete'>
+  literatureRelatedFinder: Pick<LiteratureRelatedFinder, 'run'>
   literatureSupplementFinder: Pick<LiteratureSupplementFinder, 'run'>
   literatureSupplementAttachments: Pick<LiteratureSupplementAttachments, 'run' | 'progress'>
   literatureFullTextFinder: Pick<LiteratureFullTextFinder<LiteratureItemView>, 'run'>
@@ -68,6 +70,7 @@ export const createLiteratureCommandOwner = ({
   literatureReferenceResolver,
   literatureMetadataEnricher,
   literatureFullTextFinder,
+  literatureRelatedFinder,
   literatureSupplementFinder,
   literatureSupplementAttachments,
   artifactProvenanceRepository,
@@ -92,6 +95,7 @@ export const createLiteratureCommandOwner = ({
   supplementAttachmentProgress: (request) => literatureSupplementAttachments.progress(request),
   supplementAttachment: (request, signal) =>
     literatureSupplementAttachments.run(request, signal ?? new AbortController().signal),
+  related: (request, signal) => literatureRelatedFinder.run(request, signal),
   supplements: (request, signal) => literatureSupplementFinder.run(request, signal),
   fullText: (request) => literatureFullTextFinder.run(request),
   formatDocument: async (request) => {

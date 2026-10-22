@@ -103,6 +103,15 @@ describe('SettingsRepository connector mutators', () => {
     })
   })
 
+  it('sets and clears a Semantic Scholar credential reference', async () => {
+    await withRepo(async (repo) => {
+      await repo.setSemanticScholarCredential('cipher-ref')
+      expect((await readConnectors(repo))?.semanticScholarApiKeyRef).toBe('cipher-ref')
+      await repo.setSemanticScholarCredential(undefined)
+      expect((await readConnectors(repo))?.semanticScholarApiKeyRef).toBeUndefined()
+    })
+  })
+
   it('sets and clears an OpenAlex credential reference', async () => {
     await withRepo(async (repo) => {
       await repo.setOpenAlexCredential('cipher-ref')

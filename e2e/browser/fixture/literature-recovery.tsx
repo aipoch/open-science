@@ -1,3 +1,4 @@
+import type { LiteratureRelatedRequest } from '@aipoch/literature-discovery/contracts'
 import { LiteratureRendererProvider } from '@/pages/literature/public/host'
 import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
@@ -116,6 +117,32 @@ window.api = {
     abortTransfer: async () => {}
   },
   literature: {
+    related: async (request: LiteratureRelatedRequest) => {
+      fileRequests.push(request)
+      return {
+        itemId: fileItem.id,
+        metadataRevision: fileItem.metadataRevision,
+        direction: request.direction,
+        state: 'ready',
+        resolutionToken: '00000000-0000-4000-8000-000000000000',
+        records: [
+          {
+            paperId: 'a'.repeat(40),
+            item: literatureItemInputSchema.parse({
+              itemType: 'journalArticle',
+              title:
+                request.direction === 'references'
+                  ? 'A foundational reference'
+                  : 'A follow-up study',
+              issuedYear: 2025,
+              abstract: 'An example abstract from Semantic Scholar.',
+              containerTitle: 'Example Journal',
+              url: 'https://www.semanticscholar.org/paper/' + 'a'.repeat(40)
+            })
+          }
+        ]
+      }
+    },
     get: async () => fileItem,
     importPdf: async (request: { itemId: string; attachment: { name: string } }) => {
       fileRequests.push(request)
@@ -150,6 +177,8 @@ window.api = {
     }),
     transact: async (command: LiteratureCatalogCommand) => {
       commands.push(command)
+      if (command.kind === 'stage-candidate')
+        return { kind: 'candidate', id: 'found-paper', state: 'pending' }
       if (command.kind === 'update-collection')
         collections = collections.map((collection) =>
           collection.id === command.collectionId

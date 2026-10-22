@@ -137,3 +137,29 @@ test('adds multiple PDFs through the picker and drop area and downloads from the
     })
   await expect(detail).toBeVisible()
 })
+
+for (const width of [375, 1000]) {
+  test(`single-paper citation discovery at ${width}px`, async ({ page }) => {
+    // Open the existing desktop table before exercising the detail at narrow widths.
+    await page.setViewportSize({ width: 1000, height: 850 })
+    await page.goto('/literature-recovery.html?mode=files')
+    await page.getByText('All references', { exact: true }).click()
+    await page.getByText('A reference with supporting PDFs', { exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    await page.setViewportSize({ width, height: 850 })
+    await dialog.getByRole('button', { name: 'References', exact: true }).click()
+    await expect(dialog.getByText('A foundational reference', { exact: true })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Cited by', exact: true }).click()
+    await expect(dialog.getByText('A follow-up study', { exact: true })).toBeVisible()
+    await dialog.getByRole('checkbox', { name: 'Select A follow-up study' }).check()
+    await dialog.getByRole('button', { name: 'Add selected to Inbox' }).click()
+    await expect(dialog.getByText('In Inbox', { exact: true })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Back', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: 'References', exact: true })).toBeFocused()
+    await expect(
+      dialog.getByText('A reference with supporting PDFs', { exact: true })
+    ).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+}
