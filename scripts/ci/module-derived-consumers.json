@@ -421,7 +421,9 @@
       "src/main/windows.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "page_home": [
       "src/main/index-fatal-errors.test.ts",
@@ -448,7 +450,8 @@
       "src/main/windows.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_documents": ["src/main/session-package/materialize.test.ts"],
     "pdf_preview_runtime": [
@@ -458,15 +461,20 @@
       "src/main/windows.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-preparation.test.tsx"
     ],
     "pdf_structure_engine": [
+      "packages/pdf-translation/test/reader/pdf-translation-structure-source.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-whole-region-retention.test.ts",
       "src/main/settings-window-ipc.test.ts",
       "src/main/windows.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_text": [
       "src/main/composition/session-packages.test.ts",
@@ -3595,6 +3603,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-narrow-hat.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-numeric-token-links.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-supporting-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-checkpoint.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-job.test.tsx",
@@ -10271,16 +10280,6 @@
       "src/main/settings-window-ipc.test.ts",
       "src/main/windows.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
-    ],
-    "workspace_previews": [
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
-      "src/main/settings-window-ipc.test.ts",
-      "src/main/windows.test.ts",
-      "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],

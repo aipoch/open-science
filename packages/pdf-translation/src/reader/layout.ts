@@ -47,6 +47,7 @@ type Block = Rect & {
 }
 type LayoutBlock = {
   sourceOnly?: true
+  preserve?: 'formula' | 'code' | 'literal' | 'reference'
   tableCell?: true
   id: string
   page: number
@@ -69,6 +70,7 @@ type LayoutUnit = {
   kind: 'prose-candidate' | 'heading-candidate' | 'other'
   source: string
   sourceOnly?: true
+  preserve?: 'formula' | 'code' | 'literal' | 'reference'
   items: string[]
   originalStrings: string[]
   fragments: { id: string; page: number; rect: Rect & { font: number } }[]
@@ -3714,6 +3716,38 @@ function extractPage(
     for (const line of listing) for (const item of line.items) codeItems.add(item)
   }
   const detachedProseOrigins = new Map<Line, Line>()
+  // A captioned algorithm with numbered/indented control-flow lines is a code
+  // block, not ordinary instructions. Keep the title eligible for translation.
+  for (const [index, start] of orderedLines.entries()) {
+    if (!/^Algorithm\s+\d+\b/u.test(start.text)) continue
+    const listing: Line[] = []
+    let last = start
+    for (const line of orderedLines.slice(index + 1)) {
+      if (line.x >= start.right + start.font || line.right <= start.x - start.font) continue
+      if (
+        line.x < start.x - start.font ||
+        line.baseline - last.baseline > start.font * 2.5 ||
+        Math.abs(line.font - start.font) > start.font * 0.25 ||
+        isPdfTranslationCaption(line.text) ||
+        /^Algorithm\s+\d+\b/u.test(line.text) ||
+        line.text.split(/\s+/u).length > 24
+      )
+        break
+      listing.push(line)
+      last = line
+    }
+    if (
+      listing.length < 3 ||
+      listing.filter((line) =>
+        /\b(?:for|while|if|else|return|end|Input|Output|Require|Ensure)\b/u.test(line.text)
+      ).length < 2 ||
+      listing.filter(
+        (line) => /^\d+[.:]?\s+/u.test(line.text) || line.x > start.x + start.font * 0.5
+      ).length < 2
+    )
+      continue
+    for (const line of listing) for (const item of line.items) codeItems.add(item)
+  }
   // A tall delimiter may start above this row. When its native item order
   // and x position both fall between two runs on the row, keep those runs
   // separate instead of making prose own the intervening formula glyph.
@@ -8089,6 +8123,17 @@ function extractPage(
     blocks: finalOrdered.map((b, index) => ({
       id: `p${page.page}-b${index + 1}`,
       ...(b.items.every((item) => tableItems.has(item)) ? { tableCell: true as const } : {}),
+      ...(b.items.every((item) => codeItems.has(item))
+        ? { preserve: 'code' as const }
+        : separatedMath.has(b) ||
+            (!separatedProse.has(b) &&
+              (b.lines.some((line) => preservedFormulaLines.has(line)) ||
+                completeDualScriptPackets.some(
+                  (packet) =>
+                    packet.size === b.items.length && b.items.every((item) => packet.has(item))
+                )))
+          ? { preserve: 'formula' as const }
+          : {}),
       ...(separatedMath.has(b) ||
       (!separatedProse.has(b) &&
         (completeDualScriptPackets.some(
@@ -9126,7 +9171,14 @@ export function groupPdfTranslationPages(raw: { pages: PdfLayoutPage[] }): PdfTr
       unit.originalStrings.push(...block.originalStrings)
       unit.fragments.push({ id: block.id, page: block.page, rect: block.rect })
       unit.risks = [...new Set([...unit.risks, ...block.risks])]
-      if (sourceOnly) unit.sourceOnly = true
+      if (sourceOnly) {
+        unit.sourceOnly = true
+        if (block.preserve) unit.preserve = block.preserve
+        else if (block.risks.includes('formula-extraction') || symbolicExpression(block.source))
+          unit.preserve = 'formula'
+        else if (/^[\d\s.,;:()[\]{}+−–—*/×÷^%=<>≤≥∗|!-]+$/u.test(block.source.trim()))
+          unit.preserve = 'literal'
+      }
       if (prose) previousBody = unit
       // Never leap over an unclassified body-sized line to reach a convenient continuation.
       else if (heading || (!margin && !artifact && fontMatch)) {
@@ -10171,6 +10223,19 @@ export function groupPdfTranslationPages(raw: { pages: PdfLayoutPage[] }): PdfTr
       )
         references = false
     }
+    // A References heading in the right column can precede left-column prose
+    // in this intermediate array. Reference mode starts in its own column.
+    const referenceAnchor = referenceHeading?.fragments[0]
+    const beforeReferenceColumn =
+      referenceAnchor &&
+      unit.fragments.every((fragment) => {
+        const anchor = referenceAnchor
+        return (
+          fragment.page === anchor.page &&
+          (fragment.rect.right < anchor.rect.x - bodyFont * 0.5 ||
+            fragment.rect.bottom < anchor.rect.y)
+        )
+      })
     // An appendix float may be placed before its section heading. It is
     // independently captioned material, not a bibliography continuation.
     const appendixCaption = /^(?:Table|Tab\.|Figure|Fig\.)\s+([A-Z])\.\d+[.:]\s+\p{Lu}/u.exec(
@@ -10200,8 +10265,15 @@ export function groupPdfTranslationPages(raw: { pages: PdfLayoutPage[] }): PdfTr
             )
         )
       })
-    if (references && !floatingAppendixCaption && !isolatedCaptions.has(unit))
+    if (
+      references &&
+      !beforeReferenceColumn &&
+      !floatingAppendixCaption &&
+      !isolatedCaptions.has(unit)
+    ) {
       unit.sourceOnly = true
+      unit.preserve = 'reference'
+    }
     // Ending a mis-scoped bibliography must not release short formula pieces
     // or an algorithm merely because they escaped the earlier classification.
     // Restore only the complete native body style proved by this supplement's

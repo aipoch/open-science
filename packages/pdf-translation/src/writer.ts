@@ -42,6 +42,7 @@ import {
   type PdfGenerationFailure,
   pdfTranslationLayoutFailureSchema,
   type PdfTranslationPdfResult,
+  pdfTranslationReflowLayoutSchema,
   type PdfTranslationPdfRequest as CachedPdfRequest
 } from './contracts.js'
 
@@ -103,6 +104,7 @@ export class PdfTranslationWriter {
     }
     return new Promise((resolve, reject) => {
       let layoutFailures: PdfTranslationPdfResult['layoutFailures'] = []
+      let reflow: PdfTranslationPdfResult['reflow']
       let measurements: Omit<z.infer<typeof workerDiagnostics>, 'retained'> | undefined
       let settled = false
       const finish = (data: Uint8Array | null, failure?: PdfGenerationFailure): void => {
@@ -132,7 +134,12 @@ export class PdfTranslationWriter {
           .finally(() => {
             this.active.delete(input.id)
             if (failure && caller.isCurrent()) reject(new PdfGenerationError(failure))
-            else resolve(caller.isCurrent() && data ? { data, layoutFailures } : null)
+            else
+              resolve(
+                caller.isCurrent() && data
+                  ? { data, layoutFailures, ...(reflow ? { reflow } : {}) }
+                  : null
+              )
           })
       }
       const cancel = (): void => finish(null)
@@ -140,6 +147,30 @@ export class PdfTranslationWriter {
       this.active.set(input.id, { caller, cancel })
       caller.signal.addEventListener('abort', cancel, { once: true })
       worker.once('message', (value) => {
+        if (input.layout === 'reflow' && value?.data) {
+          const parsed = pdfTranslationReflowLayoutSchema.safeParse(value.reflow)
+          if (
+            !parsed.success ||
+            parsed.data.sourcePageNumbers.some((n) => n > input.pages.length) ||
+            (parsed.data.sourcePages !== undefined &&
+              (parsed.data.sourcePages.length !== parsed.data.sourcePageNumbers.length ||
+                parsed.data.sourcePages.some((pages) =>
+                  pages.some((n) => n > input.pages.length)
+                ))) ||
+            parsed.data.originalPageNumbers?.some(
+              (n) => n > parsed.data.sourcePageNumbers.length
+            ) ||
+            parsed.data.units.some(
+              (u) =>
+                u.unitIndex >= input.units.length ||
+                u.fragments.some((f) => f.pageNumber > parsed.data.sourcePageNumbers.length)
+            )
+          ) {
+            finish(null, { code: 'worker-failed' })
+            return
+          }
+          reflow = parsed.data
+        }
         const reports = z
           .array(
             pdfTranslationLayoutFailureSchema.extend({
@@ -195,9 +226,35 @@ export class PdfTranslationWriter {
   valid(input: PdfTranslationPdfRequest): boolean {
     if (
       !input ||
+      (input.layout !== undefined && input.layout !== 'reflow') ||
+      (input.layout === 'reflow' && input.incremental !== undefined) ||
+      (input.originalRegions !== undefined &&
+        (input.layout !== 'reflow' ||
+          !Array.isArray(input.originalRegions) ||
+          input.originalRegions.length > 10000 ||
+          input.originalRegions.some(
+            (region) =>
+              !region ||
+              !Number.isInteger(region.pageNumber) ||
+              region.pageNumber < 1 ||
+              region.pageNumber > input.pages?.length ||
+              !region.rect ||
+              ![region.rect.x, region.rect.y, region.rect.width, region.rect.height].every(
+                Number.isFinite
+              ) ||
+              region.rect.x < 0 ||
+              region.rect.y < 0 ||
+              region.rect.width <= 0 ||
+              region.rect.height <= 0 ||
+              region.rect.x + region.rect.width > 1 ||
+              region.rect.y + region.rect.height > 1
+          ))) ||
       (input.incremental !== undefined &&
         (!input.incremental || typeof input.incremental !== 'object')) ||
       (input.preserveUnsupported !== undefined && typeof input.preserveUnsupported !== 'boolean') ||
+      (input.preserveUnmatched !== undefined &&
+        (typeof input.preserveUnmatched !== 'boolean' ||
+          (input.preserveUnmatched && input.preserveUnsupported !== true))) ||
       typeof input.id !== 'string' ||
       !/^[\w-]{1,64}$/.test(input.id) ||
       !(input.data instanceof Uint8Array) ||
@@ -252,6 +309,7 @@ export class PdfTranslationWriter {
     return input.units.every((unit) => {
       if (
         !unit ||
+        (unit.kind !== undefined && !['text', 'reference', 'visual'].includes(unit.kind)) ||
         typeof unit.source !== 'string' ||
         !unit.source.trim() ||
         typeof unit.translation !== 'string' ||

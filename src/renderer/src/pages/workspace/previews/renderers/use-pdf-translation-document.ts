@@ -17,6 +17,14 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'
+import { usePdfReflowDocument } from './use-pdf-reflow-document'
+import type { PdfTranslationStructureContext } from './pdf-translation-structure'
+import type {
+  PdfTranslationDocumentState,
+  PdfTranslationPageGeometry as Geometry
+} from './pdf-translation-document-state'
+
+export type { PdfTranslationDocumentState } from './pdf-translation-document-state'
 
 import {
   pdfGenerationFailure,
@@ -27,25 +35,7 @@ import { type PdfTranslationRecordLayoutRequest } from '../../../../../../shared
 
 /** A generated file belongs to exactly one accepted result snapshot, never a filename alone. */
 export type PdfTranslationArtifact = Readonly<{ results: PdfTranslationResults; data: Uint8Array }>
-type Geometry = Readonly<{ width: number; height: number; rotation: number }>
-type State =
-  | { status: 'idle' }
-  | { status: 'loading'; phase: 'generating' | 'validating' }
-  | {
-      status: 'error'
-      failure: PdfGenerationFailure
-      details?: string
-      unitId?: string
-      retryUnchanged?: boolean
-    }
-  | {
-      status: 'ready'
-      document: PDFDocumentProxy
-      pages: readonly Geometry[]
-      originalUnitCount: number
-      retainedUnitIds: readonly string[]
-      unchangedLayoutUnitIds?: readonly string[]
-    }
+type State = PdfTranslationDocumentState
 const idle: State = { status: 'idle' }
 const textKey = (text: string): string => text.normalize('NFC').replace(/\s/gu, '')
 
@@ -805,7 +795,10 @@ export function usePdfTranslationDocument(
   results: PdfTranslationResults | undefined,
   artifact: PdfTranslationArtifact | undefined,
   resourceRequestKey: string,
-  beforeReady?: () => void
+  beforeReady?: () => void,
+  layout?: 'reflow',
+  translating = false,
+  structureContext?: PdfTranslationStructureContext
 ): {
   state: State
   ready: Extract<State, { status: 'ready' }> | undefined
@@ -818,6 +811,15 @@ export function usePdfTranslationDocument(
   retry: () => void
   registerDisposer: (dispose: () => void) => () => void
 } {
+  const reflow = usePdfReflowDocument(
+    original,
+    results,
+    resourceRequestKey,
+    layout === 'reflow',
+    beforeReady,
+    translating,
+    structureContext
+  )
   const [request, setRequest] = useState<{
     failed?: {
       original: PDFDocumentProxy
@@ -828,6 +830,11 @@ export function usePdfTranslationDocument(
     retryUnitId?: string
     baseline?: Displayed
     bypassCache?: { original: PDFDocumentProxy; results: PdfTranslationResults }
+    originalPages?: {
+      original: PDFDocumentProxy
+      source: PdfTranslationResults['source']
+      pageNumbers: readonly number[]
+    }
   }>({})
   const generationClock = useRef(0)
   const [layoutReports, setLayoutReports] = useState<{
@@ -875,6 +882,7 @@ export function usePdfTranslationDocument(
   const [displayed, setDisplayed] = useState<Displayed>()
   const live = useRef<Displayed | undefined>(undefined)
   const admitted =
+    layout !== 'reflow' &&
     original &&
     results &&
     (!artifact || artifact.results === results) &&
@@ -935,11 +943,46 @@ export function usePdfTranslationDocument(
   useEffect(() => {
     if (!admitted) return
     const runResults = selected
-    const runSnapshot = snapshot
-    if (!runResults || !runSnapshot) return
-    const units = runResults.source.units
-      .filter((unit) => !unit.sourceOnly)
-      .map((unit, index) => ({ ...unit, fragments: runSnapshot.units[index].fragments }))
+    if (!runResults || !snapshot) return
+    const sourceUnits = runResults.source.units.filter((unit) => !unit.sourceOnly)
+    const originalPages = new Set(
+      request.originalPages?.original === original &&
+        request.originalPages.source === runResults.source
+        ? request.originalPages.pageNumbers
+        : []
+    )
+    // Preserve joined paragraphs as a whole, including their other pages.
+    let expanded: boolean
+    do {
+      expanded = false
+      for (const unit of sourceUnits) {
+        if (!unit.fragments.some((fragment) => originalPages.has(fragment.pageNumber))) continue
+        for (const fragment of unit.fragments)
+          if (!originalPages.has(fragment.pageNumber)) {
+            originalPages.add(fragment.pageNumber)
+            expanded = true
+          }
+      }
+    } while (expanded)
+    const preservedIds = new Set(
+      sourceUnits
+        .filter((unit) => unit.fragments.some((fragment) => originalPages.has(fragment.pageNumber)))
+        .map((unit) => unit.id)
+    )
+    const runSnapshot = originalPages.size
+      ? {
+          ...snapshot,
+          units: snapshot.units.map((unit, index) =>
+            preservedIds.has(sourceUnits[index].id)
+              ? { ...unit, fragments: sourceUnits[index].fragments, translation: unit.source }
+              : unit
+          )
+        }
+      : snapshot
+    const units = sourceUnits.map((unit, index) => ({
+      ...unit,
+      fragments: runSnapshot.units[index].fragments
+    }))
     const acceptedById = new Map(runResults.units.map((unit) => [unit.id, unit]))
     const complete =
       units.length > 0 &&
@@ -979,6 +1022,7 @@ export function usePdfTranslationDocument(
     const baseline = request.baseline
     const reusable =
       !useArtifact &&
+      originalPages.size === 0 &&
       baseline?.original === original &&
       live.current?.release === baseline.release &&
       baseline.artifact === artifact &&
@@ -1026,7 +1070,7 @@ export function usePdfTranslationDocument(
     generationClock.current = generatedAt
     const generatedUnits = units.flatMap((unit, sourceIndex) =>
       acceptedById.has(unit.id)
-        ? [{ unit, sourceIndex, snapshot: runSnapshot.units[sourceIndex] }]
+        ? [{ unit, sourceIndex, snapshot: snapshot.units[sourceIndex] }]
         : []
     )
     let nativeFailures: Record<string, PdfTranslationLayoutFailure> = {}
@@ -1035,7 +1079,7 @@ export function usePdfTranslationDocument(
     const bypassCache =
       request.bypassCache?.original === original && request.bypassCache.results === runResults
     const cache =
-      complete && runResults.checkpoint
+      complete && !originalPages.size && runResults.checkpoint
         ? {
             source: pdfTranslationCheckpointRequestSchema.parse(runResults.checkpoint.source),
             checkpointKey: runResults.checkpoint.key,
@@ -1103,24 +1147,43 @@ export function usePdfTranslationDocument(
       if (!data) {
         const source = await original.getData()
         if (cancelled) return
+        if (originalPages.size) {
+          // Transplant only verified replacement pages into the original PDF.
+          // Preserved page streams must not pass through PDFium serialization.
+          const pageNumbers = Array.from(
+            { length: original.numPages },
+            (_, index) => index + 1
+          ).filter((number) => !originalPages.has(number))
+          incremental = pageNumbers.length ? { data: source, pageNumbers } : undefined
+        }
         const generate = async (): Promise<Uint8Array | undefined> => {
           cacheToken = undefined
           cacheHit = false
+          nativeFailures = {}
+          for (const { unit } of generatedUnits)
+            if (preservedIds.has(unit.id))
+              nativeFailures[unit.id] = {
+                code: 'validation-failed',
+                phase: 'verification',
+                pageNumbers: [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))],
+                fragmentCount: unit.fragments.length
+              }
+          if (originalPages.size === original.numPages) return source.slice()
           const output = await api!.generatePdf({
             id,
             preserveUnsupported: true,
+            preserveUnmatched: true,
             data: source,
             ...(incremental ? { incremental } : {}),
             ...(cache ? { cache } : {}),
             pages: runResults.source.pages,
             // The native indices refer to this accepted subset, not the full source.
-            units: generatedUnits.map(({ snapshot: unit }) => ({
-              source: unit.source,
-              fragments: unit.fragments,
-              translation: unit.translation
+            units: generatedUnits.map(({ sourceIndex }) => ({
+              source: runSnapshot.units[sourceIndex].source,
+              fragments: runSnapshot.units[sourceIndex].fragments,
+              translation: runSnapshot.units[sourceIndex].translation
             }))
           })
-          nativeFailures = {}
           if (!output || output instanceof Uint8Array) return output ?? undefined
           cacheToken = cache ? output.cacheToken : undefined
           cacheHit = Boolean(cache && output.cacheHit)
@@ -1138,7 +1201,12 @@ export function usePdfTranslationDocument(
           // Unsupported page transplantation falls back once to the original full
           // generation/validation path. Capacity/timeouts remain explicit errors.
           const code = pdfGenerationFailure(error).code
-          if (!incremental || !['worker-failed', 'invalid-input'].includes(code) || cancelled)
+          if (
+            !incremental ||
+            originalPages.size > 0 ||
+            !['worker-failed', 'invalid-input'].includes(code) ||
+            cancelled
+          )
             throw error
           incremental = undefined
           data = await generate()
@@ -1211,7 +1279,7 @@ export function usePdfTranslationDocument(
           }
           const [sourceAnnotations, targetAnnotations] = await Promise.all([
             annotationKey(original, sourcePage, true),
-            annotationKey(translated, translatedPage)
+            annotationKey(translated, translatedPage, originalPages.has(number))
           ])
           annotations.push(targetAnnotations)
           const text: TextContent = await getPdfTranslationTextContent(translatedPage)
@@ -3442,7 +3510,15 @@ export function usePdfTranslationDocument(
       }
       let originalUnitCount = runResults.failedUnitIds?.length ?? 0
       const retainedUnitIds: string[] = []
-      for (let i = 0; i < units.length; i++)
+      for (let i = 0; i < units.length; i++) {
+        if (
+          preservedIds.has(units[i].id) &&
+          acceptedById.has(units[i].id) &&
+          acceptedById.get(units[i].id)!.translation !== units[i].source
+        ) {
+          originalUnitCount++
+          retainedUnitIds.push(units[i].id)
+        }
         if (
           units[i].source !== runSnapshot.units[i].translation &&
           textKey(regionText[i].join('')) !== textKey(runSnapshot.units[i].translation)
@@ -3464,11 +3540,13 @@ export function usePdfTranslationDocument(
           originalUnitCount++
           retainedUnitIds.push(units[i].id)
         }
+      }
       if (!cancelled) {
         recordLayout(
           generatedUnits.flatMap(({ unit, sourceIndex, snapshot }) => {
             if (
               incremental &&
+              !preservedIds.has(unit.id) &&
               (!cacheToken || retainedUnitIds.includes(unit.id)) &&
               !unit.fragments.some((fragment) =>
                 incremental?.pageNumbers.includes(fragment.pageNumber)
@@ -3575,6 +3653,29 @@ export function usePdfTranslationDocument(
         release()
         if (validating && cacheHit && !bypassCache) {
           setRequest({ ...request, bypassCache: { original, results: runResults } })
+          return
+        }
+        // A failed candidate is never displayed. Rebuild its affected page from
+        // the original source, then run the same independent verification again.
+        // Each page can enter this fallback only once for this source; errors in
+        // already-preserved content remain explicit instead of looping forever.
+        if (
+          validating &&
+          !useArtifact &&
+          validationPage !== undefined &&
+          validationPage >= 1 &&
+          validationPage <= original.numPages &&
+          !originalPages.has(validationPage)
+        ) {
+          setRequest({
+            ...request,
+            bypassCache: { original, results: runResults },
+            originalPages: {
+              original,
+              source: runResults.source,
+              pageNumbers: [...originalPages, validationPage]
+            }
+          })
           return
         }
         const previous = request.failed
@@ -3746,37 +3847,39 @@ export function usePdfTranslationDocument(
     }
     return failures
   }, [admitted, results, original, layoutReports])
-  return {
-    state,
-    unfilledUnitIds,
-    layoutFailures,
-    ready: canDisplay ? displayed?.value : undefined,
-    unchangedLayoutUnitIds:
-      canDisplay && displayed
-        ? (displayed.value.unchangedLayoutUnitIds ?? []).filter((id) => {
-            const before = displayed.results.units.find((unit) => unit.id === id)
-            const after = results?.units.find((unit) => unit.id === id)
-            return (
-              before?.translation === after?.translation &&
-              before?.translationSource === after?.translationSource
-            )
-          })
-        : [],
-    updateAvailable: Boolean(
-      admitted &&
-      selected &&
-      (results.units.length !== selected.units.length ||
-        !isPdfTranslationResultExtension(selected, results))
-    ),
-    isCurrent: Boolean(
-      canDisplay &&
-      displayed &&
-      results &&
-      displayed.results.units.length === results.units.length &&
-      isPdfTranslationResultExtension(displayed.results, results)
-    ),
-    refresh,
-    retry,
-    registerDisposer
-  }
+  return layout === 'reflow'
+    ? reflow
+    : {
+        state,
+        unfilledUnitIds,
+        layoutFailures,
+        ready: canDisplay ? displayed?.value : undefined,
+        unchangedLayoutUnitIds:
+          canDisplay && displayed
+            ? (displayed.value.unchangedLayoutUnitIds ?? []).filter((id) => {
+                const before = displayed.results.units.find((unit) => unit.id === id)
+                const after = results?.units.find((unit) => unit.id === id)
+                return (
+                  before?.translation === after?.translation &&
+                  before?.translationSource === after?.translationSource
+                )
+              })
+            : [],
+        updateAvailable: Boolean(
+          admitted &&
+          selected &&
+          (results.units.length !== selected.units.length ||
+            !isPdfTranslationResultExtension(selected, results))
+        ),
+        isCurrent: Boolean(
+          canDisplay &&
+          displayed &&
+          results &&
+          displayed.results.units.length === results.units.length &&
+          isPdfTranslationResultExtension(displayed.results, results)
+        ),
+        refresh,
+        retry,
+        registerDisposer
+      }
 }

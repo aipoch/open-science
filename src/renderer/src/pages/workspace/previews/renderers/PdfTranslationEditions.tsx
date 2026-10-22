@@ -65,7 +65,7 @@ export function PdfTranslationEditions({
     })
   const language = (value: string): string => t(value, { defaultValue: value })
   const label = (edition: PdfTranslationEdition, index: number): string =>
-    `#${index + 1} ${language(edition.language)} · ${edition.model.modelId ?? t('Default')}`
+    `#${editions.length - index} ${language(edition.language)} · ${edition.model.modelId ?? t('Default')}`
   return (
     <AlertDialog.Root
       open={Boolean(deletingEdition)}
