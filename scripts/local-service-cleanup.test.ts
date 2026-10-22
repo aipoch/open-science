@@ -30,6 +30,8 @@ import {
   captureFixtureProcess,
   captureFixtureAgents,
   captureFixtureService,
+  observeFixtureService,
+  cleanupObservedFixtureService,
   captureFixtureRoot,
   cleanupFixtureProcess,
   cleanupFixtureService,
@@ -159,6 +161,65 @@ describe('isolated fixture process cleanup', () => {
     const child = { pid: owner.pid, exitCode: null, signalCode: null } as ChildProcess
     await cleanupFixtureProcess(captureFixtureProcess(child))
     expect(process.kill).toHaveBeenCalledExactlyOnceWith(owner.pid, 'SIGTERM')
+  })
+
+  it.each(['missing-record', 'unreadable-process'])(
+    'confirms ordinary exit without signaling an observation-only service (%s)',
+    async (reason) => {
+      if (reason === 'missing-record')
+        mocks.readOwner.mockResolvedValue(JSON.stringify({ ...owner, birthToken: undefined }))
+      else mocks.birth.mockReturnValue(undefined)
+      const observed = await observeFixtureService(target.configRoot)
+      expect(observed?.verified).toBeUndefined()
+      expect(observed?.pid).toBe(owner.pid)
+      mocks.alive.mockReturnValue(false)
+      await cleanupObservedFixtureService(observed)
+      expect(process.kill).not.toHaveBeenCalled()
+      expect(mocks.acquire).toHaveBeenCalledExactlyOnceWith(target.configRoot)
+      expect(mocks.receipts).toHaveBeenCalledTimes(2)
+      expect(mocks.release).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('retains an observation-only live or unreadable service without sending signals', async () => {
+    vi.useFakeTimers()
+    mocks.birth.mockReturnValue(undefined)
+    const observed = await observeFixtureService(target.configRoot)
+    const cleanup = cleanupObservedFixtureService(observed)
+    const assertion = expect(cleanup).rejects.toThrow('exit is unconfirmed')
+    await vi.advanceTimersByTimeAsync(22_000)
+    await assertion
+    expect(process.kill).not.toHaveBeenCalled()
+    expect(mocks.acquire).not.toHaveBeenCalled()
+  })
+
+  it('retains a stopped observation-only service when its real directory lock is busy', async () => {
+    mocks.birth.mockReturnValue(undefined)
+    const observed = await observeFixtureService(target.configRoot)
+    mocks.alive.mockReturnValue(false)
+    mocks.acquire.mockImplementation(() => {
+      throw new Error('directory remains owned')
+    })
+    await expect(cleanupObservedFixtureService(observed)).rejects.toThrow('directory remains owned')
+    expect(process.kill).not.toHaveBeenCalled()
+  })
+
+  it('retains unresolved agent receipts after an observation-only service exits', async () => {
+    mocks.birth.mockReturnValue(undefined)
+    const observed = await observeFixtureService(target.configRoot)
+    mocks.alive.mockReturnValue(false)
+    mocks.receipts.mockReturnValue([{ receiptId: 'unresolved', phase: 'cleanup-pending' }])
+    await expect(cleanupObservedFixtureService(observed)).rejects.toThrow(
+      'ownership remains unresolved'
+    )
+    expect(process.kill).not.toHaveBeenCalled()
+    expect(mocks.release).toHaveBeenCalledOnce()
+  })
+
+  it('never converts a definite identity conflict into a passive observation', async () => {
+    mocks.birth.mockReturnValue('reused-pid')
+    await expect(observeFixtureService(target.configRoot)).rejects.toThrow('cannot be captured')
+    expect(process.kill).not.toHaveBeenCalled()
   })
 
   it('waits through an unreadable birth identity until actual death without another signal', async () => {

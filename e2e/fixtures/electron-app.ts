@@ -1,6 +1,6 @@
 import {
-  captureFixtureService,
-  cleanupFixtureService,
+  observeFixtureService,
+  cleanupObservedFixtureService,
   runFixtureCleanup
 } from './local-service-cleanup'
 import { expect, test as base, type TestInfo } from '@playwright/test'
@@ -1947,11 +1947,15 @@ class ElectronAppHarness implements ElectronApp {
     this.application = undefined
     this.applicationProcess = undefined
     this.currentPage = undefined
-    let service: Awaited<ReturnType<typeof captureFixtureService>>
+    let service: Awaited<ReturnType<typeof observeFixtureService>>
     try {
       await runFixtureCleanup([
         async () => {
-          service = await captureFixtureService(this.roots.storageRoot)
+          service = await observeFixtureService(this.roots.storageRoot)
+          if (service && !service.verified)
+            process.stderr.write(
+              'Fixture service birth identity is unavailable; require passive exit and lock/receipt confirmation.\n'
+            )
         },
         () =>
           closeElectronApplicationForCleanup(
@@ -1984,7 +1988,7 @@ class ElectronAppHarness implements ElectronApp {
               requireGraceful
             }
           ),
-        () => cleanupFixtureService(service)
+        () => cleanupObservedFixtureService(service)
       ])
     } finally {
       this.stopFlushDiagnostics?.()

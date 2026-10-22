@@ -10,6 +10,13 @@ import { isRuntimeProcessAlive } from '../../src/main/runtime-stop-confirmation'
 type CapturedProcess = { pid: number; birthToken: string }
 export type CapturedFixtureProcess = CapturedProcess & { child: ChildProcess }
 export type CapturedService = CapturedProcess & { configRoot: string; generation: string }
+/** Observation permits passive exit checks, never signals. */
+export type ObservedFixtureService = {
+  configRoot: string
+  pid: number
+  generation: string
+  verified?: CapturedService
+}
 export type CapturedFixtureAgent = CapturedProcess & { receiptId: string }
 export type CapturedFixtureRoot = Readonly<{
   path: string
@@ -92,9 +99,9 @@ export function captureFixtureProcess(child: ChildProcess): CapturedFixtureProce
   return { child, pid: child.pid, birthToken }
 }
 
-export async function captureFixtureService(
+export async function observeFixtureService(
   configRoot: string
-): Promise<CapturedService | undefined> {
+): Promise<ObservedFixtureService | undefined> {
   try {
     const record = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
     if (
@@ -102,23 +109,63 @@ export async function captureFixtureService(
       record.schemaVersion !== 1 ||
       !Number.isSafeInteger(record.pid) ||
       record.pid <= 0 ||
+      (record.birthToken !== undefined &&
+        (typeof record.birthToken !== 'string' || record.birthToken.length === 0)) ||
       !uuid.test(record.generation) ||
       (record.desktop && !uuid.test(record.desktop.generation))
     )
       throw new Error(`Fixture service owner is invalid; preserve ${configRoot}`)
     if (!isRuntimeProcessAlive(record.pid)) return undefined
     const birthToken = processBirthIdentity(record.pid)
-    if (!birthToken || record.birthToken !== birthToken)
+    if (birthToken && record.birthToken && record.birthToken !== birthToken)
       throw new Error(`Fixture service identity cannot be captured; preserve ${configRoot}`)
-    return {
+    const observed: ObservedFixtureService = {
       configRoot,
       pid: record.pid,
-      generation: record.desktop?.generation ?? record.generation,
-      birthToken
+      generation: record.desktop?.generation ?? record.generation
     }
+    if (birthToken && record.birthToken === birthToken)
+      observed.verified = { ...observed, birthToken }
+    return observed
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
+  }
+}
+
+export async function captureFixtureService(
+  configRoot: string
+): Promise<CapturedService | undefined> {
+  const observed = await observeFixtureService(configRoot)
+  if (!observed) return undefined
+  if (!observed.verified)
+    throw new Error(`Fixture service identity cannot be captured; preserve ${configRoot}`)
+  return observed.verified
+}
+
+/** A missing optional birth token must not prevent ordinary App shutdown. */
+export async function cleanupObservedFixtureService(
+  observed: ObservedFixtureService | undefined
+): Promise<void> {
+  if (!observed) return
+  if (observed.verified) return cleanupFixtureService(observed.verified)
+  // Never signal an observation-only PID. Unreadable/reused/live PIDs remain unconfirmed.
+  const deadline = Date.now() + 22_000
+  while (isRuntimeProcessAlive(observed.pid)) {
+    if (Date.now() >= deadline)
+      throw new Error(`Fixture service exit is unconfirmed; preserve ${observed.configRoot}`)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  const lease = acquireRuntimeDirectorySync(observed.configRoot)
+  try {
+    for (const namespace of ['main-agent-process-ownership', 'delegation-process-ownership']) {
+      if (new DelegatedProcessOwnership(observed.configRoot, namespace).receipts().length)
+        throw new Error(
+          `Fixture agent ownership remains unresolved; preserve ${observed.configRoot}`
+        )
+    }
+  } finally {
+    lease.release()
   }
 }
 
