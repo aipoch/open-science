@@ -1125,6 +1125,19 @@ describe('workspace conversation items', () => {
     ).toBe('Using tool: Notebook restart')
   })
 
+  it('names directory discovery even before a result is available', () => {
+    expect(
+      formatActivityTitle(
+        createActivity({
+          status: 'in_progress',
+          title: 'open-science-notebook_list_authorized_directories'
+        }),
+        undefined,
+        t
+      )
+    ).toBe('Using tool: List authorized directories')
+  })
+
   it('renders memory MCP tools as user-facing actions across provider identity forms', () => {
     expect(
       formatActivityTitle(

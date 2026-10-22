@@ -191,6 +191,8 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "List authorized directories": "許可されたディレクトリを一覧表示",
+    "checked directory access": "ディレクトリへのアクセス権を確認した",
     "Could not load Reviewer log.": "レビュアーログを読み込めませんでした。",
     "Preparing to receive package…": "パッケージの受信を準備中…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "ブラウザーからのインポートを準備できません。起動エラーを解決してから再試行してください。",

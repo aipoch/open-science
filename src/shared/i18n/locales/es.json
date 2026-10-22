@@ -193,6 +193,8 @@
     "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
+    "List authorized directories": "Listar directorios autorizados",
+    "checked directory access": "consultó el acceso a directorios",
     "Could not load Reviewer log.": "No se pudo cargar el registro del revisor.",
     "Preparing to receive package…": "Preparando la recepción del paquete…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "No se pudo preparar la importación desde el navegador. Resuelva el error de inicio e inténtelo de nuevo.",

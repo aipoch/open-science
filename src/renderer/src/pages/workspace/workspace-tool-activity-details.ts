@@ -14,6 +14,7 @@ import { memoryAgentRememberResultSchema, memoryAgentResultSchema } from '../../
 import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {
   getNotebookMemoryToolDisplayName,
+  isAuthorizedDirectoryTool,
   isNotebookManagePackagesToolName,
   matchNotebookMemoryTool,
   resolveNotebookLanguage,
@@ -1264,6 +1265,13 @@ const buildToolActivityDetails = (
     return details
       ? { ...details, displayName: 'Skill', subtitle: getLoadedSkillName(activity) }
       : undefined
+  }
+  // Keep the existing input/output inspection, with a user-facing label for every provider.
+  if (isAuthorizedDirectoryTool(activity.providerToolName, activity.title)) {
+    return {
+      displayName: t('List authorized directories'),
+      sections: buildGenericDetails(activity)?.sections ?? []
+    }
   }
   const literatureDetails = buildLiteratureDetails(activity)
   if (literatureDetails) return literatureDetails

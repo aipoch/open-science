@@ -191,6 +191,8 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
+    "List authorized directories": "허용된 디렉터리 목록 조회",
+    "checked directory access": "디렉터리 접근 권한 확인",
     "Could not load Reviewer log.": "리뷰어 로그를 불러오지 못했습니다.",
     "Preparing to receive package…": "패키지 수신 준비 중…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "브라우저 가져오기를 준비할 수 없습니다. 시작 오류를 해결한 후 다시 시도하세요.",
