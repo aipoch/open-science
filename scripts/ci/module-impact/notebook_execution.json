@@ -1,4 +1,5 @@
 {
+  "fullTestReason": "Removing the shell search preflight changes the trusted source boundary; retain full validation until the reduced boundary is reviewed and trusted.",
   "ownerPaths": [
     "src/main/notebook/windows-runtime-catalog.json",
     "src/main/notebook/windows-runtime-components.ts",
