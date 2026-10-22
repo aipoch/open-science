@@ -61,13 +61,11 @@ export function runModuleImpactAuthorityCli(
 ) {
   const base = requireCommit(argumentValue(arguments_, '--base') ?? environment.BASE_SHA, '--base')
   const head = requireCommit(argumentValue(arguments_, '--head') ?? environment.HEAD_SHA, '--head')
-  const changes = changesFromGit(base, head, { cwd, execute })
-  const { manifest, registrationModules, registrationOnly } = resolveModuleImpactInputs(changes, {
-    base,
-    head,
-    cwd,
-    execute
-  })
+  // An accepted derived index is removed from the changes it would otherwise route as global.
+  const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
+    changesFromGit(base, head, { cwd, execute }),
+    { base, head, cwd, execute }
+  )
   const candidatePlan = classifyChanges(changes, undefined, {
     moduleManifest: manifest,
     registrationModules,

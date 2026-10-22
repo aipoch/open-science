@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { sourceSnapshot, createConsumerDependencyReader } from './consumer-retirement.mjs'
+import { sourceSnapshot, createDependencyReader } from './module-graph/index.mjs'
 import { loadModuleImpactManifestAtRevision } from './load-module-impact.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { validatePackageTestRegistry } from './package-test-impact.mjs'
@@ -24,8 +24,8 @@ export function auditPackageConsumers(revision = 'HEAD', cwd = process.cwd()) {
   const runtimeEdges = Object.entries(
     JSON.parse(source.read('scripts/ci/module-runtime-consumers.json'))
   )
-  const structural = createConsumerDependencyReader(source, runtimeEdges)
-  const runtime = createConsumerDependencyReader(source, runtimeEdges, { runtimeOnly: true })
+  const structural = createDependencyReader(source, runtimeEdges)
+  const runtime = createDependencyReader(source, runtimeEdges, { runtimeOnly: true })
   const hostFiles = [...source.files].filter((path) => /^src\/.*\.[cm]?[jt]sx?$/.test(path))
   const isTest = (path) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
   const packages = registry.packages.map(({ root, dependencies }) => {
