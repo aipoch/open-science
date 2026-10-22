@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ElectronUpdaterStrategy, type ElectronUpdaterDeps } from './electron-updater-strategy'
 import { UpdateService } from './service'
-import { ManualInstallerFallback } from './manual-install'
 import { UpdateLifecycleError } from '../../shared/update'
 
 vi.mock('electron-updater', () => ({
@@ -64,16 +63,8 @@ async function setup(download = true) {
     manualInstallStorePath: join(directory, 'receipt.json'),
     verifyManualInstallerSignature: async () => {},
     revealManualInstallerFile: reveal,
-    markUpdateShutdown: () => () => {},
-    manualInstallRecovery: async (...args) => terminalObservation(...args)
+    markUpdateShutdown: () => () => {}
   }
-  const terminalObservation = (
-    ...args: Parameters<NonNullable<ElectronUpdaterDeps['manualInstallRecovery']>>
-  ): ReturnType<NonNullable<ElectronUpdaterDeps['manualInstallRecovery']>> =>
-    common.manualInstallRecovery === initialObservation
-      ? Promise.resolve('pending' as const)
-      : common.manualInstallRecovery!(...args)
-  const initialObservation = common.manualInstallRecovery
   const strategy = new ElectronUpdaterStrategy(common)
   await strategy.check()
   if (download) await strategy.download()
@@ -221,7 +212,6 @@ it('settles a manifest download failure and releases its claim when the receipt 
     error: expect.stringContaining('403')
   })
   expect(f.service.getStatus().state).toBe('error')
-  expect(f.configuration.log.warn).toHaveBeenCalled()
   expect(await f.service.getManualInstall()).toMatchObject({
     kind: 'website',
     reason: 'download-failed'
@@ -298,58 +288,39 @@ it('handles an Electron installer error event without throwing when its failure 
   expect(release).toHaveBeenCalledOnce()
 })
 
-it('preserves the manifest installer-open error and releases apply ownership when its receipt write fails', async () => {
-  const f = await setupManifest()
-  f.configuration.openPath.mockImplementationOnce(async () => {
-    await blockReceipt(f.receipt)
-    return 'native launch rejected'
-  })
-  await expect(f.service.apply()).resolves.toMatchObject({
-    state: 'ready',
-    error: 'Could not open the update installer: native launch rejected'
-  })
-  expect(f.service.getStatus().recovery).toBeUndefined()
-  expect(f.configuration.log.warn).toHaveBeenCalled()
-  await rm(f.receipt, { recursive: true })
-  await f.service.apply()
-  expect(f.configuration.openPath).toHaveBeenCalledTimes(2)
-})
-
-it('still refuses Electron native submission if the pending receipt cannot be persisted', async () => {
-  const f = await setup(false)
-  const receipt = f.common.manualInstallStorePath!
-  const observe = vi.fn(async () => {})
-  const rollback = vi.fn()
-  const strategy = new ElectronUpdaterStrategy({
-    ...f.common,
-    beforeInstallHandoff: async () => blockReceipt(receipt),
-    observeManualInstallHandoff: observe,
-    markUpdateShutdown: () => rollback
-  })
-  await strategy.check()
-  await strategy.download()
-  await expect(strategy.apply()).resolves.toMatchObject({
-    state: 'error',
-    reason: 'install-failed',
-    error: expect.stringMatching(/EISDIR|EPERM|EACCES/)
-  })
-  expect(f.updater.quitAndInstall).not.toHaveBeenCalled()
-  expect(observe).not.toHaveBeenCalled()
-  expect(rollback).toHaveBeenCalledOnce()
-})
-
-it('restores manifest error state without submitting an installer if the pending receipt cannot be persisted', async () => {
+it('preserves an explicit OS open refusal and automatic retry while auxiliary storage is unwritable', async () => {
   const f = await setupManifest()
   await blockReceipt(f.receipt)
-  await expect(f.service.apply()).rejects.toThrow(/EISDIR|EPERM|EACCES/)
-  expect(f.service.getStatus()).toMatchObject({
+  f.configuration.openPath.mockResolvedValueOnce('No application is associated with this file')
+  expect(await f.service.apply()).toMatchObject({
     state: 'ready',
-    error: expect.stringMatching(/EISDIR|EPERM|EACCES/)
+    error: 'Could not open the update installer: No application is associated with this file'
   })
-  expect(f.configuration.openPath).not.toHaveBeenCalled()
-  await rm(f.receipt, { recursive: true })
+  expect(f.service.getStatus().recovery).toBeUndefined()
+  expect((await f.service.getManualInstall()).kind).toBe('local')
+  await f.service.apply()
+  expect(f.configuration.openPath).toHaveBeenCalledTimes(2)
+  expect((await f.service.getManualInstall()).kind).toBe('blocked')
+})
+
+it('preserves Electron download and native handoff when auxiliary storage is unwritable', async () => {
+  const f = await setup(false)
+  await blockReceipt(f.common.manualInstallStorePath!)
+  expect(await f.strategy.download()).toMatchObject({ state: 'ready' })
+  await f.strategy.apply()
+  expect(f.updater.quitAndInstall).toHaveBeenCalledOnce()
+  f.updater.emit('error', new Error('native result unknown'))
+  expect(f.strategy.getStatus().recovery?.installation).toBe('pending')
+  expect((await f.strategy.getManualInstall()).kind).toBe('blocked')
+})
+
+it('preserves verified manifest download and submission when auxiliary storage is unwritable', async () => {
+  const f = await setupManifest(false)
+  await blockReceipt(f.receipt)
+  expect(await f.service.download()).toMatchObject({ state: 'ready' })
   await f.service.apply()
   expect(f.configuration.openPath).toHaveBeenCalledOnce()
+  expect((await f.service.getManualInstall()).kind).toBe('blocked')
 })
 
 it.each(['recovered', 'cancelled', 'installed'] as const)(
@@ -376,7 +347,6 @@ it.each(['recovered', 'cancelled', 'installed'] as const)(
     await blockReceipt(f.common.manualInstallStorePath!)
     expect(await strategy.recover()).toMatchObject({ state: 'ready', ...result })
     expect(strategy.getStatus().recovery).toBeUndefined()
-    expect(log.warn).toHaveBeenCalled()
     expect(recoverInstall).toHaveBeenCalledOnce()
   }
 )
@@ -403,65 +373,88 @@ it.each(['electron', 'manifest'] as const)(
   }
 )
 
-it('qualifies and reveals a reconstructed complete NSIS executable after real handoff failure', async () => {
-  const f = await setup()
-  f.common.manualInstallRecovery = async () => 'failed'
-  expect(f.strategy.getStatus().manualInstall).toBeUndefined()
-  f.updater.quitAndInstall.mockImplementation(() => {
-    throw new Error('native launch failed')
-  })
-  await f.strategy.apply()
-  expect(await f.strategy.getManualInstall()).toMatchObject({ kind: 'local', format: 'nsis' })
-  await f.strategy.revealManualInstaller()
-  expect(f.reveal).toHaveBeenCalledExactlyOnceWith(f.path)
-  const receipt = JSON.parse(await readFile(f.common.manualInstallStorePath!, 'utf8'))
-  expect(receipt.attempt.state).toBe('failed')
-})
+it.each([false, true])(
+  'routes a safe pre-install failure by standalone eligibility (extra packages: %s)',
+  async (extraPackages) => {
+    const f = await setup(false)
+    const strategy = new ElectronUpdaterStrategy({
+      ...f.common,
+      prepareInstallHandoff: async () => {
+        throw new Error('preparation failed')
+      },
+      inspectManualInstallSafety: async () => true
+    })
+    f.updater.downloadUpdate.mockImplementation(async () => {
+      f.updater.emit('update-downloaded', {
+        version: '2.0.0',
+        downloadedFile: f.path,
+        files: [
+          {
+            url: 'aipoch-open-science-2.0.0-win-x64-setup.exe',
+            size: f.bytes.length,
+            sha512: createHash('sha512').update(f.bytes).digest('base64')
+          }
+        ],
+        ...(extraPackages ? { packages: { x64: {} } } : {})
+      })
+    })
+    await strategy.check()
+    await strategy.download()
+    await strategy.apply()
+    expect((await strategy.getManualInstall()).kind).toBe(extraPackages ? 'website' : 'local')
+    await strategy.revealManualInstaller()
+    expect(f.reveal).toHaveBeenCalledTimes(extraPackages ? 0 : 1)
+    expect(f.updater.quitAndInstall).not.toHaveBeenCalled()
+  }
+)
 
-it('persists unresolved native handoff and prevents every recovery command bypass after restart', async () => {
+it('keeps original installation protection authoritative after restart', async () => {
   const f = await setup()
   await f.strategy.apply()
-  const cancelInstall = vi.fn(async () => ({ outcome: 'cancelled' as const }))
-  const recoverInstall = vi.fn(async () => ({ outcome: 'recovered' as const }))
-  const recheckInstall = vi.fn(async () => ({ recovery: undefined }))
+  const prepareInstall = vi.fn(async () => ({
+    reason: 'installation-busy' as const,
+    recovery: {
+      phase: 'install-check' as const,
+      runtime: 'unknown' as const,
+      installation: 'pending' as const,
+      canCancel: false,
+      canRecover: true,
+      canRetryInstall: false
+    }
+  }))
   const restarted = new ElectronUpdaterStrategy({
     ...f.common,
-    cancelInstall,
-    recoverInstall,
-    recheckInstall
+    prepareInstall,
+    inspectManualInstallSafety: async () => false
   })
-  expect(restarted.getStatus().recovery?.installation).toBe('pending')
-  const checks = f.updater.checkForUpdates.mock.calls.length
-  await restarted.check()
-  await restarted.apply()
-  await restarted.cancel()
-  await restarted.recover()
-  await restarted.recheck()
-  expect(f.updater.checkForUpdates).toHaveBeenCalledTimes(checks)
-  expect(cancelInstall).not.toHaveBeenCalled()
-  expect(recoverInstall).not.toHaveBeenCalled()
-  expect(recheckInstall).not.toHaveBeenCalled()
+  expect((await restarted.check()).state).toBe('available')
+  await restarted.download()
+  expect(await restarted.apply()).toMatchObject({ recovery: { installation: 'pending' } })
+  expect(prepareInstall).toHaveBeenCalledOnce()
+  expect(f.updater.quitAndInstall).toHaveBeenCalledOnce()
   expect((await restarted.getManualInstall()).kind).toBe('blocked')
 })
 
-it('retains the package through safe recovery, and rehydrates the updater before automatic retry', async () => {
-  const f = await setup()
-  f.common.manualInstallRecovery = async () => 'failed'
-  f.updater.quitAndInstall.mockImplementationOnce(() => {
-    throw new Error('native launch failed')
-  })
-  await f.strategy.apply()
-  const restarted = new ElectronUpdaterStrategy(f.common)
-  expect((await restarted.getManualInstall()).kind).toBe('local')
-  const downloads = f.updater.downloadUpdate.mock.calls.length
-  await restarted.apply()
-  expect(f.updater.downloadUpdate).toHaveBeenCalledTimes(downloads + 1)
-  expect(restarted.getStatus().state).toBe('ready')
-})
+it.each(['electron', 'manifest'] as const)(
+  'does not let old %s fallback records hijack Check updates',
+  async (provider) => {
+    const f = await setupManifest()
+    const stored = JSON.parse(await readFile(f.receipt, 'utf8'))
+    stored.failure = 'install'
+    await writeFile(f.receipt, JSON.stringify(stored))
+    const restarted =
+      provider === 'electron'
+        ? new ElectronUpdaterStrategy(f.common)
+        : new UpdateService(f.configuration)
+    expect(restarted.getStatus().state).toBe('idle')
+    expect((await restarted.getManualInstall()).kind).toBe('blocked')
+    expect(await restarted.check()).toMatchObject({ state: 'available', latest: '2.0.0' })
+    expect(restarted.getStatus().localPath).toBeUndefined()
+  }
+)
 
 it('disambiguates the actual downloaded architecture in a multi-architecture Mac feed', async () => {
   const f = await setup()
-  f.common.manualInstallRecovery = async () => 'failed'
   const updater = f.updater
   const files = ['x64', 'arm64'].map((arch) => ({
     url: `aipoch-open-science-2.0.0-mac-${arch}.zip`,
@@ -477,7 +470,10 @@ it('disambiguates the actual downloaded architecture in a multi-architecture Mac
     ...f.common,
     manualInstallStorePath: null,
     platform: 'darwin',
-    arch: 'arm64'
+    arch: 'arm64',
+    prepareInstallHandoff: async () => {
+      throw new Error('preparation failed')
+    }
   })
   updater.emit('update-available', { version: '2.0.0', files })
   await strategy.download()
@@ -492,64 +488,28 @@ it('disambiguates the actual downloaded architecture in a multi-architecture Mac
   })
 })
 
-it('preserves manifest download provenance and never launches an installer during file reveal', async () => {
-  const f = await setup()
-  const download = {
-    url: 'https://updates.example/aipoch-open-science-2.0.0-mac-arm64.dmg',
-    size: f.bytes.length,
-    sha256: createHash('sha256').update(f.bytes).digest('hex')
+it('does not require fallback qualification to open a manifest installer verified by the provider', async () => {
+  const f = await setupManifest(false)
+  const { ManualInstallerFallback } = await import('./manual-install')
+  const capture = vi
+    .spyOn(ManualInstallerFallback.prototype, 'capture')
+    .mockRejectedValueOnce(new Error('auxiliary verification unavailable'))
+  try {
+    expect(await f.service.download()).toMatchObject({ state: 'ready' })
+    await f.service.apply()
+    expect(f.configuration.openPath).toHaveBeenCalledOnce()
+    expect((await f.service.getManualInstall()).kind).toBe('blocked')
+  } finally {
+    capture.mockRestore()
   }
-  const fetchImpl = vi.fn(async (url: string | URL | Request) => {
-    if (String(url).endsWith('version.json'))
-      return new Response(
-        JSON.stringify({ version: '2.0.0', downloads: { 'mac-arm64': download } })
-      )
-    const response = new Response(f.bytes, {
-      headers: { 'content-length': String(f.bytes.length) }
-    })
-    Object.defineProperty(response, 'url', { value: download.url })
-    return response
-  }) as unknown as typeof fetch
-  const openPath = vi.fn(async () => 'native launch rejected')
-  const configuration = {
-    currentVersion: '1.0.0',
-    platform: 'darwin' as const,
-    arch: 'arm64',
-    fetchImpl,
-    manifestUrl: 'https://updates.example/version.json',
-    promptSavePath: async () => join(f.directory, 'installer.dmg'),
-    installationGuard: () => false,
-    openPath,
-    broadcast: vi.fn(),
-    manualInstallStorePath: join(f.directory, 'manifest-receipt.json'),
-    verifyManualInstallerSignature: async () => {},
-    revealManualInstallerFile: f.reveal
-  }
-  const service = new UpdateService(configuration)
-  await service.check()
-  await service.download()
-  await service.apply()
-  expect(await service.getManualInstall()).toMatchObject({ kind: 'local', format: 'dmg' })
-  const restarted = new UpdateService(configuration)
-  expect(restarted.getStatus().download).toEqual(download)
-  const owner = (await import('./command-owner')).createUpdateCommandOwner(restarted)
-  const ready = await owner.check()
-  expect(ready.manualInstall).toMatchObject({ kind: 'local', format: 'dmg' })
-  expect(ready.reason).toBeUndefined()
-  expect(ready.recovery).toBeUndefined()
-  await restarted.revealManualInstaller()
-  expect(openPath).toHaveBeenCalledTimes(1)
-  expect(f.reveal).toHaveBeenCalledTimes(1)
 })
 
 it('keeps protected executor recovery authoritative without creating a native pending attempt', async () => {
   const f = await setup()
-  const observe = vi.fn(async () => {})
   const recoverInstall = vi.fn(async () => ({ outcome: 'recovered' as const, recovery: undefined }))
   const strategy = new ElectronUpdaterStrategy({
     ...f.common,
     manualInstallStorePath: null,
-    observeManualInstallHandoff: observe,
     executeInstall: async () => {
       throw new Error('protected executor failed before replacement')
     },
@@ -558,95 +518,66 @@ it('keeps protected executor recovery authoritative without creating a native pe
   await strategy.check()
   await strategy.download()
   await strategy.apply()
-  expect(observe).not.toHaveBeenCalled()
   await strategy.recover()
   expect(recoverInstall).toHaveBeenCalledOnce()
   expect((await strategy.getManualInstall()).kind).toBe('local')
 })
 
-it('requires native terminal evidence before recovering an asynchronous handoff failure while the runtime is stopped', async () => {
-  const f = await setup()
-  const settled = vi.fn().mockResolvedValue('pending')
+it('keeps legacy handoff unknown despite SDK errors and later runtime recovery snapshots', async () => {
+  const f = await setup(false)
   const recoverInstall = vi.fn(async () => ({ outcome: 'recovered' as const, recovery: undefined }))
   const strategy = new ElectronUpdaterStrategy({
     ...f.common,
     manualInstallStorePath: null,
-    manualInstallRecovery: settled,
     recoverInstall
   })
   await strategy.check()
   await strategy.download()
   await strategy.apply()
   f.updater.emit('error', new Error('asynchronous native error'))
-  expect(strategy.getStatus().recovery).toMatchObject({
-    installation: 'pending',
-    canRecover: true,
-    canRetryInstall: false
-  })
-  strategy.publishLifecycleStatus({
-    recovery: {
-      phase: 'stopped',
-      runtime: 'stopped-clean',
-      installation: 'unchanged',
-      canCancel: true,
-      canRecover: true,
-      canRetryInstall: false
-    }
-  })
+  strategy.publishLifecycleStatus({ recovery: undefined, reason: undefined, state: 'ready' })
   await strategy.recover()
+  await strategy.apply()
   expect(recoverInstall).not.toHaveBeenCalled()
-  settled.mockResolvedValue('failed')
-  await strategy.recover()
-  expect(recoverInstall).toHaveBeenCalledOnce()
-  expect((await strategy.getManualInstall()).kind).toBe('local')
+  expect(f.updater.quitAndInstall).toHaveBeenCalledOnce()
+  expect((await strategy.getManualInstall()).kind).toBe('blocked')
 })
 
-it('retains protected handoff provenance across restart while the existing installation record gates recovery', async () => {
-  const f = await setup()
-  const observe = vi.fn(async () => {})
-  const executor = new ElectronUpdaterStrategy({
-    ...f.common,
-    observeManualInstallHandoff: observe,
-    executeInstall: async () => {}
-  })
+it('leaves protected startup recovery authoritative without restoring a fallback offer', async () => {
+  const f = await setup(false)
+  const executor = new ElectronUpdaterStrategy({ ...f.common, executeInstall: async () => {} })
   await executor.check()
   await executor.download()
   await executor.apply()
-  expect(observe).not.toHaveBeenCalled()
-  const stored = JSON.parse(await readFile(f.common.manualInstallStorePath!, 'utf8'))
-  expect(stored.artifact.version).toBe('2.0.0')
-  expect(stored.attempt).toBeUndefined()
-  let safe = false
-  const recoverInstall = vi.fn(async () => {
-    safe = true
-    return { outcome: 'recovered' as const, recovery: undefined }
-  })
-  const restarted = new ElectronUpdaterStrategy({
-    ...f.common,
-    inspectManualInstallSafety: async () => safe,
-    recoverInstall
-  })
-  expect(restarted.getStatus().latest).toBe('2.0.0')
-  expect((await restarted.getManualInstall()).kind).toBe('blocked')
+  const recoverInstall = vi.fn(async () => ({ outcome: 'recovered' as const, recovery: undefined }))
+  const restarted = new ElectronUpdaterStrategy({ ...f.common, recoverInstall })
+  expect(restarted.getStatus().state).toBe('idle')
   await restarted.recover()
   expect(recoverInstall).toHaveBeenCalledOnce()
-  expect((await restarted.getManualInstall()).kind).toBe('local')
+  expect((await restarted.getManualInstall()).kind).toBe('blocked')
+  expect((await restarted.check()).state).toBe('available')
 })
 
-it('publishes a reachable retry/manual status during scheduler startup for a known failed native attempt', async () => {
-  const f = await setup()
-  f.common.manualInstallRecovery = async () => 'failed'
-  f.updater.quitAndInstall.mockImplementation(() => {
-    throw new Error('native launch failed')
-  })
-  await f.strategy.apply()
-  const restarted = new ElectronUpdaterStrategy(f.common)
-  const owner = (await import('./command-owner')).createUpdateCommandOwner(restarted)
-  const status = await owner.check() // Same action the startup scheduler invokes; no hidden manual command.
-  expect(status).toMatchObject({ state: 'ready', manualInstall: { kind: 'local', format: 'nsis' } })
-  expect(status.reason).toBeUndefined()
-  expect(status.recovery).toBeUndefined() // UpdateDialog selects its dismissible retry view, not S13.
-})
+it.each(['electron', 'manifest'] as const)(
+  'ignores historical pending and failed %s fallback records without granting an entry',
+  async (provider) => {
+    const f = await setupManifest()
+    const stored = JSON.parse(await readFile(f.receipt, 'utf8'))
+    for (const state of ['pending', 'failed']) {
+      stored.attempt = { state, version: '2.0.0', identity: stored.artifact.identity }
+      stored.failure = 'install'
+      await writeFile(f.receipt, JSON.stringify(stored))
+      const restarted =
+        provider === 'electron'
+          ? new ElectronUpdaterStrategy(f.common)
+          : new UpdateService(f.configuration)
+      expect((await restarted.getManualInstall()).kind).toBe('blocked')
+      expect(await restarted.check()).toMatchObject({ state: 'available', latest: '2.0.0' })
+      expect(restarted.getStatus().manualInstall).toBeUndefined()
+      expect(restarted.getStatus().localPath).toBeUndefined()
+    }
+  }
+)
 
 it('keeps asynchronous native handoff protected against checks, newer feed events and new downloads', async () => {
   const f = await setup()
@@ -686,63 +617,13 @@ it('keeps the Linux DEB distribution instructions after a transfer fails before 
   })
 })
 
-it('lets the existing manifest recovery UI action recheck native evidence and publish a reachable fallback after restart', async () => {
-  const f = await setup()
-  const target = join(f.directory, 'manifest.dmg')
-  const download = {
-    url: 'https://updates.example/aipoch-open-science-2.0.0-mac-arm64.dmg',
-    size: f.bytes.length,
-    sha256: createHash('sha256').update(f.bytes).digest('hex')
-  }
-  const recovery = vi.fn().mockResolvedValue('pending')
-  const openPath = vi.fn(async () => '')
-  const fetchImpl = vi.fn(async (url: unknown) => {
-    if (String(url).endsWith('version.json'))
-      return new Response(
-        JSON.stringify({ version: '2.0.0', downloads: { 'mac-arm64': download } })
-      )
-    const response = new Response(f.bytes, {
-      headers: { 'content-length': String(f.bytes.length) }
-    })
-    Object.defineProperty(response, 'url', { value: download.url })
-    return response
-  }) as unknown as typeof fetch
-  const configuration = {
-    platform: 'darwin' as const,
-    arch: 'arm64',
-    currentVersion: '1.0.0',
-    manifestUrl: 'https://updates.example/version.json',
-    fetchImpl,
-    promptSavePath: async () => target,
-    openPath,
-    broadcast: vi.fn(),
-    installationGuard: () => false,
-    manualInstallStorePath: join(f.directory, 'manifest-recovery.json'),
-    manualInstallRecovery: recovery,
-    inspectManualInstallSafety: async () => true,
-    verifyManualInstallerSignature: async () => {}
-  }
-  const service = new UpdateService(configuration)
-  await service.check()
-  await service.download()
-  await service.apply()
-  const restarted = new UpdateService(configuration)
-  const owner = (await import('./command-owner')).createUpdateCommandOwner(restarted)
-  expect((await owner.check()).recovery).toMatchObject({
-    installation: 'pending',
-    canRecover: true
-  })
-  expect((await owner.recover()).manualInstall).toBeUndefined()
-  expect(openPath).toHaveBeenCalledTimes(1)
-  recovery.mockResolvedValue('failed')
-  const status = await owner.recover() // RuntimeUpdateDialog S13 Retry calls this existing owner action.
-  expect(status).toMatchObject({ state: 'ready', manualInstall: { kind: 'local', format: 'dmg' } })
-  expect(status.reason).toBeUndefined()
-  expect(status.recovery).toBeUndefined()
-  expect(openPath).toHaveBeenCalledTimes(1)
-  const downloads = vi.mocked(fetchImpl).mock.calls.length
-  await owner.check()
-  expect(fetchImpl).toHaveBeenCalledTimes(downloads)
+it('does not restore manifest handoff authority from its auxiliary cache', async () => {
+  const f = await setupManifest()
+  await f.service.apply()
+  const restarted = new UpdateService(f.configuration)
+  expect((await restarted.check()).state).toBe('available')
+  expect((await restarted.getManualInstall()).kind).toBe('blocked')
+  expect(f.configuration.openPath).toHaveBeenCalledOnce()
 })
 
 it('does not infer terminal failure from a synchronous native submission exception', async () => {
@@ -757,24 +638,21 @@ it('does not infer terminal failure from a synchronous native submission excepti
     canRetryInstall: false
   })
   expect((await f.strategy.getManualInstall()).kind).toBe('blocked')
-  const receipt = JSON.parse(await readFile(f.common.manualInstallStorePath!, 'utf8'))
-  expect(receipt.attempt.state).toBe('pending')
-  expect(receipt.attempt.operationId).toMatch(/^[0-9a-f-]{36}$/)
 })
 
-it('releases the apply claim if durable failure cleanup cannot be written', async () => {
-  const f = await setup()
-  const clear = vi
-    .spyOn(ManualInstallerFallback.prototype, 'clearFailure')
-    .mockImplementationOnce(() => {
-      throw new Error('disk full')
-    })
+it('does not require fallback provenance before an Electron native handoff', async () => {
+  const f = await setup(false)
+  const { ManualInstallerFallback } = await import('./manual-install')
+  const capture = vi
+    .spyOn(ManualInstallerFallback.prototype, 'capture')
+    .mockRejectedValueOnce(new Error('auxiliary verification unavailable'))
   try {
-    expect(await f.strategy.apply()).toMatchObject({ state: 'ready', error: 'disk full' })
-    expect(f.updater.quitAndInstall).not.toHaveBeenCalled()
+    await f.strategy.download()
     await f.strategy.apply()
     expect(f.updater.quitAndInstall).toHaveBeenCalledOnce()
+    f.updater.emit('error', new Error('unknown native result'))
+    expect((await f.strategy.getManualInstall()).kind).toBe('blocked')
   } finally {
-    clear.mockRestore()
+    capture.mockRestore()
   }
 })

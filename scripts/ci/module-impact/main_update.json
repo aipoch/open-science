@@ -52,8 +52,6 @@
     "scripts/windows-installer-extractor.test.ts",
     "src/main/update/manual-install.test.ts",
     "src/main/update/manual-install.ts",
-    "src/main/update/native-install-observation.test.ts",
-    "src/main/update/native-install-observation.ts",
     "src/main/update/manual-install-strategy.test.ts"
   ],
   "interfacePaths": [
@@ -73,8 +71,7 @@
     "src/main/update/installation-reboot-recovery.ts",
     "src/main/update/verification-process.ts",
     "src/main/update/windows-update-handoff.ts",
-    "src/main/update/manual-install.ts",
-    "src/main/update/native-install-observation.ts"
+    "src/main/update/manual-install.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -109,7 +106,6 @@
       "scripts/windows-install-publication.test.ts",
       "scripts/windows-installer-extractor.test.ts",
       "src/main/update/manual-install.test.ts",
-      "src/main/update/native-install-observation.test.ts",
       "src/main/update/manual-install-strategy.test.ts"
     ],
     "contract": [

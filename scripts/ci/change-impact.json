@@ -319,7 +319,6 @@
         "src/main/update/electron-updater-strategy.ts",
         "src/main/update/command-owner.ts",
         "src/main/update/manual-install.ts",
-        "src/main/update/native-install-observation.ts",
         "src/main/update/service.ts",
         "src/main/wsl/**",
         "src/main/session-persistence/**",

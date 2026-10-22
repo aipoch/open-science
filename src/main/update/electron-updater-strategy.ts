@@ -226,7 +226,6 @@ const extractArtifactSize = (
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly manual: ManualInstallerFallback
   private artifactCapture?: Promise<void>
-  private restoredArtifact = false
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
   private readonly platform: NodeJS.Platform
@@ -319,7 +318,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.manual = new ManualInstallerFallback(
       this.platform === 'darwin' || this.platform === 'win32' ? this.platform : 'linux',
       this.arch,
-      this.currentVersion,
       {
         ...deps,
         manualInstallStorePath:
@@ -346,19 +344,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       },
       () => this.status,
       (manualInstall) => this.setStatus({ ...this.status, manualInstall }),
-      (status) => this.setStatus({ ...this.status, ...status })
+      this.log
     )
-    const restored = this.manual.restoredStatus()
-    if (restored) {
-      this.status = { ...this.status, ...restored }
-      this.restoredArtifact = true
-      queueMicrotask(
-        () =>
-          void this.manual
-            .get()
-            .catch((error) => this.log.warn('restored update qualification failed', error))
-      )
-    }
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
     this.subscribe()
@@ -541,7 +528,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       const installFailure = this.installerStarted
       // A post-handoff SDK error is not proof that the detached native installer has exited.
       if (!this.manual.hasPendingAttempt())
-        this.recordManualFailure(installFailure ? 'install' : 'download')
+        this.manual.failed(installFailure ? 'install' : 'download')
       this.readOnlyInstallerFailure ||= isMacReadOnlyUpdaterError(err, this.platform)
       this.applying = false
       this.installerStarted = false
@@ -557,15 +544,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             : 'Update error'
       })
     })
-  }
-
-  private recordManualFailure(kind: 'download' | 'install'): void {
-    try {
-      this.manual.failed(kind)
-    } catch (error) {
-      // Auxiliary failure bookkeeping must not interrupt error publication or handoff cleanup.
-      this.log.warn('manual update failure could not be persisted', error)
-    }
   }
 
   private pendingNativeRecovery(): Partial<UpdateStatus> {
@@ -677,7 +655,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   async check(): Promise<UpdateStatus> {
     // Keep provider checks mutually exclusive with downloads. A ready update may still be refreshed,
     // but its events are reconciled against the downloaded version by the subscribers above.
-    if (this.restoredArtifact || this.manual.hasPendingAttempt()) {
+    if (this.manual.hasPendingAttempt()) {
       await this.manual.get()
       return this.status
     }
@@ -807,7 +785,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         // reset the status to 'available', so leave it untouched here. Caught so the lifecycle never
         // rejects and can't poison the next download()'s drain.
         if (!token.cancelled) {
-          this.recordManualFailure('download')
+          this.manual.failed('download')
           this.setStatus({
             ...this.status,
             state: 'error',
@@ -836,7 +814,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   async cancel(): Promise<UpdateStatus> {
     if (
       this.installerStarted ||
-      (this.manual.hasPendingAttempt() && !(await this.manual.confirmAttemptSettled())) ||
+      this.manual.hasPendingAttempt() ||
       this.status.recovery?.canCancel === false
     )
       return this.status
@@ -900,14 +878,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const pending = (async () => {
       try {
         const result = await action()
-        try {
-          if (result.outcome === 'recovered' || result.outcome === 'cancelled')
-            this.manual.recovered()
-          else if (result.outcome === 'installed') this.manual.supersede(undefined)
-        } catch (error) {
-          // The recovery action has already settled; publish its actual runtime/install result.
-          this.log.warn('manual update recovery could not be persisted', error)
-        }
+        if (result.outcome === 'recovered' || result.outcome === 'cancelled')
+          this.manual.recovered()
+        else if (result.outcome === 'installed') this.manual.supersede(undefined)
         this.applying = false
         this.setStatus({ ...this.status, state: 'ready', ...result })
       } catch (error) {
@@ -930,8 +903,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       await this.manual.get()
       return this.status
     }
-    if (this.manual.hasPendingAttempt() && !(await this.manual.confirmAttemptSettled()))
-      return this.status
+    if (this.manual.hasPendingAttempt()) return this.status
     return this.runRecoveryAction(this.installationHooks.recheckInstall)
   }
 
@@ -941,8 +913,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       await this.manual.get()
       return this.status
     }
-    if (this.manual.hasPendingAttempt() && !(await this.manual.confirmAttemptSettled()))
-      return this.status
+    if (this.manual.hasPendingAttempt()) return this.status
     return this.runRecoveryAction(this.installationHooks.recoverInstall)
   }
 
@@ -955,25 +926,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     // second teardown/install. The broadcast also gives the renderer immediate feedback during the
     // shutdown gate, which can take up to 15 seconds on Windows.
     if (this.status.state !== 'ready' || this.applying) return this.status
-    if (this.manual.hasPendingAttempt() && !(await this.manual.confirmAttemptSettled()))
-      return this.status
-    if (this.restoredArtifact) {
-      if (this.status.recovery) return this.status
-      // A restarted SDK has no download state. Rehydrate its provider before retrying automatic apply.
-      this.restoredArtifact = false
-      this.setStatus({ state: 'idle' })
-      await this.check()
-      return this.download()
-    }
+    if (this.manual.hasPendingAttempt()) return this.status
     if (this.artifactCapture) await this.artifactCapture
     if (this.status.state !== 'ready' || this.applying) return this.status
     if (this.blockForInstallation(options.relaunch !== false)) return this.status
-    try {
-      this.manual.clearFailure()
-    } catch (error) {
-      this.setLifecycleFailure(error)
-      return this.status
-    }
+    this.manual.clearFailure()
     this.applying = true
     this.installerStarted = false
     this.setStatus({
@@ -1016,7 +973,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
           return this.status
         }
       } catch (error) {
-        this.recordManualFailure('install')
+        this.manual.failed('install')
         this.releaseAbortedInstallHandoff()
         this.applying = false
         this.setStatus({
@@ -1118,7 +1075,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     try {
       await this.installationHooks.beforeInstallHandoff?.(this.status)
     } catch (error) {
-      this.recordManualFailure('install')
+      this.manual.failed('install')
       this.releaseAbortedInstallHandoff()
       this.applying = false
       this.setLifecycleFailure(error)
@@ -1131,14 +1088,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.installerStarted = true
     let nativeSubmissionStarted = false
     try {
-      // Keep the platform handoff and manual observer on the same durable operation.
-      if (this.installationHooks.executeInstall) this.manual.retainProtectedHandoffContext()
       this.updateHandoff?.handoff()
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
       if (!this.installationHooks.executeInstall || executed === 'legacy') {
         const operationId = this.updateHandoff?.operationId ?? randomUUID()
-        if (this.status.localPath && this.status.artifactSha512)
-          await this.manual.beforeHandoff(operationId)
+        this.manual.beforeHandoff()
         this.updater.openScienceUpdateOperation = operationId
         nativeSubmissionStarted = true
         this.updater.quitAndInstall(
@@ -1152,7 +1106,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.releaseAbortedInstallHandoff()
       this.applying = false
       this.installerStarted = false
-      if (!nativeSubmissionStarted) this.recordManualFailure('install')
+      if (!nativeSubmissionStarted) this.manual.failed('install')
       this.setStatus({
         ...this.status,
         state: 'error',

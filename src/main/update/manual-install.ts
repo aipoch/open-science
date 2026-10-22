@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { basename, dirname, join } from 'node:path'
 import { installationFs } from './installation-filesystem'
-import { isNewer } from '../../shared/update'
 import type { ManualInstallInfo, ManualInstallerFormat, UpdateStatus } from '../../shared/update'
 
 export type ManualInstallerArtifact = {
@@ -26,21 +26,6 @@ export type ManualInstallerOptions = {
   revealManualInstallerFile?: (path: string) => void | Promise<void>
   verifyManualInstallerSignature?: (artifact: ManualInstallerArtifact) => Promise<void>
   inspectManualInstallSafety?: () => Promise<boolean | 'quit-required'>
-  // Native result/process evidence is required. An unchanged running version is never failure proof.
-  observeManualInstallHandoff?: (
-    artifact: ManualInstallerArtifact,
-    operationId?: string
-  ) => Promise<void>
-  manualInstallRecovery?: (
-    artifact: ManualInstallerArtifact,
-    operationId?: string
-  ) => Promise<'failed' | 'pending' | 'installed'>
-}
-type Stored = {
-  schema: 1
-  artifact?: ManualInstallerArtifact
-  failure?: 'download' | 'install'
-  attempt?: { identity: string; version: string; operationId?: string; state: 'pending' | 'failed' }
 }
 const { lstat, open, access } = installationFs.promises
 const snapshotKey = (status: UpdateStatus): string =>
@@ -73,7 +58,7 @@ export function manualInstallIsSafe(status: UpdateStatus): boolean {
 }
 
 // A pre-native occupancy refusal may expose instructions, never installation authority. The
-// persisted native-attempt gate and the live main-process safety hook must still authorize it.
+// current handoff gate and the live main-process safety hook must still authorize it.
 export function manualInstallRequiresQuit(status: UpdateStatus): boolean {
   return (
     (status.state === 'ready' || status.state === 'error' || status.state === 'available') &&
@@ -126,10 +111,13 @@ export function manualInstallerFormat(
 
 /** Main-only artifact ownership and fallback authority. No caller can supply a filesystem path. */
 export class ManualInstallerFallback {
-  private stored: Stored = { schema: 1 }
+  private artifact?: ManualInstallerArtifact
+  private failure?: 'download' | 'install'
+  private handoffStarted = false
   private revision = 0
   private check?: Promise<ManualInstallInfo>
   private checkSnapshot?: string
+  private checkRevision?: number
   private formatHint?: ManualInstallerFormat
   private reveal?: Promise<ManualInstallInfo>
   private qualification?: { snapshot: string; revision: number; info: ManualInstallInfo }
@@ -137,42 +125,22 @@ export class ManualInstallerFallback {
   constructor(
     private readonly platform: ManualInstallInfo['platform'],
     private readonly arch: string,
-    currentVersion: string,
     options: ManualInstallerOptions,
     private readonly status: () => UpdateStatus,
     private readonly publish: (info: ManualInstallInfo | undefined) => void,
-    private readonly publishRecovery?: (status: Partial<UpdateStatus>) => void
+    private readonly log?: Pick<Logger, 'warn'>
   ) {
     this.options = options
-    if (options.manualInstallStorePath) {
-      try {
-        const file = installationFs.lstatSync(options.manualInstallStorePath)
-        if (!file.isFile() || file.size > 64 * 1024) return
-        const stored = JSON.parse(
-          installationFs.readFileSync(options.manualInstallStorePath, 'utf8')
-        ) as Stored
-        const a = stored.artifact
-        if (
-          stored.schema === 1 &&
-          a &&
-          a.platform === platform &&
-          a.arch === arch &&
-          isNewer(a.version, currentVersion) &&
-          typeof a.path === 'string' &&
-          typeof a.identity === 'string' &&
-          ['sha256', 'sha512'].includes(a.algorithm) &&
-          Number.isSafeInteger(a.size) &&
-          a.size > 0 &&
-          typeof a.checksum === 'string'
-        )
-          this.stored = stored
-        else if (a && !isNewer(a.version, currentVersion)) this.persist()
-      } catch {
-        /* Missing or malformed provenance never grants access to a cache file. */
-      }
-    }
   }
   private persist(): void {
+    try {
+      this.writeRecord()
+    } catch (error) {
+      // Auxiliary provenance must never change the owning download or installation outcome.
+      this.log?.warn('manual update provenance could not be persisted', error)
+    }
+  }
+  private writeRecord(): void {
     const file = this.options.manualInstallStorePath
     if (!file) return
     installationFs.mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
@@ -180,7 +148,10 @@ export class ManualInstallerFallback {
     try {
       const descriptor = installationFs.openSync(temporary, 'wx', 0o600)
       try {
-        installationFs.writeFileSync(descriptor, JSON.stringify(this.stored))
+        installationFs.writeFileSync(
+          descriptor,
+          JSON.stringify({ schema: 1, artifact: this.artifact })
+        )
         installationFs.fsyncSync(descriptor)
       } finally {
         installationFs.closeSync(descriptor)
@@ -198,35 +169,14 @@ export class ManualInstallerFallback {
       installationFs.rmSync(temporary, { force: true })
     }
   }
-  restoredStatus(): Partial<UpdateStatus> | undefined {
-    const { artifact, attempt, failure } = this.stored
-    if (!artifact || (!failure && !attempt)) return undefined
-    return {
-      state: 'ready',
-      latest: artifact.version,
-      localPath: artifact.path,
-      ...(artifact.algorithm === 'sha512'
-        ? { artifactSha512: artifact.checksum }
-        : { download: { url: artifact.source, size: artifact.size, sha256: artifact.checksum } }),
-      reason: 'install-failed',
-      error: 'The previous update requires verification.',
-      recovery: {
-        phase: 'install-check',
-        runtime: 'unknown',
-        installation: attempt?.state === 'pending' ? 'pending' : 'unknown',
-        canCancel: false,
-        canRetryInstall: false,
-        canRecover: true
-      }
-    }
-  }
   async capture(
     input: Omit<ManualInstallerArtifact, 'identity' | 'device' | 'inode' | 'modified'>
   ): Promise<void> {
     if (this.hasPendingAttempt())
       throw new Error('A native installation attempt is still unresolved.')
     const revision = ++this.revision
-    this.stored = { schema: 1 }
+    this.artifact = undefined
+    this.failure = undefined
     this.publish(undefined)
     const stat = await lstat(input.path)
     if (!stat.isFile() || stat.size !== input.size) return
@@ -240,73 +190,58 @@ export class ManualInstallerFallback {
     // Verify bytes before trusting completion notifications or writing durable provenance.
     await this.verify(artifact, false)
     if (revision !== this.revision) return
-    this.stored = { schema: 1, artifact }
+    this.artifact = artifact
     this.persist()
   }
   supersede(version?: string): void {
     if (this.hasPendingAttempt()) return
-    if (!this.stored.artifact || this.stored.artifact.version === version) return
+    if (this.artifact && this.artifact.version === version) return
     ++this.revision
-    this.stored = { schema: 1 }
-    this.persist()
+    this.artifact = undefined
+    this.failure = undefined
     this.publish(undefined)
   }
   failed(kind: 'download' | 'install'): void {
-    if (kind === 'download' && this.hasPendingAttempt()) return
-    this.stored.failure = kind
-    if (this.stored.attempt) this.stored.attempt.state = 'failed'
-    this.persist()
-  }
-  retainProtectedHandoffContext(): void {
-    // The existing installation-protection record owns executor settlement and startup admission.
-    // Retain the release/artifact offer across a crash without creating a second pending native gate.
-    if (!this.stored.artifact) return
-    this.stored.failure = 'install'
-    this.persist()
+    if (this.hasPendingAttempt()) return
+    ++this.revision
+    this.failure = kind
   }
   clearFailure(): void {
     if (this.hasPendingAttempt()) return
-    this.stored.failure = undefined
-    this.persist()
-  }
-  async beforeHandoff(operationId: string = randomUUID()): Promise<void> {
-    const artifact = this.stored.artifact
-    if (!artifact) throw new Error('Verified update artifact provenance is unavailable.')
     ++this.revision
-    this.stored.attempt = {
-      identity: artifact.identity,
-      version: artifact.version,
-      operationId,
-      state: 'pending'
-    }
-    this.persist()
-    await this.options.observeManualInstallHandoff?.(artifact, operationId)
+    this.failure = undefined
+  }
+  beforeHandoff(): void {
+    // Submission errors do not prove a detached native installer stopped. Only the original
+    // installation protection owns cross-start recovery; this gate lives for this process.
+    ++this.revision
+    this.handoffStarted = true
+  }
+  handoffRejected(): void {
+    // Only a definite OS refusal to open the installer may use this. Exceptions or later SDK
+    // errors leave handoffStarted intact because the native outcome is unknown.
+    this.handoffStarted = false
+    this.failed('install')
   }
   hasPendingAttempt(): boolean {
-    return this.stored.attempt?.state === 'pending'
-  }
-  async confirmAttemptSettled(): Promise<boolean> {
-    if (!this.hasPendingAttempt()) return true
-    await this.get()
-    return !this.hasPendingAttempt()
+    return this.handoffStarted
   }
   recovered(): void {
-    if (this.hasPendingAttempt()) return
-    if (this.stored.attempt) this.stored.attempt.state = 'failed'
-    this.stored.failure = 'install'
-    this.persist()
+    if (this.hasPendingAttempt() || !this.artifact) return
+    ++this.revision
+    this.failure = 'install'
   }
   setOfferFormat(format: ManualInstallerFormat | undefined): void {
     this.formatHint = format
   }
   entry(): ManualInstallInfo | undefined {
     if (
-      (!this.stored.failure && !manualInstallRequiresQuit(this.status())) ||
+      (!this.failure && !manualInstallRequiresQuit(this.status())) ||
       (!manualInstallIsSafe(this.status()) && !manualInstallRequiresQuit(this.status())) ||
-      this.stored.attempt?.state === 'pending'
+      this.handoffStarted
     )
       return undefined
-    return this.website(this.stored.failure === 'download' ? 'download-failed' : 'unavailable')
+    return this.website(this.failure === 'download' ? 'download-failed' : 'unavailable')
   }
   isCurrent(info: ManualInstallInfo | undefined): boolean {
     return (
@@ -323,8 +258,7 @@ export class ManualInstallerFallback {
   private base(): Pick<ManualInstallInfo, 'identity' | 'platform' | 'arch' | 'version'> {
     return {
       identity:
-        this.stored.artifact?.identity ??
-        `${this.platform}:${this.arch}:${this.status().latest ?? ''}`,
+        this.artifact?.identity ?? `${this.platform}:${this.arch}:${this.status().latest ?? ''}`,
       platform: this.platform,
       arch: this.arch,
       version: this.status().latest
@@ -337,8 +271,8 @@ export class ManualInstallerFallback {
       ...this.base(),
       kind: 'website',
       reason,
-      ...((this.stored.artifact?.format ?? this.formatHint)
-        ? { format: this.stored.artifact?.format ?? this.formatHint }
+      ...((this.artifact?.format ?? this.formatHint)
+        ? { format: this.artifact?.format ?? this.formatHint }
         : {})
     }
   }
@@ -388,12 +322,13 @@ export class ManualInstallerFallback {
     if (this.check) {
       // A newer lifecycle waits for the old verifier, then receives its own current-state check.
       // Coalescing an old failed-install snapshot into recovery would otherwise strand the entry.
-      if (this.checkSnapshot === snapshot) return this.check
+      if (this.checkSnapshot === snapshot && this.checkRevision === this.revision) return this.check
       return this.check.then(() => this.get())
     }
     const pending = this.inspect()
     this.check = pending
     this.checkSnapshot = snapshot
+    this.checkRevision = this.revision
     void pending
       .finally(() => {
         if (this.check === pending) this.check = undefined
@@ -403,49 +338,18 @@ export class ManualInstallerFallback {
   }
   private async inspect(): Promise<ManualInstallInfo> {
     const revision = this.revision
-    let snapshot = snapshotKey(this.status())
+    const snapshot = snapshotKey(this.status())
     const blocked = (): ManualInstallInfo => {
       const result = this.blocked()
-      if (revision === this.revision && snapshotKey(this.status()) === snapshot)
+      if (
+        !this.handoffStarted &&
+        revision === this.revision &&
+        snapshotKey(this.status()) === snapshot
+      )
         this.publishQualified(result)
       return result
     }
-    const artifact = this.stored.artifact
-    if (
-      this.stored.attempt?.state === 'pending' &&
-      artifact &&
-      this.options.manualInstallRecovery
-    ) {
-      const result = await this.options
-        .manualInstallRecovery(artifact, this.stored.attempt?.operationId)
-        .catch(() => 'pending' as const)
-      if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return blocked()
-      if (result === 'failed') {
-        this.failed('install')
-      } else return blocked()
-    }
-    if (
-      this.stored.failure &&
-      !this.hasPendingAttempt() &&
-      this.status().recovery?.phase === 'install-check'
-    ) {
-      // A failed process is separate from a usable running service. Keep the recovery UI until
-      // current runtime control, occupancy and active work have also been checked in main.
-      const current = this.status()
-      const eligible =
-        manualInstallIsSafe({ ...current, recovery: undefined, reason: undefined }) &&
-        (!this.options.inspectManualInstallSafety ||
-          (await this.options.inspectManualInstallSafety().catch(() => false)) === true)
-      if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return blocked()
-      if (!eligible) return blocked()
-      this.publishRecovery?.({
-        recovery: undefined,
-        reason: undefined,
-        state: 'ready',
-        error: 'The previous installer stopped before completing the update.'
-      })
-      snapshot = snapshotKey(this.status())
-    }
+    const artifact = this.artifact
     const safe = async (): Promise<boolean | 'quit-required'> => {
       const requiresQuit = manualInstallRequiresQuit(this.status())
       if (this.hasPendingAttempt() || (!manualInstallIsSafe(this.status()) && !requiresQuit))
@@ -457,11 +361,11 @@ export class ManualInstallerFallback {
       if (this.hasPendingAttempt()) return false
       return result && (requiresQuit || result === 'quit-required') ? 'quit-required' : result
     }
-    if (!this.stored.failure && !manualInstallRequiresQuit(this.status())) return blocked()
+    if (!this.failure && !manualInstallRequiresQuit(this.status())) return blocked()
     const eligibility = await safe()
     if (!eligibility) return blocked()
     let result: ManualInstallInfo
-    if (this.stored.failure === 'download') result = this.website('download-failed')
+    if (this.failure === 'download') result = this.website('download-failed')
     else if (!artifact || artifact.version !== this.status().latest)
       result = this.website('unavailable')
     else if (!artifact.standalone || !artifact.format) result = this.website('not-standalone')
@@ -496,7 +400,7 @@ export class ManualInstallerFallback {
       const revision = this.revision
       const result = await this.get()
       if (result.kind !== 'local' || revision !== this.revision) return result
-      const artifact = this.stored.artifact!
+      const artifact = this.artifact!
       const snapshot = snapshotKey(this.status())
       if (result.identity !== artifact.identity) return this.blocked()
       try {

@@ -36,17 +36,7 @@ async function fixture(options: ManualInstallerOptions = {}) {
     ...options
   }
   const create = (): ManualInstallerFallback =>
-    new ManualInstallerFallback(
-      'linux',
-      'x64',
-      '1.0.0',
-      configuration,
-      () => status,
-      publish,
-      (update) => {
-        status = { ...status, ...update }
-      }
-    )
+    new ManualInstallerFallback('linux', 'x64', configuration, () => status, publish)
   const owner = create()
   const input = {
     platform: 'linux' as const,
@@ -168,13 +158,11 @@ describe('manual installer qualification and continuity', () => {
     signature.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
     const pending = f.owner.revealInstaller()
     await vi.waitFor(() => expect(signature).toHaveBeenCalledTimes(2))
-    await f.owner.beforeHandoff('native-operation')
+    await f.owner.beforeHandoff()
     expect(f.owner.isCurrent(offer)).toBe(false)
     release()
     expect((await pending).kind).toBe('blocked')
     expect(f.reveal).not.toHaveBeenCalled()
-    // A stale other-runtime UI snapshot cannot override a durable pending attempt on restart.
-    expect((await f.create().get()).kind).toBe('blocked')
   })
   it('rechecks live safety after signature verification and invalidates old lifecycle offers', async () => {
     const safety = vi.fn().mockResolvedValueOnce('quit-required').mockResolvedValue(false)
@@ -323,50 +311,27 @@ describe('manual installer qualification and continuity', () => {
     })
     expect(f.reveal).not.toHaveBeenCalled()
   })
-  it('durably binds handoff to artifact identity and never treats unchanged version or recovery clicks as failure proof', async () => {
-    const observe = vi.fn(async () => {})
-    const f = await fixture({ observeManualInstallHandoff: observe })
-    await f.owner.beforeHandoff()
-    const persisted = JSON.parse(await readFile(f.store, 'utf8'))
-    expect(persisted.attempt).toMatchObject({
-      state: 'pending',
-      identity: persisted.artifact.identity
-    })
-    expect(observe).toHaveBeenCalledTimes(1)
-    const restarted = f.create()
-    f.setStatus(restarted.restoredStatus()!)
-    restarted.recovered()
-    expect(await restarted.confirmAttemptSettled()).toBe(false)
-    expect(await restarted.get()).toMatchObject({ kind: 'blocked' })
-    expect(f.status().recovery?.installation).toBe('pending')
-  })
-  it('restores the retained package after explicit completed native failure evidence', async () => {
-    const recovery = vi.fn().mockResolvedValue('pending')
-    const f = await fixture({ manualInstallRecovery: recovery })
-    await f.owner.beforeHandoff()
-    const restarted = f.create()
-    f.setStatus(restarted.restoredStatus()!)
-    expect(await restarted.confirmAttemptSettled()).toBe(false)
-    recovery.mockResolvedValue('failed')
-    expect(await restarted.confirmAttemptSettled()).toBe(true)
-    expect(f.status().recovery).toBeUndefined()
-    expect(await restarted.get()).toMatchObject({ kind: 'local' })
-    expect(JSON.parse(await readFile(f.store, 'utf8')).attempt.state).toBe('failed')
-  })
-  it('drops the stale artifact attempt once the target version is running', async () => {
+  it('keeps current handoff unknown despite failure and recovery notifications', async () => {
     const f = await fixture()
-    await f.owner.beforeHandoff()
-    const current = new ManualInstallerFallback(
-      'linux',
-      'x64',
-      '2.0.0',
-      { manualInstallStorePath: f.store },
-      f.status,
-      f.publish
-    )
-    expect(current.restoredStatus()).toBeUndefined()
-    expect(JSON.parse(await readFile(f.store, 'utf8')).artifact).toBeUndefined()
+    f.owner.beforeHandoff()
+    f.owner.failed('install')
+    f.owner.recovered()
+    expect(f.owner.hasPendingAttempt()).toBe(true)
+    expect(await f.owner.get()).toMatchObject({ kind: 'blocked' })
   })
+  it.each(['pending', 'failed'] as const)(
+    'does not restore a historical %s attempt or cached artifact',
+    async (state) => {
+      const f = await fixture()
+      const stored = JSON.parse(await readFile(f.store, 'utf8'))
+      stored.attempt = { state, version: '2.0.0', identity: stored.artifact.identity }
+      stored.failure = 'install'
+      await writeFile(f.store, JSON.stringify(stored))
+      const restarted = f.create()
+      expect(restarted.hasPendingAttempt()).toBe(false)
+      expect(await restarted.get()).toMatchObject({ kind: 'blocked' })
+    }
+  )
 })
 
 describe('first-party independently installable channel contract', () => {
@@ -454,18 +419,34 @@ it('refuses artifact supersession and recapture while the exact native handoff i
   expect(f.owner.hasPendingAttempt()).toBe(true)
 })
 
-it('retires an unresolved older target when a newer version was installed separately', async () => {
+it('rechecks an equivalent failure snapshot after its qualification revision changes', async () => {
+  let release!: () => void
+  const safety = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = () => resolve(true)
+        })
+    )
+    .mockResolvedValue(true)
+  const f = await fixture({ inspectManualInstallSafety: safety })
+  f.owner.failed('download')
+  const first = f.owner.get()
+  f.owner.failed('download')
+  const second = f.owner.get()
+  release()
+  expect((await first).kind).toBe('blocked')
+  expect(await second).toMatchObject({ kind: 'website', reason: 'download-failed' })
+  expect(f.status().manualInstall).toMatchObject({ kind: 'website', reason: 'download-failed' })
+})
+
+it('discards a capture superseded before its first filesystem await completes', async () => {
   const f = await fixture()
-  await f.owner.beforeHandoff()
-  const current = new ManualInstallerFallback(
-    'linux',
-    'x64',
-    '2.1.0',
-    { manualInstallStorePath: f.store },
-    f.status,
-    f.publish
-  )
-  expect(current.restoredStatus()).toBeUndefined()
-  expect(current.hasPendingAttempt()).toBe(false)
-  expect(JSON.parse(await readFile(f.store, 'utf8')).artifact).toBeUndefined()
+  f.owner.supersede('3.0.0')
+  const capture = f.owner.capture(f.input)
+  f.owner.supersede('3.0.0')
+  await capture
+  f.owner.failed('install')
+  expect(await f.owner.get()).toMatchObject({ kind: 'website', reason: 'unavailable' })
 })

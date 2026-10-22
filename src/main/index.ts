@@ -56,10 +56,7 @@ import type { LocalePreferenceSnapshot } from '../shared/locale'
 import { acquireCredentialBootstrapLease, type RuntimeDirectoryLease } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
-import {
-  installationRootForEntry,
-  inspectInstallationAvailability
-} from './update/installation-protection'
+import { installationRootForEntry } from './update/installation-protection'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -1587,31 +1584,10 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
-  const { createNativeInstallObservation } = await import('./update/native-install-observation')
-  const nativeInstallObservation = app.isPackaged
-    ? createNativeInstallObservation({
-        path: join(profilePath, 'updates', 'native-install-observation.json'),
-        installationRoot: installationRootForEntry(backendPaths.entry),
-        currentVersion: app.getVersion(),
-        inspectOccupancy: () => {
-          const info = client!.runtimeInfo()
-          return inspectInstallationAvailability({
-            installationRoot: installationRootForEntry(backendPaths.entry),
-            runtime: {
-              pid: client!.processId(),
-              generation: info.generation,
-              configRoot: info.startupOptions.configRoot
-            },
-            allowedProcessIds: allowedInstallationProcessIds()
-          })
-        }
-      })
-    : {}
   const update = createUpdateStrategy(process.platform, {
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
-    ...nativeInstallObservation,
     cancelInstall: async () => {
       if (preparedMacInstallation?.debGate)
         await cancelDebSystemdGate(preparedMacInstallation.debGate)

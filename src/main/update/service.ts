@@ -88,7 +88,6 @@ const installerFileName = (url: string): string => {
 // renderer stores stay in sync. All I/O is injectable for tests; production reads Electron/OS.
 export class UpdateService implements UpdateStrategy {
   private readonly manual: ManualInstallerFallback
-  private restoredArtifact = false
   private status: UpdateStatus
   // Aborts the in-flight installer download; held so cancel() can stop it. Cleared once download settles.
   private downloadAbort?: AbortController
@@ -150,7 +149,6 @@ export class UpdateService implements UpdateStrategy {
     this.manual = new ManualInstallerFallback(
       this.platform === 'darwin' || this.platform === 'win32' ? this.platform : 'linux',
       this.arch,
-      this.currentVersion,
       {
         ...deps,
         manualInstallStorePath:
@@ -165,19 +163,8 @@ export class UpdateService implements UpdateStrategy {
       },
       () => this.status,
       (manualInstall) => this.setStatus({ ...this.status, manualInstall }),
-      (status) => this.setStatus({ ...this.status, ...status })
+      this.log
     )
-    const restored = this.manual.restoredStatus()
-    if (restored) {
-      this.status = { ...this.status, ...restored }
-      this.restoredArtifact = true
-      queueMicrotask(
-        () =>
-          void this.manual
-            .get()
-            .catch((error) => this.log.warn('restored update qualification failed', error))
-      )
-    }
   }
 
   // Platform-aware save location. Windows/Linux write straight to the Downloads folder (no OS
@@ -208,7 +195,7 @@ export class UpdateService implements UpdateStrategy {
 
   async recheck(): Promise<UpdateStatus> {
     // The existing recovery dialog calls this provider through the same command owner as the SDK.
-    // Qualification owns pending-process evidence and live safety; a retry never opens the package.
+    // Unresolved native handoffs remain blocked; this does not infer installer settlement.
     await this.manual.get()
     return this.status
   }
@@ -219,15 +206,6 @@ export class UpdateService implements UpdateStrategy {
 
   getStatus(): UpdateStatus {
     return this.status
-  }
-
-  private recordManualFailure(kind: 'download' | 'install'): void {
-    try {
-      this.manual.failed(kind)
-    } catch (error) {
-      // Auxiliary failure bookkeeping must not interrupt the owning update lifecycle.
-      this.log.warn('manual update failure could not be persisted', error)
-    }
   }
 
   // Manifest flow always applies via an installer, so stamp applyKind here so every broadcast status
@@ -255,7 +233,7 @@ export class UpdateService implements UpdateStrategy {
   async check(): Promise<UpdateStatus> {
     // A transfer and a manifest check cannot own the status concurrently. Once ready, checks still run
     // but only a strictly newer release may supersede the downloaded installer.
-    if (this.restoredArtifact || this.manual.hasPendingAttempt()) return this.recheck()
+    if (this.manual.hasPendingAttempt()) return this.recheck()
     if (this.downloadLifecycle) return this.status
     if (this.checkLifecycle) return this.checkLifecycle
 
@@ -303,7 +281,7 @@ export class UpdateService implements UpdateStrategy {
               )
             : undefined
         )
-        if (!download) this.recordManualFailure('install')
+        if (!download) this.manual.failed('install')
         this.setStatus({
           state: 'available',
           current: this.currentVersion,
@@ -487,19 +465,21 @@ export class UpdateService implements UpdateStrategy {
             this.status.latest,
             'manifest'
           )
-          await this.manual.capture({
-            path: localPath,
-            version: this.status.latest,
-            platform:
-              this.platform === 'darwin' || this.platform === 'win32' ? this.platform : 'linux',
-            arch: this.arch,
-            source: download.url,
-            size: download.size,
-            algorithm: 'sha256',
-            checksum: download.sha256.toLowerCase(),
-            format,
-            standalone: Boolean(format)
-          })
+          await this.manual
+            .capture({
+              path: localPath,
+              version: this.status.latest,
+              platform:
+                this.platform === 'darwin' || this.platform === 'win32' ? this.platform : 'linux',
+              arch: this.arch,
+              source: download.url,
+              size: download.size,
+              algorithm: 'sha256',
+              checksum: download.sha256.toLowerCase(),
+              format,
+              standalone: Boolean(format)
+            })
+            .catch((error) => this.log.warn('update artifact provenance unavailable', error))
         }
         if (abort.signal.aborted || this.downloadAbort !== abort) return
         this.setStatus({
@@ -517,7 +497,7 @@ export class UpdateService implements UpdateStrategy {
         // an error the user can retry from. Caught here so the lifecycle never rejects and can't poison
         // the next download()'s drain.
         if (!abort.signal.aborted) {
-          this.recordManualFailure('download')
+          this.manual.failed('download')
           this.setStatus({
             ...this.status,
             state: 'error',
@@ -571,9 +551,7 @@ export class UpdateService implements UpdateStrategy {
     admittedStatus: UpdateStatus,
     options?: UpdateApplyOptions
   ): Promise<UpdateStatus> {
-    if (this.status !== admittedStatus || !(await this.manual.confirmAttemptSettled()))
-      return this.status
-    this.restoredArtifact = false
+    if (this.status !== admittedStatus || this.manual.hasPendingAttempt()) return this.status
     if (this.blockForInstallation(options?.relaunch !== false)) return this.status
     let nativeSubmissionStarted = false
     const pendingRecovery = (): Partial<UpdateStatus> =>
@@ -617,10 +595,10 @@ export class UpdateService implements UpdateStrategy {
         if (this.status !== ownedStatus) return this.status
         if (verified) {
           operation.phase('open-installer')
-          await this.manual.beforeHandoff()
+          this.manual.beforeHandoff()
           nativeSubmissionStarted = true
           const error = await this.openPath(localPath)
-          if (error) this.recordManualFailure('install')
+          if (error) this.manual.handoffRejected()
           if (this.status === ownedStatus) {
             this.setStatus({
               ...admittedStatus,
@@ -659,7 +637,7 @@ export class UpdateService implements UpdateStrategy {
       return this.status
     } catch (error) {
       if (this.status === ownedStatus && ownedStatus.state === 'applying') {
-        if (!nativeSubmissionStarted) this.recordManualFailure('install')
+        if (!nativeSubmissionStarted) this.manual.failed('install')
         this.setStatus({
           ...admittedStatus,
           state: 'ready',
