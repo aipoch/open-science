@@ -484,6 +484,7 @@
         "e2e/session-residency-capacity.spec.ts",
         "e2e/compute-execution-mode.spec.ts",
         "e2e/find-overlay.spec.ts",
+        "e2e/native-action-menu.spec.ts",
         "e2e/literature-client-sync.spec.ts",
         "e2e/journal-attributes.spec.ts",
         "e2e/literature-smart-collections.spec.ts",
@@ -572,6 +573,7 @@
       "runner": "playwright",
       "paths": [
         "e2e/certification/helpers.ts",
+        "e2e/fixtures/action-menu.ts",
         "e2e/fixtures/brand-storage-data.ts",
         "e2e/fixtures/conversation.ts",
         "e2e/fixtures/electron-app.ts",
