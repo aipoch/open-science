@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import type { PdfAnnotationKind, PdfAnnotationSelector } from '../../shared/pdf-annotations'
+import type { PdfNativeAnnotationDraft } from '../../shared/pdf-annotations'
 import type { PdfMarkColor } from '../../shared/pdf-bookmarks'
 
 const MAX_IMPORTED_NATIVE_ANNOTATIONS = 500
@@ -41,17 +41,6 @@ type PdfJsPage = Readonly<{
   getAnnotations: (options?: { intent?: string }) => Promise<readonly PdfJsAnnotation[]>
   getTextContent: () => Promise<{ items: readonly PdfJsTextItem[] }>
   cleanup?: () => void
-}>
-
-type PdfNativeAnnotationDraft = Readonly<{
-  nativeId?: string
-  stableKey: string
-  pageNumber: number
-  kind: PdfAnnotationKind
-  selector: PdfAnnotationSelector
-  color: PdfMarkColor
-  note: string
-  subtype: string
 }>
 
 type NativePdfAnnotationImportResult = Readonly<{

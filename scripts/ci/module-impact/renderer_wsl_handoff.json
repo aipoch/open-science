@@ -4,7 +4,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/session-persistence/usage-regressions.test.ts",
       "src/main/specialist/application-commands.test.ts",

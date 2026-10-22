@@ -45,8 +45,12 @@ for (path in paths[c(2,1)]) {
           language === 'python' ? ['-c', script] : ['--vanilla', '-e', script],
           { cwd: dataRoot, timeout: 30_000 }
         )
-        expect(await readFile(join(dataRoot, 'a.csv.copy'), 'utf8')).toBe('Ctrl\n')
-        expect(await readFile(join(dataRoot, 'b.csv.copy'), 'utf8')).toBe('IRI\n')
+        expect(
+          (await readFile(join(dataRoot, 'a.csv.copy'), 'utf8')).replaceAll('\r\n', '\n')
+        ).toBe('Ctrl\n')
+        expect(
+          (await readFile(join(dataRoot, 'b.csv.copy'), 'utf8')).replaceAll('\r\n', '\n')
+        ).toBe('IRI\n')
       }
     } finally {
       await rm(root, { recursive: true, force: true })

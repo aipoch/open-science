@@ -443,7 +443,8 @@ export class SessionPackageOperation {
     kind: PackageOperationSnapshot['kind'],
     session: SessionPackageRequest | undefined,
     work: (signal: AbortSignal) => Promise<T>,
-    importTarget?: PackageOperationSnapshot['importTarget']
+    importTarget?: PackageOperationSnapshot['importTarget'],
+    requiresRecovery?: () => boolean
   ): Promise<T> {
     if (this.controller) throw new Error('A Session package operation is already in progress.')
     const controller = new AbortController()
@@ -480,15 +481,16 @@ export class SessionPackageOperation {
       return result
     } catch (error) {
       const sensitiveContent = this.current?.sensitiveContent
+      // A cancelled transfer can still own a durable import that must remain retryable.
+      const recoveryRequired = this.current?.result?.recovery || requiresRecovery?.()
       this.current = {
         ...this.current!,
-        state:
-          controller.signal.aborted && !this.current?.result?.recovery ? 'cancelled' : 'failed',
+        state: controller.signal.aborted && !recoveryRequired ? 'cancelled' : 'failed',
         files: undefined,
         summary: undefined,
         importPreview: undefined,
         error:
-          controller.signal.aborted && !this.current?.result?.recovery
+          controller.signal.aborted && !recoveryRequired
             ? undefined
             : error instanceof Error
               ? error.message

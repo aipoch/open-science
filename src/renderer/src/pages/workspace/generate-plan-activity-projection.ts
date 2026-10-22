@@ -1,4 +1,4 @@
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import { createPlanDocumentV1, type PlanDocumentV1 } from '../../../../shared/session-plan/contract'
 
 type PlanTranscriptStep = Readonly<{

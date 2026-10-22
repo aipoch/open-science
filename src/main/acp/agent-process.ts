@@ -2,7 +2,7 @@ import { nodeRuntimeEnvironment } from '../node-process-host'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import type { AgentProcessSpawner } from '../agent-framework/types'
+import type { AgentProcessSpawner } from '../node-process-host'
 
 import { createLogger } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv } from '../settings/shell-path'

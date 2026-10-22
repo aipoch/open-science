@@ -1,11 +1,173 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { credentialRecoveryMessage } from './recovery'
 import { CredentialIdentityError } from './selection'
-import { credentialDiagnosticSchema } from './diagnostic'
+import { inventoryDiagnosticSchema, windowsCredentialDiagnosticSchema } from './diagnostic'
 import { initLogger, writeFatalLogSync } from '@aipoch/diagnostics/node'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readCredentialCiphertexts } from './ciphertext-inventory'
+import { DatabaseSync } from 'node:sqlite'
+
+const cleanup = vi.hoisted(() => ({ fail: undefined as ((path: string) => void) | undefined }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    rmSync(path: string, options: import('node:fs').RmOptions) {
+      cleanup.fail?.(path)
+      actual.rmSync(path, options)
+    }
+  }
+})
+
+it.each(['read-success', 'invalid-ciphertext'])(
+  'reports the correct failure when snapshot cleanup fails after %s',
+  (kind) => {
+    const root = mkdtempSync(join(tmpdir(), 'private-inventory-cleanup-'))
+    let temporary: string | undefined
+    try {
+      const path = join(root, 'open-science.db')
+      const db = new DatabaseSync(path)
+      db.exec('CREATE TABLE ComputeCredential(ciphertext TEXT)')
+      if (kind === 'invalid-ciphertext') {
+        db.exec("INSERT INTO ComputeCredential VALUES ('PRIVATE-SECRET')")
+      }
+      db.close()
+      const before = readFileSync(path)
+      cleanup.fail = (target) => {
+        temporary = target
+        throw Object.assign(new Error(`PRIVATE-SECRET ${target}`), { code: 'EACCES' })
+      }
+      let failure: unknown
+      try {
+        readCredentialCiphertexts({ configRoot: root, profilePath: join(root, 'profile') })
+      } catch (error) {
+        failure = error
+      }
+      expect(temporary).toBeDefined()
+      expect(failure).toBeInstanceOf(CredentialIdentityError)
+      const message = credentialRecoveryMessage(failure as CredentialIdentityError, ['en'])
+      expect(message).toContain('Affected data: Application database')
+      if (kind === 'read-success') {
+        expect(message).toContain('Stage: Cleaning up database inspection resources')
+        expect(message).toContain('Access was denied by the operating system.')
+        expect(message).toContain('SYSTEM_ERROR: EACCES')
+        expect(message).not.toContain('Reading database contents')
+      } else {
+        expect(message).toContain('Stage: Reading database contents')
+        expect(message).toContain('An encrypted data entry has an invalid format.')
+        expect(message).not.toContain('SYSTEM_ERROR: EACCES')
+      }
+      expect(message).not.toContain('PRIVATE-SECRET')
+      expect(message).not.toContain(root)
+      expect(message).not.toContain(temporary!)
+      expect(readFileSync(path)).toEqual(before)
+    } finally {
+      cleanup.fail = undefined
+      if (temporary) rmSync(temporary, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it.each(['journal', 'credentials', 'pending', 'database'])(
+  'explains the actual %s inventory failure without suggesting key recovery',
+  (kind) => {
+    const root = mkdtempSync(join(tmpdir(), 'private-inventory-'))
+    try {
+      const path = join(root, 'open-science.db')
+      if (kind === 'journal') {
+        const db = new DatabaseSync(path)
+        db.exec('CREATE TABLE fixture(value TEXT)')
+        db.close()
+        writeFileSync(`${path}-journal`, Buffer.from([1]))
+      } else if (kind === 'credentials') {
+        writeFileSync(join(root, 'credentials.json'), '{PRIVATE-SECRET')
+      } else if (kind === 'pending') {
+        writeFileSync(join(root, 'credentials.json.crash.tmp'), 'PRIVATE-SECRET')
+      } else writeFileSync(path, 'PRIVATE-SECRET is not a database')
+      const contents = (): Record<string, Buffer> =>
+        Object.fromEntries(readdirSync(root).map((name) => [name, readFileSync(join(root, name))]))
+      const before = contents()
+      let failure: unknown
+      try {
+        readCredentialCiphertexts({ configRoot: root, profilePath: join(root, 'profile') })
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(CredentialIdentityError)
+      expect((failure as CredentialIdentityError).reason).toBe('ciphertext-inventory-unavailable')
+      const message = credentialRecoveryMessage(failure as CredentialIdentityError, ['en'])
+      const expected = {
+        journal: [
+          'Affected data: Application database',
+          'Stage: Checking database journals',
+          'The rollback journal header is incomplete.'
+        ],
+        credentials: [
+          'Affected data: Credential configuration',
+          'Stage: Parsing configuration',
+          'The configuration is not valid JSON.'
+        ],
+        pending: [
+          'Affected data: Credential configuration',
+          'Stage: Reading files',
+          'An unfinished configuration write needs recovery.'
+        ],
+        database: [
+          'Affected data: Application database',
+          'Stage: Reading database contents',
+          'The database could not be read.'
+        ]
+      }[kind]!
+      for (const text of expected) expect(message).toContain(text)
+      expect(message).toContain(
+        'Startup has stopped. This check has not modified the original data.'
+      )
+      expect(message).not.toContain('Unlock the system credential store')
+      expect(message).not.toContain(root)
+      expect(message).not.toContain('PRIVATE-SECRET')
+      expect(contents()).toEqual(before)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it('does not suggest key recovery when an older inventory error has no details', () => {
+  const message = credentialRecoveryMessage(
+    new CredentialIdentityError('ciphertext-inventory-unavailable'),
+    ['en']
+  )
+  expect(message).toContain('The failing data source and exact cause are unknown.')
+  expect(message).not.toContain('Unlock the system credential store')
+})
+
+it.each(inventoryDiagnosticSchema.shape.reason.options)(
+  'localizes inventory reason %s and its object and stage in every shipped language',
+  (reason) => {
+    const index = inventoryDiagnosticSchema.shape.reason.options.indexOf(reason)
+    const sources = inventoryDiagnosticSchema.shape.source.options
+    const stages = inventoryDiagnosticSchema.shape.stage.options
+    const error = new CredentialIdentityError('ciphertext-inventory-unavailable', undefined, {
+      code: 'inventory-failed',
+      source: sources[index % sources.length],
+      stage: stages[index % stages.length],
+      reason
+    })
+    const english = credentialRecoveryMessage(error, ['en'])
+    const englishDetails = english
+      .split('\n')
+      .filter((line) => /^(Affected data|Stage|Failure reason):/.test(line))
+    expect(englishDetails).toHaveLength(3)
+    for (const locale of ['de', 'es', 'fr', 'ja', 'ko', 'ru', 'zh-CN', 'zh-TW']) {
+      const translated = credentialRecoveryMessage(error, [locale])
+      expect(translated).toContain('CREDENTIAL_DETAIL: inventory-failed')
+      for (const detail of englishDetails) expect(translated).not.toContain(detail.split(': ')[1])
+    }
+  }
+)
 
 it('preserves safe diagnostics in the real synchronous fatal log sink', () => {
   const logDir = mkdtempSync(join(tmpdir(), 'credential-diagnostic-log-'))
@@ -38,7 +200,7 @@ it('shows the specific Windows file-lock reason and safe system code', () => {
   expect(message).toContain('现有凭据未被替换')
 })
 
-it.each(credentialDiagnosticSchema.shape.code.options)(
+it.each(windowsCredentialDiagnosticSchema.shape.code.options)(
   'localizes Windows diagnostic %s in every shipped language',
   (code) => {
     const error = new CredentialIdentityError('windows-profile-key-unavailable', undefined, {

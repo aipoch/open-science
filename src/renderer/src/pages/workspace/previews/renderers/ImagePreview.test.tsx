@@ -56,7 +56,8 @@ describe('ImagePreviewRenderer', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'artifact',
       projectId: 'project-1',
-      fileId: 'artifact-1'
+      fileId: 'artifact-1',
+      imagePreview: true
     })
   })
 })

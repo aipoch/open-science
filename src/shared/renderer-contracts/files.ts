@@ -2,6 +2,8 @@
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../artifacts'
 
 import type {
+  ArtifactSaveOperationRequest,
+  ArtifactSaveProgress,
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
@@ -143,7 +145,7 @@ export const managedFileVersionsCancelDiffContracts = {
     (
       request: ManagedFileVersionInspectRequest
     ) => Promise<ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>>
-  >()('managed-file-versions', ['managed-file-versions:inspect', ELECTRON]),
+  >()('managed-file-versions', ['managed-file-versions:inspect', WEB]),
   'managedFileVersions.saveTextEdit': callable<
     (
       request: ManagedFileVersionSaveTextEditRequest
@@ -184,6 +186,13 @@ export const projectFilesGetOverviewContracts = {
 } as const
 
 export const saveBlobFileContracts = {
+  getArtifactSaveProgress: callable<
+    (request: ArtifactSaveOperationRequest) => Promise<ArtifactSaveProgress | undefined>
+  >()('platform-file-save', ['file:artifact-save-progress', MAPPED_ELECTRON]),
+  cancelArtifactSave: callable<(request: ArtifactSaveOperationRequest) => Promise<void>>()(
+    'platform-file-save',
+    ['file:cancel-artifact-save', MAPPED_ELECTRON]
+  ),
   saveBlobFile: callable<(request: SaveBlobFileRequest) => Promise<SaveBlobFileResult>>()(
     'platform-file-save',
     ['file:save-blob', MAPPED_NATIVE]

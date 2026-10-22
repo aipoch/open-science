@@ -61,6 +61,8 @@ planned for every change it carries, not only its own pull request. CI Integrity
 pull request title in the queue because it becomes the squash subject.
 Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
 and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
+The Notebook macOS isolation suite allows one fresh-process retry, retaining both attempts in CI
+logs. A repeated failure remains blocking; release verification keeps its single-attempt policy.
 Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Queue reselects Windows core integration groups for the combined revision; selected checks remain blocking.
 
 ### Platform profiles
@@ -167,8 +169,57 @@ without requiring notarization. Windows nightly permits unsigned binaries but re
 signatures; stable Release checks remain unchanged. Nightly does not publish CLI
 deb/rpm packages, npm packages or Homebrew updates.
 The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution=npm` retains the
-credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
-for a GitHub Release.
+credential-free npm packaging dry-run. No npm token is needed for a GitHub Release.
+
+### Publishing npm packages
+
+Stable Release preparation creates npm tarballs alongside CLI archives from the same signed
+backend, without compiling it again. All five native installation checks, the minimum supported
+Node check and the complete-set gate must pass before Release publication. Nightly remains
+archive-only. npm tarballs and their existing integrity reports are retained as Actions artifacts
+for 30 days; they are not attached to the public GitHub Release.
+
+`npm-release.yml` runs independently after a successful stable Release. It downloads that exact
+Release run's verified npm artifacts without rebuilding or repacking. Manual dispatch requires
+`release_run_id` and defaults to `dry_run=true`, which validates the complete artifact set and
+registry preflight without writes or npm credentials. Old Release runs without npm artifacts,
+expired artifacts, mismatched bytes and `latest` downgrades fail closed; there is no rebuild fallback.
+
+The publisher checks source, version, all six packages and registry integrity before any write.
+It uploads missing platform packages concurrently and waits for all five exact versions and
+integrity values to be readable in the registry before publishing the shared CLI entry package.
+Any platform failure blocks the entry package and fails the job, while other in-flight uploads
+finish. Successful uploads remain published; retry using the same Release run's original artifacts.
+Matching published versions are skipped. An authentication failure still requires repairing that
+package's publishing authorization before retrying; concurrency does not repair credentials.
+
+Publishing stays on `main` through the `npm` environment using npm Trusted Publishing (OIDC).
+Registry failures do not undo or block the already published GitHub Release. First publication
+requires explicit bootstrap credentials; remove them after configuring trust. Build jobs and
+dry-runs receive no npm credentials. No application data, state enums or report schema changes
+are involved.
+
+For focused preparation checks, dispatch `publish-npm.yml` with `distribution=archive`,
+`include_npm=true` and a single `target`; select `all` to exercise the complete-set gate.
+This reuses the combined preparation path without publication. Leave `desktop_run_id` empty:
+that input remains an extraction-only check. The dispatcher also retains credential-free
+historical source packaging with `distribution=npm` and `release_run_id`, but those rebuilt
+artifacts must not replace the original bytes of a partially published version.
+
+#### Updating the npm package documentation
+
+Edit `packages/open-science/README.md` for the npm package page and
+`packages/open-science/CLI.md` for the command reference. npm staging copies these files into
+the entry package; the repository-root README remains the broader product overview.
+Keep installation requirements and examples aligned with the standalone runtime guide and
+the published manifest, whose version and Node requirement come from the standalone build.
+
+[npm updates a package-page README only when a new version is published](https://docs.npmjs.com/about-package-readme-files).
+Merging documentation into `main` does not update an already published package page. Include
+the changes in a new stable Release source and let the existing npm publication workflow
+publish that version. Re-running publication for an old Release uses its old source and cannot
+replace an immutable published version. Do not publish the development package directory
+directly: it lacks the generated platform dependency manifest.
 
 ## Supplemental desktop coverage
 
@@ -247,12 +298,40 @@ uses the same repository-owned dependency reader as package tiering, without ext
 tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
 destructive changes, dirty checkouts and missing evidence retain the broad selection.
 
+## Module graph engine
+
+`scripts/ci/module-graph/` owns source evidence and the proofs built on it. Each file has one role:
+
+| File                    | Responsibility                                                      |
+| ----------------------- | ------------------------------------------------------------------- |
+| `source.mjs`            | Git snapshots and working-tree reads; never executes candidate code |
+| `dependency-reader.mjs` | The single TypeScript-based import reader                           |
+| `boundaries.mjs`        | Loads and validates `scripts/ci/module-boundaries.json`             |
+| `layers.mjs`            | File roles and layer rules                                          |
+| `derived-index.mjs`     | Reads and applies `module-derived-consumers.json`                   |
+| `derived-consumers.mjs` | Generates/checks the index and runs the coverage guard (CLI)        |
+| `boundary-evidence.mjs` | Verifies reviewed boundaries; rejections name the unmet condition   |
+| `retirement.mjs`        | Trusted base/head consumer and package-evidence retirement proofs   |
+| `relationships.mjs`     | Exports the module relationship report (CLI)                        |
+
+Other scripts import only `index.mjs`, or `policy.mjs` when they must stay dependency-free:
+trusted preflight runs from an exported base tree without installed packages.
+`module-graph/boundaries.test.ts` enforces both rules. Data files stay at their existing
+`scripts/ci/` paths because base-revision checkers read them from candidate revisions.
+
+PR Gate preflight exports the complete base `scripts/ci/` tree with `git archive`, so moving
+internal files never requires a workflow change. A base without `module-impact-authority.mjs`
+bootstraps a full plan.
+
 ## Derived consumer evidence
 
 The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
 selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
 Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
-missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+missing, stale or invalid evidence. Index changes require CI owner review. PR Gate treats a modified,
+valid index as additive evidence: it merges the candidate tests into the trusted index, so selection
+can only grow, and routes the remaining paths normally. An added, deleted, renamed or invalid index,
+or any other CI input, still selects the full plan.
 Non-source resource changes anywhere in the repository do not reject an inherited stale index
 when the dependency reader's text inputs and recomputed consumer memberships are unchanged.
 This uses the reader's own JavaScript/TypeScript/JSON input boundary, not a documentation-path
@@ -271,6 +350,92 @@ The consumer-coverage guard requires reachable coverage and a fresh derived inde
 require deleting conservative explicit consumers. A newly complete dependency graph can prove
 current independence without proving historical reachability. Only the trusted base/head
 retirement checks described below authorize removing those existing obligations.
+
+### Reviewed source-derived boundaries
+
+Reviewed modules use known source dependencies plus explicit runtime and behavioral
+contracts instead of historical whole-module test inheritance. The exact module cohort and source
+boundaries are trusted policy in `scripts/ci/module-boundaries.json`, not candidate metadata. Pure
+boundaries require a complete runtime-cone check; stateful boundaries require reviewed direct runtime
+imports and mandatory behavior tests. An unknown direct loader or external runtime import requires
+reclassification. This does not prove transitive services or packages pure; their declared contracts
+and platform lanes remain part of validation.
+
+Credential identity, provider transport and framework launch permit a bounded literal loader syntax:
+`createRequire(import.meta.url)` called directly or held in a local `const`, literal single-argument
+calls or `.resolve()`, and literal `process.getBuiltinModule()` calls. Escaped or shadowed bindings,
+computed targets and module-loader chaining remain opaque. This opt-in only establishes reviewed
+direct imports; it does not make the default consumer reader or transitive native/transport code
+complete.
+
+The shared file-role classifier enforces structural direction, including type-only imports. Record
+contracts cannot import services; codecs may use contracts, policy and packages, but cannot
+orchestrate services. Bootstrap credential-store state is identified separately. Host adapters
+cannot import host services or composition. Presentation models cannot import UI implementations or
+host code. Application services cannot import presentation or application composition. Mixed modules
+report multiple roles. Domain contracts cannot import application implementations; repositories may
+use lower-level storage infrastructure, but not command adapters. Infrastructure cannot import
+application services, while runtime state cannot import composition or presentation. Presentation
+runtime is distinguished from pure presentation models. Pure policy, domain-contract and
+presentation-model files cannot borrow a mixed owner's filesystem, process or UI import permissions;
+their direct external imports are checked separately. Host ports define their own contracts rather
+than importing an Electron adapter's types; a name containing `contracts` is not an exemption.
+Legacy foreign `interfacePaths` remain routing obligations, not proof of a public domain interface.
+
+Reviewed boundaries may declare `resourcePaths` separately from parser-readable `sources`; the two
+lists must partition all non-test owner paths, and `resourceTests` must be a nonempty subset of the
+pinned `requiredTests`. Resource contents remain opaque: their behavior, packaging and platform
+contracts must be reviewed explicitly. New owner paths, assets or missing tests invalidate the
+boundary; no directory-wide resource exemption is supported. Pure text-processing imports may be
+approved per file through `pureExternalImports`; only the reviewed parsing packages are admitted,
+never filesystem/process/UI imports. These opt-ins apply only to reviewed dependency-model
+selection; independent-history proofs retain their original conservative parser and opaque-resource
+behavior.
+
+For these modules, `consumerModules` retains platform and fallback routing only; it does not copy
+downstream modules' entire test inventories into the affected plan. Owner/contract suites,
+generated consumers, type/mock imports and explicit runtime edges remain selected. Keep dynamic
+IPC, event and filesystem obligations in the runtime manifest or explicit contract tests; an opaque
+consumer cone alone no longer requires retaining every historical test.
+
+Integrity permits inheritance-only consumer removals for this cohort only in a registration-only
+revision with unchanged source, interfaces, owner/contract tests, module edges, platform/fallback
+obligations and policy. Known reachable tests cannot retire. Reports call these
+**dependency-model retirements**, separately from proven independence. Merge the policy before a
+cleanup that relies on it. Integrity rejects newly copied consumers without known dependency
+evidence, and also rejects unreviewed owner expansion, additional module fan-out, reversed layers,
+missing required contracts and runtime dependencies outside the applicable boundary. Restore the
+reviewed boundary or add `fullTestReason` and review its reclassification. Other modules retain the
+existing conservative inheritance and retirement rules.
+
+## Actions cache maintenance
+
+The **Clean up closed PR caches** workflow sweeps `refs/pull/<number>/merge` caches after
+PR Gate completes for a PR or merge group. It checks each PR's current state and deletes
+only closed-PR caches, including fork PRs. Open-PR, main, branch and tag caches are preserved;
+a reopened PR may need to populate its cache again.
+
+The privileged workflow uses
+[`workflow_run`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+so both its definition and cleanup script come from main. It does not execute upstream code,
+restore caches or download artifacts. This applies GitHub's
+[closed-PR cache cleanup guidance](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manage-caches)
+without granting write access to a PR-controlled workflow.
+
+A PR closed after its last Gate run is swept by the next Gate completion or a manual run.
+For immediate recovery, run a manual sweep on main. Inspect the dry-run logs before enabling deletion:
+
+```bash
+gh workflow run cache-cleanup.yml --ref main -f dry_run=true
+gh workflow run cache-cleanup.yml --ref main -f dry_run=false
+```
+
+If the shared Windows Notebook runtime cache has already been evicted, run
+`gh workflow run windows-notebook-runtime.yml --ref main` after cleanup. This reuses the
+existing compiler and verification workflow to restore main's cache; PR-scoped caches cannot
+warm main or other PRs. Cache keys and validation remain unchanged. Cleanup reduces quota
+pressure but cannot guarantee retention; a missing runtime cache still triggers compilation.
+No Release assets, Deployments or periodic compiler runs are used.
 
 ## CI control-plane approval
 
@@ -298,8 +463,19 @@ requires full validation. Verified retirements appear in the Integrity summary.
 Historical consumer entries for tests owned by a foreign package may also retire when complete
 source graphs for both revisions prove no path to the module, preserving the unique original
 package test owner and the union of runtime edges. Missing package manifests or incomplete
-evidence retain the registration. This does not authorize retirement of already-unproven host
-consumer contracts. These exceptions do not remove owner/contract tests, interfaces, module
+evidence retain the registration. Already-independent main/renderer consumer tests may retire in
+a consumer-removal-only registration change when complete structural traversal in both revisions
+proves independence and the unique original test owner retains the test in its owner bucket.
+Structural traversal includes type imports: a type dependency on the owner or an unresolved local
+type target still retains the registration. A separate strict runtime traversal rejects filesystem,
+IPC, network, process and other opaque access, including transitive access, even without a declared
+runtime edge. Explicitly erased type imports/exports do not execute the referenced module's body;
+only this runtime opacity check excludes them. Mixed imports, empty imports, side effects, mocks
+and declared runtime edges remain runtime dependencies. Source, test, runtime-declaration or
+executable-policy changes in the same diff reject this host exception. Unknown dependencies and
+full-validation modules retain their evidence. All other module fields must remain unchanged;
+owner transfers and new consumer registrations cannot be bundled into this exception.
+These exceptions do not remove owner/contract tests, interfaces, module
 consumer edges, or routing obligations; they execute only from trusted-base code. Merge a policy
 change before proposing registration cleanup that depends on it.
 New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and
@@ -373,6 +549,22 @@ non-reachability, retaining uncertainty from host globals and filesystem access.
 This proves bounded registration coverage, not behavioral equivalence of the refactor. Required
 behavior tests, CI owner review of policy and trusted-base validation remain mandatory. Merge this
 policy before proposing source/registration cleanup that depends on it.
+
+Full owners split under a separate proof. Only module-impact JSON and the derived consumer index
+may change; source, test and runtime declarations stay byte-identical. The remaining owner keeps
+a nonempty full marker, which may be restated, plus every contract, consumer, module edge,
+overlay, fallback and its surviving interfaces. Each moved path needs a unique destination.
+Shared sources move only into **new** modules that inherit the origin's fallback, overlays,
+downstream module edges and moved interfaces. A new full destination can take any surface.
+A selective destination accepts only static contracts: no runtime-consumer edge, no
+renderer-catalog or generated Web API file, no channel/event name (a `domain:action` literal or
+template segment, or any name passed to an event/IPC API) or persisted-format marker, and
+complete direct dependency evidence. Its plan must select every statically reachable
+test (outside excluded package roots) and every original explicit test with no static path from
+the origin's sources; those may observe the owner through IPC or files. Regression fixtures may
+move to an existing reader owner only when their fixture routing, lanes and selected tests are
+preserved. Moved owner tests keep their owner classification. Merge this policy before
+proposing a registration split that depends on it.
 
 This registration-only proof follows source imports (including type and test-mock imports) and
 explicit runtime-consumer edges. Host globals such as `process` or `window`, Node built-ins and

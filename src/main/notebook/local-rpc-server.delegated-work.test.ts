@@ -924,7 +924,18 @@ describe('authenticated delegatedWorkCall route', () => {
       transport: 'tcp',
       delegatedWorkService: { delegate }
     })
+    const retired = await server.issueSessionConnection(
+      'trusted-session',
+      'trusted-project',
+      'trusted-root-frame'
+    )
+    const successor = await server.issueSessionConnection(
+      'trusted-session',
+      'trusted-project',
+      'trusted-root-frame'
+    )
     server.registerSessionSpecialist('trusted-session', 'trusted-specialist')
+    server.releaseSessionCapabilitiesIfOwned('trusted-session', [retired.token])
     const connection = await server.issueControlConnection(
       'trusted-session',
       'trusted-project',
@@ -960,6 +971,7 @@ describe('authenticated delegatedWorkCall route', () => {
     )
     endInvocation()
     connection.release()
+    successor.release?.()
   })
 
   it('rejects delegation when no authenticated control invocation is active', async () => {

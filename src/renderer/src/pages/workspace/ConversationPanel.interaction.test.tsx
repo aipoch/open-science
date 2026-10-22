@@ -1,7 +1,10 @@
 import { getResumeFailureMessage } from '@/lib/acp/workspace-runtime-prompt-preparation-owner'
+import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
+import { applyWorkspaceRuntimeEvent } from '@/lib/acp/workspace-events'
 import {
   reportWorkspaceOperationError,
-  clearWorkspaceOperationError
+  clearWorkspaceOperationError,
+  useWorkspaceOperationErrors
 } from '@/lib/acp/workspace-operation-error'
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { parseSideChatAnnotationText, type Annotation } from '../../../../shared/annotations'
@@ -24,10 +27,12 @@ vi.mock('@/lib/session-fork', () => ({
 import { ConversationPanel } from './ConversationPanel'
 import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
+import { AcpDurableContinuationContextOwner } from '../../../../main/acp/durable-continuation-context-owner'
 import { recordRestartTurnOutcome } from '../../../../main/session-persistence/turn-outcome-authority'
 import {
   materializeSessionConversationGraph,
-  normalizeSessionAfterRestore
+  normalizeSessionAfterRestore,
+  rearmUnacceptedElicitationContinuations
 } from '../../../../shared/session-persistence'
 import type { SessionConversationCommand } from '../../../../shared/session-conversation-command'
 import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
@@ -1834,10 +1839,116 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
 
     const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
     expect(banner?.textContent).toContain('Could not switch to Specialist B')
+    expect(banner?.textContent).toContain('switch rejected')
     clickRetry()
 
     expect(retrySpecialistSelection).toHaveBeenCalledOnce()
     expect(retryDraftReconfigure).not.toHaveBeenCalled()
+  })
+
+  it('shows the failure reason when retrying an already saved selection rejects', () => {
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: {
+          specialist: {
+            reconfigureError: { ...errorView, committed: true, message: 'connection lost' }
+          }
+        }
+      }
+    })
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain('Could not switch to Specialist B')
+    expect(banner?.textContent).toContain('connection lost')
+  })
+
+  it('keeps recovery available for a restored pending selection without an observed failure', () => {
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: { ...errorView, committed: true, message: '' } } }
+      }
+    })
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain('Specialist switch is pending for Specialist B')
+    expect(banner?.textContent).toContain(
+      'The selection is saved, but the Agent runtime has not applied it yet.'
+    )
+    expect(banner?.textContent).toContain('Retry')
+    expect(banner?.textContent).toContain('Choose another specialist')
+    expect(banner?.textContent).toContain('Use None (Main Agent)')
+  })
+
+  it('shows progress instead of recovery actions while retrying a Specialist switch', () => {
+    renderPanel({
+      view: { activeSession: { ...activeSession, specialistId: 'previous' } },
+      specialist: {
+        view: {
+          specialist: {
+            barrierInFlight: true,
+            historyId: undefined,
+            reconfigureError: errorView
+          }
+        }
+      }
+    })
+
+    const progress = container.querySelector('[data-testid="specialist-switch-loading"]')
+    expect(progress?.getAttribute('role')).toBe('status')
+    expect(progress?.classList.contains('sr-only')).toBe(true)
+    const picker = container.querySelector('[data-testid="composer-specialist-picker-trigger"]')
+    expect(picker?.getAttribute('aria-busy')).toBe('true')
+    expect(picker?.querySelector('.animate-spin')).not.toBeNull()
+    expect(progress?.textContent).toContain('Switching to Main Agent')
+    expect(container.querySelector('[data-testid="reconfigure-error-banner"]')).toBeNull()
+  })
+
+  it('disables both send controls and Enter while a Specialist switch is in flight', () => {
+    const submit = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      composer: { view: { doc: { nodes: [{ type: 'text', text: 'Keep this draft' }] } } },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } },
+      specialist: { view: { specialist: { barrierInFlight: true, historyId: 'target' } } }
+    })
+    const send = container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
+    const options = container.querySelector<HTMLButtonElement>('[aria-label="More send options"]')!
+    const editor = container.querySelector<HTMLElement>('[role="textbox"]')!
+    act(() => {
+      send.click()
+      editor.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(submit).not.toHaveBeenCalled()
+    expect(send.disabled).toBe(true)
+    expect(options.disabled).toBe(true)
+    expect(
+      container
+        .querySelector('[aria-label="Send message options"]')
+        ?.classList.contains('bg-bg-300')
+    ).toBe(true)
+    expect(editor.getAttribute('contenteditable')).toBe('true')
+    expect(editor.textContent).toContain('Keep this draft')
+  })
+
+  it.each([
+    ['runtime-application-failed', 'The Agent runtime could not apply the selected Specialist.'],
+    [
+      'pending-state-clear-failed',
+      'The Specialist was applied, but its completion state could not be saved.'
+    ]
+  ] as const)('explains a completed %s failure before offering recovery', (reason, message) => {
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: { ...errorView, committed: true, reason } } }
+      }
+    })
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain(message)
+    expect(banner?.textContent).toContain('Your draft and queued messages are preserved.')
+    expect(container.querySelector('[data-testid="specialist-switch-loading"]')).toBeNull()
   })
 
   it('keeps send-barrier Retry routed through draft submission', () => {
@@ -3106,6 +3217,7 @@ describe('ConversationPanel composer intake', () => {
       title: 'Choice before Plan',
       cwd: '/workspace',
       status: 'waiting-plan-approval',
+      liveInteractionState: { permission: false, elicitation: true },
       activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
       messages: planOriginMessages(),
       activities: [pendingActivity],
@@ -3176,7 +3288,7 @@ describe('ConversationPanel composer intake', () => {
       projectId: 'project-a',
       title: 'Restored choice',
       cwd: '/workspace',
-      status: 'idle',
+      status: 'waiting-for-user',
       messages: [],
       activities: [
         {
@@ -3354,6 +3466,307 @@ describe('ConversationPanel composer intake', () => {
     expect(getComposerForm().hidden).toBe(false)
     expect(container.textContent).not.toContain('Waiting for a response')
   })
+
+  it.each(
+    (['before-rearm', 'after-rearm'] as const).flatMap((order) =>
+      [false, true].flatMap((previousFailure) =>
+        [false, true].map((authenticationRequired) => ({
+          order,
+          previousFailure,
+          authenticationRequired
+        }))
+      )
+    )
+  )(
+    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure, authentication: $authenticationRequired)',
+    async ({ order, previousFailure, authenticationRequired }) => {
+      // This tests failure disclosure, not the still-unknown cause of the reported
+      // admission rejection. Feed the public event contract emitted by AcpRuntime.
+      const failure = authenticationRequired
+        ? 'Authentication required'
+        : 'Runtime Session turn is already owned by another execution.'
+      const answered = materializeSessionConversationGraph({
+        id: `question-continuation-${order}-${previousFailure}`,
+        projectId: 'project-a',
+        title: 'Confirm the report',
+        cwd: '/workspace',
+        status: 'waiting-for-user',
+        runtimeTranscriptOwner: 'main',
+        messages: [
+          {
+            id: 'report-prompt',
+            role: 'user',
+            content: 'Prepare the report.',
+            ...(previousFailure
+              ? {
+                  turnOutcome: {
+                    kind: 'failed' as const,
+                    settledAt: 2,
+                    error: 'Previous attempt failed'
+                  }
+                }
+              : {}),
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        activities: [
+          {
+            id: 'report-question',
+            kind: 'tool',
+            title: 'Confirm the report',
+            status: 'completed',
+            promptMessageId: 'report-prompt',
+            eventIds: ['question-answered'],
+            sortIndex: 2,
+            createdAt: 2,
+            updatedAt: 3,
+            elicitation: {
+              message: 'Confirm the report?',
+              fields: [
+                {
+                  id: 'question_0',
+                  label: 'Confirmation',
+                  kind: 'single-select',
+                  options: [{ value: 'confirm', label: 'Confirm' }]
+                },
+                { id: 'question_0_custom', label: 'Other', kind: 'text' }
+              ],
+              state: 'answered',
+              answers: [{ fieldId: 'question_0', value: 'confirm' }],
+              respondedAt: 3,
+              continuationPending: true,
+              durable: {
+                kind: 'agent-user-choice',
+                requestId: 'report-choice',
+                promptMessageId: 'report-prompt'
+              }
+            }
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      })
+      const projected = hydrateSession(answered)
+      useSessionStore.setState({ ...createInitialSessionState(), sessions: [projected] })
+      useWorkspaceOperationErrors.setState({ errors: {}, diagnostics: {} })
+      renderPanel({ view: { activeSession: projected }, elicitation: { requests: [] } })
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+      const receiveError = async (): Promise<void> => {
+        await applyWorkspaceRuntimeEvent({
+          id: 'continuation-failed',
+          timestamp: 4,
+          kind: 'error',
+          level: 'error',
+          sessionId: answered.id,
+          promptMessageId: 'report-prompt',
+          title: 'Could not continue the Agent task',
+          text: failure
+        })
+      }
+      if (order === 'before-rearm') await receiveError()
+      const rearmed = rearmUnacceptedElicitationContinuations(answered, 'report-prompt', {
+        requestId: 'report-choice',
+        toolCallId: 'report-question'
+      })
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: useSessionStore.getState().sessions[0],
+        session: rearmed,
+        mode: 'runtime-transcript-authority'
+      })
+      if (order === 'after-rearm') await receiveError()
+      const current = useSessionStore.getState().sessions[0]
+      expect(current.status).toBe('waiting-for-user')
+      expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
+      const view = { activeSession: current }
+      // Control: the existing error surface can display this failure beside a
+      // pending question; the event consumer must deliver it to that surface.
+      renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
+      expect(container.textContent).toContain(
+        authenticationRequired ? 'Sign in to continue this conversation' : failure
+      )
+      renderPanel({
+        view: {
+          ...view,
+          actionError: useWorkspaceOperationErrors.getState().errors[current.id] ?? null
+        },
+        elicitation: { requests: [] }
+      })
+      expect(
+        current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
+      ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+      if (authenticationRequired) {
+        expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+        expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+        expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()
+        expect(container.textContent).toContain('Sign in to continue this conversation')
+        expect(
+          [...container.querySelectorAll('button')].some(
+            (button) => button.textContent === 'Model settings'
+          )
+        ).toBe(true)
+        // Account recovery only restores the pending question; it neither answers nor replays it.
+        renderPanel({
+          view: {
+            ...view,
+            actionError: failure,
+            authenticationRecovery: { required: false, openSettings: vi.fn() }
+          },
+          elicitation: { requests: [] }
+        })
+        expect(container.textContent).not.toContain('Sign in to continue this conversation')
+        expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
+        expect(
+          current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
+        ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+      } else {
+        expect(
+          container.textContent,
+          'The retryable question must explain why confirmation did not continue the task'
+        ).toContain(failure)
+      }
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+    }
+  )
+
+  it.each(['running', 'idle'] as const)(
+    'does not restore an orphaned durable question that Main rejects while the task is %s',
+    async (status) => {
+      // Reproduce the reported boundary state: the task continues (or has finished),
+      // no live request remains, but its recorded question still says pending.
+      // Use Main's real response authority so the screenshot error is not mocked.
+      const activeSession: ChatSession = {
+        id: 'session-orphaned-durable-choice',
+        projectId: 'project-a',
+        title: 'Export the analysis to PDF',
+        cwd: '/workspace',
+        status,
+        messages: [
+          {
+            id: 'export-prompt',
+            role: 'user',
+            content: 'Export the completed Markdown analysis to PDF.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        ...(status === 'running'
+          ? { activeRun: { promptMessageId: 'export-prompt', startedAt: 1 } }
+          : {}),
+        activities: [
+          {
+            id: 'export-choice',
+            kind: 'tool',
+            title: 'AskUserQuestion',
+            status: 'completed',
+            promptMessageId: 'export-prompt',
+            eventIds: [],
+            sortIndex: 2,
+            createdAt: 2,
+            updatedAt: 3,
+            elicitation: {
+              message: 'How should the PDF be exported?',
+              fields: [
+                {
+                  id: 'question_0',
+                  label: 'Export method',
+                  kind: 'single-select',
+                  options: [{ value: 'agent', label: 'Let the agent decide' }]
+                },
+                { id: 'question_0_custom', label: 'Other', kind: 'text' }
+              ],
+              state: 'pending',
+              durable: {
+                kind: 'agent-user-choice',
+                requestId: 'export-choice-request',
+                promptMessageId: 'export-prompt'
+              }
+            }
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      }
+      activeSession.conversationGraph =
+        materializeSessionConversationGraph(activeSession).conversationGraph
+      const authority = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(activeSession)
+      })
+      const waitingAuthority = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => ({
+          ...structuredClone(activeSession),
+          status: 'waiting-for-user'
+        })
+      })
+      await expect(
+        waitingAuthority.prepareElicitation({
+          projectId: activeSession.projectId,
+          sessionId: activeSession.id,
+          requestId: 'export-choice-request',
+          toolCallId: 'export-choice',
+          action: 'decline'
+        })
+      ).resolves.toMatchObject({ request: { requestId: 'export-choice-request' } })
+      await expect(
+        authority.prepareElicitation({
+          projectId: activeSession.projectId,
+          sessionId: activeSession.id,
+          requestId: 'export-choice-request',
+          toolCallId: 'export-choice',
+          action: 'decline'
+        })
+      ).rejects.toThrow('Durable elicitation no longer matches the pending Session activity.')
+      const responseErrors: string[] = []
+      useSessionStore.setState({ ...createInitialSessionState(), sessions: [activeSession] })
+      renderPanel({
+        view: { activeSession },
+        elicitation: {
+          requests: pendingWorkspaceElicitations(activeSession),
+          respond: async (response) => {
+            try {
+              await authority.prepareElicitation({
+                projectId: activeSession.projectId,
+                sessionId: activeSession.id,
+                requestId: response.requestId,
+                toolCallId: response.request!.toolCallId!,
+                action: response.action,
+                answers: response.answers
+              })
+            } catch (error) {
+              responseErrors.push((error as Error).message)
+              throw error
+            }
+          }
+        }
+      })
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const skip = Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.trim() === 'Skip'
+        )
+        if (!skip) break
+        await act(async () => skip.click())
+      }
+      for (const error of responseErrors) {
+        expect(error).toBe('Durable elicitation no longer matches the pending Session activity.')
+      }
+      expect(useSessionStore.getState().sessions[0].status).toBe(status)
+      expect(
+        getComposerForm().hasAttribute('inert'),
+        `a question rejected as stale must not permanently prevent the next prompt: ${responseErrors.join('; ')}`
+      ).toBe(false)
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+      expect(
+        Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.trim() === 'Skip'
+        )
+      ).toBeUndefined()
+      expect(responseErrors).toEqual([])
+    }
+  )
 
   it('keeps attachment limits discoverable in the tooltip and touch fallback', () => {
     renderPanel()
@@ -7533,7 +7946,7 @@ describe('ConversationPanel fix loop lock', () => {
     }
   )
 
-  it('uses the running composer submit action to add the draft to the queue', () => {
+  it('replaces Stop with queue submission for a sendable draft and preserves Enter queueing', () => {
     const onQueueMessage = vi.fn()
     const runningSession: ChatSession = {
       ...idleSession,
@@ -7555,8 +7968,73 @@ describe('ConversationPanel fix loop lock', () => {
       '[data-testid="composer-queue-submit"]'
     ) as HTMLButtonElement
     expect(queueSubmit.disabled).toBe(false)
+    expect(queueSubmit.getAttribute('aria-label')).toBe('Add message to queue')
+    const slot = container.querySelector('[data-testid="composer-running-control-slot"]')!
+    expect(slot.querySelector(':scope > button')).toBe(queueSubmit)
+    expect(queueSubmit.parentElement).toBe(slot)
+    expect(container.querySelector('[aria-label="Send message"]')).toBeNull()
     act(() => queueSubmit.click())
     expect(onQueueMessage).toHaveBeenCalledWith([])
+    act(() => {
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      )
+    })
+    expect(onQueueMessage).toHaveBeenCalledTimes(2)
+    renderPanel({
+      view: { activeSession: runningSession },
+      composer: { view: { doc: { nodes: [] } } },
+      conversation: { availability: { submit: false, submitMode: 'queue' } }
+    })
+    expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+    expect(slot.querySelector(':scope > button')).toBe(queueSubmit)
+    expect(queueSubmit.getAttribute('aria-label')).toBe('Cancel run')
+  })
+
+  it.each([
+    { submit: false, submitMode: 'queue' as const },
+    { submit: true, submitMode: 'send' as const }
+  ])(
+    'keeps Stop as the primary action when queue submission is unavailable: %j',
+    (availability) => {
+      const onQueueMessage = vi.fn()
+      renderPanel({
+        view: {
+          activeSession: {
+            ...idleSession,
+            status: 'running',
+            activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+          }
+        },
+        conversation: {
+          availability,
+          actions: { submit: { draft: routeDraftSubmit({ send: onQueueMessage }) } }
+        }
+      })
+      expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+      const slot = container.querySelector('[data-testid="composer-running-control-slot"]')!
+      expect(slot.querySelector(':scope > button')?.getAttribute('aria-label')).toBe('Cancel run')
+      expect(onQueueMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the options menu enabled to stop with a draft when side chat is unavailable', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...idleSession,
+          status: 'running',
+          activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+        },
+        sideChatDisabledReason: 'Side chat unavailable'
+      },
+      sideChat: { createDraft: undefined, retryHydration: undefined },
+      conversation: { availability: { submit: true, submitMode: 'queue' } }
+    })
+    const menu = container.querySelector(
+      '[data-testid="running-side-chat-menu-trigger"]'
+    ) as HTMLButtonElement
+    expect(menu.disabled).toBe(false)
   })
 
   it('keeps Send and branch-scoped Stop together after a timed Main turn settles', () => {
@@ -7675,6 +8153,7 @@ describe('ConversationPanel fix loop lock', () => {
   })
 
   it('shows cascade progress, prevents duplicate Stop, and restores the control after failure', async () => {
+    const onQueueMessage = vi.fn()
     let rejectStop!: (error: Error) => void
     const onCancelRun = vi.fn(
       () =>
@@ -7693,14 +8172,19 @@ describe('ConversationPanel fix loop lock', () => {
       },
       conversation: {
         availability: {
-          submit: false
+          submit: true,
+          submitMode: 'queue'
         },
         actions: {
-          cancel: onCancelRun
+          cancel: onCancelRun,
+          submit: { draft: routeDraftSubmit({ send: onQueueMessage }) }
         }
       }
     })
 
+    const queue = container.querySelector(
+      '[data-testid="composer-queue-submit"]'
+    ) as HTMLButtonElement
     const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     act(() => {
       cancelButton.click()
@@ -7708,8 +8192,19 @@ describe('ConversationPanel fix loop lock', () => {
     })
 
     expect(onCancelRun).toHaveBeenCalledOnce()
-    expect(cancelButton.disabled).toBe(true)
-    expect(cancelButton.getAttribute('aria-label')).toBe('Stopping run and subagents')
+    const stopping = container.querySelector(
+      '[aria-label="Stopping run and subagents"]'
+    ) as HTMLButtonElement
+    expect(stopping.disabled).toBe(true)
+    expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+    expect(queue.disabled).toBe(true)
+    act(() => {
+      queue.click()
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onQueueMessage).not.toHaveBeenCalled()
 
     await act(async () => {
       rejectStop(new Error('cascade unavailable'))
@@ -7718,6 +8213,7 @@ describe('ConversationPanel fix loop lock', () => {
 
     const retry = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     expect(retry.disabled).toBe(false)
+    expect(queue.disabled).toBe(false)
     expect(container.textContent).toContain('cascade unavailable')
   })
 
@@ -7834,7 +8330,7 @@ describe('ConversationPanel fix loop lock', () => {
       '[data-testid="composer-running-control-slot"]'
     ) as HTMLDivElement
     expect(slot.className.split(' ')).toEqual(
-      expect.arrayContaining(['w-24', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
+      expect.arrayContaining(['w-16', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
     )
     expect(slot.querySelector('[aria-label="Cancel run"]')).not.toBeNull()
   })
@@ -8327,7 +8823,8 @@ describe('ConversationPanel error box + report affordance', () => {
       expect(openSettingsToPanel).toHaveBeenCalledExactlyOnceWith('model')
       expect(changeDoc).not.toHaveBeenCalled()
       expect(session).toEqual(snapshot)
-      expect(container.textContent).toContain('Keep my research draft')
+      expect(container.querySelector('[data-testid=ordinary-composer-form]')).toBeNull()
+      expect(doc).toEqual(docFromText('Keep my research draft'))
     }
   )
 

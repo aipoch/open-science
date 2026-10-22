@@ -31,6 +31,10 @@ on:
         type: choice
         default: all
         options: [all, '1', '2', '3']
+      test_pattern:
+        description: Optional Playwright title regex for the scheduled-fixes diagnostic only
+        type: string
+        default: ''
 
 permissions:
   actions: read
@@ -185,12 +189,18 @@ jobs:
         id: scheduled_fixes
         continue-on-error: true
         if: ${{ matrix.group == 'scheduled-fixes' }}
-        run: >-
-          npx playwright test e2e/session-turn-outcome.spec.ts
-          e2e/auto-review-stop-resume.spec.ts e2e/transcript-capacity.spec.ts
-          e2e/desktop-runtime-restart.spec.ts e2e/desktop-runtime-preview-recovery.spec.ts
-          e2e/pdf-workspace-translation.spec.ts
-          --retries=0 --fail-on-flaky-tests --global-timeout=1200000
+        env:
+          TEST_PATTERN: ${{ inputs.test_pattern }}
+        run: |
+          if [[ -n "$TEST_PATTERN" ]]; then
+            npx playwright test --grep "$TEST_PATTERN" --retries=0 --fail-on-flaky-tests --global-timeout=1200000
+          else
+            npx playwright test e2e/session-turn-outcome.spec.ts \
+              e2e/auto-review-stop-resume.spec.ts e2e/transcript-capacity.spec.ts \
+              e2e/desktop-runtime-restart.spec.ts e2e/desktop-runtime-preview-recovery.spec.ts \
+              e2e/pdf-workspace-translation.spec.ts \
+              --retries=0 --fail-on-flaky-tests --global-timeout=1200000
+          fi
       - name: Run complete Mac functional journeys
         id: functional
         if: ${{ matrix.group == 'functional' }}

@@ -42,6 +42,12 @@ export const pdfTableSourceItemsSchema = z
     'Table source items must be sorted and unique.'
   )
 const issue = z.object({ code: z.string().min(1), detail: z.string() }).strict()
+export const pdfNativeBodySchema = z
+  .object({
+    kind: z.enum(['math-table', 'algorithm']),
+    sourceItems: pdfTableSourceItemsSchema
+  })
+  .strict()
 const region = z
   .object({
     page: pageNumber,
@@ -176,6 +182,7 @@ const element = z
     regions: z.array(region).min(1),
     // Optional, independently proved native figure labels; never inferred from a crop box.
     sourceItems: pdfTableSourceItemsSchema.optional(),
+    nativeBody: pdfNativeBodySchema.optional(),
     caption: z
       .object({ text: z.string(), regions: z.array(region).min(1) })
       .strict()
@@ -188,12 +195,30 @@ const element = z
       .optional(),
     tableNotes: tableNotes.optional(),
     thumbnailId: id.optional(),
+    // Element-wide issues only; grouped table parts retain their own issues.
     issues: z.array(issue)
   })
   .strict()
   .refine(
     (value) => !value.sourceItems || value.kind === 'figure',
     'Only figures may own element-level native text.'
+  )
+  .refine(
+    (value) =>
+      !value.nativeBody ||
+      (!!value.caption &&
+        !value.sourceItems &&
+        !value.table &&
+        !value.tableParts &&
+        !value.tableNotes &&
+        ((value.kind === 'algorithm' &&
+          value.nativeBody.kind === 'algorithm' &&
+          value.issues.length === 0) ||
+          (value.kind === 'table' &&
+            value.nativeBody.kind === 'math-table' &&
+            value.issues.length === 1 &&
+            value.issues[0].code === 'no-source-cell-grid'))),
+    'Native bodies require a complete captioned algorithm or an image-only mathematical table.'
   )
   .refine(
     (value) => value.kind === 'table' || (!value.table && !value.tableParts && !value.tableNotes),
@@ -371,8 +396,12 @@ export const parsePdfStructureResult = (
   const sourceRanges = new Map<string, Array<{ start: number; end: number }>>()
   const wholeSources = new Set<string>()
   const figureSources = new Set<string>()
+  const bodySources = new Set<string>()
   for (const element of result.elements)
-    for (const item of element.sourceItems ?? []) {
+    for (const item of [
+      ...(element.sourceItems ?? []),
+      ...(element.nativeBody?.sourceItems ?? [])
+    ]) {
       const key = `${item.pageNumber}:${item.index}`
       if (
         !processed.has(item.pageNumber) ||
@@ -381,6 +410,7 @@ export const parsePdfStructureResult = (
         throw new Error('PDF figure source item does not belong to its figure page.')
       if (figureSources.has(key)) throw new Error('PDF figure source item has multiple owners.')
       figureSources.add(key)
+      if (element.nativeBody) bodySources.add(key)
     }
   for (const element of result.elements) {
     const tables =
@@ -401,7 +431,11 @@ export const parsePdfStructureResult = (
           throw new Error('PDF table source item does not belong to its cell page.')
         const key = `${item.pageNumber}:${item.index}`
         if (figureSources.has(key))
-          throw new Error('PDF text belongs to both a figure and a table.')
+          throw new Error(
+            bodySources.has(key)
+              ? 'PDF text belongs to both a native body and a table.'
+              : 'PDF text belongs to both a figure and a table.'
+          )
         if (sourceTexts.has(key) && sourceTexts.get(key) !== item.text)
           throw new Error('PDF table source item has conflicting original text.')
         sourceTexts.set(key, item.text)

@@ -1,9 +1,9 @@
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { parse } from 'papaparse'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import {

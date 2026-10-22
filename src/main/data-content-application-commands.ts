@@ -253,6 +253,14 @@ const dataContentApplicationCommands = Object.freeze({
   ),
 
   sessionOpenRecoveryFolder: electronCommand('sessions:open-recovery-folder', 'openRecoveryFolder'),
+  artifactSaveProgress: invocationCommandFor<FileSaveCommands>()(
+    'file:artifact-save-progress',
+    'file:artifact-save-progress'
+  ),
+  cancelArtifactSave: invocationCommandFor<FileSaveCommands>()(
+    'file:cancel-artifact-save',
+    'file:cancel-artifact-save'
+  ),
   fileSaveBlob: invocationCommandFor<FileSaveCommands>()('file:save-blob', 'file:save-blob'),
   fileSaveManaged: invocationCommandFor<FileSaveCommands>()(
     'file:save-managed',
@@ -735,6 +743,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.reproducibilityCancel
   ]),
   defineApplicationCommandGroup('native-file-save', [
+    dataContentApplicationCommands.artifactSaveProgress,
+    dataContentApplicationCommands.cancelArtifactSave,
     dataContentApplicationCommands.fileSaveBlob,
     dataContentApplicationCommands.fileSaveManaged,
     dataContentApplicationCommands.fileSaveSessionArtifacts,
@@ -1293,8 +1303,23 @@ const registerDataContentApplicationCommands = (
       'uploads:transfer-status': (invocation) => dependencies.uploads.transferStatus(invocation)
     })
     scope.registerGroup(dataContentApplicationCommandGroups[8], {
-      'managed-file-versions:inspect': ({ args }) =>
-        dependencies.managedFileVersions.inspect(args[0]),
+      'managed-file-versions:inspect': async (invocation) => {
+        const [request] = invocation.args
+        const result = await dependencies.managedFileVersions.inspect(request)
+        // The command may be reached from a remote Web caller. Never return a Version whose
+        // resolved Project or logical File identity differs from the requested scope.
+        if (
+          result.ok &&
+          (result.value.projectId !== request.projectId || result.value.fileId !== request.fileId)
+        ) {
+          throw new Error('Managed file version identity does not match the requested scope.')
+        }
+        // Web can inspect versions, but its renderer has no edit or diff commands.
+        if (result.ok && invocation.callerContext.surface === 'web') {
+          return { ...result, value: { ...result.value, canEdit: false, canDiff: false } }
+        }
+        return result
+      },
       'managed-file-versions:save-text-edit': ({ args }) =>
         dependencies.managedFileVersions.saveTextEdit(args[0]),
       'managed-file-versions:diff-text': (invocation) =>
@@ -1333,6 +1358,10 @@ const registerDataContentApplicationCommands = (
         dependencies.reproducibility.cancel(invocation)
     })
     scope.registerGroup(dataContentApplicationCommandGroups[10], {
+      'file:artifact-save-progress': (invocation) =>
+        dependencies.fileSaveCommands['file:artifact-save-progress'](invocation),
+      'file:cancel-artifact-save': (invocation) =>
+        dependencies.fileSaveCommands['file:cancel-artifact-save'](invocation),
       'file:save-blob': (invocation) => dependencies.fileSaveCommands['file:save-blob'](invocation),
       'file:save-managed': (invocation) =>
         dependencies.fileSaveCommands['file:save-managed'](invocation),

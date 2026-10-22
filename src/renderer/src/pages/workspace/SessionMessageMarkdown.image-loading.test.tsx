@@ -102,7 +102,8 @@ describe('message image resource loading', () => {
       projectId: 'project-1',
       fileId: artifact.artifactId,
       versionId: 'version-1',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
   })
 

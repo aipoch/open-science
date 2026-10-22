@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import {
   Check,
   CircleAlert,

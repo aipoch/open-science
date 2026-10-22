@@ -1,0 +1,12 @@
+{
+  "ownerPaths": ["src/shared/storage.ts", "src/shared/storage.test.ts"],
+  "interfacePaths": ["src/shared/storage.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/shared/storage.test.ts"],
+    "contract": [],
+    "consumer": ["src/shared/notebook-env.typecheck.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

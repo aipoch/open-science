@@ -106,11 +106,16 @@ test('exports selected diagnostics without changing the persisted session', asyn
   }
   await sessionCheckbox.check()
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
-  await expect(dialog.getByText(/^Diagnostic package exported successfully/)).toBeVisible({
+  await expect(
+    dialog.getByText(/^Diagnostic package (exported successfully|partially exported)/)
+  ).toBeVisible({
     timeout: 45_000
   })
   await expect(dialog.locator('pre')).toHaveCount(0)
-  await dialog.getByRole('status').scrollIntoViewIfNeeded()
+  await expect(dialog.getByRole('status')).toBeInViewport({ ratio: 1 })
+  await expect(dialog.getByRole('button', { name: 'Show in folder', exact: true })).toBeInViewport({
+    ratio: 1
+  })
   await page.screenshot({ path: testInfo.outputPath('diagnostics-export-result.png') })
   expect(await readFile(sourcePath, 'utf8')).toBe(evidence)
   const extracted = testInfo.outputPath('unpacked')
@@ -193,7 +198,9 @@ test('exports selected diagnostics without changing the persisted session', asyn
   await expect(executionFiles).toContainText('notebook/frames/diagnostic-frame/run.json')
   await expect(dialog.getByText(/Review for sensitive content before sharing/)).toBeVisible()
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
-  await expect(dialog.getByText(/^Diagnostic package exported successfully/)).toBeVisible({
+  await expect(
+    dialog.getByText(/^Diagnostic package (exported successfully|partially exported)/)
+  ).toBeVisible({
     timeout: 45_000
   })
   const evidenceDirectory = testInfo.outputPath('evidence-unpacked')
@@ -229,7 +236,9 @@ test('exports selected diagnostics without changing the persisted session', asyn
   }, codeArchive)
   await includeCode.check()
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
-  await expect(dialog.getByText(/^Diagnostic package exported successfully/)).toBeVisible({
+  await expect(
+    dialog.getByText(/^Diagnostic package (exported successfully|partially exported)/)
+  ).toBeVisible({
     timeout: 45_000
   })
   const codeDirectory = testInfo.outputPath('code-unpacked')

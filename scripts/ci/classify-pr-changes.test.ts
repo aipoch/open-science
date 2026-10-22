@@ -1,14 +1,17 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative, resolve } from 'node:path'
+import { join, posix, relative, resolve } from 'node:path'
 
+import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
 import {
   classifyChanges,
+  macosGroupsForPlan,
   parseNameStatus,
   platformExecutionPlan,
+  playwrightReaderTests,
   toGitHubOutputPlan
 } from './classify-pr-changes.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
@@ -882,5 +885,306 @@ describe('pull request change classification', () => {
     })
 
     expect(uncoveredFiles).toEqual([])
+  })
+})
+
+describe('desktop E2E routing', () => {
+  const desktopLanes = [
+    'e2e_smoke_macos',
+    'e2e_functional_macos',
+    'e2e_functional_windows',
+    'e2e_workspace_macos',
+    'e2e_workspace_windows',
+    'e2e_accessibility_macos',
+    'e2e_visual_macos',
+    'e2e_regressions_macos',
+    'e2e_delegation_macos'
+  ]
+  const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+  const tracked = execFileSync('git', ['ls-files', 'e2e/**'], { encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean)
+  const classify = (path: string): ReturnType<typeof classifyChanges> =>
+    classifyChanges([{ path, status: 'modified' }])
+  const e2eLanes = (path: string): string[] =>
+    classify(path).lanes.filter((lane: string) => desktopLanes.includes(lane))
+
+  // Executors as configured: npm scripts named by pr-gate steps, the smoke step's explicit
+  // files, the accessibility wrapper and @pr-mainline tags read by the Windows mainline job.
+  const executors = (): Record<string, string[]> => {
+    const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<
+      string,
+      string
+    >
+    const steps = (
+      load(readFileSync('.github/workflows/pr-gate.yml', 'utf8')) as {
+        jobs: Record<
+          string,
+          { steps: Array<{ id?: string; run?: string; uses?: string; with?: unknown }> }
+        >
+      }
+    ).jobs.macos_e2e.steps
+    const run = (id: string): string => steps.find((step) => step.id === id)?.run ?? ''
+    const specs = (command: string): string[] => command.match(/e2e\/[\w./-]+\.spec\.ts/g) ?? []
+    const script = (id: string): string[] => specs(scripts[/npm run (\S+)/.exec(run(id))![1]] ?? '')
+    const tagged = tracked.filter(
+      (path) => path.endsWith('.spec.ts') && readFileSync(path, 'utf8').includes('@pr-mainline-')
+    )
+    const accessibility = readFileSync('scripts/ci/run-accessibility-e2e.mjs', 'utf8')
+    const supplemental = readFileSync('.github/actions/source-regression/action.yml', 'utf8')
+    for (const group of ['regressions', 'delegation']) {
+      expect(steps.find((step) => step.id === `e2e_${group}_macos`)).toMatchObject({
+        uses: './.github/actions/source-regression',
+        with: { group }
+      })
+      expect(supplemental).toContain(`npm run test:e2e:${group} --`)
+    }
+    const lanes = {
+      e2e_smoke_macos: specs(run('e2e_smoke_macos')),
+      e2e_functional_macos: script('e2e_functional_macos'),
+      e2e_workspace_macos: script('e2e_workspace_macos'),
+      e2e_accessibility_macos: specs(accessibility),
+      e2e_visual_macos: script('e2e_visual_macos'),
+      e2e_regressions_macos: specs(scripts['test:e2e:regressions']),
+      e2e_delegation_macos: specs(scripts['test:e2e:delegation'])
+    }
+    expect(run('e2e_accessibility_macos')).toBe('npm run test:e2e:accessibility:signal')
+    for (const files of Object.values(lanes)) expect(files.length).toBeGreaterThan(0)
+    // Windows mainline journeys/workspace follow the macOS script that owns each tagged spec.
+    const windowsFunctional = tagged.filter((path) => lanes.e2e_functional_macos.includes(path))
+    const windowsWorkspace = tagged.filter((path) => lanes.e2e_workspace_macos.includes(path))
+    expect([...windowsFunctional, ...windowsWorkspace].sort()).toEqual(tagged.sort())
+    return {
+      ...lanes,
+      e2e_functional_windows: windowsFunctional,
+      e2e_workspace_windows: windowsWorkspace
+    }
+  }
+
+  it.each([
+    ['e2e/accessibility.spec.ts', ['e2e_accessibility_macos']],
+    ['e2e/desktop-runtime-recovery.spec.ts', ['e2e_regressions_macos']],
+    ['e2e/delegation-resume.spec.ts', ['e2e_delegation_macos']],
+    ['e2e/session-fork.spec.ts', ['e2e_functional_macos']],
+    ['e2e/visual-regression.spec.ts', ['e2e_visual_macos']],
+    ['e2e/window-presentation.spec.ts', ['e2e_smoke_macos', 'e2e_regressions_macos']],
+    [
+      'e2e/electron-foundation.spec.ts',
+      ['e2e_smoke_macos', 'e2e_functional_macos', 'e2e_functional_windows']
+    ],
+    ['e2e/workspace-files.spec.ts', ['e2e_workspace_macos', 'e2e_workspace_windows']],
+    ['e2e/certification/remote-pairing.spec.ts', []]
+  ])('routes %s to its executing lanes', (path, lanes) => {
+    const plan = classify(path)
+    expect(plan.mode).toBe('selective')
+    expect(e2eLanes(path)).toEqual(lanes)
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining(['policy', 'format', 'lint', 'typecheck_node'])
+    )
+    expect(plan.lanes).not.toContain('unit_macos')
+    expect(plan.lanes).not.toContain('e2e_browser_windows')
+    expect(createAffectedTestPlan([{ path, status: 'modified' }], graph).testFiles).toEqual([])
+  })
+
+  it('matches every root spec to the lanes whose configured command executes it', () => {
+    const lanes = executors()
+    const specs = tracked.filter(
+      (path) => path.endsWith('.spec.ts') && !path.startsWith('e2e/browser/')
+    )
+    const drift = specs.flatMap((path) => {
+      const expected = desktopLanes.filter((lane) => lanes[lane]?.includes(path))
+      const actual = e2eLanes(path)
+      return expected.join() === actual.join() ? [] : [`${path}: ${actual} != ${expected}`]
+    })
+    expect(drift).toEqual([])
+  })
+
+  // Static references inside e2e/: relative imports, repo-relative strings and path segments.
+  const importers = (): Map<string, Set<string>> => {
+    const files = new Set(tracked)
+    const reverse = new Map<string, Set<string>>()
+    const resolveTarget = (base: string): string[] => {
+      for (const extension of ['', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.jsx'])
+        if (files.has(base + extension)) return [base + extension]
+      return tracked.filter((path) => path.startsWith(`${base}/`))
+    }
+    for (const file of tracked) {
+      if (!/\.(?:[cm]?[jt]sx?|html)$/.test(file)) continue
+      const text = readFileSync(file, 'utf8')
+      const targets = [
+        ...[...text.matchAll(/['"`](\.{1,2}\/[^'"`$]+)['"`]/g)].map((match) =>
+          posix.join(posix.dirname(file), match[1])
+        ),
+        ...[...text.matchAll(/\/?(e2e\/[\w./-]+)/g)].map((match) => match[1].replace(/\/$/, '')),
+        ...[...text.matchAll(/['"]e2e['"]\s*,\s*['"]fixtures['"]\s*,\s*['"]([\w.-]+)['"]/g)].map(
+          (match) => `e2e/fixtures/${match[1]}`
+        ),
+        ...[...text.matchAll(/['"]([\w-]+\.(?:cjs|mjs|sh|png))['"]/g)].map((match) =>
+          posix.join(posix.dirname(file), match[1])
+        )
+      ]
+      for (const target of targets.flatMap(resolveTarget)) {
+        if (target === file) continue
+        if (!reverse.has(target)) reverse.set(target, new Set())
+        reverse.get(target)!.add(file)
+      }
+    }
+    return reverse
+  }
+
+  it('maps each shared fixture to at least the union of its importing specs', () => {
+    const reverse = importers()
+    const specsFor = (helper: string): string[] => {
+      const seen = new Set<string>()
+      const pending = [helper]
+      while (pending.length) {
+        for (const next of reverse.get(pending.pop()!) ?? []) {
+          if (seen.has(next)) continue
+          seen.add(next)
+          pending.push(next)
+        }
+      }
+      return [...seen].filter((path) => path.endsWith('.spec.ts'))
+    }
+    expect(specsFor('e2e/fixtures/electron-app.ts').length).toBeGreaterThan(80)
+    const missing = tracked
+      .filter((path) => !path.endsWith('.spec.ts') && !path.startsWith('e2e/browser/'))
+      .filter((path) => classify(path).mode === 'selective')
+      .flatMap((helper) => {
+        const lanes = classify(helper).lanes
+        const required = new Set(specsFor(helper).flatMap((spec) => classify(spec).lanes))
+        const absent = [...required].filter((lane) => !lanes.includes(lane))
+        return absent.length ? [`${helper}: ${absent.join(', ')}`] : []
+      })
+    expect(missing).toEqual([])
+  })
+
+  it.each([
+    ['e2e/fixtures/electron-app.ts', desktopLanes],
+    ['e2e/fixtures/viewport.ts', ['e2e_accessibility_macos', 'e2e_visual_macos']],
+    ['e2e/fixtures/library.ts', ['e2e_regressions_macos']]
+  ])('routes the shared fixture %s to its importers union', (path, lanes) => {
+    expect(classify(path).mode).toBe('selective')
+    expect(e2eLanes(path)).toEqual(lanes)
+  })
+
+  it.each([
+    'e2e/playwright.accessibility.config.ts',
+    'e2e/playwright.browser.config.ts',
+    'e2e/vite.browser-test.config.ts',
+    'e2e/accessibility-reporter.ts',
+    'e2e/windows-shard-reporter.ts',
+    'playwright.config.ts'
+  ])('keeps the Playwright configuration input %s on the full plan', (path) => {
+    const plan = classify(path)
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('global_gate_input')
+  })
+
+  it.each([
+    ['e2e/new-unregistered.spec.ts', 'modified', 'unknown'],
+    ['e2e/fixtures/new-unattributed-helper.ts', 'added', 'unknown'],
+    ['e2e/desktop-runtime-recovery.spec.ts', 'deleted', 'destructive_change'],
+    ['e2e/fixtures/electron-app.ts', 'renamed', 'destructive_change']
+  ])('keeps %s (%s) on the full plan', (path, status, root) => {
+    const plan = classifyChanges([{ path, status }])
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain(root)
+  })
+
+  it('attributes every tracked E2E file so new specs cannot silently fall back to full', () => {
+    expect(tracked.length).toBeGreaterThan(100)
+    expect(tracked.filter((path) => classify(path).roots.includes('unknown'))).toEqual([])
+  })
+
+  it('declares every Vitest suite that loads a selective E2E input', () => {
+    const files = new Set(tracked)
+    const resolveFile = (base: string): string | undefined =>
+      ['', '.ts', '.tsx', '.mjs', '.cjs', '.js'].map((ext) => base + ext).find((p) => files.has(p))
+    // Vitest loads a test's own reads plus its transitive imports; factory mocks replace a module
+    // for the whole graph. Path strings inside E2E files are Electron launch inputs, not loads.
+    const imports = (file: string): string[] =>
+      [
+        ...readFileSync(file, 'utf8').matchAll(
+          /(?:from\s+|import\(\s*|require\(\s*)['"](\.{1,2}\/[^'"]+)['"]/g
+        )
+      ].map((match) => posix.join(posix.dirname(file), match[1]))
+    const closure = (test: string): Set<string> => {
+      const text = readFileSync(test, 'utf8')
+      const mocked = new Set(
+        [...text.matchAll(/vi\.mock\(\s*['"]([^'"]+)['"]\s*,/g)].map((match) =>
+          resolveFile(posix.join(posix.dirname(test), match[1]))
+        )
+      )
+      const reads = [
+        ...text.matchAll(/(?:readFile(?:Sync)?|resolve)\([^)]*?['"](e2e\/[^'"]+)['"]/g)
+      ].map((match) => match[1])
+      const seen = new Set<string>()
+      const pending = [...imports(test), ...reads]
+      while (pending.length) {
+        const next = resolveFile(pending.pop()!)
+        if (!next?.startsWith('e2e/') || seen.has(next) || mocked.has(next)) continue
+        seen.add(next)
+        if (/\.[cm]?[jt]sx?$/.test(next)) pending.push(...imports(next))
+      }
+      return seen
+    }
+    const tests = execFileSync('git', ['ls-files', '*.test.ts', '*.test.tsx', '*.test.mjs'], {
+      encoding: 'utf8'
+    })
+      .split('\n')
+      .filter((path) => path && !path.startsWith('e2e/'))
+      .filter((path) => /['"](?:\.\.\/)+e2e\/|['"]e2e\//.test(readFileSync(path, 'utf8')))
+    const undeclared: string[] = []
+    const reached = new Map(tests.map((test) => [test, closure(test)]))
+    for (const [test, inputs] of reached) {
+      for (const input of inputs) {
+        if (classify(input).mode !== 'selective') continue
+        if (!playwrightReaderTests(input)?.includes(test)) undeclared.push(`${input} -> ${test}`)
+      }
+    }
+    expect(undeclared).toEqual([])
+    const readers = readManifest().rules.filter((rule: { tests?: string[] }) => rule.tests)
+    expect(readers.length).toBeGreaterThan(0)
+    for (const rule of readers as Array<{ id: string; paths: string[]; tests: string[] }>) {
+      for (const test of rule.tests) {
+        expect(test, rule.id).toMatch(/^(?!e2e\/)[\w./-]+\.test\.ts$/)
+        // A declaration may cover a runtime require the scan cannot see, but never nothing.
+        const used = rule.paths.some(
+          (path) => reached.get(test)?.has(path) || readFileSync(test, 'utf8').includes(path)
+        )
+        expect(used, `${rule.id} -> ${test}`).toBe(true)
+      }
+    }
+    expect(playwrightReaderTests('e2e/fixtures/brand-storage-data.ts')).toEqual([
+      'scripts/electron-app-fixture.test.ts',
+      'scripts/electron-fixture-teardown.test.ts',
+      'src/main/storage/brand-location.test.ts'
+    ])
+    expect(playwrightReaderTests('src/main/index.ts')).toBeUndefined()
+  })
+
+  it('keeps every selected desktop lane executable by its PR Gate job', () => {
+    for (const lane of desktopLanes) {
+      const path = tracked.find((file) => e2eLanes(file).includes(lane))!
+      const plan = classify(path)
+      const output = toGitHubOutputPlan(plan)
+      const bundle = lane.endsWith('_windows') ? 'windows_e2e' : 'macos_e2e'
+      expect(plan.bundles, `${path} -> ${lane}`).toContain(bundle)
+      if (bundle === 'macos_e2e') {
+        const group = Object.entries({
+          journeys: ['e2e_smoke_macos', 'e2e_functional_macos', 'e2e_workspace_macos'],
+          presentation: ['e2e_accessibility_macos', 'e2e_visual_macos'],
+          regressions: ['e2e_regressions_macos'],
+          delegation: ['e2e_delegation_macos']
+        }).find(([, lanes]) => lanes.includes(lane))![0]
+        expect(output.macosGroups, `${path} -> ${lane}`).toContain(group)
+        expect(macosGroupsForPlan(plan)).toEqual(output.macosGroups)
+      }
+      // PRs substitute Windows journeys for Mac; the queue keeps one Mac core group.
+      const changes = [{ path, status: 'modified' }]
+      expect(platformExecutionPlan(plan, changes, 'pull_request').bundles).toContain('windows_e2e')
+      expect(platformExecutionPlan(plan, changes, 'merge_group').lanes).toContain('e2e_smoke_macos')
+    }
   })
 })

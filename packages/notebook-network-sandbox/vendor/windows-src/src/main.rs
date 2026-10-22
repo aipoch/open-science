@@ -2080,7 +2080,29 @@ mod windows_host {
     fn write_acl_state(ownership_root: &Path, state: &AclState) -> Result<()> {
         let path = acl_state_path(ownership_root);
         let temporary = path.with_extension("json.tmp");
-        if state.snapshots.is_empty() && state.leases.is_empty() {
+        let mut remove_state = state.snapshots.is_empty() && state.leases.is_empty();
+        if remove_state {
+            // Empty state still records an interrupted cleanup while a receipt remains.
+            // Keep it durable until receipt deletion succeeds, so retry can recover.
+            match fs::read_dir(acl_directory(ownership_root)) {
+                Ok(entries) => {
+                    for entry in entries {
+                        if entry
+                            .context("inspect ACL lease receipt")?
+                            .path()
+                            .extension()
+                            .is_some_and(|extension| extension == "json")
+                        {
+                            remove_state = false;
+                            break;
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).context("inspect ACL lease directory"),
+            }
+        }
+        if remove_state {
             for candidate in [&temporary, &path] {
                 match fs::remove_file(candidate) {
                     Ok(()) => {}
@@ -4551,6 +4573,120 @@ mod windows_host {
                 .and_then(|mut lease| lease.release());
             fs::remove_dir_all(&parent).unwrap();
             result.unwrap();
+        }
+
+        #[test]
+        fn prepare_setup_recovers_after_empty_lease_receipt_delete_is_blocked() {
+            use std::os::windows::fs::OpenOptionsExt;
+
+            let installation_id = "abab1212abab1212abab1215";
+            let parent = unique_test_root("locked-empty-lease-retry");
+            fs::create_dir_all(&parent).unwrap();
+            let root = parent.join(installation_id);
+            let id = new_lease_id().unwrap();
+            let capability =
+                CommandCapability::new(command_capability_name(installation_id, &id)).unwrap();
+            let spec: LaunchSpec = serde_json::from_value(serde_json::json!({
+                "executable": "unused", "arguments": [], "cwd": parent,
+                "readOnlyRoots": [], "readWriteRoots": [], "deniedReadRoots": [],
+                "deniedWriteRoots": []
+            }))
+            .unwrap();
+            let mut lease =
+                AclLease::acquire(installation_id, &root, id.clone(), &capability, &spec).unwrap();
+            // Real Windows sharing semantics: reads and writes remain possible, deletion does not.
+            let occupied = OpenOptions::new()
+                .read(true)
+                .share_mode(3)
+                .open(acl_directory(&root).join(format!("{id}.json")))
+                .unwrap();
+            let failure = lease.release().unwrap_err();
+            assert!(format!("{failure:#}").contains("remove ACL lease"));
+            drop(lease);
+            drop(occupied);
+
+            // The public retry entry point must recover once the external file handle is gone.
+            let retry = prepare_setup(installation_id, &root.to_string_lossy());
+            fs::remove_dir_all(&parent).unwrap();
+            retry.expect("setup retry must recover after receipt deletion is unblocked");
+        }
+
+        #[test]
+        fn prepare_setup_retries_interrupted_empty_lease_recovery() {
+            use std::os::windows::fs::OpenOptionsExt;
+
+            let installation_id = "abab1212abab1212abab1216";
+            let parent = unique_test_root("locked-dead-lease-recovery");
+            let root = parent.join(installation_id);
+            let id = new_lease_id().unwrap();
+            let name = command_capability_name(installation_id, &id);
+            let capability = CommandCapability::new(name.clone()).unwrap();
+            let receipt = AclLeaseRecord {
+                schema_version: ACL_LEASE_SCHEMA,
+                installation_id: installation_id.into(),
+                lease_id: id.clone(),
+                // Windows process IDs are aligned, so this cannot identify a live owner.
+                owner_process_id: u32::MAX,
+                capability_name: name,
+                capability_sid: sid_text(capability.sid()).unwrap(),
+                grants: vec![],
+            };
+            write_acl_state(
+                &root,
+                &AclState {
+                    schema_version: ACL_STATE_SCHEMA,
+                    installation_id: installation_id.into(),
+                    snapshots: vec![],
+                    leases: vec![receipt.clone()],
+                },
+            )
+            .unwrap();
+            let receipt_path = acl_directory(&root).join(format!("{id}.json"));
+            write_acl_record(&receipt_path, &receipt).unwrap();
+            let occupied = OpenOptions::new()
+                .read(true)
+                .share_mode(3)
+                .open(&receipt_path)
+                .unwrap();
+            let failure = prepare_setup(installation_id, &root.to_string_lossy()).unwrap_err();
+            assert!(format!("{failure:#}").contains("remove ACL lease"));
+            drop(occupied);
+
+            let retry = prepare_setup(installation_id, &root.to_string_lossy());
+            let receipts_removed = !receipt_path.exists();
+            let state_removed = !acl_state_path(&root).exists();
+            fs::remove_dir_all(&parent).unwrap();
+            retry.expect("setup retry must finish interrupted lease recovery");
+            assert!(receipts_removed && state_removed);
+        }
+
+        #[test]
+        fn prepare_setup_does_not_adopt_historical_orphan_receipts() {
+            let installation_id = "abab1212abab1212abab1217";
+            let parent = unique_test_root("missing-acl-state-orphan");
+            let root = parent.join(installation_id);
+            let id = new_lease_id().unwrap();
+            let name = command_capability_name(installation_id, &id);
+            let capability = CommandCapability::new(name.clone()).unwrap();
+            let receipt = AclLeaseRecord {
+                schema_version: ACL_LEASE_SCHEMA,
+                installation_id: installation_id.into(),
+                lease_id: id.clone(),
+                owner_process_id: u32::MAX,
+                capability_name: name,
+                capability_sid: sid_text(capability.sid()).unwrap(),
+                grants: vec![],
+            };
+            let receipt_path = acl_directory(&root).join(format!("{id}.json"));
+            write_acl_record(&receipt_path, &receipt).unwrap();
+            let before = fs::read(&receipt_path).unwrap();
+            let failure = prepare_setup(installation_id, &root.to_string_lossy()).unwrap_err();
+            let after = fs::read(&receipt_path).unwrap();
+            let state_created = acl_state_path(&root).exists();
+            fs::remove_dir_all(&parent).unwrap();
+            assert!(format!("{failure:#}").contains("ACL state is missing"));
+            assert_eq!(before, after);
+            assert!(!state_created);
         }
 
         #[test]

@@ -69,7 +69,9 @@ describe('OpenCode delegated runtime preparation', () => {
     prepared.push(runtime)
     const derived = runtime.backend
     expect(derived.env.HOME).toBe('/unchanged-user-home')
-    expect(derived.env.OPENCODE_CONFIG_CONTENT).toBe(backend.env.OPENCODE_CONFIG_CONTENT)
+    expect(derived.env.OPENCODE_CONFIG_CONTENT).not.toContain(
+      join(backend.env.XDG_CONFIG_HOME, 'opencode')
+    )
     expect(derived.sessionModel).toBe(backend.sessionModel)
     expect(derived.args).toEqual([
       '--log-level',
@@ -84,9 +86,10 @@ describe('OpenCode delegated runtime preparation', () => {
     const configPath = join(derived.env.XDG_CONFIG_HOME, 'opencode', 'opencode.json')
     const actual = JSON.parse(await readFile(configPath, 'utf8'))
     expect(actual.model).toContain('admitted-model')
-    expect(actual.instructions).toHaveLength(2)
+    expect(actual.instructions ?? []).toEqual([])
+    expect(JSON.parse(derived.env.OPENCODE_CONFIG_CONTENT).instructions).toHaveLength(2)
     const instructions = await Promise.all(
-      actual.instructions.map(async (path: string) => {
+      JSON.parse(derived.env.OPENCODE_CONFIG_CONTENT).instructions.map(async (path: string) => {
         expect(path.startsWith(join(derived.env.XDG_CONFIG_HOME, 'opencode', 'instructions'))).toBe(
           true
         )
@@ -192,7 +195,9 @@ describe('OpenCode delegated runtime preparation', () => {
                 content: '{synthetic-secret-do-not-expose'
               }
             ]
-          : backend.opencodeConfigFiles!.filter((file) => !file.path.endsWith('connectors.md'))
+          : backend.opencodeConfigFiles!.filter(
+              (file) => !/connectors-[a-f0-9]+\.md$/.test(file.path)
+            )
       const result = await prepareOpenCodeRuntime(backend, join(root, 'attempt')).catch(
         (error: Error) => error
       )

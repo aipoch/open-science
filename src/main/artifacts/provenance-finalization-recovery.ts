@@ -16,7 +16,6 @@ import {
   validateDurableMessageOwnership
 } from './provenance-message-finalization'
 import type { ArtifactRepository, PendingArtifactRunPublication } from './repository'
-import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 type ArtifactProjectReconciliationState = {
   readonly projectId: string
@@ -24,6 +23,11 @@ type ArtifactProjectReconciliationState = {
 }
 
 const artifactProjectReconciliationState = Symbol('artifactProjectReconciliationState')
+
+const projectReconciliationHasUnfinishedPublications = (
+  snapshot: ArtifactProjectReconciliationSnapshot
+): boolean =>
+  snapshot[artifactProjectReconciliationState].unfinishedCompatibilityPublications.length > 0
 
 // Opaque outside this module: callers may route a Project-scoped snapshot but cannot inspect or
 // construct its publication state. This keeps compatibility layout knowledge inside Provenance.
@@ -35,6 +39,39 @@ type PreparedArtifactFinalizationContext = Pick<
   FinalizeArtifactVersionsRequest,
   'rootFrameId' | 'agentFrameId' | 'messageBranchId' | 'runtimeSegmentId' | 'promptMessageId'
 >
+
+type FinalizationRecoveryVersion = {
+  id: string
+  artifactRunId: string
+  state: string
+  messageId: string | null
+  rootFrameId: string
+  agentFrameId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+}
+
+const hasCompleteFinalizationContext = (version: {
+  id: string
+  state: string
+  messageId: string | null
+  artifactRunId: string | null
+  rootFrameId: string | null
+  agentFrameId: string | null
+  messageBranchId: string | null
+  runtimeSegmentId: string | null
+  promptMessageId: string | null
+}): version is FinalizationRecoveryVersion => {
+  return (
+    version.artifactRunId !== null &&
+    version.rootFrameId !== null &&
+    version.agentFrameId !== null &&
+    version.messageBranchId !== null &&
+    version.runtimeSegmentId !== null &&
+    version.promptMessageId !== null
+  )
+}
 
 type ArtifactFinalizationRecoveryResult = {
   recoveredVersionIds: string[]
@@ -114,7 +151,7 @@ const inferDurableFinalizationMessageId = (
 }
 
 // Require Session metadata and every persisted owner projection to carry ArtifactFile.id.
-const isArtifactLinkedToDurableMessage = (
+export const isArtifactLinkedToDurableMessage = (
   session: PersistedChatSession,
   messageId: string,
   versionId: string
@@ -187,21 +224,35 @@ class ArtifactProvenanceFinalizationRecovery {
     }
 
     const client = await this.options.getClient()
-    const allFinalizationVersions = (
-      await client.artifactVersion.findMany({
-        where: {
-          originKind: 'agent_generated',
-          state: { in: ['pending', 'finalized'] },
-          artifact: { is: { projectId, sessionId: appSessionId } }
-        }
-      })
-    ).map(requireAgentArtifactVersion)
+    // Recovery only needs its small ownership/context projection. Selecting every Artifact
+    // Version column makes this scan deserialize historical execution snapshots, which can be
+    // several megabytes each and can exhaust the Prisma native string bridge for the whole
+    // Session. Keep unrelated payload columns out of the recovery path.
+    const allFinalizationVersions = await client.artifactVersion.findMany({
+      where: {
+        originKind: 'agent_generated',
+        state: { in: ['pending', 'finalized'] },
+        artifact: { is: { projectId, sessionId: appSessionId } }
+      },
+      select: {
+        id: true,
+        artifactRunId: true,
+        state: true,
+        messageId: true,
+        rootFrameId: true,
+        agentFrameId: true,
+        messageBranchId: true,
+        runtimeSegmentId: true,
+        promptMessageId: true
+      }
+    })
     const requestedRunIds = artifactRunIds ? new Set(artifactRunIds) : undefined
     const requestedVersionIds = artifactVersionIds ? new Set(artifactVersionIds) : undefined
     const isScopedRetry = requestedRunIds !== undefined || requestedVersionIds !== undefined
     const candidateVersions = allFinalizationVersions.filter(
       (version) =>
         (!isScopedRetry ||
+          !version.artifactRunId ||
           requestedRunIds?.has(version.artifactRunId) ||
           requestedVersionIds?.has(version.id)) &&
         (isScopedRetry ||
@@ -209,9 +260,18 @@ class ArtifactProvenanceFinalizationRecovery {
           (version.messageId !== null &&
             !isArtifactLinkedToDurableMessage(durableSession, version.messageId, version.id)))
     )
-    result.nativeFinalizationRunIds = [
-      ...new Set(candidateVersions.map((version) => version.artifactRunId))
-    ]
+    const nativeRunIds = new Set<string>()
+    for (const version of candidateVersions) {
+      // Missing context must never make a native Version look like a legacy-only publication.
+      if (!version.artifactRunId) {
+        throw new ArtifactFinalizationProofError(
+          'claim-context-missing',
+          `Artifact Version is missing its finalization run identity: ${version.id}`
+        )
+      }
+      nativeRunIds.add(version.artifactRunId)
+    }
+    result.nativeFinalizationRunIds = [...nativeRunIds]
     const unresolvedNativeFinalizationRunIds = new Set(result.nativeFinalizationRunIds)
     const invalidProofNativeFinalizationRunIds = new Set<string>()
     // Native Session linkage proves only that immutable Provenance content is attached. A single
@@ -229,7 +289,7 @@ class ArtifactProvenanceFinalizationRecovery {
     )
     const runIds = [
       ...new Set([
-        ...candidateVersions.map((version) => version.artifactRunId),
+        ...nativeRunIds,
         ...unfinishedCompatibilityPublications.map((publication) => publication.runId)
       ])
     ]
@@ -251,6 +311,10 @@ class ArtifactProvenanceFinalizationRecovery {
       const runVersions = allFinalizationVersions.filter(
         (version) => version.artifactRunId === artifactRunId
       )
+      if (!runVersions.every(hasCompleteFinalizationContext)) {
+        invalidProofNativeFinalizationRunIds.add(artifactRunId)
+        continue
+      }
       if (
         runVersions.length === 0 ||
         runVersions.some(
@@ -363,6 +427,7 @@ class ArtifactProvenanceFinalizationRecovery {
 
 export {
   ArtifactProvenanceFinalizationRecovery,
+  projectReconciliationHasUnfinishedPublications,
   type ArtifactFinalizationRecoveryResult,
   type ArtifactProjectReconciliationSnapshot
 }

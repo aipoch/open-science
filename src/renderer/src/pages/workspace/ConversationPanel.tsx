@@ -1,4 +1,6 @@
+import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import { isAgentAuthenticationRequired } from './agent-authentication-error'
+import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
@@ -45,11 +47,9 @@ import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import {
-  projectSessionActionability,
-  useSessionStore,
-  type ChatSession
-} from '@/stores/session-store'
+import { projectSessionActionability } from '@/stores/session-actionability'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
@@ -337,6 +337,7 @@ const formatAttachmentSize = (size: number): string => {
 
 type ConversationPanelView = {
   activeSession: ChatSession | undefined
+  authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
   persistenceBlocked?: boolean
@@ -731,6 +732,7 @@ const ConversationPanel = ({
   const specialistUnavailable = specialist.view.specialist.unavailable
   const specialistHasPendingSwitch = specialist.view.specialist.hasPendingSwitch
   const reconfigureError = specialist.view.specialist.reconfigureError
+  const specialistSwitchInFlight = specialist.view.specialist.barrierInFlight
   const onSpecialistChange = specialist.actions.selectSpecialist
   const onReconfigureChooseOther = specialist.actions.chooseOtherSpecialist
   const onReconfigureUseNone = specialist.actions.useMainAgent
@@ -882,7 +884,11 @@ const ConversationPanel = ({
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
   const effectiveCanSend =
-    canSendMessage && !pendingInteractionFacts?.rootPermissionPending && !isStopping && !isResuming
+    canSendMessage &&
+    !specialistSwitchInFlight &&
+    !pendingInteractionFacts?.rootPermissionPending &&
+    !isStopping &&
+    !isResuming
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   // Keep the mounted editor stable across receipts and run completion. Only a
   // different Plan or an explicit review request owns a fresh draft/collapse state.
@@ -993,12 +999,14 @@ const ConversationPanel = ({
   )
   const resumeDiagnostic =
     operationDiagnostic?.message === actionError ? operationDiagnostic : undefined
-  const authenticationRequired = [
-    actionError,
-    composerError,
-    currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
-    showLegacyRunError ? legacyDisplayState?.error : undefined
-  ].some(isAgentAuthenticationRequired)
+  const authenticationRequired =
+    view.authenticationRecovery?.required ??
+    [
+      actionError,
+      composerError,
+      currentTurnOutcome?.outcome.kind === 'failed' ? currentTurnOutcome.outcome.error : undefined,
+      showLegacyRunError ? legacyDisplayState?.error : undefined
+    ].some(isAgentAuthenticationRequired)
   const resolvedActionError = isAgentAuthenticationRequired(actionError)
     ? undefined
     : ((isClaudeCliCompatibilityError(actionError ?? '')
@@ -1098,29 +1106,11 @@ const ConversationPanel = ({
       ?.elicitation?.state
     return state === undefined || state === 'pending'
   })
-  const pendingElicitationActivity = livePendingElicitationRequest
-    ? sessionActivities.find((activity) => activity.id === livePendingElicitationRequest.toolCallId)
-    : sessionActivities.find(
-        (activity) =>
-          activity.elicitation?.state === 'pending' &&
-          activity.elicitation.durable?.kind === 'agent-user-choice'
-      )
-  const restoredElicitation = pendingElicitationActivity?.elicitation
   const pendingElicitationRequest: PendingElicitationRequest | undefined =
-    livePendingElicitationRequest ??
-    (activeSession &&
-    pendingElicitationActivity &&
-    restoredElicitation?.state === 'pending' &&
-    restoredElicitation.durable
-      ? {
-          requestId: restoredElicitation.durable.requestId,
-          sessionId: activeSession.id,
-          toolCallId: pendingElicitationActivity.id,
-          message: restoredElicitation.message,
-          fields: restoredElicitation.fields,
-          durable: restoredElicitation.durable
-        }
-      : undefined)
+    livePendingElicitationRequest ?? pendingWorkspaceElicitations(activeSession)[0]
+  const pendingElicitationActivity = pendingElicitationRequest
+    ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
+    : undefined
   const pendingElicitation: ElicitationProjection | undefined =
     pendingElicitationActivity?.elicitation?.state === 'pending'
       ? pendingElicitationActivity.elicitation
@@ -1180,7 +1170,9 @@ const ConversationPanel = ({
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
-  const ordinaryComposerBlocked = Boolean(blockingInteraction || packageLocked)
+  const ordinaryComposerBlocked = Boolean(
+    blockingInteraction || packageLocked || authenticationRequired
+  )
 
   useEffect(() => {
     let tooltipEscape: KeyboardEvent | undefined
@@ -1309,7 +1301,7 @@ const ConversationPanel = ({
   }
 
   const handleSubmit = (): void => {
-    if (!canEditDraft || !effectiveCanSend) return
+    if (!canEditDraft || !effectiveCanSend || authenticationRequired) return
     if (docToText(draftDoc).trim() === '/setup-wsl') {
       void handleWslSetupCommand()
       return
@@ -1372,6 +1364,7 @@ const ConversationPanel = ({
       node.attachmentId ? ([[node.attachmentId, node]] as const) : []
     )
   )
+  const canQueueMessage = effectiveCanSend && submitMode === 'queue'
   const canPlanFirst = effectiveCanSend && hasTextDraft
   const hasSideChatDraft = hasTextDraft || annotations.length > 0
   const openSideChatReason =
@@ -1388,15 +1381,17 @@ const ConversationPanel = ({
       }),
       t
     )
-  const canOpenSideChat = !openSideChatReason && Boolean(sideChatController.createDraft)
-  const canStartSideChat = !sendSideChatReason
+  const canOpenSideChat =
+    !specialistSwitchInFlight && !openSideChatReason && Boolean(sideChatController.createDraft)
+  const canStartSideChat = !specialistSwitchInFlight && !sendSideChatReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
   const canOpenSendOptions =
-    canPlanFirst ||
-    canOpenSideChat ||
-    canStartSideChat ||
-    canRetrySideChatHydration ||
-    (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession)
+    !specialistSwitchInFlight &&
+    (canPlanFirst ||
+      canOpenSideChat ||
+      canStartSideChat ||
+      canRetrySideChatHydration ||
+      (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession))
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst) return
@@ -1733,7 +1728,7 @@ const ConversationPanel = ({
                 {composerError && composerErrorDetail ? (
                   <DiagnosticDetails detail={composerErrorDetail} />
                 ) : null}
-                {showSessionRecovery ? (
+                {showSessionRecovery && !authenticationRequired ? (
                   <SessionInterruptedBanner
                     message={
                       hasUnsupportedCodexRunError
@@ -1743,19 +1738,6 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
-                  />
-                ) : null}
-                {authenticationRequired ? (
-                  <ErrorNotice
-                    className="mb-2"
-                    title={t('Sign in to continue this conversation')}
-                    description={t(
-                      'The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.'
-                    )}
-                    primaryButton={{
-                      label: t('Model settings'),
-                      onClick: () => openSettingsToPanel('model')
-                    }}
                   />
                 ) : null}
                 {activeSession?.compacting ? (
@@ -2010,7 +1992,8 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (packageLocked ||
+                      (authenticationRequired ||
+                        packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
                         pendingPlan ||
@@ -2019,14 +2002,15 @@ const ConversationPanel = ({
                     )}
                   />
 
-                  {/* Reconfigure failure banner: shown directly above the composer when a pre-send
-                      specialist reconfigure failed. Draft is preserved; three recovery actions. */}
-                  {reconfigureError ? (
+                  {!specialistSwitchInFlight && reconfigureError ? (
                     <div className="relative z-10 mb-2" data-testid="reconfigure-error-banner">
                       <ErrorNotice
                         role="alert"
+                        className="rounded-xl"
                         title={
-                          reconfigureError.committed
+                          reconfigureError.committed &&
+                          !reconfigureError.reason &&
+                          !reconfigureError.message
                             ? t('Specialist switch is pending for {{name}}', {
                                 name: reconfigureError.specialistName
                               })
@@ -2034,24 +2018,40 @@ const ConversationPanel = ({
                                 name: reconfigureError.specialistName
                               })
                         }
-                        description={
-                          reconfigureError.committed
-                            ? t(
-                                'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
-                              )
-                            : t(
-                                'The agent session could not be reconfigured. Your draft has been preserved.'
-                              )
+                        content={
+                          <>
+                            <p>
+                              {reconfigureError.reason === 'runtime-application-failed'
+                                ? t('The Agent runtime could not apply the selected Specialist.')
+                                : reconfigureError.reason === 'pending-state-clear-failed'
+                                  ? t(
+                                      'The Specialist was applied, but its completion state could not be saved.'
+                                    )
+                                  : reconfigureError.committed && !reconfigureError.message
+                                    ? t(
+                                        'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
+                                      )
+                                    : reconfigureError.message ||
+                                      t(
+                                        'The agent session could not be reconfigured. Your draft has been preserved.'
+                                      )}
+                            </p>
+                            {reconfigureError.reason || reconfigureError.message ? (
+                              <p className="text-xs">
+                                {t('Your draft and queued messages are preserved.')}
+                              </p>
+                            ) : null}
+                          </>
                         }
                       >
                         <div className="flex flex-wrap gap-2">
-                          <Button size="sm" variant="outline" onClick={onReconfigureRetry}>
+                          <Button size="sm" onClick={onReconfigureRetry}>
                             {t('Retry')}
                           </Button>
                           <Button size="sm" variant="outline" onClick={onReconfigureChooseOther}>
                             {t('Choose another specialist')}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={onReconfigureUseNone}>
+                          <Button size="sm" variant="ghost" onClick={onReconfigureUseNone}>
                             {t('Use None (Main Agent)')}
                           </Button>
                         </div>
@@ -2059,7 +2059,7 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {ordinaryComposerBlocked ? (
+                  {ordinaryComposerBlocked && !authenticationRequired ? (
                     <div
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
@@ -2256,6 +2256,29 @@ const ConversationPanel = ({
                           </details>
                         ) : null}
                       </section>
+                    ) : authenticationRequired ? (
+                      <ErrorNotice
+                        icon={LockKeyhole}
+                        tone="amber"
+                        title={
+                          view.authenticationRecovery?.provider &&
+                          ['custom', 'official'].includes(view.authenticationRecovery.provider.type)
+                            ? t('Update credential')
+                            : t('Sign in to continue this conversation')
+                        }
+                        description={t(
+                          'Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.'
+                        )}
+                        primaryButton={{
+                          label: view.authenticationRecovery?.provider
+                            ? t('Open account settings')
+                            : t('Model settings'),
+                          onClick: () =>
+                            view.authenticationRecovery
+                              ? view.authenticationRecovery.openSettings()
+                              : openSettingsToPanel('model')
+                        }}
+                      />
                     ) : (
                       <form
                         ref={composerFormRef}
@@ -3173,6 +3196,20 @@ const ConversationPanel = ({
 
                             <ComposerSpecialistPicker
                               selectedId={specialistId}
+                              loadingLabel={
+                                specialistSwitchInFlight
+                                  ? t('Switching to {{target}}', {
+                                      target:
+                                        specialist.view.specialist.historyId === undefined
+                                          ? t('Main Agent')
+                                          : selectedSpecialist &&
+                                              selectedSpecialist.kind !== 'reviewer'
+                                            ? (selectedSpecialist.displayName ??
+                                              selectedSpecialist.name)
+                                            : t('Unavailable')
+                                    })
+                                  : undefined
+                              }
                               readOnly={!canChangeSpecialist}
                               onChange={onSpecialistChange}
                             />
@@ -3220,7 +3257,7 @@ const ConversationPanel = ({
                             />
 
                             {rootTurnBusy ? (
-                              // Running sessions expose cancel instead of send to prevent overlapping turns.
+                              // A sendable draft replaces Stop with queue submission without starting another turn.
                               // Detached children can outlive a wait=false Main turn, so their durable
                               // running aggregate keeps the same root cascade reachable after Main settles.
                               // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
@@ -3228,32 +3265,35 @@ const ConversationPanel = ({
                               // reachable across the whole loop, not just the agent-fix running turn.
                               <div
                                 data-testid="composer-running-control-slot"
-                                className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                                className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                               >
                                 <button
                                   type="button"
-                                  onClick={handleSubmit}
-                                  disabled={!effectiveCanSend || submitMode !== 'queue'}
-                                  className={composerIconButtonClassName}
-                                  aria-label={t('Add message to queue')}
-                                  data-testid="composer-queue-submit"
-                                >
-                                  <ArrowUp
-                                    className="size-4"
-                                    strokeWidth={2.2}
-                                    aria-hidden="true"
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleStop}
+                                  onClick={canQueueMessage ? handleSubmit : handleStop}
                                   disabled={isStopping}
-                                  className={composerCancelButtonClassName}
+                                  data-testid={
+                                    canQueueMessage ? 'composer-queue-submit' : undefined
+                                  }
+                                  className={cn(
+                                    composerCancelButtonClassName,
+                                    canQueueMessage &&
+                                      'bg-primary text-primary-foreground hover:bg-primary/90'
+                                  )}
                                   aria-label={
-                                    isStopping ? t('Stopping run and subagents') : t('Cancel run')
+                                    canQueueMessage
+                                      ? t('Add message to queue')
+                                      : isStopping
+                                        ? t('Stopping run and subagents')
+                                        : t('Cancel run')
                                   }
                                 >
-                                  {isStopping ? (
+                                  {canQueueMessage ? (
+                                    <ArrowUp
+                                      className="size-4"
+                                      strokeWidth={2.2}
+                                      aria-hidden="true"
+                                    />
+                                  ) : isStopping ? (
                                     <Loader2
                                       className="size-3.5 animate-spin"
                                       strokeWidth={2.2}
@@ -3292,6 +3332,7 @@ const ConversationPanel = ({
                                               type="button"
                                               className={composerIconButtonClassName}
                                               disabled={
+                                                !canQueueMessage &&
                                                 !canOpenSideChat &&
                                                 !canStartSideChat &&
                                                 !canRetrySideChatHydration
@@ -3308,11 +3349,26 @@ const ConversationPanel = ({
                                         </span>
                                       </TooltipTrigger>
                                       <TooltipContent side="top">
-                                        {sideChatDisabledReason ?? t('More send options')}
+                                        {canQueueMessage
+                                          ? t('More send options')
+                                          : (sideChatDisabledReason ?? t('More send options'))}
                                       </TooltipContent>
                                     </Tooltip>
                                   </>
                                   <DropdownMenuContent side="top" align="end" className="w-64">
+                                    {canQueueMessage ? (
+                                      <DropdownMenuItem
+                                        onSelect={handleStop}
+                                        aria-label={t('Cancel run')}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <Square
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Cancel run')}
+                                      </DropdownMenuItem>
+                                    ) : null}
                                     {sideChatMenuItems}
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -3323,8 +3379,14 @@ const ConversationPanel = ({
                                   role="group"
                                   aria-label={t('Send message options')}
                                   className={cn(
-                                    'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
-                                    !effectiveCanSend && !canOpenSendOptions && 'opacity-50'
+                                    'flex rounded-md [@media(pointer:coarse)]:mx-3',
+                                    specialistSwitchInFlight
+                                      ? 'bg-bg-300 text-text-300'
+                                      : 'bg-primary text-primary-foreground',
+                                    !specialistSwitchInFlight &&
+                                      !effectiveCanSend &&
+                                      !canOpenSendOptions &&
+                                      'opacity-50'
                                   )}
                                 >
                                   <Tooltip>
@@ -3337,6 +3399,7 @@ const ConversationPanel = ({
                                         disabled={!effectiveCanSend}
                                         className={cn(
                                           composerSplitSendPrimaryButtonClassName,
+                                          specialistSwitchInFlight && 'text-text-300',
                                           canOpenSendOptions && 'disabled:opacity-50'
                                         )}
                                         aria-label={t('Send message')}
@@ -3370,6 +3433,8 @@ const ConversationPanel = ({
                                             disabled={!canOpenSendOptions}
                                             className={cn(
                                               composerSplitSendMenuButtonClassName,
+                                              specialistSwitchInFlight &&
+                                                'text-text-300 after:bg-text-300/20',
                                               effectiveCanSend && 'disabled:opacity-50'
                                             )}
                                             aria-label={t('More send options')}

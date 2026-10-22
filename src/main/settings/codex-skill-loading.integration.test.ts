@@ -373,3 +373,168 @@ it.runIf(Boolean(adapter && native)).each([
   },
   30_000
 )
+
+it.runIf(Boolean(adapter && native))(
+  'keeps concurrent Main and Specialist sessions isolated in one native Codex process',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-parallel-skills-'))
+    const workspace = join(root, 'workspace')
+    const skillsDirectory = join(root, 'codex', 'skills')
+    await mkdir(workspace)
+    const writeSkill = async (name: string): Promise<string> => {
+      const path = join(skillsDirectory, name, 'SKILL.md')
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(
+        path,
+        `---\nname: ${name}\ndescription: ${name} metadata.\n---\n${name}_BODY\n`
+      )
+      return path
+    }
+    await writeSkill('mcp-genes')
+    const loaderEntry = join(root, 'skill-loader.cjs')
+    buildSync({
+      stdin: {
+        contents:
+          "import { runSkillRuntimeMcpServer } from './src/main/skills/runtime-mcp-server'; runSkillRuntimeMcpServer()",
+        resolveDir: resolve('.')
+      },
+      outfile: loaderEntry,
+      bundle: true,
+      platform: 'node',
+      format: 'cjs'
+    })
+    const requests: Record<string, unknown>[] = []
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://vendor.invalid/v1', model: 'probe-native-model' },
+      async (_url, init) => {
+        requests.push(JSON.parse(String(init?.body)))
+        return new Response(
+          [
+            { type: 'response.created', response: { id: `probe-${requests.length}` } },
+            {
+              type: 'response.output_item.done',
+              item: {
+                type: 'message',
+                id: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'done' }]
+              }
+            },
+            {
+              type: 'response.completed',
+              response: {
+                id: `probe-${requests.length}`,
+                usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 }
+              }
+            }
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(''),
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      }
+    )
+    const connection = await proxy.start()
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://vendor.invalid/v1',
+        model: 'probe-native-model',
+        contextWindow: 128_000
+      },
+      {
+        storageRoot: root,
+        executablePath: adapter!,
+        responsesConnection: connection,
+        skillDiscovery: { allowedNames: ['mcp-genes'], allowedPaths: [] }
+      }
+    )
+    for (const file of config.configFiles ?? []) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.content)
+    }
+    // This definition did not exist when the backend configuration was fixed.
+    const orphanPath = await writeSkill('mcp-orphadata')
+    const child = spawn(
+      adapter!.endsWith('.js') ? process.execPath : adapter!,
+      adapter!.endsWith('.js') ? [adapter!] : [],
+      {
+        cwd: workspace,
+        env: { ...process.env, ...config.env, CODEX_PATH: native! },
+        stdio: ['pipe', 'pipe', 'pipe']
+      }
+    )
+    const stderr: string[] = []
+    child.stderr.on('data', (chunk) => stderr.push(String(chunk)))
+    try {
+      await acp
+        .client({ name: 'parallel-skill-probe' })
+        .connectWith(
+          acp.ndJsonStream(
+            Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+            Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
+          ),
+          async (ctx) => {
+            await ctx.request(acp.methods.agent.initialize, {
+              protocolVersion: acp.PROTOCOL_VERSION,
+              clientCapabilities: {}
+            })
+            await ctx.request(acp.methods.agent.providers.set, config.providerConfiguration!)
+            await Promise.all(
+              [false, true].map(async (specialist) => {
+                const setup = framework.buildSessionSetup({
+                  systemPromptAppends: [],
+                  skillRuntimeScope: specialist ? ['mcp-orphadata'] : ['mcp-genes'],
+                  sessionOptions: {
+                    openScienceSkillRuntime: {
+                      command: process.execPath,
+                      entryPath: loaderEntry,
+                      root: join(root, 'codex'),
+                      skillsDirectory
+                    }
+                  }
+                })
+                await ctx
+                  .buildSession({ cwd: workspace, mcpServers: setup.mcpServers ?? [] })
+                  .withSession(async (session) => {
+                    session.prompt({
+                      type: 'text',
+                      text: specialist ? 'SPECIALIST_PROBE' : 'MAIN_PROBE',
+                      ...(specialist
+                        ? {
+                            _meta: {
+                              'open-science/skill-inputs': [
+                                { name: 'mcp-orphadata', path: orphanPath }
+                              ]
+                            }
+                          }
+                        : {})
+                    })
+                    while ((await session.nextUpdate()).kind !== 'stop') {
+                      /* Drain updates. */
+                    }
+                  })
+              })
+            )
+          }
+        )
+      const main = requests.find((request) => JSON.stringify(request.input).includes('MAIN_PROBE'))
+      const specialist = requests.find((request) =>
+        JSON.stringify(request.input).includes('SPECIALIST_PROBE')
+      )
+      expect(main, stderr.join('')).toBeDefined()
+      expect(specialist, stderr.join('')).toBeDefined()
+      expect(JSON.stringify(main)).toContain('mcp-genes')
+      expect(JSON.stringify(main)).not.toContain('mcp-orphadata')
+      expect(JSON.stringify(specialist)).toContain('mcp-orphadata_BODY')
+      expect(JSON.stringify(specialist)).not.toContain('mcp-genes')
+    } finally {
+      await terminateProcessTree(child)
+      await proxy.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  120_000
+)

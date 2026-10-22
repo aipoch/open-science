@@ -23,7 +23,7 @@
       "src/preload/find-overlay.test.ts",
       "src/preload/index.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx",
       "src/renderer/web/api-installer.test.ts",
@@ -33,5 +33,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "shared_contract"
+  "fallbackCapability": "shared_contract",
+  "fullTestReason": "The native action-menu preload expands the reviewed desktop bridge boundary with cross-WebContents IPC; retain complete validation until the expanded boundary is reviewed and reclassified."
 }

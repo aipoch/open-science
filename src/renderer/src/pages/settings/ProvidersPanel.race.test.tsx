@@ -504,3 +504,174 @@ describe('ProvidersPanel: claude-shared actions', () => {
     )
   })
 })
+
+it('routes recovery to the existing account mode and retains it after cancellation', async () => {
+  const login = vi.fn().mockResolvedValue({ ok: false, category: 'auth', cancelled: true })
+  useSettingsStore.setState({ loginIsolatedClaudeBrowser: login })
+  act(() =>
+    root.render(
+      <ProvidersPanel
+        recoveryProviderId="builtin-claude-isolated"
+        onCreateProvider={vi.fn()}
+        onEditProvider={vi.fn()}
+        onBusyProviderChange={vi.fn()}
+      />
+    )
+  )
+  const reconnect = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Sign in again'
+  )
+  expect(reconnect).toBeDefined()
+  expect(login).not.toHaveBeenCalled()
+  await act(async () => reconnect?.click())
+  expect(login).toHaveBeenCalledOnce()
+  expect(container.textContent).toContain('Sign in again to restore access to this account.')
+})
+
+it('routes API key recovery to the existing editor without starting login', async () => {
+  const edit = vi.fn()
+  const provider = {
+    ...useSettingsStore.getState().providers[0],
+    type: 'custom' as const,
+    id: 'api-key'
+  }
+  useSettingsStore.setState({ providers: [provider] })
+  act(() =>
+    root.render(
+      <ProvidersPanel
+        recoveryProviderId="api-key"
+        onCreateProvider={vi.fn()}
+        onEditProvider={edit}
+        onBusyProviderChange={vi.fn()}
+      />
+    )
+  )
+  const update = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Update credential'
+  )
+  await act(async () => update?.click())
+  expect(edit).toHaveBeenCalledWith(provider)
+})
+
+it.each(['claude-isolated', 'xai-subscription', 'custom'] as const)(
+  'clears %s recovery after fresh validation while retaining unrelated model failures',
+  (type) => {
+    const provider = {
+      ...useSettingsStore.getState().providers[0],
+      type,
+      lastValidatedAt: 10,
+      lastValidationFailure: {
+        at: 20,
+        category: 'model-not-found' as const,
+        target: { model: 'unavailable-model' }
+      }
+    }
+    useSettingsStore.setState({ providers: [provider] })
+    act(() =>
+      root.render(
+        <ProvidersPanel
+          recoveryProviderId={provider.id}
+          recoveryModel="available-model"
+          onCreateProvider={vi.fn()}
+          onEditProvider={vi.fn()}
+          onBusyProviderChange={vi.fn()}
+        />
+      )
+    )
+    const recoveryCopy =
+      type === 'custom'
+        ? 'Update the saved credential, then test the connection.'
+        : 'Sign in again to restore access to this account.'
+    expect(container.textContent).toContain(recoveryCopy)
+
+    const validated = {
+      ...provider,
+      hasKey: true,
+      lastValidatedAt: 30,
+      lastValidatedTarget: { model: 'available-model' }
+    }
+    act(() => useSettingsStore.setState({ providers: [validated] }))
+    expect(container.textContent).not.toContain(recoveryCopy)
+    expect(useSettingsStore.getState().providers[0].lastValidationFailure).toEqual(
+      provider.lastValidationFailure
+    )
+
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...validated, lastValidationFailure: { ...provider.lastValidationFailure, at: 40 } }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain(recoveryCopy)
+
+    act(() =>
+      useSettingsStore.setState({
+        providers: [{ ...validated, lastValidationFailure: { at: 30, category: 'auth' } }]
+      })
+    )
+    expect(container.textContent).toContain(recoveryCopy)
+
+    act(() => useSettingsStore.setState({ providers: [{ ...validated, needsKey: true }] }))
+    expect(container.textContent).toContain(recoveryCopy)
+  }
+)
+
+it.each(['pinned-model', undefined])(
+  'keeps recovery until the requested model %s is validated',
+  (recoveryModel) => {
+    const provider = {
+      ...useSettingsStore.getState().providers[0],
+      type: 'custom' as const,
+      model: 'default-model',
+      hasKey: true,
+      lastValidatedAt: 10
+    }
+    useSettingsStore.setState({ providers: [provider] })
+    const renderRecovery = (model?: string): void =>
+      act(() =>
+        root.render(
+          <ProvidersPanel
+            recoveryProviderId={provider.id}
+            recoveryModel={model}
+            onCreateProvider={vi.fn()}
+            onEditProvider={vi.fn()}
+            onBusyProviderChange={vi.fn()}
+          />
+        )
+      )
+    renderRecovery(recoveryModel)
+    const copy = 'Update the saved credential, then test the connection.'
+    expect(container.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...provider, lastValidatedAt: 20, lastValidatedTarget: { model: 'other-model' } }
+        ]
+      })
+    )
+    expect(container.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          {
+            ...provider,
+            lastValidatedAt: 30,
+            lastValidatedTarget: { model: recoveryModel ?? provider.model }
+          }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain(copy)
+    renderRecovery('other-model')
+    expect(container.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...provider, lastValidatedAt: 40, lastValidatedTarget: { model: 'other-model' } }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain(copy)
+  }
+)

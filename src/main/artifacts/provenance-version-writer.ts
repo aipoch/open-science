@@ -1,4 +1,4 @@
-import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
+import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -36,9 +36,9 @@ const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const VERSION_ALLOCATION_MAX_ATTEMPTS = 3
 
-const assertSafeSegment = (value: string, label: string): string => {
-  if (!SAFE_SEGMENT_PATTERN.test(value)) {
-    throw new Error(`Invalid ${label}: ${value}`)
+const assertSafeSegment = (value: unknown, label: string): string => {
+  if (typeof value !== 'string' || value.length === 0 || !SAFE_SEGMENT_PATTERN.test(value)) {
+    throw new Error(`Invalid ${label}: ${String(value)}`)
   }
   return value
 }

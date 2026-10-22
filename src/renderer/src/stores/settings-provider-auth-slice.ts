@@ -17,6 +17,7 @@ import type {
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult,
+  XaiOAuthLoginResult,
   XaiOAuthDeviceAuthorization
 } from '../../../shared/settings'
 import type { SettingsWriteCoordinator } from './settings-write-coordinator'
@@ -45,7 +46,7 @@ export type ProviderAuthActions = {
   cancelIsolatedClaudeLogin: () => Promise<void>
   logoutIsolatedClaude: () => Promise<ValidateProviderResult>
   beginXaiOAuthLogin: () => Promise<XaiOAuthDeviceAuthorization>
-  waitXaiOAuthLogin: () => Promise<{ accountEmail?: string }>
+  waitXaiOAuthLogin: () => Promise<XaiOAuthLoginResult>
   cancelXaiOAuthLogin: () => Promise<void>
   logoutXaiOAuth: () => Promise<void>
   refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>

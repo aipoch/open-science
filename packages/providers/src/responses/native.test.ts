@@ -142,3 +142,23 @@ it('restores namespace identity in streamed and completed response items', () =>
     ]
   })
 })
+
+it.each(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'])(
+  'keeps native Responses thinking enabled for %s',
+  (model) => {
+    const body = { model, reasoning: { effort: 'none', summary: 'auto' }, input: 'Hello' }
+    const { request } = prepareNativeResponsesRequest(body, 'minimax')
+    expect(request.reasoning).toEqual({ effort: 'low', summary: 'auto' })
+    expect(body.reasoning.effort).toBe('none')
+  }
+)
+
+it.each([
+  ['minimax', 'MiniMax-M3', 'none'],
+  [undefined, 'MiniMax-M3.1-Flash', 'none'],
+  ['minimax', 'MiniMax-M3.1-Flash', 'high'],
+  ['minimax', 'MiniMax-M3.1-Flash', undefined]
+])('preserves native reasoning for vendor %s model %s effort %s', (vendorId, model, effort) => {
+  const body = { model, ...(effort ? { reasoning: { effort } } : {}) }
+  expect(prepareNativeResponsesRequest(body, vendorId).request).toEqual(body)
+})

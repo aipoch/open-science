@@ -5,6 +5,7 @@ import type {
   ClaudeInstallResult,
   DeleteProviderRequest,
   EnvironmentCheckResult,
+  XaiOAuthLoginResult,
   XaiOAuthDeviceAuthorization,
   InstallClaudeRequest,
   InstallCodeBuddyRequest,
@@ -204,7 +205,7 @@ export const settingsUpsertProviderContracts = {
   'settings.validateProvider': callable<
     (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   >()('settings', ['settings:validate-provider']),
-  'settings.waitXaiOAuthLogin': callable<() => Promise<{ accountEmail?: string }>>()('settings', [
+  'settings.waitXaiOAuthLogin': callable<() => Promise<XaiOAuthLoginResult>>()('settings', [
     'settings:wait-xai-oauth-login',
     LOCAL
   ])

@@ -1,0 +1,12 @@
+{
+  "ownerPaths": ["src/shared/notebook-network-settings.ts"],
+  "interfacePaths": ["src/shared/notebook-network-settings.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [],
+    "contract": [],
+    "consumer": ["src/shared/notebook-env.typecheck.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

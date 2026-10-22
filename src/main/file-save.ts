@@ -14,6 +14,8 @@ import { pipeline } from 'node:stream/promises'
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 
 import type {
+  ArtifactSaveOperationRequest,
+  ArtifactSaveProgress,
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
@@ -271,6 +273,7 @@ const writeProjectArtifactArchive = async (options: {
   limits: ProjectArtifactExportLimits
   createTemporaryRoot: () => Promise<string>
   assertActive: () => void
+  onFileCompleted?: () => void
 }): Promise<boolean> => {
   let temporaryRoot: string | undefined
   let archiveHandle: FileHandle | undefined
@@ -381,6 +384,7 @@ const writeProjectArtifactArchive = async (options: {
         })
       } finally {
         await managedSource?.close()
+        options.onFileCompleted?.()
       }
     }
 
@@ -530,7 +534,27 @@ const assertCaller = ({ callerContext, callerLease }: FileSaveInvocation): void 
   callerLease.signal.throwIfAborted()
   if (!callerLease.isCurrent()) throw new Error('File export caller is no longer current.')
 }
+class ArtifactSaveCancelled extends Error {}
+
+type ArtifactSaveOperation = {
+  controller: AbortController
+  progress: ArtifactSaveProgress
+  cancelled: boolean
+}
+
+function assertOperationId(operationId: unknown): asserts operationId is string {
+  if (typeof operationId !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(operationId)) {
+    throw new Error('Invalid artifact save operation identity.')
+  }
+}
+
 export type FileSaveCommands = {
+  'file:artifact-save-progress': (
+    invocation: ApplicationInvocation<readonly [ArtifactSaveOperationRequest]>
+  ) => Promise<ArtifactSaveProgress | undefined>
+  'file:cancel-artifact-save': (
+    invocation: ApplicationInvocation<readonly [ArtifactSaveOperationRequest]>
+  ) => Promise<void>
   'file:save-blob': (
     invocation: ApplicationInvocation<readonly [SaveBlobFileRequest]>
   ) => Promise<SaveBlobFileResult>
@@ -547,26 +571,100 @@ export type FileSaveCommands = {
 export const createFileSaveCommands = (
   options: RegisterFileSaveHandlersOptions = {}
 ): FileSaveCommands => {
+  // Operations belong to the invoking renderer lease and disappear when their promise settles.
+  const operations = new WeakMap<
+    FileSaveInvocation['callerLease'],
+    Map<string, ArtifactSaveOperation>
+  >()
+  const operationFor = (
+    invocation: FileSaveInvocation,
+    operationId: unknown
+  ): ArtifactSaveOperation | undefined => {
+    assertCaller(invocation)
+    assertOperationId(operationId)
+    return operations.get(invocation.callerLease)?.get(operationId)
+  }
+  const assertTransferActive = (invocation: FileSaveInvocation): void => {
+    assertCaller(invocation)
+    const request = invocation.args[0] as { operationId?: string }
+    if (
+      request?.operationId &&
+      operations.get(invocation.callerLease)?.get(request.operationId)?.cancelled
+    ) {
+      throw new ArtifactSaveCancelled()
+    }
+  }
+  const runTransfer = async <T extends SaveSessionArtifactsResult | SaveProjectArtifactsResult>(
+    invocation: FileSaveInvocation,
+    request: { operationId?: string; files: unknown[] },
+    run: (operation: ArtifactSaveOperation) => Promise<T>
+  ): Promise<T | { saved: false; cancelled: true }> => {
+    const operation: ArtifactSaveOperation = {
+      controller: new AbortController(),
+      progress: { phase: 'preparing', completedFiles: 0, totalFiles: request.files.length },
+      cancelled: false
+    }
+    let owned = operations.get(invocation.callerLease)
+    if (request.operationId !== undefined) {
+      assertOperationId(request.operationId)
+      if (!owned) {
+        owned = new Map()
+        operations.set(invocation.callerLease, owned)
+      }
+      if (owned.has(request.operationId))
+        throw new Error('Artifact save operation is already running.')
+      owned.set(request.operationId, operation)
+    }
+    try {
+      return await run(operation)
+    } catch (error) {
+      if (error instanceof ArtifactSaveCancelled) return { saved: false, cancelled: true }
+      throw error
+    } finally {
+      if (request.operationId) owned?.delete(request.operationId)
+    }
+  }
   const publishFor =
     (invocation: FileSaveInvocation): typeof publishUserFile =>
     (destination, write, publishOptions) => {
-      assertCaller(invocation)
+      assertTransferActive(invocation)
+      const request = invocation.args[0] as { operationId?: string }
+      const operation = request?.operationId
+        ? operations.get(invocation.callerLease)?.get(request.operationId)
+        : undefined
       return (options.publishUserFile ?? publishUserFile)(
         destination,
         async (temporary) => {
           await write(temporary)
-          assertCaller(invocation)
+          assertTransferActive(invocation)
         },
         {
           ...publishOptions,
+          signal: AbortSignal.any([
+            invocation.callerLease.signal,
+            ...(operation ? [operation.controller.signal] : []),
+            ...(publishOptions?.signal ? [publishOptions.signal] : [])
+          ]),
           validateDestination: async () => {
             await publishOptions?.validateDestination?.()
-            assertCaller(invocation)
+            assertTransferActive(invocation)
           }
         }
       )
     }
   return {
+    'file:artifact-save-progress': async (invocation) => {
+      const operation = operationFor(invocation, invocation.args[0]?.operationId)
+      return operation ? { ...operation.progress } : undefined
+    },
+    'file:cancel-artifact-save': async (invocation) => {
+      const operation = operationFor(invocation, invocation.args[0]?.operationId)
+      if (operation) {
+        operation.cancelled = true
+        operation.controller.abort(new ArtifactSaveCancelled())
+        operation.progress.phase = 'cancelling'
+      }
+    },
     'file:save-blob': async (
       invocation: ApplicationInvocation<readonly [SaveBlobFileRequest]>
     ): Promise<SaveBlobFileResult> => {
@@ -696,85 +794,95 @@ export const createFileSaveCommands = (
         throw new Error('Managed file Version resolver is not configured.')
       }
 
-      if (request.files.length === 1) {
-        const [file] = request.files
-        const safeName = getSafeFilename(file.suggestedName, file.fileId)
-        const dialogOptions = {
-          defaultPath: join(runtimeMetadata().downloadsPath, safeName),
-          title: (options.translate ?? englishNativeTranslator)('Save artifact')
-        }
-        const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
-          dialogOptions,
-          invocation.callerContext.clientId
-        )
+      return runTransfer(invocation, request, async (operation) => {
+        if (request.files.length === 1) {
+          const [file] = request.files
+          const safeName = getSafeFilename(file.suggestedName, file.fileId)
+          const dialogOptions = {
+            defaultPath: join(runtimeMetadata().downloadsPath, safeName),
+            title: (options.translate ?? englishNativeTranslator)('Save artifact')
+          }
+          const { canceled, filePath } = await desktopFileInteraction().chooseSavePath(
+            dialogOptions,
+            invocation.callerContext.clientId
+          )
 
-        assertCaller(invocation)
-        if (canceled || !filePath) return { saved: false }
+          assertTransferActive(invocation)
+          if (canceled || !filePath) return { saved: false }
 
-        const managedFile = await openManagedFileVersion('artifact', {
-          projectId: request.projectId,
-          fileId: file.fileId,
-          versionId: file.versionId
-        })
-
-        try {
-          await publish(filePath, (temporaryPath) => managedFile.copyTo(temporaryPath), {
-            ...(managedFile.assertCanCopyTo
-              ? { validateDestination: () => managedFile.assertCanCopyTo!(filePath) }
-              : {})
-          })
-          return { saved: true, filePaths: [filePath] }
-        } finally {
-          await managedFile.close()
-        }
-      }
-
-      const directoryDialogOptions: Parameters<
-        ReturnType<typeof desktopFileInteraction>['chooseFiles']
-      >[0] = {
-        defaultPath: runtimeMetadata().downloadsPath,
-        properties: ['openDirectory', 'createDirectory'],
-        title: (options.translate ?? englishNativeTranslator)('Choose where to save artifacts')
-      }
-      const { canceled, filePaths } = await desktopFileInteraction().chooseFiles(
-        directoryDialogOptions,
-        invocation.callerContext.clientId
-      )
-      assertCaller(invocation)
-      const destinationDirectory = filePaths[0]
-      if (canceled || !destinationDirectory) return { saved: false }
-
-      const savedPaths: string[] = []
-      const failures: NonNullable<
-        Extract<SaveSessionArtifactsResult, { saved: true }>['failures']
-      > = []
-      for (const file of request.files) {
-        assertCaller(invocation)
-        let managedFile: ManagedFileHandle | undefined
-        try {
-          managedFile = await openManagedFileVersion('artifact', {
+          operation.progress.phase = 'running'
+          const managedFile = await openManagedFileVersion('artifact', {
             projectId: request.projectId,
             fileId: file.fileId,
             versionId: file.versionId
           })
-          const safeName = getSafeFilename(file.suggestedName, file.fileId)
-          savedPaths.push(
-            await copyToAvailableDestination(managedFile, destinationDirectory, safeName, publish)
-          )
-        } catch (error) {
-          failures.push({
-            ...file,
-            message: toErrorMessage(error)
-          })
-        } finally {
-          await managedFile?.close()
+
+          try {
+            await publish(filePath, (temporaryPath) => managedFile.copyTo(temporaryPath), {
+              ...(managedFile.assertCanCopyTo
+                ? { validateDestination: () => managedFile.assertCanCopyTo!(filePath) }
+                : {})
+            })
+            return { saved: true, filePaths: [filePath] }
+          } finally {
+            await managedFile.close()
+          }
         }
-      }
-      return {
-        saved: true,
-        filePaths: savedPaths,
-        ...(failures.length > 0 ? { failures } : {})
-      }
+
+        const directoryDialogOptions: Parameters<
+          ReturnType<typeof desktopFileInteraction>['chooseFiles']
+        >[0] = {
+          defaultPath: runtimeMetadata().downloadsPath,
+          properties: ['openDirectory', 'createDirectory'],
+          title: (options.translate ?? englishNativeTranslator)('Choose where to save artifacts')
+        }
+        const { canceled, filePaths } = await desktopFileInteraction().chooseFiles(
+          directoryDialogOptions,
+          invocation.callerContext.clientId
+        )
+        assertTransferActive(invocation)
+        const destinationDirectory = filePaths[0]
+        if (canceled || !destinationDirectory) return { saved: false }
+
+        operation.progress.phase = 'running'
+        const savedPaths: string[] = []
+        const completedFileIds: string[] = []
+        const failures: NonNullable<
+          Extract<SaveSessionArtifactsResult, { saved: true }>['failures']
+        > = []
+        for (const file of request.files) {
+          assertCaller(invocation)
+          if (operation.cancelled) break
+          let managedFile: ManagedFileHandle | undefined
+          try {
+            managedFile = await openManagedFileVersion('artifact', {
+              projectId: request.projectId,
+              fileId: file.fileId,
+              versionId: file.versionId
+            })
+            const safeName = getSafeFilename(file.suggestedName, file.fileId)
+            savedPaths.push(
+              await copyToAvailableDestination(managedFile, destinationDirectory, safeName, publish)
+            )
+            completedFileIds.push(file.fileId)
+          } catch (error) {
+            if (error instanceof ArtifactSaveCancelled) break
+            failures.push({
+              ...file,
+              message: toErrorMessage(error)
+            })
+          } finally {
+            await managedFile?.close()
+            operation.progress.completedFiles += 1
+          }
+        }
+        return {
+          saved: true,
+          filePaths: savedPaths,
+          ...(operation.cancelled ? { cancelled: true as const, completedFileIds } : {}),
+          ...(failures.length > 0 ? { failures } : {})
+        }
+      })
     },
 
     // Project-wide export packs every Artifact and Upload into one zip, grouped under uploads/ and
@@ -791,46 +899,52 @@ export const createFileSaveCommands = (
         throw new Error('Managed file Version resolver is not configured.')
       }
 
-      const dialogOptions = {
-        defaultPath: join(
-          runtimeMetadata().downloadsPath,
-          `${getSafeZipBaseName(request.suggestedArchiveName)}-artifacts.zip`
-        ),
-        title: (options.translate ?? englishNativeTranslator)('Download project artifacts'),
-        filters: [
-          {
-            name: (options.translate ?? englishNativeTranslator)('ZIP archive'),
-            extensions: ['zip']
-          }
-        ]
-      }
-      const dialogResult = await desktopFileInteraction().chooseSavePath(
-        dialogOptions,
-        invocation.callerContext.clientId
-      )
-      const { canceled, filePath } = dialogResult
-      assertCaller(invocation)
-      if (canceled || !filePath) return { saved: false }
+      return runTransfer(invocation, request, async (operation) => {
+        const dialogOptions = {
+          defaultPath: join(
+            runtimeMetadata().downloadsPath,
+            `${getSafeZipBaseName(request.suggestedArchiveName)}-artifacts.zip`
+          ),
+          title: (options.translate ?? englishNativeTranslator)('Download project artifacts'),
+          filters: [
+            {
+              name: (options.translate ?? englishNativeTranslator)('ZIP archive'),
+              extensions: ['zip']
+            }
+          ]
+        }
+        const dialogResult = await desktopFileInteraction().chooseSavePath(
+          dialogOptions,
+          invocation.callerContext.clientId
+        )
+        const { canceled, filePath } = dialogResult
+        assertTransferActive(invocation)
+        if (canceled || !filePath) return { saved: false }
 
-      const failures: SaveProjectArtifactFailure[] = []
-      const wroteArchive = await writeProjectArtifactArchive({
-        assertActive: () => assertCaller(invocation),
-        destinationPath: filePath,
-        projectId: request.projectId,
-        files: request.files,
-        openManagedFileVersion,
-        publishUserFile: publish,
-        failures,
-        limits: options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS,
-        createTemporaryRoot:
-          options.createProjectArtifactTemporaryRoot ??
-          (() => mkdtemp(join(tmpdir(), 'open-science-project-export-')))
+        operation.progress.phase = 'running'
+        const failures: SaveProjectArtifactFailure[] = []
+        const wroteArchive = await writeProjectArtifactArchive({
+          assertActive: () => assertTransferActive(invocation),
+          onFileCompleted: () => {
+            operation.progress.completedFiles += 1
+          },
+          destinationPath: filePath,
+          projectId: request.projectId,
+          files: request.files,
+          openManagedFileVersion,
+          publishUserFile: publish,
+          failures,
+          limits: options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS,
+          createTemporaryRoot:
+            options.createProjectArtifactTemporaryRoot ??
+            (() => mkdtemp(join(tmpdir(), 'open-science-project-export-')))
+        })
+        return {
+          saved: true,
+          ...(wroteArchive ? { filePath } : {}),
+          ...(failures.length > 0 ? { failures } : {})
+        }
       })
-      return {
-        saved: true,
-        ...(wroteArchive ? { filePath } : {}),
-        ...(failures.length > 0 ? { failures } : {})
-      }
     }
   }
 }

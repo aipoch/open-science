@@ -3,9 +3,72 @@ import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 import { parsePdfStructureResult, type PdfStructureResult } from '../src/result.js'
 
-const { associateAdjacentFigure } = await import(
+const { associateAdjacentFigure, associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
+function inlineRasterParagraph(): ReturnType<typeof JSON.parse> {
+  return {
+    ...target,
+    pageNumber: 3,
+    lines: [
+      'The measurements are discussed in the preceding section and illustrated above',
+      'the complete native paragraph describes the supplied program and its output',
+      'which are available with the supplementary material.'
+    ].map((text, i) => ({
+      text,
+      x: 50,
+      y: 230 + i * 16,
+      width: [500, 480, 400][i],
+      height: 12,
+      fontSize: 12
+    })),
+    graphicsBounds: [
+      {
+        kind: 'image',
+        imageHash: 'first',
+        normalizedRect: [480 / 600, 244 / 800, 548 / 600, 262 / 800],
+        paintedNormalizedRect: [490 / 600, 249 / 800, 540 / 600, 256 / 800]
+      },
+      {
+        kind: 'image',
+        imageHash: 'second',
+        normalizedRect: [50 / 600, 260 / 800, 180 / 600, 278 / 800],
+        paintedNormalizedRect: [52 / 600, 265 / 800, 175 / 600, 273 / 800]
+      }
+    ]
+  }
+}
+it('does not let raster words in a complete native paragraph steal a preceding plate caption', () => {
+  const page = inlineRasterParagraph(),
+    caption = {
+      page: 3,
+      lines: ['Figure 2. The three measured response panels.'],
+      rect: [50, 50, 550, 160]
+    },
+    before = structuredClone(page)
+  expect(associateFigures(page, [caption]).every((f) => !f.rect)).toBe(true)
+  expect(associateAdjacentFigure(target, [target, page], [caption])[0]?.caption).toEqual(caption)
+  expect(page).toEqual(before)
+})
+it.each([
+  'missing native rows',
+  'independent panel height',
+  'outside paragraph',
+  'unfinished paragraph'
+])('does not classify an independent raster pair as inline prose with %s', (guard) => {
+  const page = inlineRasterParagraph(),
+    caption = {
+      page: 3,
+      lines: ['Figure 2. The two measured response panels.'],
+      rect: [50, 50, 550, 160]
+    }
+  if (guard === 'missing native rows') page.lines = []
+  if (guard === 'independent panel height')
+    page.graphicsBounds[0].paintedNormalizedRect[3] = 300 / 800
+  if (guard === 'outside paragraph') page.graphicsBounds[0].paintedNormalizedRect[0] = 20 / 600
+  if (guard === 'unfinished paragraph') page.lines[2].text = page.lines[2].text.replace('.', ',')
+  expect(associateFigures(page, [caption]).some((f) => f.rect)).toBe(true)
+})
 const target = {
   pageNumber: 2,
   width: 600,
@@ -45,6 +108,84 @@ it('supports a caption at the top of the following page', () => {
   expect(
     associateAdjacentFigure(target, [target, { ...neighbor, pageNumber: 3 }], [after])
   ).toHaveLength(1)
+})
+it.each([
+  'complete',
+  'missing-source',
+  'wrong-number',
+  'source-alias',
+  'nearby-text',
+  'nearby-paint',
+  'contradictory-page-label',
+  'explicit-offset-label'
+])('requires native proof to exclude a top folio from a cross-page raster plate: %s', (change) => {
+  const folio = { text: '2', x: 550, y: 30, width: 6, height: 10, fontSize: 10 }
+  const page = {
+    ...target,
+    pageLabel: undefined as string | undefined,
+    lines: [folio],
+    graphicsBounds: [
+      { kind: 'image', operationIndex: 9, normalizedRect: [0.08, 0.0625, 0.95, 0.9] }
+    ]
+  }
+  const tokens = [
+    {
+      text: '2',
+      rect: [550, 30, 556, 40],
+      horizontal: true,
+      height: 10,
+      baseline: 40,
+      sourceItem: { pageNumber: 2, index: 0, text: '2' }
+    }
+  ]
+  if (change === 'missing-source') tokens.length = 0
+  if (change === 'wrong-number') {
+    folio.text = '3'
+    tokens[0].text = '3'
+    tokens[0].sourceItem.text = '3'
+  }
+  if (change === 'contradictory-page-label' || change === 'explicit-offset-label')
+    page.pageLabel = '9'
+  if (change === 'explicit-offset-label') {
+    folio.text = '9'
+    tokens[0].text = '9'
+    tokens[0].sourceItem.text = '9'
+  }
+  if (change === 'source-alias')
+    tokens.push({ ...tokens[0], rect: [550, 400, 556, 410], baseline: 410 })
+  if (change === 'nearby-text') {
+    page.lines.push({ text: 'A', x: 500, y: 30, width: 6, height: 10, fontSize: 10 })
+    tokens.push({
+      ...tokens[0],
+      text: 'A',
+      rect: [500, 30, 506, 40],
+      sourceItem: { pageNumber: 2, index: 1, text: 'A' }
+    })
+  }
+  if (change === 'nearby-paint')
+    page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex: 10,
+      normalizedRect: [0.91, 0.04, 0.93, 0.05]
+    })
+  const after = { ...before, page: 3, rect: [50, 50, 550, 150] }
+  const original = structuredClone({ page, tokens })
+  const [result] = associateAdjacentFigure(
+    page,
+    [page, { ...neighbor, pageNumber: 3 }],
+    [after],
+    [],
+    [],
+    tokens
+  )
+  expect(result.rect).toEqual([
+    48,
+    change === 'complete' || change === 'explicit-offset-label' ? 50 : 30,
+    570,
+    720
+  ])
+  expect(result.caption).toBe(after)
+  expect({ page, tokens }).toEqual(original)
 })
 it('ignores an arrow-ended continuation rule beneath a following-page caption', () => {
   const after = { ...before, page: 3, rect: [36, 56, 550, 180] }

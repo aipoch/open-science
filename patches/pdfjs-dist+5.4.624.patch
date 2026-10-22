@@ -8,19 +8,19 @@ diff --git a/node_modules/pdfjs-dist/build/pdf.worker.mjs b/node_modules/pdfjs-d
 +      } else if (this.options.fontExtraProperties && !font.missingFile &&
 +                 !font.isType3Font && !font.vertical) {
 +        // Optional diagnostics need the real outline even with browser fonts.
-+        // Expose only missing-map control fallbacks, without disabling FontFace
-+        // or changing the text operators, Unicode values, or normal font paths.
++        // Expose zero-advance outlines and missing-map control fallbacks.
++        // Do not disable FontFace or change text operators or Unicode values.
 +        const map = font.toUnicode?._map;
 +        if (map && typeof map === "object") {
 +          const unrepresented = glyphs.filter(glyph =>
 +            glyph.isInFont === true && glyph.isSpace !== true && !glyph.accent &&
 +            Number.isSafeInteger(glyph.originalCharCode) &&
 +            glyph.originalCharCode >= 0 && glyph.originalCharCode <= 65535 &&
-+            typeof glyph.unicode === "string" && !glyph.unicode.trim() &&
-+            glyph.unicode === String.fromCharCode(glyph.originalCharCode) &&
 +            typeof glyph.fontChar === "string" && glyph.fontChar.length > 0 &&
++            typeof glyph.unicode === "string" && (glyph.width === 0 || (!glyph.unicode.trim() &&
++            glyph.unicode === String.fromCharCode(glyph.originalCharCode) &&
 +            !Object.hasOwn(map, glyph.originalCharCode) &&
-+            map[glyph.originalCharCode] === undefined
++            map[glyph.originalCharCode] === undefined))
 +          );
 +          if (unrepresented.length) {
 +            try {
@@ -56,19 +56,19 @@ diff --git a/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs b/node_modules/
 +      } else if (this.options.fontExtraProperties && !font.missingFile &&
 +                 !font.isType3Font && !font.vertical) {
 +        // Optional diagnostics need the real outline even with browser fonts.
-+        // Expose only missing-map control fallbacks, without disabling FontFace
-+        // or changing the text operators, Unicode values, or normal font paths.
++        // Expose zero-advance outlines and missing-map control fallbacks.
++        // Do not disable FontFace or change text operators or Unicode values.
 +        const map = font.toUnicode?._map;
 +        if (map && typeof map === "object") {
 +          const unrepresented = glyphs.filter(glyph =>
 +            glyph.isInFont === true && glyph.isSpace !== true && !glyph.accent &&
 +            Number.isSafeInteger(glyph.originalCharCode) &&
 +            glyph.originalCharCode >= 0 && glyph.originalCharCode <= 65535 &&
-+            typeof glyph.unicode === "string" && !glyph.unicode.trim() &&
-+            glyph.unicode === String.fromCharCode(glyph.originalCharCode) &&
 +            typeof glyph.fontChar === "string" && glyph.fontChar.length > 0 &&
++            typeof glyph.unicode === "string" && (glyph.width === 0 || (!glyph.unicode.trim() &&
++            glyph.unicode === String.fromCharCode(glyph.originalCharCode) &&
 +            !Object.hasOwn(map, glyph.originalCharCode) &&
-+            map[glyph.originalCharCode] === undefined
++            map[glyph.originalCharCode] === undefined))
 +          );
 +          if (unrepresented.length) {
 +            try {

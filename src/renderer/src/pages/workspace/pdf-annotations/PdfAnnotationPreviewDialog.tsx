@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PdfAnnotation } from '../../../../../shared/pdf-annotations'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import { FilePreviewDialog } from '../FilePreviewDialog'
 import { PdfAnnotationsProvider } from './PdfAnnotationsProvider'
 import { requestPdfAnnotationReveal } from '../annotations/annotation-reveal'

@@ -72,7 +72,10 @@ const validateImageAnnotationSourcesBeforeSend = async (
     const previewResources = resources ?? window.api.previewResources
     let resourceId: string | undefined
     try {
-      const resource = await previewResources.acquire(acquireRequest(annotation.source))
+      const resource = await previewResources.acquire({
+        ...acquireRequest(annotation.source),
+        imagePreview: true
+      })
       resourceId = resource.id
     } catch {
       throw new Error(IMAGE_ANNOTATION_SOURCE_UNAVAILABLE_MESSAGE)

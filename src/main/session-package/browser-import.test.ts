@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { syncBuiltinESMExports } from 'node:module'
 import { request as httpRequest } from 'node:http'
+import { Server } from 'node:net'
 import fs from 'node:fs/promises'
 import type { BrowserPackageTransfer } from '../../shared/session-package'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -21,6 +22,27 @@ afterEach(async () => {
   vi.restoreAllMocks()
   syncBuiltinESMExports()
   for (const dispose of disposers.splice(0).reverse()) await dispose()
+})
+
+it.each(['EACCES', 'EADDRINUSE'])('selects another test port after %s', async (code) => {
+  const listen = vi.spyOn(Server.prototype, 'listen').mockImplementationOnce(function (
+    this: Server
+  ) {
+    queueMicrotask(() => this.emit('error', Object.assign(new Error('Port unavailable'), { code })))
+    return this
+  })
+  expect(await findBrowserImportPort()).toBeGreaterThanOrEqual(49152)
+  expect(listen.mock.calls.length).toBeGreaterThanOrEqual(2)
+})
+
+it('bounds test port discovery when every port is denied', async () => {
+  const error = Object.assign(new Error('Port unavailable'), { code: 'EACCES' })
+  const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server) {
+    queueMicrotask(() => this.emit('error', error))
+    return this
+  })
+  await expect(findBrowserImportPort()).rejects.toBe(error)
+  expect(listen).toHaveBeenCalledTimes(32)
 })
 
 it('keeps released-source cleanup failures visible and retries without revoking the receipt', async () => {
@@ -48,6 +70,37 @@ it('keeps released-source cleanup failures visible and retries without revoking 
   expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
   await f.bridge.cancel(id) // A late duplicate cleanup click cannot revoke an accepted receipt.
   expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+})
+
+it('joins source cleanup when release is repeated during shutdown', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  await f.chunk('hello')
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+  let releaseCleanup!: () => void
+  const gate = new Promise<void>((resolve) => {
+    releaseCleanup = resolve
+  })
+  const remove = fs.rm
+  const cleanup = vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
+    await gate
+    return remove(...args)
+  })
+  syncBuiltinESMExports()
+  try {
+    f.releases[0]()
+    f.releases[0]()
+    await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(1))
+    const closing = f.bridge.close()
+    // close must join the outstanding deletion before attempting its final removal.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    releaseCleanup()
+    await closing
+    expect(await readdir(f.root)).toEqual([])
+  } finally {
+    releaseCleanup()
+  }
 })
 
 async function setup(

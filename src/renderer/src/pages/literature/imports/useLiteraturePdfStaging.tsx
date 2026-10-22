@@ -30,10 +30,12 @@ export function useLiteraturePdfStaging(): {
   )
   const pdfNativeImportRef = useRef<string | undefined>(undefined)
   const uploadPageMountedRef = useRef(true)
+  const cancelledRef = useRef(false)
   const stagePdf = async (
     file: File,
     transferId: string
   ): Promise<Awaited<ReturnType<typeof stageComposerFile>>> => {
+    cancelledRef.current = false
     const controller = new AbortController()
     pdfUploadRef.current = { controller, transferId }
     if (!uploadPageMountedRef.current) controller.abort()
@@ -57,12 +59,14 @@ export function useLiteraturePdfStaging(): {
   const cancelPdfUpload = (): void => {
     const operationId = pdfNativeImportRef.current
     if (operationId) {
+      cancelledRef.current = true
       void hostApi.literature.cancelPdfImport({ operationId }).catch(() => undefined)
       setPdfUpload((current) => (current ? { ...current, phase: 'cancelling' } : current))
     }
     const controller = pdfUploadRef.current?.controller
     if (!controller || controller.signal.aborted || !pdfUpload || pdfUpload.phase !== 'uploading')
       return
+    cancelledRef.current = true
     controller.abort()
     setPdfUpload({ ...pdfUpload, phase: 'cancelling' })
     void hostApi.uploads
@@ -165,7 +169,8 @@ export function useLiteraturePdfStaging(): {
   const trackNativeImport = (operationId: string | undefined): void => {
     pdfNativeImportRef.current = operationId
   }
-  const wasCancelled = (): boolean => pdfUploadRef.current?.controller.signal.aborted === true
+  const wasCancelled = (): boolean =>
+    cancelledRef.current || pdfUploadRef.current?.controller.signal.aborted === true
   const clear = (): void => {
     pdfUploadRef.current = undefined
     pdfNativeImportRef.current = undefined

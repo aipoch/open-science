@@ -69,3 +69,17 @@ describe('PDC clinical tool host integration', () => {
     expect(doc).toContain('completeness: "unknown"')
   })
 })
+
+it('exposes posted ClinicalTrials.gov results through the registry and generated Skill', () => {
+  const descriptor = getDescriptor('clinical-trials', 'get_trial_results')!
+  expect(descriptor).toBeDefined()
+  expect(getConnectorTools('clinical-trials')).toContain(descriptor)
+  expect(descriptor.credentialKeys).toEqual([])
+  expect(() => validateToolArguments(descriptor, descriptor.exampleArgs!)).not.toThrow()
+  expect(() => validateToolArguments(descriptor, {})).toThrow('invalid_arguments')
+  const doc = renderSkillDoc('clinical-trials')
+  expect(doc).toContain('### get_trial_results')
+  expect(doc).toContain('results_section')
+  expect(doc).toContain('unitOfMeasure')
+  expect(doc).toContain('Missing data does not mean zero events or no treatment effect')
+})

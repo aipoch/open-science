@@ -51,6 +51,7 @@ type AcpSessionResumeDecision =
       }>)
 
 type AcpSessionResumeAdoptableFailureReason =
+  | 'codex-rollout-not-found'
   | 'resource-not-found-code'
   | 'session-not-found-message'
   | 'session-service-failure'
@@ -320,6 +321,18 @@ class AcpSessionResumePolicy {
 
     const details = readProperty(data.value, 'details')
     if (!details.readable) return authoritativeFailure('uninspectable-error')
+    // The installed Codex adapter wraps this native response in Internal error. Keep the exact
+    // shape distinct: Specialist switching may replace this missing history, but must not turn
+    // opaque provider failures or arbitrary "failed to resume" messages into automatic resets.
+    if (
+      context?.currentFrameworkId === 'codex' &&
+      typeof details.value === 'string' &&
+      /^no rollout found for thread id [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        details.value.trim()
+      )
+    ) {
+      return adoptableFailure('codex-rollout-not-found')
+    }
     if (describesUnresumableSession(details.value)) {
       return adoptableFailure('legacy-unresumable-details')
     }

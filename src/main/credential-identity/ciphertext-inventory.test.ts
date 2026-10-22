@@ -1,4 +1,6 @@
+import { spawnSync } from 'node:child_process'
 import {
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -31,6 +33,98 @@ const ref = (text: string): string => `enc:${Buffer.from(text).toString('base64'
 afterEach(() => roots.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })))
 
 describe('read-only ciphertext inventory', () => {
+  it('does not let an inactive journal bypass an unreadable application database', () => {
+    const paths = fixture()
+    const path = join(paths.configRoot, 'open-science.db')
+    const original = Buffer.from('not a SQLite database')
+    const journal = Buffer.alloc(28)
+    writeFileSync(path, original)
+    writeFileSync(`${path}-journal`, journal)
+    expect(() => readCredentialCiphertexts(paths)).toThrow(
+      expect.objectContaining({ reason: 'ciphertext-inventory-unavailable' })
+    )
+    expect(readFileSync(path)).toEqual(original)
+    expect(readFileSync(`${path}-journal`)).toEqual(journal)
+  })
+
+  it.each([
+    ['application', 'before journal sync'],
+    ['cookies', 'before journal sync'],
+    ['application', 'after spilling uncommitted pages'],
+    ['cookies', 'after spilling uncommitted pages']
+  ])('reads committed %s ciphertext after a writer exits %s', (store, stage) => {
+    const paths = fixture()
+    const path = join(
+      store === 'application' ? paths.configRoot : paths.profilePath,
+      store === 'application' ? 'open-science.db' : 'Cookies'
+    )
+    const table = store === 'application' ? 'ComputeCredential' : 'cookies'
+    const column = store === 'application' ? 'ciphertext' : 'encrypted_value'
+    const spill = stage === 'after spilling uncommitted pages'
+    // Let SQLite create both crash states, without fabricating a journal header.
+    const writer = spawnSync(process.execPath, [
+      '--no-warnings',
+      '-e',
+      `
+        const { DatabaseSync } = require('node:sqlite')
+        const db = new DatabaseSync(process.argv[1])
+        db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=5; PRAGMA cache_spill=${spill ? 'ON' : 'OFF'}')
+        db.exec('CREATE TABLE ${table}(${column} BLOB, padding BLOB)')
+        db.prepare('INSERT INTO ${table} VALUES (?, zeroblob(65536))').run(Buffer.from('committed-ciphertext'))
+        db.exec('BEGIN IMMEDIATE')
+        db.prepare('UPDATE ${table} SET ${column}=?, padding=randomblob(65536)').run(Buffer.from('uncommitted-ciphertext'))
+        require('node:fs').writeSync(1, 'journal-written')
+        process.kill(process.pid, 'SIGKILL')
+        `,
+      path
+    ])
+    expect(writer.error).toBeUndefined()
+    expect(writer.stdout.toString()).toBe('journal-written')
+    expect(writer.status).toBe(process.platform === 'win32' ? 1 : null)
+    expect(writer.signal).toBe(process.platform === 'win32' ? null : 'SIGKILL')
+    const original = readFileSync(path)
+    const journal = readFileSync(`${path}-journal`)
+    expect(journal.length).toBeGreaterThan(512)
+    if (spill) expect(journal.subarray(0, 8).toString('hex')).toBe('d9d505f920a163d7')
+    else {
+      expect(journal.subarray(0, 12)).toEqual(Buffer.alloc(12))
+      expect(journal.subarray(12, 28)).not.toEqual(Buffer.alloc(16))
+    }
+
+    // Establish the reported contrast using SQLite itself on an independent copy.
+    const controlPath = join(paths.configRoot, 'control.db')
+    copyFileSync(path, controlPath)
+    copyFileSync(`${path}-journal`, `${controlPath}-journal`)
+    const control = new DatabaseSync(controlPath, { readOnly: !spill })
+    try {
+      expect(control.prepare('PRAGMA integrity_check').get()?.integrity_check).toBe('ok')
+      expect(
+        Buffer.from(
+          control.prepare(`SELECT ${column} FROM ${table}`).get()![column] as Uint8Array
+        ).toString()
+      ).toBe('committed-ciphertext')
+    } finally {
+      control.close()
+    }
+
+    const inspect = (): string[] | string => {
+      try {
+        return readCredentialCiphertexts(paths).map((value) => value.toString())
+      } catch (error) {
+        if (!(error instanceof CredentialIdentityError)) throw error
+        return error.reason
+      }
+    }
+    const first = inspect()
+    const second = inspect()
+    expect(readFileSync(path)).toEqual(original)
+    expect(readFileSync(`${path}-journal`)).toEqual(journal)
+    expect({ first, second }).toEqual({
+      first: ['committed-ciphertext'],
+      second: ['committed-ciphertext']
+    })
+  })
+
   it.each(['DELETE', 'PERSIST'])(
     'accepts an existing .open-science directory without renaming it after a completed %s transaction',
     (mode) => {

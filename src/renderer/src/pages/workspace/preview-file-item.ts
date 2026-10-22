@@ -1,6 +1,6 @@
 import { LITERATURE_PREVIEW_SESSION_ID } from '../../../../shared/literature-attachment-reference'
-import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
-import type { ChatSession } from '@/stores/session-store'
+import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-contract'
+import type { ChatSession } from '@/stores/session-store-contract'
 import type { ArtifactFile } from '../../../../shared/artifacts'
 import type { ProjectFileItem, ResolveProjectFileRequest } from '../../../../shared/project-files'
 import type { MessagePart, SessionPdfBinding } from '../../../../shared/session-persistence'

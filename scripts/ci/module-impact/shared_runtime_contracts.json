@@ -1,0 +1,35 @@
+{
+  "ownerPaths": [
+    "src/shared/activity-groups.test.ts",
+    "src/shared/activity-groups.ts",
+    "src/shared/local-fs.test.ts",
+    "src/shared/local-fs.ts",
+    "src/shared/network-proxy.ts",
+    "src/shared/web-caller-location.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/activity-groups.ts",
+    "src/shared/local-fs.ts",
+    "src/shared/network-proxy.ts",
+    "src/shared/web-caller-location.ts"
+  ],
+  "consumerModules": [
+    "desktop_composition",
+    "host_command_runtime",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": ["src/shared/activity-groups.test.ts", "src/shared/local-fs.test.ts"],
+    "contract": [],
+    "consumer": [
+      "scripts/build-backend.integration.test.ts",
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "src/shared/renderer-contracts/definition.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

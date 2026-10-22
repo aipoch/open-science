@@ -4,11 +4,13 @@
  */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { ChevronDown, GripVertical, ListOrdered, Loader2, Pencil, Send, Trash2 } from 'lucide-react'
-import { useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
+import { InlineNotice } from '@/components/ui/inline-notice'
+import { Button } from '@/components/ui/button'
 
 import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import type { WorkspaceMessageQueueController } from './workspace-message-queue-controller'
@@ -91,19 +93,25 @@ const ComposerMessageQueueTrigger = ({
   onExpandedChange
 }: ComposerMessageQueueTriggerProps): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const failedCount = items.filter((item) => item.phase === 'error').length
   if (items.length === 0) return null
 
   return (
     <button
       type="button"
-      className={queueTriggerClassName}
+      className={cn(queueTriggerClassName, failedCount > 0 && 'text-status-failure-foreground')}
       aria-expanded={expanded}
       aria-controls="composer-message-queue-list"
       onClick={() => onExpandedChange(!expanded)}
       data-testid="composer-queue-trigger"
     >
       <ListOrdered className="size-3.5" strokeWidth={2} aria-hidden="true" />
-      {t('Queue ({{count}}) · Not saved', { count: items.length })}
+      {items.some((item) => !item.messageAppended)
+        ? t('Queue ({{count}}) · Not saved', { count: items.length })
+        : t('Message queue')}
+      <span role="status" aria-live="polite">
+        {failedCount > 0 ? t('Needs attention: {{number}}', { number: failedCount }) : ''}
+      </span>
       <ChevronDown
         className={cn(
           'size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none',
@@ -119,6 +127,7 @@ const ComposerMessageQueueContent = ({
   items,
   announcement,
   actions,
+  removed = [],
   expanded
 }: ComposerMessageQueueContentProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -126,6 +135,12 @@ const ComposerMessageQueueContent = ({
   const [draggedHeight, setDraggedHeight] = useState(0)
   const [dropTarget, setDropTarget] = useState<DropTarget>()
   const pointerDragRef = useRef<PointerDrag | undefined>(undefined)
+  const listRef = useRef<HTMLOListElement>(null)
+  const firstFailedId = items.find((item) => item.phase === 'error')?.id
+  useEffect(() => {
+    if (expanded && firstFailedId)
+      listRef.current?.querySelector('[data-queue-error]')?.scrollIntoView?.({ block: 'nearest' })
+  }, [expanded, firstFailedId])
 
   const showDropTarget = (next?: DropTarget): void => {
     const drag = pointerDragRef.current
@@ -185,13 +200,49 @@ const ComposerMessageQueueContent = ({
     finishDrag()
   }
 
-  if (items.length === 0) return null
+  if (items.length === 0 && removed.length === 0) return null
 
   return (
     <>
+      {removed.map((item) => (
+        <InlineNotice key={item.id} level={item.unavailable ? 'warning' : 'info'} role="status">
+          <span>{t('Queued message removed.')}</span>
+          <span className="block truncate" title={item.text}>
+            {item.text || t('Attachment message')}
+          </span>
+          {item.unavailable ? (
+            <span>
+              {t('The original conversation or branch changed. Return to it before undoing.')}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => actions.undoRemove?.(item.id)}
+          >
+            {t('Undo')}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => actions.dismissRemoved?.(item.id)}
+          >
+            {t('Dismiss')}
+          </Button>
+        </InlineNotice>
+      ))}
       {expanded ? (
         <section className="border-b border-border-200" aria-label={t('Message queue')}>
-          <ol id="composer-message-queue-list" className="max-h-36 overflow-y-auto">
+          {items.some((item) => !item.messageAppended) ? (
+            <p className="text-xs text-muted-foreground">
+              {t('Unsent messages: {{number}}. Leaving or reloading this page discards them.', {
+                number: items.filter((item) => !item.messageAppended).length
+              })}
+            </p>
+          ) : null}
+          <ol ref={listRef} id="composer-message-queue-list" className="max-h-36 overflow-y-auto">
             {items.map((item, index) => {
               const busy = item.phase === 'interrupting' || item.phase === 'sending'
               const preview = item.text.trim() || t('Attachment message')
@@ -274,7 +325,10 @@ const ComposerMessageQueueContent = ({
                       </p>
                     ) : null}
                     {item.error ? (
-                      <p className="mt-0.5 text-[11px] leading-4 text-red-400" role="alert">
+                      <p
+                        data-queue-error
+                        className="mt-0.5 text-[11px] leading-4 text-status-failure-foreground"
+                      >
                         {queueErrorText(t, item.error)}
                       </p>
                     ) : item.deferredUntilIdle ? (

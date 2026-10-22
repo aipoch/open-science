@@ -3,7 +3,7 @@
  * contrast: pass (40–41) · pre-emit critique: P5 H5 E5 S5 R5 V4
  */
 import { FocusScope } from '@radix-ui/react-focus-scope'
-import { Bell, CheckCheck, X } from 'lucide-react'
+import { Bell, CheckCheck, LoaderCircle, X } from 'lucide-react'
 import {
   type CSSProperties,
   useCallback,
@@ -258,6 +258,8 @@ const NotificationBellContent = ({
   const refresh = useNotificationInboxStore((state) => state.refresh)
   const markRead = useNotificationInboxStore((state) => state.markRead)
   const markAllRead = useNotificationInboxStore((state) => state.markAllRead)
+  const markAllReadPending = useNotificationInboxStore((state) => state.markAllReadPending)
+  const markAllReadError = useNotificationInboxStore((state) => state.markAllReadError)
   const sessions = useSessionStore((state) => state.sessions)
   const projects = useProjectStore((state) => state.projects)
   const groups = presentNotificationInbox(items, sessions, projects)
@@ -638,14 +640,19 @@ const NotificationBellContent = ({
                   </div>
                   <button
                     type="button"
-                    disabled={unreadCount === 0}
+                    disabled={unreadCount === 0 || markAllReadPending}
+                    aria-busy={markAllReadPending}
                     onClick={() => runNotificationTask(markAllRead)}
                     className={cn(
                       'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-text-100 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 disabled:cursor-default disabled:opacity-40',
                       isMobile ? 'h-11 text-sm' : 'h-8 text-xs'
                     )}
                   >
-                    <CheckCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    {markAllReadPending ? (
+                      <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <CheckCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    )}
                     {t('Mark all read')}
                   </button>
                 </div>
@@ -656,6 +663,17 @@ const NotificationBellContent = ({
                     isMobile ? 'min-h-0 flex-1 px-2 py-2' : 'max-h-[min(28rem,70vh)]'
                   )}
                 >
+                  {markAllReadError ? (
+                    <ErrorNotice
+                      role="alert"
+                      title={t('Could not mark messages as read.')}
+                      primaryButton={{
+                        label: t('Retry'),
+                        onClick: () => runNotificationTask(markAllRead),
+                        loading: markAllReadPending
+                      }}
+                    />
+                  ) : null}
                   {status === 'error' ? (
                     <ErrorNotice
                       role="alert"

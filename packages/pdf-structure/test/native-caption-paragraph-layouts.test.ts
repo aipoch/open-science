@@ -308,7 +308,7 @@ it.each(['parent-cue', 'font', 'spacing'])(
   }
 )
 
-it.each(['solidifies', 'connects', 'serves two purposes'])(
+it.each(['solidifies', 'connects', 'serves two purposes', 'and is', 'and are', 'and were'])(
   'keeps the literal finite-verb figure reference as prose (%s)',
   (verb) => {
     expect(captionKind(`Figure 9 ${verb} the independently measured observations.`)).toBeUndefined()

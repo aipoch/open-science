@@ -153,7 +153,8 @@ describe('SessionMessageMarkdown integration', () => {
       projectId: 'project-1',
       fileId: imageArtifact.artifactId,
       versionId: 'version-2',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
     expect(fetch).toHaveBeenCalledTimes(2)
   })
@@ -211,7 +212,8 @@ describe('SessionMessageMarkdown integration', () => {
       projectId: 'project-1',
       fileId: 'artifact-1',
       versionId: 'version-1',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
   })
 

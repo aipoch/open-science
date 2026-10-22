@@ -468,23 +468,25 @@ for (const borrowed of [false, true])
         JSON.parse(await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8'))
       ).toEqual(before)
       if (!borrowed) {
-        // Lose the real pipe when quit preparation holds write admission. The failed quit must
-        // release closing state and leave manual recovery available without stopping the backend.
+        // Cancel the single disconnected decision after quit loses its pipe, then recover.
         await app.evaluate(({ app, BrowserWindow, dialog }) => {
-          dialog.showErrorBox = () => undefined
-          dialog.showMessageBox = async (...args: unknown[]) => ({
-            response: args.some(
+          const quitRecovery = { confirmations: 0, errors: [] as string[] }
+          ;(globalThis as typeof globalThis & { quitRecovery: typeof quitRecovery }).quitRecovery =
+            quitRecovery
+          dialog.showErrorBox = (_title, message) => {
+            quitRecovery.errors.push(message)
+          }
+          dialog.showMessageBox = async (...args: unknown[]) => {
+            const disconnected = args.some(
               (arg) =>
                 typeof arg === 'object' &&
                 arg !== null &&
-                'buttons' in arg &&
-                Array.isArray(arg.buttons) &&
-                arg.buttons.includes('Retry saving')
+                'message' in arg &&
+                arg.message === 'Quit while disconnected?'
             )
-              ? 0
-              : 1,
-            checkboxChecked: false
-          })
+            if (disconnected) quitRecovery.confirmations += 1
+            return { response: disconnected ? 0 : 1, checkboxChecked: false }
+          }
           const contents = BrowserWindow.getAllWindows()[0].webContents
           const send = contents.send.bind(contents)
           contents.send = (channel, ...args): void => {
@@ -513,7 +515,17 @@ for (const borrowed of [false, true])
         await expect
           .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
           .toMatchObject({ phase: 'disconnected', closing: false })
-        await page.getByRole('button', { name: 'Stay', exact: true }).click()
+        expect(
+          await app.evaluate(
+            () =>
+              (
+                globalThis as typeof globalThis & {
+                  quitRecovery: { confirmations: number; errors: string[] }
+                }
+              ).quitRecovery
+          )
+        ).toEqual({ confirmations: 1, errors: [] })
+        await expect(page.getByRole('button', { name: 'Stay', exact: true })).toHaveCount(0)
         await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
         await expect
           .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
@@ -523,8 +535,7 @@ for (const borrowed of [false, true])
         ).toEqual(before)
       }
       if (!borrowed) {
-        await app.evaluate(({ app, dialog }) => {
-          dialog.showErrorBox = () => undefined
+        await app.evaluate(({ app }) => {
           type Pipe = {
             readable?: boolean
             writable?: boolean
@@ -587,6 +598,16 @@ for (const borrowed of [false, true])
         await expect
           .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
           .toMatchObject({ phase: 'disconnected', closing: false })
+        expect(
+          await app.evaluate(
+            () =>
+              (
+                globalThis as typeof globalThis & {
+                  quitRecovery: { confirmations: number; errors: string[] }
+                }
+              ).quitRecovery
+          )
+        ).toEqual({ confirmations: 2, errors: [] })
         await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
         await expect
           .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
@@ -743,6 +764,9 @@ for (const scenario of [
   'native quit',
   'native quit without window',
   'repeated notice quit',
+  'quit after failed reconnects',
+  'connection loss during quit',
+  'connection loss after quit preflight',
   'system shutdown',
   'system shutdown during confirmation'
 ] as const)
@@ -774,41 +798,96 @@ for (const scenario of [
       owner = JSON.parse(
         await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8')
       ) as RuntimeOwner
-      await app.evaluate(({ dialog }) => {
-        type QuitProbe = { dialogs: string[]; errors: string[]; respond?: () => void }
-        const probe: QuitProbe = { dialogs: [], errors: [] }
-        ;(globalThis as typeof globalThis & { quitProbe: QuitProbe }).quitProbe = probe
-        dialog.showErrorBox = (_title, content) => {
-          probe.errors.push(content)
-        }
-        dialog.showMessageBox = (options) => {
-          if (!('message' in options)) throw new Error('Expected an unparented quit confirmation')
-          probe.dialogs.push(options.message)
-          return new Promise((resolve) => {
-            probe.respond = () => resolve({ response: 0, checkboxChecked: false })
-          })
-        }
-        const pipe = (
-          process as NodeJS.Process & {
-            _getActiveHandles(): {
-              readable?: boolean
-              writable?: boolean
-              _handle?: { constructor: { name: string } }
-              destroy(): void
-            }[]
+      await app.evaluate(
+        ({ dialog, BrowserWindow, ipcMain }, quitDisconnect) => {
+          type QuitProbe = {
+            dialogs: string[]
+            errors: string[]
+            respond?: (response?: number) => void
           }
-        )
-          ._getActiveHandles()
-          .find(
-            (handle) =>
-              handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
+          const probe: QuitProbe = { dialogs: [], errors: [] }
+          ;(globalThis as typeof globalThis & { quitProbe: QuitProbe }).quitProbe = probe
+          dialog.showErrorBox = (_title, content) => {
+            probe.errors.push(content)
+          }
+          dialog.showMessageBox = (options) => {
+            if (!('message' in options)) throw new Error('Expected an unparented quit confirmation')
+            probe.dialogs.push(options.message)
+            return new Promise((resolve) => {
+              probe.respond = (response = 0) => resolve({ response, checkboxChecked: false })
+            })
+          }
+          const pipe = (
+            process as NodeJS.Process & {
+              _getActiveHandles(): {
+                readable?: boolean
+                writable?: boolean
+                _handle?: { constructor: { name: string } }
+                destroy(): void
+              }[]
+            }
           )
-        if (!pipe) throw new Error('Desktop pipe missing')
-        pipe.destroy()
-      })
+            ._getActiveHandles()
+            .find(
+              (handle) =>
+                handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
+            )
+          if (!pipe) throw new Error('Desktop pipe missing')
+          if (quitDisconnect === 'failed-reconnects') {
+            const net = process.getBuiltinModule('node:net')
+            const connect = net.Socket.prototype.connect
+            net.Socket.prototype.connect = function (
+              this: import('node:net').Socket,
+              ...args: unknown[]
+            ) {
+              const result = Reflect.apply(connect, this, args)
+              if (/os-desktop-|open-science-/.test(JSON.stringify(args)))
+                this.once('connect', () => this.destroy())
+              return result
+            }
+            pipe.destroy()
+          } else if (quitDisconnect === 'after-preflight') {
+            ipcMain.prependOnceListener('sessions:flush-response', () => pipe.destroy())
+          } else if (quitDisconnect === 'during-preflight') {
+            const contents = BrowserWindow.getAllWindows()[0].webContents
+            const send = contents.send.bind(contents)
+            contents.send = (channel, ...args) => {
+              if (channel === 'sessions:flush-request') {
+                contents.send = send
+                pipe.destroy()
+              }
+              send(channel, ...args)
+            }
+          } else {
+            pipe.destroy()
+          }
+        },
+        scenario === 'connection loss during quit'
+          ? 'during-preflight'
+          : scenario === 'connection loss after quit preflight'
+            ? 'after-preflight'
+            : scenario === 'quit after failed reconnects'
+              ? 'failed-reconnects'
+              : undefined
+      )
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-        .toMatchObject({ phase: 'disconnected' })
+        .toMatchObject({
+          phase:
+            scenario === 'connection loss during quit' ||
+            scenario === 'connection loss after quit preflight'
+              ? 'connected'
+              : 'disconnected'
+        })
+      if (scenario === 'quit after failed reconnects') {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const before = await page.evaluate(() => window.api.desktopRuntime!.getState())
+          await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+          await expect
+            .poll(() => page.evaluate(() => window.api.desktopRuntime!.getState()))
+            .toMatchObject({ phase: 'disconnected', epoch: before.epoch + 1 })
+        }
+      }
       const requestSystemShutdown = async (): Promise<void> => {
         const desktopProcess = app!.process()
         if (process.platform === 'win32') {
@@ -827,7 +906,9 @@ for (const scenario of [
         await requestSystemShutdown()
         return
       }
-      if (scenario === 'repeated notice quit') {
+      if (scenario === 'quit after failed reconnects') {
+        await page.getByRole('button', { name: 'Quit', exact: true }).click()
+      } else if (scenario === 'repeated notice quit') {
         await page.evaluate(() => {
           void window.api.desktopRuntime!.quit()
           void window.api.desktopRuntime!.quit()
@@ -850,6 +931,18 @@ for (const scenario of [
           })
         )
         .toEqual({ dialogs: ['Quit while disconnected?'], errors: [] })
+      if (scenario === 'quit after failed reconnects') {
+        const desktopProcess = app.process()
+        await app.evaluate(() => {
+          ;(
+            globalThis as typeof globalThis & { quitProbe: { respond(response: number): void } }
+          ).quitProbe.respond(1)
+        })
+        await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
+        app = undefined
+        expect(processHasExited(owner.pid)).toBe(false)
+        return
+      }
       if (scenario === 'system shutdown during confirmation') {
         await requestSystemShutdown()
         return

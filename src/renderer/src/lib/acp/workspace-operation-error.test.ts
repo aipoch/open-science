@@ -1,3 +1,4 @@
+import { useSettingsStore } from '@/stores/settings-store'
 import { beforeEach, expect, it } from 'vitest'
 import {
   clearWorkspaceOperationError,
@@ -5,7 +6,14 @@ import {
   useWorkspaceOperationErrors
 } from './workspace-operation-error'
 
-beforeEach(() => useWorkspaceOperationErrors.setState({ errors: {}, diagnostics: {} }))
+beforeEach(() =>
+  useWorkspaceOperationErrors.setState({
+    errors: {},
+    providerValidations: {},
+    providerTargets: {},
+    diagnostics: {}
+  })
+)
 it('keeps the captured exception separate from normalized text and scoped to its initiating session', () => {
   const error = new Error('Error invoking remote method: Internal error')
   reportWorkspaceOperationError('first', 'Unknown error', { operation: 'resume', rawError: error })
@@ -27,6 +35,23 @@ it('removes stale resume details when another operation replaces the error', () 
   expect(useWorkspaceOperationErrors.getState().diagnostics.session).toBeUndefined()
 })
 
+it('retains the initiating provider until the error is replaced or cleared', () => {
+  reportWorkspaceOperationError('first', 'Authentication required', {
+    providerTarget: { providerId: 'provider-b', model: 'target-model' }
+  })
+  reportWorkspaceOperationError('second', 'Authentication required', {
+    providerTarget: { providerId: 'provider-a' }
+  })
+  expect(useWorkspaceOperationErrors.getState().providerTargets).toEqual({
+    first: { providerId: 'provider-b', model: 'target-model' },
+    second: { providerId: 'provider-a' }
+  })
+  reportWorkspaceOperationError('first', 'Another failure')
+  expect(useWorkspaceOperationErrors.getState().providerTargets.first).toBeUndefined()
+  clearWorkspaceOperationError('second')
+  expect(useWorkspaceOperationErrors.getState().providerTargets).not.toHaveProperty('second')
+})
+
 it('retains structured thrown exception fields before normalizing its message', () => {
   const raw = {
     message: 'Internal error',
@@ -35,4 +60,21 @@ it('retains structured thrown exception fields before normalizing its message', 
   }
   reportWorkspaceOperationError('session', 'Unknown error', { operation: 'resume', rawError: raw })
   expect(JSON.parse(useWorkspaceOperationErrors.getState().diagnostics.session.detail)).toEqual(raw)
+})
+
+it('captures shared validation baselines when errors occur and clears only the initiating session', () => {
+  const provider = useSettingsStore.getState().providers[0]
+  useSettingsStore.setState({ providers: [{ ...provider, id: 'provider', lastValidatedAt: 10 }] })
+  reportWorkspaceOperationError('first', 'Authentication required')
+  reportWorkspaceOperationError('second', 'Authentication required')
+  useSettingsStore.setState({ providers: [{ ...provider, id: 'provider', lastValidatedAt: 30 }] })
+  reportWorkspaceOperationError('first', 'Authentication required')
+  expect(useWorkspaceOperationErrors.getState().providerValidations).toEqual({
+    first: { provider: 30 },
+    second: { provider: 10 }
+  })
+  clearWorkspaceOperationError('first')
+  expect(useWorkspaceOperationErrors.getState().providerValidations).toEqual({
+    second: { provider: 10 }
+  })
 })

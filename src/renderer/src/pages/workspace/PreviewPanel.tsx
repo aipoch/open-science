@@ -18,7 +18,7 @@ import type {
   PreviewItem,
   PreviewSourceItem,
   PreviewToolItem
-} from '@/stores/preview-workbench-store'
+} from '@/stores/preview-workbench-contract'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 

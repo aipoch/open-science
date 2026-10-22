@@ -14,11 +14,10 @@ import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../sh
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 import {
   projectSessionActionability,
-  resolveRootPermissionPending,
-  useSessionStore,
-  type ChatMessage,
-  type ChatSession
-} from '../../stores/session-store'
+  resolveRootPermissionPending
+} from '../../stores/session-actionability'
+import { useSessionStore } from '../../stores/session-store'
+import type { ChatMessage, ChatSession } from '../../stores/session-store-contract'
 import {
   buildWorkspaceHistoryReplay,
   resolveHistoryReplayTarget,
@@ -120,15 +119,23 @@ const canPrepareExistingWorkspacePrompt = ({
   !runtimeState.promptInFlightSessionIds.includes(sessionId) &&
   (!session?.compacting || allowCompactionRecovery) &&
   (!session ||
-    projectSessionActionability(session, {
-      rootPermissionPending: resolveRootPermissionPending(
-        runtimeState.pendingPermissions,
-        sessionId
-      ),
-      allowPendingSessionRetry: Boolean(
-        session.isPending && (!session.branchSource || isPendingSessionRetryable(session.id))
-      )
-    }).actions.startTurn.allowed)
+    projectSessionActionability(
+      // Recovery owns the failed turn and has already replaced/compacted its provider context.
+      // The prior prompt's idle snapshot may lag the terminal event and reset response. Ignore
+      // only that presentation flag; active runs and pending interactions still block admission.
+      allowCompactionRecovery && session.compacting
+        ? { ...session, agentPromptInFlight: false }
+        : session,
+      {
+        rootPermissionPending: resolveRootPermissionPending(
+          runtimeState.pendingPermissions,
+          sessionId
+        ),
+        allowPendingSessionRetry: Boolean(
+          session.isPending && (!session.branchSource || isPendingSessionRetryable(session.id))
+        )
+      }
+    ).actions.startTurn.allowed)
 
 const canAdmitExistingWorkspacePrompt = (
   runtimeState: ExistingWorkspacePromptAdmission['runtimeState'],
@@ -429,7 +436,10 @@ const prepareExistingWorkspacePrompt = async (
     }
   } catch (error) {
     if (request.isCurrent?.() === false) return undefined
-    reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error))
+    reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error), {
+      providerTarget:
+        request.selectedRuntime.agentConfiguration ?? currentSession?.agentConfiguration
+    })
     return undefined
   } finally {
     releasePreparation?.()

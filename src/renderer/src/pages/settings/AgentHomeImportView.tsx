@@ -3,10 +3,12 @@ import { Trans, useTranslation } from 'react-i18next'
 
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import type {
+  AgentHomeSkillImportResult,
   AgentHomeSkillRef,
   AgentHomeSkillSource,
   AgentHomeSkillView
 } from '@aipoch/skills/document'
+import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
@@ -165,6 +167,10 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
   const importSelected = async (): Promise<void> => {
     if (isScanning || importing || selected.size === 0 || !currentSkills) return
     const frameworkId = activeFrameworkId
+    const generation = scanGeneration.current
+    const isCurrent = (): boolean =>
+      scanGeneration.current === generation &&
+      useSettingsStore.getState().agentFrameworkId === frameworkId
 
     const requested = currentSkills
       .filter((skill) => selected.has(skillKey(skill)) && !skill.alreadyImported)
@@ -174,28 +180,51 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
     setImporting(true)
     setMessage(null)
     try {
-      const result = await importAgentHomeSkills(requested)
-      const failures = result.results.filter((item) => item.error !== undefined)
-      const importedCount = result.results.length - failures.length
-      if (importedCount > 0) onImported()
-      if (useSettingsStore.getState().agentFrameworkId !== frameworkId) return
-
-      if (failures.length === 0) {
-        setMessage(
-          t('Imported {{count}} skills.', {
-            defaultValue_one: 'Imported {{count}} skill.',
-            count: importedCount
-          })
-        )
-      } else {
-        setMessage(
-          t('Imported {{count}}; {{failureCount}} failed. {{error}}', {
-            count: importedCount,
-            failureCount: failures.length,
-            error: failures[0]?.error ?? ''
-          }).trim()
-        )
+      const results: AgentHomeSkillImportResult[] = []
+      let requestError: string | undefined
+      for (
+        let offset = 0;
+        offset < requested.length;
+        offset += SKILL_IMPORT_LIMITS.maxSkillsPerBundle
+      ) {
+        if (!isCurrent()) break
+        try {
+          const result = await importAgentHomeSkills(
+            requested.slice(offset, offset + SKILL_IMPORT_LIMITS.maxSkillsPerBundle)
+          )
+          results.push(...result.results)
+        } catch (error) {
+          requestError =
+            error instanceof Error ? error.message : t('Could not import the selected skills.')
+          break
+        }
       }
+      const failures = results.filter((item) => item.error !== undefined)
+      const importedCount = results.length - failures.length
+      if (importedCount > 0) onImported()
+      if (!isCurrent()) return
+
+      let summary: string
+      if (failures.length === 0) {
+        summary = t('Imported {{count}} skills.', {
+          defaultValue_one: 'Imported {{count}} skill.',
+          count: importedCount
+        })
+      } else {
+        summary = t('Imported {{count}}; {{failureCount}} failed. {{error}}', {
+          count: importedCount,
+          failureCount: failures.length,
+          error: failures[0]?.error ?? ''
+        }).trim()
+      }
+      // A rejected request may have committed writes. Report only confirmed outcomes, then rescan.
+      setMessage(
+        requestError === undefined
+          ? summary
+          : results.length > 0
+            ? `${summary} ${requestError}`
+            : requestError
+      )
       await runScan(frameworkId, { preserveMessage: true })
     } catch (error) {
       if (useSettingsStore.getState().agentFrameworkId === frameworkId) {

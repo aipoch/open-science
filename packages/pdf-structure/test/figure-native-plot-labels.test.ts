@@ -37,6 +37,57 @@ it('recovers fragmented rotated axis and the complete keyed common legend', () =
   ])
 })
 
+it.each(['complete', 'gap', 'duplicate-label', 'prose', 'caption', 'table'])(
+  'requires complete and unambiguous split top legend keys: %s',
+  (change) => {
+    const f = input()
+    f.tokens = f.tokens.slice(7)
+    f.rules = [147, 247, 347].flatMap((x) => [
+      [x, 83, x + 5, 83],
+      [x + 5, 83, x + 10, 83]
+    ])
+    const captions: ReturnType<typeof JSON.parse>[] = [],
+      tables: number[][] = []
+    if (change === 'gap') f.rules[1][0] += 1
+    if (change === 'duplicate-label') f.tokens.push({ ...f.tokens[0] })
+    if (change === 'prose') f.tokens.push(token('Outside words', [110, 88, 190, 96]))
+    if (change === 'caption') captions.push({ page: 1, rect: [110, 88, 190, 96] })
+    if (change === 'table') tables.push([110, 88, 190, 96])
+    const before = JSON.stringify(f)
+    const result = nativeAttachedPlotLabels(f.page, f.figure, captions, tables, f.rules, f.tokens)
+    expect(result.rect).toEqual(change === 'complete' ? [100, 80, 500, 250] : f.figure.rect)
+    expect(result.sourceItems).toBeUndefined()
+    expect(JSON.stringify(f)).toBe(before)
+  }
+)
+
+it.each(['complete', 'mixed-unit', 'one-row', 'duplicate-row', 'prose', 'caption', 'table'])(
+  'requires a consistent repeated percentage column for an exterior axis: %s',
+  (change) => {
+    const f = input()
+    f.tokens = [
+      ...Array.from({ length: 4 }, (_, i) =>
+        token(`${i * 25}%`, [100, 110 + i * 30, 116, 118 + i * 30])
+      ),
+      token('Rate', [80, 130, 90, 190], false, 10)
+    ]
+    f.rules = []
+    const captions: ReturnType<typeof JSON.parse>[] = [],
+      tables: number[][] = []
+    if (change === 'mixed-unit') f.tokens[0].text = '0'
+    if (change === 'one-row') f.tokens = [f.tokens[0], f.tokens[4]]
+    if (change === 'duplicate-row') f.tokens = [f.tokens[0], f.tokens[0], f.tokens[0], f.tokens[4]]
+    if (change === 'prose') f.tokens.push(token('Note', [81, 210, 99, 218]))
+    if (change === 'caption') captions.push({ page: 1, rect: [81, 210, 99, 218] })
+    if (change === 'table') tables.push([81, 210, 99, 218])
+    const before = JSON.stringify(f)
+    const result = nativeAttachedPlotLabels(f.page, f.figure, captions, tables, f.rules, f.tokens)
+    expect(result.rect).toEqual(change === 'complete' ? [80, 100, 500, 250] : f.figure.rect)
+    expect(result.sourceItems).toBeUndefined()
+    expect(JSON.stringify(f)).toBe(before)
+  }
+)
+
 it('completes right colorbar ticks and fragmented rotated labels', () => {
   const f = input()
   f.tokens = [

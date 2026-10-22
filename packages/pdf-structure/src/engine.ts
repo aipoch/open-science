@@ -17,7 +17,7 @@ export const createEngineAt = (
   return {
     async describe() {
       const hash = createHash('sha256')
-        .update('candidate-pdf-engine-v1')
+        .update('candidate-pdf-engine-v2')
         .update(JSON.stringify(options.modelRecipe))
       const require = createRequire(pathToFileURL(join(resources, 'host.mjs')))
       hash.update(JSON.stringify(sharp.versions))

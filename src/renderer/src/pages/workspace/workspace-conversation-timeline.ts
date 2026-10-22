@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store-contract'
 import {
   isHiddenControlMessage,
   isInheritedForkTurn,

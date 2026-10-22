@@ -3270,6 +3270,50 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
+  it.each(['Reading', 'reading'])(
+    'allows deleting a parent when its promoted child shares its name (%s)',
+    async (childName) => {
+      const parent = {
+        id: 'parent',
+        revision: 1,
+        name: 'Reading',
+        description: '',
+        itemCount: 0,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const child = { ...parent, id: 'child', name: childName, parentId: parent.id }
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(
+          request.scope === 'collections' ? { entries: [parent, child] } : { entries: [] }
+        )
+      )
+      useNavigationStore.setState({ pendingLiteratureCollectionId: parent.id })
+      render(<LiteratureLibraryPage />)
+      await screen.findByRole('heading', { name: parent.name })
+      await openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Delete collection' }))
+      const alert = await screen.findByRole('alertdialog')
+      expect(
+        within(alert).getByText('Child collections will move to the top level.')
+      ).not.toBeNull()
+      expect(
+        within(alert).queryByRole('button', { name: 'Rename conflicting collection' })
+      ).toBeNull()
+      const deleteButton = within(alert).getByRole('button', { name: 'Delete collection' })
+      expect(deleteButton.hasAttribute('disabled')).toBe(false)
+      transact.mockResolvedValueOnce({ kind: 'collection', id: parent.id })
+      fireEvent.click(deleteButton)
+      await waitFor(() =>
+        expect(transact).toHaveBeenCalledWith({
+          kind: 'delete-collection',
+          collectionId: parent.id
+        })
+      )
+      expect(await screen.findByRole('heading', { name: 'All references' })).not.toBeNull()
+    }
+  )
+
   it('previews promoted children and opens the conflicting child in the existing editor', async () => {
     const parent = {
       id: 'parent',
@@ -3575,7 +3619,7 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
-  it.each(['second.pdf', 'notes.txt'])(
+  it.each(['notes.txt'])(
     'reports rejected multi-file PDF drops including %s before staging any file',
     async (secondName) => {
       search.mockImplementation(async (request: { scope: string }) =>
@@ -3608,7 +3652,7 @@ describe('LiteratureLibraryPage', () => {
         })
       })
       expect(within(detail).getByRole('alert').textContent).toContain(
-        'Choose one PDF at a time. No files were added.'
+        'Only PDF files can be attached. No files were added.'
       )
       if (secondName === 'notes.txt')
         expect(within(detail).getByRole('alert').textContent).toContain(
@@ -3618,6 +3662,158 @@ describe('LiteratureLibraryPage', () => {
       expect(importPdf).not.toHaveBeenCalled()
     }
   )
+
+  it.each(['bib', 'bibtex', 'ris', 'nbib', 'txt'])(
+    'routes a dropped %s file to reference preview',
+    async (extension) => {
+      const file = new File(['references'], `references.${extension}`)
+      Object.defineProperty(file, 'text', { value: async () => 'reference contents' })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const zone = document.querySelector('[data-slot="literature-import-drop-zone"]')!
+      fireEvent.drop(zone, { dataTransfer: { types: ['Files'], files: [file] } })
+      await waitFor(() =>
+        expect(importRecords).toHaveBeenCalledWith({
+          mode: 'preview',
+          content: 'reference contents'
+        })
+      )
+      expect(transact).not.toHaveBeenCalled()
+      expect(importPdf).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([['paper.pdf', 'references.nbib'], ['one.ris', 'two.bib'], ['notes.docx']])(
+    'rejects an unsupported or mixed library drop: %s',
+    async (...names) => {
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const files = names.map((name) => new File(['contents'], name))
+      fireEvent.drop(document.querySelector('[data-slot="literature-import-drop-zone"]')!, {
+        dataTransfer: { types: ['Files'], files }
+      })
+      expect(screen.getByRole('alert')).not.toBeNull()
+      expect(importRecords).not.toHaveBeenCalled()
+      expect(transact).not.toHaveBeenCalled()
+      expect(stageLocalFile).not.toHaveBeenCalled()
+    }
+  )
+
+  it('routes dropped PDFs to the existing single and batch review flows', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const zone = document.querySelector('[data-slot="literature-import-drop-zone"]')!
+    fireEvent.drop(zone, {
+      dataTransfer: { types: ['Files'], files: [new File(['pdf'], 'first.pdf')] }
+    })
+    expect(await screen.findByRole('dialog', { name: 'Import PDF' })).not.toBeNull()
+    expect(stageLocalFile).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    fireEvent.drop(zone, {
+      dataTransfer: {
+        types: ['Files'],
+        files: [new File(['pdf'], 'first.pdf'), new File(['pdf'], 'second.pdf')]
+      }
+    })
+    expect(await screen.findByRole('dialog', { name: 'Import PDFs' })).not.toBeNull()
+    expect(stageLocalFile).not.toHaveBeenCalled()
+  })
+
+  it.each(['drop', 'picker'])(
+    'adds multiple attachments through %s and retains successful files around a failure',
+    async (method) => {
+      const attached = {
+        ...libraryItem,
+        attachments: [
+          {
+            id: 'existing',
+            kind: 'fullText' as const,
+            title: '',
+            sortOrder: 0,
+            createdAt: 1,
+            updatedAt: 1,
+            versions: [
+              {
+                id: 'existing-v1',
+                versionNumber: 1,
+                filename: 'existing.pdf',
+                contentType: 'application/pdf',
+                sizeBytes: 8,
+                checksum: 'a'.repeat(64),
+                createdAt: 1
+              }
+            ]
+          }
+        ]
+      }
+      search.mockImplementation(async (request: { scope: string }) =>
+        request.scope === 'library' ? { entries: [attached] } : { entries: [] }
+      )
+      stageLocalFile.mockImplementation(async (file: File) => ({
+        id: file.name,
+        sessionId: '.pending',
+        name: file.name,
+        originalName: file.name,
+        path: `/managed/${file.name}`,
+        mimeType: 'application/pdf',
+        size: file.size
+      }))
+      importPdf.mockImplementation(async ({ attachment }: { attachment: { name: string } }) => {
+        if (attachment.name === 'bad.pdf') throw new Error('[pdf-invalid]')
+        attached.attachments.push({
+          ...attached.attachments[0],
+          id: attachment.name,
+          versions: [
+            {
+              ...attached.attachments[0].versions[0],
+              id: attachment.name,
+              filename: attachment.name
+            }
+          ]
+        })
+        return { item: { ...attached, attachments: [...attached.attachments] } }
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+      const files = ['first.pdf', 'bad.pdf', 'last.pdf'].map(
+        (name) => new File(['%PDF'], name, { type: 'application/pdf' })
+      )
+      if (method === 'drop')
+        fireEvent.drop(detail.querySelector('[data-slot="literature-pdf-drop-zone"]')!, {
+          dataTransfer: { types: ['Files'], files }
+        })
+      else fireEvent.change(within(detail).getByLabelText('Add PDFs'), { target: { files } })
+      await waitFor(() => expect(importPdf).toHaveBeenCalledTimes(3))
+      await screen.findByRole('button', { name: 'Preview last.pdf' })
+      expect(screen.getByRole('button', { name: 'Preview first.pdf' })).not.toBeNull()
+      expect(screen.getByRole('button', { name: 'Preview existing.pdf' })).not.toBeNull()
+      expect(within(detail).getByRole('alert').textContent).toContain(
+        'bad.pdf: This PDF is damaged or invalid.'
+      )
+      expect(importPdf.mock.calls.every(([request]) => request.itemId === libraryItem.id)).toBe(
+        true
+      )
+      expect(importRecords).not.toHaveBeenCalled()
+      expect(transact).not.toHaveBeenCalled()
+    }
+  )
+
+  it('blocks a library drop while reference details are open', async () => {
+    search.mockImplementation(async (request: { scope: string }) =>
+      request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    fireEvent.drop(document.querySelector('[data-slot="literature-import-drop-zone"]')!, {
+      dataTransfer: { types: ['Files'], files: [new File(['pdf'], 'paper.pdf')] }
+    })
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(stageLocalFile).not.toHaveBeenCalled()
+    expect(transact).not.toHaveBeenCalled()
+  })
 
   it('shows a cancellable reference import while the file is still being read', async () => {
     let finishRead!: (content: string) => void
@@ -3905,8 +4101,8 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    fireEvent.change(screen.getByLabelText('Add PDF'), {
-      target: { files: [new File(['pdf'], 'paper.pdf')] }
+    fireEvent.change(screen.getByLabelText('Add PDFs'), {
+      target: { files: [new File(['pdf'], 'paper.pdf'), new File(['pdf'], 'next.pdf')] }
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel upload' }))
     await act(async () => {
@@ -3921,8 +4117,68 @@ describe('LiteratureLibraryPage', () => {
       })
     })
     expect(deleteUpload).toHaveBeenCalledWith({ path: '/managed/late.pdf' })
+    expect(stageLocalFile).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('alert').textContent).toContain('Not added: next.pdf')
     expect(importPdf).not.toHaveBeenCalled()
     expect(claimLocalFile).not.toHaveBeenCalled()
+  })
+
+  it('stops remaining PDFs after native annotation cancellation while retaining the committed attachment', async () => {
+    search.mockImplementation(async (request: { scope: string }) =>
+      request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+    )
+    type Progress = import('../../../../shared/pdf-annotations').PdfNativeAnnotationImportProgress
+    let progress!: (event: Progress) => void
+    window.api.pdfAnnotations = {
+      ...window.api.pdfAnnotations,
+      onImportProgress: (listener) => {
+        progress = listener
+        return () => {}
+      }
+    }
+    stageLocalFile.mockResolvedValue({
+      id: 'paper',
+      sessionId: '.pending',
+      name: 'paper.pdf',
+      originalName: 'paper.pdf',
+      path: '/managed/paper.pdf',
+      mimeType: 'application/pdf',
+      size: 3
+    })
+    let finishImport!: (value: unknown) => void
+    importPdf.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishImport = resolve
+        })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    fireEvent.change(screen.getByLabelText('Add PDFs'), {
+      target: { files: [new File(['pdf'], 'paper.pdf'), new File(['pdf'], 'next.pdf')] }
+    })
+    await waitFor(() => expect(importPdf).toHaveBeenCalledOnce())
+    const operationId = importPdf.mock.calls[0][0].operationId
+    act(() =>
+      progress({
+        operationId,
+        phase: 'parsing',
+        pagesProcessed: 0,
+        pageCount: 2,
+        importedCount: 0,
+        unsupportedCount: 0
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel upload' }))
+    expect(window.api.literature.cancelPdfImport).toHaveBeenCalledWith({ operationId })
+    const committed = createLibraryItemWithPdf()
+    get.mockResolvedValue(committed)
+    await act(async () => finishImport({ item: committed }))
+    expect(stageLocalFile).toHaveBeenCalledTimes(1)
+    expect(importPdf).toHaveBeenCalledTimes(1)
+    expect(within(detail).getByRole('button', { name: 'Preview paper.pdf' })).not.toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain('Not added: next.pdf')
   })
 
   it('does not start PDF staging after a pending reference creation outlives the page', async () => {
@@ -3973,7 +4229,7 @@ describe('LiteratureLibraryPage', () => {
     const page = render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    fireEvent.change(screen.getByLabelText('Add PDF'), {
+    fireEvent.change(screen.getByLabelText('Add PDFs'), {
       target: { files: [new File(['pdf'], 'paper.pdf')] }
     })
     const request = stageLocalFile.mock.calls[0][1]
@@ -4018,7 +4274,7 @@ describe('LiteratureLibraryPage', () => {
       const file = new File(['pdf'], 'paper.pdf')
       if (owner === 'existing') {
         await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-        fireEvent.change(screen.getByLabelText('Add PDF'), { target: { files: [file] } })
+        fireEvent.change(screen.getByLabelText('Add PDFs'), { target: { files: [file] } })
       } else {
         fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
         await screen.findByLabelText('Title')
@@ -4028,7 +4284,7 @@ describe('LiteratureLibraryPage', () => {
       await act(async () => {
         rejectStage(new Error('Upload transfer is no longer active.'))
       })
-      expect((await screen.findByRole('alert')).textContent).toBe(
+      expect((await screen.findByRole('alert')).textContent).toContain(
         'PDF upload cancelled. The reference was kept.'
       )
       expect(importPdf).not.toHaveBeenCalled()
@@ -4083,7 +4339,7 @@ describe('LiteratureLibraryPage', () => {
         await openReferenceDetail(
           await screen.findByText('Corrective Retrieval Augmented Generation')
         )
-        fireEvent.change(screen.getByLabelText('Add PDF'), { target: { files: [file] } })
+        fireEvent.change(screen.getByLabelText('Add PDFs'), { target: { files: [file] } })
       } else {
         fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
         await screen.findByLabelText('Title')
@@ -4168,13 +4424,15 @@ describe('LiteratureLibraryPage', () => {
     await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
 
     const file = new File(['%PDF-1.7'], 'paper.pdf', { type: 'application/pdf' })
-    expect(screen.getByText('Drag and drop or click to upload')).not.toBeNull()
+    expect(
+      screen.getByText('Drop PDFs here to attach to this reference, or choose files.')
+    ).not.toBeNull()
     expect(screen.getByRole('heading', { name: 'Attachments' })).not.toBeNull()
     expect(screen.queryByRole('heading', { name: 'Files' })).toBeNull()
     const dropZone = document.querySelector<HTMLElement>('[data-slot="literature-pdf-drop-zone"]')!
-    const pdfInput = screen.getByLabelText('Add PDF') as HTMLInputElement
+    const pdfInput = screen.getByLabelText('Add PDFs') as HTMLInputElement
     const inputClick = vi.spyOn(pdfInput, 'click')
-    fireEvent.click(dropZone)
+    fireEvent.click(screen.getByRole('button', { name: 'Add PDFs' }))
     expect(inputClick).toHaveBeenCalledOnce()
     const dropEvent = new Event('drop', { bubbles: true })
     Object.defineProperty(dropEvent, 'dataTransfer', {
@@ -8172,6 +8430,80 @@ describe('LiteratureLibraryPage', () => {
     ])
   })
 
+  it('imports explicitly selected references and retains excluded conflict diagnostics', async () => {
+    const conflict = { ...libraryItem.item, title: 'Conflicting reference' }
+    const content = 'mixed references'
+    importRecords.mockImplementation(async (request: { mode: 'commit' | 'preview' }) => ({
+      format: 'bibtex',
+      items: [libraryItem.item, conflict],
+      errors: [],
+      scannedEntries: 2,
+      truncated: false,
+      entries: [
+        {
+          index: 0,
+          title: libraryItem.item.title,
+          item: libraryItem.item,
+          warnings: [],
+          status: 'ready'
+        },
+        {
+          index: 1,
+          title: conflict.title,
+          item: conflict,
+          warnings: [],
+          status: 'conflict',
+          conflict: {
+            identifiers: conflict.identifiers,
+            matches: [{ itemId: 'other', title: 'Other reference' }]
+          }
+        }
+      ],
+      ...(request.mode === 'commit'
+        ? { imported: { itemIds: [libraryItem.id], createdCount: 1, reusedCount: 0 } }
+        : {})
+    }))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const file = new File([content], 'references.bib')
+    Object.defineProperty(file, 'text', { value: async () => content })
+    fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+    const submit = (await screen.findByRole('button', {
+      name: 'Import references'
+    })) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Exclude conflicting references' }))
+    expect(submit.disabled).toBe(true)
+    await waitFor(() => expect(submit.disabled).toBe(false))
+    expect(
+      (
+        screen.getByRole('checkbox', {
+          name: 'Select reference 2: Conflicting reference'
+        }) as HTMLInputElement
+      ).checked
+    ).toBe(false)
+    fireEvent.click(submit)
+    await waitFor(() =>
+      expect(importRecords).toHaveBeenCalledWith({
+        mode: 'commit',
+        content,
+        selectedItemIndexes: [0]
+      })
+    )
+    expect(
+      await screen.findByText('Excluded references were not imported. Their details remain below.')
+    ).not.toBeNull()
+    expect(screen.getByText('Library reference: Other reference')).not.toBeNull()
+    expect((screen.getByText(/View details/).closest('details') as HTMLDetailsElement).open).toBe(
+      true
+    )
+    const excluded = screen.getByRole('checkbox', {
+      name: 'Select reference 2: Conflicting reference'
+    }) as HTMLInputElement
+    expect(excluded.disabled).toBe(true)
+    expect(excluded.checked).toBe(false)
+  })
+
   it('previews and imports BibTeX records into the Library', async () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
@@ -11975,7 +12307,7 @@ describe('LiteratureLibraryPage', () => {
       })
       const pending = deferred<{ item: LiteratureItemView }>()
       importPdf.mockReturnValueOnce(pending.promise)
-      fireEvent.change(screen.getByLabelText('Add PDF'), {
+      fireEvent.change(screen.getByLabelText('Add PDFs'), {
         target: { files: [new File(['%PDF-1.7'], 'paper.pdf', { type: 'application/pdf' })] }
       })
       await waitFor(() => expect(importPdf).toHaveBeenCalledTimes(1))

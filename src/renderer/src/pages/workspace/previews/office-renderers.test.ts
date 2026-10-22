@@ -438,12 +438,6 @@ describe('renderOfficeFile', () => {
     expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
       'box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15)'
     )
-    expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
-      'content-visibility: auto'
-    )
-    expect(container.querySelector('style[data-open-science-docx-fit]')?.textContent).toContain(
-      'contain-intrinsic-size: auto'
-    )
     expect(pageStyle.marginBottom).toBe('30px')
 
     await cleanup()

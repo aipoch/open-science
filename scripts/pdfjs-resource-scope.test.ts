@@ -7,7 +7,7 @@ import { PDFDocument, PDFName, StandardFonts, type PDFRef } from 'pdf-lib'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 it.each(['legacy', 'modern'] as const)(
-  'PDF.js %s exposes only proved missing-Unicode glyph paths without changing font rendering',
+  'PDF.js %s exposes diagnostic missing-Unicode and zero-advance paths without changing font rendering',
   (flavor) => {
     const require = createRequire(import.meta.url)
     const source = ts.createSourceFile(
@@ -75,6 +75,18 @@ it.each(['legacy', 'modern'] as const)(
     expect(calls).toEqual([[font, [missing], owner.handler, owner.options]])
     expect(font.disableFontFace).toBe(false)
     calls.length = 0
+    const zeroAdvance = { ...normal, width: 0 }
+    font.charsToGlyphs = () => [zeroAdvance]
+    handle.call(owner, 'encoded', state)
+    expect(calls).toEqual([[font, [zeroAdvance], owner.handler, owner.options]])
+    expect(font.disableFontFace).toBe(false)
+    calls.length = 0
+    for (const override of [{ isInFont: false }, { accent: {} }, { fontChar: '' }]) {
+      font.charsToGlyphs = () => [Object.assign({}, zeroAdvance, override)]
+      handle.call(owner, 'encoded', state)
+      expect(calls).toEqual([])
+    }
+    font.charsToGlyphs = () => glyphs
     owner.options.fontExtraProperties = false
     handle.call(owner, 'encoded', state)
     expect(calls).toEqual([])

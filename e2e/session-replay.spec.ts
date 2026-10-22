@@ -605,7 +605,8 @@ test('previews recorded DOCX inside replay and routes its iframe menu at non-def
   })
   await office.getByText('Replay native context area', { exact: true }).click({ button: 'right' })
   await expect(menu).toBeHidden()
-  await page.keyboard.press('Escape')
+  // Passthrough does not create an app menu. Escape here navigates out of the preview itself.
+  await expect(replay.locator('iframe[data-office-preview-frame]')).toBeVisible()
   await replay.getByRole('button', { name: 'Back to files', exact: true }).click()
   await expect(replay.locator('iframe[data-office-preview-frame]')).toHaveCount(0)
   await expect(files).toBeVisible()

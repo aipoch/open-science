@@ -829,6 +829,7 @@ describe('qualified readLines helper first inputs', () => {
 
   it.each([
     'reader <- function(path) { lines <- base::readLines(warn=FALSE, path); lines }\nreader(path="inputs/observations.txt")',
+    'reader <- function(path) { lines <- readLines(con=path); lines }\nreader("inputs/observations.txt")',
     'reader <- function() { base::readLines(con="inputs/observations.txt", skipNul=TRUE); NULL }\nreader()',
     'reader <- function(expected, path) { lines <- base::readLines(con=path); stopifnot(length(lines)==expected); lines }\nreader(path="inputs/observations.txt", 3L)',
     `readLines <- function(...) NULL\n${helper}\nreader("inputs/observations.txt")`
@@ -892,7 +893,7 @@ describe('qualified readLines helper first inputs', () => {
   })
 
   it.each([
-    'readLines(con=path)',
+    'customReadLines(con=path)',
     'base:::readLines(con=path)',
     'other::readLines(con=path)',
     'base::readLines(con=path, con=path)',

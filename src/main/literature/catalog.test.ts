@@ -27,6 +27,7 @@ import { TagRepository } from '../tags/repository'
 import { TagResourceCatalog } from '../tags/resource-catalog'
 import { TagService } from '../tags/service'
 import { LiteratureCatalog } from './catalog'
+import { createLiteratureCommandOwner } from './command-owner'
 import { ContentRepository } from '../storage/content-repository'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 
@@ -199,6 +200,93 @@ describe('LiteratureCatalog', () => {
       catalog.attachContent({ ...input, contentBlobId: 'missing' }, undefined, item)
     ).rejects.toThrow('content authority')
   })
+
+  it.each(['attachment', 'new Inbox version', 'existing Inbox version'] as const)(
+    'rolls back %s when PDF binding fails and retries without duplicate versions',
+    async (path) => {
+      const catalog = await setup()
+      const checksum = 'd'.repeat(64)
+      await client!.contentBlob.create({
+        data: {
+          id: 'binding-blob',
+          checksum,
+          storageKey: 'binding.pdf',
+          sizeBytes: 128n,
+          contentType: 'application/pdf',
+          state: 'available',
+          verifiedAt: new Date()
+        }
+      })
+      const input = {
+        itemId: 'binding-item',
+        contentBlobId: 'binding-blob',
+        filename: 'paper.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 128,
+        checksum
+      }
+      let existingVersionId: string | undefined
+      if (path === 'existing Inbox version') {
+        const item = await catalog.transact({ kind: 'create-item', item: candidate().item })
+        const attachment = await catalog.attachContent({ ...input, itemId: item.id })
+        existingVersionId = attachment.versionId
+        // Model a published attachment whose annotation projection has not been populated.
+        await client!.pdfAnnotationDocument.deleteMany()
+      }
+      const staged =
+        path === 'attachment'
+          ? undefined
+          : await catalog.stageAcquiredPdf(candidate(), {
+              ...input,
+              pageCount: 1,
+              sourceUrl: 'https://example.test/paper.pdf'
+            })
+      const publish = async (): Promise<unknown> =>
+        staged
+          ? catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+          : catalog.attachContent(input, undefined, candidate().item)
+      await client!
+        .$executeRawUnsafe(`CREATE TRIGGER reject_pdf_binding AFTER INSERT ON PdfAnnotationSourceBinding
+        BEGIN SELECT RAISE(ABORT, 'injected PDF binding failure'); END`)
+      await expect(publish()).rejects.toMatchObject({
+        code: 'P2003',
+        meta: { modelName: 'PdfAnnotationSourceBinding' }
+      })
+      const retained = existingVersionId ? 1 : 0
+      expect(await client!.literatureItem.count()).toBe(retained)
+      expect(await client!.literatureAttachment.count()).toBe(retained)
+      expect(await client!.literatureAttachmentVersion.count()).toBe(retained)
+      expect(await client!.pdfAnnotationDocument.count()).toBe(0)
+      expect(await client!.pdfAnnotationSourceBinding.count()).toBe(0)
+      expect(await client!.contentBlob.findMany()).toMatchObject([
+        { id: 'binding-blob', checksum, sizeBytes: 128n, state: 'available' }
+      ])
+      if (staged) {
+        expect(
+          await client!.literatureInboxCandidate.findUniqueOrThrow({ where: { id: staged.id } })
+        ).toMatchObject({ state: 'pending' })
+        expect(await client!.literatureInboxPdf.count()).toBe(1)
+      }
+
+      await client!.$executeRawUnsafe('DROP TRIGGER reject_pdf_binding')
+      await publish()
+      expect(await client!.literatureItem.count()).toBe(1)
+      expect(await client!.literatureAttachment.count()).toBe(1)
+      const versions = await client!.literatureAttachmentVersion.findMany()
+      expect(versions).toHaveLength(1)
+      if (existingVersionId) expect(versions[0].id).toBe(existingVersionId)
+      expect(await client!.pdfAnnotationDocument.count()).toBe(1)
+      expect(await client!.pdfAnnotationSourceBinding.findMany()).toMatchObject([
+        { sourceKind: 'literature-attachment-version', versionId: versions[0].id, checksum }
+      ])
+      if (staged) {
+        expect(
+          await client!.literatureInboxCandidate.findUniqueOrThrow({ where: { id: staged.id } })
+        ).toMatchObject({ state: 'accepted' })
+        expect(await client!.literatureInboxPdf.count()).toBe(0)
+      }
+    }
+  )
 
   it('searches PDF notes and quotes under Library with stable mixed pagination and active source scopes', async () => {
     const catalog = await setup()
@@ -1840,6 +1928,58 @@ describe('LiteratureCatalog', () => {
     expect(merged.item.title).toBe('Preferred title')
     expect(toCslItem(merged.id, merged.item).DOI).toBe('10.1234/preferred')
   })
+
+  it.each(['duplicate', 'conflict'] as const)(
+    'rechecks and imports the remaining reference after excluding a batch %s source',
+    async (kind) => {
+      const catalog = await setup()
+      const a = candidate({ doi: '10.1234/one', title: 'Earlier reference' }).item
+      const b = {
+        ...a,
+        identifiers: [{ scheme: 'pmid' as const, value: '12345', isPrimary: true }]
+      }
+      const last = {
+        ...a,
+        title: 'Selected reference',
+        ...(kind === 'conflict' ? { identifiers: [...a.identifiers, ...b.identifiers] } : {})
+      }
+      const items = kind === 'conflict' ? [a, b, last] : [a, last]
+      const owner = createLiteratureCommandOwner({
+        literatureCatalog: catalog,
+        literatureCitationFormatter: {
+          parseReferences: async () => ({
+            items,
+            errors: [],
+            warnings: [],
+            format: 'bibtex',
+            scannedEntries: items.length,
+            truncated: false
+          })
+        }
+      } as unknown as Parameters<typeof createLiteratureCommandOwner>[0])
+      const original = await owner.importRecords({ mode: 'preview', content: 'source' })
+      expect(original.entries.at(-1)?.status).toBe(kind === 'conflict' ? 'conflict' : 'existing')
+      const selectedItemIndexes = [items.length - 1]
+      const selected = await owner.importRecords({
+        mode: 'preview',
+        content: 'source',
+        selectedItemIndexes
+      })
+      expect(selected.entries).toHaveLength(1)
+      expect(selected.entries[0].index).toBe(items.length - 1)
+      expect(['ready', 'warning']).toContain(selected.entries[0].status)
+      const committed = await owner.importRecords({
+        mode: 'commit',
+        content: 'source',
+        selectedItemIndexes
+      })
+      expect(committed.imported).toMatchObject({ createdCount: 1, reusedCount: 0 })
+      expect(await client!.literatureItem.count()).toBe(1)
+      expect((await catalog.get(committed.imported!.itemIds[0]))?.item.title).toBe(
+        'Selected reference'
+      )
+    }
+  )
 
   it.each(['reuse', 'fill-missing', 'separate'] as const)(
     'handles conflicts within one file with %s atomically',

@@ -17,7 +17,12 @@
       "src/renderer/src/office-preview/office-preview-frame-bridge.test.ts",
       "src/renderer/src/office-preview/office-preview-runtime.test.ts"
     ],
-    "contract": [],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/assets/diff-colors.test.ts",
+      "src/renderer/src/assets/pdf-text-layer.test.ts",
+      "src/renderer/src/assets/provider-icons.packaging.test.ts"
+    ],
     "consumer": ["src/renderer/src/pages/workspace/previews/office-behavior-regressions.test.ts"]
   },
   "capabilityOverlays": [],

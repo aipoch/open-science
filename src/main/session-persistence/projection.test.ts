@@ -5,8 +5,17 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 
-import type { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Prisma, type PrismaClient } from '@prisma/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const transactionError = vi.hoisted(() => vi.fn())
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
+  return {
+    ...original,
+    createLogger: (scope: string) => ({ ...original.createLogger(scope), error: transactionError })
+  }
+})
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
@@ -174,6 +183,46 @@ describe('Session projection', () => {
     if (storageRoot) await removeStorageRoot(storageRoot)
     storageRoot = undefined
   })
+
+  it.each([
+    { entered: false, code: 'P2028' },
+    { entered: true, code: 'P2028' },
+    { entered: true, code: 'private-query-content' }
+  ])(
+    'diagnoses transaction failure without content: $entered / $code',
+    async ({ entered, code }) => {
+      transactionError.mockClear()
+      const error = new Prisma.PrismaClientKnownRequestError('private-query-content', {
+        code,
+        clientVersion: 'test',
+        meta: { query: 'private-query-content' }
+      })
+      const failingClient = {
+        $transaction: vi.fn(async (operation: (tx: unknown) => Promise<unknown>) => {
+          if (entered) {
+            return operation({
+              project: {
+                findFirst: async () => {
+                  throw error
+                }
+              }
+            })
+          }
+          throw error
+        })
+      } as unknown as PrismaClient
+      const repository = new SessionProjectionRepository(async () => failingClient)
+      await expect(repository.prepareSave(session('private-session-id'))).rejects.toBe(error)
+      expect(transactionError).toHaveBeenCalledWith('projection transaction failed', {
+        errorCategory: 'object',
+        transactionStarted: entered,
+        admissionMs: expect.any(Number),
+        elapsedMs: expect.any(Number),
+        ...(code === 'P2028' ? { prismaCode: code } : {})
+      })
+      expect(JSON.stringify(transactionError.mock.calls)).not.toMatch(/private-/)
+    }
+  )
 
   it('preserves retained turn, run, and artifact timestamp semantics', () => {
     const projected = buildSessionProjection(session('session-1'))
@@ -360,78 +409,84 @@ describe('Session projection', () => {
     expect(buildSessionProjection(pending).summary.needsStartupRecovery).toBe(true)
   })
 
-  it('lets a session save and cancellation recovery wait for an active database transaction', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'session-transaction-admission-'))
-    initDataRoot(storageRoot)
-    client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
-    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
-    const projection = new SessionProjectionRepository(async () => client!)
-    const repository = new SessionRepository(storageRoot, {}, projection)
-    const operations = new ComputeJobOperationRepository(async () => client!)
-    const entered = createDeferred<void>()
-    const release = createDeferred<void>()
-    const active = client.$transaction(async (tx) => {
-      await tx.$queryRawUnsafe('SELECT 1')
-      entered.resolve()
-      await release.promise
+  describe('transaction contention', () => {
+    beforeEach(async () => {
+      // Migrations are fixture setup, not part of the transaction admission deadline. In the
+      // Windows full-test lane they can take longer than the contention being exercised.
+      storageRoot = await mkdtemp(join(tmpdir(), 'session-transaction-contention-'))
+      initDataRoot(storageRoot)
+      client = createProjectDbClient(storageRoot)
+      await migrateApplicationDatabase(client)
+      await client.project.create({ data: { id: 'project-1', name: 'Project' } })
     })
-    await entered.promise
-    // This is shorter than Prisma's existing five-second transaction execution budget, but
-    // exceeds its implicit two-second admission budget on this single-connection database.
-    const timer = setTimeout(() => release.resolve(), 2_500)
-    try {
-      const results = await Promise.allSettled([
-        repository.saveSession(session('waiting-session')),
-        operations.claimNext('cancel', new Date(), 30_000, 'waiting-cancellation')
-      ])
-      const failures = results.flatMap((result) =>
-        result.status === 'rejected'
-          ? [{ code: result.reason?.code, message: String(result.reason) }]
-          : []
-      )
-      expect(failures, JSON.stringify(failures)).toEqual([])
-      expect(await client.session.findUnique({ where: { id: 'waiting-session' } })).toMatchObject({
-        title: 'Session waiting-session'
-      })
-      expect(results[1]).toEqual({ status: 'fulfilled', value: null })
-    } finally {
-      clearTimeout(timer)
-      release.resolve()
-      await active
-    }
-  }, 15_000)
 
-  it('keeps a session save queued through prolonged SQLite transaction contention', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'session-transaction-contention-'))
-    initDataRoot(storageRoot)
-    client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
-    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
-    const projection = new SessionProjectionRepository(async () => client!)
-    const repository = new SessionRepository(storageRoot, {}, projection)
-    const entered = createDeferred<void>()
-    const release = createDeferred<void>()
-    const active = client.$transaction(
-      async (tx) => {
+    it('lets a session save and cancellation recovery wait for an active database transaction', async () => {
+      const projection = new SessionProjectionRepository(async () => client!)
+      const repository = new SessionRepository(storageRoot!, {}, projection)
+      const operations = new ComputeJobOperationRepository(async () => client!)
+      const entered = createDeferred<void>()
+      const release = createDeferred<void>()
+      const active = client!.$transaction(async (tx) => {
         await tx.$queryRawUnsafe('SELECT 1')
         entered.resolve()
         await release.promise
-      },
-      { timeout: 30_000 }
-    )
-    await entered.promise
-    const timer = setTimeout(() => release.resolve(), 12_500)
-    try {
-      await expect(repository.saveSession(session('prolonged-contention'))).resolves.toMatchObject({
-        title: 'Session prolonged-contention'
       })
-    } finally {
-      clearTimeout(timer)
-      release.resolve()
-      await active
-    }
-  }, 30_000)
+      await entered.promise
+      // This is shorter than Prisma's existing five-second transaction execution budget, but
+      // exceeds its implicit two-second admission budget on this single-connection database.
+      const timer = setTimeout(() => release.resolve(), 2_500)
+      try {
+        const results = await Promise.allSettled([
+          repository.saveSession(session('waiting-session')),
+          operations.claimNext('cancel', new Date(), 30_000, 'waiting-cancellation')
+        ])
+        const failures = results.flatMap((result) =>
+          result.status === 'rejected'
+            ? [{ code: result.reason?.code, message: String(result.reason) }]
+            : []
+        )
+        expect(failures, JSON.stringify(failures)).toEqual([])
+        expect(
+          await client!.session.findUnique({ where: { id: 'waiting-session' } })
+        ).toMatchObject({
+          title: 'Session waiting-session'
+        })
+        expect(results[1]).toEqual({ status: 'fulfilled', value: null })
+      } finally {
+        clearTimeout(timer)
+        release.resolve()
+        await active
+      }
+    }, 15_000)
+
+    it('keeps a session save queued through prolonged SQLite transaction contention', async () => {
+      const projection = new SessionProjectionRepository(async () => client!)
+      const repository = new SessionRepository(storageRoot!, {}, projection)
+      const entered = createDeferred<void>()
+      const release = createDeferred<void>()
+      const active = client!.$transaction(
+        async (tx) => {
+          await tx.$queryRawUnsafe('SELECT 1')
+          entered.resolve()
+          await release.promise
+        },
+        { timeout: 30_000 }
+      )
+      await entered.promise
+      const timer = setTimeout(() => release.resolve(), 12_500)
+      try {
+        await expect(
+          repository.saveSession(session('prolonged-contention'))
+        ).resolves.toMatchObject({
+          title: 'Session prolonged-contention'
+        })
+      } finally {
+        clearTimeout(timer)
+        release.resolve()
+        await active
+      }
+    }, 30_000)
+  })
 
   it('saves sessions while cancellation recovery polls the shared database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'session-recovery-contention-'))

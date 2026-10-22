@@ -51,7 +51,7 @@ AIPOCH Open-Science prend en charge la recherche computationnelle et intensive e
 
 Les sessions de recherche terminées peuvent également être exportées sous forme de paquets `.science` portables pour la revue, la transmission et l’archivage, avec les branches de conversation, versions de fichiers, enregistrements Notebook et preuves de vérification sélectionnés.
 
-> 💡 **AIPOCH Open-Science v1.0.0** _(mise à jour en octobre 2026)_. Cette étape réunit l’espace de recherche privilégiant le stockage local, les agents scientifiques, l’exécution Python/R dans le Notebook, les outils bibliographiques et les paquets de recherche portables `.science`. Consultez les [notes de version 1.0.0](../../release-notes/1.0.0/fr.md) pour les changements depuis v0.37.2 et les modifications de mise à niveau de la CLI. Les téléchargements correspondent toujours à la [dernière version publiée](https://github.com/aipoch/open-science/releases/latest).
+> 💡 **AIPOCH Open-Science v1.0.2** _(mise à jour en octobre 2026)_. Ce correctif ajoute cinq nouveaux Connecteurs Scientifiques ainsi qu'une prise en charge plus poussée de GDC et d'Ensembl, des libellés honnêtes de sélection simple/multiple sur les cartes de réponse, une boîte de dialogue de paquet de session qui reste stable, un chargement de session plus rapide, et une série de correctifs pour les sessions, les notebooks et la récupération des identifiants, ainsi que des correctifs de sécurité pour le runtime Node et la première publication npm de la CLI. Consultez les [notes de version 1.0.2](../../release-notes/1.0.2/fr.md) pour plus de détails. Les téléchargements correspondent toujours à la [dernière version publiée](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />
@@ -101,6 +101,16 @@ brew install aipoch/tap/open-science
 ```
 
 Cette formule inclut Node et fonctionne sans l’application de bureau ; sa version peut différer du Cask de bureau. Voir les prérequis et mises à niveau dans le [guide du runtime autonome](../standalone-runtime.md).
+
+Pour le CLI autonome et l’interface Web, installez le [paquet npm publié](https://www.npmjs.com/package/@aipoch/open-science) avec **Node.js 22.13.0 ou ultérieur** :
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Ouvrez l’URL affichée pour terminer la configuration, ou suivez le [guide de configuration du terminal](../../packages/open-science/CLI.md#first-run-setup-codex). npm prend en charge macOS ARM64/x64, Linux ARM64/x64 avec glibc et Windows x64 ; l’application de bureau n’est pas nécessaire. Conservez les dépendances facultatives npm et consultez les [prérequis Linux et les instructions de mise à jour](../standalone-runtime.md#install-from-npm). L’URL contient un jeton d’authentification ; gardez-la privée.
 
 Sous Windows, une réinstallation conserve les données de recherche. Pour tout effacer, consultez l’[outil de réinitialisation](../../scripts/windows-reset/README.md), qui supprime définitivement les données locales après confirmation.
 
@@ -331,7 +341,7 @@ npm run pack:backend
 
 L’interface Web fonctionne avec un backend Node ordinaire, sans Electron ni affichage graphique. `npm run dev:web` et `npm run dev:headless` construisent et démarrent le backend et l’interface Web, sans bureau ni icône de notification. `OPEN_SCIENCE_WEB_PORT` choisit le port (`44100` par défaut) ; Ctrl+C arrête proprement le service au premier plan.
 
-Le développement nécessite Node.js 24. Le tarball npm autonome exige Node >=22.13.0 ; le CLI/SDK léger exige Node >=22.5. Les archives Release, la formule Homebrew et le lanceur du bureau incluent leur propre runtime.
+Le développement nécessite Node.js 24. Le paquet npm publié et le tarball autonome construit localement exigent Node.js >=22.13.0. Les archives Release, la formule Homebrew et le lanceur du bureau incluent leur propre runtime.
 
 Le bureau et le navigateur partagent le même service. Quitter le bureau arrête seulement le backend qu’il a démarré ; une connexion à un service lancé par le CLI est simplement détachée.
 

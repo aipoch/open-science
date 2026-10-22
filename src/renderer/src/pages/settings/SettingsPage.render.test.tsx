@@ -499,6 +499,29 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('retains the requested recovery model through the settings route', async () => {
+    const provider = installCustomProviderSnapshot()
+    provider.models.push('pinned-model')
+    useSettingsStore.getState().openSettingsToProvider(provider.id, 'pinned-model')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    const copy = 'Update the saved credential, then test the connection.'
+    expect(document.body.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [{ ...provider, lastValidatedAt: 20, lastValidatedTarget: { model: 'model-a' } }]
+      })
+    )
+    expect(document.body.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...provider, lastValidatedAt: 30, lastValidatedTarget: { model: 'pinned-model' } }
+        ]
+      })
+    )
+    expect(document.body.textContent).not.toContain(copy)
+  })
+
   it('retains model tab DOM across model routes and navigation Back', async () => {
     window.api.settings.getClassification = vi.fn().mockResolvedValue({ revision: 0, services: [] })
     window.api.localModels = {
@@ -6769,8 +6792,8 @@ describe('Provider editor leave protection', () => {
 })
 
 describe('Settings Compute completion navigation', () => {
-  it.each(['left', 'returned', 'closed', 'closed-during-exit'] as const)(
-    'keeps the selected Settings location after an old host creation succeeds (%s)',
+  it.each(['panel', 'back', 'closed', 'closed-during-exit'] as const)(
+    'waits for a save during navigation but relinquishes completion authority after host-driven close (%s)',
     async (location) => {
       const previous = useComputeStore.getState()
       let resolve!: (host: Awaited<ReturnType<typeof previous.createHost>>) => void
@@ -6834,17 +6857,19 @@ describe('Settings Compute completion navigation', () => {
             expect(document.querySelector('#compute-alias')).toBeNull()
           }
         } else {
-          await act(async () => navButton('General')!.click())
-          if (location === 'returned') {
-            await act(async () =>
-              document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+          await act(async () => {
+            if (location === 'panel') navButton('General')!.click()
+            else document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+          })
+          expect(document.body.textContent).toContain(
+            'Wait for the current save to finish before leaving.'
+          )
+          expect(
+            document.querySelector<HTMLButtonElement>(
+              '[data-testid="skill-discard-confirmation"] button[data-slot="button"]'
             )
-            act(() =>
-              fireEvent.change(document.querySelector('#compute-alias')!, {
-                target: { value: 'new-draft' }
-              })
-            )
-          }
+          ).not.toBeNull()
+          expect(navButton('Compute')?.getAttribute('aria-current')).toBe('page')
         }
         await act(async () =>
           resolve({ providerId: 'ssh:cluster' } as Awaited<ReturnType<typeof previous.createHost>>)
@@ -6853,12 +6878,13 @@ describe('Settings Compute completion navigation', () => {
         expect(probeHost).toHaveBeenCalledExactlyOnceWith('ssh:cluster')
         if (location === 'closed' || location === 'closed-during-exit')
           await act(async () => render(true))
-        if (location === 'left')
-          expect(navButton('General')?.getAttribute('aria-current')).toBe('page')
-        else
-          expect(document.querySelector<HTMLInputElement>('#compute-alias')?.value).toBe(
-            location === 'returned' ? 'new-draft' : ''
-          )
+        if (location === 'closed' || location === 'closed-during-exit') {
+          expect(document.querySelector<HTMLInputElement>('#compute-alias')?.value).toBe('')
+        } else {
+          expect(navButton('Compute')?.getAttribute('aria-current')).toBe('page')
+          expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).toBeNull()
+          expect(document.querySelector('#compute-alias')).toBeNull()
+        }
       } finally {
         useComputeStore.setState({
           createHost: previous.createHost,
@@ -7045,4 +7071,63 @@ it('dismisses a network leave request when the pending save succeeds', async () 
   expect(document.body.textContent).not.toContain('Your network rules have not been saved.')
   expect(onClose).not.toHaveBeenCalled()
   expect(document.body.querySelector('[aria-label="Domain hostname"]')).not.toBeNull()
+})
+
+describe('Connection editor shared leave protection', () => {
+  const click = async (label: string): Promise<void> => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (item) => item.textContent?.trim() === label
+    )!
+    expect(button, label).toBeDefined()
+    await act(async () => button.click())
+  }
+  it.each(['Connectors', 'Compute'] as const)(
+    'protects %s drafts through panel, breadcrumb, back and close',
+    async (panel) => {
+      window.api.compute.passwordCapability = vi.fn().mockResolvedValue({ available: true })
+      const onClose = vi.fn()
+      await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+      await act(async () => navButton(panel)!.click())
+      if (panel === 'Compute') await click('Add SSH host')
+      else {
+        openRadixMenu(
+          [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+            button.textContent?.includes('Add connector')
+          )
+        )
+        await act(async () => {
+          clickRadixMenuItem(
+            [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
+              item.textContent?.includes('Local command')
+            )
+          )
+          await Promise.resolve()
+        })
+      }
+      const selector = panel === 'Compute' ? '#compute-alias' : '[aria-label="Display name"]'
+      const field = (): HTMLInputElement => document.querySelector(selector)!
+      act(() => fireEvent.change(field(), { target: { value: 'Draft research connection' } }))
+      const leaveButtons = [
+        navButton('General')!,
+        document.querySelector<HTMLButtonElement>(`[aria-label="Back to ${panel.toLowerCase()}"]`)!,
+        document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!,
+        document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!
+      ]
+      for (const leave of leaveButtons) {
+        expect(leave).not.toBeNull()
+        await act(async () => leave.click())
+        expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
+        expect(onClose).not.toHaveBeenCalled()
+        await click('Keep editing')
+        expect(field().value).toBe('Draft research connection')
+      }
+      await act(async () => navButton('General')!.click())
+      await click('Discard changes')
+      expect(navButton('General')?.getAttribute('aria-current')).toBe('page')
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+      )
+      expect(field().value).toBe('')
+    }
+  )
 })

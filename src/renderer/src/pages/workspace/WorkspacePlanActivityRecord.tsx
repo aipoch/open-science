@@ -1,6 +1,6 @@
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import {
   AlertCircle,
   Check,

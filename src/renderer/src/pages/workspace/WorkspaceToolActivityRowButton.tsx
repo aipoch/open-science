@@ -1,6 +1,6 @@
 import type { ReactNode, Ref } from 'react'
 
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
 import { WorkspaceCollapsiblePanel } from './WorkspaceCollapsiblePanel'

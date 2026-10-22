@@ -7,7 +7,11 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { isSupportedCodexAcpVersion, isSupportedCodexCliVersion } from '../../shared/codex-runtime'
-import { createLogger } from '@aipoch/diagnostics/node'
+import {
+  boundedRuntimeDiagnostic,
+  createLogger,
+  runtimeChildProcessErrorFields
+} from '@aipoch/diagnostics/node'
 import { augmentedPathEnv } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
@@ -20,6 +24,7 @@ const log = createLogger('codex-detect')
 // A runnable adapter that reports a version can still be unpaired with a working native Codex; only a
 // live ACP initialize proves the first session will start. Bounded so detection never hangs.
 const ACP_SMOKE_TIMEOUT_MS = 15_000
+const MAX_SMOKE_STDERR_CHARS = 8 * 1024
 
 export type CodexDetectResult = {
   adapterPath: string
@@ -296,6 +301,12 @@ const runAcpInitializeSmoke =
       const result = await new Promise<boolean>((resolve) => {
         let settled = false
         let buffer = ''
+        let stderrOutput = ''
+        let stderrTruncated = false
+        let timedOut = false
+        let processError: Error | undefined
+        let initializeError:
+          { code?: number; message?: ReturnType<typeof boundedRuntimeDiagnostic> } | undefined
         const child = spawnCodexWithInstallAdmission(
           [adapterPath, ...(opts.codexPath ? [opts.codexPath] : [])],
           () =>
@@ -303,7 +314,7 @@ const runAcpInitializeSmoke =
               detached: platform !== 'win32',
               windowsHide: true,
               shell: useShell,
-              stdio: ['pipe', 'pipe', 'ignore'],
+              stdio: ['pipe', 'pipe', 'pipe'],
               env: {
                 ...stripCodexCredentialEnv(augmentedPathEnv(process.env)),
                 ...(isJavaScript ? { ...nodeRuntimeEnvironment() } : {}),
@@ -320,6 +331,10 @@ const runAcpInitializeSmoke =
           settled = true
           clearTimeout(timer)
           signal?.removeEventListener('abort', onAbort)
+          // Snapshot before our own teardown changes the exit status. A forced kill is not the
+          // initialization failure, and cancellation is not an installation defect.
+          const status = child.exitCode
+          const exitSignal = child.signalCode
           child.stdin.destroy()
           // Reap the adapter AND its Codex grandchild while the parent is still alive (on success this
           // runs the moment initialize answers), awaiting the robust tree teardown before resolving. A
@@ -333,9 +348,34 @@ const runAcpInitializeSmoke =
                 )
               }
             })
-            .finally(() => resolve(ok))
+            .finally(() => {
+              if (!ok && !signal?.aborted) {
+                // A cut quoted credential may no longer match the sanitizer. Withhold the
+                // incomplete trailing line whenever the raw capture limit was reached.
+                const stderr = boundedRuntimeDiagnostic(
+                  stderrTruncated
+                    ? stderrOutput.slice(0, stderrOutput.lastIndexOf('\n') + 1)
+                    : stderrOutput
+                )
+                log.error('ACP initialize check failed', {
+                  status,
+                  signal: exitSignal,
+                  timedOut,
+                  stderr: stderr.text,
+                  stderrTruncated: stderrTruncated || stderr.truncated,
+                  processError: processError
+                    ? runtimeChildProcessErrorFields(processError)
+                    : undefined,
+                  initializeError
+                })
+              }
+              resolve(ok)
+            })
         }
-        const timer = setTimeout(() => finish(false), ACP_SMOKE_TIMEOUT_MS)
+        const timer = setTimeout(() => {
+          timedOut = true
+          finish(false)
+        }, ACP_SMOKE_TIMEOUT_MS)
         const onAbort = (): void => finish(false)
         signal?.addEventListener('abort', onAbort, { once: true })
         if (signal?.aborted) onAbort()
@@ -347,9 +387,21 @@ const runAcpInitializeSmoke =
             const message = JSON.parse(trimmed) as {
               id?: unknown
               result?: { protocolVersion?: unknown }
+              error?: { code?: unknown; message?: unknown }
             }
             // codex-acp stops its Codex child when stdin closes, so end it once initialize answers.
-            if (message.id === 1) finish(message.result?.protocolVersion === 1)
+            if (message.id === 1) {
+              if (message.error) {
+                initializeError = {
+                  code: typeof message.error.code === 'number' ? message.error.code : undefined,
+                  message:
+                    typeof message.error.message === 'string'
+                      ? boundedRuntimeDiagnostic(message.error.message)
+                      : undefined
+                }
+              }
+              finish(message.result?.protocolVersion === 1)
+            }
           } catch {
             // Non-JSON stdout (banners, logs) is not a valid ACP response.
           }
@@ -365,13 +417,25 @@ const runAcpInitializeSmoke =
             buffer = buffer.slice(newline + 1)
           }
         })
-        child.once('error', () => finish(false))
+        child.stderr.setEncoding('utf8')
+        child.stderr.on('data', (chunk: string) => {
+          const remaining = MAX_SMOKE_STDERR_CHARS - stderrOutput.length
+          stderrOutput += chunk.slice(0, remaining)
+          stderrTruncated ||= stderrOutput.length >= MAX_SMOKE_STDERR_CHARS
+        })
+        child.once('error', (error) => {
+          processError = error
+          finish(false)
+        })
         child.once('exit', () => {
           if (buffer.trim()) consume(buffer)
           finish(false)
         })
         child.stdin.write(`${initialize}\n`, (error) => {
-          if (error) finish(false)
+          if (error) {
+            processError ??= error
+            finish(false)
+          }
         })
       })
       signal?.throwIfAborted()

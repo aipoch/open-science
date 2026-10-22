@@ -8,6 +8,7 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it } from 'vitest'
 
+import { prepareOpenCodeRuntime } from '../delegation/opencode-runtime-preparation'
 import { readWorkspaceTextFile } from '../acp/filesystem'
 import { createOpencodeFramework, opencodeConfigDir, opencodeStorageDir } from './opencode'
 
@@ -175,4 +176,132 @@ it.runIf(executable)(
     }
   },
   60_000
+)
+
+it.runIf(executable)(
+  'isolates native discovery for parallel Main and Specialist processes sharing source documents',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'opencode-parallel-skills-'))
+    const workspace = join(root, 'workspace')
+    await mkdir(workspace)
+    for (const name of ['mcp-genes', 'mcp-orphadata']) {
+      const path = join(opencodeConfigDir(root), 'skills', name, 'SKILL.md')
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(
+        path,
+        `---\nname: ${name}\ndescription: ${name} metadata.\n---\n${name}_BODY\n`
+      )
+    }
+    const requests: Record<string, unknown>[] = []
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk) => chunks.push(chunk))
+      request.on('end', () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString())
+        requests.push(body)
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(
+          [
+            `data: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta: { role: 'assistant', content: 'done' }, finish_reason: null }] })}`,
+            `data: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', created: 1, model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}`,
+            'data: [DONE]',
+            ''
+          ].join('\n\n')
+        )
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const children: ReturnType<typeof spawn>[] = []
+    const stderr: string[] = []
+    const probe = async (specialist: boolean): Promise<void> => {
+      const name = specialist ? 'mcp-orphadata' : 'mcp-genes'
+      const config = createOpencodeFramework().prepareModelConfig(
+        {
+          type: 'custom',
+          apiEndpoints: ['chat-completions'],
+          model: 'probe-model',
+          key: 'test-key',
+          baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+        },
+        {
+          storageRoot: root,
+          executablePath: executable!,
+          instructions: `Scope: ${name}`,
+          skillDiscovery: {
+            allowedNames: [name],
+            allowedPaths: [join(opencodeConfigDir(root), 'skills', name, 'SKILL.md')]
+          }
+        }
+      )
+      const isolated = await prepareOpenCodeRuntime(
+        {
+          framework: createOpencodeFramework(),
+          executablePath: executable!,
+          env: config.env ?? {},
+          opencodeConfigFiles: config.configFiles
+        },
+        join(root, specialist ? 'specialist' : 'main')
+      )
+      const child = spawn(executable!, ['acp'], {
+        cwd: workspace,
+        env: { ...process.env, ...isolated.backend.env },
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      children.push(child)
+      child.stderr!.on('data', (chunk) => stderr.push(String(chunk)))
+      await acp
+        .client({ name: 'parallel-skill-probe' })
+        .connectWith(
+          acp.ndJsonStream(
+            Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>,
+            Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>
+          ),
+          async (ctx) => {
+            await ctx.request(acp.methods.agent.initialize, {
+              protocolVersion: acp.PROTOCOL_VERSION,
+              clientCapabilities: {}
+            })
+            await ctx
+              .buildSession({ cwd: workspace, mcpServers: [] })
+              .withSession(async (session) => {
+                session.prompt(specialist ? 'SPECIALIST_PROBE' : 'MAIN_PROBE')
+                while ((await session.nextUpdate()).kind !== 'stop') {
+                  /* Drain updates. */
+                }
+              })
+          }
+        )
+    }
+    try {
+      await Promise.all([probe(false), probe(true)]).catch((error) => {
+        throw new Error(`${String(error)}\n${stderr.join('')}`)
+      })
+      const main = requests.find(
+        (request) =>
+          Array.isArray(request.tools) &&
+          request.tools.length > 0 &&
+          JSON.stringify(request.messages).includes('MAIN_PROBE')
+      )
+      const specialist = requests.find(
+        (request) =>
+          Array.isArray(request.tools) &&
+          request.tools.length > 0 &&
+          JSON.stringify(request.messages).includes('SPECIALIST_PROBE')
+      )
+      expect(main, stderr.join('')).toBeDefined()
+      expect(specialist, stderr.join('')).toBeDefined()
+      expect(JSON.stringify(main)).toContain('mcp-genes metadata')
+      expect(JSON.stringify(main)).not.toContain('mcp-orphadata')
+      expect(JSON.stringify(specialist)).toContain('mcp-orphadata metadata')
+      expect(JSON.stringify(specialist)).not.toContain('mcp-genes')
+    } finally {
+      for (const child of children) {
+        if (child.exitCode === null) child.kill('SIGTERM')
+      }
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  120_000
 )

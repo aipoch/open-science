@@ -1,3 +1,7 @@
+import {
+  captureProviderValidationSnapshot,
+  type ProviderValidationSnapshot
+} from '@/lib/provider-validation-snapshot'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ComposerDraft } from './composer-contract'
@@ -73,6 +77,7 @@ type WorkspaceComposerUploadController = {
     transfers: ComposerUploadTransfer[]
     error: string | null
     errorDetail?: string
+    errorProviderValidations?: ProviderValidationSnapshot
     isUploading: boolean
   }
   actions: {
@@ -161,9 +166,12 @@ export const useWorkspaceComposerUploadController = ({
   const { t } = useTranslation()
   const [error, setErrorText] = useState<string | null>(null)
   const [errorDetail, setErrorDetail] = useState<string>()
+  const [errorProviderValidations, setErrorProviderValidations] =
+    useState<ProviderValidationSnapshot>()
   const setError = useCallback((message: string | null, detail?: string): void => {
     setErrorText(message)
     setErrorDetail(detail)
+    setErrorProviderValidations(message === null ? undefined : captureProviderValidationSnapshot())
   }, [])
   const attachmentsRef = useRef(attachments)
   const transfersRef = useRef<ComposerUploadTransfer[]>(initialDraft.attachmentTransfers)
@@ -1433,6 +1441,7 @@ export const useWorkspaceComposerUploadController = ({
       transfers,
       error,
       errorDetail,
+      errorProviderValidations,
       isUploading: transfers.some(unfinishedComposerUpload)
     },
     actions: {

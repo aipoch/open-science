@@ -66,6 +66,7 @@ export type AdmittedAgentBackendTarget = ExplicitAgentBackendTarget &
 
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
+  skillWhitelist?: string[]
   systemPromptAppends?: string[]
   grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   includeSkillAndConnectorContext?: boolean
@@ -98,7 +99,7 @@ export type AgentBackendRuntimePort = Pick<
   | 'resolveCodexExecutable'
   | 'probeCodexNativeVersion'
   | 'provisionClaudeRuntimeConfig'
-  | 'materializeAgentSkills'
+  | 'prepareAgentSkillDiscovery'
   | 'materializeAgentConfigFiles'
   | 'reserveOpenCodeUsagePort'
   | 'resolveCodexProxyEnvironment'
@@ -185,7 +186,8 @@ export class AgentBackendResolver {
       new Set(context.forcedSkillIds ?? []),
       executablePath,
       plan.claudeModelConfig,
-      context.includeSkillAndConnectorContext !== false
+      context.includeSkillAndConnectorContext !== false,
+      context.skillWhitelist
     )
   }
 
@@ -358,7 +360,7 @@ export class AgentBackendResolver {
         : undefined
     let connectorInstructions =
       includeSkillAndConnectorContext && framework.id === 'claude-code'
-        ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
+        ? renderConnectorInstructions()
         : ''
     const executablePath =
       framework.id === 'claude-code'
@@ -407,7 +409,8 @@ export class AgentBackendResolver {
         forcedSkillIds,
         executablePath,
         plan.claudeModelConfig,
-        includeSkillAndConnectorContext
+        includeSkillAndConnectorContext,
+        context.skillWhitelist
       )
       const transport = await this.transports.acquire({ activeTarget: target, plan })
       return {
@@ -440,6 +443,12 @@ export class AgentBackendResolver {
       await this.ensureCodexSubscriptionHome(codexSubscriptionTransport)
     }
     const backendProviderId = plan.backendProviderId
+    let skillDiscovery: Awaited<ReturnType<AgentRuntimeManager['prepareAgentSkillDiscovery']>> = {
+      connectorSkillNames: [],
+      allowedNames: [],
+      mainAllowedNames: [],
+      allowedPaths: []
+    }
     if (framework.supportsSkills || framework.id === 'codebuddy') {
       const skillsRoot =
         framework.id === 'codebuddy'
@@ -447,20 +456,19 @@ export class AgentBackendResolver {
           : framework.id === 'codex'
             ? codexSkillRuntimeRoot
             : opencodeConfigDir(this.storageRoot)
-      const materializedConnectorSkillNames = includeSkillAndConnectorContext
-        ? await this.runtime.materializeAgentSkills(
+      skillDiscovery = includeSkillAndConnectorContext
+        ? await this.runtime.prepareAgentSkillDiscovery(
             settings,
             skillsRoot,
             forcedSkillIds,
+            context.skillWhitelist,
             ...(framework.id === 'codebuddy' ? [{ directoryLayout: 'agent-facing' as const }] : [])
           )
-        : []
-      connectorInstructions = includeSkillAndConnectorContext
-        ? renderConnectorInstructions(materializedConnectorSkillNames)
-        : ''
+        : skillDiscovery
+      connectorInstructions = includeSkillAndConnectorContext ? renderConnectorInstructions() : ''
     } else if (includeSkillAndConnectorContext) {
       connectorInstructions = renderConnectorInstructions(
-        this.connectors.connectorSkillNames(settings.connectors)
+        this.connectors.connectorSkillNames(settings.connectors, context.skillWhitelist)
       )
     }
 
@@ -478,6 +486,7 @@ export class AgentBackendResolver {
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
         executablePath,
+        ...(skillDiscovery ? { skillDiscovery } : {}),
         ...(context.grantedLocalRoots?.length
           ? { grantedLocalRoots: context.grantedLocalRoots }
           : {}),
@@ -542,19 +551,25 @@ export class AgentBackendResolver {
           ? { sessionModelRequired: true }
           : {}),
         sessionEffort,
-        ...((framework.id === 'codebuddy' || framework.id === 'codex') &&
-        includeSkillAndConnectorContext
+        ...(includeSkillAndConnectorContext
           ? {
               sessionOptions: {
                 [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
-                  command: process.execPath,
-                  entryPath: this.skillRuntimeMcpEntryPath,
+                  mainAllowedNames: skillDiscovery.mainAllowedNames,
+                  ...(framework.id === 'opencode'
+                    ? { nativeAllowedNames: skillDiscovery.allowedNames }
+                    : {
+                        command: process.execPath,
+                        entryPath: this.skillRuntimeMcpEntryPath
+                      }),
                   ...(framework.id === 'codebuddy'
                     ? { root: codeBuddySkillRuntimeRoot }
-                    : {
-                        root: codexSkillRuntimeRoot,
-                        skillsDirectory: join(codexSkillRuntimeRoot, 'skills')
-                      })
+                    : framework.id === 'codex'
+                      ? {
+                          root: codexSkillRuntimeRoot,
+                          skillsDirectory: join(codexSkillRuntimeRoot, 'skills')
+                        }
+                      : {})
                 }
               }
             }
@@ -588,7 +603,8 @@ export class AgentBackendResolver {
     forcedSkillIds: ReadonlySet<string>,
     resolvedExecutablePath?: string,
     modelConfig?: ClaudeRuntimeModelConfig,
-    includeSkillAndConnectorContext = true
+    includeSkillAndConnectorContext = true,
+    allowedNames?: readonly string[]
   ): Promise<AgentSpawnConfig> {
     const executablePath =
       resolvedExecutablePath ??
@@ -601,7 +617,8 @@ export class AgentBackendResolver {
       settings,
       forcedSkillIds,
       modelConfig ?? null,
-      includeSkillAndConnectorContext
+      includeSkillAndConnectorContext,
+      allowedNames
     )
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
@@ -622,7 +639,8 @@ export class AgentBackendResolver {
       [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
         command: process.execPath,
         entryPath: this.skillRuntimeMcpEntryPath,
-        root: runtimeConfig.skillProjection.root
+        root: runtimeConfig.skillProjection.root,
+        mainAllowedNames: runtimeConfig.mainAllowedNames
       }
     }
     const sessionOptions =
