@@ -720,7 +720,9 @@ for (const stalled of [false, true]) {
             await restarted.page.evaluate(() => window.api.sessions.loadAll())
           ).sessions.find((entry) => entry.id === session.id)!
           expect(restored.providerSessionId).toBe(session.providerSessionId)
-          const userTurns = (messages: typeof session.messages): { id: string; content: string }[] =>
+          const userTurns = (
+            messages: typeof session.messages
+          ): { id: string; content: string }[] =>
             messages
               .filter((message) => message.role === 'user')
               .map(({ id, content }) => ({ id, content }))
