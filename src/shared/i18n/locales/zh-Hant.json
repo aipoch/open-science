@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "無法讀取此專家的技能或連接器。請嘗試重新傳送。",
     "Could not load Reviewer log.": "無法載入審閱器記錄。",
     "Preparing to receive package…": "正在準備接收套件…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "無法準備瀏覽器匯入。請解決啟動錯誤後重試。",

@@ -29,6 +29,7 @@ import { NotificationBell } from '@/components/NotificationBell'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
+import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -39,6 +40,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { ResizablePanel } from '@/components/ui/resizable'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import { cn } from '@/lib/utils'
@@ -53,6 +55,7 @@ import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
+import { Popover as PopoverPrimitive } from 'radix-ui'
 import type { TFunction } from 'i18next'
 import {
   AlertTriangle,
@@ -111,6 +114,7 @@ import type {
 import {
   VISION_MODEL_NOT_CONFIGURED_MESSAGE,
   isReportableRunFailure,
+  isSpecialistCapabilityReadFailure,
   visionRunFailureMessage
 } from '../../../../shared/run-error-classification'
 import {
@@ -210,6 +214,14 @@ const localizeVisionRunFailure = (
 }
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
+
+const localizeSpecialistReadFailure = (
+  error: string | null | undefined,
+  t: TFunction
+): string | undefined =>
+  isSpecialistCapabilityReadFailure(error)
+    ? t('The Specialist Skills or Connectors could not be loaded. Try sending again.')
+    : undefined
 
 const composerIconButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-50',
@@ -478,20 +490,30 @@ type ConversationPanelProps = {
 const renderConversationError = (
   children: React.ReactNode,
   onDismiss: () => void,
-  dismissLabel: string
-): React.JSX.Element => (
-  <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
-    <button
-      type="button"
-      onClick={onDismiss}
-      aria-label={dismissLabel}
-      className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
-    >
-      <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-    </button>
-    {children}
-  </div>
-)
+  dismissLabel: string,
+  retryable = false
+): React.JSX.Element =>
+  retryable ? (
+    <ErrorNotice
+      className="mb-2"
+      tone="amber"
+      icon={AlertTriangle}
+      content={children}
+      dismissButton={{ label: dismissLabel, onClick: onDismiss }}
+    />
+  ) : (
+    <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label={dismissLabel}
+        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
+      >
+        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+      </button>
+      {children}
+    </div>
+  )
 
 const DismissibleConversationError = ({
   children
@@ -809,6 +831,7 @@ const ConversationPanel = ({
     window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
   }
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const sendButtonRef = useRef<HTMLButtonElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // The workspace retains pending Resume state while this panel remounts for another session.
   const isResuming = Boolean(
@@ -824,7 +847,20 @@ const ConversationPanel = ({
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
   const [composerRestoreFocusRequest, setComposerRestoreFocusRequest] = useState<number>()
   const [agentControlsOpenRequest, setAgentControlsOpenRequest] = useState(0)
+  const [specialistNoticeTarget, setSpecialistNoticeTarget] = useState<{
+    sessionId: string
+    specialistId?: string
+  }>()
+  const [specialistNoticeVisible, setSpecialistNoticeVisible] = useState(false)
+  const [specialistNoticePointerPaused, setSpecialistNoticePointerPaused] = useState(false)
+  const [specialistNoticeFocusPaused, setSpecialistNoticeFocusPaused] = useState(false)
   const [computeControlsOpenRequest, setComputeControlsOpenRequest] = useState(0)
+
+  useEffect(() => {
+    if (!specialistNoticeTarget) return
+    const reveal = window.setTimeout(() => setSpecialistNoticeVisible(true), 150)
+    return () => window.clearTimeout(reveal)
+  }, [specialistNoticeTarget])
 
   // Preview surfaces (PDF "Read with agent" entries) ask the composer to take focus through a
   // window event; route it into the editor's existing restore-focus counter.
@@ -1016,6 +1052,7 @@ const ConversationPanel = ({
         : undefined) ??
       localizeImageAnnotationSourceError(actionError, t) ??
       localizeVisionRunFailure(actionError, t) ??
+      localizeSpecialistReadFailure(actionError, t) ??
       actionError)
   let resumeErrorDescription = resolvedActionError
   if (resumeDiagnostic && resolvedActionError) {
@@ -1300,7 +1337,41 @@ const ConversationPanel = ({
     }
   }
 
+  const canExplainUnavailableSpecialist = Boolean(
+    activeSession &&
+    specialistUnavailable &&
+    canEditDraft &&
+    !ordinaryComposerBlocked &&
+    !specialistSwitchInFlight &&
+    !isStopping &&
+    !isResuming &&
+    (docToText(draftDoc).trim() || attachments.length > 0)
+  )
+  const specialistNoticeCurrent = Boolean(
+    canExplainUnavailableSpecialist &&
+    specialistNoticeTarget?.sessionId === activeSession?.id &&
+    specialistNoticeTarget?.specialistId === specialistId
+  )
+  const specialistUnavailableOpen = specialistNoticeCurrent && specialistNoticeVisible
+  // Forget the attempted send when its session, binding, or blocking condition changes.
+  if (specialistNoticeTarget && !specialistNoticeCurrent) setSpecialistNoticeTarget(undefined)
+  if (!specialistUnavailableOpen && specialistNoticePointerPaused)
+    setSpecialistNoticePointerPaused(false)
+  if (!specialistUnavailableOpen && specialistNoticeFocusPaused)
+    setSpecialistNoticeFocusPaused(false)
+  useNoticeCountdown(
+    specialistNoticeTarget ? 6000 : undefined,
+    !specialistUnavailableOpen || specialistNoticePointerPaused || specialistNoticeFocusPaused,
+    () => setSpecialistNoticeTarget(undefined),
+    specialistNoticeTarget
+  )
+
   const handleSubmit = (): void => {
+    if (canExplainUnavailableSpecialist && activeSession) {
+      setSpecialistNoticeVisible(!specialistNoticeTarget)
+      setSpecialistNoticeTarget({ sessionId: activeSession.id, specialistId })
+      return
+    }
     if (!canEditDraft || !effectiveCanSend || authenticationRequired) return
     if (docToText(draftDoc).trim() === '/setup-wsl') {
       void handleWslSetupCommand()
@@ -1722,7 +1793,12 @@ const ConversationPanel = ({
                 !isAgentAuthenticationRequired(composerError) &&
                 composerError !== actionError ? (
                   <div role="alert" className="mb-2">
-                    <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
+                    <ErrorNotice
+                      inline
+                      icon={AlertTriangle}
+                      tone={isSpecialistCapabilityReadFailure(composerError) ? 'amber' : 'red'}
+                      title={localizeSpecialistReadFailure(composerError, t) ?? composerError}
+                    />
                   </div>
                 ) : null}
                 {composerError && composerErrorDetail ? (
@@ -1833,7 +1909,9 @@ const ConversationPanel = ({
                                 ) : null}
                               </>,
                               onDismiss,
-                              t('Dismiss error')
+                              t('Dismiss error'),
+                              isSpecialistCapabilityReadFailure(actionError) &&
+                                !showLegacyRunErrorRow
                             )
                           : null}
                       </>
@@ -1875,21 +1953,6 @@ const ConversationPanel = ({
                           }
                         : undefined
                     }
-                  />
-                ) : null}
-
-                {activeSession && specialistUnavailable ? (
-                  <ErrorNotice
-                    role="status"
-                    aria-live="polite"
-                    data-testid="specialist-unavailable-notice"
-                    className="mb-3"
-                    title={t('This Specialist is no longer available')}
-                    description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
-                    primaryButton={{
-                      label: t('Choose Specialist'),
-                      onClick: () => setAgentControlsOpenRequest((request) => request + 1)
-                    }}
                   />
                 ) : null}
 
@@ -3385,34 +3448,101 @@ const ConversationPanel = ({
                                       : 'bg-primary text-primary-foreground',
                                     !specialistSwitchInFlight &&
                                       !effectiveCanSend &&
+                                      !canExplainUnavailableSpecialist &&
                                       !canOpenSendOptions &&
                                       'opacity-50'
                                   )}
                                 >
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={handleSubmit}
-                                        disabled={!effectiveCanSend}
-                                        className={cn(
-                                          composerSplitSendPrimaryButtonClassName,
-                                          specialistSwitchInFlight && 'text-text-300',
-                                          canOpenSendOptions && 'disabled:opacity-50'
-                                        )}
-                                        aria-label={t('Send message')}
-                                      >
-                                        <ArrowUp
-                                          className="size-4"
-                                          strokeWidth={2.2}
-                                          aria-hidden="true"
-                                        />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">{t('Send message')}</TooltipContent>
-                                  </Tooltip>
+                                  <Popover
+                                    open={specialistUnavailableOpen}
+                                    onOpenChange={(open) => {
+                                      if (!open) setSpecialistNoticeTarget(undefined)
+                                    }}
+                                  >
+                                    <Tooltip open={specialistUnavailableOpen ? false : undefined}>
+                                      <TooltipTrigger asChild>
+                                        <PopoverAnchor asChild>
+                                          <Button
+                                            ref={sendButtonRef}
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={handleSubmit}
+                                            disabled={
+                                              !effectiveCanSend && !canExplainUnavailableSpecialist
+                                            }
+                                            className={cn(
+                                              composerSplitSendPrimaryButtonClassName,
+                                              specialistSwitchInFlight && 'text-text-300',
+                                              canOpenSendOptions && 'disabled:opacity-50'
+                                            )}
+                                            aria-label={t('Send message')}
+                                          >
+                                            <ArrowUp
+                                              className="size-4"
+                                              strokeWidth={2.2}
+                                              aria-hidden="true"
+                                            />
+                                          </Button>
+                                        </PopoverAnchor>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top">
+                                        {t('Send message')}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    <PopoverContent
+                                      side="top"
+                                      align="end"
+                                      sideOffset={12}
+                                      collisionPadding={16}
+                                      className="w-80 max-w-[calc(100vw-2rem)] p-4"
+                                      aria-label={t('This Specialist is no longer available')}
+                                      onOpenAutoFocus={(event) => event.preventDefault()}
+                                      onCloseAutoFocus={(event) => event.preventDefault()}
+                                      onInteractOutside={(event) => {
+                                        if (sendButtonRef.current?.contains(event.target as Node)) {
+                                          event.preventDefault()
+                                        }
+                                      }}
+                                      onPointerEnter={() => setSpecialistNoticePointerPaused(true)}
+                                      onPointerLeave={() => setSpecialistNoticePointerPaused(false)}
+                                      onFocusCapture={() => setSpecialistNoticeFocusPaused(true)}
+                                      onBlurCapture={(event) => {
+                                        if (
+                                          !event.currentTarget.contains(
+                                            event.relatedTarget as Node | null
+                                          )
+                                        ) {
+                                          setSpecialistNoticeFocusPaused(false)
+                                        }
+                                      }}
+                                    >
+                                      <ErrorNotice
+                                        inline
+                                        role="status"
+                                        data-testid="specialist-unavailable-notice"
+                                        title={t('This Specialist is no longer available')}
+                                        description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
+                                        primaryButton={{
+                                          label: t('Choose Specialist'),
+                                          variant: 'default',
+                                          onClick: () => {
+                                            setSpecialistNoticeTarget(undefined)
+                                            setAgentControlsOpenRequest((request) => request + 1)
+                                          }
+                                        }}
+                                        dismissButton={{
+                                          label: t('Close'),
+                                          onClick: () => setSpecialistNoticeTarget(undefined)
+                                        }}
+                                      />
+                                      <PopoverPrimitive.Arrow
+                                        width={12}
+                                        height={6}
+                                        className="fill-popover"
+                                      />
+                                    </PopoverContent>
+                                  </Popover>
                                   <DropdownMenu>
                                     <Tooltip>
                                       {/* Same focus guard as the + trigger: a dropdown close returns

@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "スペシャリストのスキルまたはコネクタを読み込めませんでした。もう一度送信してください。",
     "Could not load Reviewer log.": "レビュアーログを読み込めませんでした。",
     "Preparing to receive package…": "パッケージの受信を準備中…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "ブラウザーからのインポートを準備できません。起動エラーを解決してから再試行してください。",

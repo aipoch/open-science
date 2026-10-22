@@ -194,6 +194,7 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Не удалось загрузить Навыки или Коннекторы Специалиста. Попробуйте отправить сообщение ещё раз.",
     "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",
     "Preparing to receive package…": "Подготовка к получению пакета…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Не удалось подготовить импорт из браузера. Устраните ошибку запуска и повторите попытку.",

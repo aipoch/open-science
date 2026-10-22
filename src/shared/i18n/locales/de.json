@@ -192,6 +192,7 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Die Fähigkeiten oder Konnektoren des Spezialisten konnten nicht geladen werden. Versuchen Sie erneut zu senden.",
     "Could not load Reviewer log.": "Das Reviewer-Protokoll konnte nicht geladen werden.",
     "Preparing to receive package…": "Empfang des Pakets wird vorbereitet…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Der Browserimport konnte nicht vorbereitet werden. Beheben Sie den Startfehler und versuchen Sie es erneut.",
