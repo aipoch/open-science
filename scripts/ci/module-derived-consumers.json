@@ -49,6 +49,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "environment_engine": [
+      "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
@@ -233,7 +234,10 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
-    "native_process_tree": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "native_process_tree": [
+      "src/main/local-fs/service.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ],
     "notebook_analysis": [
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -245,8 +249,12 @@
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "notebook_execution": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "notebook_execution": [
+      "src/main/local-fs/service.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ],
     "notebook_execution_model": [
+      "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
@@ -254,13 +262,20 @@
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "notebook_network_sandbox": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "notebook_network_sandbox": [
+      "src/main/local-fs/service.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ],
     "notebook_repository": [
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "notebook_runtime_binding": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "notebook_runtime_binding": [
+      "src/main/local-fs/service.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ],
     "notebook_syntax": [
+      "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
@@ -4129,6 +4144,7 @@
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/literature/scale-regressions.test.ts",
+      "src/main/local-fs/service.test.ts",
       "src/main/managed-file-versions/service.integration.test.ts",
       "src/main/node-entry.test.ts",
       "src/main/node-process-host.test.ts",
@@ -9128,6 +9144,9 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "wsl_runtime_admission": ["src/main/notebook/authorized-directories.integration.test.ts"]
+    "wsl_runtime_admission": [
+      "src/main/local-fs/service.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ]
   }
 }

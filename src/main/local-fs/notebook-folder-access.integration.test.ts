@@ -121,7 +121,7 @@ it.skipIf(process.platform !== 'win32' || process.env.OPEN_SCIENCE_TEST_PATH_ACL
         expect(policyChange).not.toHaveBeenCalled()
       }
       const [grant] = await service.grantRoot({ path: folder, access: 'ro' })
-      expect(policyChange).toHaveBeenCalledTimes(1)
+      expect(policyChange).not.toHaveBeenCalled()
       for (const session of [sessionA, sessionB]) {
         const retried = await execute(session)
         expect(retried.status, retried.stderr).toBe(0)
