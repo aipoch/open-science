@@ -382,6 +382,56 @@ it('keeps speed settings collapsed and changes the current operation budget', as
   })
 })
 
+it.each([4, 16, 64])(
+  'displays a restored %i MiB/s budget without restoring its preset',
+  async (rate) => {
+    const operation: PackageOperationSnapshot = {
+      id: 'restored-transfer',
+      kind: 'import',
+      state: 'running',
+      progress: { phase: 'validating' },
+      transferBytesPerSecond: rate * 1024 ** 2
+    }
+    const packageOperation = vi.fn(async () => operation)
+    vi.stubGlobal('api', {
+      sessions: { packageOperation, onPackageOperation: () => () => undefined }
+    })
+    usePackageOperationStore.setState({ operation, open: true })
+    await act(async () => root.render(<SessionPackageOperation />))
+    const select = document.querySelector<HTMLElement>('[role="combobox"]')!
+    expect(select.textContent).toBe(`${rate}.0 MiB/s`)
+    expect(packageOperation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'set-speed' })
+    )
+    Element.prototype.scrollIntoView ??= () => undefined
+    await act(async () => {
+      select.closest('details')!.open = true
+      select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(options.map((item) => item.textContent)).toEqual([
+      'Auto',
+      '128.0 MiB/s',
+      '256.0 MiB/s',
+      '512.0 MiB/s',
+      '1.0 GiB/s'
+    ])
+    await act(async () => options.find((item) => item.textContent === 'Auto')!.click())
+    expect(packageOperation).toHaveBeenCalledWith({
+      action: 'set-speed',
+      operationId: operation.id,
+      bytesPerSecond: null
+    })
+    await act(async () =>
+      usePackageOperationStore.getState().receive({
+        ...operation,
+        transferBytesPerSecond: undefined
+      })
+    )
+    expect(select.textContent).toBe('Auto')
+  }
+)
+
 it('does not relock the source Session while retrying temporary cleanup', () => {
   const session = { id: 's', projectId: 'p' }
   expect(

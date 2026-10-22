@@ -947,7 +947,11 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 aria-label={t('Disk activity limit')}
                 className="w-36 shrink-0 tabular-nums"
               >
-                <SelectValue />
+                <SelectValue>
+                  {operation.transferBytesPerSecond === undefined
+                    ? t('Auto')
+                    : t('{{speed}}/s', { speed: bytes(operation.transferBytesPerSecond) })}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="auto">{t('Auto')}</SelectItem>
