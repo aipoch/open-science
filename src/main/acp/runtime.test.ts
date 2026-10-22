@@ -30166,6 +30166,63 @@ describe('Specialist Skill scoping', () => {
     }
   )
 
+  it('preserves a Specialist attachment when writer close starts during identity resolution', async () => {
+    const process = new FakeAgentProcess()
+    const identity = createDeferred<{ append: string; prefix: string }>()
+    const resolvingIdentity = createDeferred()
+    const closing = createDeferred()
+    const closed = createDeferred()
+    const agent = startFakeAgent(process, ['codex-pending-close'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      onClose: () => {
+        closing.resolve(undefined)
+        return closed.promise
+      }
+    })
+    let fireTimeout: (() => void) | undefined
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      resolveSpecialistIdentity: async (id) => {
+        if (id !== 'new') return { append: '', prefix: 'Old identity' }
+        resolvingIdentity.resolve(undefined)
+        return identity.promise
+      },
+      resumeTimeoutMs: 1000,
+      setTimer: (callback) => {
+        fireTimeout = callback
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: () => {}
+    })
+    try {
+      const { sessionId } = await runtime.createSession({ cwd: '/workspace', specialistId: 'old' })
+      const switched = runtime.switchSpecialist(sessionId, 'new')
+      const rejected = expect(switched).rejects.toThrow('Resume the Session first')
+      await resolvingIdentity.promise
+      const release = runtime.releaseSessionForTransfer(sessionId)
+      const timedOut = expect(release).rejects.toThrow('timed out')
+      await closing.promise
+      fireTimeout?.()
+      await timedOut
+      identity.resolve({ append: '', prefix: 'New identity' })
+      await rejected
+      expect(runtime.getSnapshot().sessionIds).toContain(sessionId)
+      expect(runtime.hasPendingSessionWriterRelease(sessionId)).toBe(true)
+      expect(agent.resumedSessions).toEqual([])
+      closed.resolve(undefined)
+      await expect(runtime.releaseSessionForTransfer(sessionId)).resolves.toBe(
+        'codex-pending-close'
+      )
+    } finally {
+      closed.resolve(undefined)
+      identity.resolve({ append: '', prefix: 'New identity' })
+      await runtime.disconnect()
+    }
+  })
+
   it('projects a switched OpenCode Specialist on an app-owned continuation without a second user event', async () => {
     const process = new FakeAgentProcess()
     const agent = startFakeAgent(process, ['opencode-handoff'], {

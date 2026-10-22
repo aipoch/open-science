@@ -120,8 +120,8 @@ const composeAcpRuntimeProviderSessionOwners = (
       reserveIdentity(undefined, [sessionId], publishedAppSessionId),
     adopter: providerSessionAdopter,
     reconfigureSession: (request) => providerSessionResumer.reconfigure(request),
-    assertSkillScopeRefreshSupported: () =>
-      providerSessionResumer.assertSkillScopeRefreshSupported(),
+    assertSkillScopeRefreshSupported: (sessionId) =>
+      providerSessionResumer.assertSkillScopeRefreshSupported(sessionId),
     permission: session.permissionContext,
     elicitation: session.elicitationOwner,
     clearUserChoiceProvenanceForSession: runtime.clearUserChoiceProvenanceForSession,

@@ -504,6 +504,47 @@ describe('AcpProviderSessionResumer', () => {
     expect(h.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
   })
 
+  it.each([codexResponsesBackend, codexBridgeBackend, codexResponsesCompatibilityBackend])(
+    'blocks reconfiguration until a timed-out writer release is recovered for $modelRoute',
+    async (initialBackend) => {
+      const h = createHarness({
+        attached: true,
+        initialBackend: { ...initialBackend, providerContinuityToken: 'same-provider' },
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+      let finish!: () => void
+      h.request.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
+      )
+      const release = h.releaseForTransfer()
+      const timedOut = expect(release).rejects.toThrow('timed out')
+      h.fireTimeout()
+      await timedOut
+      await expect(h.reconfigure()).rejects.toThrow('Resume the Session first')
+      expect(h.request).toHaveBeenCalledOnce()
+      expect(h.providerSession.dispose).not.toHaveBeenCalled()
+      finish()
+      await Promise.resolve()
+      await expect(h.reconfigure()).rejects.toThrow('Resume the Session first')
+      expect(h.request).toHaveBeenCalledOnce()
+      const recovery = {
+        previousFrameworkId: 'codex',
+        previousBackendId: initialBackend.backendId,
+        providerContinuityToken: 'same-provider'
+      } as const
+      await h.resume(recovery)
+      expect(
+        h.request.mock.calls.filter(([method]) => method === acp.methods.agent.session.close)
+      ).toHaveLength(1)
+      await expect(h.reconfigure(recovery)).resolves.toMatchObject({
+        sessionId: 'stable-app-session'
+      })
+    }
+  )
+
   it('waits for a timed-out close before resuming the original attached model', async () => {
     const h = createHarness({
       attached: true,

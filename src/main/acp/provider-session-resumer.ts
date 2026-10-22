@@ -188,6 +188,7 @@ export class AcpProviderSessionResumer {
   }
 
   async reconfigure(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    this.assertNoPendingWriterRelease(request.sessionId)
     const entry = this.deps.registry.lookup(request.sessionId)
     const attachment = entry?.attachment
     const snapshot = entry?.aggregate.snapshot()
@@ -198,7 +199,7 @@ export class AcpProviderSessionResumer {
         true
       )
     }
-    this.assertSkillScopeRefreshSupported()
+    this.assertSkillScopeRefreshSupported(request.sessionId)
     this.deps.registry.detach(attachment, 'provider')
     try {
       const result = await this.resumeDetached(
@@ -535,7 +536,7 @@ export class AcpProviderSessionResumer {
     let provisionalSession: ActiveSession | undefined
     try {
       let backend = this.deps.currentBackend()
-      this.assertSkillScopeRefreshSupported()
+      this.assertSkillScopeRefreshSupported(request.sessionId)
       capability = await this.deps.capabilities.provision({
         stableAppSessionId: request.sessionId,
         framework: backend.framework,
@@ -792,7 +793,17 @@ export class AcpProviderSessionResumer {
     })
   }
 
-  assertSkillScopeRefreshSupported(): void {
+  private assertNoPendingWriterRelease(sessionId: string): void {
+    // A timed-out close can still terminate its writer. Only resume consumes its release receipt.
+    if (this.writerReleases.has(sessionId)) {
+      throw new Error(
+        'Cannot reconfigure a Session while its writer release is pending. Resume the Session first.'
+      )
+    }
+  }
+
+  assertSkillScopeRefreshSupported(sessionId: string): void {
+    this.assertNoPendingWriterRelease(sessionId)
     const backend = this.deps.currentBackend()
     if (backend.framework.id === 'codex' && backend.session.options?.openScienceSkillRuntime) {
       const missingMethod = !this.deps.supportsSessionClose()
