@@ -914,7 +914,7 @@ class LiteratureCatalog {
     const hasFullText = request.entryKind === 'pdf' ? true : filter?.hasFullText
     if (hasFullText !== undefined)
       predicates.push(Prisma.sql`${hasFullText ? Prisma.empty : Prisma.sql`NOT`} EXISTS (
-      SELECT 1 FROM "LiteratureAttachment" a JOIN "LiteratureAttachmentVersion" v ON v."attachmentId" = a.id WHERE a."itemId" = i.id
+      SELECT 1 FROM "LiteratureAttachment" a JOIN "LiteratureAttachmentVersion" v ON v."attachmentId" = a.id WHERE a."itemId" = i.id AND a.kind = 'fullText'
       AND (lower(v."contentType") = 'application/pdf' OR lower(v.filename) LIKE '%.pdf'))`)
     const where = Prisma.join(predicates, ' AND ')
     if (request.scope === 'global-search') {

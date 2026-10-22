@@ -108,7 +108,7 @@ export function mergeSupplementResults(
         const existing = merged.get(key)
         if (existing) {
           if (!existing.providers.includes(provider)) existing.providers.push(provider)
-          existing.files ??= record.files
+          if (!existing.files?.length && record.files?.length) existing.files = record.files
           existing.license ??= record.license
         } else merged.set(key, { ...record, providers: [provider] })
       }

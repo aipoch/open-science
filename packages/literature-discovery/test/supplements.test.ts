@@ -59,6 +59,28 @@ const supplement =
   '<supplementary-material id="s1"><label>File S1</label><caption><p>Data table</p></caption><media xlink:href="supplement.xls"/></supplementary-material>'
 
 describe('supplementary material search', () => {
+  it.each([{ files: undefined }, { files: [] }, { files: [{ name: 'earlier.tsv' }] }])(
+    'fills only absent or empty inventories when merging matching DOIs',
+    ({ files }) => {
+      const record = {
+        id: 'r1',
+        doi,
+        title: 'Supplement',
+        sourceUrl: 'https://doi.org/' + doi,
+        evidence: 'source-declared' as const
+      }
+      const laterFiles = [{ name: 'later.tsv', downloadId: 'd1b720c7-1000-4000-8000-000000000001' }]
+      const base = { itemId: item.id, metadataRevision: 1, state: 'complete' as const, issues: [] }
+      const merged = mergeSupplementResults([
+        { ...base, provider: 'datacite', records: [{ ...record, files: laterFiles }] },
+        { ...base, provider: 'figshare', records: [{ ...record, files }] }
+      ])
+      expect(merged).toHaveLength(1)
+      expect(merged[0].files).toEqual(files?.length ? files : laterFiles)
+      expect(merged[0].providers).toEqual(['figshare', 'datacite'])
+    }
+  )
+
   it.each([
     ['<b>Supplement</b> data', 'Supplement data'],
     ['<scr<script>ipt>alert(1)</scr</script>ipt>', 'scriptalert(1)/script'],

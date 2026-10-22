@@ -156,42 +156,55 @@ describe('LiteratureCatalog', () => {
     })
   })
 
-  it('stores non-PDF attachments without classifying them as full-text PDFs', async () => {
-    const catalog = await setup()
-    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
-    const checksum = 'a'.repeat(64)
-    await client!.contentBlob.create({
-      data: {
-        id: 'ordinary-blob',
-        checksum,
-        storageKey: 'data.docx',
-        sizeBytes: 128n,
-        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        state: 'available',
-        verifiedAt: new Date()
-      }
-    })
-    await catalog.attachContent({
-      itemId: created.id,
-      kind: 'supplementary',
-      contentBlobId: 'ordinary-blob',
-      filename: 'data.docx',
-      contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      sizeBytes: 128,
-      checksum
-    })
-    const item = await catalog.get(created.id)
-    expect(item!.attachments[0].versions[0]).toMatchObject({ filename: 'data.docx' })
-    expect(
-      (await catalog.search({ scope: 'library', filter: { hasFullText: true } })).entries
-    ).toHaveLength(0)
-    expect(
-      (await catalog.search({ scope: 'library', filter: { hasFullText: false } })).entries
-    ).toHaveLength(1)
-    expect(
-      (await catalog.search({ scope: 'global-search', entryKind: 'pdf' })).entries
-    ).toHaveLength(0)
-  })
+  it.each([
+    [
+      'supplementary',
+      'data.docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      0
+    ],
+    ['supplementary', 'supplement.pdf', 'application/pdf', 0],
+    ['fullText', 'paper.pdf', 'application/pdf', 1],
+    ['fullText', 'notes.txt', 'text/plain', 0]
+  ] as const)(
+    'classifies %s %s correctly in full-text filters',
+    async (kind, filename, contentType, fullTextCount) => {
+      const catalog = await setup()
+      const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const checksum = 'a'.repeat(64)
+      await client!.contentBlob.create({
+        data: {
+          id: 'ordinary-blob',
+          checksum,
+          storageKey: filename,
+          sizeBytes: 128n,
+          contentType,
+          state: 'available',
+          verifiedAt: new Date()
+        }
+      })
+      await catalog.attachContent({
+        itemId: created.id,
+        kind,
+        contentBlobId: 'ordinary-blob',
+        filename,
+        contentType,
+        sizeBytes: 128,
+        checksum
+      })
+      const item = await catalog.get(created.id)
+      expect(item!.attachments[0].versions[0]).toMatchObject({ filename })
+      expect(
+        (await catalog.search({ scope: 'library', filter: { hasFullText: true } })).entries
+      ).toHaveLength(fullTextCount)
+      expect(
+        (await catalog.search({ scope: 'library', filter: { hasFullText: false } })).entries
+      ).toHaveLength(1 - fullTextCount)
+      expect(
+        (await catalog.search({ scope: 'global-search', entryKind: 'pdf' })).entries
+      ).toHaveLength(fullTextCount)
+    }
+  )
 
   it('creates one reference for concurrent Add PDF requests and rolls back a failed new reference', async () => {
     const catalog = await setup()
