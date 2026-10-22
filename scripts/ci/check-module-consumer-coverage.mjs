@@ -5,6 +5,7 @@ import {
 } from './generate-module-derived-consumers.mjs'
 import { loadDerivedConsumers, withDerivedConsumers } from './module-derived-consumers.mjs'
 import assert from 'node:assert/strict'
+import { dependencyBoundaryViolations } from './consumer-retirement.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
 // This guard supplements the explicit IPC/behavioral contracts in the manifest. It does not
@@ -12,6 +13,11 @@ import { loadModuleImpactManifest } from './load-module-impact.mjs'
 export function checkModuleConsumerCoverage() {
   const source = workingConsumerSource()
   const manifest = loadModuleImpactManifest()
+  assert.deepEqual(
+    dependencyBoundaryViolations(source, manifest),
+    [],
+    'Source-derived module boundary changed'
+  )
   const { reverse } = checkDerivedConsumers(source, manifest)
   const { modules } = withDerivedConsumers(manifest, loadDerivedConsumers())
   const isTest = (path) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !path.startsWith('e2e/')

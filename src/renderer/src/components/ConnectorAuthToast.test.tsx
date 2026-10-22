@@ -16,7 +16,7 @@ describe('ConnectorAuthToast', () => {
       connectorAuthNotice: { id: 'oauth-mcp', displayName: 'OAuth MCP' },
       loadConnectors: vi.fn().mockResolvedValue(undefined),
       dismissConnectorAuthNotice: vi.fn(),
-      openSettingsToPanel: vi.fn()
+      openSettingsToConnector: vi.fn()
     })
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -39,6 +39,6 @@ describe('ConnectorAuthToast', () => {
     act(() => open?.click())
 
     expect(useSettingsStore.getState().dismissConnectorAuthNotice).toHaveBeenCalledOnce()
-    expect(useSettingsStore.getState().openSettingsToPanel).toHaveBeenCalledWith('connectors')
+    expect(useSettingsStore.getState().openSettingsToConnector).toHaveBeenCalledWith('oauth-mcp')
   })
 })

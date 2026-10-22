@@ -18,7 +18,11 @@ import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 
-import { loadDerivedConsumers, withDerivedConsumers } from './module-derived-consumers.mjs'
+import {
+  loadDerivedConsumers,
+  withDerivedConsumers,
+  usesDependencyConsumers
+} from './module-derived-consumers.mjs'
 
 const defaultManifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
@@ -85,11 +89,12 @@ export function modulesForPath(manifest, path) {
     .map(([moduleId]) => moduleId)
 }
 
-function expandConsumers(manifest, seeds) {
+function expandConsumers(manifest, seeds, testsOnly = false) {
   const selected = new Set()
   const visit = (moduleId) => {
     if (selected.has(moduleId)) return
     selected.add(moduleId)
+    if (testsOnly && usesDependencyConsumers(moduleId, manifest.modules[moduleId])) return
     for (const consumer of manifest.modules[moduleId].consumerModules) visit(consumer)
   }
   for (const seed of seeds) visit(seed)
@@ -247,7 +252,8 @@ export function createAffectedTestPlan(
     }
   }
 
-  const modules = expandConsumers(manifest, [...seeds])
+  const capabilityModules = expandConsumers(manifest, [...seeds])
+  const modules = expandConsumers(manifest, [...seeds], true)
   // A consumer's full marker describes edits to its own contract, not selecting
   // its tests as evidence for another owner. Retain the entire consumer closure.
   const fullModule = [...seeds, ...testModules].find(
@@ -258,7 +264,13 @@ export function createAffectedTestPlan(
   }
   for (const moduleId of seeds) {
     const visit = (consumer, chain) => {
-      reasons.push([...chain, consumer].join(' -> '))
+      reasons.push(
+        [
+          ...chain,
+          consumer,
+          ...(!modules.includes(consumer) ? ['capability routing only'] : [])
+        ].join(' -> ')
+      )
       for (const next of manifest.modules[consumer].consumerModules) {
         visit(next, [...chain, consumer])
       }
@@ -268,6 +280,9 @@ export function createAffectedTestPlan(
     }
   }
   const plan = selectivePlan(manifest, [...modules, ...testModules], reasons, graph)
+  const capabilityPlan = selectivePlan(manifest, [...capabilityModules, ...testModules], [], graph)
+  plan.capabilityOverlays = capabilityPlan.capabilityOverlays
+  plan.fallbackCapabilities = capabilityPlan.fallbackCapabilities
   // Editing a registered test runs that test; changing implementations or shared fixtures
   // still runs every declared owner, contract and transitive consumer test.
   plan.testFiles = sorted([

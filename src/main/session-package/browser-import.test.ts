@@ -72,6 +72,37 @@ it('keeps released-source cleanup failures visible and retries without revoking 
   expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
 })
 
+it('joins source cleanup when release is repeated during shutdown', async () => {
+  const f = await setup()
+  await f.bridge.begin(launch(f.port))
+  await f.chunk('hello')
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+  let releaseCleanup!: () => void
+  const gate = new Promise<void>((resolve) => {
+    releaseCleanup = resolve
+  })
+  const remove = fs.rm
+  const cleanup = vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
+    await gate
+    return remove(...args)
+  })
+  syncBuiltinESMExports()
+  try {
+    f.releases[0]()
+    f.releases[0]()
+    await vi.waitFor(() => expect(cleanup).toHaveBeenCalledTimes(1))
+    const closing = f.bridge.close()
+    // close must join the outstanding deletion before attempting its final removal.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    releaseCleanup()
+    await closing
+    expect(await readdir(f.root)).toEqual([])
+  } finally {
+    releaseCleanup()
+  }
+})
+
 async function setup(
   options: {
     idleMs?: number

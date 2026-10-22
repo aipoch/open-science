@@ -1888,7 +1888,12 @@ void startDesktop().catch(async (error: unknown) => {
     ...diagnosticErrorFields(error),
     phase: bootstrapPhase,
     ...(error instanceof CredentialIdentityError
-      ? { recoveryReason: error.reason, validationDiagnostic: error.diagnostic }
+      ? {
+          recoveryReason: error.reason,
+          // Inventory context is transient UI data, not an additional persisted diagnostic.
+          validationDiagnostic:
+            error.diagnostic?.code === 'inventory-failed' ? undefined : error.diagnostic
+        }
       : {})
   }
   bootstrapLog.error('desktop startup failed', failureFields)

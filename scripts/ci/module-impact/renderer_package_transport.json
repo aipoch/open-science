@@ -3,7 +3,11 @@
   "interfacePaths": ["src/renderer/src/lib/specialist-package-upload.ts"],
   "testFiles": {
     "owner": [],
-    "contract": [],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/pages/workspace/composer-upload-transfer.test.ts",
+      "src/renderer/web/api-installer.test.ts"
+    ],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",

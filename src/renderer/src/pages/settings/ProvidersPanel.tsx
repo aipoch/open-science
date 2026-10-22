@@ -1,3 +1,5 @@
+import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
+import { ErrorNotice } from '@/components/error-notice'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Notice } from '@/components/notice'
 import type { TFunction } from 'i18next'
@@ -49,6 +51,8 @@ import { XaiOAuthSignInDialog } from './XaiOAuthSignInDialog'
 import { localizeProviderResourceMessage } from './validation-message'
 
 type ProvidersPanelProps = {
+  recoveryProviderId?: string
+  recoveryModel?: string
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
   // sub-view owned by SettingsPage, not by this panel.
   onCreateProvider: () => void
@@ -110,6 +114,8 @@ const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
 // its connection tests and Codex subscription sign-in/out. Store-driven; only the form navigation
 // and the shared busy flag come in as props.
 const ProvidersPanel = ({
+  recoveryProviderId,
+  recoveryModel,
   onCreateProvider,
   onEditProvider,
   busyProviderId,
@@ -493,8 +499,86 @@ const ProvidersPanel = ({
     })
   }
 
+  const recoveryProvider = providers.find(({ id }) => id === recoveryProviderId)
+  const [recoveryBaseline, setRecoveryBaseline] = useState({
+    id: recoveryProviderId,
+    model: recoveryModel,
+    validatedAt: recoveryProvider?.lastValidatedAt
+  })
+  if (recoveryBaseline.id !== recoveryProviderId || recoveryBaseline.model !== recoveryModel)
+    setRecoveryBaseline({
+      id: recoveryProviderId,
+      model: recoveryModel,
+      validatedAt: recoveryProvider?.lastValidatedAt
+    })
+  const recoveryComplete =
+    recoveryProvider?.lastValidatedAt !== undefined &&
+    recoveryProvider.lastValidatedAt > (recoveryBaseline.validatedAt ?? 0) &&
+    !recoveryProvider.needsKey &&
+    (recoveryProvider.lastValidationFailure?.category !== 'auth' ||
+      recoveryProvider.lastValidationFailure.at < recoveryProvider.lastValidatedAt) &&
+    (!recoveryProvider.lastValidatedTarget?.model ||
+      recoveryProvider.lastValidatedTarget.model ===
+        resolveProviderEffectiveModel(recoveryProvider, recoveryModel))
+
+  const recoveryPending =
+    isCodexLoginPending ||
+    isClaudeSharedLoginPending ||
+    isClaudeIsolatedLoginPending ||
+    isXaiLoginPending ||
+    busyProviderId === recoveryProviderId
+  const recoverProvider = (): void => {
+    if (!recoveryProvider || recoveryPending) return
+    switch (recoveryProvider.type) {
+      case 'codex-shared':
+        void handleCodexReimport(recoveryProvider)
+        break
+      case 'codex-isolated':
+        if (recoveryProvider.codexAuthMode === 'imported')
+          void handleCodexReimport(recoveryProvider)
+        else void handleCodexLogin()
+        break
+      case 'claude-shared':
+        void handleClaudeSharedLogin()
+        break
+      case 'claude-isolated':
+        void handleClaudeIsolatedBrowserLogin()
+        break
+      case 'xai-subscription':
+        void handleXaiLogin()
+        break
+      default:
+        onEditProvider(recoveryProvider)
+    }
+  }
+  const recoveryUsesKey =
+    recoveryProvider?.type === 'custom' || recoveryProvider?.type === 'official'
+  const recoveryUsesImport =
+    recoveryProvider?.type === 'codex-shared' || recoveryProvider?.codexAuthMode === 'imported'
   return (
     <div className="space-y-5 p-5">
+      {recoveryProvider && !recoveryComplete ? (
+        <ErrorNotice
+          tone="amber"
+          title={recoveryProvider.name}
+          description={
+            recoveryUsesKey
+              ? t('Update the saved credential, then test the connection.')
+              : recoveryUsesImport
+                ? t('Sign in to the Codex CLI, then re-import its login here.')
+                : t('Sign in again to restore access to this account.')
+          }
+          primaryButton={{
+            label: recoveryUsesKey
+              ? t('Update credential')
+              : recoveryUsesImport
+                ? t('Re-import login')
+                : t('Sign in again'),
+            onClick: recoverProvider,
+            loading: recoveryPending
+          }}
+        />
+      ) : null}
       {/* Main model selection and reasoning effort share one section and one row, mirroring the
           scenario model selectors below. The Model field needs at least one provider; the effort
           control is always visible. */}

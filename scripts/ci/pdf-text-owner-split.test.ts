@@ -70,7 +70,8 @@ describe.each([
     git('config', 'user.name', 'Fixture')
     git('config', 'user.email', 'fixture@example.test')
     put('scripts/ci/module-impact.json', '{"schemaVersion":1}')
-    put('scripts/ci/module-runtime-consumers.json', '{}')
+    // New source-derived owners need explicit evidence for this computed import.
+    put('scripts/ci/module-runtime-consumers.json', JSON.stringify({ [source]: [uncertain] }))
     put(
       'scripts/ci/package-test-boundaries.json',
       JSON.stringify({
@@ -128,7 +129,7 @@ describe.each([
   })
 
   it.each([consumer, uncertain])(
-    'rejects losing reachable or uncertain consumer evidence: %s',
+    'rejects losing imported or registered runtime consumer evidence: %s',
     (path) => {
       const state = fixture()
       state.target.testFiles.consumer = state.target.testFiles.consumer.filter(

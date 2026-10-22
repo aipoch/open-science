@@ -1,4 +1,4 @@
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { Annotation } from '../../../../../shared/annotation-contract'
 import {

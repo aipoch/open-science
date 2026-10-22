@@ -46,8 +46,8 @@ import {
 } from '@/components/ui/message-scroller'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import type { PreviewFileItem, PreviewProvenanceTab } from '@/stores/preview-workbench-store'
-import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import type { PreviewFileItem, PreviewProvenanceTab } from '@/stores/preview-workbench-contract'
+import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store-contract'
 import {
   createSessionReviewerPreviewItem,
   usePreviewWorkbenchStore

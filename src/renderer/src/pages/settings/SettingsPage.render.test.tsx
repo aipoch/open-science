@@ -499,6 +499,29 @@ const installCustomProviderSnapshot = (): ProviderView => {
 }
 
 describe('SettingsPage layout', () => {
+  it('retains the requested recovery model through the settings route', async () => {
+    const provider = installCustomProviderSnapshot()
+    provider.models.push('pinned-model')
+    useSettingsStore.getState().openSettingsToProvider(provider.id, 'pinned-model')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    const copy = 'Update the saved credential, then test the connection.'
+    expect(document.body.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [{ ...provider, lastValidatedAt: 20, lastValidatedTarget: { model: 'model-a' } }]
+      })
+    )
+    expect(document.body.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...provider, lastValidatedAt: 30, lastValidatedTarget: { model: 'pinned-model' } }
+        ]
+      })
+    )
+    expect(document.body.textContent).not.toContain(copy)
+  })
+
   it('retains model tab DOM across model routes and navigation Back', async () => {
     window.api.settings.getClassification = vi.fn().mockResolvedValue({ revision: 0, services: [] })
     window.api.localModels = {

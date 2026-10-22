@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 const RECENT_SESSION_LIMIT = 5
 

@@ -18,6 +18,7 @@ import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 
 import type {
+  AgentFrameworkId,
   AppIconVariant,
   ClaudeInfo,
   ClaudeSubscriptionProviderId,
@@ -36,7 +37,6 @@ import type {
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
-import type { AgentFrameworkId } from '../agent-framework'
 type StoredClassificationService = {
   id: string
   adapter: ClassificationAdapter

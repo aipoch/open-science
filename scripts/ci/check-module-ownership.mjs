@@ -7,6 +7,9 @@ import {
   verifiedHostSourceMoves
 } from './host-owner-split.mjs'
 import {
+  dependencyBasedConsumerRetirements,
+  dependencyBoundaryViolations,
+  sourceSnapshot,
   verifiedConsumerRetirements,
   verifiedExcludedPackageTests,
   verifiedFuzzyMatchOwnerSplit,
@@ -316,12 +319,30 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
   validateModuleImpactManifest(headManifest, { pathExists: (path) => existing.has(path) })
   const hostSplits = verifiedHostOwnerSplits(mergeBase, head, baseManifest, headManifest, { cwd })
   const hostMoves = verifiedHostSourceMoves(mergeBase, head, baseManifest, headManifest, { cwd })
-  return checkModuleOwnership({
+  const dependencyRetirements = dependencyBasedConsumerRetirements(
+    mergeBase,
+    head,
+    baseManifest,
+    headManifest,
+    { cwd }
+  )
+  const sources = [sourceSnapshot(mergeBase, cwd), sourceSnapshot(head, cwd)]
+  const runtimeEdges = sources.flatMap((source) =>
+    Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}'))
+  )
+  const boundaryViolations = dependencyBoundaryViolations(
+    sources[1],
+    headManifest,
+    baseManifest,
+    runtimeEdges
+  )
+  const result = checkModuleOwnership({
     baseManifest,
     headManifest,
     baseFiles,
     headFiles,
     retiredConsumers: new Set([
+      ...dependencyRetirements,
       ...verifiedConsumerRetirements(mergeBase, head, baseManifest, headManifest, { cwd }),
       ...hostSplits.consumers,
       ...hostMoves.consumers
@@ -340,4 +361,11 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
     transferredOwnerTests: new Set([...hostSplits.ownerTests, ...hostMoves.ownerTests]),
     changes: parseNameStatus(git('diff', '--name-status', '-z', mergeBase, head))
   })
+  result.violations.push(...boundaryViolations)
+  result.ok = result.violations.length === 0
+  result.retiredConsumers = result.retiredConsumers.filter(
+    (entry) => !dependencyRetirements.has(entry)
+  )
+  result.dependencyBasedRetirements = [...dependencyRetirements]
+  return result
 }

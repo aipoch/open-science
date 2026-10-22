@@ -1,5 +1,5 @@
 import type { PersistedActivityGroup } from '../../../../shared/session-persistence'
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 
 import { isActivityActive, type ConversationItem } from './workspace-conversation-items'
 import {

@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import {
   SESSION_DETAILS_DESCRIPTION_MAX_LENGTH,
   SESSION_DETAILS_TITLE_MAX_LENGTH

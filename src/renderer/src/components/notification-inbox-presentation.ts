@@ -1,7 +1,7 @@
 import type { NotificationInboxItem } from '../../../shared/notifications'
 import { isHiddenControlMessage, isHumanUserMessage } from '../../../shared/session-persistence'
 import type { Project } from '../../../shared/projects'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 export type NotificationInboxGroup = Readonly<{
   key: 'unread' | 'earlier'

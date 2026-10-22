@@ -390,6 +390,11 @@ export type XaiOAuthDeviceAuthorization = {
   intervalSeconds: number
 }
 
+export type XaiOAuthLoginResult = {
+  accountEmail?: string
+  validation: ValidateProviderResult
+}
+
 // Applies a targeted failure only to the model/protocol it probed; provider-level failures still
 // apply everywhere. Shared by main and renderer so every selection surface uses the same rule.
 export const providerValidationTargetMatches = (

@@ -7,7 +7,8 @@ import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profil
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
-import { useSessionStore, type ChatMessage, type ChatSession } from '../../stores/session-store'
+import { useSessionStore } from '../../stores/session-store'
+import type { ChatMessage, ChatSession } from '../../stores/session-store-contract'
 import type { useAcpRuntime } from './useAcpRuntime'
 import {
   buildWorkspaceHistoryReplay,

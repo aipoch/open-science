@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 
 import { createManagedPreviewRequest } from './preview-file-reader'
 import { isManagedFilePublicationPendingError } from './preview-errors'

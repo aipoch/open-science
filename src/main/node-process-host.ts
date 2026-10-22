@@ -1,3 +1,13 @@
+import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process'
+
+// Already-resolved spawn inputs: env and args come from prepareModelConfig merged over the base
+// process env; configFiles are written by the runtime before this call.
+export type AgentProcessSpawner = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptionsWithoutStdio & { stdio: 'pipe' }
+) => ChildProcessWithoutNullStreams
+
 // A desktop helper reuses Electron's Node mode; a standalone helper runs the current ordinary Node
 // executable. An explicit undefined removes an inherited Electron flag from spawn environments.
 export const nodeRuntimeEnvironment = (): NodeJS.ProcessEnv => ({

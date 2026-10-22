@@ -1,11 +1,9 @@
 import { latestTurnAnchor } from '../../../../shared/session-persistence'
 import {
   projectSessionActionability,
-  type ChatMessage,
-  type ChatSession,
-  type SessionActionabilityFacts,
-  type ToolActivity
-} from '@/stores/session-store'
+  type SessionActionabilityFacts
+} from '@/stores/session-actionability'
+import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store-contract'
 
 type TimelinePosition = {
   updatedAt: number

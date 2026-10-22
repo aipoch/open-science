@@ -9,6 +9,9 @@ const f = vi.hoisted(() => ({
   lifetimeAdmission: undefined as (() => void) | undefined,
   startupFailure: false,
   healthyCredentials: false,
+  inventoryFailure: undefined as Error | undefined,
+  credentialAccess: undefined as
+    typeof import('./credential-identity/access').createCredentialAccess | undefined,
   releaseInstallation: vi.fn(),
   writeExit: vi.fn(async () => {}),
   closeOwnership: vi.fn(async () => {}),
@@ -164,8 +167,7 @@ vi.mock('./credential-identity/node-cipher', () => ({
     }
   })
 }))
-vi.mock('./credential-identity/bootstrap', async () => {
-  const { createCredentialAccess } = await import('./credential-identity/access')
+vi.mock('./credential-identity/bootstrap', () => {
   const identity = { backend: 'mac-keychain', appName: 'Open Science', exists: true } as const
   return {
     selectStartupCredentialIdentity: () => identity,
@@ -175,8 +177,9 @@ vi.mock('./credential-identity/bootstrap', async () => {
         cipher: import('./secure-storage').SecureStorageCipher,
         recover: (error: import('./credential-identity/selection').CredentialIdentityError) => void
       ) => {
+        if (f.inventoryFailure) throw f.inventoryFailure
         if (f.healthyCredentials) return
-        createCredentialAccess({
+        f.credentialAccess!({
           identity,
           cipher,
           probe: () => ({ status: 'exists' }),
@@ -242,10 +245,13 @@ const exitCode = process.exitCode
 const listeners = new Map(
   (['SIGINT', 'SIGTERM'] as const).map((signal) => [signal, new Set(process.listeners(signal))])
 )
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules()
+  // Keep thrown errors and the reporter on the same module instance after each entry reload.
+  f.credentialAccess = (await import('./credential-identity/access')).createCredentialAccess
   vi.clearAllMocks()
   f.healthyCredentials = false
+  f.inventoryFailure = undefined
   f.startupFailure = false
   f.startDesktop.mockResolvedValue(
     f.desktop as unknown as Awaited<ReturnType<typeof f.startDesktop>>
@@ -301,6 +307,33 @@ it('reports credential recovery during startup as a failure after draining resou
     reason: 'decryption-failed'
   })
   expect(JSON.stringify(messages)).not.toContain('fixture key')
+})
+
+it('sends transient inventory details to the desktop without persisting them', async () => {
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  f.inventoryFailure = new CredentialIdentityError('ciphertext-inventory-unavailable', undefined, {
+    code: 'inventory-failed',
+    source: 'cookies',
+    stage: 'check-journal',
+    reason: 'journal-invalid'
+  })
+  vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b')
+  const send = vi.spyOn(process, 'send').mockImplementation(() => true)
+  vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
+  await import('./node-entry')
+  await vi.waitFor(() => expect(process.exitCode).toBe(1))
+  const failed = send.mock.calls
+    .map(([message]) => backendStartupStatusSchema.parse(message))
+    .find((status) => status.kind === 'failed')
+  expect(failed?.diagnostic).toEqual({
+    code: 'inventory-failed',
+    source: 'cookies',
+    stage: 'check-journal',
+    reason: 'journal-invalid'
+  })
+  expect(f.log.error).toHaveBeenCalled()
+  expect(JSON.stringify(f.log.error.mock.calls)).not.toContain('inventory-failed')
+  expect(JSON.stringify(f.log.error.mock.calls)).not.toContain('journal-invalid')
 })
 
 it.each(['directory', 'installation'] as const)(

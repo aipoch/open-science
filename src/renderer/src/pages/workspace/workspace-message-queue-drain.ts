@@ -7,6 +7,7 @@ import {
   queueItemIsBusy,
   queuePermissionIsPending,
   queueSessionIsSendable,
+  queueAuthenticationRequired,
   queuedAdmissionFailure,
   queuedItemHasPayload
 } from './workspace-message-queue-admission'
@@ -53,7 +54,11 @@ const dispatchQueuedSession = (
   ) {
     const head = owner.itemsFor(sessionId)[0]
     if (!head || head.phase === 'sending' || head.phase === 'error') return
-    const contextError = queueItemContextError(session, head)
+    const contextError =
+      queueItemContextError(session, head) ??
+      (queueAuthenticationRequired(session, head.agentConfiguration)
+        ? { kind: 'send' as const, detail: 'Authentication required' }
+        : undefined)
     if (!contextError) {
       item = head
       break
@@ -75,7 +80,7 @@ const dispatchQueuedSession = (
   }
   if (!item) return
   if (!current.isSpecialistReady(sessionId)) return
-  if (!queueSessionIsSendable(current, session)) return
+  if (!queueSessionIsSendable(current, session, item.agentConfiguration)) return
 
   owner.replaceItem(sessionId, item.id, {
     phase: 'sending',
@@ -151,7 +156,10 @@ const dispatchQueuedSession = (
       if (!result) {
         const latest = owner.resolveOptions(optionsRef.current)
         const latestSession = latest.getSession(sessionId)
-        if (latestSession && !queueSessionIsSendable(latest, latestSession)) {
+        if (
+          latestSession &&
+          !queueSessionIsSendable(latest, latestSession, item.agentConfiguration)
+        ) {
           if (owner.dispatches.get(sessionId) === activeDispatch) {
             owner.dispatches.delete(sessionId)
           }
@@ -243,6 +251,14 @@ const sendQueuedItemNow = async (
     const canContinue = (): boolean => {
       if (!liveSession) {
         owner.discardSession(sessionId, current.composer.discardSnapshot)
+        return false
+      }
+      if (queueAuthenticationRequired(liveSession, item.agentConfiguration)) {
+        owner.replaceItem(sessionId, itemId, {
+          phase: 'error',
+          error: { kind: 'send', detail: 'Authentication required' },
+          deferredUntilIdle: false
+        })
         return false
       }
       const contextError = queueItemContextError(liveSession, item)
@@ -338,7 +354,11 @@ const sendQueuedItemNow = async (
       const latest = owner.resolveOptions(optionsRef.current)
       const latestSession = latest.getSession(sessionId)
       const latestLiveTurn = isQueueLiveTurn(latestSession)
-      if (!latestSession || !latestLiveTurn || queueSessionIsSendable(latest, latestSession)) {
+      if (
+        !latestSession ||
+        !latestLiveTurn ||
+        queueSessionIsSendable(latest, latestSession, item.agentConfiguration)
+      ) {
         owner.replaceItem(sessionId, itemId, {
           phase: 'queued',
           error: undefined,
