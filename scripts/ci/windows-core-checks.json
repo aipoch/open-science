@@ -81,7 +81,8 @@
     "tests": [
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
-      "src/main/notebook/shell-search-scope.test.ts"
+      "src/main/notebook/shell-search-scope.test.ts",
+      "src/main/notebook/shell-process-ownership.test.ts"
     ],
     "paths": ["src/main/notebook/"]
   },

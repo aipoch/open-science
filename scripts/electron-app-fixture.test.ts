@@ -202,25 +202,28 @@ it.skipIf(process.platform !== 'win32')(
         await mkdir(path, { recursive: true })
       // This smoke verifies system-tool availability in a fresh isolated profile, not a startup
       // latency SLA. Production identity reads still stop after 2s and may report unknown.
-      const query = (script: string, timeout: number): string =>
+      const query = (module: string, script: string, timeout: number): string =>
         execFileSync(
           'powershell.exe',
           [
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            `[Console]::Error.WriteLine('fixture-powershell: command started'); ${script}`
+            `[Console]::Error.WriteLine('fixture-powershell: command started'); ` +
+              `Import-Module "$PSHOME\\Modules\\${module}\\${module}.psd1" -ErrorAction Stop; ${script}`
           ],
           { env: environment, encoding: 'utf8', timeout, windowsHide: true }
         ).trim()
       expect(
         query(
+          'Microsoft.PowerShell.Management',
           `$p = Get-Process -Id ${process.pid} -ErrorAction Stop; $p.StartTime.ToUniversalTime().ToFileTimeUtc()`,
           15_000
         )
       ).toMatch(/^\d+$/)
       expect(
         query(
+          'Microsoft.PowerShell.Utility',
           "Add-Type -TypeDefinition 'public class FixtureProbe { public static int Value() { return 17; } }'; [FixtureProbe]::Value()",
           30_000
         )
