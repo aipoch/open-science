@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -206,14 +206,19 @@ it.for([
       XDG_DATA_HOME: join(root, 'xdg-data'),
       XDG_CACHE_HOME: join(root, 'xdg-cache'),
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-      // Exercise native session lifecycle without remote catalogs or cold plugin dependency installs.
-      // App plugin behavior is covered separately by the OpenCode framework integration tests.
+      // The synthetic model is registered by the app; no remote catalog is needed.
       OPENCODE_DISABLE_MODELS_FETCH: '1',
-      OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
-      OPENCODE_PURE: '1',
       ELECTRON_RUN_AS_NODE: '1',
       ...config.env
     })
+    if (framework.id === 'opencode' && process.env.OPENCODE_TEST_PLUGIN_DEPENDENCIES) {
+      const target = join(root, 'opencode', 'config', 'opencode')
+      for (const entry of ['package.json', 'package-lock.json', 'node_modules']) {
+        await cp(join(process.env.OPENCODE_TEST_PLUGIN_DEPENDENCIES, entry), join(target, entry), {
+          recursive: true
+        })
+      }
+    }
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: cwd,

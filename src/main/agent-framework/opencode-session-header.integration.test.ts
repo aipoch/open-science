@@ -1,9 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { Readable, Writable } from 'node:stream'
 
 import * as acp from '@agentclientprotocol/sdk'
@@ -107,7 +108,23 @@ it.runIf(opencodePath)(
       'opencode-go/probe-model'
     )
     const connection = await bridge.start()
-    const framework = createOpencodeFramework()
+    const marker = join(root, 'external-plugin-loaded')
+    const externalPlugin = join(root, 'external-plugin.mjs')
+    await writeFile(
+      externalPlugin,
+      [
+        "import { writeFileSync } from 'node:fs'",
+        `export const ExternalProbe = async () => { writeFileSync(${JSON.stringify(marker)}, 'loaded'); return {} }`
+      ].join('\n')
+    )
+    const externalConfig = join(root, 'external-config.json')
+    await writeFile(
+      externalConfig,
+      JSON.stringify({ plugin: [pathToFileURL(externalPlugin).href] })
+    )
+    const framework = createOpencodeFramework({
+      sourceEnv: { ...process.env, OPENCODE_CONFIG: externalConfig }
+    })
     const modelConfig = framework.prepareModelConfig(
       {
         type: 'official',
@@ -126,10 +143,21 @@ it.runIf(opencodePath)(
       await writeFile(file.path, file.content, 'utf8')
     }
 
-    const child: ChildProcessWithoutNullStreams = spawn(opencodePath!, ['acp'], {
-      cwd: workspace,
-      env: { ...process.env, ...modelConfig.env },
-      stdio: ['pipe', 'pipe', 'pipe']
+    // Optional offline fixture for a previously provisioned plugin runtime; never copy user config.
+    if (process.env.OPENCODE_TEST_PLUGIN_DEPENDENCIES) {
+      const target = join(root, 'opencode', 'config', 'opencode')
+      for (const entry of ['package.json', 'package-lock.json', 'node_modules']) {
+        await cp(join(process.env.OPENCODE_TEST_PLUGIN_DEPENDENCIES, entry), join(target, entry), {
+          recursive: true
+        })
+      }
+    }
+
+    const child: ChildProcessWithoutNullStreams = framework.spawn({
+      executablePath: opencodePath!,
+      args: modelConfig.args ?? [],
+      env: modelConfig.env ?? {},
+      spawnProcess: (command, args, options) => spawn(command, args, { ...options, cwd: workspace })
     })
     const stderr: string[] = []
     child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
@@ -167,6 +195,7 @@ it.runIf(opencodePath)(
             })
         })
 
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' })
       expect(sessionIds).toHaveLength(2)
       expect(sessionIds[0]).not.toBe(sessionIds[1])
       expect(requests.every((request) => request.opencodeSession !== undefined)).toBe(true)
