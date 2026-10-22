@@ -107,7 +107,6 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Find WikiPathways by name and species.')
     case 'wikipathways/get_pathway':
       return t('Retrieve WikiPathways metadata and revision dates.')
-
     case 'genes/get_hgnc_gene':
       return t('Retrieve HGNC gene names and aliases.')
     case 'genes/resolve_hgnc_alias':

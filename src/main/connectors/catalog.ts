@@ -6,7 +6,6 @@ const directory = new Set([
   'dailymed',
   'biosamples',
   'wikipathways',
-
   'orphadata',
   'pdc',
   'iedb',
