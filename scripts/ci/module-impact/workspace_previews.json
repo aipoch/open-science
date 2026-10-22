@@ -411,5 +411,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Content-first PDF reflow adds renderer state and document-generation sources beyond the reviewed workspace preview boundary; retain full CI validation until the expanded boundary and runtime contracts are reviewed."
 }
