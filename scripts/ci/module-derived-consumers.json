@@ -45,6 +45,7 @@
     ],
     "host_bounded_io": [
       "src/main/image-preview-resize.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "host_file_publisher": ["src/main/session-package/materialize.test.ts"],

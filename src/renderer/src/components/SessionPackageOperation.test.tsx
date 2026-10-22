@@ -537,6 +537,21 @@ it('distinguishes import checks from the confirmed transfer, including backgroun
   expect(document.querySelector('[role="status"]')?.textContent).toBe('Checking Session package…')
   expect(document.body.textContent).toContain('Disk activity: 1.0 KiB/s')
   act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      progress: { phase: 'validating', completedBytes: 1024, totalBytes: 2048 }
+    })
+  )
+  expect(document.body.textContent).toContain('Reading package…')
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      progress: { phase: 'validating', completedFiles: 2, totalFiles: 10 }
+    })
+  )
+  expect(document.body.textContent).toContain('Checking 2 of 10 files…')
+  expect(document.body.textContent).not.toContain('1.0 KiB / 2.0 KiB')
+  act(() =>
     usePackageOperationStore.getState().receive({ ...operation, progress: { phase: 'validating' } })
   )
   expect(document.body.textContent).toContain('Validating package…')

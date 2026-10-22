@@ -7785,6 +7785,8 @@
     "Add PDFs": "Ajouter des PDF",
     "Drop PDFs here to attach to this reference, or choose files.": "Déposez des PDF ici pour les joindre à cette référence, ou sélectionnez des fichiers.",
     "Import PDFs together, or one reference file at a time. No files were added.": "Importez les PDF ensemble, ou un seul fichier de références à la fois. Aucun fichier n’a été ajouté.",
-    "Drop PDFs or reference files to import": "Déposez des PDF ou des fichiers de références pour les importer"
+    "Drop PDFs or reference files to import": "Déposez des PDF ou des fichiers de références pour les importer",
+    "Reading package…": "Lecture du paquet…",
+    "Checking {{completed}} of {{total}} files…": "Vérification de {{completed}} fichiers sur {{total}}…"
   }
 }

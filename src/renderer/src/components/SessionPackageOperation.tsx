@@ -246,11 +246,20 @@ const PackageProgressMeter = ({
   const { t } = useTranslation()
   const { waiting, phase } = operationStatus(operation, t)
   if (operation.state !== 'running' || waiting) return null
-  const { completedBytes, totalBytes } = operation.progress
+  const { completedBytes, totalBytes, completedFiles, totalFiles } = operation.progress
   if (isImportCheck(operation))
     return (
       <div className="space-y-2 text-xs text-muted-foreground">
-        <p>{phase}</p>
+        <p>
+          {totalBytes !== undefined && operation.progress.phase === 'validating'
+            ? t('Reading package…')
+            : totalFiles !== undefined
+              ? t('Checking {{completed}} of {{total}} files…', {
+                  completed: completedFiles ?? 0,
+                  total: totalFiles
+                })
+              : phase}
+        </p>
         {completedBytes !== undefined && totalBytes !== undefined ? (
           <p className="tabular-nums">
             {bytes(completedBytes)} / {bytes(totalBytes)}

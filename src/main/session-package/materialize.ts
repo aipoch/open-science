@@ -3,8 +3,9 @@ import type { Stats } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { SessionPackageInventoryEntry } from '../../shared/session-package'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
-import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+import { copyFileWithinBudget } from '../bounded-file-io'
 import { packageCapacityChecker } from './capacity'
+import { createPackageContentVerifier } from './content-verification'
 
 // Only immutable execution blobs may share an inode. Working files and metadata are rewritten.
 const blobIdentity = (entry: SessionPackageInventoryEntry): string | undefined => {
@@ -53,6 +54,7 @@ export const createPackageMaterializer = async (
   await mkdir(destinationRoot, { recursive: true })
   const checkCapacity = await packageCapacityChecker(destinationRoot)
   checkCapacity(allocatedBudget)
+  const verifyContent = createPackageContentVerifier()
   const copies = new Map<string, { path: string; stats: Stats }>()
   return async (entry, targetKey = entry.storageKey!, onProgress) => {
     signal?.throwIfAborted()
@@ -65,7 +67,7 @@ export const createPackageMaterializer = async (
     try {
       if (existing) {
         // Legacy packages may have separate source objects advertising the same digest.
-        const digest = await digestFileWithinBudget(source, entry.sizeBytes, signal)
+        const digest = await verifyContent(source, entry.sizeBytes, signal)
         if (digest.checksum !== entry.checksum || digest.sizeBytes !== entry.sizeBytes)
           throw new Error('Session package content checksum mismatch.')
         if (!sameFile(await lstat(existing.path), existing.stats))

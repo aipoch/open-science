@@ -40,8 +40,6 @@ export class SessionPackageOperation {
   private browserTransfers: BrowserPackageTransfer[] = []
   private selection?: (selection: PackageFileSelection) => void
   private lastProgressAt = 0
-  private autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
-  private autoAdjustedAt = 0
   private completion: Promise<unknown> = Promise.resolve()
   async close(): Promise<void> {
     this.cancel()
@@ -65,22 +63,14 @@ export class SessionPackageOperation {
     return this.controller !== undefined
   }
 
+  // Stream backpressure already follows slow storage. CPU/validation pauses must not lower
+  // the next I/O stage's budget based on a throttled throughput sample.
   get transferBytesPerSecond(): number {
-    return this.current?.transferBytesPerSecond ?? this.autoRate
+    return this.current?.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
   }
 
   reportIo = (ioBytesPerSecond: number): void => {
     if (!this.current || !this.controller) return
-    if (this.current.transferBytesPerSecond === undefined && ioBytesPerSecond > 0) {
-      const now = Date.now()
-      if (now - this.autoAdjustedAt >= 2_000) {
-        if (ioBytesPerSecond >= this.autoRate * 0.85)
-          this.autoRate = Math.min(PACKAGE_MAX_IO_BYTES_PER_SECOND, this.autoRate * 2)
-        else if (ioBytesPerSecond < this.autoRate * 0.6)
-          this.autoRate = Math.max(PACKAGE_DEFAULT_IO_BYTES_PER_SECOND, this.autoRate / 2)
-        this.autoAdjustedAt = now
-      }
-    }
     this.current = { ...this.current, ioBytesPerSecond }
     if (Date.now() - this.lastProgressAt >= 150) {
       this.lastProgressAt = Date.now()
@@ -321,10 +311,6 @@ export class SessionPackageOperation {
           request.bytesPerSecond > PACKAGE_MAX_IO_BYTES_PER_SECOND)
       )
         throw new Error('Invalid package transfer rate.')
-      if (request.bytesPerSecond === null) {
-        this.autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
-        this.autoAdjustedAt = Date.now()
-      }
       this.current = {
         ...this.current,
         ...(request.bytesPerSecond === null
@@ -449,8 +435,6 @@ export class SessionPackageOperation {
     if (this.controller) throw new Error('A Session package operation is already in progress.')
     const controller = new AbortController()
     this.controller = controller
-    this.autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
-    this.autoAdjustedAt = Date.now()
     this.current = {
       id: randomUUID(),
       kind,

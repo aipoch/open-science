@@ -7457,6 +7457,8 @@
     "Add PDFs": "PDF を追加",
     "Drop PDFs here to attach to this reference, or choose files.": "ここに PDF をドロップしてこの文献に添付するか、ファイルを選択してください。",
     "Import PDFs together, or one reference file at a time. No files were added.": "PDF はまとめて、文献ファイルは一度に1つずつインポートしてください。ファイルは追加されませんでした。",
-    "Drop PDFs or reference files to import": "PDF または文献ファイルをドロップしてインポート"
+    "Drop PDFs or reference files to import": "PDF または文献ファイルをドロップしてインポート",
+    "Reading package…": "パッケージを読み込み中…",
+    "Checking {{completed}} of {{total}} files…": "{{total}} ファイル中 {{completed}} ファイルを確認中…"
   }
 }

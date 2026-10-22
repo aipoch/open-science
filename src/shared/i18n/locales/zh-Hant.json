@@ -7457,6 +7457,8 @@
     "Add PDFs": "新增 PDF",
     "Drop PDFs here to attach to this reference, or choose files.": "將 PDF 拖曳至此處以附加至此文獻，或選擇檔案。",
     "Import PDFs together, or one reference file at a time. No files were added.": "請批次匯入 PDF，或每次匯入一個參考文獻檔案。未新增任何檔案。",
-    "Drop PDFs or reference files to import": "放開以匯入 PDF 或參考文獻檔案"
+    "Drop PDFs or reference files to import": "放開以匯入 PDF 或參考文獻檔案",
+    "Reading package…": "正在讀取套件…",
+    "Checking {{completed}} of {{total}} files…": "正在檢查檔案：{{completed}} / {{total}}…"
   }
 }

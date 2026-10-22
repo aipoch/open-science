@@ -1980,7 +1980,7 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           expect(finished).toBe(true)
         }
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(256 * 1024 ** 2)
         expect(desktop.operations.snapshot?.ioBytesPerSecond).toBe(16 * 1024 ** 2)
         for (const rate of [128, 256]) {
           desktop.respond({
@@ -1995,9 +1995,9 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           operationId: desktop.operations.snapshot!.id,
           bytesPerSecond: null
         })
-        expect(desktop.operations.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(256 * 1024 ** 2)
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(256 * 1024 ** 2)
         return result
       })
     )
@@ -2362,7 +2362,8 @@ it.each(['valid', 'invalid'] as const)(
       )
       expect(inspect).toHaveBeenCalledWith(
         expect.stringContaining(await realpath(staging)),
-        expect.any(AbortSignal)
+        expect.any(AbortSignal),
+        expect.any(Function)
       )
       expect(await fixture.client.session.count()).toBe(0)
       expect(dialog.showMessageBox).not.toHaveBeenCalled()

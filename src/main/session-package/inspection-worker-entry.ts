@@ -1,3 +1,4 @@
+import type { PackageProgress } from '../../shared/session-package'
 import { parentPort, workerData } from 'node:worker_threads'
 import { inspectSessionPackage } from './inspection'
 import { withFileIoPacing } from '../file-io-pacing'
@@ -15,6 +16,26 @@ port.on('message', ({ id }: { id: number }) => {
   grant?.()
 })
 const post = (message: InspectionWorkerMessage): void => port.postMessage(message)
+let lastProgressAt = 0
+let previousStage = ''
+const reportProgress = (progress: PackageProgress): void => {
+  const stage =
+    progress.totalBytes !== undefined
+      ? 'reading'
+      : progress.totalFiles !== undefined
+        ? 'files'
+        : 'records'
+  const complete =
+    progress.totalBytes !== undefined
+      ? progress.completedBytes === progress.totalBytes
+      : progress.totalFiles !== undefined && progress.completedFiles === progress.totalFiles
+  const now = performance.now()
+  if (stage !== previousStage || complete || now - lastProgressAt >= 150) {
+    previousStage = stage
+    lastProgressAt = now
+    post({ kind: 'progress', progress })
+  }
+}
 void withFileIoPacing(
   (bytes) =>
     new Promise<void>((resolve) => {
@@ -27,7 +48,8 @@ void withFileIoPacing(
       input.path,
       input.directory,
       new AbortController().signal,
-      input.temporaryRoot
+      input.temporaryRoot,
+      reportProgress
     )
 )
   .then(

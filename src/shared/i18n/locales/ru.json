@@ -7924,6 +7924,8 @@
     "Add PDFs": "Добавить PDF",
     "Drop PDFs here to attach to this reference, or choose files.": "Перетащите PDF сюда, чтобы прикрепить их к этому источнику, или выберите файлы.",
     "Import PDFs together, or one reference file at a time. No files were added.": "Импортируйте PDF вместе или по одному файлу библиографических записей. Файлы не добавлены.",
-    "Drop PDFs or reference files to import": "Перетащите PDF или файлы библиографических записей для импорта"
+    "Drop PDFs or reference files to import": "Перетащите PDF или файлы библиографических записей для импорта",
+    "Reading package…": "Чтение пакета…",
+    "Checking {{completed}} of {{total}} files…": "Проверка файлов: {{completed}} из {{total}}…"
   }
 }

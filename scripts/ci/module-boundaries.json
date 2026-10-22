@@ -2065,6 +2065,7 @@
     "main_session_package": {
       "sources": [
         "src/main/session-package/archive.ts",
+        "src/main/session-package/content-verification.ts",
         "src/main/session-package/capacity.ts",
         "src/main/session-package/cleanup.ts",
         "src/main/session-package/deletion.ts",
@@ -2107,6 +2108,7 @@
       },
       "consumerModules": [],
       "requiredTests": [
+        "src/main/session-package/content-verification.test.ts",
         "src/main/session-package/archive.test.ts",
         "src/main/session-package/deletion.test.ts",
         "src/main/session-package/desktop.test.ts",

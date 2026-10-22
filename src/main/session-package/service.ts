@@ -81,6 +81,7 @@ import {
   writePackageArchive
 } from './archive'
 import { assertPackageCapacity } from './capacity'
+import { createPackageContentVerifier } from './content-verification'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { SessionPackageDeletion } from './deletion'
 import { executionEvidenceKeys } from './execution-evidence'
@@ -1283,14 +1284,28 @@ export class SessionPackageService {
     }, signal)
   }
 
-  inspect(path: string, signal?: AbortSignal): Promise<SessionPackagePreview> {
-    return this.serialize(() => this.inspectNow(path), signal)
+  inspect(
+    path: string,
+    signal?: AbortSignal,
+    onProgress?: (progress: PackageProgress) => void
+  ): Promise<SessionPackagePreview> {
+    return this.serialize(() => this.inspectNow(path, onProgress), signal)
   }
 
-  private async inspectNow(path: string): Promise<SessionPackagePreview> {
+  private async inspectNow(
+    path: string,
+    onProgress?: (progress: PackageProgress) => void
+  ): Promise<SessionPackagePreview> {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-package-inspect-'))
     return withPackageCleanup(
-      () => (this.options.inspectPackage ?? inspectSessionPackage)(path, directory, this.signal),
+      () =>
+        (this.options.inspectPackage ?? inspectSessionPackage)(
+          path,
+          directory,
+          this.signal,
+          undefined,
+          onProgress
+        ),
       () => rm(directory, { recursive: true, force: true })
     )
   }
@@ -1405,7 +1420,9 @@ export class SessionPackageService {
         const inspected = await (this.options.inspectPackage ?? inspectSessionPackage)(
           path,
           sourceRoot,
-          this.signal
+          this.signal,
+          undefined,
+          onProgress
         )
         if (confirm) await this.waitForUser(() => confirm(inspected, this.signal))
       }
@@ -1538,15 +1555,19 @@ export class SessionPackageService {
       await mkdir(evidenceDirectory, { recursive: true })
       const files: SessionPackageReceipt['files'] = []
       const nativeInventory: SessionPackageManifest['inventory'] = []
+      const verifyContent = createPackageContentVerifier()
       for (const entry of manifest.inventory) {
         if (!entry.storageKey) continue
         const localStorageKey = remapStorageKey(entry.storageKey, native.identities)
-        const localEntry = await packageEntry(
-          destinationRoot,
-          localStorageKey,
-          entry.kind,
-          this.signal
-        )
+        const localEntry = {
+          path: localStorageKey,
+          kind: entry.kind,
+          ...(await verifyContent(
+            join(destinationRoot, localStorageKey),
+            PACKAGE_MAX_BYTES,
+            this.signal
+          ))
+        }
         files.push({
           sourceStorageKey: entry.storageKey,
           sourceChecksum: entry.checksum,

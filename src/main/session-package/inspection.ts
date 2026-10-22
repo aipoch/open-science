@@ -2,7 +2,11 @@ import { validatePackageLiteratureSession } from './literature'
 import { join } from 'node:path'
 import { decodeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
-import type { SessionPackageManifest, SessionPackagePreview } from '../../shared/session-package'
+import type {
+  PackageProgress,
+  SessionPackageManifest,
+  SessionPackagePreview
+} from '../../shared/session-package'
 import { readPackageArchive, readPackageJson } from './archive'
 import { parseNativeRecords } from './native-snapshot'
 import { validatePackageRecords } from './validation'
@@ -63,9 +67,11 @@ export const inspectSessionPackage = async (
   path: string,
   directory: string,
   signal: AbortSignal,
-  temporaryRoot?: string
+  temporaryRoot?: string,
+  onProgress?: (progress: PackageProgress) => void
 ): Promise<SessionPackagePreview> => {
-  const manifest = await readPackageArchive(path, directory, signal)
+  const manifest = await readPackageArchive(path, directory, signal, onProgress)
+  onProgress?.({ phase: 'validating' })
   const session = await readSession(directory)
   if (manifest.source.projectId !== session.projectId || manifest.source.sessionId !== session.id)
     throw new Error('Session package source identity mismatch.')

@@ -812,7 +812,9 @@ export class SessionPackageDesktop {
             this.options.assertCanStart?.()
             this.operations.report({ phase: 'validating' })
             try {
-              await this.acceptCleanup(() => this.options.service.inspect(sourcePath, signal))
+              await this.acceptCleanup(() =>
+                this.options.service.inspect(sourcePath, signal, this.operations.report)
+              )
             } catch (error) {
               this.failOperation(error)
             }
@@ -861,22 +863,26 @@ export class SessionPackageDesktop {
               const archive = join(directory, 'session.science')
               await this.copyArchive(input, archive, 'copying', signal)
               this.operations.report({ phase: 'validating' })
+              let confirmed = false
               const result = await this.options.withDataRootWrite(() =>
                 this.acceptCleanup(() =>
                   this.options.service
                     .importFrom(
                       archive,
                       signal,
-                      // Service progress starts after confirmation; final validation belongs to import.
+                      // Inspection reports before confirmation; subsequent validation belongs to import.
                       (progress) =>
                         this.operations.report(
-                          progress.phase === 'validating' ? { phase: 'importing' } : progress
+                          confirmed && progress.phase === 'validating'
+                            ? { ...progress, phase: 'importing' }
+                            : progress
                         ),
                       async (preview, budgetSignal) => {
                         await this.operations.waitForImport(
                           { preview, filename: basename(input) },
                           budgetSignal
                         )
+                        confirmed = true
                         signal.throwIfAborted()
                       },
                       target

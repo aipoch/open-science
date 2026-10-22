@@ -121,7 +121,7 @@ describe('SessionPackageOperation', () => {
     const completion = deferred()
     const run = owner.run('import', undefined, () => completion.promise)
     const id = owner.snapshot!.id
-    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
     owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 4 * 1024 ** 2 })
     expect(owner.transferBytesPerSecond).toBe(4 * 1024 ** 2)
     expect(owner.snapshot).toMatchObject({ id, state: 'running' })
@@ -135,16 +135,16 @@ describe('SessionPackageOperation', () => {
     ).toThrow('no longer active')
   })
 
-  it('adapts the default budget to sustained disk throughput and can return to Auto', async () => {
+  it('starts at the full default budget without mistaking processing pauses for slow storage', async () => {
     vi.useFakeTimers()
     const owner = new SessionPackageOperation()
     const completion = deferred()
     const run = owner.run('import', undefined, () => completion.promise)
-    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
 
     await vi.advanceTimersByTimeAsync(2_000)
     owner.reportIo(16 * 1024 ** 2)
-    expect(owner.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
 
     owner.respond({
       action: 'set-speed',
@@ -153,7 +153,7 @@ describe('SessionPackageOperation', () => {
     })
     expect(owner.transferBytesPerSecond).toBe(64 * 1024 ** 2)
     owner.respond({ action: 'set-speed', operationId: owner.snapshot!.id, bytesPerSecond: null })
-    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
 
     completion.resolve()
     await run
