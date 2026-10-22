@@ -5284,14 +5284,19 @@ mod windows_host {
             let acl_before = capture_acl_snapshot(&parent.to_string_lossy()).unwrap();
             let ticket =
                 format!("{}{}", new_lease_id().unwrap(), new_lease_id().unwrap()).replace('-', "");
-            // Start the foreign process before creating the pipe. PowerShell startup can take
-            // several seconds on a busy hosted runner, so let it retry until the server is ready
-            // instead of spending the server's connection timeout before its first attempt.
+            // Wait for the script, not just process creation, before starting the server timeout.
+            let client_ready = parent.join("client-ready");
             let script = format!(
-                r#"$deadline = [DateTime]::UtcNow.AddSeconds(30); while ([DateTime]::UtcNow -lt $deadline) {{
+                r#"[System.IO.File]::WriteAllText($env:OPEN_SCIENCE_TEST_READY, 'ready')
+$deadline = [DateTime]::UtcNow.AddSeconds(30); while ([DateTime]::UtcNow -lt $deadline) {{
   $p = [System.IO.Pipes.NamedPipeClientStream]::new('.', 'LOCAL\OpenScience.RAccess.{ticket}', [System.IO.Pipes.PipeDirection]::InOut)
-  try {{ $p.Connect(1000); $null = $p.ReadByte(); exit 0 }} catch {{ Start-Sleep -Milliseconds 100 }} finally {{ $p.Dispose() }}
+  try {{
+    try {{ $p.Connect(1000) }} catch {{ Start-Sleep -Milliseconds 100; continue }}
+    try {{ $null = $p.ReadByte() }} catch [System.IO.IOException] {{}}
+    exit 0
+  }} finally {{ $p.Dispose() }}
 }}
+Write-Error 'Foreign verification client did not connect before its deadline'
 exit 1"#
             );
             let mut foreign = Command::new("powershell.exe")
@@ -5302,9 +5307,22 @@ exit 1"#
                     "-Command",
                     &script,
                 ])
+                .env("OPEN_SCIENCE_TEST_READY", &client_ready)
                 .creation_flags(0x08000000)
                 .spawn()
                 .unwrap();
+            let startup = Instant::now();
+            while !client_ready.exists() {
+                if let Some(status) = foreign.try_wait().unwrap() {
+                    panic!("Foreign verification client exited before readiness: {status}");
+                }
+                if startup.elapsed() > Duration::from_secs(30) {
+                    let _ = foreign.kill();
+                    let status = foreign.wait().unwrap();
+                    panic!("Foreign verification client startup timed out: {status}");
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
             let server_ticket = ticket.clone();
             let server_root = root.clone();
             let expected_pid = unsafe { GetCurrentProcessId() };
@@ -5319,10 +5337,13 @@ exit 1"#
             });
             let error = format!("{:#}", server.join().unwrap().unwrap_err());
             let foreign = foreign.wait().unwrap();
-            assert!(foreign.success());
             assert!(
                 error.contains("Unexpected R verification client"),
-                "{error}"
+                "server: {error}; foreign client: {foreign}"
+            );
+            assert!(
+                foreign.success(),
+                "foreign client: {foreign}; server: {error}"
             );
             assert_eq!(fs::read(journal_path(&root)).unwrap(), journal_before);
             assert_eq!(fs::read(receipt_path(&root)).unwrap(), receipt_before);
