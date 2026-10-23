@@ -2,7 +2,12 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import type {
+  ArtifactVersionFile,
+  FinalizeArtifactVersionsRequest
+} from '../../shared/artifact-provenance'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import type { ManagedFileIdentity, SaveTextEditResult } from '../../shared/managed-file-versions'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ProjectFilesQueryOwner } from '../project-files/query-owner'
 import { ArtifactProvenanceRepository } from './provenance-repository'
@@ -65,7 +70,11 @@ afterEach(async () => {
   await fixture?.dispose()
 })
 
-const prepare = async (run: number, content?: string, filename = 'report.md') => {
+const prepare = async (
+  run: number,
+  content?: string,
+  filename = 'report.md'
+): Promise<{ version: ArtifactVersionFile; proof: FinalizeArtifactVersionsRequest }> => {
   const common = {
     projectId: 'project-1',
     appSessionId: 'session-1',
@@ -96,12 +105,16 @@ const prepare = async (run: number, content?: string, filename = 'report.md') =>
   }
 }
 
-const publish = async (prepared: Awaited<ReturnType<typeof prepare>>) => {
+const publish = async (prepared: Awaited<ReturnType<typeof prepare>>): Promise<void> => {
   await repository.finalizeRun(prepared.proof)
   await repository.activateFinalizedRun(prepared.proof)
 }
 
-const setupEditedReport = async () => {
+const setupEditedReport = async (): Promise<{
+  first: Awaited<ReturnType<typeof prepare>>
+  identity: ManagedFileIdentity
+  saved: Extract<SaveTextEditResult, { kind: 'created' }>
+}> => {
   const first = await prepare(1)
   await publish(first)
   const identity = {

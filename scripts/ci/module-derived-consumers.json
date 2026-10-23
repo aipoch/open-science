@@ -10,10 +10,7 @@
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "artifact_provenance": [
-      "src/main/artifacts/provenance-user-edit.integration.test.ts",
-      "src/main/session-package/materialize.test.ts"
-    ],
+    "artifact_provenance": ["src/main/session-package/materialize.test.ts"],
     "artifact_publication_request": [
       "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
