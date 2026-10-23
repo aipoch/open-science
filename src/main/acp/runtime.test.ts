@@ -2163,6 +2163,114 @@ const PERMISSION_PROJECTION_DECISIONS = [
   ['cancel', undefined, 'permission-closed']
 ] as const
 
+describe('host-owned Shell destination approval contract', () => {
+  it.each(PERMISSION_PROJECTION_FRAMEWORKS)(
+    'parks and persists destination allow/deny without provider replay through %s',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const promptGate = createDeferred()
+      const fakeAgent = startFakeAgent(process, ['network-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        onPrompt: () => promptGate.promise
+      })
+      const persisted = materializeSessionConversationGraph({
+        id: 'network-session',
+        projectId: 'project-fixture',
+        cwd: '/workspace',
+        title: 'Destination wait',
+        status: 'running',
+        createdAt: 1,
+        updatedAt: 1,
+        messages: [
+          {
+            id: 'prompt-network',
+            role: 'user',
+            content: 'Run sample client',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      } satisfies PersistedChatSession)
+      let context: SessionRuntimeContext = { version: 1, revision: 0 }
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: async () => context,
+            loadSessionForContinuation: async () => ({ ...persisted, runtimeContext: context }),
+            containsMessageOnActiveBranch: async () => true,
+            patchSessionRuntimeContext: async (command) => {
+              await command.beforePersist?.({ ...persisted, runtimeContext: context })
+              context = { ...context, ...command.patch, revision: context.revision + 1 }
+              return context
+            }
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
+        })
+      })
+      const session = await runtime.createSession({
+        cwd: '/workspace',
+        projectId: 'project-fixture',
+        permissionProfile: 'ask'
+      })
+      const prompt = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Run sample client',
+        provenanceContext: { promptMessageId: 'prompt-network' }
+      })
+      try {
+        await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+        for (const optionId of ['allow-once', 'deny', undefined]) {
+          const decision = runtime.requestAppPermission({
+            sessionId: session.sessionId,
+            title: 'Network approval',
+            rawInput: {},
+            options: [],
+            networkApproval: {
+              projectId: 'project-fixture',
+              executionId: 'run-fixture',
+              commandFingerprint: 'a'.repeat(64),
+              hostname: 'service.example.test',
+              port: 443,
+              runtime: 'bash'
+            }
+          })
+          await vi.waitFor(() => expect(runtime.getSnapshot().pendingPermissions).toHaveLength(1))
+          const request = runtime.getSnapshot().pendingPermissions[0]
+          expect(context.networkApprovals?.[0].requestId).toBe(request.requestId)
+          await runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId,
+            cancelled: optionId === undefined
+          })
+          await expect(decision).resolves.toBe(optionId)
+          expect(context.networkApprovals).toBeUndefined()
+          expect(fakeAgent.prompts).toHaveLength(1)
+        }
+      } finally {
+        promptGate.resolve()
+        await prompt
+        await runtime.shutdown()
+      }
+    },
+    30_000
+  )
+})
+
 describe('host-owned Notebook code-risk review receipts', () => {
   it.each(PERMISSION_PROJECTION_FRAMEWORKS)(
     'publishes allow, deny and cancellation receipts for %s',

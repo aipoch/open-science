@@ -20,7 +20,12 @@ import type {
 
 const backend = vi.hoisted(() => ({
   request: undefined as
-    | ((request: { host: string; port?: number; purpose?: 'probe' | 'block' }) => Promise<boolean>)
+    | ((request: {
+        host: string
+        port?: number
+        purpose?: 'probe' | 'block'
+        canResume?: () => boolean
+      }) => Promise<boolean>)
     | undefined,
   initialize: vi.fn().mockResolvedValue(undefined),
   cleanup: vi.fn().mockResolvedValue({
@@ -160,10 +165,11 @@ beforeEach(() => {
           ) => backend.cleanup(outcome)
         }
       const controller = new AbortController()
-      backend.request = ({ host, port, purpose }) =>
+      backend.request = ({ host, port, purpose, canResume }) =>
         command.onNetworkAccessRequest({
           host,
           purpose,
+          ...(canResume ? { canResume } : {}),
           ...(port === undefined ? {} : { port }),
           signal: controller.signal
         })
@@ -195,6 +201,81 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each([true, false])(
+    'parks a Shell network request, deduplicates it, and releases only a live connection (%s)',
+    async (connectionLive) => {
+      const root = await mkdtemp(join(tmpdir(), 'sandbox-network-approval-'))
+      fixtureDirectories.push(root)
+      const decision = Promise.withResolvers<'allowOnce'>()
+      const requestDecision = vi.fn(() => decision.promise)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: 'linux',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision
+      })
+      const wrapped = await owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', 'sample-client request'],
+        env: {},
+        cwd: root,
+        commandText: 'sample-client request',
+        executionReference: 'run-fixture',
+        sessionId: 'session-fixture',
+        projectId: 'project-fixture',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const waiting = vi.fn()
+      const end = wrapped.beginExecution!({
+        commandText: 'sample-client request',
+        onNetworkWaitChange: waiting
+      })
+      const first = backend.request!({
+        host: 'service.example.test',
+        port: 443,
+        purpose: 'block',
+        canResume: () => connectionLive
+      })
+      const duplicate = backend.request!({
+        host: 'service.example.test',
+        port: 443,
+        purpose: 'block',
+        canResume: () => connectionLive
+      })
+      await vi.waitFor(() => expect(requestDecision).toHaveBeenCalledOnce())
+      expect(requestDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hostname: 'service.example.test',
+          executionId: 'run-fixture',
+          commandFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
+        })
+      )
+      expect(waiting).toHaveBeenLastCalledWith(true)
+      let settled = false
+      void first.then(() => {
+        settled = true
+      })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      decision.resolve('allowOnce')
+      await expect(first).resolves.toBe(connectionLive)
+      await expect(duplicate).resolves.toBe(connectionLive)
+      expect(waiting).toHaveBeenLastCalledWith(false)
+      expect(wrapped.networkApprovalRetryRequired?.()).toBe(!connectionLive)
+      end()
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
   it.each([undefined, true, false])(
     'projects folder restriction %s while preserving explicit roots',
     async (enabled) => {

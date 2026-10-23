@@ -2,6 +2,7 @@ import type { RequestPermissionRequest, RequestPermissionResponse } from '@agent
 import { createHash, randomUUID } from 'node:crypto'
 
 import { createLogger } from '@aipoch/diagnostics/node'
+import type { SandboxNetworkApprovalInput } from './sandbox-network-approval-owner'
 import type { AcpPermissionResponse, AcpPermissionSettlementState } from '../../shared/acp'
 import type { AcpPermissionGrant, AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type {
@@ -45,6 +46,7 @@ import { extractProviderToolName } from './runtime-events'
 type PendingPermission = {
   request: AcpPermissionRequest
   appOwned?: true
+  beforeRespond?: (optionId: string | undefined) => Promise<void>
   decisionAuthority?: PermissionDiagnostic['authority']
   automaticRequest?: RequestPermissionRequest
   policyContext?: PermissionPolicyContext
@@ -65,6 +67,11 @@ type PendingPermission = {
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
 type AppPermissionRequest = Readonly<{
+  requestId?: string
+  durable?: true
+  networkApproval?: SandboxNetworkApprovalInput
+  canResume?: () => boolean
+  beforeRespond?: (optionId: string | undefined) => Promise<void>
   sessionId: string
   title: string
   rawInput: unknown
@@ -1074,8 +1081,9 @@ class AcpPermissionBroker {
   // the broker's renderer projection, response validation, and Session cancellation lifecycle.
   requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
     if (input.signal?.aborted) return Promise.resolve(undefined)
-    const requestId = randomUUID()
+    const requestId = input.requestId ?? randomUUID()
     const request: AcpPermissionRequest = {
+      ...(input.durable ? { durable: true } : {}),
       requestId,
       sessionId: input.sessionId,
       toolCallId: `app-approval:${requestId}`,
@@ -1090,6 +1098,8 @@ class AcpPermissionBroker {
       requestId,
       request,
       appOwned: true,
+      durablePersisted: input.durable === true,
+      beforeRespond: input.beforeRespond,
       ...(input.permissionPrompts
         ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
         : {})
@@ -1644,6 +1654,15 @@ class AcpPermissionBroker {
     // Keep the claimed request cancellable until its provider decision is released.
     this.respondingRequests.set(response.requestId, pending)
     try {
+      if (pending.beforeRespond) {
+        const optionId =
+          !response.cancelled &&
+          pending.request.options.some((option) => option.optionId === response.optionId)
+            ? response.optionId
+            : undefined
+        await pending.beforeRespond(optionId)
+        if (pending.settled) return true
+      }
       if (response.cancelled || !response.optionId) {
         const persistence = this.persistLiveSettlement(pending)
         if (persistence) await persistence
@@ -1759,6 +1778,12 @@ class AcpPermissionBroker {
 
       return true
     } catch (error) {
+      // A durable app decision that failed to commit still owns its live wait. Keep it actionable
+      // and do not release privileged work as if the human had denied the request.
+      if (pending.beforeRespond && !pending.settled) {
+        this.pendingRequests.set(response.requestId, pending)
+        throw error
+      }
       this.trace(pending, {
         stage: 'decision',
         authority: pending.decisionAuthority,

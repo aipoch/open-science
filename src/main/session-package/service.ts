@@ -265,6 +265,7 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
     ? {
         ...session.runtimeContext,
         permission: undefined,
+        networkApprovals: undefined,
         sideChat: undefined,
         sideChats: undefined,
         sideChatRelays: undefined,
@@ -292,9 +293,14 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   const runtimeContext = session.runtimeContext
   return (
     isRecord(runtimeContext) &&
-    ['permission', 'sideChat', 'sideChats', 'sideChatRelays', 'sessionContext'].some((key) =>
-      Object.hasOwn(runtimeContext, key)
-    )
+    [
+      'permission',
+      'networkApprovals',
+      'sideChat',
+      'sideChats',
+      'sideChatRelays',
+      'sessionContext'
+    ].some((key) => Object.hasOwn(runtimeContext, key))
   )
 }
 
@@ -1261,6 +1267,7 @@ export class SessionPackageService {
       )
       if (!source) throw new Error('Session not found or unreadable.')
       if (
+        source.runtimeContext?.networkApprovals?.some(({ state }) => state === 'pending') ||
         source.runtimeContext?.permission?.state === 'pending' ||
         source.runtimeContext?.plan?.approval === 'pending'
       )
@@ -1498,6 +1505,7 @@ export class SessionPackageService {
         runtimeContext: mappedSession.runtimeContext
           ? {
               ...mappedSession.runtimeContext,
+              networkApprovals: undefined,
               sideChatRelays: undefined,
               // Local reading links are not part of a portable Session package.
               sessionContext: undefined,

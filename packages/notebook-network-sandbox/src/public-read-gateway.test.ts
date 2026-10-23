@@ -39,6 +39,7 @@ const setup = async (
     upgrade?: boolean
     source?: 'unknown' | 'explicit'
     active?: boolean
+    approve?: (canResume?: () => boolean) => Promise<boolean>
   } = {}
 ): Promise<{
   open: (servername?: string | false) => Promise<TLSSocket>
@@ -90,8 +91,12 @@ const setup = async (
   const gateway = await CommandGateway.open({
     credentials: { username: 'test', password: 'secret' },
     parentProxy: { https: `http://127.0.0.1:${proxyPort}` },
-    decide: async (_host, _port, purpose) => {
-      if (purpose === 'block') blocked()
+    decide: async (_host, _port, purpose, canResume) => {
+      if (purpose === 'block') {
+        blocked()
+        if (options.approve)
+          return { allowed: await options.approve(canResume), address: '93.184.216.34' }
+      }
       return { allowed: false, source: options.source ?? 'unknown', address: '93.184.216.34' }
     },
     inspection: {
@@ -146,6 +151,61 @@ const response = (socket: Socket): Promise<string> =>
     socket.once('error', reject)
   })
 describe('inspected CONNECT over real sockets (injected public address via local parent)', () => {
+  it('reports client expiry while the command remains alive and never sends the approved stale body', async () => {
+    const approval = Promise.withResolvers<boolean>()
+    let canResume: (() => boolean) | undefined
+    const { open, seen, blocked } = await setup({
+      approve: (live) => {
+        canResume = live
+        return approval.promise
+      }
+    })
+    const socket = await open()
+    socket.write(
+      'POST /synthetic HTTP/1.1\r\nHost: data.example\r\nContent-Length: 6\r\n\r\nmarker'
+    )
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    expect(canResume?.()).toBe(true)
+    socket.destroy()
+    await vi.waitFor(() => expect(canResume?.()).toBe(false))
+    approval.resolve(true)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(seen).toEqual([])
+  })
+
+  it('holds an authenticated POST until approval and forwards it on the same connection', async () => {
+    const approval = Promise.withResolvers<boolean>()
+    const { open, seen, blocked } = await setup({ approve: () => approval.promise })
+    const socket = await open()
+    const reply = response(socket)
+    socket.write(
+      'POST /synthetic HTTP/1.1\r\nHost: data.example\r\nAuthorization: Bearer fixture-only\r\nContent-Length: 6\r\n\r\nmarker'
+    )
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    expect(seen).toEqual([])
+    approval.resolve(true)
+    expect(await reply).toContain('fixture')
+    expect(seen).toEqual([
+      expect.objectContaining({
+        method: 'POST',
+        url: '/synthetic',
+        headers: expect.objectContaining({ authorization: 'Bearer fixture-only' })
+      })
+    ])
+  })
+
+  it('never forwards a pending approved request after the gateway has closed', async () => {
+    const approval = Promise.withResolvers<boolean>()
+    const { open, seen, blocked, gateway } = await setup({ approve: () => approval.promise })
+    const socket = await open()
+    socket.write('POST /synthetic HTTP/1.1\r\nHost: data.example\r\nContent-Length: 0\r\n\r\n')
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    await gateway.close()
+    approval.resolve(true)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(seen).toEqual([])
+  })
+
   it('GET then POST on the same TLS connection never sends POST upstream', async () => {
     const { open, seen, blocked, authorities } = await setup()
     const socket = await open()

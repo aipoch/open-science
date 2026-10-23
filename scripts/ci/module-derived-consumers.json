@@ -92,6 +92,7 @@
     "framework_installation": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "framework_process_launch": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "host_bounded_io": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/image-preview-resize.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -106,10 +107,12 @@
     "host_http_transport": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "host_managed_preview": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "host_process_runtime": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts"
     ],
     "host_rpc_transport": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts"
     ],
@@ -123,6 +126,7 @@
       "src/main/notebook/authorized-directories.integration.test.ts"
     ],
     "host_value_guards": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -180,7 +184,10 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "main_agent_framework": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_agent_framework": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts"
+    ],
     "main_agents": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "main_archive": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "main_connectors": ["src/main/acp/specialist-capability-resolution.test.ts"],
@@ -194,8 +201,14 @@
     ],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
     "main_notifications": ["src/main/acp/specialist-capability-resolution.test.ts"],
-    "main_permission_grants": ["src/main/acp/specialist-capability-resolution.test.ts"],
-    "main_session_plan": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_permission_grants": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts"
+    ],
+    "main_session_plan": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts"
+    ],
     "main_session_replay": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "main_specialist": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "main_storage": [
@@ -335,7 +348,10 @@
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "notebook_application": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "notebook_application": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts"
+    ],
     "notebook_evidence": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "notebook_execution_model": [
       "src/main/acp/specialist-capability-resolution.test.ts",
@@ -359,6 +375,7 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "notebook_runtime_binding": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts"
@@ -385,6 +402,7 @@
     "package_literature_citations": [
       "packages/literature-discovery/test/related.test.ts",
       "packages/literature-discovery/test/supplements.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/literature/supplement-attachments.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -404,6 +422,7 @@
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
     "package_literature_library": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
@@ -498,6 +517,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_text": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/composition/session-packages.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -524,6 +544,7 @@
     ],
     "provider_transport": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "providers_package": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/recovery.test.ts",
@@ -1296,6 +1317,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
@@ -2023,6 +2045,7 @@
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime-snapshot-owner.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
@@ -2505,6 +2528,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
@@ -3120,6 +3144,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
@@ -3637,6 +3662,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
@@ -4219,6 +4245,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
@@ -4707,6 +4734,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
@@ -5730,6 +5758,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
@@ -6946,6 +6975,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
@@ -8396,6 +8426,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
@@ -9057,7 +9088,10 @@
     "side_chat_message_bridge": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "skill_activation_policy": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "skill_marketplace": ["src/main/acp/specialist-capability-resolution.test.ts"],
-    "skill_package": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "skill_package": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts"
+    ],
     "skill_runtime_transport": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "specialist_package": [
       "src/main/acp/specialist-capability-resolution.test.ts",
@@ -9086,7 +9120,10 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
-    "user_skills_repository": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "user_skills_repository": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts"
+    ],
     "web_renderer_bridge": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],

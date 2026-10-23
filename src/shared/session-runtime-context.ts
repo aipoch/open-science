@@ -1,3 +1,4 @@
+import type { SandboxNetworkApproval } from './sandbox-network-approval'
 import type { AcpPermissionRequest } from './acp-permission-contract'
 import type { SessionDelegatedWorkRuntimeContext } from './delegated-work-contract'
 import type { ReasoningEffort } from './model-preference-contract'
@@ -52,6 +53,7 @@ export type SessionRuntimeContextOwner =
   | 'plan'
   | 'delegatedWork'
   | 'permission'
+  | 'networkApprovals'
   | 'sideChat'
   | 'sideChatRelays'
   | 'pdfContext'
@@ -104,6 +106,7 @@ export type SessionRuntimeContext = Readonly<{
   revision: number
   plan?: SessionPlanRuntimeContext
   delegatedWork?: SessionDelegatedWorkRuntimeContext
+  networkApprovals?: readonly SandboxNetworkApproval[]
   permission?: SessionPermissionRuntimeContext
   sessionContext?: SessionReadingContext
   pdfContext?: SessionPdfContext
@@ -124,6 +127,7 @@ export type SessionRuntimeContextPatch = Readonly<
   Partial<{
     plan: SessionPlanRuntimeContext | undefined
     delegatedWork: SessionDelegatedWorkRuntimeContext | undefined
+    networkApprovals: readonly SandboxNetworkApproval[] | undefined
     permission: SessionPermissionRuntimeContext | undefined
     sessionContext: SessionReadingContext | undefined
     pdfContext: SessionPdfContext | undefined

@@ -7561,6 +7561,7 @@
     "Fetch DepMap PRISM drug response AUC values for a compound.": "指定した化合物の DepMap PRISM 薬剤応答 AUC 値を取得します。",
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "指定した遺伝子の DepMap/CCLE RNA 発現量を log2(TPM+1) で取得します。",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "細胞モデルの倍数性に対する DepMap/CCLE の相対遺伝子コピー数を取得します。",
-    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal と DepMap/CCLE のがん研究および細胞モデルのオミクス、依存性、薬剤応答データ。"
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal と DepMap/CCLE のがん研究および細胞モデルのオミクス、依存性、薬剤応答データ。",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。"
   }
 }

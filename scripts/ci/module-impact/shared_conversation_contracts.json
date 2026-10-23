@@ -55,7 +55,9 @@
     "src/shared/session-persistence/turn-outcome-codec.test.ts",
     "src/shared/session-persistence/prompt-preparation.test.ts",
     "src/shared/runtime-tool-identity.ts",
-    "src/shared/history-preamble.ts"
+    "src/shared/history-preamble.ts",
+    "src/shared/sandbox-network-approval.ts",
+    "src/shared/session-persistence/network-approvals.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -180,9 +182,12 @@
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
     "src/shared/runtime-tool-identity.ts",
-    "src/shared/history-preamble.ts"
+    "src/shared/history-preamble.ts",
+    "src/shared/sandbox-network-approval.ts"
   ],
-  "consumerModules": ["shared_application_contracts"],
+  "consumerModules": [
+    "shared_application_contracts"
+  ],
   "testFiles": {
     "owner": [
       "src/shared/acp.test.ts",
@@ -201,7 +206,9 @@
       "src/shared/session-persistence/turn-outcome-codec.test.ts",
       "src/shared/session-persistence/prompt-preparation.test.ts"
     ],
-    "contract": ["src/shared/session-persistence.architecture.test.ts"],
+    "contract": [
+      "src/shared/session-persistence.architecture.test.ts"
+    ],
     "consumer": [
       "src/main/literature/journal-attributes.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",

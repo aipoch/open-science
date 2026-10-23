@@ -7561,6 +7561,7 @@
     "Fetch DepMap PRISM drug response AUC values for a compound.": "获取指定化合物的 DepMap PRISM 药物响应 AUC 值。",
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "获取指定基因的 DepMap/CCLE RNA 表达量，单位为 log2(TPM+1)。",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "获取 DepMap/CCLE 中相对于细胞模型倍性的基因拷贝数。",
-    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "来自 cBioPortal 和 DepMap/CCLE 的癌症研究及细胞模型组学、依赖性和药物响应数据。"
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "来自 cBioPortal 和 DepMap/CCLE 的癌症研究及细胞模型组学、依赖性和药物响应数据。",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令行正在等待网络访问批准。如果进程已结束，请批准后手动重试命令；系统不会自动重新执行。"
   }
 }

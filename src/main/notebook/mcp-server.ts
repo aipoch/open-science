@@ -59,7 +59,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
-  'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
+  'Beyond restricted reads, call `request_network_access`. A failed connection is not required. Shell also pauses proxy connections for a human decision when a destination needs approval. If a command ends while waiting, retry explicitly after reviewing possible side effects; approval never replays the command.',
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',

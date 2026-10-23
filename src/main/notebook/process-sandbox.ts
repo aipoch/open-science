@@ -2,6 +2,9 @@ import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
 
+export const NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE =
+  'NETWORK_APPROVAL_RETRY_REQUIRED: Network access was approved, but the connection or execution has ended. Review possible side effects and retry the command explicitly. The command was not replayed.'
+
 export type NotebookSandboxTarget =
   | Readonly<{ kind: 'native' }>
   | Readonly<{
@@ -92,7 +95,15 @@ export type NotebookSandboxedSpawn = Readonly<{
   requestProcessTreeTermination?: () => Promise<boolean>
   confirmProcessState?: () => Promise<NotebookSandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
-  beginExecution?: (request?: { commandText: string }) => () => void
+  beginExecution?: (request?: {
+    commandText: string
+    executionReference?: string
+    signal?: AbortSignal
+    onNetworkWaitChange?: (waiting: boolean) => void
+  }) => () => void
+  waitForNetworkApprovals?: () => Promise<void>
+  networkApprovalRetryRequired?: () => boolean
+  onNetworkWaitChange?: (listener: (waiting: boolean) => void) => () => void
   annotateStderr: (stderr: string, stdout?: string) => string
   cleanup: (
     reason: NotebookSandboxCleanupReason,

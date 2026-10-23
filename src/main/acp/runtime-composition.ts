@@ -857,6 +857,8 @@ const createAcpRuntime = ({
         ...(!delegatedNotebookConnection && sessionPersistenceCoordinator
           ? {
               permissionWait: {
+                allowNetworkDomain:
+                  settingsService.allowNotebookNetworkDomain?.bind(settingsService),
                 sessions: sessionPersistenceCoordinator,
                 onSessionUpdated: (session) => {
                   try {
