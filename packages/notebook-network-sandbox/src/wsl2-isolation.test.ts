@@ -285,6 +285,12 @@ describe('WSL2 sandbox adapter', () => {
       ])
     )
     expect(launch.argv.slice(1).join('\n')).not.toContain('C:\\')
+    const nodeProxyIndex = launch.argv.indexOf('NODE_USE_ENV_PROXY')
+    expect(launch.argv.slice(nodeProxyIndex - 1, nodeProxyIndex + 2)).toEqual([
+      '--setenv',
+      'NODE_USE_ENV_PROXY',
+      '1'
+    ])
     expect(launch.argv).toEqual(
       expect.arrayContaining([
         '--setenv',
