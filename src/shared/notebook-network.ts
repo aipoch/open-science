@@ -254,12 +254,53 @@ export const validateCustomAllowedDomain = (value: string): DomainValidationResu
   return { ok: true, hostname }
 }
 
+// Stored grants accept domain rules only. URL conversion belongs to explicit user input.
+const validateCustomAllowedDomainRule = (value: string): DomainValidationResult => {
+  const wildcard = value.startsWith('*.')
+  const result = validateCustomAllowedDomain(wildcard ? value.slice(2) : value)
+  return result.ok && wildcard ? { ok: true, hostname: `*.${result.hostname}` } : result
+}
+
+export const parseCustomAllowedDomainInput = (value: string): DomainValidationResult => {
+  const input = value.trim()
+  if (!input) return { ok: false, reason: 'empty' }
+  // Reject characters that the URL parser would silently remove or treat as separators.
+  if (/[\s\\]/.test(input)) return { ok: false, reason: 'format' }
+  const source = /^[a-z][a-z\d+.-]*:\/\//i.test(input)
+    ? input
+    : input.startsWith('//')
+      ? `https:${input}`
+      : `https://${input}`
+  try {
+    const authorityStart = source.indexOf('://') + 3
+    const authority = source.slice(authorityStart).split(/[/?#]/, 1)[0]
+    const wildcard = authority.startsWith('*.')
+    // Chromium percent-encodes '*' in hostnames whereas Node preserves it. Parse only
+    // the exact domain so both runtimes retain the same explicit wildcard semantics.
+    const url = new URL(
+      wildcard ? source.slice(0, authorityStart) + source.slice(authorityStart + 2) : source
+    )
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      !authority ||
+      authority.includes('@') ||
+      url.username ||
+      url.password
+    ) {
+      return { ok: false, reason: 'format' }
+    }
+    return validateCustomAllowedDomainRule(wildcard ? `*.${url.hostname}` : url.hostname)
+  } catch {
+    return { ok: false, reason: 'format' }
+  }
+}
+
 const normalizeAllowedDomains = (value: unknown): string[] => {
   if (!Array.isArray(value)) return []
   return uniqueSorted(
     value.flatMap((entry) => {
       if (typeof entry !== 'string') return []
-      const result = validateCustomAllowedDomain(entry)
+      const result = validateCustomAllowedDomainRule(entry)
       return result.ok ? [result.hostname] : []
     })
   )
