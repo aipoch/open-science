@@ -5703,6 +5703,7 @@ describe('notebook runtime service', () => {
             repository: new NotebookRunRepository(root),
             platform: 'linux'
           })
+          liveShellServices.push(service)
 
           const result = await service.executeShell({
             sessionId: 'session-1',

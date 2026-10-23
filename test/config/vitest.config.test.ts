@@ -292,6 +292,7 @@ it('serializes real kernels, TCP servers, and integration files', () => {
       '**/*.integration.test.ts',
       '**/*.certification.test.ts',
       'src/main/notebook/kernel-executor.test.ts',
+      'src/main/notebook/runtime-service.test.ts',
       'src/main/local-rpc-transport.test.ts',
       'src/main/session-plan/plan-mcp-server.test.ts',
       'src/main/acp/mcp-http-host.test.ts'
