@@ -1728,14 +1728,15 @@ export function removeClippedFormText(content, operators, originalContent = cont
   for (const [font, chars] of streams) {
     const text = chars.map((c) => c.char).join('')
     const source = original.get(font)
-    // PDF.js can omit an off-page suffix. A single clip for the entire font
-    // stream makes its item-to-clip assignment unambiguous even in that case.
+    // PDF.js can omit off-page prefixes and suffixes. A contiguous source
+    // substring still has unambiguous clip ownership when the entire font
+    // stream shares one clip; mixed clips require exact stream alignment.
     const uniformClip = chars[0]?.clip
     if (
       text !== source &&
       !(
         source &&
-        text.startsWith(source) &&
+        text.includes(source) &&
         uniformClip &&
         chars.every((c) => c.clip === uniformClip)
       )

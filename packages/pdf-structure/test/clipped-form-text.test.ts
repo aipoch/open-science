@@ -107,3 +107,55 @@ it('keeps an unmatched stream when an omitted suffix crosses different form clip
   }
   expect(removeClippedFormText(content, operators).items).toEqual(content.items)
 })
+
+it.each(['prefix', 'both ends'])(
+  'removes off-clip duplicate captions when PDF.js omits the %s of a uniform form stream',
+  async (omission) => {
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const item = (
+      str: string,
+      y: number
+    ): { str: string; fontName: string; width: number; height: number; transform: number[] } => ({
+      str,
+      fontName: 'form',
+      width: 60,
+      height: 10,
+      transform: [10, 0, 0, 10, 20, y]
+    })
+    const content = {
+      items: [
+        item('Figure 2. Sample measurements.', 120),
+        item('Visible axis label', 20),
+        item('Partially clipped label', 95)
+      ]
+    }
+    const operators = {
+      fnArray: [OPS.setFont, OPS.paintFormXObjectBegin, OPS.showText, OPS.paintFormXObjectEnd],
+      argsArray: [
+        ['form', 10],
+        [null, [0, 0, 100, 100]],
+        [
+          [
+            {
+              unicode:
+                'Omitted running header' +
+                content.items.map((i) => i.str).join('') +
+                (omission === 'both ends' ? 'Omitted footer' : '')
+            }
+          ]
+        ],
+        []
+      ]
+    }
+    const before = structuredClone({ content, operators })
+    expect(removeClippedFormText(content, operators).items).toEqual(content.items.slice(1))
+    expect({ content, operators }).toEqual(before)
+    // Interior omissions do not establish a contiguous source stream.
+    const unmatched = { items: [content.items[0], content.items[2]] }
+    expect(removeClippedFormText(unmatched, operators).items).toEqual(unmatched.items)
+    // The same text outside the form makes an omitted prefix ambiguous.
+    operators.fnArray.push(OPS.setFont, OPS.showText)
+    operators.argsArray.push(['form', 10], [[{ unicode: 'Outside text' }]])
+    expect(removeClippedFormText(content, operators).items).toEqual(content.items)
+  }
+)

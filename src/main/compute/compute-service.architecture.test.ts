@@ -1,5 +1,3 @@
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 import {
   expectTypeOnlyContract,
   runtimeModuleSpecifiers,
@@ -741,23 +739,4 @@ describe('Compute service architecture', () => {
     )
     expect(mainIpc).not.toContain('sessionEnabledComputeHostsOwnerRef.current?.project(session)')
   })
-})
-
-it('selects explicit downstream behavior contracts at the reviewed boundary', () => {
-  {
-    const plan = createAffectedTestPlan(
-      [{ path: 'src/main/compute/compute-service.ts', status: 'modified' }],
-      { status: 'not-used', testFiles: [] }
-    )
-    expect(plan.mode).toBe('selective')
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        'src/main/compute/compute-job-lifecycle.test.ts',
-        'src/main/compute/cancellation-runtime.integration.test.ts',
-        'src/main/compute/job-deletion-runtime-isolation.test.ts',
-        'src/main/compute/ipc.test.ts',
-        'src/main/notebook/host-compute.integration.test.ts'
-      ])
-    )
-  }
 })

@@ -191,9 +191,6 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
-    "An API key is optional but recommended.": "APIキーは任意ですが、設定を推奨します。",
-    "Configure API key": "API キーを設定",
-    "Semantic Scholar settings": "Semantic Scholar の設定",
     "Could not load Reviewer log.": "レビュアーログを読み込めませんでした。",
     "Preparing to receive package…": "パッケージの受信を準備中…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "ブラウザーからのインポートを準備できません。起動エラーを解決してから再試行してください。",
@@ -1818,6 +1815,7 @@
     "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "復元済み：{{restored}}。登録済みまたは利用不可のためスキップ：{{skipped}}。引き続き非表示：{{remaining}}。",
     "The update could not be confirmed. Check the Inbox before trying again.": "更新結果を確認できませんでした。再試行する前に受信トレイを確認してください。",
     "Literature library": "文献ライブラリ",
+    "New Agent discoveries will appear here for review.": "エージェントが新しく見つけた文献は、確認のためここに表示されます。",
     "New collection": "新しいコレクション",
     "No references found": "文献が見つかりません",
     "Search and organize the references you use across projects.": "複数のプロジェクトで使用する文献を検索して整理します。",
@@ -7496,6 +7494,17 @@
     "Drop files to attach to this reference": "ファイルをドロップしてこの文献に添付",
     "Partial results": "一部の結果",
     "Existing attachments are kept. You can also add files from your device.": "既存の添付ファイルは保持されます。お使いのデバイスからファイルを追加することもできます。",
+    "Public cancer imaging collections and series metadata from TCIA.": "TCIA の公開がん画像コレクションとシリーズのメタデータ。",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG のパスウェイ、エントリ、遺伝子マッピング。学術利用およびライセンスの制限が適用されます。",
+    "Search public TCIA imaging collections.": "TCIA の公開画像コレクションを検索します。",
+    "Retrieve TCIA collection details and download requirements.": "TCIA コレクションの詳細とダウンロード要件を取得します。",
+    "Retrieve public imaging series metadata by UID.": "UID で公開画像シリーズのメタデータを取得します。",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG のパスウェイ、オルソログ、化合物、反応を検索します。",
+    "Retrieve a KEGG entry summary.": "KEGG エントリの概要を取得します。",
+    "Map a KEGG gene to pathways or UniProt.": "KEGG 遺伝子をパスウェイまたは UniProt にマッピングします。",
+    "An API key is optional but recommended.": "APIキーは任意ですが、設定を推奨します。",
+    "Configure API key": "API キーを設定",
+    "Semantic Scholar settings": "Semantic Scholar の設定",
     "Add selected to Inbox": "選択した文献を受信箱に追加",
     "Already in Library": "ライブラリに登録済み",
     "Citation discovery": "引用文献の探索",
@@ -7523,7 +7532,6 @@
     "These results expired. Search again.": "結果の有効期限が切れました。再検索してください。",
     "This reference changed. Reopen its details and try again.": "この文献は変更されました。詳細を開き直して再試行してください。",
     "References discovered by you or Agents will appear here for review.": "ユーザーまたはエージェントが見つけた文献が、確認のためここに表示されます。",
-    "New Agent discoveries will appear here for review.": "エージェントが新しく見つけた文献は、確認のためここに表示されます。",
     "Review discovered references before they enter your library.": "見つかった文献を確認してからライブラリに追加します。"
   }
 }

@@ -191,9 +191,6 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
-    "An API key is optional but recommended.": "API key 為選填設定，建議新增。",
-    "Configure API key": "設定 API 金鑰",
-    "Semantic Scholar settings": "Semantic Scholar 設定",
     "Could not load Reviewer log.": "無法載入審閱器記錄。",
     "Preparing to receive package…": "正在準備接收套件…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "無法準備瀏覽器匯入。請解決啟動錯誤後重試。",
@@ -1904,6 +1901,7 @@
     "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "已還原：{{restored}}。已收錄或無法使用，已略過：{{skipped}}。仍已忽略：{{remaining}}。",
     "The update could not be confirmed. Check the Inbox before trying again.": "無法確認更新結果。請檢查收件匣後再試。",
     "Literature library": "文獻庫",
+    "New Agent discoveries will appear here for review.": "智能體新發現的文獻會顯示在此處供你審核。",
     "New collection": "新增合集",
     "No references found": "找不到文獻",
     "Search and organize the references you use across projects.": "搜尋並整理你在各個專案中使用的文獻。",
@@ -7496,6 +7494,17 @@
     "Drop files to attach to this reference": "拖放檔案以附加至此參考文獻",
     "Partial results": "部分結果",
     "Existing attachments are kept. You can also add files from your device.": "保留現有附件，也可從裝置新增檔案。",
+    "Public cancer imaging collections and series metadata from TCIA.": "TCIA 公開腫瘤影像資料集與序列中繼資料。",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG 路徑、條目與基因對應。適用學術用途及授權限制。",
+    "Search public TCIA imaging collections.": "搜尋 TCIA 公開影像資料集。",
+    "Retrieve TCIA collection details and download requirements.": "取得 TCIA 資料集詳情與下載要求。",
+    "Retrieve public imaging series metadata by UID.": "透過 UID 取得公開影像序列中繼資料。",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "搜尋 KEGG 路徑、直系同源基因、化合物與反應。",
+    "Retrieve a KEGG entry summary.": "取得 KEGG 條目摘要。",
+    "Map a KEGG gene to pathways or UniProt.": "將 KEGG 基因對應至路徑或 UniProt。",
+    "An API key is optional but recommended.": "API key 為選填設定，建議新增。",
+    "Configure API key": "設定 API 金鑰",
+    "Semantic Scholar settings": "Semantic Scholar 設定",
     "Add selected to Inbox": "將所選文獻加入收件匣",
     "Already in Library": "已在文獻庫中",
     "Citation discovery": "引用探索",
@@ -7523,7 +7532,6 @@
     "These results expired. Search again.": "這些結果已過期，請重新搜尋。",
     "This reference changed. Reopen its details and try again.": "此文獻已變更，請重新開啟詳細資料後重試。",
     "References discovered by you or Agents will appear here for review.": "您或智能體發現的文獻會顯示在此處供審核。",
-    "New Agent discoveries will appear here for review.": "智能體新發現的文獻會顯示在此處供你審核。",
     "Review discovered references before they enter your library.": "審核找到的文獻，再將其加入文獻庫。"
   }
 }

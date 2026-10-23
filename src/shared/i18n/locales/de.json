@@ -192,9 +192,6 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
-    "An API key is optional but recommended.": "Ein API-Schlüssel ist optional, wird aber empfohlen.",
-    "Configure API key": "API-Schlüssel konfigurieren",
-    "Semantic Scholar settings": "Semantic-Scholar-Einstellungen",
     "Could not load Reviewer log.": "Das Reviewer-Protokoll konnte nicht geladen werden.",
     "Preparing to receive package…": "Empfang des Pakets wird vorbereitet…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Der Browserimport konnte nicht vorbereitet werden. Beheben Sie den Startfehler und versuchen Sie es erneut.",
@@ -4677,6 +4674,7 @@
     "Results {{start}}–{{end}} of {{total}}": "Ergebnisse {{start}}–{{end}} von {{total}}",
     "Move": "Verschieben",
     "Move {{column}}": "{{column}} verschieben",
+    "New Agent discoveries will appear here for review.": "Neue Funde von Agenten erscheinen hier zur Prüfung.",
     "New collection": "Neue Sammlung",
     "No active projects": "Keine aktiven Projekte",
     "No collections": "Keine Sammlungen",
@@ -7656,6 +7654,17 @@
     "Drop files to attach to this reference": "Dateien ablegen, um sie dieser Referenz anzuhängen",
     "Partial results": "Teilergebnisse",
     "Existing attachments are kept. You can also add files from your device.": "Vorhandene Anhänge bleiben erhalten. Sie können auch Dateien von Ihrem Gerät hinzufügen.",
+    "Public cancer imaging collections and series metadata from TCIA.": "Öffentliche Krebsbildsammlungen und Serienmetadaten von TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG-Signalwege, Einträge und Genzuordnungen. Beschränkungen für akademische Nutzung und Lizenzierung gelten.",
+    "Search public TCIA imaging collections.": "Öffentliche TCIA-Bildsammlungen suchen.",
+    "Retrieve TCIA collection details and download requirements.": "Details und Downloadvoraussetzungen einer TCIA-Sammlung abrufen.",
+    "Retrieve public imaging series metadata by UID.": "Metadaten öffentlicher Bildserien anhand der UID abrufen.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG-Signalwege, Orthologe, Verbindungen und Reaktionen suchen.",
+    "Retrieve a KEGG entry summary.": "Zusammenfassung eines KEGG-Eintrags abrufen.",
+    "Map a KEGG gene to pathways or UniProt.": "Ein KEGG-Gen Signalwegen oder UniProt zuordnen.",
+    "An API key is optional but recommended.": "Ein API-Schlüssel ist optional, wird aber empfohlen.",
+    "Configure API key": "API-Schlüssel konfigurieren",
+    "Semantic Scholar settings": "Semantic-Scholar-Einstellungen",
     "Add selected to Inbox": "Auswahl zum Posteingang hinzufügen",
     "Already in Library": "Bereits in der Bibliothek",
     "Citation discovery": "Zitationssuche",
@@ -7683,7 +7692,6 @@
     "These results expired. Search again.": "Diese Ergebnisse sind abgelaufen. Suchen Sie erneut.",
     "This reference changed. Reopen its details and try again.": "Diese Referenz wurde geändert. Öffnen Sie die Details erneut und versuchen Sie es noch einmal.",
     "References discovered by you or Agents will appear here for review.": "Von Ihnen oder Agenten gefundene Referenzen erscheinen hier zur Prüfung.",
-    "New Agent discoveries will appear here for review.": "Neue Funde von Agenten erscheinen hier zur Prüfung.",
     "Review discovered references before they enter your library.": "Prüfen Sie gefundene Referenzen, bevor sie in Ihre Bibliothek gelangen."
   }
 }

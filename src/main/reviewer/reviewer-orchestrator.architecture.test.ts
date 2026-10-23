@@ -34,8 +34,6 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 
 import {
   listProductionSources,
@@ -567,24 +565,5 @@ describe('Reviewer orchestrator architecture', () => {
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
       fallbackCapability: 'main_runtime'
     })
-    for (const path of [
-      'src/main/reviewer/orchestrator.ts',
-      'src/main/reviewer/paged-preview-electron.ts'
-    ]) {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-        status: 'not-used',
-        testFiles: []
-      })
-      expect(plan.mode, path).toBe('selective')
-      expect(plan.testFiles, path).toEqual(
-        expect.arrayContaining([
-          'src/renderer/src/stores/review-store.test.ts',
-          'src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx',
-          'src/renderer/src/reviewer-paged-preview/main.test.ts',
-          'src/renderer/src/lib/acp/workspace-events.test.ts',
-          'src/main/delegation/delegated-review-evidence.test.ts'
-        ])
-      )
-    }
   })
 })

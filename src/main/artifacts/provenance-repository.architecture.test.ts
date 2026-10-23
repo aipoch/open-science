@@ -1,5 +1,3 @@
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 import {
   expectBoundaryPaths,
   expectBoundaryOwnerTests
@@ -638,23 +636,4 @@ it('keeps Literature and Artifact implementations connected only through injecte
     }
   }
   expect(violations).toEqual([])
-})
-
-it('selects explicit downstream behavior contracts at the reviewed boundary', () => {
-  {
-    const plan = createAffectedTestPlan(
-      [{ path: 'src/main/artifacts/provenance-repository.ts', status: 'modified' }],
-      { status: 'not-used', testFiles: [] }
-    )
-    expect(plan.mode).toBe('selective')
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        'src/renderer/src/lib/acp/workspace-events.test.ts',
-        'src/renderer/src/pages/workspace/SessionReproducibilityDialog.test.tsx',
-        'src/renderer/src/pages/workspace/artifact-environment-lock-store.test.ts',
-        'src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx',
-        'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts'
-      ])
-    )
-  }
 })

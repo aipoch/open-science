@@ -194,9 +194,6 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
-    "An API key is optional but recommended.": "API-ключ необязателен, но рекомендуется.",
-    "Configure API key": "Настроить API-ключ",
-    "Semantic Scholar settings": "Настройки Semantic Scholar",
     "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",
     "Preparing to receive package…": "Подготовка к получению пакета…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Не удалось подготовить импорт из браузера. Устраните ошибку запуска и повторите попытку.",
@@ -1885,6 +1882,7 @@
     "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Уже восстановлено: {{restored}}. Принято или недоступно, пропущено: {{skipped}}. Всё ещё отклонено: {{remaining}}.",
     "The update could not be confirmed. Check the Inbox before trying again.": "Не удалось подтвердить обновление. Проверьте входящие перед повторной попыткой.",
     "Literature library": "Библиотека источников",
+    "New Agent discoveries will appear here for review.": "Новые источники, найденные Агентами, появятся здесь для проверки.",
     "New collection": "Новая коллекция",
     "No references found": "Источники не найдены",
     "Search and organize the references you use across projects.": "Ищите и упорядочивайте источники, используемые в разных проектах.",
@@ -7963,6 +7961,17 @@
     "Drop files to attach to this reference": "Перетащите файлы, чтобы прикрепить их к этой ссылке",
     "Partial results": "Частичные результаты",
     "Existing attachments are kept. You can also add files from your device.": "Существующие вложения сохраняются. Также можно добавить файлы с вашего устройства.",
+    "Public cancer imaging collections and series metadata from TCIA.": "Открытые коллекции онкологических изображений и метаданные серий TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "Пути, записи и сопоставления генов KEGG. Действуют ограничения академического использования и лицензирования.",
+    "Search public TCIA imaging collections.": "Поиск открытых коллекций изображений TCIA.",
+    "Retrieve TCIA collection details and download requirements.": "Получение сведений о коллекции TCIA и требований к загрузке.",
+    "Retrieve public imaging series metadata by UID.": "Получение метаданных открытых серий изображений по UID.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "Поиск путей, ортологов, соединений и реакций KEGG.",
+    "Retrieve a KEGG entry summary.": "Получение сводки записи KEGG.",
+    "Map a KEGG gene to pathways or UniProt.": "Сопоставление гена KEGG с путями или UniProt.",
+    "An API key is optional but recommended.": "API-ключ необязателен, но рекомендуется.",
+    "Configure API key": "Настроить API-ключ",
+    "Semantic Scholar settings": "Настройки Semantic Scholar",
     "Add selected to Inbox": "Добавить выбранное во входящие",
     "Already in Library": "Уже в библиотеке",
     "Citation discovery": "Поиск цитирований",
@@ -7990,7 +7999,6 @@
     "These results expired. Search again.": "Срок действия результатов истёк. Выполните поиск снова.",
     "This reference changed. Reopen its details and try again.": "Источник изменился. Откройте сведения заново и повторите попытку.",
     "References discovered by you or Agents will appear here for review.": "Источники, найденные вами или Агентами, появятся здесь для проверки.",
-    "New Agent discoveries will appear here for review.": "Новые источники, найденные Агентами, появятся здесь для проверки.",
     "Review discovered references before they enter your library.": "Проверьте найденные источники перед добавлением в библиотеку."
   }
 }

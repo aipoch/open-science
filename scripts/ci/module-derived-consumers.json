@@ -19,8 +19,10 @@
     ],
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "connector_core": [
+      "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
-      "packages/connector-builtins/src/scientific-expansion.test.ts"
+      "packages/connector-builtins/src/scientific-expansion.test.ts",
+      "packages/connector-builtins/src/tcia.test.ts"
     ],
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
     "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],

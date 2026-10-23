@@ -193,9 +193,6 @@
     "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
-    "An API key is optional but recommended.": "La clave de API es opcional, pero se recomienda configurarla.",
-    "Configure API key": "Configurar clave API",
-    "Semantic Scholar settings": "Configuración de Semantic Scholar",
     "Could not load Reviewer log.": "No se pudo cargar el registro del revisor.",
     "Preparing to receive package…": "Preparando la recepción del paquete…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "No se pudo preparar la importación desde el navegador. Resuelva el error de inicio e inténtelo de nuevo.",
@@ -1887,6 +1884,7 @@
     "Already restored: {{restored}}. Accepted or unavailable, skipped: {{skipped}}. Still dismissed: {{remaining}}.": "Ya restauradas: {{restored}}. Aceptadas o no disponibles, omitidas: {{skipped}}. Aún descartadas: {{remaining}}.",
     "The update could not be confirmed. Check the Inbox before trying again.": "No se pudo confirmar la actualización. Revise la bandeja de entrada antes de volver a intentarlo.",
     "Literature library": "Biblioteca de referencias",
+    "New Agent discoveries will appear here for review.": "Las nuevas referencias encontradas por Agentes aparecerán aquí para su revisión.",
     "New collection": "Nueva colección",
     "No references found": "No se encontraron referencias",
     "Search and organize the references you use across projects.": "Busque y organice las referencias que utiliza en distintos proyectos.",
@@ -7824,6 +7822,17 @@
     "Drop files to attach to this reference": "Soltar archivos para adjuntarlos a esta referencia",
     "Partial results": "Resultados parciales",
     "Existing attachments are kept. You can also add files from your device.": "Se conservan los archivos adjuntos existentes. También puede añadir archivos desde su equipo.",
+    "Public cancer imaging collections and series metadata from TCIA.": "Colecciones públicas de imágenes de cáncer y metadatos de series de TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "Vías, entradas y correspondencias de genes de KEGG. Se aplican restricciones de uso académico y licencia.",
+    "Search public TCIA imaging collections.": "Buscar colecciones públicas de imágenes de TCIA.",
+    "Retrieve TCIA collection details and download requirements.": "Obtener detalles y requisitos de descarga de una colección de TCIA.",
+    "Retrieve public imaging series metadata by UID.": "Obtener metadatos de series públicas de imágenes por UID.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "Buscar vías, ortólogos, compuestos y reacciones de KEGG.",
+    "Retrieve a KEGG entry summary.": "Obtener un resumen de una entrada de KEGG.",
+    "Map a KEGG gene to pathways or UniProt.": "Asignar un gen de KEGG a vías o a UniProt.",
+    "An API key is optional but recommended.": "La clave de API es opcional, pero se recomienda configurarla.",
+    "Configure API key": "Configurar clave API",
+    "Semantic Scholar settings": "Configuración de Semantic Scholar",
     "Add selected to Inbox": "Añadir selección a la bandeja de entrada",
     "Already in Library": "Ya está en la biblioteca",
     "Citation discovery": "Explorar citas",
@@ -7851,7 +7860,6 @@
     "These results expired. Search again.": "Estos resultados han caducado. Vuelva a buscar.",
     "This reference changed. Reopen its details and try again.": "Esta referencia ha cambiado. Vuelva a abrir sus detalles e inténtelo de nuevo.",
     "References discovered by you or Agents will appear here for review.": "Las referencias encontradas por usted o por Agentes aparecerán aquí para su revisión.",
-    "New Agent discoveries will appear here for review.": "Las nuevas referencias encontradas por Agentes aparecerán aquí para su revisión.",
     "Review discovered references before they enter your library.": "Revisar las referencias encontradas antes de añadirlas a la biblioteca."
   }
 }

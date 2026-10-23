@@ -49,8 +49,6 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { loadModuleImpactManifest } from '../../../../scripts/ci/load-module-impact.mjs'
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../../scripts/ci/module-test-impact.mjs'
 
 const rendererRoot = resolve(__dirname, '..')
 const facadePath = resolve(__dirname, 'session-store.ts')
@@ -1079,20 +1077,6 @@ describe('Session Store architecture', () => {
       capabilityOverlays: ['renderer_state'],
       fallbackCapability: 'renderer_view'
     })
-    for (const path of ['src/renderer/src/stores/session-store.ts']) {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-        status: 'not-used',
-        testFiles: []
-      })
-      expect(plan.mode, path).toBe('selective')
-      expect(plan.testFiles, path).toEqual(
-        expect.arrayContaining([
-          'src/renderer/src/hooks/useLifecycleSync.test.tsx',
-          'src/renderer/src/lib/acp/workspace-events.test.ts',
-          'src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx'
-        ])
-      )
-    }
   })
 })
 

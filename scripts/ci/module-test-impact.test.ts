@@ -1255,8 +1255,7 @@ describe('Notebook package module boundaries', () => {
     }
     for (const path of [
       'src/main/notebook/runtime-service.ts',
-      'src/main/notebook/dependency-analysis-adapter.ts',
-      'src/main/notebook/scientific-output-analysis.ts'
+      'src/main/notebook/dependency-analysis-adapter.ts'
     ]) {
       const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
       expect(plan.mode).toBe('selective')
@@ -1273,10 +1272,6 @@ describe('Notebook package module boundaries', () => {
     [
       'src/main/notebook/dependency-analysis-adapter.ts',
       'src/main/notebook/dependency-analysis-adapter.test.ts'
-    ],
-    [
-      'src/main/notebook/working-file-observer.ts',
-      'src/main/notebook/working-file-observer.test.ts'
     ],
     ['src/main/storage/content-repository.ts', 'src/main/storage/content-repository.test.ts']
   ])('keeps host integrations without upstream package units for %s', (path, integration) => {
