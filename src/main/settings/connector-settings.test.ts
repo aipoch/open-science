@@ -1138,6 +1138,19 @@ describe('ConnectorSettingsModule', () => {
     expect(stored?.enabled).toBe(false)
   })
 
+  it('encrypts Semantic Scholar at rest and exposes only configured state', async () => {
+    let snapshot = await service.setSemanticScholarCredential({ apiKey: 'semantic-scholar-secret' })
+    expect(snapshot.semanticScholar).toEqual({ hasApiKey: true })
+    expect(JSON.stringify(snapshot)).not.toContain('semantic-scholar-secret')
+
+    const raw = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(raw).not.toContain('semantic-scholar-secret')
+    expect(JSON.parse(raw).connectors.semanticScholarApiKeyRef).toMatch(/^enc:/)
+
+    snapshot = await service.setSemanticScholarCredential({ apiKey: '' })
+    expect(snapshot.semanticScholar).toEqual({ hasApiKey: false })
+  })
+
   it('encrypts OpenAlex at rest and exposes only configured state', async () => {
     let snapshot = await service.setOpenAlexCredential({ apiKey: 'openalex-secret' })
     expect(snapshot.openAlex).toEqual({ hasApiKey: true })

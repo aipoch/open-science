@@ -319,6 +319,7 @@ const composeAcpRuntimePromptOwners = (
     finalizer: base.promptOutcomeFinalizer,
     permission: session.permissionContext,
     environment: {
+      authorizedDirectories: options.authorizedDirectories,
       connectionGeneration: () => base.connectionResources.epoch,
       backend: () => base.backendGeneration.current,
       tooling: () => session.sessionEnvironment.toolingAvailability(),

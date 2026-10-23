@@ -498,7 +498,19 @@ export const sessionPackageCommandContracts = {
     validationCodec(packageOperationSnapshotSchema.nullable())
   ),
   export: defineApplicationCommandContract(
-    validationCodec(z.tuple([sessionPackageRequestSchema])),
+    validationCodec(
+      z.tuple([
+        sessionPackageRequestSchema,
+        // Headless callers (CLI / local Web RPC) name the destination explicitly; desktop
+        // renderers omit it and keep the native save dialog.
+        z
+          .string()
+          .min(1)
+          .max(32768)
+          .regex(/\.science$/i)
+          .optional()
+      ])
+    ),
     validationCodec(exportResultSchema)
   ),
   import: defineApplicationCommandContract(
@@ -511,10 +523,15 @@ export const sessionPackageCommandContracts = {
             .min(1)
             .max(32768)
             .regex(/\.science$/i)
+            .optional(),
+          z
+            .object({ nonInteractive: z.literal(true) })
+            .strict()
             .optional()
         ])
         .refine(
-          ([target, sourcePath]) => !sourcePath || !target?.projectName,
+          ([target, sourcePath, options]) =>
+            !sourcePath || !target?.projectName || options?.nonInteractive === true,
           'Dropped packages require an existing Project or destination selection.'
         )
     ),

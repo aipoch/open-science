@@ -1200,6 +1200,31 @@ describe('WorkspaceToolDetailsRow', () => {
     })
   })
 
+  it('renders localized directory discovery while retaining the inspectable result', async () => {
+    const activity = createActivity({
+      title: 'mcp__open-science-notebook__list_authorized_directories',
+      providerToolName: 'mcp__open-science-notebook__list_authorized_directories',
+      rawOutput: { revision: 'v1', directories: [] }
+    })
+    root = createRoot(container)
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity, i18next.t)!}
+          isExpanded={false}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('列出已授权目录')
+    expect(container.textContent).not.toContain('mcp__')
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
+  })
+
   it('renders a localized memory action without exposing its MCP identity', async () => {
     const saveActivity = createActivity({
       providerToolName: 'mcp__open-science-notebook__remember_memory',

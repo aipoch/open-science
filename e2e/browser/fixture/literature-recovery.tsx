@@ -1,3 +1,4 @@
+import type { LiteratureRelatedRequest } from '@aipoch/literature-discovery/contracts'
 import { LiteratureRendererProvider } from '@/pages/literature/public/host'
 import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
@@ -8,6 +9,7 @@ import { LiteratureBatchLookupDialog } from '@/pages/literature/workflows/Litera
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { LiteratureJobRequest, LiteratureJobView } from '@aipoch/literature-discovery/jobs'
 import {
   literatureItemInputSchema,
@@ -18,6 +20,7 @@ import { createRoot } from 'react-dom/client'
 
 initI18n('en')
 const mode = new URLSearchParams(location.search).get('mode')
+let requiresCitationKey = new URLSearchParams(location.search).has('citation-key')
 const parent = {
   id: 'parent',
   revision: 1,
@@ -116,6 +119,47 @@ window.api = {
     abortTransfer: async () => {}
   },
   literature: {
+    related: async (request: LiteratureRelatedRequest) => {
+      fileRequests.push(request)
+      if (new URLSearchParams(location.search).has('citation-loading'))
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { finishCitationLookup: resolve })
+        )
+      if (requiresCitationKey)
+        return {
+          itemId: fileItem.id,
+          metadataRevision: fileItem.metadataRevision,
+          direction: request.direction,
+          state: 'unavailable',
+          issue: 'rate-limited',
+          records: []
+        }
+      return {
+        itemId: fileItem.id,
+        metadataRevision: fileItem.metadataRevision,
+        direction: request.direction,
+        state: 'ready',
+        nextOffset: request.offset === 0 ? 20 : undefined,
+        resolutionToken: '00000000-0000-4000-8000-000000000000',
+        records: [
+          {
+            paperId: (request.offset ? 'b' : 'a').repeat(40),
+            item: literatureItemInputSchema.parse({
+              itemType: 'journalArticle',
+              title: request.offset
+                ? 'Another related paper'
+                : request.direction === 'references'
+                  ? 'A foundational reference'
+                  : 'A follow-up study',
+              issuedYear: 2025,
+              abstract: 'An example abstract from Semantic Scholar.',
+              containerTitle: 'Example Journal',
+              url: 'https://www.semanticscholar.org/paper/' + 'a'.repeat(40)
+            })
+          }
+        ]
+      }
+    },
     get: async () => fileItem,
     importPdf: async (request: { itemId: string; attachment: { name: string } }) => {
       fileRequests.push(request)
@@ -150,6 +194,21 @@ window.api = {
     }),
     transact: async (command: LiteratureCatalogCommand) => {
       commands.push(command)
+      if (command.kind === 'stage-candidate') {
+        const saveMode = new URLSearchParams(location.search).get('citation-save')
+        if (saveMode) {
+          await new Promise<void>((resolve) =>
+            Object.assign(window, { finishCitationStage: resolve })
+          )
+          if (
+            saveMode === 'failure' &&
+            commands.filter((entry) => 'kind' in entry && entry.kind === 'stage-candidate')
+              .length === 2
+          )
+            throw new Error('Staging failed')
+        }
+        return { kind: 'candidate', id: 'found-paper', state: 'pending' }
+      }
       if (command.kind === 'update-collection')
         collections = collections.map((collection) =>
           collection.id === command.collectionId
@@ -184,6 +243,15 @@ useNavigationStore.setState({
 })
 useProjectStore.setState({ projects: [], isLoaded: true })
 useTagStore.setState({ status: 'ready', revision: 1, tags: [], assignments: [] })
+useSettingsStore.setState({
+  encryptionAvailable: true,
+  connectorsLoaded: true,
+  semanticScholar: { hasApiKey: false },
+  setSemanticScholarCredential: async () => {
+    requiresCitationKey = false
+    useSettingsStore.setState({ semanticScholar: { hasApiKey: true } })
+  }
+})
 createRoot(document.getElementById('root')!).render(
   <LiteratureRendererProvider host={literatureRendererHost}>
     {mode === 'batch' ? (

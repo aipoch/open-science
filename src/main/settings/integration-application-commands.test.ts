@@ -65,6 +65,7 @@ const expectedConnectorChannels = [
   'settings:set-connector-auto-allow',
   'settings:set-tool-permission',
   'settings:set-ncbi-credentials',
+  'settings:set-semantic-scholar-credential',
   'settings:set-openalex-credential',
   'settings:validate-openalex-credential',
   'settings:add-custom-server',
@@ -183,7 +184,7 @@ describe('Settings integration application commands', () => {
     }
     expect(skillMethod('startSkillMarketplaceBatch')).toHaveBeenCalledWith(request)
   })
-  it('defines the exact 45-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 46-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -217,7 +218,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(45)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(46)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -226,7 +227,7 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(44)
+    expect(integrationContracts).toHaveLength(45)
     expect(
       integrationContracts
         ?.filter(
@@ -249,6 +250,7 @@ describe('Settings integration application commands', () => {
             contract.channel !== 'settings:authenticate-device-credential' &&
             contract.channel !== 'settings:cancel-device-credential-authentication' &&
             contract.channel !== 'settings:disconnect-device-credential' &&
+            contract.channel !== 'settings:set-semantic-scholar-credential' &&
             contract.channel !== 'settings:set-openalex-credential' &&
             contract.channel !== 'settings:validate-openalex-credential' &&
             contract.channel !== 'settings:add-custom-server' &&
@@ -279,6 +281,7 @@ describe('Settings integration application commands', () => {
             contract.channel === 'settings:authenticate-device-credential' ||
             contract.channel === 'settings:cancel-device-credential-authentication' ||
             contract.channel === 'settings:disconnect-device-credential' ||
+            contract.channel === 'settings:set-semantic-scholar-credential' ||
             contract.channel === 'settings:set-openalex-credential' ||
             contract.channel === 'settings:validate-openalex-credential' ||
             contract.channel === 'settings:add-custom-server' ||
@@ -639,6 +642,18 @@ describe('Settings integration application commands', () => {
         invocation([{ id: 'server-1' }] as const, createTaskCallerContext({ location: 'remote' }))
       )
     ).rejects.toThrow('Channel only available from the local app: settings:test-custom-server')
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.setSemanticScholarCredential,
+        invocation(
+          [{ apiKey: 'semantic-scholar-key' }] as const,
+          createWebCallerContext('remote-human', { location: 'remote' })
+        )
+      )
+    ).rejects.toThrow(
+      'Channel only available from the local app: settings:set-semantic-scholar-credential'
+    )
 
     await expect(
       router.dispatcher.invoke(

@@ -1,5 +1,5 @@
 import { link, lstat, mkdir, rm } from 'node:fs/promises'
-import type { Stats } from 'node:fs'
+import type { BigIntStats, Stats } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { SessionPackageInventoryEntry } from '../../shared/session-package'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
@@ -109,8 +109,8 @@ export const createPackageMaterializer = async (
   }
 }
 
-const observation = (stat: Stats): string =>
-  `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
+const observation = (stat: BigIntStats): string =>
+  `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`
 
 // Reuse reads only within one validation pass, including immutable hardlink aliases. A changed
 // observation requires a fresh digest; separate calls never trust an earlier import/export.
@@ -118,19 +118,19 @@ export const createPackageContentVerifier = (): typeof digestFileWithinBudget =>
   const verified = new Map<string, Awaited<ReturnType<typeof digestFileWithinBudget>>>()
   return async (path, maxBytes, signal) => {
     signal?.throwIfAborted()
-    const before = await lstat(path)
+    const before = await lstat(path, { bigint: true })
     signal?.throwIfAborted()
     if (!before.isFile()) throw new Error('Session package content is not a regular file.')
-    assertWithinResourceBudget('file', before.size, maxBytes)
+    assertWithinResourceBudget('file', Number(before.size), maxBytes)
     const key = observation(before)
     // Filesystems without a usable inode identity cannot establish that aliases share bytes.
-    const reusable = Number.isSafeInteger(before.ino) && before.ino > 0
+    const reusable = before.ino > 0n
     const cached = reusable ? verified.get(key) : undefined
     if (cached) return cached
     const digest = await digestFileWithinBudget(path, maxBytes, signal)
-    const after = await lstat(path)
+    const after = await lstat(path, { bigint: true })
     signal?.throwIfAborted()
-    if (!after.isFile() || observation(after) !== key || digest.sizeBytes !== after.size)
+    if (!after.isFile() || observation(after) !== key || BigInt(digest.sizeBytes) !== after.size)
       throw new Error('Session package content changed during validation.')
     if (reusable) verified.set(key, digest)
     return digest

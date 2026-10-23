@@ -258,7 +258,13 @@ describe('renderer contract catalog', () => {
           surfaceInstallation.localWeb === 'web-rpc' &&
           parameterCodec.electron !== parameterCodec.web
       )
-    ).toEqual(['acp.connect', 'acp.createSession', 'notebookEnv.cancel', 'sessions.saveSession'])
+    ).toEqual([
+      'acp.connect',
+      'acp.createSession',
+      'notebookEnv.cancel',
+      'sessions.importPackage',
+      'sessions.saveSession'
+    ])
 
     const explicitEquivalentTransforms = paths(
       ({ parameterCodec }) =>
@@ -526,6 +532,7 @@ describe('renderer contract catalog', () => {
       'literature.jobs',
       'literature.journals',
       'literature.lookupMetadata',
+      'literature.related',
       'literature.search',
       'literature.sources',
       'literature.supplementAttachment',
@@ -569,6 +576,7 @@ describe('renderer contract catalog', () => {
       'sessionReplay.saveView',
       'sessionReplay.unlinkSession',
       'sessions.cancelDiagnostics',
+      'sessions.deleteRecoveryFile',
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportDiagnostics',
@@ -619,6 +627,7 @@ describe('renderer contract catalog', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:related',
       'literature:search',
       'literature:sources',
       'literature:supplement-attachment',
@@ -662,6 +671,7 @@ describe('renderer contract catalog', () => {
       'session-replay:save-view',
       'session-replay:unlink-session',
       'sessions:cancel-diagnostics',
+      'sessions:delete-recovery-file',
       'sessions:delete-session',
       'sessions:edit-details',
       'sessions:export-diagnostics',

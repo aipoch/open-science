@@ -606,6 +606,43 @@ turns only and is rejected while root-agent, subagent, or Notebook work is activ
 does not block the update. Stale revisions fail with `session_revision_conflict`; invalid or
 unavailable references fail with `invalid_configuration`.
 
+## Session package export and import
+
+Export a Session to a `.science` package at an explicit path. The Session must be idle:
+
+```bash
+open-science session export <session-id> --project <id-or-name> --output ~/backups/session.science
+```
+
+`--project` resolves a Project by id or name and selects which Session to export. `--output` must
+be an absolute or relative path ending in `.science`; when it is omitted the command fails instead
+of opening a native save dialog, because the CLI runs without a desktop session. The command
+returns the saved status and written path as JSON with `--json`.
+
+Both package commands allow up to one hour by default. Use `--timeout-ms <milliseconds>`
+to adjust the request deadline for large packages or slower disks.
+
+Import a `.science` package. Import is non-interactive by design and requires an explicit
+confirmation flag:
+
+```bash
+open-science session import ~/backups/session.science --new-project "Restored session" --non-interactive
+open-science session import ~/backups/session.science --project <id-or-name> --non-interactive
+```
+
+`--non-interactive` confirms the import preview on the caller's behalf; without it the command
+fails rather than waiting for an approval that a headless caller can never supply. Choose exactly
+one destination: `--project` imports into an existing Project, `--new-project` creates one with
+the given name, and omitting both uses the package's own Project name in a new Project. The
+package file is read directly from disk, so no upload or drag-and-drop step is involved.
+
+Both commands dispatch the same `sessions:export-package`, `sessions:import-package`, and
+`sessions:package-operation` application commands the desktop app uses, over the authenticated
+loopback HTTP channel. They are unavailable to remote Web sessions by design: the channel is
+installed as a rejecting stub for remote callers, and the handler additionally requires a local
+caller, so arbitrary-path file read and write stay confined to loopback callers that hold the
+service token.
+
 ## Agent routing settings
 
 Inspect or atomically update the global Agent framework plus Reviewer and Subagent model routing:

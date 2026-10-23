@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto'
+import * as fs from 'node:fs/promises'
 import { link, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { withFileIoPacing } from '../file-io-pacing'
 import { createPackageContentVerifier } from './materialize'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, lstat: vi.fn(actual.lstat) }
+})
 
 const roots: string[] = []
 const fixture = async (): Promise<{ source: string; alias: string; payload: Buffer }> => {
@@ -18,35 +24,48 @@ const fixture = async (): Promise<{ source: string; alias: string; payload: Buff
   return { source, alias, payload }
 }
 afterEach(async () => {
+  vi.mocked(fs.lstat).mockReset()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
-it('reads unchanged aliases once per invocation while validating each caller budget', async () => {
-  const { source, alias, payload } = await fixture()
-  let bytes = 0
-  await withFileIoPacing(
-    async (size) => {
-      bytes += size
-    },
-    async () => {
-      const verify = createPackageContentVerifier()
-      const digest = await verify(source, payload.length)
-      expect(digest).toEqual({
-        sizeBytes: payload.length,
-        checksum: createHash('sha256').update(payload).digest('hex')
+it.each([false, true])(
+  'reads unchanged aliases once per invocation with large inode=%s while validating each caller budget',
+  async (largeInode) => {
+    const { source, alias, payload } = await fixture()
+    if (largeInode) {
+      const { lstat } = await vi.importActual<typeof fs>('node:fs/promises')
+      vi.mocked(fs.lstat).mockImplementation(async (...args) => {
+        const stat = await lstat(...args)
+        // NTFS file IDs can exceed the integer precision of a JavaScript number.
+        stat.ino = (typeof stat.ino === 'bigint' ? 2n ** 60n : 2 ** 60) as typeof stat.ino
+        return stat
       })
-      expect(await verify(alias, payload.length)).toEqual(digest)
-      expect(await verify(source, payload.length)).toEqual(digest)
-      expect(bytes).toBe(payload.length)
-      await expect(verify(alias, payload.length - 1)).rejects.toThrow()
-      const controller = new AbortController()
-      controller.abort(new Error('cancelled'))
-      await expect(verify(alias, payload.length, controller.signal)).rejects.toThrow('cancelled')
-      await createPackageContentVerifier()(alias, payload.length)
-      expect(bytes).toBe(payload.length * 2)
     }
-  )
-})
+    let bytes = 0
+    await withFileIoPacing(
+      async (size) => {
+        bytes += size
+      },
+      async () => {
+        const verify = createPackageContentVerifier()
+        const digest = await verify(source, payload.length)
+        expect(digest).toEqual({
+          sizeBytes: payload.length,
+          checksum: createHash('sha256').update(payload).digest('hex')
+        })
+        expect(await verify(alias, payload.length)).toEqual(digest)
+        expect(await verify(source, payload.length)).toEqual(digest)
+        expect(bytes).toBe(payload.length)
+        await expect(verify(alias, payload.length - 1)).rejects.toThrow()
+        const controller = new AbortController()
+        controller.abort(new Error('cancelled'))
+        await expect(verify(alias, payload.length, controller.signal)).rejects.toThrow('cancelled')
+        await createPackageContentVerifier()(alias, payload.length)
+        expect(bytes).toBe(payload.length * 2)
+      }
+    )
+  }
+)
 
 it('does not trust a replaced source or separately stored legacy object', async () => {
   const { source, payload } = await fixture()

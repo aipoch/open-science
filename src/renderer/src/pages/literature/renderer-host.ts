@@ -15,6 +15,7 @@ import type {
   OpenAlexCredentialView,
   OpenAlexCredentialValidation,
   SetOpenAlexCredentialRequest,
+  SetSemanticScholarCredentialRequest,
   ValidateOpenAlexCredentialRequest
 } from '../../../../shared/settings'
 
@@ -142,6 +143,7 @@ export type LiteratureRendererHost = {
   }>
   useSettingsStore: SelectorStore<{
     ncbi: NcbiCredentialsView
+    semanticScholar?: { hasApiKey: boolean }
     openAlex: OpenAlexCredentialView
     encryptionAvailable: boolean
     loadConnectors(): Promise<void>
@@ -151,6 +153,7 @@ export type LiteratureRendererHost = {
     setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<void>
     isSettingsOpen: boolean
     openSettingsToClassification(): void
+    setSemanticScholarCredential(request: SetSemanticScholarCredentialRequest): Promise<void>
   }>
   useProjectFormDialog(options?: {
     onCreated?: (project: LiteratureProject) => void

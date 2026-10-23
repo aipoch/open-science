@@ -99,6 +99,7 @@ export type ConnectorsSnapshot = {
   ncbi: NcbiCredentialsView
   // Optional only for compatibility with an older main process during local development.
   openAlex?: OpenAlexCredentialView
+  semanticScholar?: { hasApiKey: boolean }
 }
 
 export type DeviceCredentialKind = 'api_key' | 'token' | 'oauth'

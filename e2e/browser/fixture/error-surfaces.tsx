@@ -40,6 +40,11 @@ if (query.has('undo')) {
 
 export function Fixture(): React.JSX.Element {
   const { t } = useTranslation()
+  const [damagedFiles, setDamagedFiles] = useState([
+    { projectId: 'research', fileName: 'conversation.json' },
+    { projectId: 'research', fileName: 'second-conversation.json' }
+  ])
+  const [deletions, setDeletions] = useState(0)
   const [confirm, setConfirm] = useState(false)
   const [attempts, setAttempts] = useState(0)
   const [dismissed, setDismissed] = useState(false)
@@ -50,6 +55,26 @@ export function Fixture(): React.JSX.Element {
       <h1 className="text-xl font-semibold">
         Error surfaces — production components / fixture data
       </h1>
+      {query.has('delete-recovery') ? (
+        <section data-testid="delete-recovery-host">
+          <SessionCatalogRecoveryAlert
+            inline
+            recovery={
+              damagedFiles.length
+                ? { kind: 'damaged-authority', affectedFiles: damagedFiles }
+                : { kind: 'ready' }
+            }
+            onDeleteRecoveryFile={async (request) => {
+              setDeletions((count) => count + 1)
+              await new Promise((resolve) => setTimeout(resolve, 100))
+              if (deletions === 0) throw new Error('Fixture removal failure')
+              setDamagedFiles((files) => files.filter((file) => file.fileName !== request.fileName))
+            }}
+            onRetry={() => setRetry((count) => count + 1)}
+          />
+          <output data-testid="deletion-count">{deletions}</output>
+        </section>
+      ) : null}
       {query.has('inline-catalog') ? (
         <section data-testid="inline-catalog-host">
           <SessionCatalogRecoveryAlert

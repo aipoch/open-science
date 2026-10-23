@@ -222,6 +222,7 @@ export function composeCommandDependencies({
       literatureReferenceResolver: researchCatalog.literatureReferenceResolver,
       literatureMetadataEnricher: researchCatalog.literatureMetadataEnricher,
       literatureFullTextFinder: researchCatalog.literatureFullTextFinder,
+      literatureRelatedFinder: researchCatalog.literatureRelatedFinder,
       literatureSupplementFinder: researchCatalog.literatureSupplementFinder,
       literatureSupplementAttachments: researchCatalog.literatureSupplementAttachments,
       artifactProvenanceRepository: managedFiles.artifactProvenanceRepository,
@@ -272,14 +273,17 @@ export function composeCommandDependencies({
         exportSessionPackage: (invocation) =>
           sessionPackageSurfaces.sessionPackageDesktop.export(
             invocation.args[0],
-            invocation.callerContext.clientId
+            invocation.callerContext.clientId,
+            invocation.args[1]
           ),
         importSessionPackage: (invocation) =>
           sessionPackageSurfaces.sessionPackageDesktop.import(
             invocation.callerContext.clientId,
             invocation.callerContext.lifecycleClientId,
             invocation.args[0],
-            invocation.args[1]
+            invocation.args[1],
+            false,
+            invocation.args[2]
           ),
         exportConversationFromInvokingWindow: (invocation) =>
           sessionPackageSurfaces.conversationExportService.exportConversation(
@@ -312,6 +316,16 @@ export function composeCommandDependencies({
       projects: projectLifecycle.projectHandlers,
       sessions: {
         ...sessionSurfaces.sessionPersistenceHandlers,
+        deleteRecoveryFile: async (request) => {
+          await projectLifecycle.projectDeletionCoordinator.waitForProjectOperations([
+            request.projectId
+          ])
+          await projectLifecycle.archiveCoordinator.withSessionRecoveryDeletion(
+            request.projectId,
+            request.fileName.slice(0, -5),
+            () => sessionAuthority.sessionPersistenceCoordinator.deleteRecoveryFile(request)
+          )
+        },
         filterPdfContextCandidates: (request) =>
           documentReading.sessionPdfContextOwner.filterCandidates(request),
         linkPdfContext: (request) =>

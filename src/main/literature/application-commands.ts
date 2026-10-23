@@ -1,5 +1,7 @@
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
 import {
+  type LiteratureRelatedRequest,
+  type LiteratureRelatedResult,
   type LiteratureFullTextRequest,
   type LiteratureFullTextProgress,
   type LiteratureSupplementRequest,
@@ -74,6 +76,7 @@ type LiteratureCommandOwner = Readonly<{
     request: LiteratureSupplementAttachmentRequest,
     signal?: AbortSignal
   ): Promise<LiteratureSupplementAttachmentResult>
+  related(request: LiteratureRelatedRequest, signal?: AbortSignal): Promise<LiteratureRelatedResult>
   supplements(
     request: LiteratureSupplementRequest,
     signal?: AbortSignal
@@ -139,6 +142,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [LiteratureSupplementAttachmentRequest],
     LiteratureSupplementAttachmentResult
   >('literature:supplement-attachment', literatureApplicationCommandContracts.supplementAttachment),
+  related: defineApplicationCommand<
+    'literature:related',
+    readonly [LiteratureRelatedRequest],
+    LiteratureRelatedResult
+  >('literature:related', literatureApplicationCommandContracts.related),
   supplements: defineApplicationCommand<
     'literature:supplements',
     readonly [LiteratureSupplementRequest],
@@ -217,6 +225,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.exportRecord,
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
+  literatureApplicationCommands.related,
   literatureApplicationCommands.supplements,
   literatureApplicationCommands.supplementAttachment,
   literatureApplicationCommands.supplementAttachmentProgress,
@@ -275,6 +284,11 @@ const registerLiteratureApplicationCommands = (
             args[0],
             AbortSignal.any([callerLease.signal, lifetime.signal])
           )
+        ),
+      'literature:related': ({ args, callerLease }) =>
+        run(
+          () => owner.related(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
         ),
       'literature:supplements': ({ args, callerLease }) =>
         run(

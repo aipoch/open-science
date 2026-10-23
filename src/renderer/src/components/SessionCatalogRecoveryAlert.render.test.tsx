@@ -242,4 +242,167 @@ describe('SessionCatalogRecoveryAlert', () => {
         ?.textContent
     ).toBe('Retry recovery')
   })
+  it('requires confirmation, blocks duplicate deletion, and keeps remaining files open after recheck', async () => {
+    const pending = Promise.withResolvers<void>()
+    const remove = vi.fn(() => pending.promise)
+    const recheck = vi.fn()
+    const files = [
+      { projectId: 'project-a', fileName: 'first.json' },
+      { projectId: 'project-a', fileName: 'second.json' }
+    ]
+    const render = (affectedFiles = files): void =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{ kind: 'damaged-authority', affectedFiles }}
+          onDeleteRecoveryFile={remove}
+          onRetry={recheck}
+        />
+      )
+    const button = (name: string): HTMLButtonElement | undefined =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent === name
+      )
+    act(() => render())
+    act(() => button('View affected conversations')?.click())
+    act(() => button('Delete damaged file')?.click())
+    expect(document.body.textContent).toContain('This cannot be undone')
+    expect(document.querySelector('[data-testid="session-recovery-details-dialog"]')).toBeNull()
+    expect(document.body.textContent).not.toContain('second.json')
+    expect(
+      document.querySelectorAll('[data-testid="session-recovery-delete-dialog"] button')
+    ).toHaveLength(2)
+    expect(remove).not.toHaveBeenCalled()
+    act(() => button('Cancel')?.click())
+    expect(button('Permanently delete')).toBeUndefined()
+    act(() => button('Delete damaged file')?.click())
+    act(() => {
+      button('Permanently delete')?.click()
+      button('Permanently delete')?.click()
+    })
+    expect(remove).toHaveBeenCalledExactlyOnceWith(files[0])
+    expect(button('Deleting…')?.disabled).toBe(true)
+    expect(button('Cancel')?.disabled).toBe(true)
+    expect(button('Close')).toBeUndefined()
+    await act(async () => {
+      pending.resolve()
+      await pending.promise
+    })
+    expect(recheck).toHaveBeenCalledOnce()
+    act(() => render([files[1]]))
+    expect(document.querySelector('[data-testid="session-recovery-details-dialog"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('first.json')
+    expect(document.body.textContent).toContain('second.json')
+    act(() => root.render(<SessionCatalogRecoveryAlert recovery={{ kind: 'ready' }} />))
+    expect(document.querySelector('[data-testid="session-recovery-details-dialog"]')).toBeNull()
+  })
+
+  it('returns to the remaining files when rechecking resolves the confirmation target', () => {
+    const files = [
+      { projectId: 'p', fileName: 'first.json' },
+      { projectId: 'p', fileName: 'second.json' }
+    ]
+    const render = (affectedFiles = files): void =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{ kind: 'damaged-authority', affectedFiles }}
+          onDeleteRecoveryFile={vi.fn()}
+        />
+      )
+    const button = (name: string): HTMLButtonElement | undefined =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent === name
+      )
+    act(() => render())
+    act(() => button('View affected conversations')?.click())
+    act(() => button('Delete damaged file')?.click())
+    expect(document.querySelector('[data-testid="session-recovery-delete-dialog"]')).not.toBeNull()
+    act(() => render([files[1]]))
+    expect(document.querySelector('[data-testid="session-recovery-delete-dialog"]')).toBeNull()
+    expect(document.querySelector('[data-testid="session-recovery-details-dialog"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('first.json')
+    expect(document.body.textContent).toContain('second.json')
+  })
+
+  it('reports deletion failure, rechecks partial removal and permits retry', async () => {
+    const remove = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Access denied'))
+      .mockResolvedValueOnce(undefined)
+    const recheck = vi.fn()
+    const button = (name: string): HTMLButtonElement | undefined =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent === name
+      )
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{
+            kind: 'damaged-authority',
+            affectedFiles: [{ projectId: 'p', fileName: 'first.json' }]
+          }}
+          onDeleteRecoveryFile={remove}
+          onRetry={recheck}
+        />
+      )
+    )
+    act(() => button('View affected conversations')?.click())
+    act(() => button('Delete damaged file')?.click())
+    await act(async () => button('Permanently delete')?.click())
+    expect(document.body.textContent).toContain('Could not delete all recovery copies')
+    expect(recheck).toHaveBeenCalledOnce()
+    expect(button('Permanently delete')?.disabled).toBe(false)
+    await act(async () => button('Permanently delete')?.click())
+    expect(remove).toHaveBeenCalledTimes(2)
+    expect(recheck).toHaveBeenCalledTimes(2)
+  })
+
+  it('explains why compute-owned recovery copies cannot be deleted', async () => {
+    const remove = vi
+      .fn()
+      .mockRejectedValue(new Error('Session recovery files still own compute jobs.'))
+    const recheck = vi.fn()
+    const button = (name: string): HTMLButtonElement | undefined =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent === name
+      )
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{
+            kind: 'damaged-authority',
+            affectedFiles: [{ projectId: 'p', fileName: 'first.json' }]
+          }}
+          onDeleteRecoveryFile={remove}
+          onRetry={recheck}
+        />
+      )
+    )
+    act(() => button('View affected conversations')?.click())
+    act(() => button('Delete damaged file')?.click())
+    await act(async () => button('Permanently delete')?.click())
+    expect(document.body.textContent).toContain('This conversation still has compute jobs.')
+    expect(document.body.textContent).toContain('Their remote files are kept.')
+    expect(document.body.textContent).toContain('first.json')
+    expect(recheck).toHaveBeenCalledOnce()
+  })
+
+  it('does not offer deletion for oversized files', () => {
+    act(() =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{
+            kind: 'oversized-authority',
+            affectedFiles: [{ projectId: 'p', fileName: 'large.json' }]
+          }}
+          onDeleteRecoveryFile={vi.fn()}
+        />
+      )
+    )
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="session-persistence-action"]')
+        ?.click()
+    )
+    expect(document.body.textContent).not.toContain('Delete damaged file')
+  })
 })

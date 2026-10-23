@@ -1531,12 +1531,14 @@ export type ConnectorsSnapshot = {
   ncbi: NcbiCredentialsView
   // Optional only for compatibility with an older main process during local development.
   openAlex?: OpenAlexCredentialView
+  semanticScholar?: { hasApiKey: boolean }
 }
 
 export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
 export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
 export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
 export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
+export type SetSemanticScholarCredentialRequest = { apiKey: string }
 export type SetOpenAlexCredentialRequest = { apiKey: string }
 export type ValidateOpenAlexCredentialRequest = { apiKey: string }
 export type OpenAlexCredentialValidation =

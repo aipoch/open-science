@@ -195,6 +195,7 @@ const createDependencies = () => {
     messages: []
   }
   const sessions = {
+    deleteRecoveryFile: vi.fn(async () => undefined),
     listRuntimeTerminalFailures: vi.fn(async () => []),
     retryRuntimeTerminalCommit: vi.fn(async () => undefined),
     searchMessages: vi.fn(),
@@ -318,6 +319,7 @@ const WRAPPED_COMMAND_KEYS = [
   'projectUpdate',
   'projectUpdateSessionDefaults',
   'sessionDelete',
+  'sessionDeleteRecoveryFile',
   'sessionEditDetails',
   'sessionExportConversation',
   'sessionFork',
@@ -445,6 +447,7 @@ describe('Data and content application commands', () => {
         'projects:update-session-defaults',
         'sessions:open-recovery-folder',
         'sessions:delete-session',
+        'sessions:delete-recovery-file',
         'sessions:edit-details',
         'sessions:export-conversation',
         'sessions:inspect-diagnostics',
@@ -2485,4 +2488,32 @@ describe('Data and content application commands', () => {
       }
     })
   })
+})
+
+it('validates recovery-file deletion and holds the data-root lease for the mutation', async () => {
+  const deps = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+  const request = { projectId: 'project-a', fileName: 'session-1.json' }
+  await expect(
+    router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionDeleteRecoveryFile,
+      invocation([request])
+    )
+  ).resolves.toBeUndefined()
+  expect(deps.sessions.deleteRecoveryFile).toHaveBeenCalledExactlyOnceWith(request)
+  expect(deps.dependencies.withDataRootWrite).toHaveBeenCalledOnce()
+  for (const invalid of [
+    { ...request, fileName: '../session-1.json' },
+    { ...request, projectId: 'C:foo' },
+    { ...request, path: '/tmp/file' }
+  ]) {
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionDeleteRecoveryFile,
+        invocation([invalid] as never)
+      )
+    ).rejects.toThrow()
+  }
+  expect(deps.sessions.deleteRecoveryFile).toHaveBeenCalledOnce()
 })

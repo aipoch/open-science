@@ -145,3 +145,79 @@ for (const fixture of ['error-surfaces.html?toasts', 'notice-styles.html?']) {
     await expect(page.getByRole('button', { name: '打开连接器', exact: true })).toBeVisible()
   })
 }
+
+for (const width of [360, 1000]) {
+  test(`damaged recovery files can be confirmed, retried and cleared at ${width}px`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/error-surfaces.html?delete-recovery')
+    await page
+      .getByTestId('delete-recovery-host')
+      .getByRole('button', { name: 'View affected conversations' })
+      .click()
+    const dialog = page.getByTestId('session-recovery-details-dialog')
+    const confirmation = page.getByTestId('session-recovery-delete-dialog')
+    await dialog
+      .getByText('conversation.json', { exact: true })
+      .locator('..')
+      .getByRole('button', { name: 'Delete damaged file' })
+      .click()
+    await expect(confirmation.getByText('This cannot be undone.', { exact: false })).toBeVisible()
+    await expect(dialog).toHaveCount(0)
+    await expect(confirmation.getByRole('button')).toHaveCount(2)
+    await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(page.getByTestId('deletion-count')).toHaveText('0')
+    await expect(
+      dialog.getByText('conversation.json', { exact: true }).locator('..').getByRole('button')
+    ).toBeFocused()
+    await dialog
+      .getByText('conversation.json', { exact: true })
+      .locator('..')
+      .getByRole('button', { name: 'Delete damaged file' })
+      .click()
+    await confirmation.getByRole('button', { name: 'Permanently delete', exact: true }).click()
+    await expect(confirmation.getByRole('alert')).toContainText(
+      'Could not delete all recovery copies'
+    )
+    await expect(page.getByTestId('retry-count')).toHaveText('1')
+    expect(
+      await confirmation.evaluate((element) => element.scrollWidth <= element.clientWidth)
+    ).toBe(true)
+    await page.screenshot({ path: `test-results/recovery-delete-${width}.png` })
+    await confirmation.getByRole('button', { name: 'Permanently delete', exact: true }).click()
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByText('conversation.json', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByText('second-conversation.json', { exact: true })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Delete damaged file' }).click()
+    await confirmation.getByRole('button', { name: 'Permanently delete', exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(confirmation).toHaveCount(0)
+    await expect(
+      page.getByTestId('delete-recovery-host').getByTestId('session-persistence-alert')
+    ).toHaveCount(0)
+
+    await page.goto('/error-surfaces.html?delete-recovery&locale=zh-Hans')
+    await page.getByRole('button', { name: '查看受影响的对话', exact: true }).click()
+    await page.screenshot({
+      path: `test-results/recovery-list-zh-${width}.png`,
+      animations: 'disabled'
+    })
+    await dialog
+      .getByText('conversation.json', { exact: true })
+      .locator('..')
+      .getByRole('button', { name: '删除损坏文件', exact: true })
+      .click()
+    await expect(confirmation.getByRole('button')).toHaveCount(2)
+    await expect(confirmation.getByRole('button', { name: '取消', exact: true })).toBeFocused()
+    await expect(dialog).toHaveCount(0)
+    await confirmation.screenshot({
+      path: `test-results/recovery-confirm-zh-${width}.png`,
+      animations: 'disabled'
+    })
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeVisible()
+    await expect(confirmation).toHaveCount(0)
+  })
+}

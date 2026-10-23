@@ -93,6 +93,10 @@ const matchExactNotebookTool = (
   return undefined
 }
 
+// Directory discovery shares this MCP transport but does not execute a Notebook cell.
+export const isAuthorizedDirectoryTool = (...names: Array<string | undefined | null>): boolean =>
+  names.some((name) => matchExactNotebookTool(name, ['list_authorized_directories']) !== undefined)
+
 const matchNotebookRunTool = (toolName: string | undefined | null): string | undefined =>
   matchNotebookTool(toolName, NOTEBOOK_RUN_TOOL_SUFFIXES)
 

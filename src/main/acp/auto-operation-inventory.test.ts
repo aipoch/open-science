@@ -48,6 +48,7 @@ const notebookOperations: Record<string, 'inner_authorization' | 'legacy' | 'ope
   bash_execute: 'legacy',
   request_network_access: 'inner_authorization',
   notebook_state: 'legacy',
+  list_authorized_directories: 'legacy',
   list_notebook_runtimes: 'legacy',
   notebook_bind_runtime: 'legacy',
   notebook_switch_runtime: 'legacy',
@@ -163,7 +164,7 @@ describe('Auto operation completeness against real tool registrations', () => {
           'e1ec395347887d9b6645ae0f74c268901712e26ff5b93ec7b128d46134c986ed',
         // Reviewed: question/mode guidance only; input validation and handlers are unchanged.
         'notebook/mcp-server.ts':
-          '9f0c679d39461462307788133da200b7534604d1bd9086819d513dca78bf2dc5',
+          '13b4ff08361f04e81c47054c16aff29b37f8e66c3f234a22fe70f4de86a0f4c2',
         'session-plan/plan-mcp-server.ts':
           'b32ac73d8a2655f556c50b067892eb4caa3940acdcae6df7d8475d81cf7b98d9',
         'skills/mcp-server.ts': '3064af8275f8026e9dbf84b445f3a5061d41619c523def579c4b759c0aac338b'
