@@ -63,19 +63,19 @@ it.skipIf(process.platform !== 'darwin')(
         return identity!
       })
       expect(service.ppid).toBe(1)
-      const leader = native.getDarwinProcess(child.pid!)!
-      expect(leader.coalitionId).toMatch(/^[1-9][0-9]*$/)
-      expect(service.coalitionId).toMatch(/^[1-9][0-9]*$/)
-      expect(service.coalitionId).not.toBe(leader.coalitionId)
       expect(service.pgid).toBe(service.pid)
       expect(service.sid).toBe(service.pid)
       expect(read(service.pid, 'OPEN_SCIENCE_PROCESS_TREE_ID')).toBe(false)
+      const leader = native.getDarwinProcess(child.pid!)!
       const first = await terminateProcessTree(child)
       unreadable = false
       const retry = await terminateProcessTree(child)
       expect(native.getDarwinProcess(service.pid)?.uniqueId).toBe(service.uniqueId)
       expect(first).toEqual({ reaped: true })
       expect(retry).toEqual({ reaped: true })
+      expect(leader.coalitionId).toMatch(/^[1-9][0-9]*$/)
+      expect(service.coalitionId).toMatch(/^[1-9][0-9]*$/)
+      expect(service.coalitionId).not.toBe(leader.coalitionId)
     } finally {
       observation.mockRestore()
       try {
