@@ -140,6 +140,12 @@ const splitRedaction =
   serializedRedaction
 
 it.each([
+  ['literal password comparison', Buffer.from('password == "actual-secret"'), false],
+  [
+    'credential mutation after empty initialization',
+    Buffer.from('password = {}\npassword["value"] = "actual-secret"'),
+    false
+  ],
   ...['os.environ["PASSWORD"]', '['].map<[string, Buffer, boolean]>((prefix) => [
     `unfinished credential assignment beyond the stream overlap: ${prefix}`,
     Buffer.from(

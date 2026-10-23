@@ -294,7 +294,9 @@ const findPackageTextMatch = (
       }
   }
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
-  for (const match of text.matchAll(/\b([a-z][a-z0-9_-]*)(\s*["']?\s*[:=]\s*)/gi)) {
+  for (const match of text.matchAll(
+    /(?:\\+[rn]|\b)([a-z][a-z0-9_-]*)((?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_-]+\\*["']|[a-z0-9_]+)[ \t]*\])*\s*["']?\s*[:=]\s*)/gi
+  )) {
     if (!isSensitiveDiagnosticKey(match[1])) continue
     if (nonCredentialField(match.index)) continue
     // A Python loop's iterable is not a credential assignment. Inspect only the
@@ -313,7 +315,14 @@ const findPackageTextMatch = (
     const start = match.index + match[0].length
     const rest = text.slice(start)
     // Comparisons and arrow syntax do not assign a credential value.
-    if (match[2].trim() === '=' && /^[=>]/.test(rest)) continue
+    if (
+      match[2].trim() === '=' &&
+      (/^(?:={1,2}|>)[ \t]{0,512}[a-zA-Z_][a-zA-Z0-9_.]{0,127}(?=[ \t]{0,512}(?:[;,\r\n}]|$)|\\[rn]|"(?:[},]|$))/.test(
+        rest
+      ) ||
+        (!complete && /^(?:={1,2}|>)[ \t]{0,512}$/.test(rest)))
+    )
+      continue
     // Empty collections contain no credential. Defer incomplete collection prefixes
     // but still inspect any nonempty contents, including nested literal secrets.
     if (

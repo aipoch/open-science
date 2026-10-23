@@ -630,3 +630,21 @@ it.each([
     expect(scanner.finish(), `chunk size ${size}`).toBeDefined()
   }
 })
+
+it.each([
+  'password == "actual-secret"',
+  'token === "actual-secret"',
+  'password = {}\npassword["value"] = "actual-secret"',
+  'tokens = []\ntokens[0] = "actual-secret"',
+  'password["nested"]["value"] = "actual-secret"'
+])('detects literal comparison operands and sensitive indexed writes: %s', (code) => {
+  for (const text of [code, JSON.stringify({ content: code })]) {
+    expect(findSensitivePackageText(text)).toBeDefined()
+    for (let split = 0; split <= text.length; split++) {
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, split))
+      scanner.write(text.slice(split))
+      expect(scanner.finish(), `split ${split}`).toBeDefined()
+    }
+  }
+})
