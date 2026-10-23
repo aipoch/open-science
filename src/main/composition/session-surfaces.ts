@@ -142,6 +142,7 @@ export async function composeSessionSurfaces({
         appVersion: dependencies.appVersion,
         configRoot: dependencies.configRoot,
         profileNamespace: 'session-details',
+        allowNativeCodexSubscription: true,
         resolveTarget: (target, context) =>
           dependencies.settingsService.resolveExplicitAgentBackend(target, context)
       })

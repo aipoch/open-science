@@ -1,6 +1,5 @@
 import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
-import { isSensitiveDiagnosticKey } from '@aipoch/diagnostics'
 import {
   createLogger,
   diagnosticErrorFields,
@@ -136,7 +135,7 @@ import {
   PackageTextScanner,
   buildSensitiveContentEvidence,
   findSensitivePackageText,
-  isPrivatePackageValue,
+  isPrivatePackageField,
   type PackageSensitiveContentSource
 } from './sensitive-content'
 import { withPackageTransfer } from './transfer'
@@ -350,7 +349,7 @@ function* inspectShareable(value: unknown, location: string): Generator<number> 
     yield 1
     for (const [index, [key, item]] of Object.entries(value).entries()) {
       const child = `${location}[entry ${index}]`
-      if (isSensitiveDiagnosticKey(key) && typeof item === 'string' && isPrivatePackageValue(item))
+      if (typeof item === 'string' && isPrivatePackageField(key, item))
         throw new PackageSensitiveContentError(
           child,
           'field',

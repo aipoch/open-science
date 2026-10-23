@@ -85,7 +85,8 @@ class SessionDetailsModelOwner {
     settings: StoredSettings,
     frameworkId: PersistedChatSession['agentFrameworkId'],
     providerId: string,
-    model: string
+    model: string,
+    allowNativeCodexSubscription = false
   ): void {
     if (!frameworkId) throw new Error('The Session details model has no Agent Framework.')
     const provider = settings.providers.find((entry) => entry.id === providerId)
@@ -93,6 +94,8 @@ class SessionDetailsModelOwner {
       throw new Error('The Session details model provider is unavailable.')
     }
     if (isCodexSubscriptionProvider(provider.type)) {
+      // Inherited subscriptions use the runner's disposable native profile, not a model bridge.
+      if (allowNativeCodexSubscription && frameworkId === 'codex') return
       throw new Error('Codex subscription models cannot run as the Session details model.')
     }
     const framework = getAgentFramework(frameworkId)
@@ -122,7 +125,7 @@ class SessionDetailsModelOwner {
       if (!frameworkId || !providerId || !model) {
         throw new Error('The saved Session has no complete Main model target for Session details.')
       }
-      this.assertAvailable(settings, frameworkId, providerId, model)
+      this.assertAvailable(settings, frameworkId, providerId, model, true)
       return Object.freeze({
         mode: 'target',
         target: Object.freeze({

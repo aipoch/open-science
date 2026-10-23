@@ -7750,6 +7750,9 @@
     "Fetch DepMap PRISM drug response AUC values for a compound.": "AUC-Werte der DepMap-PRISM-Wirkstoffantwort für eine Verbindung abrufen.",
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "DepMap/CCLE-RNA-Expression eines Gens in log2(TPM+1) abrufen.",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "DepMap/CCLE-Genkopienzahl relativ zur Ploidie des Zellmodells abrufen.",
-    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Krebsstudien sowie Omik-, Abhängigkeits- und Wirkstoffantwortdaten von Zellmodellen aus cBioPortal und DepMap/CCLE."
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Krebsstudien sowie Omik-, Abhängigkeits- und Wirkstoffantwortdaten von Zellmodellen aus cBioPortal und DepMap/CCLE.",
+    "Export screening results (CSV)": "Screening-Ergebnisse exportieren (CSV)",
+    "Screening results could not be exported.": "Die Screening-Ergebnisse konnten nicht exportiert werden.",
+    "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut."
   }
 }

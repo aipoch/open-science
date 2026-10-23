@@ -7589,6 +7589,9 @@
     "Fetch DepMap PRISM drug response AUC values for a compound.": "获取指定化合物的 DepMap PRISM 药物响应 AUC 值。",
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "获取指定基因的 DepMap/CCLE RNA 表达量，单位为 log2(TPM+1)。",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "获取 DepMap/CCLE 中相对于细胞模型倍性的基因拷贝数。",
-    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "来自 cBioPortal 和 DepMap/CCLE 的癌症研究及细胞模型组学、依赖性和药物响应数据。"
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "来自 cBioPortal 和 DepMap/CCLE 的癌症研究及细胞模型组学、依赖性和药物响应数据。",
+    "Export screening results (CSV)": "导出筛选结果（CSV）",
+    "Screening results could not be exported.": "无法导出筛选结果。",
+    "Screening data changed during export. Please try again.": "导出期间筛选数据发生了变化。请重试。"
   }
 }

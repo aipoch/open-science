@@ -7587,6 +7587,9 @@
     "Fetch DepMap PRISM drug response AUC values for a compound.": "지정한 화합물의 DepMap PRISM 약물 반응 AUC 값을 가져옵니다.",
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "지정한 유전자의 DepMap/CCLE RNA 발현량을 log2(TPM+1) 단위로 가져옵니다.",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "세포 모델의 배수성 대비 DepMap/CCLE 유전자 복제수를 가져옵니다.",
-    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터."
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터.",
+    "Export screening results (CSV)": "스크리닝 결과 내보내기(CSV)",
+    "Screening results could not be exported.": "스크리닝 결과를 내보내지 못했습니다.",
+    "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요."
   }
 }

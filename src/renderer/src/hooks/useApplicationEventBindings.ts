@@ -390,6 +390,7 @@ const useApplicationEventBindings = ({
           clearTimeout(pendingNotificationRetryTimer.current)
           pendingNotificationRetryTimer.current = undefined
         }
+        if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') return
         try {
           const pending = await window.api.notifications.peekPendingOpenSession()
           if (pendingNotificationRetryEpoch.current !== retryEpoch) return
@@ -434,6 +435,7 @@ const useApplicationEventBindings = ({
           // generation, navigation revision and cleanup still govern whether it can open.
           if (!isPendingNotificationCommandUnavailable(error)) throw error
           if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+          if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') return
           pendingNotificationRetryTimer.current = setTimeout(() => {
             pendingNotificationRetryTimer.current = undefined
             if (pendingNotificationRetryEpoch.current !== retryEpoch) return
@@ -492,7 +494,7 @@ const useApplicationEventBindings = ({
   useEffect(() => {
     openPendingNotificationSessionRef.current = openPendingNotificationSession
     void openPendingNotificationSession()
-  }, [openPendingNotificationSession])
+  }, [openPendingNotificationSession, desktopRecoveryPhase])
 
   useEffect(() => {
     const removeRequest = window.api.compute.onApprovalRequest(enqueueComputeApproval)
