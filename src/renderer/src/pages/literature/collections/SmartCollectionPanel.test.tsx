@@ -157,6 +157,28 @@ it('requires the explicit cost confirmation before recomputing', async () => {
   await waitFor(() => expect(onRunPendingChange).toHaveBeenLastCalledWith(false))
 })
 
+it('offers screening CSV separately from the included-reference export, including when no papers match', async () => {
+  const onExport = vi.fn().mockResolvedValue(true)
+  render(
+    <SmartCollectionPanel
+      collectionId="smart"
+      name="Trials"
+      description="Adult trials"
+      onExport={onExport}
+      exportDisabled
+    />
+  )
+  await screen.findByText('Collection saved')
+  fireEvent.click(screen.getByRole('button', { name: 'Collection actions' }))
+  expect(
+    (await screen.findByRole('menuitem', { name: 'Export screening results (CSV)' })).getAttribute(
+      'aria-disabled'
+    )
+  ).not.toBe('true')
+  expect(screen.getByRole('menuitem', { name: 'Export included references' })).toBeTruthy()
+  expect(onExport).not.toHaveBeenCalled()
+})
+
 it.each(['completed', 'failed', 'cancelled'] as const)(
   'shows success only when the requested run is %s',
   async (state) => {
@@ -828,3 +850,73 @@ it.each(['cancelled', 'interrupted'] as const)(
     expect(screen.getByRole('button', { name: 'Resume analysis' })).toBeTruthy()
   }
 )
+
+it('adversarial: clicking the CSV action saves screening bytes without invoking reference export', async () => {
+  const onExport = vi.fn().mockResolvedValue(true)
+  const save = vi.fn().mockResolvedValue({ saved: true })
+  Object.assign(window.api, { saveBlobFile: save })
+  Object.assign(window.api.literature, {
+    search: vi.fn(async (request) =>
+      request.scope === 'collections'
+        ? {
+            entries: [
+              {
+                id: 'smart',
+                name: 'Trials',
+                description: 'Adult trials',
+                smart: true,
+                revision: 1,
+                itemCount: 0,
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ]
+          }
+        : {
+            entries: [
+              {
+                id: 'paper',
+                metadataRevision: 1,
+                attachments: [],
+                collectionIds: [],
+                projectIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                item: {
+                  itemType: 'journalArticle',
+                  title: 'A trial',
+                  abstract: '',
+                  issuedText: '',
+                  creators: [],
+                  identifiers: [],
+                  typeFields: {}
+                }
+              }
+            ],
+            totalCount: 1
+          }
+    )
+  })
+  transact.mockImplementation(async (command) => ({
+    kind: 'collection',
+    id: 'smart',
+    smart: { ...view, rows: command.summaryOnly ? [] : view.rows }
+  }))
+  render(
+    <SmartCollectionPanel
+      collectionId="smart"
+      name="Trials"
+      description="Adult trials"
+      onExport={onExport}
+      exportDisabled
+    />
+  )
+  await screen.findByText('Collection saved')
+  fireEvent.click(screen.getByRole('button', { name: 'Collection actions' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Export screening results (CSV)' }))
+  await waitFor(() => expect(save).toHaveBeenCalledOnce())
+  expect(onExport).not.toHaveBeenCalled()
+  const request = save.mock.calls[0]![0]
+  expect(request.suggestedName).toBe('Trials-screening-results.csv')
+  expect(new TextDecoder().decode(request.data)).toContain('"paper","A trial"')
+})

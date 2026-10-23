@@ -7094,8 +7094,8 @@
     "Custom public domains": "Eigene öffentliche Domains",
     "Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.": "Domainfreigaben erlauben auch das Senden von Daten. Selbst eingeschränkte Lesezugriffe übertragen die angeforderte URL.",
     "Enter an exact hostname and a port from 1 to 65535.": "Geben Sie einen exakten Hostnamen und einen Port von 1 bis 65535 ein.",
-    "Enter an exact hostname without a scheme, path, port, wildcard, or IP address.": "Geben Sie einen exakten Hostnamen ohne Protokoll, Pfad, Port, Platzhalter oder IP-Adresse ein.",
-    "Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Nur exakte Hostnamen, ohne Subdomains. Private Adressen bleiben gesperrt. Diese Regeln erlauben auch unterstützte Vorschauen und Symbole für Konversationslinks.",
+    "Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.": "Geben Sie einen Hostnamen, eine HTTP(S)-URL oder einen Platzhalter wie *.example.com ein. IP-Adressen und lokale Hostnamen werden nicht unterstützt.",
+    "Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Fügen Sie einen Hostnamen oder eine HTTP(S)-URL ein; nur der Hostname wird gespeichert. Verwenden Sie *.example.com für alle Subdomains und fügen Sie example.com für die Stammdomain separat hinzu. Private Adressen bleiben blockiert. Diese Regeln erlauben auch unterstützte Vorschauen und Symbole für Konversationslinks.",
     "Hostname": "Hostname",
     "Manage access": "Zugriff verwalten",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "Verwalten Sie öffentliche Domains und vertrauenswürdige private Dienste für die geschützte Ausführung von Notebook und Befehlszeile.",
@@ -7722,6 +7722,9 @@
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "DepMap/CCLE-RNA-Expression eines Gens in log2(TPM+1) abrufen.",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "DepMap/CCLE-Genkopienzahl relativ zur Ploidie des Zellmodells abrufen.",
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Krebsstudien sowie Omik-, Abhängigkeits- und Wirkstoffantwortdaten von Zellmodellen aus cBioPortal und DepMap/CCLE.",
+    "Export screening results (CSV)": "Screening-Ergebnisse exportieren (CSV)",
+    "Screening results could not be exported.": "Die Screening-Ergebnisse konnten nicht exportiert werden.",
+    "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut.",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Die Befehlszeile wartet auf Netzwerkzugriff. Falls der Prozess beendet ist, geben Sie den Zugriff frei und führen Sie den Befehl ausdrücklich erneut aus. Er wird nicht automatisch wiederholt."
   }
 }

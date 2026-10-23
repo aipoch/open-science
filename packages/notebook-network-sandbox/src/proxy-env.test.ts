@@ -15,6 +15,7 @@ describe('Notebook network proxy environment', () => {
       no_proxy: '',
       HTTP_PROXY: http,
       HTTPS_PROXY: http,
+      NODE_USE_ENV_PROXY: '1',
       ALL_PROXY: http,
       FTP_PROXY: 'socks5h://command%20id:random%2Fsecret@127.0.0.1:4100',
       CLOUDSDK_PROXY_ADDRESS: '127.0.0.1',

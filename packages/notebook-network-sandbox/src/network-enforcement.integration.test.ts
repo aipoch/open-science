@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createPrivateKey } from 'node:crypto'
 import type { LookupAddress, LookupAllOptions } from 'node:dns'
 import { lookup } from 'node:dns/promises'
 import { createRequire } from 'node:module'
@@ -6,6 +7,8 @@ import { createServer, request as httpRequest } from 'node:http'
 import { mkdtemp, rm, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { createSecureContext, TLSSocket } from 'node:tls'
+import type { Socket } from 'node:net'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -71,6 +74,120 @@ const runAndCleanup = async (
 const platformSupported = process.platform === 'darwin' || process.platform === 'linux'
 
 describe.runIf(platformSupported)('Notebook network sandbox enforcement', () => {
+  it.each(['fetch', 'http'] as const)(
+    'routes Node %s HTTP and HTTPS through the gateway and preserves policy denial',
+    async (client) => {
+      await import('reflect-metadata')
+      const x509 = await import('@peculiar/x509')
+      const algorithm = { name: 'ECDSA', namedCurve: 'P-256', hash: 'SHA-256' }
+      const keys = await crypto.subtle.generateKey(algorithm, true, ['sign', 'verify'])
+      // Use a distinct issuer from the gateway's inspection CA, including on older OpenSSL.
+      const certificate = await x509.X509CertificateGenerator.createSelfSigned({
+        name: 'CN=example.test',
+        keys,
+        notBefore: new Date(Date.now() - 60_000),
+        notAfter: new Date(Date.now() + 86400_000),
+        signingAlgorithm: algorithm,
+        extensions: [
+          new x509.SubjectAlternativeNameExtension([{ type: 'dns', value: 'example.test' }])
+        ]
+      })
+      const certificatePem = certificate.toString('pem')
+      const context = createSecureContext({
+        cert: certificatePem,
+        key: createPrivateKey({
+          key: Buffer.from(await crypto.subtle.exportKey('pkcs8', keys.privateKey)),
+          format: 'der',
+          type: 'pkcs8'
+        }).export({ format: 'pem', type: 'pkcs8' })
+      })
+      const destinations: string[] = []
+      const sockets = new Set<Socket>()
+      // A local parent proxy is the upstream fixture. Only host-side DNS is pinned; the child
+      // must use the real authenticated gateway because example.test cannot resolve in it.
+      const server = createServer((request, response) => {
+        destinations.push(request.url!)
+        response.end('node-proxy-ok')
+      })
+      server.on('connection', (socket) => {
+        sockets.add(socket)
+        socket.once('close', () => sockets.delete(socket))
+      })
+      server.on('connect', (request, socket) => {
+        destinations.push(request.url!)
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+        // Node 22's fetch tunnels HTTP as well as HTTPS; newer versions can forward HTTP.
+        if (request.url!.endsWith(':80')) {
+          socket.once('data', () => {
+            socket.end(
+              'HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nnode-proxy-ok'
+            )
+          })
+          return
+        }
+        const tls = new TLSSocket(socket, { isServer: true, secureContext: context })
+        tls.on('error', () => tls.destroy())
+        tls.once('data', () => {
+          tls.end('HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nnode-proxy-ok')
+        })
+      })
+      await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+      const address = server.address()
+      if (!address || typeof address === 'string')
+        throw new Error('Expected an IPv4 server address.')
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: ['example.test'], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') },
+        parentProxy: { http: `http://127.0.0.1:${address.port}` },
+        trustBundle: { path: '', certificates: [certificatePem] }
+      })
+      const dnsFixture = vi
+        .mocked<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>(lookup)
+        .mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+      const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
+      try {
+        await sandbox.initialize()
+        for (const protocol of ['http', 'https']) {
+          const url = `${protocol}://example.test/`
+          const script =
+            client === 'fetch'
+              ? `fetch(${JSON.stringify(url)}, { signal: AbortSignal.timeout(3000) }).then(async r => { if (!r.ok) throw new Error(String(r.status)); process.stdout.write(await r.text()) }).catch(e => { console.error(e.cause?.code ?? e.message); process.exitCode = 1 })`
+              : `require('node:${protocol}').get(${JSON.stringify(url)}, { timeout: 3000 }, r => { if (r.statusCode !== 200) { r.resume(); process.exitCode = 1 } else r.pipe(process.stdout) }).on('error', e => { console.error(e.code); process.exitCode = 1 }).on('timeout', function () { this.destroy(new Error('timeout')) })`
+          const runClient = async (): Promise<Awaited<ReturnType<typeof runAndCleanup>>> => {
+            const wrapped = await sandbox.wrap({
+              command: `${quote(process.execPath)} -e ${quote(script)}`,
+              cwd: process.cwd(),
+              onNetworkAccessRequest: async () => false
+            })
+            return runAndCleanup(wrapped, process.cwd())
+          }
+          sandbox.updatePolicy({ allowedDomains: ['example.test'], deniedDomains: [] })
+          const allowed = await runClient()
+          expect(allowed, allowed.annotatedStderr).toMatchObject({
+            code: 0,
+            stdout: 'node-proxy-ok'
+          })
+          expect(destinations).toHaveLength(1)
+
+          sandbox.updatePolicy({
+            allowedDomains: ['example.test'],
+            deniedDomains: ['example.test']
+          })
+          const denied = await runClient()
+          expect(denied.code).not.toBe(0)
+          expect(denied.annotatedStderr).toContain('OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+          expect(destinations).toHaveLength(1)
+          destinations.length = 0
+        }
+      } finally {
+        dnsFixture.mockRestore()
+        await sandbox.dispose()
+        for (const socket of sockets) socket.destroy()
+        await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+      }
+    }
+  )
+
   it('keeps ordinary target approval available when local CA initialization fails', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-ca-failure-'))
     const sandbox = new NotebookNetworkSandbox({

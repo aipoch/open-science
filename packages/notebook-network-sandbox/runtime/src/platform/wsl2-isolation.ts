@@ -736,6 +736,7 @@ const createGuestEnvironment = async (
     HOME: '/tmp/open-science-home',
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8',
+    NODE_USE_ENV_PROXY: '1',
     PATH: '/usr/bin:/bin'
   }
   for (const [key, value] of Object.entries(request.pathEnvironment ?? {})) {

@@ -6935,8 +6935,8 @@
     "Custom public domains": "自訂公用網域",
     "Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.": "網域授權不僅允許下載，也允許傳送資料。即使是受限讀取，也會傳送請求的 URL。",
     "Enter an exact hostname and a port from 1 to 65535.": "請輸入完整主機名稱和 1 到 65535 之間的連接埠。",
-    "Enter an exact hostname without a scheme, path, port, wildcard, or IP address.": "請輸入完整主機名稱，不要包含通訊協定、路徑、連接埠、萬用字元或 IP 位址。",
-    "Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "僅比對完整主機名稱，不包含子網域。私網位址仍遭封鎖。這些規則也允許載入支援的對話連結預覽和圖示。",
+    "Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.": "請輸入主機名稱、HTTP(S) URL 或 *.example.com 形式的萬用字元。不支援 IP 位址和本機主機名稱。",
+    "Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "新增主機名稱或貼上 HTTP(S) URL；僅儲存主機名稱。使用 *.example.com 比對所有子網域，根網域 example.com 需另外新增。私網位址仍遭封鎖。這些規則也允許載入支援的對話連結預覽和圖示。",
     "Hostname": "主機名稱",
     "Manage access": "管理存取",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "管理受保護的 Notebook 和命令列執行所使用的公用網域與受信任私網服務。",
@@ -7562,6 +7562,9 @@
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "取得指定基因的 DepMap/CCLE RNA 表現量，單位為 log2(TPM+1)。",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "取得 DepMap/CCLE 中相對於細胞模型倍性的基因拷貝數。",
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "來自 cBioPortal 和 DepMap/CCLE 的癌症研究及細胞模型體學、依賴性與藥物反應資料。",
+    "Export screening results (CSV)": "匯出篩選結果（CSV）",
+    "Screening results could not be exported.": "無法匯出篩選結果。",
+    "Screening data changed during export. Please try again.": "匯出期間篩選資料發生變更。請重試。",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令列正在等待網路存取核准。如果程序已結束，請核准後手動重試命令；系統不會自動重新執行。"
   }
 }

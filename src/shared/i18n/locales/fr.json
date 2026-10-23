@@ -7261,8 +7261,8 @@
     "Custom public domains": "Domaines publics personnalisés",
     "Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.": "Les autorisations de domaine permettent aussi d’envoyer des données. Même les lectures restreintes transmettent l’URL demandée.",
     "Enter an exact hostname and a port from 1 to 65535.": "Saisissez un nom d’hôte exact et un port de 1 à 65535.",
-    "Enter an exact hostname without a scheme, path, port, wildcard, or IP address.": "Saisissez un nom d’hôte exact, sans protocole, chemin, port, caractère générique ni adresse IP.",
-    "Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Uniquement des noms d’hôte exacts, sans sous-domaines. Les adresses privées restent bloquées. Ces règles autorisent aussi les aperçus et icônes pris en charge pour les liens des conversations.",
+    "Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.": "Saisissez un nom d’hôte, une URL HTTP(S) ou un caractère générique comme *.example.com. Les adresses IP et les noms d’hôte locaux ne sont pas pris en charge.",
+    "Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Ajoutez un nom d’hôte ou collez une URL HTTP(S) ; seul le nom d’hôte est enregistré. Utilisez *.example.com pour tous les sous-domaines et ajoutez example.com séparément pour le domaine racine. Les adresses privées restent bloquées. Ces règles autorisent aussi les aperçus et icônes pris en charge pour les liens des conversations.",
     "Hostname": "Nom d’hôte",
     "Manage access": "Gérer l’accès",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "Gérez les domaines publics et les services privés de confiance pour l’exécution protégée de Notebook et du Terminal.",
@@ -7890,6 +7890,9 @@
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "Récupérer l’expression ARN DepMap/CCLE d’un gène en log2(TPM+1).",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "Récupérer le nombre de copies d’un gène DepMap/CCLE relatif à la ploïdie du modèle cellulaire.",
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Études sur le cancer et données omiques, dépendances et réponses aux médicaments des modèles cellulaires de cBioPortal et DepMap/CCLE.",
+    "Export screening results (CSV)": "Exporter les résultats du tri (CSV)",
+    "Screening results could not be exported.": "Impossible d’exporter les résultats du tri.",
+    "Screening data changed during export. Please try again.": "Les données du tri ont changé pendant l’exportation. Réessayez.",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement."
   }
 }
