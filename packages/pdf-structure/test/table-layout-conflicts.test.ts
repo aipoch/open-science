@@ -7,6 +7,110 @@ const { reviewFinalNativeTableSources } = await import(
 const { nativeTableLayoutConflicts: conflicts } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-layout-conflicts.mjs')).href
 )
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function detachedScientificScript() {
+  const f = fixture()
+  for (let row = 1; row <= 3; row++)
+    f.add(row, 1, [
+      ...((row % 2
+        ? [
+            ['2', 40, 20 + row * 20, 6, 10],
+            ['×', 50, 20 + row * 20, 6, 10]
+          ]
+        : []) as [string, number, number, number, number][]),
+      ['10', 60, 20 + row * 20, 12, 10],
+      [String(row), 72, 16.4 + row * 20, 4, 7.3]
+    ])
+  const base = f.add(4, 1, [['10', 60, 100, 12, 10]])
+  f.cells.pop()
+  const script = f.add(4, 1, [['4', 72, 96.4, 4, 7.3]])
+  f.cells.pop()
+  const target = f.cells.at(-1)!
+  target.text += ' 4'
+  target.sourceItems.push(...script.sourceItems)
+  target.sourceRects.push(...script.sourceRects)
+  for (const font of f.tokens) Object.assign(font, { fontAscent: 0.8, fontDescent: -0.2 })
+  for (const font of f.tokens.filter((t) => t.text === '×'))
+    Object.assign(font, { fontAscent: 0.75, fontDescent: -0.25 })
+  return { ...f, base, script, target, table: { ...f.table(), page: 1, unassigned: ['10'] } }
+}
+
+it('rejects a preceding record that owns the next native scientific exponent', () => {
+  const f = detachedScientificScript()
+  expect(conflicts(f.table, f.tokens, [])).toContain('native-script-crosses-record-owner')
+  const checked = reviewFinalNativeTableSources(f.table, f.tokens, [])
+  expect(checked.issues).toContain('native-table-structure-ambiguous')
+  expect(checked.reviewCandidate).toBe(false)
+  expect(checked.cells).toBe(f.cells)
+  expect(checked.cropRect).toBe(f.table.cropRect)
+})
+
+it.each([
+  'missing base',
+  'base already owned',
+  'duplicate source',
+  'source literal mismatch',
+  'intervening source',
+  'non-horizontal source',
+  'different font metrics',
+  'missing font metrics',
+  'different page',
+  'detached geometry',
+  'ordinary font size',
+  'subscript',
+  'irregular record spacing',
+  'only one independent record',
+  'different numeric lane',
+  'explicit spanning cell',
+  'measured source partition',
+  'unassigned absent',
+  'non-scientific base'
+])('does not infer a detached exponent contradiction with %s', (mode) => {
+  const f = detachedScientificScript(),
+    base = f.tokens.find((t) => t.sourceItem === f.base.sourceItems[0])!,
+    script = f.tokens.find((t) => t.sourceItem === f.script.sourceItems[0])!
+  if (mode === 'missing base') f.tokens.splice(f.tokens.indexOf(base), 1)
+  if (mode === 'base already owned') f.cells.push(f.base)
+  if (mode === 'duplicate source') f.tokens.push(structuredClone(base))
+  if (mode === 'source literal mismatch') base.sourceItem.text = 'another'
+  if (mode === 'intervening source') {
+    script.sourceItem.index++
+    f.tokens.push({
+      ...base,
+      text: 'x',
+      sourceItem: { pageNumber: 1, index: script.sourceItem.index - 1, text: 'x' }
+    })
+  }
+  if (mode === 'non-horizontal source') base.horizontal = false
+  if (mode === 'different font metrics') Object.assign(script, { fontAscent: 0.9 })
+  if (mode === 'missing font metrics') Object.assign(base, { fontDescent: undefined })
+  if (mode === 'different page') base.sourceItem.pageNumber = 2
+  if (mode === 'detached geometry') base.rect[2] -= 3
+  if (mode === 'ordinary font size') script.height = 10
+  if (mode === 'subscript') {
+    script.baseline += 8
+    script.rect[1] += 8
+    script.rect[3] += 8
+  }
+  if (mode === 'irregular record spacing') {
+    base.baseline += 8
+    base.rect[1] += 8
+    base.rect[3] += 8
+  }
+  if (mode === 'only one independent record') f.cells.shift()
+  if (mode === 'different numeric lane') f.cells[0].column = 2
+  if (mode === 'explicit spanning cell') f.target.rowSpan = 2
+  if (mode === 'measured source partition')
+    f.target.sourceSegments = [{ ...script.sourceItem, start: 0, end: 1, rect: script.rect }]
+  if (mode === 'unassigned absent') f.table.unassigned = []
+  if (mode === 'non-scientific base') {
+    base.text = '12'
+    base.sourceItem.text = '12'
+    f.table.unassigned = ['12']
+  }
+  expect(conflicts(f.table, f.tokens, [])).not.toContain('native-script-crosses-record-owner')
+})
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function fixture() {
   type Source = { pageNumber: number; index: number; text: string }
@@ -71,6 +175,420 @@ function fixture() {
     })
   }
 }
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function topAnchoredOrdinalRecords() {
+  const f = fixture()
+  f.add(0, 0, [['vi.', 20, 20, 10]])
+  f.cells.pop()
+  f.add(0, 1, [['A complete prior record starts here', 50, 20, 160]])
+  f.cells.pop()
+  const preceding = f.add(0, 1, [['The same record continues here', 50, 32, 160]])
+  const tail = f.add(1, 1, [['The prior record ends here.', 50, 44, 160]])
+  f.cells.pop()
+  f.add(0, 0, [])
+  for (const [row, marker] of ['vii.', 'viii.', 'ix.'].entries()) {
+    const y = 56 + row * 36
+    f.add(row + 1, 0, [[marker, 20, y, 10]])
+    const body = f.add(row + 1, 1, [
+      ['An independent record starts here', 50, y, 160],
+      ['This record has another full line', 50, y + 12, 160],
+      ['Its complete final line ends here.', 50, y + 24, 160]
+    ])
+    if (row === 0) {
+      body.sourceItems.unshift(...tail.sourceItems)
+      body.sourceRects.unshift(...tail.sourceRects)
+      body.text = tail.text + ' ' + body.text
+    }
+  }
+  const content = {
+    items: f.tokens.map((t) => ({
+      str: t.text,
+      dir: 'ltr',
+      width: t.rect[2] - t.rect[0],
+      height: t.height,
+      transform: [t.height, 0, 0, t.height, t.rect[0], 200 - t.baseline],
+      fontName: 'native'
+    })),
+    styles: { native: { ascent: 0.8, descent: -0.2, vertical: false } }
+  }
+  return {
+    ...f,
+    preceding,
+    tail,
+    context: { sourceContent: content, viewport: { transform: [1, 0, 0, -1, 0, 200] } },
+    table: {
+      ...f.table(),
+      page: 1,
+      grid: Array.from({ length: 4 }, () => ['', '']),
+      unassigned: ['vi.', 'A complete prior record starts here'],
+      issues: [],
+      reviewCandidate: true
+    }
+  }
+}
+
+it.each(['crossed tail', 'correct owner', 'centered marker'])(
+  'checks a complete top-anchored native ordinal packet with %s',
+  (mode) => {
+    const f = topAnchoredOrdinalRecords(),
+      body = f.cells.find((c) => c.row === 1 && c.column === 1)!
+    if (mode === 'correct owner') {
+      f.preceding.sourceItems.push(...f.tail.sourceItems)
+      f.preceding.sourceRects.push(...f.tail.sourceRects)
+      f.preceding.text += ' ' + f.tail.text
+      body.sourceItems.shift()
+      body.sourceRects.shift()
+      body.text = body.text.slice(f.tail.text.length + 1)
+    }
+    if (mode === 'centered marker') {
+      const marker = f.tokens.find((t) => t.text === 'vii.')!
+      marker.baseline += 6
+      marker.rect[1] += 6
+      marker.rect[3] += 6
+      f.context.sourceContent.items[marker.sourceItem.index].transform[5] -= 6
+    }
+    const before = structuredClone(f.table),
+      found = conflicts(f.table, f.tokens, [], [], f.context)
+    if (mode === 'crossed tail') {
+      expect(found).toContain('native-ordinal-record-tail-crosses-row')
+      const checked = reviewFinalNativeTableSources(f.table, f.tokens, [], [], f.context)
+      expect(checked.issues).toContain('native-table-structure-ambiguous')
+      expect(checked.reviewCandidate).toBe(false)
+      expect(checked.cells).toBe(f.table.cells)
+      expect(checked.cropRect).toBe(f.table.cropRect)
+    } else expect(found).not.toContain('native-ordinal-record-tail-crosses-row')
+    expect(f.table).toEqual(before)
+  }
+)
+
+// Native ownership witnesses are anonymous and do not propose replacement cells.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function residualNativeOwnership(kind: string) {
+  const f = fixture()
+  const rules: number[][] = []
+  let tag = ''
+  if (kind === 'crossed dividers') {
+    tag = 'native-dividers-cross-leaf-record'
+    for (const row of [1, 2])
+      for (const column of [0, 1])
+        f.add(row, column, [
+          ['first', 10 + column * 60, row * 50 - 10],
+          ['second', 10 + column * 60, row * 50 + 10]
+        ])
+    for (const y of [50, 100]) rules.push([0, y, 120, y])
+  } else if (kind === 'ruled stub') {
+    tag = 'native-calibrated-ruled-stub-span'
+    for (const group of [0, 1]) {
+      const start = 1 + group * 3
+      f.add(group ? start : start + 1, 0, [['Group', 10, 50 + group * 80]]).rowSpan = group ? 3 : 1
+      for (let row = start; row < start + 3; row++)
+        for (const column of [1, 2, 3])
+          f.add(row, column, [['12', 10 + column * 60, 30 + group * 80 + (row - start) * 20]])
+      for (const y of [15 + group * 80, 85 + group * 80]) rules.push([0, y, 220, y])
+    }
+  } else if (kind === 'source group') {
+    tag = 'native-group-span-crosses-source-block'
+    for (const group of [0, 1, 2]) {
+      const start = 1 + group * 3
+      f.add(start + 1, 0, [['Group', 10, 50 + group * 80]]).rowSpan = 3
+      for (let row = start; row < start + 3; row++)
+        for (const column of [1, 2, 3])
+          f.add(row, column, [['12', 10 + column * 60, 30 + group * 80 + (row - start) * 20]])
+    }
+  } else if (kind === 'closed leaf') {
+    tag = 'native-closed-leaf-face-split'
+    for (const column of [0, 1]) {
+      f.add(1, column, [
+        ['12', 10 + column * 50, 10],
+        ['34', 10 + column * 50, 24]
+      ])
+      f.add(2, column, [['56', 10 + column * 50, 60]])
+      f.add(3, column, [['78', 10 + column * 50, 74]])
+    }
+    for (const y of [0, 30, 50, 80]) rules.push([0, y, 100, y])
+    for (const x of [0, 50, 100])
+      for (const [top, bottom] of [
+        [0, 30],
+        [50, 80]
+      ])
+        rules.push([x, top, x, bottom])
+  } else if (kind === 'empty leaf') {
+    tag = 'native-run-crosses-empty-leaf'
+    f.add(1, 0, [['Method', 10, 30]])
+    f.add(1, 1, [['Count', 60, 30]])
+    f.add(1, 2, [['Decision', 110, 30]])
+    f.add(2, 0, [['Case', 10, 50]])
+    f.add(2, 1, [])
+    f.add(2, 2, [['100 Ready', 60, 50, 80]])
+    for (const row of [3, 4, 5]) {
+      f.add(row, 0, [['Case', 10, 10 + row * 20]])
+      f.add(row, 1, [['1000', 60, 10 + row * 20]])
+      f.add(row, 2, [['Ready', 110, 10 + row * 20]])
+    }
+    rules.push([0, 40, 160, 40], [0, 130, 160, 130])
+  } else {
+    tag = 'native-label-source-block-split'
+    for (const row of [1, 2]) {
+      for (const column of [0, 1, 2]) f.add(row, column, [['Anchor', 10 + column * 60, row * 40]])
+      f.add(row, 3, [
+        ['First', 210, row * 40 - 10],
+        ['Last', 210, row * 40 + 10]
+      ])
+    }
+    for (const column of [0, 1, 2]) f.add(3, column, [['Anchor', 10 + column * 60, 140]])
+    f.add(3, 3, [['First', 210, 130]])
+    const target = f.add(4, 3, [['Tail', 210, 150]])
+    for (const column of [0, 1, 2]) f.add(4, column, [['Anchor', 10 + column * 60, 190]])
+    const next = f.add(4, 3, [['Next', 210, 190]])
+    f.cells.pop()
+    target.text += ' ' + next.text
+    target.sourceItems.push(...next.sourceItems)
+    target.sourceRects.push(...next.sourceRects)
+  }
+  for (const font of f.tokens)
+    Object.assign(font, {
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      nativeLabelRect: [font.rect[0], font.baseline - 8, font.rect[2], font.baseline + 2]
+    })
+  return { ...f, rules, tag }
+}
+
+it.each([
+  'crossed dividers',
+  'ruled stub',
+  'source group',
+  'closed leaf',
+  'empty leaf',
+  'centered tail'
+])('retains a native-proved %s contradiction without replacing source cells', (kind) => {
+  const f = residualNativeOwnership(kind)
+  expect(conflicts(f.table(), f.tokens, f.rules)).toContain(f.tag)
+  const table = f.table()
+  const result = reviewFinalNativeTableSources(table, f.tokens, f.rules)
+  expect(result.issues).toContain('native-table-structure-ambiguous')
+  expect(result.reviewCandidate).toBe(false)
+  expect(result.cells).toBe(table.cells)
+  expect(result.grid).toBe(table.grid)
+  expect(result.cropRect).toBe(table.cropRect)
+})
+
+it.each(
+  [
+    'crossed dividers',
+    'ruled stub',
+    'source group',
+    'closed leaf',
+    'empty leaf',
+    'centered tail'
+  ].flatMap((kind) =>
+    [
+      'missing descent',
+      kind === 'empty leaf'
+        ? 'merged calibration peer'
+        : kind === 'ruled stub' || kind === 'source group'
+          ? 'duplicate record column'
+          : 'foreign source'
+    ].map((mode) => ({ kind, mode }))
+  )
+)('requires complete exclusive native proof for $kind with $mode', ({ kind, mode }) => {
+  const f = residualNativeOwnership(kind)
+  if (mode === 'missing descent')
+    for (const font of f.tokens) Object.assign(font, { fontDescent: undefined })
+  else if (mode === 'merged calibration peer')
+    for (const cell of f.cells.filter((cell) => cell.row > 2 && cell.column === 2)) cell.rowSpan = 2
+  else if (mode === 'duplicate record column')
+    for (const cell of f.cells.filter(
+      (cell) => cell.column === 3 && (kind === 'source group' || cell.row % 3 === 1)
+    ))
+      cell.column = 2
+  else
+    f.tokens.push(
+      ...structuredClone(f.tokens).map((font) => ({
+        ...font,
+        text: 'Foreign',
+        sourceItem: { ...font.sourceItem, index: font.sourceItem.index + 1000, text: 'Foreign' }
+      }))
+    )
+  expect(conflicts(f.table(), f.tokens, f.rules)).not.toContain(f.tag)
+})
+
+// Anonymous native records exercise contradiction proofs, never replacement grids.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function closedFaces(split = false) {
+  const f = fixture()
+  for (let row = 1; row <= 3; row++)
+    for (let col = 0; col < 3; col++)
+      f.add(row, col, [[col ? '12' : 'Label', 10 + col * 60, 5 + row * 30, 20]])
+  const unassigned = split ? [] : f.cells.splice(3, 3).map((c) => c.text)
+  if (split) for (const col of [1, 2]) f.add(4, col, [['tail', 10 + col * 60, 104, 20]])
+  const rules = [20, 50, 80, 110].flatMap((y) => [
+    [0, y, 100, y],
+    [100, y, 200, y]
+  ])
+  for (const x of [0, 200]) rules.push([x, 20, x, 110])
+  return { ...f, rules, table: { ...f.table(), unassigned } }
+}
+
+it.each(['missing record', 'split tail', 'missing fence', 'only one peer'])(
+  'checks segmented native faces with %s',
+  (mode) => {
+    const f = closedFaces(mode === 'split tail')
+    if (mode === 'missing fence') f.rules.splice(-1)
+    if (mode === 'only one peer') f.cells.splice(-3)
+    const tag =
+      mode === 'split tail'
+        ? 'closed-record-face-split-across-rows'
+        : 'unassigned-closed-native-record'
+    expect(conflicts(f.table, f.tokens, f.rules).includes(tag)).toBe(
+      mode === 'missing record' || mode === 'split tail'
+    )
+  }
+)
+
+it.each(['complete metrics', 'missing metrics', 'missing divider'])(
+  'checks a header divider against verified native label metrics: %s',
+  (mode) => {
+    const f = fixture()
+    for (let col = 0; col < 3; col++)
+      f.add(0, col, [
+        ['Header', 10 + col * 60, 20],
+        ['Body', 10 + col * 60, 35]
+      ])
+    if (mode !== 'missing metrics')
+      for (const font of f.tokens)
+        Object.assign(font, {
+          fontAscent: 0.4,
+          nativeLabelRect: [font.rect[0], font.baseline - 4, font.rect[2], font.baseline + 6]
+        })
+    expect(
+      conflicts(f.table(), f.tokens, mode === 'missing divider' ? [] : [[5, 30, 160, 30]]).includes(
+        'printed-header-rule-inside-row'
+      )
+    ).toBe(mode === 'complete metrics')
+  }
+)
+
+it.each([true, false])(
+  'requires complete native stream proof for one displaced stub: %s',
+  (valid) => {
+    const f = fixture()
+    f.add(1, 0, [
+      ['Record', 10, 40],
+      ['long', 10, 52]
+    ])
+    f.add(2, 0, [
+      ['tail', 10, 64],
+      ['Next', 10, 80]
+    ])
+    for (const row of [1, 2])
+      for (const col of [1, 2]) f.add(row, col, [['12', 80 + col * 30, row * 40]])
+    const order = [0, 1, 2, 5, 3, 4, 6, 7]
+    f.tokens.forEach((font, i) => {
+      font.sourceItem.index = order[i]
+    })
+    if (!valid) f.tokens[2].sourceItem.index = 99
+    expect(conflicts(f.table(), f.tokens).includes('stub-continuation-crosses-record-row')).toBe(
+      valid
+    )
+  }
+)
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function labelBlock(span = false) {
+  const f = fixture()
+  f.add(1, 0, [
+    ['Wrapped', 10, 40],
+    ['label', 10, 52]
+  ])
+  f.add(1, 1, [['12', 100, 40]])
+  f.add(1, 2, [['13', 150, 40]])
+  f.add(2, 0, [['Wrapped', 10, 80]])
+  const tail = f.add(3, 0, [['label', 10, 92]], span ? 3 : 1)
+  if (!span) f.cells.pop()
+  f.add(2, 1, [['14', 100, 80]])
+  f.add(2, 2, [['15', 150, 80]])
+  return { ...f, tail, table: { ...f.table(), unassigned: span ? [] : ['label'] } }
+}
+
+it.each(['unassigned tail', 'split span', 'missing calibration', 'foreign next source'])(
+  'requires a closed calibrated native label block: %s',
+  (mode) => {
+    const f = labelBlock(mode === 'split span')
+    if (mode === 'missing calibration') f.cells.splice(0, 3)
+    if (mode === 'foreign next source') {
+      const index = f.tail.sourceItems[0].index + 1
+      for (const font of f.tokens) if (font.sourceItem.index >= index) font.sourceItem.index++
+      f.tokens.push({
+        ...f.tokens[0],
+        text: 'Foreign',
+        sourceItem: { pageNumber: 1, index, text: 'Foreign' }
+      })
+    }
+    expect(conflicts(f.table, f.tokens).includes('native-label-source-block-split')).toBe(
+      mode === 'unassigned tail' || mode === 'split span'
+    )
+  }
+)
+
+it.each(['empty', 'inside', 'top crossing', 'bottom crossing'])(
+  'requires an empty independently headed estimate gutter: %s',
+  (foreign) => {
+    const f = fixture()
+    f.add(0, 0, [
+      ['Gain', 80, 20, 20],
+      ['Interval', 140, 20, 20]
+    ])
+    for (let row = 1; row <= 3; row++)
+      f.add(row, 0, [
+        ['12', 90, 20 + row * 20, 10],
+        ['[1, 2]', 120, 20 + row * 20, 40]
+      ])
+    if (foreign !== 'empty') {
+      f.add(7, 7, [
+        [
+          'Foreign',
+          105,
+          foreign === 'top crossing' ? 15 : foreign === 'bottom crossing' ? 85 : 50,
+          10
+        ]
+      ])
+      f.cells.pop()
+    }
+    expect(
+      conflicts(f.table(), f.tokens, [
+        [0, 5, 200, 5],
+        [0, 95, 200, 95]
+      ]).includes('independently-headed-estimate-interval-lanes')
+    ).toBe(foreign === 'empty')
+  }
+)
+
+it.each(['complete groups', 'missing sibling', 'explicit spans'])(
+  'requires independent native parent and child heading groups: %s',
+  (mode) => {
+    const f = fixture()
+    for (const start of [0, 2]) {
+      f.add(0, start, [['Left', 10 + start * 50, 40, 20]])
+      f.add(0, start + 1, [
+        ['Parent', 10 + start * 50, 20, 70],
+        ['Right', 60 + start * 50, 40, 20]
+      ])
+      for (const row of [1, 2])
+        for (const col of [start, start + 1])
+          f.add(row, col, [['12', 10 + col * 50, 60 + row * 20, 20]])
+    }
+    if (mode === 'missing sibling') f.cells.splice(0, 1)
+    if (mode === 'explicit spans')
+      for (const cell of f.cells.filter((c) => c.row === 0)) cell.colSpan = 2
+    expect(
+      conflicts(f.table(), f.tokens, [[0, 30, 230, 30]]).includes(
+        'native-parent-heading-consumed-by-child-leaf'
+      )
+    ).toBe(mode === 'complete groups')
+  }
+)
 
 it('rejects a missing native heading between a parent and ruled leaf headers', () => {
   const f = fixture()
@@ -962,3 +1480,773 @@ it('does not infer omitted records from external notes, partial columns or ambig
     expect(conflicts(f.table(), f.tokens), variant).toEqual([])
   }
 })
+
+it('isolates two terminal scalar lanes proved by numeric headings and two independent peer columns', () => {
+  const f = fixture()
+  for (let row = 0; row < 3; row++) {
+    f.add(row, 0, [[['Setting', 'Estimate', 'Error'][row], 10, 30 + row * 25, 60]])
+    for (const col of [1, 2]) f.add(row, col, [['2', 85 + col * 45, 30 + row * 25, 10]])
+    f.add(row, 3, [
+      ['8', 225, 30 + row * 25, 10],
+      ['16', 270, 30 + row * 25, 10]
+    ])
+  }
+  const table = { ...f.table(), grid: Array.from({ length: 3 }, () => Array(4).fill('')) }
+  expect(conflicts(table, f.tokens)).toContain('numeric-headed-terminal-lanes-collapsed')
+  const before = JSON.stringify(table)
+  const checked = reviewFinalNativeTableSources(table, f.tokens, [])
+  expect(checked.issues).toContain('native-table-structure-ambiguous')
+  expect(checked.grid).toBe(table.grid)
+  expect(checked.cells).toBe(table.cells)
+  expect(JSON.stringify(table)).toBe(before)
+  f.cells.at(-1)!.colSpan = 2
+  expect(conflicts(table, f.tokens)).not.toContain('numeric-headed-terminal-lanes-collapsed')
+  f.cells.at(-1)!.colSpan = 1
+  expect(conflicts(table, [...f.tokens, { ...f.tokens.at(-1)! }])).not.toContain(
+    'numeric-headed-terminal-lanes-collapsed'
+  )
+})
+
+it('rejects duplicate record stubs and distinct thresholds merged above a spanning note', () => {
+  const f = fixture()
+  f.add(1, 0, [
+    ['Control', 10, 50, 45],
+    ['Control', 10, 70, 45]
+  ])
+  f.add(1, 1, [
+    ['2/5', 80, 50],
+    ['3/5', 80, 70]
+  ])
+  f.add(1, 2, [['1.2', 140, 50]])
+  f.add(1, 3, [['0.8', 200, 50]])
+  f.add(1, 4, [['No observations', 140, 70, 110]])
+  expect(conflicts(f.table(), f.tokens)).toContain('repeated-stub-records-collapsed')
+  f.cells[0].rowSpan = 2
+  expect(conflicts(f.table(), f.tokens)).not.toContain('repeated-stub-records-collapsed')
+  f.cells[0].rowSpan = 1
+  f.cells[1].text = 'A wrapped threshold label'
+  expect(conflicts(f.table(), f.tokens)).not.toContain('repeated-stub-records-collapsed')
+})
+
+it('rejects complete parent runs moved over an empty leading field below a split native heading', () => {
+  const f = fixture(),
+    head = f.add(0, 0, [['ID Description', 10, 30, 90]])
+  head.text = 'ID'
+  head.sourceRects = [[10, 20, 25, 30]]
+  f.cells.push({ ...head, column: 1, text: 'Description', sourceRects: [[25, 20, 100, 30]] })
+  for (let row = 1; row <= 3; row++) {
+    f.add(row, 0, [])
+    f.add(row, 1, [[`R${row} Complete description`, 10, 50 + row * 20, 155]])
+  }
+  const rules = [[0, 40, 200, 40]]
+  expect(conflicts(f.table(), f.tokens, rules)).toContain('whole-native-parent-crosses-empty-stub')
+  expect(conflicts(f.table(), f.tokens, [])).not.toContain('whole-native-parent-crosses-empty-stub')
+  f.cells[3].colSpan = 2
+  expect(conflicts(f.table(), f.tokens, rules)).not.toContain(
+    'whole-native-parent-crosses-empty-stub'
+  )
+})
+
+it('rejects line rows inside repeated ragged native paragraph blocks, preserving row-major tables', () => {
+  const f = fixture()
+  for (let col = 0; col < 3; col++) f.add(0, col, [['Heading', 10 + col * 100, 30, 50]])
+  for (let group = 0; group < 2; group++)
+    for (let col = 0; col < 3; col++)
+      for (let line = 0; line < [3, 2, 4][col]; line++)
+        f.add(1 + group * 4 + line, col, [
+          [`Native words ${line}`, 10 + col * 100, 55 + group * 100 + line * 20, 70]
+        ])
+  const table = { ...f.table(), grid: Array.from({ length: 9 }, () => Array(3).fill('')) },
+    rules = [[0, 40, 300, 40]]
+  expect(conflicts(table, f.tokens, rules)).toContain(
+    'native-paragraph-blocks-split-into-line-rows'
+  )
+  expect(conflicts(table, f.tokens, [])).not.toContain(
+    'native-paragraph-blocks-split-into-line-rows'
+  )
+  f.add(1, 1, [['Unclaimed native words', 120, 80, 70]])
+  f.cells.pop()
+  expect(conflicts(table, f.tokens, rules)).not.toContain(
+    'native-paragraph-blocks-split-into-line-rows'
+  )
+  f.tokens.pop()
+  // Independent native cell paint order follows the actual row units here.
+  for (const [index, c] of [...f.cells]
+    .sort((a, b) => a.row - b.row || a.column - b.column)
+    .entries())
+    c.sourceItems[0].index = index
+  expect(conflicts(table, f.tokens, rules)).not.toContain(
+    'native-paragraph-blocks-split-into-line-rows'
+  )
+})
+
+it('retains an unknown formula atom in a closed native advance gap across whitespace items', () => {
+  const f = fixture()
+  f.add(0, 0, [['A =', 10, 40, 25]])
+  const expression = f.add(0, 1, [
+    ['smooth', 50, 40, 30],
+    ['X', 90, 40, 10]
+  ])
+  const glyph = f.add(1, 1, [['\u0000', 82, 35, 8]])
+  f.cells.pop()
+  expression.sourceItems[0].index = 10
+  glyph.sourceItems[0].index = 12
+  expression.sourceItems[1].index = 13
+  const table = { ...f.table(), unassigned: [glyph.text] }
+  expect(conflicts(table, f.tokens)).toContain('unassigned-native-formula-atom')
+  f.tokens.at(-1)!.rect[0] -= 10
+  expect(conflicts(table, f.tokens)).not.toContain('unassigned-native-formula-atom')
+})
+
+it('uses repeated printed metric labels to reject a collapsed first numeric panel', () => {
+  const f = fixture()
+  f.add(0, 0, [
+    ['Parameter', 10, 30, 50],
+    ['Response', 10, 50, 50],
+    ['Change', 10, 70, 50]
+  ])
+  for (const col of [1, 2, 3])
+    f.add(0, col, [
+      ['0.2', col * 80, 30],
+      ['.42', col * 80, 50],
+      ['-1.5%', col * 80, 70]
+    ])
+  for (const [at, label] of ['Parameter', 'Response', 'Change'].entries()) {
+    f.add(at + 1, 0, [[label, 10, 110 + at * 20, 50]])
+    for (const col of [1, 2, 3]) f.add(at + 1, col, [['2', col * 80, 110 + at * 20]])
+  }
+  const rules = [[0, 85, 280, 85]]
+  expect(conflicts(f.table(), f.tokens, rules)).toContain('repeated-metric-panel-rows-collapsed')
+  expect(conflicts(f.table(), f.tokens, [])).not.toContain('repeated-metric-panel-rows-collapsed')
+  f.cells.find((c) => c.row === 2 && c.column === 0)!.text = 'Different measure'
+  expect(conflicts(f.table(), f.tokens, rules)).not.toContain(
+    'repeated-metric-panel-rows-collapsed'
+  )
+})
+
+it('requires omitted native headings and a printed divider before isolating a prose reference lane', () => {
+  const f = fixture()
+  const left = f.add(0, 0, [['Explanation', 10, 25, 95]]),
+    right = f.add(0, 1, [['Ref.', 150, 25, 20]])
+  f.cells.splice(0)
+  for (let row = 0; row < 3; row++)
+    f.add(row, 0, [
+      ['A complete claim', 10, 50 + row * 35, 95],
+      ['continues here', 10, 65 + row * 35, 90],
+      ['Q', 155, 50 + row * 35, 10]
+    ])
+  const table = { ...f.table(), unassigned: [left.text, right.text] },
+    rules = [[0, 35, 180, 35]]
+  expect(conflicts(table, f.tokens, rules)).toContain('omitted-headed-reference-lane')
+  expect(conflicts({ ...table, unassigned: [] }, f.tokens, rules)).not.toContain(
+    'omitted-headed-reference-lane'
+  )
+  expect(conflicts(table, f.tokens, [])).not.toContain('omitted-headed-reference-lane')
+})
+
+it('rejects a complete top header band merged with a separately repeated body-value band', () => {
+  const f = fixture()
+  f.add(0, 0, [
+    ['Operation', 10, 25, 55],
+    ['Initial setup', 10, 45, 65]
+  ])
+  f.add(0, 1, [
+    ['Work', 100, 25, 25],
+    ['F(n)', 100, 45, 30]
+  ])
+  f.add(0, 2, [
+    ['Scale', 190, 25, 25],
+    ['linear', 190, 45, 30]
+  ])
+  f.add(0, 3, [
+    ['Mode', 280, 25, 25],
+    ['absent', 280, 45, 30]
+  ])
+  for (const row of [1, 2]) {
+    f.add(row, 0, [['Later operation', 10, 45 + row * 20, 70]])
+    f.add(row, 1, [[`F(n${row})`, 100, 45 + row * 20, 35]])
+    f.add(row, 2, [['linear', 190, 45 + row * 20, 30]])
+    f.add(row, 3, [['absent', 280, 45 + row * 20, 30]])
+  }
+  const table = { ...f.table(), grid: Array.from({ length: 3 }, () => Array(4).fill('')) }
+  const order = [...f.tokens].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  order.forEach((token, index) => {
+    token.sourceItem.index = index
+  })
+  const marker = 'native-header-and-first-record-merged'
+  expect(conflicts(table, f.tokens)).toContain(marker)
+  const reviewed = reviewFinalNativeTableSources(table, f.tokens)
+  expect(reviewed.issues).toContain('native-table-structure-ambiguous')
+  expect(reviewed.cells).toBe(table.cells)
+  expect(reviewed.grid).toBe(table.grid)
+  expect(reviewed.cropRect).toBe(table.cropRect)
+  // Column-major painting can describe an ordinary multiline heading.
+  f.tokens.forEach((token, index) => {
+    token.sourceItem.index = index
+  })
+  expect(conflicts(table, f.tokens)).not.toContain(marker)
+  order.forEach((token, index) => {
+    token.sourceItem.index = index
+  })
+  f.cells[1].rowSpan = 2
+  expect(conflicts(table, f.tokens)).not.toContain(marker)
+  f.cells[1].rowSpan = 1
+  // The same bands below an earlier native row cannot be the table's header.
+  f.add(3, 0, [['Earlier printed record', 10, 15, 90]])
+  expect(conflicts(table, f.tokens)).not.toContain(marker)
+})
+
+it('rejects independent record starts synchronized with a repeated categorical lane and another field', () => {
+  const f = fixture()
+  for (const [col, title] of ['Measure', 'Stages', 'Checklist'].entries())
+    f.add(0, col, [[title, 10 + col * 100, 25, 50]])
+  f.add(1, 0, [
+    ['Consumed energy', 10, 55, 80],
+    ['Processor hours', 10, 85, 80]
+  ])
+  const repeated = f.add(1, 1, [
+    ['A·B·C', 110, 55, 50],
+    ['A·B·C', 110, 85, 50]
+  ])
+  const other = f.add(1, 2, [
+    ['K2, K7', 210, 55, 50],
+    ['K4, K8', 210, 85, 50]
+  ])
+  for (const row of [2, 3]) {
+    f.add(row, 0, [['Other measure', 10, 85 + row * 20, 70]])
+    f.add(row, 1, [['A·B·C', 110, 85 + row * 20, 50]])
+    f.add(row, 2, [['K3', 210, 85 + row * 20, 20]])
+  }
+  const table = { ...f.table(), grid: Array.from({ length: 4 }, () => Array(3).fill('')) },
+    marker = 'native-independent-record-starts-merged'
+  expect(conflicts(table, f.tokens)).toContain(marker)
+  expect(reviewFinalNativeTableSources(table, f.tokens).issues).toContain(
+    'native-table-structure-ambiguous'
+  )
+  other.colSpan = 2
+  expect(conflicts(table, f.tokens)).not.toContain(marker)
+  other.colSpan = 1
+  repeated.rowSpan = 2
+  expect(conflicts(table, f.tokens)).not.toContain(marker)
+  repeated.rowSpan = 1
+  const second = f.tokens.find((t) => t.sourceItem === repeated.sourceItems[1])!
+  second.baseline -= 30
+  second.rect[1] -= 30
+  second.rect[3] -= 30
+  expect(conflicts(table, f.tokens)).not.toContain(marker)
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function splitNativeSectionRecord() {
+  const f = fixture(),
+    stub = f.add(1, 0, [
+      ['SET', 10, 30, 15, 8],
+      ['0', 20, 46, 4],
+      ['.', 24, 46, 2],
+      ['5', 26, 46, 4]
+    ]),
+    word = f.add(0, 0, [['parameter', 30, 30, 40]])
+  f.cells.pop()
+  const symbol = f.add(0, 2, [
+      ['ξ', 75, 30, 6],
+      ['q', 81, 31, 4, 6]
+    ]),
+    merged = f.add(
+      1,
+      1,
+      [
+        ['0', 70, 46, 4],
+        ['.', 74, 46, 2],
+        ['7', 76, 46, 4],
+        ['+', 120, 46, 4],
+        ['8', 124, 46, 4],
+        ['.', 128, 46, 2],
+        ['8', 130, 46, 4]
+      ],
+      2
+    )
+  f.add(1, 3, [['0.2', 170, 46, 12]])
+  for (const row of [2, 3])
+    for (const [column, x] of [20, 70, 120, 170].entries())
+      f.add(row, column, [
+        [column === 2 ? '+1' : '1', x, 30 + row * 16, column === 2 ? 8 : 4],
+        ['.', x + (column === 2 ? 8 : 4), 30 + row * 16, 2],
+        ['2', x + (column === 2 ? 10 : 6), 30 + row * 16, 4]
+      ])
+  const order = [...f.tokens].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
+  order.forEach((token, index) => {
+    token.sourceItem.index = index
+  })
+  return {
+    ...f,
+    stub,
+    word,
+    symbol,
+    merged,
+    table: {
+      ...f.table(),
+      grid: Array.from({ length: 4 }, () => Array(4).fill('')),
+      unassigned: [word.text]
+    },
+    rules: [
+      [0, 18, 195, 18],
+      [0, 90, 195, 90]
+    ]
+  }
+}
+
+it('retains native sources when a split section also projects two numeric lanes into one cell', () => {
+  const f = splitNativeSectionRecord(),
+    marker = 'native-section-and-projected-record-conflict',
+    before = structuredClone(f.table)
+  expect(conflicts(f.table, f.tokens, f.rules)).toContain(marker)
+  const checked = reviewFinalNativeTableSources(f.table, f.tokens, f.rules)
+  expect(checked.issues).toContain('native-table-structure-ambiguous')
+  expect(checked.cells).toBe(f.table.cells)
+  expect(checked.grid).toBe(f.table.grid)
+  expect(checked.cropRect).toBe(f.table.cropRect)
+  expect(f.table).toEqual(before)
+})
+
+it.each([
+  'unassigned absent',
+  'unassigned source missing',
+  'duplicate source',
+  'unassigned literal mismatch',
+  'intervening unbound native source',
+  'source rectangle mismatch',
+  'explicit row span',
+  'measured source partition',
+  'missing font height',
+  'outside crop',
+  'no projected numeric span',
+  'only two numeric records',
+  'different heading baseline',
+  'word outside native gap',
+  'same-row multiline heading',
+  'column-major native order',
+  'percentage annotation',
+  'missing divider',
+  'duplicate divider'
+])('keeps a section/record layout when %s prevents its complete contradiction proof', (mode) => {
+  const f = splitNativeSectionRecord()
+  if (mode === 'unassigned absent') f.table.unassigned = []
+  if (mode === 'unassigned source missing')
+    f.tokens.splice(
+      f.tokens.findIndex((t) => t.sourceItem === f.word.sourceItems[0]),
+      1
+    )
+  if (mode === 'duplicate source') f.tokens.push(structuredClone(f.tokens[0]))
+  if (mode === 'unassigned literal mismatch') f.word.sourceItems[0].text = 'another'
+  if (mode === 'intervening unbound native source') {
+    for (const token of f.tokens) if (token.sourceItem.index >= 2) token.sourceItem.index++
+    f.tokens.push({
+      text: 'x',
+      horizontal: false,
+      height: 0,
+      baseline: 30,
+      rect: [50, 20, 55, 30],
+      sourceItem: { pageNumber: 1, index: 2, text: 'x' }
+    })
+  }
+  if (mode === 'source rectangle mismatch') f.stub.sourceRects[0] = [9, 22, 25, 30]
+  if (mode === 'explicit row span') f.symbol.rowSpan = 2
+  if (mode === 'measured source partition')
+    f.symbol.sourceSegments = [
+      { ...f.symbol.sourceItems[0], start: 0, end: 1, rect: f.symbol.sourceRects[0] }
+    ]
+  if (mode === 'missing font height')
+    f.tokens.find((t) => t.sourceItem === f.stub.sourceItems[0])!.height = NaN
+  if (mode === 'outside crop') f.table.cropRect[0] = 15
+  if (mode === 'no projected numeric span') f.merged.colSpan = 1
+  if (mode === 'only two numeric records')
+    f.cells.splice(0, f.cells.length, ...f.cells.filter((c) => c.row !== 3))
+  if (mode === 'different heading baseline') {
+    const font = f.tokens.find((t) => t.sourceItem === f.stub.sourceItems[0])!
+    font.baseline -= 2
+    font.rect[1] -= 2
+    font.rect[3] -= 2
+  }
+  if (mode === 'word outside native gap') {
+    const font = f.tokens.find((t) => t.sourceItem === f.word.sourceItems[0])!
+    font.rect[0] += 60
+    font.rect[2] += 60
+  }
+  if (mode === 'same-row multiline heading') f.symbol.row = 1
+  if (mode === 'column-major native order')
+    [...f.tokens]
+      .sort((a, b) => a.rect[0] - b.rect[0] || a.baseline - b.baseline)
+      .forEach((t, n) => {
+        t.sourceItem.index = n
+      })
+  if (mode === 'percentage annotation') {
+    const c = f.cells.find((c) => c.row === 2 && c.column === 1)!,
+      font = f.tokens.find((t) => t.sourceItem === c.sourceItems.at(-1))!
+    font.text += '%'
+    font.sourceItem.text = font.text
+    c.text += '%'
+  }
+  if (mode === 'missing divider') f.rules.pop()
+  if (mode === 'duplicate divider') f.rules.push([...f.rules[0]])
+  expect(conflicts(f.table, f.tokens, f.rules)).not.toContain(
+    'native-section-and-projected-record-conflict'
+  )
+})
+
+// Independently headed lanes must keep their native sources even when the grid fuses them.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function headedFractionAndCount() {
+  const f = fixture()
+  for (const [column, text] of ['Model', 'Count', 'Safe'].entries())
+    f.add(0, column, [[text, 10 + column * 90, 30, 25]])
+  f.add(0, 3, [
+    ['Rate', 300, 25, 20],
+    ['trial', 297, 36, 23],
+    ['↑', 321, 36, 7],
+    ['Err.', 340, 25, 20],
+    ['↓', 345, 36, 8]
+  ])
+  for (const row of [1, 2, 3]) {
+    f.add(row, 0, [['Model', 10, 40 + row * 20, 25]])
+    f.add(row, 1, [[String(row), 100, 40 + row * 20, 10]])
+    f.add(row, 2, [[String(row + 2), 190, 40 + row * 20, 10]])
+    f.add(row, 3, [
+      [`${row}/20`, 300, 40 + row * 20, 28],
+      ['0', 355, 40 + row * 20, 5]
+    ])
+  }
+  for (const font of f.tokens)
+    Object.assign(font, {
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      nativeLabelRect: [
+        font.rect[0],
+        font.baseline - font.height * 0.8,
+        font.rect[2],
+        font.baseline + font.height * 0.2
+      ]
+    })
+  return {
+    ...f,
+    table: {
+      ...f.table(),
+      page: 1,
+      grid: Array.from({ length: 4 }, () => Array(4).fill('')),
+      issues: []
+    },
+    rules: [
+      [0, 10, 380, 10],
+      [0, 45, 380, 45],
+      [0, 110, 380, 110]
+    ]
+  }
+}
+
+it('retains independent native fraction and count lanes without guessing replacement columns', () => {
+  const f = headedFractionAndCount(),
+    before = structuredClone(f.table)
+  expect(conflicts(f.table, f.tokens, f.rules)).toContain('native-headed-fraction-count-lanes')
+  const checked = reviewFinalNativeTableSources(f.table, f.tokens, f.rules)
+  expect(checked.issues).toContain('native-table-structure-ambiguous')
+  expect(checked.reviewCandidate).toBe(false)
+  expect(checked.cells).toBe(f.table.cells)
+  expect(checked.grid).toBe(f.table.grid)
+  expect(f.table).toEqual(before)
+})
+
+it.each([
+  'missing closing rule',
+  'duplicate source',
+  'foreign top edge',
+  'foreign bottom edge',
+  'missing font metrics'
+])('does not infer independent native terminal lanes with %s', (mode) => {
+  const f = headedFractionAndCount()
+  if (mode === 'missing closing rule') f.rules.pop()
+  if (mode === 'duplicate source') f.tokens.push(structuredClone(f.tokens[3]))
+  if (mode === 'missing font metrics') Object.assign(f.tokens[3], { fontAscent: undefined })
+  if (mode.startsWith('foreign')) {
+    const y = mode === 'foreign top edge' ? 19 : 109
+    const c = f.add(7, 3, [['Foreign', 332, y, 3]])
+    f.cells.pop()
+    const font = f.tokens.find((t) => t.sourceItem === c.sourceItems[0])!
+    Object.assign(font, {
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      nativeLabelRect: [332, y - 8, 335, y + 2]
+    })
+  }
+  expect(conflicts(f.table, f.tokens, f.rules)).not.toContain('native-headed-fraction-count-lanes')
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function displacedNativeSubscript() {
+  const f = fixture(),
+    c = f.add(1, 0, [
+      ['Wave ', 10, 40, 30],
+      ['q', 40, 40, 6],
+      ['2', 46, 41.1, 4, 6.7],
+      ['(s', 55, 40, 10],
+      ['−1', 65, 35.8, 7, 6.7],
+      [')', 73, 40, 4]
+    ])
+  Object.assign(c, {
+    text: 'Wave q (s−1 2)',
+    textRuns: [
+      { text: 'Wave q (s', position: 'normal' },
+      { text: '−1', position: 'superscript' },
+      { text: ' 2)', position: 'normal' }
+    ]
+  })
+  for (const font of f.tokens)
+    Object.assign(font, {
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      nativeLabelRect: [
+        font.rect[0],
+        font.baseline - font.height * 0.8,
+        font.rect[2],
+        font.baseline + font.height * 0.2
+      ]
+    })
+  return { ...f, c, table: { ...f.table(), page: 1, issues: [] } }
+}
+
+it('retains a native-attached subscript displaced into a later closed enclosure', () => {
+  const f = displacedNativeSubscript(),
+    before = structuredClone(f.table)
+  expect(conflicts(f.table, f.tokens)).toContain('native-attached-subscript-order-conflict')
+  const checked = reviewFinalNativeTableSources(f.table, f.tokens)
+  expect(checked.issues).toContain('native-table-structure-ambiguous')
+  expect(checked.reviewCandidate).toBe(false)
+  expect(checked.cells).toBe(f.table.cells)
+  expect(checked.grid).toBe(f.table.grid)
+  expect(f.table).toEqual(before)
+})
+
+it.each(['correct order', 'different metrics', 'missing atom', 'foreign attachment'])(
+  'does not infer a displaced native subscript with %s',
+  (mode) => {
+    const f = displacedNativeSubscript()
+    if (mode === 'correct order')
+      Object.assign(f.c, {
+        text: 'Wave q2 (s−1)',
+        textRuns: [{ text: 'Wave q2 (s−1)', position: 'normal' }]
+      })
+    if (mode === 'different metrics') Object.assign(f.tokens[2], { fontDescent: -0.3 })
+    if (mode === 'missing atom') f.tokens.splice(2, 1)
+    if (mode === 'foreign attachment') {
+      const c = f.add(7, 0, [['Foreign', 42, 39, 2]])
+      f.cells.pop()
+      const font = f.tokens.find((t) => t.sourceItem === c.sourceItems[0])!
+      Object.assign(font, { fontAscent: 0.8, fontDescent: -0.2, nativeLabelRect: [42, 31, 44, 41] })
+    }
+    expect(conflicts(f.table, f.tokens)).not.toContain('native-attached-subscript-order-conflict')
+  }
+)
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function calibratedNativeCycles(merged = true) {
+  const f = fixture()
+  for (const column of [0, 1, 2]) f.add(0, column, [['Heading', 10 + column * 60, 20, 35]])
+  for (const record of [0, 1, 2, 3])
+    for (const column of [0, 1, 2]) {
+      const row = merged ? Math.max(1, record) : record + 1,
+        prior = f.cells.find((c) => c.row === row && c.column === column),
+        cell = f.add(row, column, [
+          ['Record', 10 + column * 60, 50 + record * 50, 35],
+          ['continued', 10 + column * 60, 62 + record * 50, 40]
+        ])
+      if (prior) {
+        f.cells.pop()
+        prior.text += ' ' + cell.text
+        prior.sourceItems.push(...cell.sourceItems)
+        prior.sourceRects.push(...cell.sourceRects)
+      }
+    }
+  for (const font of f.tokens)
+    Object.assign(font, {
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      nativeLabelRect: [font.rect[0], font.baseline - 8, font.rect[2], font.baseline + 2]
+    })
+  return {
+    ...f,
+    table: {
+      ...f.table(),
+      page: 1,
+      grid: Array.from({ length: merged ? 4 : 5 }, () => Array(3).fill('')),
+      cropRect: [0, 0, 200, 245],
+      issues: []
+    },
+    rules: [0, 30, 245].map((y) => [0, y, 200, y])
+  }
+}
+
+it('protects merged native record cycles calibrated by complete independent records', () => {
+  const f = calibratedNativeCycles()
+  expect(conflicts(f.table, f.tokens, f.rules)).toContain('native-calibrated-source-cycles-merged')
+  const checked = reviewFinalNativeTableSources(f.table, f.tokens, f.rules)
+  expect(checked.issues).toContain('native-table-structure-ambiguous')
+  expect(checked.grid).toBe(f.table.grid)
+  expect(checked.cells).toBe(f.table.cells)
+  expect(checked.cropRect).toBe(f.table.cropRect)
+})
+
+it.each([
+  'already separate records',
+  'missing font proof',
+  'foreign crossing frame',
+  'missing header divider',
+  'source order broken',
+  'shared calibration owner'
+])('does not infer a native record cycle contradiction with %s', (mode) => {
+  const f = calibratedNativeCycles(mode !== 'already separate records')
+  if (mode === 'missing font proof') Object.assign(f.tokens[3], { fontDescent: undefined })
+  if (mode === 'foreign crossing frame') {
+    const c = f.add(8, 0, [['Foreign', 10, 4, 20]])
+    f.cells.pop()
+    Object.assign(
+      f.tokens.find((t) => t.sourceItem === c.sourceItems[0])!,
+      {
+        fontAscent: 0.8,
+        fontDescent: -0.2,
+        nativeLabelRect: [10, -4, 30, 6]
+      }
+    )
+  }
+  if (mode === 'missing header divider') f.rules.splice(1, 1)
+  if (mode === 'source order broken') f.tokens[3].sourceItem.index = 10000
+  if (mode === 'shared calibration owner') f.table.cells.find((c) => c.row === 3)!.rowSpan = 2
+  expect(conflicts(f.table, f.tokens, f.rules)).not.toContain(
+    'native-calibrated-source-cycles-merged'
+  )
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function measuredHeadingLeaves(outside = false) {
+  const f = fixture()
+  f.add(0, 1, [['AA BB CC DD', 50, 30, 110]], 3)
+  if (outside) f.cells.pop()
+  for (const row of [1, 2, 3]) {
+    f.add(row, 1, [['1.1 2.2', 50, 40 + row * 20, 50]])
+    f.add(row, 2, [['3.3', 110, 40 + row * 20, 20]])
+    f.add(row, 3, [['4.4', 140, 40 + row * 20, 20]])
+  }
+  for (const font of f.tokens)
+    Object.assign(font, {
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      nativeLabelRect: [font.rect[0], font.baseline - 8, font.rect[2], font.baseline + 2]
+    })
+  const measuredRuns = f.tokens.map((font) => ({
+    ...font,
+    literalGlyphs: [...font.text.replace(/\s/gu, '')],
+    glyphRuns: Array.from(font.text.replace(/\s/gu, ''), () => 1),
+    gaps:
+      font.text === 'AA BB CC DD'
+        ? [2, 4, 6].map((index, n) => ({ index, left: 70 + n * 30, right: 80 + n * 30 }))
+        : font.text === '1.1 2.2'
+          ? [{ index: 3, left: 70, right: 80 }]
+          : []
+  }))
+  return {
+    ...f,
+    measuredRuns,
+    table: { ...f.table(), page: 1, cropRect: [0, outside ? 35 : 0, 200, 120], issues: [] },
+    rules: [
+      [0, 20, 200, 20],
+      [0, 35, 200, 35],
+      [0, 110, 200, 110]
+    ]
+  }
+}
+
+it.each([false, true])(
+  'protects measured independent leaf headings with outside frame %s',
+  (outside) => {
+    const f = measuredHeadingLeaves(outside),
+      before = structuredClone(f.table)
+    expect(conflicts(f.table, f.tokens, f.rules, f.measuredRuns)).toContain(
+      'native-measured-heading-leaf-collapse'
+    )
+    const checked = reviewFinalNativeTableSources(f.table, f.tokens, f.rules, f.measuredRuns)
+    expect(checked.issues).toContain('native-table-structure-ambiguous')
+    expect(checked.cells).toBe(f.table.cells)
+    expect(checked.grid).toBe(f.table.grid)
+    const nested = reviewFinalNativeTableSources(
+      { parts: [f.table], cropRect: f.table.cropRect },
+      f.tokens,
+      f.rules,
+      f.measuredRuns
+    )
+    expect(nested.parts[0].issues).toContain('native-table-structure-ambiguous')
+    expect(nested.parts[0].cells).toBe(f.table.cells)
+    expect(f.table).toEqual(before)
+  }
+)
+
+it.each([
+  'missing measurement',
+  'duplicate measurement',
+  'wrong glyph literal',
+  'wrong gap',
+  'missing adjacent divider',
+  'only two records',
+  'foreign full font'
+])('does not infer measured leaf collapse with %s', (mode) => {
+  const f = measuredHeadingLeaves()
+  if (mode === 'missing measurement') f.measuredRuns.shift()
+  if (mode === 'duplicate measurement') f.measuredRuns.push(structuredClone(f.measuredRuns[0]))
+  if (mode === 'wrong glyph literal') f.measuredRuns[0].literalGlyphs[0] = 'Z'
+  if (mode === 'wrong gap') f.measuredRuns[0].gaps[0].index++
+  if (mode === 'missing adjacent divider') f.rules.splice(1, 1)
+  if (mode === 'only two records') f.table.cells = f.table.cells.filter((c) => c.row < 3)
+  if (mode === 'foreign full font') {
+    const c = f.add(7, 0, [['Foreign', 75, 25, 2]])
+    f.cells.pop()
+    Object.assign(
+      f.tokens.find((t) => t.sourceItem === c.sourceItems[0])!,
+      { fontAscent: 0.8, fontDescent: -0.2, nativeLabelRect: [75, 17, 77, 27] }
+    )
+  }
+  expect(conflicts(f.table, f.tokens, f.rules, f.measuredRuns)).not.toContain(
+    'native-measured-heading-leaf-collapse'
+  )
+})
+
+it.each(['shifted owner', 'correct owner', 'missing divider', 'foreign header font'])(
+  'checks complete independently calibrated native heading lanes with %s',
+  (mode) => {
+    const f = calibratedNativeCycles()
+    f.table.cropRect[3] = 250
+    f.rules[0] = [0, 5, 200, 5]
+    f.table.cells.find((c) => c.row === 3 && c.column === 0)!.sourceRects.reverse()
+    if (mode !== 'correct owner') {
+      const a = f.table.cells.find((c) => c.row === 0 && c.column === 0)!,
+        b = f.table.cells.find((c) => c.row === 0 && c.column === 1)!
+      a.column = 1
+      b.column = 0
+    }
+    if (mode === 'missing divider') f.rules.splice(1, 1)
+    if (mode === 'foreign header font') {
+      const c = f.add(8, 0, [['Foreign', 70, 20, 20]])
+      f.cells.pop()
+      Object.assign(
+        f.tokens.find((t) => t.sourceItem === c.sourceItems[0])!,
+        {
+          fontAscent: 0.8,
+          fontDescent: -0.2,
+          nativeLabelRect: [70, 12, 90, 22]
+        }
+      )
+    }
+    const found = conflicts(f.table, f.tokens, f.rules)
+    if (mode === 'shifted owner') {
+      expect(found).toContain('native-heading-assigned-to-foreign-lane')
+      const checked = reviewFinalNativeTableSources(f.table, f.tokens, f.rules)
+      expect(checked.issues).toContain('native-table-structure-ambiguous')
+      expect(checked.cells).toBe(f.table.cells)
+      expect(checked.cropRect).toBe(f.table.cropRect)
+    } else expect(found).not.toContain('native-heading-assigned-to-foreign-lane')
+  }
+)

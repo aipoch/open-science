@@ -11,6 +11,11 @@ import {
   type ModuleImpactManifest
 } from './load-module-impact.mjs'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
+import {
+  dependencyBoundaryViolations,
+  provablyStaleConsumerTests,
+  sourceSnapshot
+} from './module-graph/index.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
@@ -86,6 +91,38 @@ describe('module registration layouts', () => {
         modules: [...before.modules].sort()
       })
     }
+  })
+
+  it('normalizes omitted consumer registrations so integrity proofs never see undefined', () => {
+    const base = commit()
+    const sparse: Record<string, unknown> = structuredClone(sample().modules.sample)
+    delete sparse.consumerModules
+    delete (sparse.testFiles as Record<string, unknown>).consumer
+    put(moduleImpactRegistrationPath, { schemaVersion: 1 })
+    put('scripts/ci/module-impact/sample.json', sparse)
+    const head = commit()
+    for (const loaded of [local(), loadModuleImpactManifestAtRevision(head, { cwd: root })]) {
+      expect(loaded).toEqual(sample())
+      expect(validateModuleImpactManifest(loaded)).toBe(loaded)
+    }
+    const manifest = local()
+    expect(() =>
+      dependencyBoundaryViolations(sourceSnapshot(head, root), manifest, manifest, [])
+    ).not.toThrow()
+    expect(provablyStaleConsumerTests(manifest.modules.sample, () => ({}))).toEqual([])
+    expect(moduleOwnershipFromRevisions(base, head, { cwd: root }).ok).toBe(true)
+  })
+
+  it.each([
+    [
+      'testFiles.consumer',
+      { testFiles: { owner: ['src/sample.test.ts'], contract: [], consumer: null } }
+    ],
+    ['consumerModules', { consumerModules: null }]
+  ])('keeps a null %s invalid instead of defaulting it', (field, override) => {
+    put(moduleImpactRegistrationPath, { schemaVersion: 1 })
+    put('scripts/ci/module-impact/sample.json', { ...sample().modules.sample, ...override })
+    expect(() => validateModuleImpactManifest(local())).toThrow(`${field} must be an array`)
   })
 
   it('reads hundreds of shards with duplicate blobs and UTF-8 metadata losslessly', () => {

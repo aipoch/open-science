@@ -3,6 +3,189 @@ import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { area, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
+import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
+
+// A single raster in a non-masking, untransformed group can outlive its
+// quantized box. Keep the complete image, separating it from actual caption
+// glyph ink rather than the caption's taller advance box. The legacy numeric
+// limit and ordinary packet API retain their existing contracts.
+export function nativeGroupedRasterCaptionBottom(page, figure, context) {
+  const valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0,
+    same = (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    inside = (a, b) => b.every((n, i) => (i < 2 ? n >= a[i] - 1e-7 : n <= a[i] + 1e-7)),
+    o = context?.operators,
+    v = context?.viewport,
+    caption = figure?.caption,
+    raw = context?.content?.items
+  if (
+    !Number.isSafeInteger(page?.pageNumber) ||
+    page.pageNumber < 1 ||
+    !valid(figure?.rect) ||
+    !valid(caption?.rect) ||
+    caption.page !== page?.pageNumber ||
+    !Array.isArray(caption.lines) ||
+    !caption.lines.length ||
+    !caption.lines.every((l) => typeof l === 'string') ||
+    !Number.isFinite(page.width) ||
+    !Number.isFinite(page.height) ||
+    page.width <= 0 ||
+    page.height <= 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    ![
+      raw,
+      page.graphicsBounds,
+      context?.graphicsBounds,
+      o?.fnArray,
+      o?.argsArray,
+      context?.glyphBounds
+    ].every(Array.isArray) ||
+    raw.some((r) => !r || typeof r.str !== 'string') ||
+    !same(page.graphicsBounds, context.graphicsBounds) ||
+    page.graphicsBounds.length !== 1 ||
+    o.fnArray.length !== o.argsArray.length ||
+    o.fnArray.length > 100000 ||
+    !same(v?.transform, [1, 0, 0, -1, 0, page.height]) ||
+    v.scale !== 1 ||
+    v.rotation !== 0 ||
+    v.width !== page.width ||
+    v.height !== page.height
+  )
+    return
+  const start = o.fnArray.indexOf(OPS.beginGroup),
+    end = o.fnArray.indexOf(OPS.endGroup),
+    group = o.argsArray[start]?.[0]
+  if (
+    start < 0 ||
+    end <= start ||
+    o.fnArray.lastIndexOf(OPS.beginGroup) !== start ||
+    o.fnArray.lastIndexOf(OPS.endGroup) !== end ||
+    !group ||
+    !same(Object.keys(group).sort(), ['bbox', 'isolated', 'knockout', 'matrix', 'smask']) ||
+    group.matrix !== null ||
+    group.smask !== null ||
+    group.knockout !== false ||
+    typeof group.isolated !== 'boolean' ||
+    !valid(group.bbox) ||
+    o.argsArray[start]?.length !== 1 ||
+    !same(o.argsArray[start], o.argsArray[end]) ||
+    o.fnArray.slice(start + 1, end).includes(OPS.showText)
+  )
+    return
+  // Group clipping can only shrink this envelope. No group matrix or mask is
+  // admitted; save/restore preserves the original indices and parent state.
+  const normalized = { fnArray: [...o.fnArray], argsArray: [...o.argsArray] }
+  normalized.fnArray[start] = OPS.save
+  normalized.fnArray[end] = OPS.restore
+  normalized.argsArray[start] = normalized.argsArray[end] = []
+  for (let i = start + 1; i < end; i++) {
+    if (o.fnArray[i] !== OPS.beginText) continue
+    const stop = o.fnArray.indexOf(OPS.endText, i + 1)
+    if (
+      stop <= i ||
+      stop >= end ||
+      !o.fnArray
+        .slice(i + 1, stop)
+        .every((n) => [OPS.dependency, OPS.setFont, OPS.setLeading].includes(n))
+    )
+      return
+    // Leading in this empty text block paints nothing. Any visible packet or
+    // relative line movement still reaches the unchanged strict packet parser.
+    for (let j = i + 1; j < stop; j++)
+      if (o.fnArray[j] === OPS.setLeading) {
+        if (o.argsArray[j]?.length !== 1 || !Number.isFinite(o.argsArray[j][0])) return
+        normalized.fnArray[j] = OPS.dependency
+        normalized.argsArray[j] = []
+      }
+    i = stop
+  }
+  const tokens = raw
+      .filter((r) => typeof r.str === 'string' && r.str.trim())
+      .map((r) => tableTextToken(r, v, 0)),
+    packet = nativePageTextPacketInventory(
+      page,
+      tokens,
+      { ...context, operators: normalized },
+      true
+    )
+  if (!packet || packet.evidence.paths.size || packet.evidence.images.length !== 1) return
+  const image = packet.evidence.images[0],
+    graphic = page.graphicsBounds[0],
+    a = o.argsArray[image.operationIndex],
+    images = context.opaqueRasterImages
+  if (
+    !valid(image.rect) ||
+    !inside(figure.rect, image.rect) ||
+    !valid(graphic?.normalizedRect) ||
+    graphic.normalizedRect.some((n) => n < 0 || n > 1) ||
+    graphic.kind !== 'image' ||
+    graphic.operationIndex !== image.operationIndex ||
+    image.operationIndex <= start ||
+    image.operationIndex >= end ||
+    !Array.isArray(images) ||
+    images.length !== 1 ||
+    !images[0] ||
+    images[0].operationIndex !== image.operationIndex ||
+    images[0].kind !== 2 ||
+    !Number.isSafeInteger(a?.[1]) ||
+    a[1] <= 0 ||
+    !Number.isSafeInteger(a?.[2]) ||
+    a[2] <= 0 ||
+    images[0].imageId !== a?.[0] ||
+    images[0].width !== a?.[1] ||
+    images[0].height !== a?.[2]
+  )
+    return
+  const records = packet.records.filter((r) => inside(caption.rect, r.rect)),
+    key = (s) => s.replace(/\s+/gu, '')
+  if (
+    !records.length ||
+    key(records.map((r) => r.r.str).join(' ')) !== key(caption.lines.join(' '))
+  )
+    return
+  const claimed = new Set(records.flatMap((r) => r.part.map((p) => p.g))),
+    captionInk = [...claimed].filter((g) => area(g.ink) > 0),
+    captionInkTop = Math.min(...captionInk.map((g) => g.ink[1])),
+    bottom = (image.rect[3] + captionInkTop) / 2,
+    strip = [0, bottom, page.width, Math.min(page.height, figure.rect[3] + 2)]
+  if (
+    !captionInk.length ||
+    !Number.isFinite(bottom) ||
+    image.rect[3] >= captionInkTop ||
+    bottom >= figure.rect[3] ||
+    bottom <= figure.rect[1] ||
+    figure.rect[3] - bottom > (page.height / 256) * 2 ||
+    packet.glyphs.some((g) => !claimed.has(g) && intersection(g.ink, strip) > 0)
+  )
+    return
+  return { bottom, captionInkTop, imageRect: image.rect }
+}
+
+// Byte-budget retries change the scale and ceil-sized last pixel. Admit this
+// optional trim only after the actual PNG protects both complete paint domains.
+export function nativeGroupedRasterCaptionPngSafe(proof, png, rect, bounds) {
+  if (
+    !proof ||
+    !Array.isArray(proof.imageRect) ||
+    proof.imageRect.length !== 4 ||
+    !proof.imageRect.every(Number.isFinite) ||
+    area(proof.imageRect) <= 0 ||
+    !Number.isFinite(proof.captionInkTop) ||
+    !Number.isFinite(proof.bottom) ||
+    rect?.[3] !== proof.bottom ||
+    proof.bottom !== (proof.imageRect[3] + proof.captionInkTop) / 2
+  )
+    return false
+  const raster = getPdfCropRasterProtectionFromPng(png, rect, bounds)
+  return (
+    !!raster &&
+    raster.protection[3] < proof.captionInkTop &&
+    proof.imageRect.every((n, i) =>
+      i < 2 ? n >= rect[i] + 1 / raster.scaleLower : n <= rect[i] - 1 / raster.scaleLower
+    )
+  )
+}
 
 // Quantized paint boxes can overlap a caption even though the actual native
 // clip ends above it. Trim only that spill, with complete text provenance and

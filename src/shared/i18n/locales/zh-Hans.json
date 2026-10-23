@@ -7543,6 +7543,8 @@
     "These results expired. Search again.": "这些结果已过期，请重新搜索。",
     "This reference changed. Reopen its details and try again.": "此文献已更改，请重新打开详情后重试。",
     "References discovered by you or Agents will appear here for review.": "您或智能体发现的文献会出现在此处供审核。",
-    "Review discovered references before they enter your library.": "审核发现的文献，再将其加入文献库。"
+    "Review discovered references before they enter your library.": "审核发现的文献，再将其加入文献库。",
+    "Map exact compound identifiers with UniChem.": "通过 UniChem 映射精确的化合物标识符。",
+    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。"
   }
 }

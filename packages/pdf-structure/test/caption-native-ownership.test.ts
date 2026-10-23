@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 import { readPdfFixture } from './read-fixture'
@@ -8,6 +9,12 @@ const { findCaptionCandidates, applyRuledCaptionRecovery } = await import(
 )
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
+)
+const { collectTableRules } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+)
+const { preciseNativeGraphicsBounds } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-table-boundary-ink.mjs')).href
 )
 type NativeLine = {
   text: string
@@ -1358,6 +1365,146 @@ it.each([
     })
   }
   expect(recoverCenteredSource(packet)[0].lines).toHaveLength(1)
+})
+
+function ruledOutdentedSourceCaption(): ReturnType<typeof JSON.parse> {
+  const lines = [
+    ['Table 1: Independent measurements across settings,', 70, 200],
+    ['including independent groups', 60, 214]
+  ] as const
+  const context = {
+    pageNumber: 1,
+    sourceSha256: 'a'.repeat(64),
+    viewport: { width: 600, height: 800, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    content: { items: [] as ReturnType<typeof JSON.parse>[], styles: {} },
+    glyphBounds: [{ fontName: 'face', glyphs: [] as ReturnType<typeof JSON.parse>[] }],
+    operators: { fnArray: [] as number[], argsArray: [] as unknown[] },
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const emit = (op: number, args: unknown): number => {
+    context.operators.fnArray.push(op)
+    return context.operators.argsArray.push(args) - 1
+  }
+  const fonts = lines.map(([text, x, y], index) => {
+    const sourceItem = { pageNumber: 1, index, text }
+    const rect = [x, y, x + text.length * 5, y + 10]
+    emit(OPS.beginText, [])
+    emit(OPS.setFont, ['face', 10])
+    emit(OPS.setTextMatrix, [[1, 0, 0, 1, x, 800 - y - 10]])
+    emit(OPS.showText, [
+      Array.from(text, (unicode) => {
+        if (!context.glyphBounds[0].glyphs.some((g) => g.fontChar === unicode))
+          context.glyphBounds[0].glyphs.push({ fontChar: unicode, bounds: [0, 0, 0.5, 1] })
+        return { unicode, fontChar: unicode, width: 500, isInFont: true }
+      })
+    ])
+    emit(OPS.endText, [])
+    context.content.items.push({
+      str: text,
+      fontName: 'face',
+      width: text.length * 5,
+      height: 10,
+      transform: [10, 0, 0, 10, x, 800 - y - 10],
+      sourceItem
+    })
+    return { text, rect, height: 10, baseline: y + 10, horizontal: true, sourceItem }
+  })
+  const rules = [[60, 238, fonts[0].rect[2], 238]]
+  const operationIndex = emit(OPS.constructPath, [
+    OPS.stroke,
+    [Float32Array.from([0, 60, 562, 1, fonts[0].rect[2], 562])],
+    Float32Array.from([60, 562, fonts[0].rect[2], 562])
+  ])
+  context.graphicsBounds.push({
+    operationIndex,
+    kind: 'path',
+    normalizedRect: [59 / 600, 237 / 800, (fonts[0].rect[2] + 1) / 600, 239 / 800]
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: context.graphicsBounds,
+    lines: fonts.map((f) => ({
+      text: f.text,
+      x: f.rect[0],
+      y: f.rect[1],
+      width: f.rect[2] - f.rect[0],
+      height: 10,
+      fontSize: 10
+    }))
+  }
+  const caption = { page: 1, lines: [fonts[0].text], rect: [...fonts[0].rect] }
+  const rulePaintBounds = new Map()
+  const nativeRules = collectTableRules(context.operators, context.viewport, rulePaintBounds)
+  const identities = context.graphicsBounds.map((g) => ({
+    ...g,
+    rect: g.normalizedRect.map((v: number, i: number) => v * (i % 2 ? 800 : 600))
+  }))
+  const graphics = preciseNativeGraphicsBounds({
+    nativeGlyphContext: context,
+    viewport: context.viewport,
+    nativeEvidenceGraphics: identities,
+    nativePaintIdentityGraphics: identities,
+    rulePaintBounds
+  })
+  return {
+    page,
+    context: {
+      ...context,
+      captionPaintProof: { rules: nativeRules, rulePaintBounds, graphics, identities }
+    },
+    fonts,
+    rules,
+    caption
+  }
+}
+
+it('recovers a ruled outdented tail only from its complete native text packet', () => {
+  const f = ruledOutdentedSourceCaption()
+  applyRuledCaptionRecovery([f.caption], [], f.page, f.rules, f.fonts, f.context)
+  expect(f.caption.lines).toEqual(f.page.lines.map((l: { text: string }) => l.text))
+})
+
+it.each([
+  'missing-context',
+  'source-content',
+  'source-index',
+  'matrix',
+  'glyph',
+  'rule',
+  'paint',
+  'foreign-line',
+  'closed-title'
+])('keeps an outdented tail unresolved without native %s proof', (broken) => {
+  const f = ruledOutdentedSourceCaption()
+  if (broken === 'source-content') f.context.content = undefined
+  if (broken === 'source-index') f.context.content.items[1].sourceItem.index = 0
+  if (broken === 'matrix') f.context.content.items[1].transform[2] = 1
+  if (broken === 'glyph') f.context.glyphBounds[0].glyphs.pop()
+  if (broken === 'rule') f.rules = []
+  if (broken === 'paint') f.context.captionPaintProof.rulePaintBounds.clear()
+  if (broken === 'foreign-line')
+    f.page.lines.push({
+      text: 'Unrelated observation',
+      x: 65,
+      y: 226,
+      width: 150,
+      height: 5,
+      fontSize: 5
+    })
+  if (broken === 'closed-title') f.caption.lines[0] = f.caption.lines[0].replace(/,$/, '.')
+  const before = structuredClone(f.caption)
+  applyRuledCaptionRecovery(
+    [f.caption],
+    [],
+    f.page,
+    f.rules,
+    f.fonts,
+    broken === 'missing-context' ? undefined : f.context
+  )
+  expect(f.caption).toEqual(before)
 })
 
 it.each([

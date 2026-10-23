@@ -7541,6 +7541,8 @@
     "These results expired. Search again.": "결과가 만료되었습니다. 다시 검색하세요.",
     "This reference changed. Reopen its details and try again.": "이 문헌이 변경되었습니다. 상세 정보를 다시 열고 재시도하세요.",
     "References discovered by you or Agents will appear here for review.": "사용자 또는 에이전트가 찾은 문헌이 검토를 위해 여기에 표시됩니다.",
-    "Review discovered references before they enter your library.": "찾은 문헌을 검토한 후 라이브러리에 추가하세요."
+    "Review discovered references before they enter your library.": "찾은 문헌을 검토한 후 라이브러리에 추가하세요.",
+    "Map exact compound identifiers with UniChem.": "UniChem으로 정확히 일치하는 화합물 식별자를 매핑합니다.",
+    "Retrieve structure quality and validation statistics from PDBe.": "PDBe에서 구조 품질 및 검증 통계를 가져옵니다."
   }
 }

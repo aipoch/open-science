@@ -16,6 +16,24 @@ export function isModuleImpactRegistrationPath(path) {
   )
 }
 
+// Consumer registrations are optional; readers always see them as arrays so absence never
+// reaches proof, retirement or planner code as undefined.
+function normalizeModule(module) {
+  if (!module || typeof module !== 'object' || Array.isArray(module)) return module
+  const normalized = { ...module }
+  if (normalized.consumerModules === undefined) normalized.consumerModules = []
+  const testFiles = normalized.testFiles
+  // Only absence defaults; null or other invalid values still reach validation and are rejected.
+  if (
+    testFiles &&
+    typeof testFiles === 'object' &&
+    !Array.isArray(testFiles) &&
+    testFiles.consumer === undefined
+  )
+    normalized.testFiles = { ...testFiles, consumer: [] }
+  return normalized
+}
+
 function assembleManifest(rootText, shards) {
   const manifest = JSON.parse(rootText)
   if (!manifest || Array.isArray(manifest) || manifest.schemaVersion !== 1) {
@@ -34,7 +52,12 @@ function assembleManifest(rootText, shards) {
     ) {
       throw new Error('Module-impact manifest must declare modules')
     }
-    return manifest
+    return {
+      ...manifest,
+      modules: Object.fromEntries(
+        Object.entries(manifest.modules).map(([id, module]) => [id, normalizeModule(module)])
+      )
+    }
   }
   if (shards.length === 0) throw new Error('Module-impact manifest must declare modules')
   const modules = Object.fromEntries(
@@ -48,7 +71,7 @@ function assembleManifest(rootText, shards) {
         if (!module || typeof module !== 'object' || Array.isArray(module)) {
           throw new Error(`Module-impact shard must contain one module object: ${path}`)
         }
-        return [match[1], module]
+        return [match[1], normalizeModule(module)]
       })
   )
   return { ...manifest, modules }

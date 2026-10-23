@@ -7703,6 +7703,8 @@
     "These results expired. Search again.": "Diese Ergebnisse sind abgelaufen. Suchen Sie erneut.",
     "This reference changed. Reopen its details and try again.": "Diese Referenz wurde geändert. Öffnen Sie die Details erneut und versuchen Sie es noch einmal.",
     "References discovered by you or Agents will appear here for review.": "Von Ihnen oder Agenten gefundene Referenzen erscheinen hier zur Prüfung.",
-    "Review discovered references before they enter your library.": "Prüfen Sie gefundene Referenzen, bevor sie in Ihre Bibliothek gelangen."
+    "Review discovered references before they enter your library.": "Prüfen Sie gefundene Referenzen, bevor sie in Ihre Bibliothek gelangen.",
+    "Map exact compound identifiers with UniChem.": "Exakte Verbindungskennungen mit UniChem zuordnen.",
+    "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen."
   }
 }

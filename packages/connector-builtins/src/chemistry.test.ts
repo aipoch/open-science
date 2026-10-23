@@ -11,7 +11,7 @@ const engine = (fetchImpl: unknown): ParserEngine =>
   new ParserEngine({ fetchImpl: fetchImpl as typeof fetch })
 
 describe('chemistry tool set', () => {
-  it('exposes exactly the 13 upstream tools and drops the removed ones', () => {
+  it('exposes exactly the 14 upstream tools and drops the removed ones', () => {
     expect(CHEMISTRY_TOOLS.map((t) => t.id).sort()).toEqual(
       [
         'bindingdb_ligands_by_target',
@@ -26,7 +26,8 @@ describe('chemistry tool set', () => {
         'pubchem_search_compounds',
         'pubchem_similarity_search',
         'rhea_get_reaction',
-        'rhea_search_reactions'
+        'rhea_search_reactions',
+        'unichem_map_compound'
       ].sort()
     )
     for (const removed of ['pubchem_get_properties', 'pubchem_get_image']) {

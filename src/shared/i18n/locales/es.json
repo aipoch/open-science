@@ -7871,6 +7871,8 @@
     "These results expired. Search again.": "Estos resultados han caducado. Vuelva a buscar.",
     "This reference changed. Reopen its details and try again.": "Esta referencia ha cambiado. Vuelva a abrir sus detalles e inténtelo de nuevo.",
     "References discovered by you or Agents will appear here for review.": "Las referencias encontradas por usted o por Agentes aparecerán aquí para su revisión.",
-    "Review discovered references before they enter your library.": "Revisar las referencias encontradas antes de añadirlas a la biblioteca."
+    "Review discovered references before they enter your library.": "Revisar las referencias encontradas antes de añadirlas a la biblioteca.",
+    "Map exact compound identifiers with UniChem.": "Relacionar identificadores exactos de compuestos con UniChem.",
+    "Retrieve structure quality and validation statistics from PDBe.": "Obtener la calidad estructural y las estadísticas de validación de PDBe."
   }
 }

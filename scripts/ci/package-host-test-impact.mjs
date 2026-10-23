@@ -120,7 +120,7 @@ function refineConsumerTests(
         for (const module of matches) {
           if (module.fullTestReason) return retain(`full owner: ${path}`)
           for (const owner of module.ownerPaths) owners.add(owner)
-          for (const test of module.testFiles.consumer) declaredConsumers.add(test)
+          for (const test of module.testFiles.consumer ?? []) declaredConsumers.add(test)
           for (const test of tier === 'pr'
             ? [...module.testFiles.owner, ...module.testFiles.contract]
             : tests(module))

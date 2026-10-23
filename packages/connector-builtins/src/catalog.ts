@@ -162,10 +162,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'chemistry',
     displayName: 'Chemistry',
-    description: 'Small-molecule chemistry via PubChem, ChEBI, Rhea, BindingDB and LIPID MAPS.',
+    description:
+      'Small-molecule chemistry via PubChem, ChEBI, Rhea, BindingDB, LIPID MAPS and UniChem.',
     useWhen:
-      'Use when a question needs authoritative small-molecule chemistry data — PubChem compound properties (formula, weight, SMILES/InChI, IUPAC name), CID resolution and 2D similarity search, bioassay and GHS safety summaries; ChEBI ontology entities, roles and relations; Rhea enzyme reactions (by ChEBI participant, EC number, or equation text); BindingDB binding affinities (Ki/Kd/IC50/EC50) by protein target or compound; or LIPID MAPS lipid classification and compound details by exact LMID or PubChem CID.',
-    sources: ['PubChem', 'ChEBI', 'Rhea', 'BindingDB', 'LIPID MAPS'],
+      'Use when a question needs authoritative small-molecule chemistry data — PubChem compound properties (formula, weight, SMILES/InChI, IUPAC name), CID resolution and 2D similarity search, bioassay and GHS safety summaries; ChEBI ontology entities, roles and relations; Rhea enzyme reactions (by ChEBI participant, EC number, or equation text); BindingDB binding affinities (Ki/Kd/IC50/EC50) by protein target or compound; LIPID MAPS lipid classification and compound details by exact LMID or PubChem CID; or exact InChIKey/ChEMBL ID mapping to PubChem, ChEMBL and ChEBI through UniChem.',
+    sources: ['PubChem', 'ChEBI', 'Rhea', 'BindingDB', 'LIPID MAPS', 'UniChem'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
     requiresNcbi: false
   },
@@ -274,10 +275,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'structures',
     displayName: 'Structures & Interactions',
     description:
-      'Structures and molecular interactions — PDB structures, AlphaFold predictions, EMDB cryo-EM entries, Complex Portal complexes, IntAct interaction networks, and OmniPath directed regulation.',
+      'Structures and molecular interactions — PDB structures and PDBe validation, AlphaFold predictions, EMDB cryo-EM entries, Complex Portal complexes, IntAct interaction networks, and OmniPath directed regulation.',
     useWhen:
-      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, summaries, polymer entities, ligands), AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, IntAct binary interactions and networks, or bounded upstream/downstream signed human protein regulation with OmniPath (query by UniProt accession; mixed-context evidence, not tissue-specific causal proof).',
-    sources: ['PDB', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct', 'OmniPath'],
+      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, summaries, polymer entities, ligands), PDBe quality summaries and validation statistics with experimental-method context, AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, IntAct binary interactions and networks, or bounded upstream/downstream signed human protein regulation with OmniPath (query by UniProt accession; mixed-context evidence, not tissue-specific causal proof).',
+    sources: ['PDB', 'PDBe', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct', 'OmniPath'],
     termsUrl: 'https://www.rcsb.org/pages/usage-policy',
     requiresNcbi: false
   },

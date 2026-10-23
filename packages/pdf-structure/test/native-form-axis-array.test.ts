@@ -28,6 +28,90 @@ it('exposes the same strict page inventory without fabricating a figure or capti
   ).toBeUndefined()
   expect(JSON.stringify(a)).toBe(before)
 })
+it.each([
+  ['width', NaN],
+  ['height', NaN],
+  ['width', Infinity],
+  ['height', Infinity]
+])('refuses a non-finite original native %s', (field, value) => {
+  const { args: a } = anonymousScriptedArray()
+  expect(nativePageTextPacketInventory(a[0], a[5], a[6], true)).toBeDefined()
+  a[6].content.items[0][field] = value
+  expect(nativePageTextPacketInventory(a[0], a[5], a[6], true)).toBeUndefined()
+})
+const skippedOutlineArray = (): ReturnType<typeof anonymousScriptedArray> => {
+  const f = anonymousScriptedArray(),
+    o = f.args[6].operators
+  f.args[6].glyphBounds[0].glyphs.find((g: { fontChar: string }) => g.fontChar === ' ').bounds = [
+    0, 0, 0.5, 0.5
+  ]
+  f.args[6].skippedSpaceGlyphs = o.fnArray.flatMap((op: number, i: number) =>
+    op === OPS.showText
+      ? o.argsArray[i][0].flatMap(
+          (
+            g: { isInFont: boolean; unicode: string; fontChar: string; width: number },
+            n: number
+          ) =>
+            g.isInFont === false && g.unicode === ' '
+              ? [
+                  {
+                    operationIndex: i,
+                    glyphIndex: n,
+                    fontName: 'F',
+                    fontChar: g.fontChar,
+                    width: g.width
+                  }
+                ]
+              : []
+        )
+      : []
+  )
+  return f
+}
+it('keeps each proved skipped space advance while another identical font character still paints', () => {
+  const { args: a } = skippedOutlineArray(),
+    o = a[6].operators
+  o.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+  o.argsArray.push(
+    null,
+    ['F', 5],
+    [[1, 0, 0, 1, 100, 200]],
+    [[{ unicode: ' ', fontChar: ' ', width: 500, isInFont: true }]],
+    null
+  )
+  const before = JSON.stringify(a)
+  const inventory = nativePageTextPacketInventory(a[0], a[5], a[6], true)
+  expect(inventory).toBeDefined()
+  const spaces = inventory.glyphs.filter((g: { text: string }) => g.text === ' ')
+  expect(spaces.filter((g: { rendererSkipped?: boolean }) => g.rendererSkipped)).toHaveLength(
+    a[6].skippedSpaceGlyphs.length
+  )
+  expect(spaces.at(-1).ink).toEqual([100, 97.5, 102.5, 100])
+  expect(spaces.at(-1).rendererSkipped).not.toBe(true)
+  expect(JSON.stringify(a)).toBe(before)
+  expect(nativePageTextPacketInventory(a[0], a[5], a[6])).toBeUndefined()
+})
+it.each([
+  'missing-proof',
+  'wrong-operation',
+  'wrong-slot',
+  'wrong-font',
+  'wrong-width',
+  'non-space',
+  'duplicate-proof'
+])('refuses a renderer-skipped space without exact occurrence evidence: %s', (mode) => {
+  const { args: a } = skippedOutlineArray(),
+    p = a[6].skippedSpaceGlyphs[0]
+  if (mode === 'missing-proof') delete a[6].skippedSpaceGlyphs
+  if (mode === 'wrong-operation') p.operationIndex++
+  if (mode === 'wrong-slot') p.glyphIndex++
+  if (mode === 'wrong-font') p.fontName = 'Other'
+  if (mode === 'wrong-width') p.width++
+  if (mode === 'non-space')
+    a[6].operators.argsArray[p.operationIndex][0][p.glyphIndex].unicode = '?'
+  if (mode === 'duplicate-proof') a[6].skippedSpaceGlyphs.push({ ...p })
+  expect(nativePageTextPacketInventory(a[0], a[5], a[6], true)).toBeUndefined()
+})
 it('completes a whole scripted title on a proven native panel array without changing claims', () => {
   const { args: a, figure } = anonymousScriptedArray()
   const before = JSON.stringify(a)

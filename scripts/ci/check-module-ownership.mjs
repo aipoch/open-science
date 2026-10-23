@@ -79,6 +79,9 @@ function registrationViolations(
     'fallbackCapability',
     'fullTestReason'
   ])
+  // Normalize optional arrays to empty so retention checks don't need to handle undefined.
+  const testKindsOf = (module) => testKinds.flatMap((kind) => module.testFiles[kind] ?? [])
+  const consumersOf = (module) => module.consumerModules ?? []
   const retain = (before, after, label, applicable = () => true) => {
     if (before.some((entry) => applicable(entry) && !after.includes(entry))) reject(label)
   }
@@ -97,12 +100,7 @@ function registrationViolations(
   // A coherent owner can move or absorb another owner without losing evidence. Infer
   // replacements from exact paths and retained obligations, never from a candidate flag.
   const equivalentEvidence = (base, head) =>
-    testKinds
-      .flatMap((kind) => base.testFiles[kind])
-      .every(
-        (path) =>
-          !headFiles.has(path) || testKinds.some((kind) => head.testFiles[kind].includes(path))
-      ) &&
+    testKindsOf(base).every((path) => !headFiles.has(path) || testKindsOf(head).includes(path)) &&
     base.interfacePaths.every(
       (path) => !headFiles.has(path) || head.interfacePaths.includes(path)
     ) &&
@@ -131,12 +129,12 @@ function registrationViolations(
   }
   const translatedConsumer = (id) => replacements.get(id) ?? id
   const preservesConsumers = (base, head, id) =>
-    base.consumerModules.every((consumer) => {
+    consumersOf(base).every((consumer) => {
       const target = translatedConsumer(consumer)
       return (
         target === id ||
         (!headModules[target] && !replacements.has(consumer)) ||
-        head.consumerModules.includes(target)
+        consumersOf(head).includes(target)
       )
     })
   const movedPathOwner = (path, base) =>
@@ -155,11 +153,9 @@ function registrationViolations(
     }
     if (!head) {
       if (
-        [
-          ...base.ownerPaths,
-          ...base.interfacePaths,
-          ...testKinds.flatMap((kind) => base.testFiles[kind])
-        ].some((path) => headFiles.has(path))
+        [...base.ownerPaths, ...base.interfacePaths, ...testKindsOf(base)].some((path) =>
+          headFiles.has(path)
+        )
       ) {
         reject(`${id}: module with surviving paths`)
       }
@@ -178,8 +174,8 @@ function registrationViolations(
     }
     for (const kind of testKinds) {
       retain(
-        base.testFiles[kind],
-        head.testFiles[kind],
+        base.testFiles[kind] ?? [],
+        head.testFiles[kind] ?? [],
         `${id}.testFiles.${kind}`,
         (path) =>
           headFiles.has(path) &&
@@ -189,8 +185,8 @@ function registrationViolations(
       )
     }
     retain(
-      base.consumerModules.map(translatedConsumer),
-      head.consumerModules,
+      consumersOf(base).map(translatedConsumer),
+      consumersOf(head),
       `${id}.consumerModules`,
       (consumer) => consumer !== id && Object.hasOwn(headModules, consumer)
     )
@@ -212,7 +208,7 @@ function registrationViolations(
       Object.values(modules).flatMap((module) => [
         ...module.ownerPaths,
         ...module.interfacePaths,
-        ...testKinds.flatMap((kind) => module.testFiles[kind])
+        ...testKindsOf(module)
       ])
     )
   const beforePaths = explicitPaths(baseModules)
