@@ -80,7 +80,27 @@ umask 077
 printf 'v1 %s\n' "$token" > "$receipt.tmp" || exit 71
 mv -f -- "$receipt.tmp" "$receipt" || exit 71
 export OPEN_SCIENCE_WSL_EXECUTION_TOKEN="$token"
-exec "$@"
+# Resolve deny-write sources in the guest, where Windows paths have already been mapped.
+args=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --open-science-deny-write)
+      if [ -e "$2" ]; then
+        args+=(--ro-bind "$2" "$2")
+      else
+        args+=(--tmpfs "$2" --remount-ro "$2")
+      fi
+      shift 2
+      ;;
+    --clearenv)
+      # Environment values and the user command are opaque, never wrapper options.
+      args+=("$@")
+      break
+      ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+exec "${'$'}{args[@]}"
 `
 
 // Every process launched below bwrap inherits the unguessable token. Cleanup scans the guest
@@ -828,7 +848,7 @@ const buildBubblewrapArguments = (
   }
   for (const root of explicitDeniedWriteRoots) {
     // A hidden root needs no host source: it may not exist in a fresh profile.
-    if (!explicitDeniedReadRoots.includes(root)) args.push('--ro-bind', root, root)
+    if (!explicitDeniedReadRoots.includes(root)) args.push('--open-science-deny-write', root)
   }
   for (const root of explicitDeniedReadRoots) {
     args.push('--tmpfs', root)

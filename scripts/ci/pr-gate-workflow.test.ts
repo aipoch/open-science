@@ -666,6 +666,7 @@ describe('PR Gate workflow', () => {
             'windows-e2e-mainline',
             'windows-process',
             'windows-notebook-runtime',
+            'linux-notebook-isolation',
             'e2e',
             'source-regressions',
             'macos-smoke'
@@ -1719,7 +1720,8 @@ describe('PR Gate workflow', () => {
       ['policy', 'e2e_functional_windows', 'e2e_workspace_windows', 'e2e_browser_windows']
     ],
     ['windows-process', ['policy', 'windows_core'], ['policy', 'windows_runtime']],
-    ['windows-notebook-runtime', ['policy', 'windows_core'], ['policy', 'windows_runtime']]
+    ['windows-notebook-runtime', ['policy', 'windows_core'], ['policy', 'windows_runtime']],
+    ['linux-notebook-isolation', ['policy', 'linux_runtime'], ['policy', 'linux_runtime']]
   ])(
     'executes the focused %s plan through the real preflight script',
     (dryRunMode, bundles, lanes) => {
@@ -1958,6 +1960,16 @@ describe('PR Gate workflow', () => {
     const folderAuthority = workflow.jobs.linux_runtime.steps?.find(
       ({ name }) => name === 'Test Linux Folder authority across kernel restart'
     )
+    expect(
+      workflow.jobs.linux_runtime.steps?.find(
+        ({ name }) => name === 'Test real Linux filesystem and network isolation'
+      )?.run
+    ).toContain('packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts')
+    expect(
+      workflow.jobs.linux_runtime.steps?.find(
+        ({ name }) => name === 'Test WSL guest launch arguments'
+      )?.run
+    ).toContain('packages/notebook-network-sandbox/src/wsl2-isolation.test.ts')
     expect(folderAuthority?.run).toContain('src/main/notebook/kernel-executor.test.ts')
     expect(folderAuthority?.run).toContain("-t 'keeps folder authority'")
     expect(workflow.jobs.linux_runtime.env?.VITEST_PORTABLE_CI).not.toBe('1')
