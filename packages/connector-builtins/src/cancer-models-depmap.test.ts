@@ -89,7 +89,13 @@ const descriptor = (id: string): ToolDescriptor => registry.getDescriptor('cance
 type Result = { records: Record<string, unknown>[]; model_metadata_dataset: unknown }
 // Representative response fields from live Breadbox reads; tests use no network.
 function setup(
-  options: { catalog?: unknown; matrix?: unknown; search?: unknown; metadata?: unknown } = {}
+  options: {
+    catalog?: { given_id: string }[]
+    dataset?: unknown
+    matrix?: unknown
+    search?: unknown
+    metadata?: unknown
+  } = {}
 ): {
   call: (id: string, args: Record<string, unknown>) => Promise<Result>
   fetchImpl: Mock<typeof fetch>
@@ -98,7 +104,6 @@ function setup(
   const fetchImpl = vi.fn<typeof fetch>(async (url, init) => {
     const path = String(url)
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
-    if (path === `${API}/datasets/`) return Response.json(options.catalog ?? catalog)
     if (path.includes('/datasets/dimensions/'))
       return Response.json(
         options.search ?? [path.includes('compound_v2') ? drugMatch : modelMatch]
@@ -125,6 +130,9 @@ function setup(
             ])
           )
       )
+    const givenId = path.slice(`${API}/datasets/`.length)
+    const entry = (options.catalog ?? catalog).find((d) => d.given_id === givenId)
+    if (entry) return Response.json(options.dataset ?? entry)
     throw new Error(`Unexpected request: ${path}`)
   })
   const engine = new ParserEngine({ fetchImpl, retries: 0 })
@@ -204,16 +212,58 @@ describe('DepMap in Cancer Models', () => {
       unavailable_model_ids: [model2],
       records: [{ model_id: a549, score: -1.3601659641 }]
     })
-    expect(fetchImpl.mock.calls[1][0]).toBe(`${API}/datasets/matrix/${geneId}`)
-    expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({
+    expect(fetchImpl.mock.calls[2][0]).toBe(`${API}/datasets/matrix/${geneId}`)
+    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toEqual({
       features: ['KRAS'],
       feature_identifier: 'label',
       samples: [a549, model2],
       sample_identifier: 'id'
     })
-    expect(fetchImpl.mock.calls[1][1]?.headers).toMatchObject({
+    expect(fetchImpl.mock.calls[2][1]?.headers).toMatchObject({
       'user-agent': 'connector-core/0.1.0'
     })
+  })
+
+  it('resolves only the requested datasets concurrently before querying their UUIDs', async () => {
+    const { engine, fetchImpl } = setup()
+    let resolveGene!: (response: Response) => void
+    let resolveModels!: (response: Response) => void
+    fetchImpl
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveGene = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveModels = resolve
+          })
+      )
+    const pending = engine.call(descriptor('depmap_gene_dependency'), { gene: 'KRAS' }, {})
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2))
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      `${API}/datasets/Chronos_Combined`,
+      `${API}/datasets/depmap_model_metadata`
+    ])
+    resolveGene(Response.json(catalog[0]))
+    resolveModels(Response.json(catalog[2]))
+    await expect(pending).resolves.toMatchObject({ returned: 1 })
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      `${API}/datasets/Chronos_Combined`,
+      `${API}/datasets/depmap_model_metadata`,
+      `${API}/datasets/matrix/${geneId}`,
+      `${API}/datasets/tabular/${metadataId}`
+    ])
+  })
+
+  it('rejects a substituted dataset before fetching score values', async () => {
+    const { call, fetchImpl } = setup({ dataset: { ...catalog[0], given_id: 'OTHER' } })
+    await expect(call('depmap_gene_dependency', { gene: 'KRAS' })).rejects.toThrow(
+      /different dataset/
+    )
+    expect(fetchImpl.mock.calls.every(([, init]) => !init?.body)).toBe(true)
   })
 
   it('sorts scores ascending with nulls last, retaining zero and reporting truncation', async () => {
@@ -230,7 +280,7 @@ describe('DepMap in Cancer Models', () => {
         { model_id: model3, score: 0 }
       ]
     })
-    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body)).indices).toEqual([a549, model3])
+    expect(JSON.parse(String(fetchImpl.mock.calls[3][1]?.body)).indices).toEqual([a549, model3])
     const complete = await call('depmap_gene_dependency', { gene: 'KRAS' })
     expect(complete.records[2]).toMatchObject({ model_id: model2, score: null })
   })
@@ -248,7 +298,7 @@ describe('DepMap in Cancer Models', () => {
       model_metadata_dataset: { release: 'DepMap Public 26Q3' },
       records: [{ score: 0.3948607098 }]
     })
-    expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchImpl.mock.calls[3][1]?.body))).toEqual({
       features: ['DPC-006587'],
       feature_identifier: 'id',
       samples: [a549],
@@ -324,8 +374,8 @@ describe('DepMap in Cancer Models', () => {
     { matrix: { KRAS: { [a549]: '0.1' } } },
     { matrix: [] },
     { matrix: '<html>Verification</html>' },
-    { catalog: [] },
-    { catalog: [...catalog, catalog[0]] },
+    { dataset: [] },
+    { dataset: { ...catalog[0], given_id: 'OTHER' } },
     { catalog: [{ ...catalog[0], units: 'probability' }, ...catalog.slice(1)] },
     { metadata: { CellLineName: { [a549]: 'A549' } } },
     { metadata: Object.fromEntries(columns.map((c) => [c, { [model2]: 'wrong model' }])) }
@@ -400,8 +450,8 @@ describe('DepMap in Cancer Models', () => {
         sort: 'score_descending_nulls_last',
         records: [{ model_id: a549, score: value }]
       })
-      expect(fetchImpl.mock.calls[1][0]).toBe(`${API}/datasets/matrix/${datasetId}`)
-      expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({
+      expect(fetchImpl.mock.calls[2][0]).toBe(`${API}/datasets/matrix/${datasetId}`)
+      expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toEqual({
         features: [gene],
         feature_identifier: 'label',
         samples: [a549, model2],
@@ -422,7 +472,7 @@ describe('DepMap in Cancer Models', () => {
           { model_id: model3, score: 0 }
         ]
       })
-      expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body)).indices).toEqual([a549, model3])
+      expect(JSON.parse(String(fetchImpl.mock.calls[3][1]?.body)).indices).toEqual([a549, model3])
       const complete = await call(tool, { gene })
       expect(complete.records[2]).toMatchObject({ model_id: model2, score: null })
     })

@@ -43,15 +43,10 @@ const profileInput = {
 }
 const source = { source: 'DepMap', source_url: 'https://depmap.org/portal/' }
 
-async function datasets(ctx: ToolContext): Promise<unknown[]> {
-  return z.array(z.unknown()).parse(await ctx.fetchJson(`${API}/datasets/`))
-}
-function dataset(catalog: unknown[], givenId: string): z.infer<typeof datasetSchema> {
-  const matches = catalog.filter(
-    (r) => r && typeof r === 'object' && 'given_id' in r && r.given_id === givenId
-  )
-  if (matches.length !== 1) throw new Error(`DepMap dataset unavailable or ambiguous: ${givenId}`)
-  return datasetSchema.parse(matches[0])
+async function dataset(ctx: ToolContext, givenId: string): Promise<z.infer<typeof datasetSchema>> {
+  const result = datasetSchema.parse(await ctx.fetchJson(`${API}/datasets/${givenId}`))
+  if (result.given_id !== givenId) throw new Error('DepMap returned a different dataset')
+  return result
 }
 function provenance(d: z.infer<typeof datasetSchema>): Record<string, unknown> {
   return {
@@ -80,13 +75,12 @@ async function search(
 }
 async function metadata(
   ctx: ToolContext,
-  catalog: unknown[],
+  d: z.infer<typeof datasetSchema>,
   ids: string[]
 ): Promise<{
   dataset: Record<string, unknown>
   rows: Record<string, unknown>[]
 }> {
-  const d = dataset(catalog, 'depmap_model_metadata')
   if (d.format !== 'tabular_dataset' || d.index_type_name !== 'depmap_model')
     throw new Error('DepMap returned an incompatible model metadata dataset')
   const raw = z.record(z.string(), z.record(modelId, z.string().max(1000).nullable())).parse(
@@ -147,9 +141,12 @@ async function profile(
   models: string[] | undefined,
   limit: number
 ): Promise<unknown> {
-  const catalog = await datasets(ctx)
   const config = profileKinds[kind]
-  const d = dataset(catalog, config.dataset)
+  // Resolve only the two required datasets; fetching the full catalog can exhaust the deadline.
+  const [d, modelDataset] = await Promise.all([
+    dataset(ctx, config.dataset),
+    dataset(ctx, 'depmap_model_metadata')
+  ])
   if (
     d.format !== 'matrix_dataset' ||
     d.sample_type_name !== 'depmap_model' ||
@@ -182,7 +179,7 @@ async function profile(
   const annotations = selected.length
     ? await metadata(
         ctx,
-        catalog,
+        modelDataset,
         selected.map(([id]) => id)
       )
     : undefined
@@ -249,7 +246,11 @@ export const DEPMAP_TOOLS: ToolDescriptor[] = [
           has_more: false,
           records: []
         }
-      const result = await metadata(ctx, await datasets(ctx), matches.slice(0, args.limit))
+      const result = await metadata(
+        ctx,
+        await dataset(ctx, 'depmap_model_metadata'),
+        matches.slice(0, args.limit)
+      )
       const records = result.rows.filter((r) => r.CellLineName !== null)
       return {
         ...source,
