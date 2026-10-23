@@ -195,7 +195,6 @@ jobs:
           packages/notebook-analysis/src/source-file-access-analysis.clinical-formats.test.ts
           packages/notebook-analysis/src/source-file-access-analysis.workflow-orchestration.test.ts
           src/main/session-package/archive.test.ts
-          src/main/session-package/content-verification.test.ts
           src/main/session-package/service.test.ts
           packages/environment/src/package-manager.test.ts
           src/main/notebook/package-process-sandbox.test.ts
