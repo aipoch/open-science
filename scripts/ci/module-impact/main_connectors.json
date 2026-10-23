@@ -30,7 +30,22 @@
     "src/main/composition/connector-application.test.ts",
     "src/main/connectors/catalog.ts",
     "src/main/connector-reload.test.ts",
-    "src/main/connector-reload.ts"
+    "src/main/connector-reload.ts",
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-adapter.test.ts",
+    "src/main/connectors/medical-data-runtime.ts",
+    "scripts/generate-medical-data-tools.py",
+    "resources/medical-data/access.py",
+    "resources/medical-data/bootstrap.py",
+    "resources/medical-data/core.py",
+    "resources/medical-data/providers.json",
+    "resources/medical-data/README.md",
+    "resources/medical-data/requirements.txt",
+    "resources/medical-data/research.py",
+    "resources/medical-data/server.py",
+    "test/medical-data/test_core.py",
+    "test/medical-data/test_research.py",
+    "test/medical-data/verify_mcp.py"
   ],
   "interfacePaths": [
     "src/main/composition/connector-application.ts",
@@ -99,7 +114,9 @@
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
-    "src/main/websocket-frame-sender.ts"
+    "src/main/websocket-frame-sender.ts",
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -119,7 +136,8 @@
       "src/main/connectors/mcp-host-dependencies.test.ts",
       "src/main/connectors/molecule-artifact-adapter.test.ts",
       "src/main/composition/connector-application.test.ts",
-      "src/main/connector-reload.test.ts"
+      "src/main/connector-reload.test.ts",
+      "src/main/connectors/medical-data-adapter.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -1041,5 +1059,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Bundled medical data workers add Python runtime resources, credential-scoped process dispatch and relocatable research data; require complete validation until the expanded runtime boundary is reviewed."
 }

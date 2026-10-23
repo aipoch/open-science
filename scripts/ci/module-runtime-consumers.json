@@ -190,5 +190,33 @@
   "resources/pdf-translation-local/worker.mjs": [
     "src/main/literature/pdf-translation/local.ts",
     "src/main/literature/pdf-translation/local-worker.integration.test.ts"
+  ],
+  "resources/medical-data/access.py": [
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
+  ],
+  "resources/medical-data/bootstrap.py": [
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
+  ],
+  "resources/medical-data/core.py": [
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
+  ],
+  "resources/medical-data/providers.json": [
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
+  ],
+  "resources/medical-data/requirements.txt": [
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
+  ],
+  "resources/medical-data/research.py": [
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
+  ],
+  "resources/medical-data/server.py": [
+    "src/main/connectors/medical-data-adapter.ts",
+    "src/main/connectors/medical-data-runtime.ts"
   ]
 }

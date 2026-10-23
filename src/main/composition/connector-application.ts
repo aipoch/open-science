@@ -1,3 +1,11 @@
+import { createMedicalDataHandlers } from '../connectors/medical-data-adapter'
+import {
+  resolveMedicalDataResources,
+  medicalDataPython,
+  medicalDataLaunchEnvironment
+} from '../connectors/medical-data-runtime'
+import { resolveDataRoot } from '../storage-root'
+import { join } from 'node:path'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { mcpHostDependencies } from '../connectors/mcp-host-dependencies'
 import { builtinConnectorRegistry } from '../connectors/registry'
@@ -197,7 +205,16 @@ const createConnectorApplication = (
     resolveSpecialistProfile: deps.resolveSpecialistProfile,
     onCustomServerAvailabilityChanged: (serverId, availability) =>
       runtimeSettings.setCustomServerDispatchAvailability(serverId, availability),
-    localToolHandlers: deps.localToolHandlers
+    localToolHandlers: {
+      ...createMedicalDataHandlers({
+        client: mcpClientManager,
+        python: medicalDataPython,
+        runtimeEnvironment: medicalDataLaunchEnvironment,
+        script: resolveMedicalDataResources,
+        dataRoot: () => join(resolveDataRoot(), 'medical-data')
+      }),
+      ...deps.localToolHandlers
+    }
   })
 
   return {

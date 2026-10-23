@@ -1,3 +1,5 @@
+import { MEDICAL_PROVIDERS } from './medical-data'
+
 export type ConnectorMeta = {
   id: string
   displayName: string
@@ -15,6 +17,20 @@ export type ConnectorMeta = {
 
 // Scientific provider metadata, independent of application navigation and presentation.
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
+  ...MEDICAL_PROVIDERS.map((provider) => ({
+    id: provider.id,
+    displayName: provider.label,
+    description: provider.notes,
+    useWhen:
+      'Use for ' +
+      provider.label +
+      ' provider-scoped data discovery, approved downloads, file import, variable inspection and local SQL. Read provider_info and access_requirements first. ' +
+      provider.notes,
+    sources: [provider.label],
+    termsUrl: provider.docs,
+    defaultEnabled: false,
+    requiresNcbi: false
+  })),
   {
     id: 'tcia',
     displayName: 'TCIA',

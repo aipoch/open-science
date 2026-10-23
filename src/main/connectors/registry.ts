@@ -1,3 +1,4 @@
+import { MEDICAL_DATA_TOOLS } from '@aipoch/connector-builtins/medical-data'
 import { TCIA_TOOLS } from '@aipoch/connector-builtins/tcia'
 import { KEGG_TOOLS } from '@aipoch/connector-builtins/kegg'
 import { RXNORM_TOOLS } from '@aipoch/connector-builtins/rxnorm'
@@ -48,6 +49,7 @@ import { ZINC_TOOLS } from '@aipoch/connector-builtins/zinc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...MEDICAL_DATA_TOOLS,
   ...TCIA_TOOLS,
   ...KEGG_TOOLS,
   ...RXNORM_TOOLS,
