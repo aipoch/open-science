@@ -392,7 +392,10 @@ it.each([
   '--authorization Bearer [redacted]',
   'password="\\u005bredacted]"',
   'https://example.org/?token=%5Bredacted%5D',
-  'password=%5Bredacted%5D'
+  'password=%5Bredacted%5D',
+  'password="  [redacted]  "',
+  'Authorization: Bearer   [redacted]  ',
+  '{"password":"  [redacted]  "}'
 ])('does not reject any incomplete safe prefix: %s', (value) => {
   for (let length = 1; length < value.length; length++)
     expect(
@@ -400,6 +403,12 @@ it.each([
       `prefix length ${length}`
     ).toBeUndefined()
   expect(findSensitivePackageText(value)).toBeUndefined()
+  for (let split = 0; split <= value.length; split++) {
+    const scanner = new PackageTextScanner()
+    scanner.write(value.slice(0, split))
+    scanner.write(value.slice(split))
+    expect(scanner.finish(), `split ${split}`).toBeUndefined()
+  }
 })
 
 it.each([1, 2, 3, 4])('recognizes redacted Bearer values through %i JSON layers', (depth) => {
