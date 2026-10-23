@@ -1,3 +1,5 @@
+import { TCIA_TOOLS } from './tcia'
+import { KEGG_TOOLS } from './kegg'
 import { RXNORM_TOOLS } from './rxnorm'
 import { DAILYMED_TOOLS } from './dailymed'
 import { BIOSAMPLES_TOOLS } from './biosamples'
@@ -45,6 +47,8 @@ import { ZINC_TOOLS } from './zinc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...TCIA_TOOLS,
+  ...KEGG_TOOLS,
   ...RXNORM_TOOLS,
   ...DAILYMED_TOOLS,
   ...BIOSAMPLES_TOOLS,

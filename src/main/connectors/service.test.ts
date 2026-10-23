@@ -23,7 +23,7 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
-  it.each(['orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
+  it.each(['tcia', 'kegg', 'orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
     'gates %s before transport until explicit opt-in, with opt-out winning conflicts',
     async (id) => {
       const tool = builtinConnectorRegistry.getConnectorTools(id)[0]
