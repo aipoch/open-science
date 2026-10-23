@@ -2,6 +2,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, resolve, sep } from 'node:path'
 
 type FilesystemLayoutInput = Readonly<{
+  restrictFolders?: boolean
   privateRoot?: string
   readOnlyRoots: readonly string[]
   optionalReadOnlyRoots?: readonly string[]
@@ -11,6 +12,7 @@ type FilesystemLayoutInput = Readonly<{
 }>
 
 type FilesystemLayout = Readonly<{
+  restrictFolders?: boolean
   privateRoot?: string
   readOnlyRoots: readonly string[]
   optionalReadOnlyRoots?: readonly string[]
@@ -51,6 +53,7 @@ const normalizeFilesystemLayout = (input: FilesystemLayoutInput): FilesystemLayo
   const deniedReadRoots = shallowRoots(input.deniedReadRoots)
   const deniedWriteRoots = shallowRoots(input.deniedWriteRoots)
   return {
+    ...(input.restrictFolders === false ? { restrictFolders: false } : {}),
     ...(input.privateRoot ? { privateRoot: absolutePhysicalPath(input.privateRoot) } : {}),
     readOnlyRoots,
     ...(input.optionalReadOnlyRoots
@@ -77,7 +80,12 @@ const hiddenByFilesystemLayout = (layout: FilesystemLayout, value: string): bool
   if (!isAbsolute(value)) return false
   const candidate = absolutePhysicalPath(value)
   if (layout.deniedReadRoots.some((root) => contains(root, candidate))) return true
-  if (!layout.privateRoot || !contains(layout.privateRoot, candidate)) return false
+  if (
+    layout.restrictFolders === false ||
+    !layout.privateRoot ||
+    !contains(layout.privateRoot, candidate)
+  )
+    return false
   return [...layout.readOnlyRoots, ...layout.readWriteRoots].every(
     (root) => !contains(root, candidate)
   )

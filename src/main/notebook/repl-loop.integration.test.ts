@@ -602,6 +602,7 @@ describe('repl_loop local RPC transport', () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: 'http://open-science-notebook-rpc.invalid/',
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      NODE_USE_ENV_PROXY: '1',
       HTTP_PROXY: `http://command:secret@127.0.0.1:${address.port}`
     })
 

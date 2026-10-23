@@ -195,6 +195,125 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each([undefined, true, false])(
+    'projects folder restriction %s while preserving explicit roots',
+    async (enabled) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-folder-policy-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: 'darwin',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: enabled === undefined ? undefined : async () => enabled,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const wrapped = await owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: root,
+        commandText: 'true',
+        sessionId: 's',
+        projectId: 'p',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [join(root, 'secret')],
+          deniedWriteRoots: []
+        }
+      })
+      expect(backend.wrap).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          filesystem: expect.objectContaining({
+            restrictFolders: enabled !== false,
+            deniedReadRoots: [join(root, 'secret')]
+          })
+        })
+      )
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it('refuses native Windows execution without protection even when folder relaxation was saved', async () => {
+    backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/unused',
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getFolderRestrictionEnabled: async () => false,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    await expect(
+      owner.wrap({
+        executable: 'powershell.exe',
+        args: [],
+        env: {},
+        cwd: 'C:\\workspace',
+        commandText: 'true',
+        sessionId: 's',
+        projectId: 'p',
+        runtime: 'bash',
+        windowsProtectionRequired: true,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+    ).rejects.toThrow('require Windows protected mode')
+    expect(backend.wrap).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+
+  it.each([false, true])(
+    'enforces installer admission with Windows protection configured: %s',
+    async (configured) => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
+      const root = await mkdtemp(join(tmpdir(), 'os-installer-admission-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const { sandboxedPackageSpawn } = await import('./package-process-sandbox')
+      backend.wrap.mockRejectedValue(new Error('installer reached backend'))
+      try {
+        const spawn = sandboxedPackageSpawn({
+          processSandbox: owner,
+          request: { language: 'python', packages: ['example'] },
+          runtimeRoot: root,
+          storageRoot: root,
+          platform: 'win32'
+        })
+        await expect(spawn(process.execPath, ['-m', 'pip', '--version'], {})).rejects.toThrow(
+          configured ? 'installer reached backend' : 'require Windows protected mode'
+        )
+        if (configured) {
+          expect(backend.wrap).toHaveBeenCalledWith(
+            expect.objectContaining({
+              superviseProcessTree: true,
+              windowsProtectionRequired: true
+            })
+          )
+        } else {
+          expect(backend.wrap).not.toHaveBeenCalled()
+        }
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
   it
     .runIf(process.platform === 'win32')
     .each(['directory', 'receipt', 'persistent-directory'] as const)(
@@ -2202,7 +2321,7 @@ it('does not automatically grant durable permissions to an agent-created R envir
 })
 
 it.each(['managed', 'external'] as const)(
-  'dispatches %s R in unconfigured Windows standard mode without authorization',
+  'blocks %s R in unconfigured Windows standard mode before process creation',
   async (selection) => {
     const root = await mkdtemp(join(tmpdir(), 'os-r-standard-'))
     fixtureDirectories.push(root)
@@ -2256,14 +2375,12 @@ it.each(['managed', 'external'] as const)(
         projectId: 'project',
         timeoutMs: 5000
       })
-      expect(result.status, result.stderr).toBe('completed')
-      expect(result.stdout).toContain('15')
-      expect(beginSpawn).toHaveBeenCalledOnce()
-      expect(started).toHaveBeenCalledOnce()
+      expect(result.status).toBe('failed')
+      expect(result.stderr).toContain('require Windows protected mode')
+      expect(beginSpawn).not.toHaveBeenCalled()
+      expect(started).not.toHaveBeenCalled()
       expect(notStarted).not.toHaveBeenCalled()
-      expect(backend.wrap).toHaveBeenCalledWith(
-        expect.objectContaining({ windowsProtectionRequired: false })
-      )
+      expect(backend.wrap).not.toHaveBeenCalled()
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await executor.shutdown()

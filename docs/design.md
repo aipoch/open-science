@@ -888,6 +888,11 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Put hostname validation beside the input, distinguish Add to list from Save changes, and report
   unsaved changes through the shared leave guard. Save blocks concurrent edits; errors retain drafts.
   Explain that saving resets protected connections. Inactive protection gets an explicit scope notice.
+- Custom public domains accept exact hostnames, leading `*.` rules, and pasted HTTP(S) URLs.
+  URL input saves only the hostname, preserving subdomain labels such as `www`; scheme, port,
+  path, query and fragment are discarded. Wildcards cover every descendant subdomain but not the
+  root domain, which must be added separately. Explicit ask rules and private-address blocks remain
+  effective. Existing exact-host settings need no migration; older versions may drop wildcard rules.
 - Trusted private services have a separate local-only flow: exact hostname and port, DNS review,
   displayed address set and installation-wide data-sending consequence, then explicit Add and Save.
   Input edits invalidate prior reviews; late results cannot restore them. Saved rules support review

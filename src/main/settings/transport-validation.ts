@@ -19,6 +19,12 @@ const readField = (value: unknown, field: string): unknown =>
     ? (value as Readonly<Record<string, unknown>>)[field]
     : undefined
 
+const readNotebookFolderRestrictionEnabled = (request: unknown): boolean => {
+  const enabled = readField(request, 'enabled')
+  if (typeof enabled !== 'boolean') throw new Error('Invalid Notebook folder restriction flag.')
+  return enabled
+}
+
 const readNotificationsEnabled = (request: unknown): boolean => {
   const enabled = readField(request, 'enabled')
   if (typeof enabled !== 'boolean') {
@@ -254,6 +260,7 @@ export {
   readDefaultPermissionProfile,
   readGitHubToken,
   readIsolatedClaudeToken,
+  readNotebookFolderRestrictionEnabled,
   readNotificationsEnabled,
   readProjectFilesFilter,
   readReasoningEffort,

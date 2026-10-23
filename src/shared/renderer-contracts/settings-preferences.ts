@@ -124,6 +124,9 @@ export const settingsGetClassificationContracts = {
 } as const
 
 export const settingsSetNetworkProxyContracts = {
+  'settings.setNotebookFolderRestrictionEnabled': callable<
+    (request: { enabled: boolean }) => Promise<SettingsSnapshot>
+  >()('settings', ['settings:set-notebook-folder-restriction-enabled', LOCAL]),
   'settings.reviewNotebookPrivateDestination': callable<
     (request: PrivateDestinationRequest) => Promise<PrivateDestinationReview>
   >()('settings', ['settings:review-notebook-private-destination', LOCAL]),

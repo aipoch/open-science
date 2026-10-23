@@ -313,6 +313,10 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (packageMirror) settings.packageMirror = packageMirror
   const networkProxy = normalizeNetworkProxySettings(value.networkProxy)
   if (networkProxy && networkProxy.mode !== 'system') settings.networkProxy = networkProxy
+  const notebookFolderRestrictionEnabled = asBoolean(value.notebookFolderRestrictionEnabled)
+  if (notebookFolderRestrictionEnabled !== undefined) {
+    settings.notebookFolderRestrictionEnabled = notebookFolderRestrictionEnabled
+  }
   if (value.notebookNetwork !== undefined) {
     settings.notebookNetwork = normalizeNotebookNetworkSettings(value.notebookNetwork)
   }

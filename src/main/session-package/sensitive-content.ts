@@ -19,6 +19,13 @@ export const isPrivatePackageValue = (value: string): boolean => {
   return text !== '' && text !== '[redacted]'
 }
 
+// Only exempt a known authentication scheme; identifier-shaped values can still be secrets.
+export const isPrivatePackageField = (key: string, value: string): boolean => {
+  if (!isSensitiveDiagnosticKey(key) || !isPrivatePackageValue(value)) return false
+  if (/^(?:token_type|tokenType)$/.test(key) && /^(?:Bearer|bearer)$/.test(value)) return false
+  return true
+}
+
 export type PackageSensitiveContentSource = {
   storageKey: string
   root: string
@@ -83,15 +90,15 @@ export const buildSensitiveContentEvidence = (
 const findPackageTextMatch = (
   text: string,
   complete: boolean,
-  jsonBooleans: boolean,
+  jsonMetadata: boolean,
   beforeText = ''
 ): PackageTextMatch | undefined => {
-  const booleanField = (index: number): boolean => {
-    if (!jsonBooleans) return false
+  const nonCredentialField = (index: number): boolean => {
+    if (!jsonMetadata) return false
     // Header rules can start at a hyphenated key's suffix; recover the member name
     // before deciding whether its value is a JSON boolean (also across overlaps).
     while (index > 0 && /[a-z0-9_-]/i.test(text[index - 1])) index--
-    const preceding = index === 0 ? beforeText : text[index - 1]
+    const preceding = index === 0 ? beforeText.slice(-1) : text[index - 1]
     // An overlap may begin at or inside a key. Carry its preceding character so
     // rescanning cannot turn a validated boolean field into an unquoted assignment.
     // The closing quote/colon below and whole-input validation still prove its type.
@@ -99,11 +106,16 @@ const findPackageTextMatch = (
     const field = /^[a-z0-9_-]+"[ \t\r\n]*:[ \t\r\n]*/i.exec(text.slice(index))
     if (!field) return false
     const rest = text.slice(index + field[0].length)
-    if (/^(?:true|false)[ \t\r\n]*(?=[,}])/.test(rest)) return true
+    if (/^(?:true|false|null|\[[ \t\r\n]*\]|\{[ \t\r\n]*\})[ \t\r\n]*(?=[,}])/.test(rest))
+      return true
     // This is provisional until the whole JSON/NDJSON input validates. Preserve
     // the original match separately so truncated/invalid input still fails closed.
-    const prefix = rest.replace(/[ \t\r\n]+$/, '')
-    return !complete && ['true', 'false'].some((literal) => literal.startsWith(prefix))
+    const prefix = rest.replace(/[ \t\r\n]+/g, '')
+    return (
+      !complete &&
+      (['true', 'false', 'null', '[]', '{}'].some((literal) => literal.startsWith(prefix)) ||
+        /^[[{][ \t\r\n]*$/.test(rest))
+    )
   }
   const finished = (end: number): boolean =>
     complete || (end < text.length && text.slice(end).trim() !== '')
@@ -114,7 +126,7 @@ const findPackageTextMatch = (
     // before their assignment prefix leaves the bounded streaming overlap.
     const trimmed = decodeEscapes(value)
       .replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-      .trim()
+      .trimStart()
     if (
       ['Bearer', 'Basic', 'Digest', 'Negotiate'].some((scheme) =>
         scheme.toLowerCase().startsWith(trimmed.toLowerCase())
@@ -248,10 +260,7 @@ const findPackageTextMatch = (
   }
   for (const match of text.matchAll(/("(?:\\.|[^"\\])*")\s*:\s*("(?:\\.|[^"\\])*")/g)) {
     try {
-      if (
-        isSensitiveDiagnosticKey(JSON.parse(match[1])) &&
-        isPrivatePackageValue(JSON.parse(match[2]))
-      )
+      if (isPrivatePackageField(JSON.parse(match[1]), JSON.parse(match[2])))
         return {
           offset: match.index,
           length: match[0].length,
@@ -267,7 +276,7 @@ const findPackageTextMatch = (
   for (const match of text.matchAll(
     /\b(?:authorization|proxy-authorization|x-api-key|api-key|x-auth-token|x-amz-security-token|cookie|set-cookie)\b\s*["']?\s*:\s*["']?([^"'\r\n}]*)/gi
   )) {
-    if (booleanField(match.index)) continue
+    if (nonCredentialField(match.index)) continue
     if (privateValue(match[1], match.index + match[0].length))
       return {
         offset: match.index,
@@ -279,16 +288,112 @@ const findPackageTextMatch = (
       }
   }
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
-  for (const match of text.matchAll(/\b([a-z][a-z0-9_-]*)(\s*["']?\s*[:=]\s*)/gi)) {
+  for (const match of text.matchAll(
+    /(?:\\+[rn]|\b)([a-z][a-z0-9_-]*)(?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_-]+\\*["']|[a-z0-9_]+)[ \t]*\])*(\s*["']?\s*[:=]\s*)/gi
+  )) {
     if (!isSensitiveDiagnosticKey(match[1])) continue
-    if (booleanField(match.index)) continue
+    if (nonCredentialField(match.index)) continue
+    // A Python loop's iterable is not a credential assignment. Inspect only the
+    // header prefix; credentials in its body still pass through every recognizer.
+    // shortcut: headers longer than 512 characters remain conservative until needed.
+    const precedingCode = (beforeText + text.slice(Math.max(0, match.index - 512), match.index))
+      .slice(-512)
+      .replace(/\\+[rn]/g, '\n')
+    if (
+      /^[ \t]*:/.test(match[2]) &&
+      /\b(?:for[ \t]+(?:[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*,[ \t]*[a-zA-Z_][a-zA-Z0-9_]*)*|\([ \t]*[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*,[ \t]*[a-zA-Z_][a-zA-Z0-9_]*)*[ \t]*,?[ \t]*\))[ \t]+in|(?:if|elif|while)(?:[ \t]+not)?)[ \t]+$/.test(
+        precedingCode
+      )
+    )
+      continue
     const start = match.index + match[0].length
     const rest = text.slice(start)
+    // Newlines alone cannot terminate JavaScript expressions; serialized code follows
+    // the same bounded check so a later operator cannot hide a literal credential.
+    const expression = rest.replace(/\\+"/g, '"').replace(/\\+[rn]/g, '\n')
+    const expressionEndsAt = (end: number): boolean => {
+      const tail = expression.slice(end)
+      if (/^[ \t\r\n]{0,512}(?:[;}]|$)|^"(?:[},]|$)/.test(tail)) return true
+      // A following assignment is a separate statement, including indexed writes.
+      const nextAssignment =
+        /^[ \t]*[\r\n][ \t\r\n]*[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*\[[ \t]*(?:["'][a-zA-Z0-9_]+["']|[a-zA-Z0-9_]+)[ \t]*\])*[ \t]*=(?!=)/.exec(
+          tail
+        )
+      if (nextAssignment && nextAssignment[0].length <= 512) return true
+      // Named calls start another statement; word operators can still continue this one.
+      const nextCall =
+        /^[ \t]*[\r\n][ \t\r\n]*([a-zA-Z_$][a-zA-Z0-9_$]*)(?:[ \t]*\.[ \t]*[a-zA-Z_$][a-zA-Z0-9_$]*)*[ \t]*\(/.exec(
+          tail
+        )
+      if (
+        nextCall &&
+        nextCall[0].length <= 512 &&
+        !/^(?:and|or|not|is|in|instanceof|if|else|as|satisfies)$/.test(nextCall[1])
+      )
+        return true
+      // Keep an incomplete next statement provisional only within the overlap.
+      return !complete && tail.length <= 512 && /^[ \t]*(?:[\r\n]|\\+$)/.test(tail)
+    }
+    // Comparisons and arrow syntax do not assign a credential value.
+    const comparison = /^(?:={1,2}|>)[ \t]{0,512}[a-zA-Z_][a-zA-Z0-9_.]{0,127}/.exec(expression)
+    if (
+      match[2].trim() === '=' &&
+      ((comparison && expressionEndsAt(comparison[0].length)) ||
+        (!complete && /^(?:={1,2}|>)[ \t]{0,512}$/.test(rest)))
+    )
+      continue
+    // Empty collections contain no credential. Defer incomplete collection prefixes
+    // but still inspect any nonempty contents, including nested literal secrets.
+    const emptyCollection = /^(?:\[[ \t]*\]|\{[ \t]*\})/.exec(expression)
+    if (
+      match[2].trim() === '=' &&
+      ((emptyCollection && expressionEndsAt(emptyCollection[0].length)) ||
+        (!complete && rest.length <= 512 && /^[[{][ \t]*$/.test(rest)))
+    )
+      continue
+    // Prove a reference without evaluating code; defaults and compound expressions
+    // remain candidates. A bounded preview's end is not an expression terminator.
+    const reference =
+      /^(?:os\.environ\[["'][A-Z_][A-Z0-9_]*["']\]|os\.(?:getenv|environ\.get)\(["'][A-Z_][A-Z0-9_]*["']\)|process\.env\.[A-Z_][A-Z0-9_]*)/.exec(
+        expression
+      )
+    if (
+      match[2].trim() === '=' &&
+      reference &&
+      reference[0].length <= 512 &&
+      expressionEndsAt(reference[0].length)
+    )
+      continue
+    if (
+      !complete &&
+      rest.length <= 512 &&
+      match[2].trim() === '=' &&
+      (['os.environ[', 'os.getenv(', 'os.environ.get(', 'process.env.'].some((prefix) =>
+        prefix.startsWith(expression.replace(/\\+$/, ''))
+      ) ||
+        /^(?:os\.(?:environ\[|getenv\(|environ\.get\()["']?(?:[A-Z_][A-Z0-9_]*)?["']?|process\.env\.[A-Z_][A-Z0-9_]*)$/.test(
+          expression.replace(/\\+$/, '')
+        ))
+    )
+      continue
+    // A primitive annotation is safe only in a declaration and without a default.
+    if (
+      match[2].trim() === ':' &&
+      /\b(?:def[ \t]+[a-zA-Z_][a-zA-Z0-9_]*\([^()\r\n]*|(?:const|let|var)[ \t]+)$/.test(
+        precedingCode
+      ) &&
+      (/^(?:str|int|float|bool|bytes|string|number|boolean)(?=[ \t]*[,);\r\n]|$)/.test(rest) ||
+        (!complete &&
+          ['str', 'int', 'float', 'bool', 'bytes', 'string', 'number', 'boolean'].some((type) =>
+            type.startsWith(rest)
+          )))
+    )
+      continue
     // In diagnostics such as `Unexpected token ':'`, the quotes enclose the
     // separator, not a key/value pair. A genuinely quoted key has an opening
     // quote before its name; retain that character across streaming overlaps.
     const separatorQuote = /^\s*(["'])/.exec(match[2])?.[1]
-    const preceding = match.index === 0 ? beforeText : text[match.index - 1]
+    const preceding = match.index === 0 ? beforeText.slice(-1) : text[match.index - 1]
     const partialKey = match.index === 0 && /^[a-z0-9_-]$/i.test(preceding)
     if (separatorQuote && rest[0] === separatorQuote && preceding !== separatorQuote && !partialKey)
       continue
@@ -329,7 +434,10 @@ const findPackageTextMatch = (
     } catch {
       /* Inspect literal text. */
     }
-    if (privateValue(content, start + value[0].length)) {
+    if (
+      isPrivatePackageField(match[1], content) &&
+      privateValue(content, start + value[0].length)
+    ) {
       const quotedValue = quoted || partialQuoted
       return {
         offset: match.index,
@@ -405,7 +513,7 @@ export const findSensitivePackageText = (
 type TextFinding = { text: string; match: PackageTextMatch; offset: number }
 
 // Keep validation, overlap and both candidate policies under one stream owner.
-// Boolean-looking fields are exempt only after the entire file validates.
+// Typed metadata exemptions apply only after the entire file validates.
 export class PackageTextScanner {
   private readonly syntax = new PackageJsonSyntax()
   private tail = ''
@@ -417,14 +525,14 @@ export class PackageTextScanner {
   write(decoded: string, complete = false): void {
     this.syntax.write(decoded)
     const text = this.tail + decoded
-    const inspect = (jsonBooleans: boolean): TextFinding | undefined => {
-      const match = findPackageTextMatch(text, complete, jsonBooleans, this.beforeTail)
+    const inspect = (jsonMetadata: boolean): TextFinding | undefined => {
+      const match = findPackageTextMatch(text, complete, jsonMetadata, this.beforeTail)
       return match ? { text, match, offset: this.offset - this.tail.length } : undefined
     }
     this.original ??= inspect(false)
     if (this.original) this.structured ??= inspect(true)
     this.offset += decoded.length
-    if (text.length > 8192) this.beforeTail = text[text.length - 8192 - 1]
+    if (text.length > 8192) this.beforeTail = (this.beforeTail + text.slice(0, -8192)).slice(-512)
     this.tail = text.slice(-8192)
   }
 

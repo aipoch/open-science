@@ -161,7 +161,10 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   const guestRuntime = join(guestRuntimeRoot, basename(process.execPath))
   const runtimeSource = dirname(process.execPath)
   const guestPort = 3128
-  const hiddenTemporaryRoots = ['/tmp', ...(existsSync('/var/tmp') ? ['/var/tmp'] : [])]
+  const hiddenTemporaryRoots =
+    layout.restrictFolders === false
+      ? []
+      : ['/tmp', ...(existsSync('/var/tmp') ? ['/var/tmp'] : [])]
   const argumentsList = [
     '--die-with-parent',
     '--new-session',
@@ -170,7 +173,7 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     'ALL',
     // bubblewrap passes inherited descriptors through to the sandbox command. The descriptor count
     // is consumed by the gateway bridge below so its nested child inherits the same fd range.
-    '--ro-bind',
+    layout.restrictFolders === false ? '--bind' : '--ro-bind',
     '/',
     '/',
     '--tmpfs',
@@ -196,18 +199,22 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   // Temporary mounts hide AppImage resources too. Restore only explicit read grants before
   // applying private-root masks and deny overrides; unrelated host temporary files stay hidden.
   for (const root of layout.readOnlyRoots) {
-    if (contains('/tmp', root) || contains('/var/tmp', root)) {
+    if (layout.restrictFolders === false || contains('/tmp', root) || contains('/var/tmp', root)) {
       argumentsList.push('--ro-bind', root, root)
     }
   }
 
-  const sensitiveReadRoots = [
-    '/home',
-    '/mnt',
-    '/media',
-    '/run/media',
-    ...(layout.privateRoot ? [layout.privateRoot] : [])
-  ]
+  const sensitiveReadRoots = (
+    layout.restrictFolders === false
+      ? []
+      : [
+          '/home',
+          '/mnt',
+          '/media',
+          '/run/media',
+          ...(layout.privateRoot ? [layout.privateRoot] : [])
+        ]
+  )
     .filter(
       (root, index, roots) => root !== '/' && roots.indexOf(root) === index && existsSync(root)
     )
@@ -235,13 +242,19 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   // Only explicit grants may receive a read-only override. Binding an otherwise hidden deny-write path
   // would expose host data and can require creating a target beneath a sealed private root.
   for (const deniedRoot of layout.deniedWriteRoots) {
-    for (const grantedRoot of [...layout.readOnlyRoots, ...layout.readWriteRoots]) {
+    for (const grantedRoot of layout.restrictFolders === false
+      ? ['/']
+      : [...layout.readOnlyRoots, ...layout.readWriteRoots]) {
       const root = contains(grantedRoot, deniedRoot)
         ? deniedRoot
         : contains(deniedRoot, grantedRoot)
           ? grantedRoot
           : undefined
-      if (root) argumentsList.push('--ro-bind', root, root)
+      if (!root) continue
+      // A read-denied root gets a destination-only mask below; it may not exist yet.
+      if (layout.deniedReadRoots.some((denied) => contains(denied, root))) continue
+      if (existsSync(root)) argumentsList.push('--ro-bind', root, root)
+      else argumentsList.push('--tmpfs', root, '--remount-ro', root)
     }
   }
   for (const root of layout.deniedReadRoots) {
@@ -253,8 +266,13 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
         (grantedRoot) => !contains(grantedRoot, root) && !contains(root, grantedRoot)
       )
     if (alreadyHidden) continue
-    if (pathIsDirectory(root)) argumentsList.push('--tmpfs', root)
-    else argumentsList.push('--ro-bind', '/dev/null', root)
+    if (!existsSync(root) || pathIsDirectory(root)) {
+      // Missing protected paths use directory mount points, never a nonexistent bind source.
+      argumentsList.push('--tmpfs', root, '--remount-ro', root)
+    } else {
+      // --ro-bind adds nodev: this masks contents and rejects reads of the device at this path.
+      argumentsList.push('--ro-bind', '/dev/null', root)
+    }
   }
   // Bind explicitly writable children before sealing the anonymous temp mounts. bubblewrap applies
   // operations in order, so remounting /tmp first would make a workspace created under /tmp

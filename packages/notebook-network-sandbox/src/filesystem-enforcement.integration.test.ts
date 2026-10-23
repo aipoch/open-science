@@ -35,6 +35,63 @@ const platformSupported = process.platform === 'darwin' || process.platform === 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'"'"'`)}'`
 
 describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
+  it.each([true, false])(
+    'enforces folder restriction %s with explicit denies retained',
+    async (restrictFolders) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-folder-enforcement-'))
+      const workspace = join(root, 'workspace')
+      await mkdir(workspace)
+      const ordinary = join(root, 'ordinary.txt')
+      const secret = join(root, 'secret.txt')
+      const readOnlyFile = join(root, 'tool.txt')
+      const protectedFile = join(root, 'runtime.txt')
+      const missingProtected = join(root, 'missing-protected')
+      const missingWriteOnly = join(root, 'missing-write-only')
+      await Promise.all(
+        [ordinary, secret, protectedFile, readOnlyFile].map((path) => writeFile(path, 'original'))
+      )
+      const sandbox = new NotebookNetworkSandbox({
+        policy: { allowedDomains: [], deniedDomains: [] },
+        resources: { root: resolve(import.meta.dirname, '../vendor') }
+      })
+      try {
+        await sandbox.initialize()
+        const wrapped = await sandbox.wrap({
+          command: [
+            `if cat ${shellQuote(ordinary)} >/dev/null 2>&1; then test ${restrictFolders ? 1 : 0} = 0 || exit 10; else test ${restrictFolders ? 1 : 0} = 1 || exit 11; fi`,
+            `if printf changed > ${shellQuote(ordinary)}; then test ${restrictFolders ? 1 : 0} = 0 || exit 12; else test ${restrictFolders ? 1 : 0} = 1 || exit 13; fi`,
+            `if cat ${shellQuote(secret)} >/dev/null 2>&1; then exit 14; fi`,
+            `if printf changed > ${shellQuote(protectedFile)}; then exit 15; fi`,
+            `if printf changed > ${shellQuote(readOnlyFile)}; then exit 16; fi`,
+            `if mkdir -p ${shellQuote(join(missingProtected, 'child'))}; then exit 17; fi`,
+            `if mkdir -p ${shellQuote(join(missingWriteOnly, 'child'))}; then exit 18; fi`,
+            'exit 0'
+          ].join('; '),
+          cwd: workspace,
+          env: { PATH: '/usr/bin:/bin' },
+          filesystem: {
+            restrictFolders,
+            privateRoot: root,
+            readOnlyRoots: ['/bin', '/usr/bin', readOnlyFile],
+            readWriteRoots: [workspace],
+            deniedReadRoots: [secret, missingProtected],
+            deniedWriteRoots: [protectedFile, missingProtected, missingWriteOnly]
+          },
+          onNetworkAccessRequest: async () => false
+        })
+        const result = await run(wrapped, workspace)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+        expect(result.code, result.stderr).toBe(0)
+        expect(await readFile(protectedFile, 'utf8')).toBe('original')
+        expect(await readFile(readOnlyFile, 'utf8')).toBe('original')
+        expect(await readFile(ordinary, 'utf8')).toBe(restrictFolders ? 'original' : 'changed')
+      } finally {
+        await sandbox.dispose()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it
     .runIf(process.platform === 'linux' && Boolean(python3))
     .each(['/tmp', '/var/tmp'].filter(existsSync))(

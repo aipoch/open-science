@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   mapWslUncPath,
@@ -19,6 +23,120 @@ const reconciled = async (): Promise<boolean> => true
 afterEach(() => vi.unstubAllEnvs())
 
 describe('WSL2 sandbox adapter', () => {
+  it.skipIf(process.platform === 'win32')(
+    'resolves missing write-denied roots in the guest wrapper without interpreting command arguments',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'wsl-denied-write-'))
+      const existing = join(root, 'existing file')
+      const missing = join(root, 'missing folder')
+      const receipt = join(root, 'receipt')
+      await writeFile(existing, 'original')
+      const launch = await wsl2Launch({
+        target: { kind: 'wsl2', profileId: 'missing-write', distro: 'Ubuntu', user: 'fixture' },
+        command: '--open-science-deny-write',
+        cwd: root,
+        env: {},
+        filesystem: {
+          restrictFolders: false,
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: [existing, missing]
+        },
+        reconcileGuest: reconciled,
+        mapPath: async (path) => path,
+        gatewayPort: 4312,
+        gatewayCredentials: { username: 'fixture', password: 'fixture' },
+        openBridge: async () => ({
+          socketPath: join(root, 'gateway.sock'),
+          close: async () => ({ networkClosed: true, temporaryResourcesRemoved: true })
+        })
+      })
+      try {
+        const wrapper = launch.argv.indexOf('open-science-wsl-execution')
+        const bwrap = launch.argv.indexOf('/usr/bin/bwrap')
+        // Run the actual guest wrapper, substituting only bwrap with an argv recorder.
+        const output = execFileSync(
+          '/bin/bash',
+          [
+            '--noprofile',
+            '--norc',
+            '-c',
+            launch.argv[wrapper - 1]!,
+            'fixture',
+            receipt,
+            'fixture-token',
+            process.execPath,
+            '-e',
+            'process.stdout.write(JSON.stringify(process.argv.slice(1)))',
+            '--',
+            ...launch.argv.slice(bwrap + 1)
+          ],
+          { encoding: 'utf8' }
+        )
+        const args = JSON.parse(output) as string[]
+        const existingDeny = args.findIndex(
+          (arg, index) => arg === '--ro-bind' && args[index + 1] === existing
+        )
+        const missingDeny = args.findIndex(
+          (arg, index) => arg === '--tmpfs' && args[index + 1] === missing
+        )
+        expect(existingDeny).toBeGreaterThanOrEqual(0)
+        expect(missingDeny).toBeGreaterThanOrEqual(0)
+        expect(args.slice(existingDeny, existingDeny + 3)).toEqual([
+          '--ro-bind',
+          existing,
+          existing
+        ])
+        expect(args.slice(missingDeny, missingDeny + 4)).toEqual([
+          '--tmpfs',
+          missing,
+          '--remount-ro',
+          missing
+        ])
+        expect(args.at(-1)).toBe('--open-science-deny-write')
+      } finally {
+        await launch.release()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('relaxes host folder mounts without dropping the network namespace or explicit denies', async () => {
+    const launch = await wsl2Launch({
+      target: { kind: 'wsl2', profileId: 'folder-policy', distro: 'Ubuntu-22.04', user: 'fixture' },
+      command: 'true',
+      cwd: '/mnt/c/workspace',
+      env: {},
+      filesystem: {
+        restrictFolders: false,
+        privateRoot: '/mnt/c/private',
+        readOnlyRoots: [],
+        readWriteRoots: ['/mnt/c/workspace'],
+        deniedReadRoots: ['/mnt/c/private/secret'],
+        deniedWriteRoots: ['/mnt/c/private/runtime']
+      },
+      reconcileGuest: reconciled,
+      mapPath: async (path) => path,
+      gatewayPort: 4312,
+      gatewayCredentials: { username: 'command-user', password: 'command-secret' },
+      openBridge: async () => ({
+        socketPath: '/tmp/fixture/gateway.sock',
+        close: async () => ({ networkClosed: true, temporaryResourcesRemoved: true })
+      })
+    })
+    try {
+      const args = launch.argv.join(' ')
+      expect(args).toContain('--bind / /')
+      expect(args).toContain('--unshare-all')
+      expect(args).not.toContain('--tmpfs /mnt ')
+      expect(args).toContain('--tmpfs /mnt/c/private/secret')
+      expect(args).toContain('--open-science-deny-write /mnt/c/private/runtime')
+    } finally {
+      await launch.release()
+    }
+  })
+
   it('creates standalone read-only mount destinations before sealing the private scaffolding', async () => {
     const roots = ['/mnt/d/app/notebook-inputs/session/attachment', '/mnt/d/app/trust/ca.pem']
     const launch = await wsl2Launch({
@@ -167,6 +285,12 @@ describe('WSL2 sandbox adapter', () => {
       ])
     )
     expect(launch.argv.slice(1).join('\n')).not.toContain('C:\\')
+    const nodeProxyIndex = launch.argv.indexOf('NODE_USE_ENV_PROXY')
+    expect(launch.argv.slice(nodeProxyIndex - 1, nodeProxyIndex + 2)).toEqual([
+      '--setenv',
+      'NODE_USE_ENV_PROXY',
+      '1'
+    ])
     expect(launch.argv).toEqual(
       expect.arrayContaining([
         '--setenv',
@@ -304,14 +428,17 @@ describe('WSL2 sandbox adapter', () => {
         (value, index) =>
           value === '--bind' && launch.argv[index + 1] === path && launch.argv[index + 2] === path
       )
-    const deniedAncestorMount = (operation: '--ro-bind' | '--tmpfs', path: string): number =>
+    const deniedAncestorMount = (
+      operation: '--open-science-deny-write' | '--tmpfs',
+      path: string
+    ): number =>
       launch.argv.findIndex(
         (value, index) => value === operation && launch.argv[index + 1] === path
       )
 
-    expect(deniedAncestorMount('--ro-bind', '/mnt/c/protected-write')).toBeGreaterThan(
-      writableChildMount('/mnt/c/protected-write/child')
-    )
+    expect(
+      deniedAncestorMount('--open-science-deny-write', '/mnt/c/protected-write')
+    ).toBeGreaterThan(writableChildMount('/mnt/c/protected-write/child'))
     expect(deniedAncestorMount('--tmpfs', '/mnt/c/protected-read')).toBeGreaterThan(
       writableChildMount('/mnt/c/protected-read/child')
     )
