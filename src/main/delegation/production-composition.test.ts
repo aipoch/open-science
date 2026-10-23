@@ -2791,7 +2791,8 @@ describe('production delegated-work composition', () => {
       ],
       { wait: false }
     )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+    // Real workspace preparation can exceed the default poll deadline on Windows CI.
+    await expect.poll(() => harness.execution.controls(), { timeout: 10_000 }).toHaveLength(2)
     for (const control of harness.execution.controls()) control.accept()
     harness.execution.controls()[1].rejectNextPermissionProfile()
 

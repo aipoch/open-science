@@ -8,7 +8,8 @@
     "src/preload/index.test.ts",
     "src/preload/index.ts",
     "src/preload/installation-assistant.ts",
-    "src/preload/renderer-api.d.ts"
+    "src/preload/renderer-api.d.ts",
+    "src/preload/action-menu-overlay.ts"
   ],
   "interfacePaths": [
     "src/preload/electron-renderer-contract-adapter.ts",
@@ -32,5 +33,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "shared_contract"
+  "fallbackCapability": "shared_contract",
+  "fullTestReason": "The native action-menu preload expands the reviewed desktop bridge boundary with cross-WebContents IPC; retain complete validation until the expanded boundary is reviewed and reclassified."
 }

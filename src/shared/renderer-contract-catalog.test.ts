@@ -13,6 +13,29 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('keeps native action menu presentation on desktop IPC without backend or web exposure', () => {
+    for (const [publicPath, channel, dispatch] of [
+      ['window.openActionMenu', 'action-menu:open', 'electron-ipc-send'],
+      ['window.closeActionMenu', 'action-menu:close', 'electron-ipc-send'],
+      ['window.onActionMenuClosed', 'action-menu:closed', 'electron-ipc-subscription']
+    ]) {
+      expect(
+        RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)
+      ).toMatchObject({
+        channel,
+        surfaceInstallation: {
+          electron: 'preload',
+          localWeb: 'unavailable',
+          remoteWeb: 'unavailable'
+        },
+        dispatchPolicy: { electron: dispatch, localWeb: 'none', remoteWeb: 'none' }
+      })
+      expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).not.toContain(channel)
+      expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain(channel)
+      expect(Object.values(WEB_EVENT_CHANNELS)).not.toContain(channel)
+    }
+  })
+
   it('installs bulk browser revocation on every renderer with caller authorization in the owner', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.find(

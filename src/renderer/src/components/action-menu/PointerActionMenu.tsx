@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom'
+import { NativeActionMenu } from './NativeActionMenu'
 
 import {
   DropdownMenu,
@@ -7,13 +8,27 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-import { ActionMenuItems, type ActionMenuLabelRenderer } from './ActionMenuItems'
-import type { ResolvedActionMenuEntry } from './action-menu-model'
+import { ActionMenuItems } from './ActionMenuItems'
+import type { PointerActionMenuProps } from './action-menu-presentation'
 
-export const PointerActionMenu = <ActionId extends string>({
+export const PointerActionMenu = <ActionId extends string>(
+  props: PointerActionMenuProps<ActionId>
+): React.JSX.Element =>
+  window.api?.window?.openActionMenu && window.api.window.onActionMenuClosed ? (
+    <NativeActionMenu {...props} />
+  ) : (
+    <DomPointerActionMenu {...props} />
+  )
+
+export const DomPointerActionMenu = <ActionId extends string>({
   entries,
-  pointer,
+  header,
+  side = 'bottom',
   align = 'start',
+  focusFirst,
+  label,
+  sections,
+  pointer,
   testId,
   contentClassName,
   compact,
@@ -22,19 +37,7 @@ export const PointerActionMenu = <ActionId extends string>({
   onSelect,
   onClose,
   onRestoreFocus
-}: {
-  entries: readonly ResolvedActionMenuEntry<ActionId>[]
-  pointer: { x: number; y: number }
-  align?: 'start' | 'end'
-  testId: string
-  contentClassName?: string
-  compact?: boolean
-  dangerClassName?: string
-  renderLabel?: ActionMenuLabelRenderer<ActionId>
-  onSelect: (actionId: ActionId) => void
-  onClose: () => void
-  onRestoreFocus: () => void
-}): React.JSX.Element =>
+}: PointerActionMenuProps<ActionId>): React.JSX.Element =>
   createPortal(
     <DropdownMenu
       open
@@ -53,7 +56,19 @@ export const PointerActionMenu = <ActionId extends string>({
         />
       </DropdownMenuTrigger>
       <DropdownMenuContent
+        aria-label={label}
+        side={side}
         align={align}
+        onFocus={
+          focusFirst
+            ? (event) => {
+                if (event.target !== event.currentTarget) return
+                event.currentTarget
+                  .querySelector<HTMLElement>('[role="menuitem"]:not([data-disabled])')
+                  ?.focus()
+              }
+            : undefined
+        }
         sideOffset={0}
         className={cn('min-w-[9.5rem] p-1', contentClassName)}
         data-testid={testId}
@@ -62,8 +77,10 @@ export const PointerActionMenu = <ActionId extends string>({
           onRestoreFocus()
         }}
       >
+        {header}
         <ActionMenuItems
           entries={entries}
+          sections={sections}
           onSelect={onSelect}
           compact={compact}
           dangerClassName={dangerClassName}

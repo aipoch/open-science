@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { actionMenuPage } from './fixtures/action-menu'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
 
@@ -18,7 +19,8 @@ test('forks local and imported research and immediately continues through the re
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
-  await page.getByRole('menuitem', { name: 'Fork', exact: true }).click()
+  const firstMenuPage = await actionMenuPage(page)
+  await firstMenuPage.getByRole('menuitem', { name: 'Fork', exact: true }).click()
   const title = `${prompt}(2)`
   await expect(page.getByRole('button', { name: `Open actions for ${title}` })).toBeVisible()
   const row = page
@@ -41,8 +43,9 @@ test('forks local and imported research and immediately continues through the re
   ] as const) {
     if (kind === 'imported') {
       await page.getByRole('button', { name: `Open actions for ${title}` }).click()
-      await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
-      await page.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
+      const menuPage = await actionMenuPage(page)
+      await menuPage.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+      await menuPage.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
       const exporting = page.getByRole('dialog', { name: 'Export Session package', exact: true })
       await exporting.getByRole('button', { name: 'Choose save location…', exact: true }).click()
       await expect(exporting.getByText('Session package exported', { exact: true })).toBeVisible()

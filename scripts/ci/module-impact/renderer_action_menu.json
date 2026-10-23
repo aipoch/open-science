@@ -8,7 +8,14 @@
     "src/renderer/src/components/action-menu/action-menu-context.ts",
     "src/renderer/src/components/action-menu/action-menu-model.test.ts",
     "src/renderer/src/components/action-menu/action-menu-model.ts",
-    "src/renderer/src/components/action-menu/index.ts"
+    "src/renderer/src/components/action-menu/index.ts",
+    "src/renderer/action-menu-overlay.html",
+    "src/renderer/src/action-menu-overlay.tsx",
+    "src/renderer/src/assets/action-menu-overlay.css",
+    "src/renderer/src/components/action-menu/ActionMenuDropdown.tsx",
+    "src/renderer/src/components/action-menu/NativeActionMenu.test.tsx",
+    "src/renderer/src/components/action-menu/NativeActionMenu.tsx",
+    "src/renderer/src/components/action-menu/action-menu-presentation.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/action-menu/action-menu-model.ts",
@@ -18,7 +25,8 @@
   "testFiles": {
     "owner": [
       "src/renderer/src/components/action-menu/ActionMenuProvider.test.tsx",
-      "src/renderer/src/components/action-menu/action-menu-model.test.ts"
+      "src/renderer/src/components/action-menu/action-menu-model.test.ts",
+      "src/renderer/src/components/action-menu/NativeActionMenu.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -98,9 +106,11 @@
       "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
-      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts"
+      "src/renderer/src/lib/renderer-foundation-boundaries.test.ts",
+      "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts"
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The native action-menu overlay adds a separate renderer entry and cross-WebContents presentation lifecycle; retain complete validation until the expanded boundary is reviewed and reclassified."
 }

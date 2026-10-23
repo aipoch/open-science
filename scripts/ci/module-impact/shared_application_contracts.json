@@ -35,7 +35,8 @@
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/action-menu-overlay.ts"
   ],
   "interfacePaths": [
     "src/shared/interface-scale.ts",

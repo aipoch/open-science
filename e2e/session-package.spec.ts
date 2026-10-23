@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import { stat, writeFile, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
+import { actionMenuPage } from './fixtures/action-menu'
 import { findBrowserImportPort } from '../src/main/session-package/test-helpers/browser-import-port'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
@@ -325,8 +326,12 @@ test('exports a Session package and opens the imported Session with replay', asy
   })
   await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
-  await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
-  const exportPackage = page.getByRole('menuitem', { name: 'Export Session package', exact: true })
+  const menuPage = await actionMenuPage(page)
+  await menuPage.getByRole('menuitem', { name: 'Export', exact: true }).hover()
+  const exportPackage = menuPage.getByRole('menuitem', {
+    name: 'Export Session package',
+    exact: true
+  })
   await expect(exportPackage).toBeEnabled()
   await page.screenshot({ path: testInfo.outputPath('session-package-export.png') })
   await exportPackage.click()
@@ -516,9 +521,11 @@ test('exports a Session package and opens the imported Session with replay', asy
     .getByRole('navigation', { name: 'Sessions' })
     .screenshot({ path: testInfo.outputPath('session-package-sidebar-hover.png') })
   await sessionMenu.click()
-  await expect(page.getByRole('menu', { name: `Open actions for ${prompt}` })).toBeVisible()
+  const sessionMenuPage = await actionMenuPage(page)
+  await expect(sessionMenuPage.getByRole('menu', { name: 'Session actions' })).toBeVisible()
   await expect(readOnlyBadge).toHaveCSS('opacity', '0')
-  await page.keyboard.press('Escape')
+  await sessionMenuPage.keyboard.press('Escape')
+  await expect(sessionMenuPage.getByRole('menu')).toBeHidden()
   await imported.getByText('Package source', { exact: true }).click()
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await sessionMenu.focus()
@@ -582,7 +589,8 @@ test('exports a Session package and opens the imported Session with replay', asy
     .locator(`[data-session-id="${identity.sessionId}"]`)
     .getByRole('button', { name: `Open actions for ${prompt}` })
     .click()
-  await app.page.getByRole('menuitem', { name: 'Delete', exact: true }).click()
+  const deleteMenuPage = await actionMenuPage(app.page)
+  await deleteMenuPage.getByRole('menuitem', { name: 'Delete', exact: true }).click()
   const deleting = app.page.getByRole('alertdialog', { name: 'Delete Session?' })
   await expect(deleting.getByText(/the next time Open-Science starts/)).toBeVisible()
   await app.page.screenshot({ path: testInfo.outputPath('session-package-delete.png') })

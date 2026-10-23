@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 import {
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
@@ -19,12 +20,14 @@ export type ActionMenuLabelRenderer<ActionId extends string> = (
 
 export const ActionMenuItems = <ActionId extends string>({
   entries,
+  sections,
   onSelect,
   compact = true,
   dangerClassName,
   renderLabel
 }: {
   entries: readonly ResolvedActionMenuEntry<ActionId>[]
+  sections?: Record<string, string>
   onSelect: (actionId: ActionId) => void
   compact?: boolean
   dangerClassName?: string
@@ -74,26 +77,33 @@ export const ActionMenuItems = <ActionId extends string>({
         }
         const Icon = entry.icon
         return (
-          <DropdownMenuItem
-            key={entry.action}
-            data-action-id={entry.action}
-            disabled={entry.disabled}
-            title={entry.disabled ? entry.disabledDescription : undefined}
-            className={cn(
-              'gap-2',
-              compact && 'min-h-0 h-6 rounded-md px-2 py-0 text-[12px]',
-              entry.disabled &&
-                entry.disabledDescription &&
-                'data-[disabled]:pointer-events-auto data-[disabled]:cursor-default data-[disabled]:hover:bg-transparent',
-              entry.danger &&
-                (dangerClassName ??
-                  'text-danger-000 data-[highlighted]:bg-danger-000/10 data-[highlighted]:text-danger-000')
-            )}
-            onSelect={() => onSelect(entry.action)}
-          >
-            <Icon className={cn(compact ? 'size-3.5' : 'size-4', 'shrink-0')} aria-hidden="true" />
-            {renderLabel?.(entry, t(entry.labelKey)) ?? t(entry.labelKey)}
-          </DropdownMenuItem>
+          <Fragment key={entry.action}>
+            {sections?.[entry.action] ? (
+              <DropdownMenuLabel>{sections[entry.action]}</DropdownMenuLabel>
+            ) : null}
+            <DropdownMenuItem
+              data-action-id={entry.action}
+              disabled={entry.disabled}
+              title={entry.disabled ? entry.disabledDescription : undefined}
+              className={cn(
+                'gap-2',
+                compact && 'min-h-0 h-6 rounded-md px-2 py-0 text-[12px]',
+                entry.disabled &&
+                  entry.disabledDescription &&
+                  'data-[disabled]:pointer-events-auto data-[disabled]:cursor-default data-[disabled]:hover:bg-transparent',
+                entry.danger &&
+                  (dangerClassName ??
+                    'text-danger-000 data-[highlighted]:bg-danger-000/10 data-[highlighted]:text-danger-000')
+              )}
+              onSelect={() => onSelect(entry.action)}
+            >
+              <Icon
+                className={cn(compact ? 'size-3.5' : 'size-4', 'shrink-0')}
+                aria-hidden="true"
+              />
+              {renderLabel?.(entry, t(entry.labelKey)) ?? t(entry.labelKey)}
+            </DropdownMenuItem>
+          </Fragment>
         )
       })}
     </>

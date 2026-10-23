@@ -11,6 +11,7 @@ import type {
 } from '../window-controls'
 
 import type { InterfaceScale } from '../interface-scale'
+import type { NativeActionMenuRequest, NativeActionMenuResult } from '../action-menu-overlay'
 
 import {
   callable,
@@ -25,6 +26,19 @@ import {
 } from './definition'
 
 export const contracts = {
+  'window.openActionMenu': callable<(request: NativeActionMenuRequest) => void>()(
+    'window',
+    ['action-menu:open', SEND],
+    { optionalMember: true }
+  ),
+  'window.closeActionMenu': callable<(id: string) => void>()(
+    'window',
+    ['action-menu:close', SEND],
+    { optionalMember: true }
+  ),
+  'window.onActionMenuClosed': callable<
+    (listener: (result: NativeActionMenuResult) => void) => RemoveListener
+  >()('window', ['action-menu:closed', ELECTRON_EVENT], { optionalMember: true }),
   'window.announceWindowFindAppearance': callable<(appearance: WindowFindAppearance) => void>()(
     'window',
     ['window:find-appearance-changed', SEND],

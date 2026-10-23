@@ -540,7 +540,8 @@
       "src/renderer/src/pages/literature/imports/literature-pdf-extraction.test.ts",
       "src/renderer/src/pages/literature/imports/literature-pdf-metadata.test.ts",
       "src/renderer/src/pages/workspace/file-type-icon.test.ts",
-      "src/renderer/src/stores/specialist-store.test.ts"
+      "src/renderer/src/stores/specialist-store.test.ts",
+      "src/renderer/src/components/action-menu/NativeActionMenu.test.tsx"
     ]
   },
   "capabilityOverlays": [],

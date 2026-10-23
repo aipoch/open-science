@@ -346,6 +346,9 @@ type ElectronApp = {
   ) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
+  advanceSessionRevisionBehindRenderer: (
+    session: Pick<PersistedChatSession, 'projectId' | 'id' | 'title' | 'description'>
+  ) => Promise<void>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
   emitBrowserImport: (url: string) => Promise<void>
@@ -354,6 +357,14 @@ type ElectronApp = {
   emitUpdateStatus: (status: UpdateStatus) => Promise<void>
   enableFakeRemoteIt: () => Promise<Page>
   findOverlayIsVisible: () => Promise<boolean>
+  createLiveMenuBackground: (kind?: 'view' | 'webview') => Promise<void>
+  readNativeMenuLayers: () => Promise<{
+    ticks: number
+    pageVisible: boolean
+    menuVisible: boolean
+    menuOnTop: boolean
+    focused: string
+  }>
   captureFindOverlay: () => Promise<Buffer>
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
@@ -1203,9 +1214,123 @@ class ElectronAppHarness implements ElectronApp {
     return archive
   }
 
+  async advanceSessionRevisionBehindRenderer(
+    session: Pick<PersistedChatSession, 'projectId' | 'id' | 'title' | 'description'>
+  ): Promise<void> {
+    await this.runningApplication.evaluate(async ({ BrowserWindow }, session) => {
+      const mainWindow = BrowserWindow.getAllWindows()[0]
+      if (!mainWindow) throw new Error('Main window is unavailable.')
+      const webContents = mainWindow.webContents
+      const send = webContents.send.bind(webContents)
+      let suppressUpdate = true
+      webContents.send = ((channel: string, ...args: unknown[]) => {
+        if (suppressUpdate && channel === 'session:updated') {
+          suppressUpdate = false
+          return true
+        }
+        return send(channel, ...args)
+      }) as typeof webContents.send
+      try {
+        await webContents.executeJavaScript(
+          `window.api.sessions.editDetails(${JSON.stringify({
+            projectId: session.projectId,
+            sessionId: session.id,
+            title: session.title,
+            description: `${session.description ?? ''} concurrent edit`,
+            expectedTitle: session.title,
+            expectedDescription: session.description ?? ''
+          })})`
+        )
+      } finally {
+        webContents.send = send
+      }
+    }, session)
+  }
+
   async enableFakeRemoteIt(): Promise<Page> {
     this.fakeRemoteItEnabled = true
     return this.restart()
+  }
+
+  async createLiveMenuBackground(kind: 'view' | 'webview' = 'view'): Promise<void> {
+    await this.runningApplication.evaluate(
+      async ({ app, BrowserWindow, WebContentsView, session }, kind) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        const html =
+          '<body style="background:skyblue;font-size:40px">Live page <span id="ticks">0</span><script>setInterval(()=>document.querySelector("span").textContent=String(Number(document.querySelector("span").textContent)+1),50)</script>'
+        if (kind === 'webview') {
+          const sourceSession = session.fromPartition('persist:open-science-source-preview-v1')
+          await sourceSession.protocol.handle(
+            'https',
+            () =>
+              new Response(html, {
+                headers: { 'Content-Type': 'text/html' }
+              })
+          )
+          await window.webContents.executeJavaScript(`new Promise(resolve => {
+          const guest = document.createElement('webview')
+          guest.id = 'native-menu-source'
+          guest.style.cssText = 'position:fixed;left:200px;top:80px;width:520px;height:440px;z-index:100'
+          guest.setAttribute('partition', 'persist:open-science-source-preview-v1')
+          guest.setAttribute('src', 'https://native-menu.test/live')
+          guest.addEventListener('dom-ready', () => { guest.focus(); resolve() }, {once:true})
+          document.body.append(guest)
+        })`)
+          window.on('closed', () => sourceSession.protocol.unhandle('https'))
+          app.focus({ steal: true })
+          window.focus()
+          return
+        }
+        const view = new WebContentsView({
+          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+        })
+        view.setBounds({ x: 250, y: 100, width: 650, height: 550 })
+        window.contentView.addChildView(view, 0)
+        await view.webContents.loadURL(`data:text/html,${html}`)
+        app.focus({ steal: true })
+        window.focus()
+        view.webContents.focus()
+        window.on('closed', () => {
+          if (!view.webContents.isDestroyed()) view.webContents.close()
+        })
+      },
+      kind
+    )
+  }
+
+  async readNativeMenuLayers(): Promise<{
+    ticks: number
+    pageVisible: boolean
+    menuVisible: boolean
+    menuOnTop: boolean
+    focused: string
+  }> {
+    return this.runningApplication.evaluate(async ({ BrowserWindow, webContents }) => {
+      const children = BrowserWindow.getAllWindows()[0].contentView
+        .children as Electron.WebContentsView[]
+      const page = children.find((view) => view.webContents?.getURL().startsWith('data:text/html'))
+      const source =
+        page?.webContents ??
+        webContents
+          .getAllWebContents()
+          .find((contents) => contents.getURL() === 'https://native-menu.test/live')!
+      const menu = children.find((view) =>
+        view.webContents?.getURL().includes('/action-menu-overlay.html')
+      )
+      return {
+        ticks: Number(
+          await source.executeJavaScript('document.querySelector("#ticks").textContent')
+        ),
+        pageVisible: page
+          ? page.getVisible()
+          : await BrowserWindow.getAllWindows()[0].webContents.executeJavaScript(
+              'document.querySelector("#native-menu-source").checkVisibility()'
+            ),
+        menuVisible: menu?.getVisible() ?? false,
+        menuOnTop: !!menu && children.at(-1) === menu,
+        focused: webContents.getFocusedWebContents()?.getURL() ?? ''
+      }
+    })
   }
 
   async findOverlayIsVisible(): Promise<boolean> {

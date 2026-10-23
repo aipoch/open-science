@@ -1,0 +1,9 @@
+/* The native surface covers the content area for outside-click dismissal, but paints only menus. */
+html,
+body,
+#root {
+  background: transparent !important;
+}
+.dark [role='menuitem'] img {
+  filter: invert(1);
+}
