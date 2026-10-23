@@ -316,6 +316,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-notifications-enabled',
     'set-show-notification-content',
     'set-openalex-credential',
+    'set-semantic-scholar-credential',
     'set-package-mirror',
     'set-network-proxy',
     'set-notebook-network',

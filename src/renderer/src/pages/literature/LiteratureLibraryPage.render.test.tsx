@@ -427,6 +427,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          related: vi.fn(),
           supplements: vi.fn(),
           supplementAttachment: vi.fn(),
           supplementAttachmentProgress: vi.fn().mockResolvedValue(null),

@@ -216,6 +216,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const loadTags = useTagStore((state) => state.load)
   const listenTags = useTagStore((state) => state.listen)
   const tagRevision = useTagStore((state) => state.revision)
+  const [relatedDirection, setRelatedDirection] = useState<'references' | 'citations'>('references')
   const [section, setSection] = useState<LibrarySection>('inbox')
   const [inboxState, setInboxState] = useState<'pending' | 'dismissed'>('pending')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
@@ -2382,7 +2383,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         <p className="mt-1 text-sm text-muted-foreground">
                           {inboxState === 'dismissed'
                             ? t('Dismissed references can be restored here.')
-                            : t('New Agent discoveries will appear here for review.')}
+                            : t(
+                                'References discovered by you or Agents will appear here for review.'
+                              )}
                         </p>
                       </div>
                     )
@@ -2591,8 +2594,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           citationStyles={citationStyles}
           setJournalsOpen={setJournalsOpen}
           setCitationStylesOpen={setCitationStylesOpen}
+          onOpenInbox={() => {
+            closeSelectedItemDetail()
+            setInboxState('pending')
+            selectSection('inbox')
+          }}
+          relatedDirection={relatedDirection}
           renderOverview={(selectedItem) => (
             <LiteratureDetailOverview
+              onRelated={(direction) => {
+                setRelatedDirection(direction)
+                changeDetailMode('related')
+              }}
               selectedCollection={selectedCollection}
               updateSmartEvidence={updateSmartEvidence}
               isBatching={isBatching}

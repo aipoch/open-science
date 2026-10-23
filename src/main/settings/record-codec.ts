@@ -386,6 +386,8 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   }
   const contactEmail = asString(value.contactEmail)
   const ncbiApiKeyRef = asString(value.ncbiApiKeyRef)
+  const semanticScholarApiKeyRef = asString(value.semanticScholarApiKeyRef)
+  if (semanticScholarApiKeyRef) connectors.semanticScholarApiKeyRef = semanticScholarApiKeyRef
   const openAlexApiKeyRef = asString(value.openAlexApiKeyRef)
   if (contactEmail) connectors.contactEmail = contactEmail
   if (ncbiApiKeyRef) connectors.ncbiApiKeyRef = ncbiApiKeyRef

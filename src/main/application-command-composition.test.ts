@@ -266,6 +266,7 @@ describe('application command composition', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:related',
       'literature:search',
       'literature:sources',
       'literature:supplement-attachment',

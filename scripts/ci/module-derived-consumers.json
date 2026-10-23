@@ -87,6 +87,7 @@
       "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
       "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicatesView.test.tsx",
@@ -242,12 +243,14 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
     "package_literature_citations": [
+      "packages/literature-discovery/test/related.test.ts",
       "packages/literature-discovery/test/supplements.test.ts",
       "src/main/literature/supplement-attachments.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -263,6 +266,7 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -471,6 +475,7 @@
     ],
     "renderer_preferences": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
@@ -588,6 +593,7 @@
     "renderer_ui": [
       "src/renderer/src/components/FileDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
@@ -653,6 +659,7 @@
     ],
     "settings_presentation_primitives": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -8928,6 +8935,7 @@
     "workspace_file_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

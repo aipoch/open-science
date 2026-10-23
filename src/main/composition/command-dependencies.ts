@@ -222,6 +222,7 @@ export function composeCommandDependencies({
       literatureReferenceResolver: researchCatalog.literatureReferenceResolver,
       literatureMetadataEnricher: researchCatalog.literatureMetadataEnricher,
       literatureFullTextFinder: researchCatalog.literatureFullTextFinder,
+      literatureRelatedFinder: researchCatalog.literatureRelatedFinder,
       literatureSupplementFinder: researchCatalog.literatureSupplementFinder,
       literatureSupplementAttachments: researchCatalog.literatureSupplementAttachments,
       artifactProvenanceRepository: managedFiles.artifactProvenanceRepository,
