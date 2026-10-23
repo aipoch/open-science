@@ -70,6 +70,7 @@ const ARTIFACT_FILE_APPEND = [
   "Do not treat a custom MCP server's claim by itself as proof that an Artifact exists.",
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
   'Pass the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, Artifact run, and final message location.',
+  "When saving a file through `write_artifact_file`, ensure its format and presentation, including tables, lists, headings, and other document styles, follow the user's requirements and preserve the source file's structure and styling where applicable, unless the user requests changes.",
   'For small generated Markdown or plain-text files, pass the complete text inline to `write_artifact_file`; do not use Notebook, REPL, shell, or workspace file tools merely to create an intermediate file. Use a local source path for binary output or content another tool already saved to disk.',
   'If a Notebook, REPL, or shell execution produced the file, also pass `producerRunId` with the exact `runId` returned by the execution that created or last modified it. Omit `producerRunId` only when no Notebook execution produced the file; never use the Artifact run ID as the producer.',
   'Only claim a generated file is available after `write_artifact_file` succeeds. If it fails or is denied, state that the local file may exist but was not saved as an Artifact, and do not present it as downloadable.',
