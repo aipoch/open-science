@@ -702,6 +702,22 @@ describe('R admission launch protection', () => {
     expect(windowsStandardLaunch).not.toHaveBeenCalled()
   })
 
+  it('blocks a rejected protection check and admits a later verified protected launch', async () => {
+    vi.mocked(checkWindowsAppContainer).mockRejectedValueOnce(
+      new Error('probe could not be verified')
+    )
+    await expect(NotebookNetworkRuntime.wrap(request(true))).rejects.toThrow(
+      'probe could not be verified'
+    )
+    expect(windowsLaunch).not.toHaveBeenCalled()
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+    expect(CommandGateway.open).not.toHaveBeenCalled()
+
+    await NotebookNetworkRuntime.wrap(request(true))
+    expect(windowsLaunch).toHaveBeenCalledOnce()
+    expect(windowsStandardLaunch).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])(
     'rejects a revoked durable R grant (registered: %s)',
     async (registered) => {

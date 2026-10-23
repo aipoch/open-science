@@ -230,6 +230,8 @@ const refreshWindowsProtection = async (): Promise<SandboxDependencyCheck> => {
     windowsProtectedGatewayPort = undefined
     return { warnings: [], errors: [] }
   }
+  // A rejected verification must not retain the previous successful gateway proof.
+  windowsProtectedGatewayPort = undefined
   const check = await checkWindowsAppContainer(
     config.windowsHostPath,
     config.installationId,
