@@ -15,7 +15,11 @@ test('drops native packages into Workspace and Home using the existing import fl
   const prompt = 'Summarize the deterministic fixture.'
   await submitPromptViaUi(page, prompt)
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(async () => (await window.api.acp.getState()).promptInFlightSessionIds)
+    )
+    .toEqual([])
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   await page.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
@@ -65,7 +69,9 @@ test('drops native packages into Workspace and Home using the existing import fl
   )
   await page.screenshot({ path: testInfo.outputPath('project-package-drop-confirm.png') })
   await importing.getByRole('button', { name: 'Import', exact: true }).click()
-  await expect(importing.getByText('Session imported', { exact: true })).toBeVisible()
+  await expect(
+    importing.getByRole('status').filter({ hasText: /^Session imported$/ })
+  ).toBeVisible()
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Research exchange', exact: true })).toBeVisible()
@@ -122,7 +128,9 @@ test('drops native packages into Workspace and Home using the existing import fl
   await importing.getByRole('button', { name: 'Continue', exact: true }).click()
   await expect(importing.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
   await importing.getByRole('button', { name: 'Import', exact: true }).click()
-  await expect(importing.getByText('Session imported', { exact: true })).toBeVisible()
+  await expect(
+    importing.getByRole('status').filter({ hasText: /^Session imported$/ })
+  ).toBeVisible()
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('home-package-drop-completed.png') })

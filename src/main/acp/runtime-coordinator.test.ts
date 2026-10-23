@@ -7540,6 +7540,144 @@ describe.each([
   { path: 'codex-response', frameworkId: 'codex' },
   { path: 'codex-bridge', frameworkId: 'codex' }
 ] as const)('$path coordinator admission ownership', ({ path, frameworkId }) => {
+  it.each(['before admission', 'during validation'] as const)(
+    'serializes an external resume started %s with the scoped continuation resume',
+    async (timing) => {
+      const resumeEntered = createDeferred<void>()
+      const resumeFinished = createDeferred<void>()
+      const turnFinished = createDeferred<unknown>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      let resumes = 0
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          beforeResume: async () => {
+            if (++resumes !== 1) return
+            resumeEntered.resolve()
+            await resumeFinished.promise
+          },
+          prompt: () => turnFinished.promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const request = { sessionId: session.sessionId, cwd: '/workspace' }
+      let external: Promise<unknown> | undefined
+      if (timing === 'before admission') {
+        external = coordinator.resumeSession(request)
+        await resumeEntered.promise
+      }
+      const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'parent message' },
+        async (resume) => {
+          await resume(request)
+        }
+      )
+      await resumeEntered.promise
+      if (timing === 'during validation') external = coordinator.resumeSession(request)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(created.resumeSession).toHaveBeenCalledTimes(1)
+      resumeFinished.resolve()
+      await expect(accepted).resolves.toBe('provider_prompt_accepted')
+      expect(created.resumeSession).toHaveBeenCalledTimes(timing === 'before admission' ? 2 : 1)
+      turnFinished.resolve({ stopReason: 'end_turn' })
+      await external
+      expect(created.resumeSession).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each(['delete', 'cancel', 'handoff'] as const)(
+    'fences a scoped continuation resume superseded by %s',
+    async (operation) => {
+      const resumeAttached = createDeferred<void>()
+      const resumeFinished = createDeferred<void>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      let resumes = 0
+      const observer = vi.fn(async () => undefined)
+      const pauseResume = async (): Promise<void> => {
+        if (++resumes !== 1) return
+        resumeAttached.resolve()
+        await resumeFinished.promise
+      }
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          afterResumeAttached: pauseResume
+        })
+        return created.runtime
+      })
+      coordinator.setSessionResumeObserver(observer)
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const request = { sessionId: session.sessionId, cwd: '/workspace' }
+      const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'parent message' },
+        async (resume) => {
+          await resume(request)
+        }
+      )
+      const rejected = expect(accepted).rejects.toThrow()
+      await resumeAttached.promise
+      if (operation === 'delete') await coordinator.deleteSession(request)
+      else if (operation === 'cancel') await coordinator.cancelPrompt(request)
+      else await coordinator.stopPromptForHandoff(session.sessionId)
+      const external = operation === 'delete' ? undefined : coordinator.resumeSession(request)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(created.resumeSession).toHaveBeenCalledTimes(1)
+      expect(observer).not.toHaveBeenCalled()
+      resumeFinished.resolve()
+      await rejected
+      await external
+      expect(created.sendAppContinuation).not.toHaveBeenCalled()
+      if (operation === 'delete') {
+        expect(observer).not.toHaveBeenCalled()
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+      } else {
+        expect(created.resumeSession).toHaveBeenCalledTimes(2)
+        expect(observer).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
+  it('resumes inside continuation admission while external resume waits for the turn', async () => {
+    const finished = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId,
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => finished.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const resumeRequest = { sessionId: session.sessionId, cwd: '/workspace' }
+    let retainedResume!: (request: typeof resumeRequest) => Promise<unknown>
+    const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+      { sessionId: session.sessionId, text: 'parent message' },
+      async (resume) => {
+        retainedResume = resume
+        await expect(resume({ ...resumeRequest, sessionId: 'other-session' })).rejects.toThrow(
+          'admission'
+        )
+        await resume(resumeRequest)
+      }
+    )
+    await expect(accepted).resolves.toBe('provider_prompt_accepted')
+    await expect(retainedResume(resumeRequest)).rejects.toThrow('admission')
+    const calls = created.resumeSession.mock.calls.length
+    const external = coordinator.resumeSession(resumeRequest)
+    await Promise.resolve()
+    expect(created.resumeSession).toHaveBeenCalledTimes(calls)
+    finished.resolve({ stopReason: 'end_turn' })
+    await external
+    expect(created.resumeSession).toHaveBeenCalledTimes(calls + 1)
+  })
+
   it.each(['reaped', 'unreaped', 'rejected'] as const)(
     'retains send, events, cancellation and next-quit process ownership after late %s cleanup',
     async (outcome) => {
