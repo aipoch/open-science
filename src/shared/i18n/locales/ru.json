@@ -195,6 +195,7 @@
   },
   "renderer": {
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Не удалось загрузить Навыки или Коннекторы Специалиста. Попробуйте отправить сообщение ещё раз.",
+    "Query upstream or downstream human protein regulation with OmniPath.": "Поиск регуляторных связей белков человека выше или ниже по сигнальному пути с помощью OmniPath.",
     "List authorized directories": "Список разрешённых каталогов",
     "checked directory access": "проверен доступ к каталогам",
     "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",

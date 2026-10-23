@@ -484,6 +484,52 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (arguments_.includes('--coverage-changed') && !coverageChanged) {
     throw new Error('--coverage-changed requires a Git revision')
   }
+  const { plan, changes } = await resolveAffectedTestPlan(base, head, { tier, ...options })
+  if (arguments_.includes('--require-selective') && plan.mode !== 'selective') {
+    throw new Error(
+      `Selective test plan required; refusing full execution.\n${formatModuleTestPlan(plan)}`
+    )
+  }
+  if (arguments_.includes('--explain')) {
+    process.stdout.write(formatModuleTestPlan(plan))
+    return 0
+  }
+  const environment = coverageChanged
+    ? {
+        ...(options.environment ?? process.env),
+        VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
+      }
+    : options.environment
+  // CI checks out a synthetic merge commit. Vitest's coverage.changed compares against
+  // checkout HEAD, which also includes newer base-branch changes outside this PR's test plan.
+  const coverageChanges = coverageChanged
+    ? coverageChanged === base
+      ? changes
+      : changesFromGit(coverageChanged, head, options)
+    : []
+  const coveragePaths = sorted(
+    coverageChanges
+      .filter(({ path, status }) => status !== 'deleted' && /^src\/.*\.tsx?$/.test(path))
+      .map(({ path }) => path)
+  )
+  return executeModuleTestPlan(plan, {
+    ...options,
+    environment,
+    testArguments: coverageChanged
+      ? [
+          '--coverage',
+          ...(coveragePaths.length > 0 ? coveragePaths : ['__no_changed_sources__']).map(
+            (path) => `--coverage.include=${path}`
+          ),
+          ...testArguments
+        ]
+      : testArguments
+  })
+}
+
+// The plan `affected` executes for a revision range, including CodeGraph and host/package
+// refinement. Shadow reports compare against this, not the unrefined registered plan.
+export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...options } = {}) {
   const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
     changesFromGit(base, head, options),
     { base, head, ...options }
@@ -557,46 +603,7 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
       )
     }
   }
-  if (arguments_.includes('--require-selective') && plan.mode !== 'selective') {
-    throw new Error(
-      `Selective test plan required; refusing full execution.\n${formatModuleTestPlan(plan)}`
-    )
-  }
-  if (arguments_.includes('--explain')) {
-    process.stdout.write(formatModuleTestPlan(plan))
-    return 0
-  }
-  const environment = coverageChanged
-    ? {
-        ...(options.environment ?? process.env),
-        VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
-      }
-    : options.environment
-  // CI checks out a synthetic merge commit. Vitest's coverage.changed compares against
-  // checkout HEAD, which also includes newer base-branch changes outside this PR's test plan.
-  const coverageChanges = coverageChanged
-    ? coverageChanged === base
-      ? changes
-      : changesFromGit(coverageChanged, head, options)
-    : []
-  const coveragePaths = sorted(
-    coverageChanges
-      .filter(({ path, status }) => status !== 'deleted' && /^src\/.*\.tsx?$/.test(path))
-      .map(({ path }) => path)
-  )
-  return executeModuleTestPlan(plan, {
-    ...options,
-    environment,
-    testArguments: coverageChanged
-      ? [
-          '--coverage',
-          ...(coveragePaths.length > 0 ? coveragePaths : ['__no_changed_sources__']).map(
-            (path) => `--coverage.include=${path}`
-          ),
-          ...testArguments
-        ]
-      : testArguments
-  })
+  return { plan, changes, manifest, registrationModules, registrationOnly }
 }
 
 const isDirectExecution =

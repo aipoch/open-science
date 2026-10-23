@@ -192,6 +192,7 @@
   },
   "renderer": {
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "無法讀取此專家的技能或連接器。請嘗試重新傳送。",
+    "Query upstream or downstream human protein regulation with OmniPath.": "使用 OmniPath 查詢人類蛋白質的上游或下游調控關係。",
     "List authorized directories": "列出已授權目錄",
     "checked directory access": "已查詢目錄授權",
     "Could not load Reviewer log.": "無法載入審閱器記錄。",

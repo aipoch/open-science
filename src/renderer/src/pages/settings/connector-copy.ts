@@ -97,6 +97,8 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'structures/omnipath_query_regulation':
+      return t('Query upstream or downstream human protein regulation with OmniPath.')
     case 'kegg/map_gene':
       return t('Map a KEGG gene to pathways or UniProt.')
     case 'kegg/get_entry':

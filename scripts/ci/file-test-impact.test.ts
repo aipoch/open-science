@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { compareTestPlans, createFileTestPlan } from './file-test-impact.mjs'
+import {
+  compareTestPlans,
+  createFileTestPlan,
+  formatFileTestImpactReport,
+  runFileTestImpactCli
+} from './file-test-impact.mjs'
 import { consumerDependencyGraph } from './module-graph/index.mjs'
 
 const files = {
@@ -15,7 +20,9 @@ const files = {
   'src/main/owner.test.ts': "import './owner'",
   'src/main/typed.test.ts': "import type { Value } from './owner'",
   'src/main/dynamic.test.ts': 'loadByName(name)',
-  'src/main/host-layer-dependencies.architecture.test.ts': "import './owner'"
+  'src/main/host-layer-dependencies.architecture.test.ts': "import './owner'",
+  'src/main/data/table.json': '{}',
+  'src/main/data/notes.md': '# notes'
 }
 const source = {
   files: new Set(Object.keys(files)),
@@ -42,10 +49,10 @@ const classify = (
   bundles: ['unit'],
   reasonChains: []
 })
-const plan = (paths: string[], edges: Edges = []): Plan =>
+const plan = (paths: string[], edges: Edges = [], options: object = {}): Plan =>
   createFileTestPlan(
     paths.map((path) => ({ path, status: 'modified' })),
-    { source, reverse: graph(edges), classify }
+    { source, reverse: graph(edges), classify, ...options }
   )
 
 describe('createFileTestPlan', () => {
@@ -100,6 +107,24 @@ describe('createFileTestPlan', () => {
     )
   })
 
+  it('runs every test a dynamic reader declares, matched by glob', () => {
+    const readers = [
+      {
+        reason: 'loads data by computed path',
+        paths: ['src/main/data/**'],
+        tests: ['src/main/*.test.ts'],
+        exclude: ['**/*.md']
+      }
+    ]
+    expect(plan(['src/main/data/table.json'], [], { readers }).testFiles).toEqual([
+      'src/main/dynamic.test.ts',
+      'src/main/host-layer-dependencies.architecture.test.ts',
+      'src/main/owner.test.ts',
+      'src/main/typed.test.ts'
+    ])
+    expect(plan(['src/main/data/notes.md'], [], { readers }).testFiles).toEqual([])
+  })
+
   it('never selects tests from registration data', () => {
     expect(plan(['scripts/ci/module-impact/owner.json', 'src/main/owner.ts']).testFiles).toEqual([
       'src/main/host-layer-dependencies.architecture.test.ts',
@@ -133,8 +158,64 @@ describe('compareTestPlans', () => {
       { test: 'c.test.ts', evidence: ['owner:derived'] }
     ])
     expect(result.extra).toEqual(['d.test.ts'])
+    expect(result.module).toEqual({ mode: 'selective', tests: 3 })
+    expect(result.file).toEqual({ mode: 'selective', tests: 2 })
     expect(
-      compareTestPlans({ mode: 'full', testFiles: [] }, result as never, manifest).status
-    ).toBe('not-comparable')
+      compareTestPlans(
+        { mode: 'full', testFiles: [] },
+        { mode: 'selective', testFiles: ['a.test.ts'], unresolved: [] },
+        manifest
+      )
+    ).toMatchObject({ status: 'not-comparable', missing: [], extra: [] })
+  })
+})
+
+describe('formatFileTestImpactReport', () => {
+  const report = {
+    status: 'compared',
+    module: { mode: 'selective', tests: 3 },
+    file: { mode: 'selective', tests: 2 },
+    missing: [{ test: 'b.test.ts', evidence: ['owner:consumer'] }],
+    extra: ['d.test.ts'],
+    unresolved: []
+  }
+
+  it('summarizes both planners and lists the differences', () => {
+    const markdown = formatFileTestImpactReport(report)
+    expect(markdown).toContain('| Module (runs today) | selective | 3 |')
+    expect(markdown).toContain('| File (shadow) | selective | 2 |')
+    expect(markdown).toContain('### Selected only by the module planner (1)')
+    expect(markdown).toContain('- `b.test.ts` — owner:consumer')
+    expect(markdown).toContain('- `d.test.ts`')
+    expect(markdown).not.toContain('absent from the head snapshot')
+  })
+
+  it('truncates long lists and explains full plans', () => {
+    const extra = Array.from({ length: 30 }, (_, index) => `t${index}.test.ts`)
+    expect(formatFileTestImpactReport({ ...report, extra })).toContain('… 5 more in the artifact')
+    expect(
+      formatFileTestImpactReport({
+        ...report,
+        status: 'not-comparable',
+        module: { mode: 'full', tests: 0 }
+      })
+    ).toContain('Not comparable')
+  })
+})
+
+// workingTreeGraph() is the default for compareRevisionRange so that both planners
+// see the same checkout (the merge commit on pull_request, HEAD locally). Its
+// integration contract is covered by compareRevisionRange in pr-gate-workflow tests
+// and local compareRecentCommits runs; the unit fixture uses an in-memory snapshot.
+
+describe('runFileTestImpactCli', () => {
+  it('rejects unknown commands and missing revisions', async () => {
+    await expect(runFileTestImpactCli(['nope'])).rejects.toThrow('Unknown file test-impact command')
+    await expect(runFileTestImpactCli(['compare', '--base', 'x'])).rejects.toThrow(
+      '--base and --head are required'
+    )
+    await expect(
+      runFileTestImpactCli(['compare', '--base', 'x', '--head', 'y', '--tier', 'nightly'])
+    ).rejects.toThrow('--tier must be pr or queue')
   })
 })

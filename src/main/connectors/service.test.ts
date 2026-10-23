@@ -23,6 +23,36 @@ const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('routes OmniPath through the existing Structures category and per-tool policy', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json([]))
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const service = new ConnectorService({
+      registry: builtinConnectorRegistry,
+      engine: new ParserEngine({ fetchImpl, retries: 0 }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined
+    })
+    const args = { accession: 'P00533', direction: 'upstream' }
+    await expect(
+      service.call('structures', 'omnipath_query_regulation', args, internal)
+    ).resolves.toMatchObject({ records: [], returned: 0 })
+    settings.blockedToolIds.push('structures/omnipath_query_regulation')
+    await expect(
+      service.call('structures', 'omnipath_query_regulation', args, internal)
+    ).rejects.toThrow(/blocked/)
+    settings.blockedToolIds.length = 0
+    settings.disabledConnectorIds.push('structures')
+    await expect(
+      service.call('structures', 'omnipath_query_regulation', args, internal)
+    ).rejects.toThrow(/disabled/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['tcia', 'kegg', 'orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
     'gates %s before transport until explicit opt-in, with opt-out winning conflicts',
     async (id) => {

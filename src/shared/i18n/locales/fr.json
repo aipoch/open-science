@@ -194,6 +194,7 @@
   },
   "renderer": {
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Impossible de charger les Compétences ou les Connecteurs du Spécialiste. Réessayez d’envoyer le message.",
+    "Query upstream or downstream human protein regulation with OmniPath.": "Interroger la régulation des protéines humaines en amont ou en aval avec OmniPath.",
     "List authorized directories": "Lister les répertoires autorisés",
     "checked directory access": "a vérifié les autorisations d’accès aux répertoires",
     "Could not load Reviewer log.": "Impossible de charger le journal des évaluateurs.",
