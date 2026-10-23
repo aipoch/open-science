@@ -38,7 +38,7 @@ import {
   X
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
 import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
@@ -139,9 +139,16 @@ export function LiteratureDetailDialog({
     credentialsOpenRef.current = open
     setCredentialsOpenState(open)
   }
+  const [relatedSaving, setRelatedSavingState] = useState(false)
+  const relatedSavingRef = useRef(false)
+  const setRelatedSaving = useCallback((saving: boolean): void => {
+    relatedSavingRef.current = saving
+    setRelatedSavingState(saving)
+  }, [])
   const credentialFormId = useId()
   const credentialTriggerRef = useRef<HTMLButtonElement>(null)
   const closeSelectedItemDetail = (): void => {
+    if (relatedSavingRef.current) return
     setCredentialsOpen(false)
     closeDetail()
   }
@@ -238,6 +245,7 @@ export function LiteratureDetailDialog({
                   }}
                   onEscapeKeyDown={(event) => {
                     event.preventDefault()
+                    if (relatedSavingRef.current) return
                     if (credentialsOpenRef.current) {
                       closeCredentials()
                       return
@@ -262,8 +270,9 @@ export function LiteratureDetailDialog({
                           size="icon-sm"
                           className="shrink-0"
                           aria-label={t('Back')}
-                          disabled={metadata.saving}
+                          disabled={metadata.saving || relatedSaving}
                           onClick={() => {
+                            if (relatedSavingRef.current) return
                             const fromRelated = metadata.mode === 'related'
                             setCredentialsOpen(false)
                             leaveMetadataEditor()
@@ -337,6 +346,7 @@ export function LiteratureDetailDialog({
                           variant="ghost"
                           size="icon-sm"
                           aria-label={t('Semantic Scholar settings')}
+                          disabled={relatedSaving}
                           ref={credentialTriggerRef}
                           aria-expanded={credentialsOpen}
                           aria-controls={credentialsOpen ? credentialFormId : undefined}
@@ -397,7 +407,7 @@ export function LiteratureDetailDialog({
                         size="icon-sm"
                         className={dialogCloseButtonClassName}
                         aria-label={t('Close')}
-                        disabled={isAddingPdf || metadata.saving}
+                        disabled={isAddingPdf || metadata.saving || relatedSaving}
                         onClick={closeSelectedItemDetail}
                       >
                         <X className="size-4" aria-hidden="true" />
@@ -410,6 +420,7 @@ export function LiteratureDetailDialog({
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}:${generation}`}
                       item={selectedItem}
                       initialDirection={relatedDirection}
+                      onSavingChange={setRelatedSaving}
                       credentialFormId={credentialFormId}
                       credentialsOpen={credentialsOpen}
                       onOpenCredentials={() => setCredentialsOpen(true)}

@@ -23,6 +23,7 @@ export function LiteratureRelatedLookup({
   item,
   initialDirection,
   onSaved,
+  onSavingChange,
   onOpenInbox,
   credentialsOpen = false,
   credentialFormId,
@@ -32,6 +33,7 @@ export function LiteratureRelatedLookup({
   item: LiteratureItemView
   initialDirection: LiteratureRelatedRequest['direction']
   onSaved(): void
+  onSavingChange?: (saving: boolean) => void
   onOpenInbox?: () => void
   credentialsOpen?: boolean
   credentialFormId?: string
@@ -65,6 +67,7 @@ export function LiteratureRelatedLookup({
   const generation = useRef(0)
   const inFlight = useRef(false)
   const savingRef = useRef(false)
+  useEffect(() => () => onSavingChange?.(false), [onSavingChange])
   const lookup = useCallback(
     async (
       nextDirection: LiteratureRelatedRequest['direction'],
@@ -153,6 +156,7 @@ export function LiteratureRelatedLookup({
     if (savingRef.current || inFlight.current || !result) return
     savingRef.current = true
     setSaving(true)
+    onSavingChange?.(true)
     const current = generation.current
     try {
       for (const entry of result.records.filter((entry) => selected.has(entry.paperId))) {
@@ -188,7 +192,10 @@ export function LiteratureRelatedLookup({
       onSaved()
     } finally {
       savingRef.current = false
-      if (current === generation.current) setSaving(false)
+      if (current === generation.current) {
+        setSaving(false)
+        onSavingChange?.(false)
+      }
     }
   }
   const receiptLabel = (receipt: LiteratureCatalogReceipt | 'failed'): string =>
@@ -286,6 +293,7 @@ export function LiteratureRelatedLookup({
             variant="link"
             size="sm"
             className="h-auto p-0 text-xs"
+            disabled={saving}
             onClick={onOpenCredentials}
           >
             {t('Configure API key')}

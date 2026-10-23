@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import {
@@ -89,7 +89,7 @@ type Resolution = {
 export class LiteratureRelatedFinder {
   private readonly resolutions = new Map<string, Resolution>()
   private nextRequest = 0
-  private retryAt = 0
+  private readonly cooldowns = new Map<string, number>()
   constructor(
     private readonly options: {
       catalog: {
@@ -106,13 +106,24 @@ export class LiteratureRelatedFinder {
     query: Record<string, string>,
     signal: AbortSignal
   ): Promise<unknown> {
-    if (this.retryAt > Date.now()) throw new SourceError('rate-limited', this.retryAt)
+    for (const [identity, until] of this.cooldowns)
+      if (until <= Date.now()) this.cooldowns.delete(identity)
+    const readCredentials = async (): Promise<{ apiKey: string | undefined; identity: string }> => {
+      const apiKey = await this.options.apiKey?.()
+      // Retain a fingerprint, not the secret, for each credential's bounded cooldown.
+      const identity = createHash('sha256')
+        .update(apiKey ?? '')
+        .digest('hex')
+      const retryAt = this.cooldowns.get(identity)
+      if (retryAt && retryAt > Date.now()) throw new SourceError('rate-limited', retryAt)
+      return { apiKey, identity }
+    }
+    await readCredentials()
     const slot = Math.max(Date.now(), this.nextRequest)
     if (slot - Date.now() > 10_000) throw new SourceError('rate-limited', slot)
     this.nextRequest = slot + 1000
     await delay(Math.max(0, slot - Date.now()), undefined, { signal })
-    if (this.retryAt > Date.now()) throw new SourceError('rate-limited', this.retryAt)
-    const apiKey = await this.options.apiKey?.()
+    const { apiKey, identity } = await readCredentials()
     const response = await this.options.fetch(
       `https://api.semanticscholar.org/graph/v1/${path}?${new URLSearchParams(query)}`,
       {
@@ -127,9 +138,10 @@ export class LiteratureRelatedFinder {
       if (response.status === 429) {
         const value = response.headers.get('retry-after') ?? ''
         const wait = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now()
-        this.retryAt =
+        const retryAt =
           Date.now() + Math.min(300_000, Math.max(1000, Number.isFinite(wait) ? wait : 60_000))
-        throw new SourceError('rate-limited', this.retryAt)
+        this.cooldowns.set(identity, retryAt)
+        throw new SourceError('rate-limited', retryAt)
       }
       throw new SourceError(
         response.status === 404

@@ -194,8 +194,21 @@ window.api = {
     }),
     transact: async (command: LiteratureCatalogCommand) => {
       commands.push(command)
-      if (command.kind === 'stage-candidate')
+      if (command.kind === 'stage-candidate') {
+        const saveMode = new URLSearchParams(location.search).get('citation-save')
+        if (saveMode) {
+          await new Promise<void>((resolve) =>
+            Object.assign(window, { finishCitationStage: resolve })
+          )
+          if (
+            saveMode === 'failure' &&
+            commands.filter((entry) => 'kind' in entry && entry.kind === 'stage-candidate')
+              .length === 2
+          )
+            throw new Error('Staging failed')
+        }
         return { kind: 'candidate', id: 'found-paper', state: 'pending' }
+      }
       if (command.kind === 'update-collection')
         collections = collections.map((collection) =>
           collection.id === command.collectionId

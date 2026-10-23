@@ -141,6 +141,62 @@ describe('single-paper Semantic Scholar discovery', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(JSON.stringify(result)).not.toContain('secret upstream error')
   })
+  it.each([undefined, 'old-key'])(
+    'keeps a cooldown scoped to the rejected credential (%s)',
+    async (originalKey) => {
+      let apiKey = originalKey
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '60' } }))
+        .mockResolvedValueOnce(json(paper))
+        .mockResolvedValueOnce(json({ offset: 0, data: [] }))
+      const finder = new LiteratureRelatedFinder({
+        catalog: { get: async () => reference(), sources: async () => [] },
+        fetch: fetcher,
+        apiKey: async () => apiKey
+      })
+      const limited = await finder.run(request)
+      expect(limited.issue).toBe('rate-limited')
+      expect((await finder.run(request)).retryAt).toBe(limited.retryAt)
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      apiKey = 'new-key'
+      expect((await finder.run(request)).state).toBe('ready')
+      expect(fetcher).toHaveBeenCalledTimes(3)
+      expect(fetcher.mock.calls[1][1]?.headers).toMatchObject({ 'x-api-key': 'new-key' })
+      expect(fetcher.mock.calls[2][1]?.headers).toMatchObject({ 'x-api-key': 'new-key' })
+      apiKey = originalKey
+      expect((await finder.run(request)).retryAt).toBe(limited.retryAt)
+      expect(fetcher).toHaveBeenCalledTimes(3)
+    }
+  )
+  it('does not apply a late anonymous 429 to a newer authenticated request', async () => {
+    let apiKey: string | undefined = undefined
+    let finishAnonymous!: (response: Response) => void
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishAnonymous = resolve
+          })
+      )
+      .mockImplementation(async (url) =>
+        String(url).includes('/references?') ? json({ offset: 0, data: [] }) : json(paper)
+      )
+    const finder = new LiteratureRelatedFinder({
+      catalog: { get: async () => reference(), sources: async () => [] },
+      fetch: fetcher,
+      apiKey: async () => apiKey
+    })
+    const anonymous = finder.run(request)
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    apiKey = 'new-key'
+    expect((await finder.run(request)).state).toBe('ready')
+    finishAnonymous(new Response('', { status: 429, headers: { 'retry-after': '60' } }))
+    expect((await anonymous).issue).toBe('rate-limited')
+    expect((await finder.run(request)).state).toBe('ready')
+    expect(fetcher).toHaveBeenCalledTimes(5)
+  })
   it.each([401, 403, 404, 503])(
     'reports HTTP %s as failure, not an empty successful page',
     async (status) => {

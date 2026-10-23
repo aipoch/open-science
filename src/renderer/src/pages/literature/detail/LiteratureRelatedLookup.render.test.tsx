@@ -499,3 +499,29 @@ it.each([false, true, undefined])(
     await act(async () => finish(result()))
   }
 )
+
+it('holds the parent save guard across the complete batch including failed items', async () => {
+  const onSavingChange = vi.fn()
+  const finishes: Array<(value: unknown) => void> = []
+  transact.mockImplementation(() => new Promise((resolve) => finishes.push(resolve)))
+  render(
+    <LiteratureRelatedLookup
+      item={item}
+      initialDirection="references"
+      onSaved={vi.fn()}
+      onSavingChange={onSavingChange}
+    />
+  )
+  await screen.findByText('Paper b')
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper b' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select Paper c' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Add selected to Inbox' }))
+  expect(onSavingChange.mock.calls).toEqual([[true]])
+  await act(async () => finishes[0]({ kind: 'candidate', id: 'first', state: 'pending' }))
+  expect(transact).toHaveBeenCalledTimes(2)
+  expect(onSavingChange.mock.calls).toEqual([[true]])
+  await act(async () => finishes[1](Promise.reject(new Error('staging failed'))))
+  expect(onSavingChange.mock.calls).toEqual([[true], [false]])
+  expect(screen.getByText('In Inbox')).toBeTruthy()
+  expect(screen.getByText('Could not add this reference. Try again.')).toBeTruthy()
+})

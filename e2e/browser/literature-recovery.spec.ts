@@ -342,3 +342,50 @@ test('can enter a citation key while the initial lookup is pending', async ({ pa
   await expect(input).not.toBeVisible()
   await expect(dialog.locator('[data-slot="citation-key-hint"]')).not.toBeVisible()
 })
+
+for (const outcome of ['success', 'failure']) {
+  test(`keeps citation batches open until staging finishes (${outcome})`, async ({ page }) => {
+    await page.goto(`/literature-recovery.html?mode=files&citation-save=${outcome}`)
+    await page.getByText('All references', { exact: true }).click()
+    await page
+      .getByRole('button', { name: 'A reference with supporting PDFs', exact: true })
+      .click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('button', { name: 'References', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Load more', exact: true }).click()
+    await dialog.getByRole('checkbox', { name: 'Select A foundational reference' }).check()
+    await dialog.getByRole('checkbox', { name: 'Select Another related paper' }).check()
+    await dialog.getByRole('button', { name: 'Add selected to Inbox' }).click()
+    for (const count of [1, 2]) {
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (
+                window as unknown as { literatureRecovery: { commands: Array<{ kind?: string }> } }
+              ).literatureRecovery.commands.filter((entry) => entry.kind === 'stage-candidate')
+                .length
+          )
+        )
+        .toBe(count)
+      await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeDisabled()
+      await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toBeDisabled()
+      await page.keyboard.press('Escape')
+      await expect(dialog).toBeVisible()
+      await page.mouse.click(2, 2)
+      await expect(dialog).toBeVisible()
+      await page.evaluate(() =>
+        (window as unknown as { finishCitationStage(): void }).finishCitationStage()
+      )
+    }
+    await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeEnabled()
+    await expect(dialog.getByRole('button', { name: 'Back', exact: true })).toBeEnabled()
+    await expect(dialog.getByText('In Inbox', { exact: true })).toHaveCount(
+      outcome === 'success' ? 2 : 1
+    )
+    if (outcome === 'failure')
+      await expect(dialog.getByText('Could not add this reference. Try again.')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(dialog).not.toBeVisible()
+  })
+}
