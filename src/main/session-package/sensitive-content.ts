@@ -305,7 +305,7 @@ const findPackageTextMatch = (
       .replace(/\\+[rn]/g, '\n')
     if (
       /^[ \t]*:/.test(match[2]) &&
-      /\b(?:for[ \t]+[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*,[ \t]*[a-zA-Z_][a-zA-Z0-9_]*)*[ \t]+in|(?:if|elif|while)(?:[ \t]+not)?)[ \t]+$/.test(
+      /\b(?:for[ \t]+(?:[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*,[ \t]*[a-zA-Z_][a-zA-Z0-9_]*)*|\([ \t]*[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*,[ \t]*[a-zA-Z_][a-zA-Z0-9_]*)*[ \t]*,?[ \t]*\))[ \t]+in|(?:if|elif|while)(?:[ \t]+not)?)[ \t]+$/.test(
         precedingCode
       )
     )

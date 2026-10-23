@@ -558,6 +558,9 @@ describe('noncredential syntax and metadata', () => {
     'while tokens:\n    tokens.pop()',
     'if token:\n    print(value)\nwhile tokens:\n    tokens.pop()',
     'elif not token:\n    pass',
+    'for (token, value) in tokens:\n    print(value)',
+    'for (token,) in tokens:\n    print(token)',
+    'for ( token , value ) in tokens:\n    print(value)',
     'token == expected',
     'token => value',
     'tokens = []',
@@ -596,6 +599,7 @@ describe('noncredential syntax and metadata', () => {
     'password = os.getenv("PASSWORD", "actual-secret")',
     'password = os.environ["PASSWORD"] + "actual-secret"',
     'if token: password="actual-secret"',
+    'for (token, value) in tokens: password="actual-secret"',
     'token == expected; password="actual-secret"',
     'tokens = []; password="actual-secret"'
   ])('keeps literal or ambiguous credentials visible: %s', (text) => {
