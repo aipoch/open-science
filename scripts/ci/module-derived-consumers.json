@@ -215,6 +215,7 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
+    "native_process_tree": ["src/main/process-tree-foreign-service.macos.integration.test.ts"],
     "notebook_analysis": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",

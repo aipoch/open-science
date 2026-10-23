@@ -23,13 +23,24 @@ const probe = (
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     const leader = { pid: 1000, ppid: process.pid, pgid: 1000, sid: 1000, uniqueId: '100', parentUniqueId: '50' }
     const candidate = { pid: 2000, ppid: 1, pgid: 2000, sid: 2000, uniqueId: '200', parentUniqueId: scenario === 'reparented-exec' ? '1' : '150' }
+    if (scenario.startsWith('coalition-')) {
+      if (scenario !== 'coalition-leader-missing') leader.coalitionId = '10'
+      if (!['coalition-missing', 'coalition-history'].includes(scenario)) {
+        candidate.coalitionId = scenario === 'coalition-same' ? '10' : '20'
+      }
+    }
     const processes = new Map([[1000, leader], [2000, candidate]])
     let environmentReads = 0
     let readable = false
     let incomplete = scenario === 'history-gap'
     let race = false
     const binding = {
-      getDarwinProcess: pid => processes.get(pid) ?? null,
+      getDarwinProcess: pid => {
+        if (pid === 2000 && scenario === 'coalition-unreadable') return null
+        if (pid === 2000 && scenario === 'coalition-changed') return { ...candidate, coalitionId: undefined }
+        if (pid === 2000 && scenario === 'coalition-reused') return { ...candidate, uniqueId: '201' }
+        return processes.get(pid) ?? null
+      },
       listDarwinProcesses: () => ({ processes: [...processes.values()], complete: !incomplete }),
       getDarwinEnvironmentValue: pid => {
         environmentReads++
@@ -66,6 +77,7 @@ const probe = (
       await new Promise(resolve => setImmediate(resolve))
       const first = await tree.terminateProcessTree(child)
       readable = true
+      if (scenario === 'coalition-history') candidate.coalitionId = '20'
       incomplete = false
       if (scenario === 'vanished') processes.delete(2000)
       const second = await tree.terminateProcessTree(child)
@@ -76,6 +88,26 @@ const probe = (
 }
 
 describe('Darwin ownership evidence reconciliation', () => {
+  it('excludes a birth-validated foreign coalition before reading its environment', () => {
+    const result = probe('coalition-foreign')
+    expect(result.first.reaped).toBe(true)
+    expect(result.second.reaped).toBe(true)
+    expect(result.environmentReads).toBe(0)
+    expect(result.signals).not.toContain(2000)
+    expect(result.signals).not.toContain(-2000)
+  })
+
+  it.each(['same', 'missing', 'leader-missing', 'unreadable', 'reused', 'changed', 'history'])(
+    'retains strict cleanup when coalition evidence is %s',
+    (evidence) => {
+      const result = probe(`coalition-${evidence}`)
+      expect(result.first.reaped).toBe(false)
+      expect(result.second.reaped).toBe(false)
+      expect(result.signals).not.toContain(2000)
+      expect(result.signals).not.toContain(-2000)
+    }
+  )
+
   it('does not exclude an owned orphan that acquired launchd parent identity during exec', () => {
     const result = probe('reparented-exec')
     expect(result.first.reaped).toBe(false)
