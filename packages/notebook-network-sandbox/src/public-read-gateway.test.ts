@@ -39,11 +39,12 @@ const setup = async (
     upgrade?: boolean
     source?: 'unknown' | 'explicit'
     active?: boolean
+    readBody?: boolean
     approve?: (canResume?: () => boolean) => Promise<boolean>
   } = {}
 ): Promise<{
   open: (servername?: string | false) => Promise<TLSSocket>
-  seen: Array<{ method: string; url: string; headers: unknown }>
+  seen: Array<{ method: string; url: string; headers: unknown; body?: string }>
   blocked: ReturnType<typeof vi.fn>
   gateway: CommandGateway
   authorities: string[]
@@ -57,12 +58,26 @@ const setup = async (
   const originContext = await (options.origin === 'local-ca' ? localCa : originCa).getSecureContext(
     options.origin === 'wrong-host' ? 'other.example' : 'data.example'
   )
-  const seen: Array<{ method: string; url: string; headers: unknown }> = []
+  const seen: Array<{ method: string; url: string; headers: unknown; body?: string }> = []
   const http = createHttpServer((req, res) => {
-    seen.push({ method: req.method!, url: req.url!, headers: req.headers })
+    const received: (typeof seen)[number] = {
+      method: req.method!,
+      url: req.url!,
+      headers: req.headers
+    }
+    seen.push(received)
     if (options.upgrade) {
       res.writeHead(101, { connection: 'upgrade', upgrade: 'websocket' })
       res.end()
+      return
+    }
+    if (options.readBody) {
+      received.body = ''
+      req.setEncoding('utf8')
+      req.on('data', (chunk: string) => {
+        received.body += chunk
+      })
+      req.on('end', () => res.end('fixture'))
       return
     }
     res.end('fixture')
@@ -192,6 +207,48 @@ describe('inspected CONNECT over real sockets (injected public address via local
         headers: expect.objectContaining({ authorization: 'Bearer fixture-only' })
       })
     ])
+  })
+
+  it.each([true, false])('holds 100-continue until the user decision (allow=%s)', async (allow) => {
+    const approval = Promise.withResolvers<boolean>()
+    const { open, seen, blocked, authorities } = await setup({
+      approve: () => approval.promise,
+      readBody: true
+    })
+    const socket = await open()
+    let interim = ''
+    let sentBody = false
+    socket.on('data', (chunk: Buffer) => {
+      interim += chunk.toString()
+      if (!sentBody && interim.includes('100 Continue\r\n\r\n')) {
+        sentBody = true
+        socket.write('synthetic-upload')
+      }
+    })
+    const reply = response(socket)
+    socket.write(
+      'POST /synthetic HTTP/1.1\r\nHost: data.example\r\nExpect: 100-continue\r\nContent-Length: 16\r\n\r\n'
+    )
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    expect(interim).toBe('')
+    expect(authorities).toEqual([])
+    expect(seen).toEqual([])
+    approval.resolve(allow)
+    const result = await reply
+    if (allow) {
+      expect(result).toContain('100 Continue')
+      expect(result).toContain('fixture')
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ method: 'POST', body: 'synthetic-upload' })
+      // The gateway acknowledged this expectation; the origin receives an ordinary upload.
+      expect(seen[0]!.headers).not.toHaveProperty('expect')
+    } else {
+      expect(result).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+      expect(result).not.toContain('100 Continue')
+      expect(sentBody).toBe(false)
+      expect(authorities).toEqual([])
+      expect(seen).toEqual([])
+    }
   })
 
   it('never forwards a pending approved request after the gateway has closed', async () => {

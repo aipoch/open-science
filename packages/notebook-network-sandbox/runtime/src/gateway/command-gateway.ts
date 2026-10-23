@@ -1249,6 +1249,12 @@ class CommandGateway {
               return
             }
             upstream.setTimeout(60_000, stop)
+            const headers =
+              verdict.kind === 'read' ? verdict.headers : withoutConnectionHeaders(request.headers)
+            const continueExpected = request.headers.expect?.toLowerCase() === '100-continue'
+            // We acknowledge the client's expectation below after approval. Do not start a
+            // second continue handshake upstream while already streaming the accepted body.
+            if (continueExpected) delete headers.expect
             const outgoing = httpRequest(
               {
                 host,
@@ -1256,9 +1262,7 @@ class CommandGateway {
                 method: request.method,
                 path: request.url,
                 headers: {
-                  ...(verdict.kind === 'read'
-                    ? verdict.headers
-                    : withoutConnectionHeaders(request.headers)),
+                  ...headers,
                   host,
                   connection: 'close'
                 },
@@ -1291,7 +1295,7 @@ class CommandGateway {
               response.end(NETWORK_UPSTREAM_FAILED)
             })
             if (approvedBody) {
-              if (request.headers.expect?.toLowerCase() === '100-continue') response.writeContinue()
+              if (continueExpected) response.writeContinue()
               request.once('error', () => outgoing.destroy())
               request.pipe(outgoing)
             } else outgoing.end()
