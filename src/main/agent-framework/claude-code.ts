@@ -47,6 +47,16 @@ const CLAUDE_CODE_NATIVE_DELEGATION_TOOLS = Object.freeze([
 // directory, environment-mutation guard, permission identity, and durable Run recording contract.
 // Native bulk discovery does not pass through the Notebook search-scope preflight.
 const CLAUDE_CODE_NATIVE_EXECUTION_TOOLS = Object.freeze(['Bash', 'Glob', 'Grep'] as const)
+
+// Route file access through app-owned Notebook and artifact tools so folder permissions and
+// artifact provenance are enforced; native file tools can stall before ACP permission handling.
+const CLAUDE_CODE_NATIVE_FILE_TOOLS = Object.freeze([
+  'Read',
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit'
+] as const)
 const CLAUDE_CODE_DISABLED_AUTO_MEMORY_ENV = Object.freeze({
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'
 })
@@ -137,7 +147,8 @@ export const claudeCodeFramework: AgentFramework = {
       ...new Set([
         ...stringArrayValue(sessionOptions.disallowedTools),
         ...CLAUDE_CODE_NATIVE_DELEGATION_TOOLS,
-        ...CLAUDE_CODE_NATIVE_EXECUTION_TOOLS
+        ...CLAUDE_CODE_NATIVE_EXECUTION_TOOLS,
+        ...CLAUDE_CODE_NATIVE_FILE_TOOLS
       ])
     ])
     const managedSettings = Object.freeze({

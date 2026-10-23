@@ -13,7 +13,7 @@ import { codexFramework } from './codex'
 import { opencodeFramework } from './opencode'
 
 describe('claudeCodeFramework', () => {
-  it('disables native delegation and Bash while keeping the ordinary built-in preset', () => {
+  it('routes native file tools through the app while keeping the built-in preset', () => {
     const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
 
     expect(setup.meta).toMatchObject({
@@ -29,7 +29,12 @@ describe('claudeCodeFramework', () => {
             'TeamDelete',
             'Bash',
             'Glob',
-            'Grep'
+            'Grep',
+            'Read',
+            'Write',
+            'Edit',
+            'MultiEdit',
+            'NotebookEdit'
           ],
           managedSettings: {
             disableAgentView: true,
@@ -89,7 +94,12 @@ describe('claudeCodeFramework', () => {
       'TeamDelete',
       'Bash',
       'Glob',
-      'Grep'
+      'Grep',
+      'Read',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit'
     ])
     expect(options.managedSettings).toMatchObject({
       disableAgentView: true,
