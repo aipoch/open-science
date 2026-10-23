@@ -29,7 +29,8 @@ describe('desktop-only dependency contents', () => {
       for (const file of [
         'scripts/stage-backend.mjs',
         'scripts/backend-dependencies.mjs',
-        'scripts/desktop-pdf-lib.mjs'
+        'scripts/desktop-pdf-lib.mjs',
+        'scripts/desktop-dependency-chains.mjs'
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))

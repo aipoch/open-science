@@ -14,6 +14,10 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import {
+  assertPrivateDependencyChain,
+  stageDesktopDependencyChain
+} from './desktop-dependency-chains.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const { values } = parseArgs({ options: { desktop: { type: 'boolean', default: false } } })
@@ -72,6 +76,7 @@ await cp(join(root, 'packages/open-science/README.md'), join(stage, 'README.md')
 await cp(join(root, 'packages/open-science/CLI.md'), join(stage, 'CLI.md'))
 
 const installed = new Map()
+const privateDependencies = new Set()
 async function packageDirectory(name, from) {
   let directory = from
   while (true) {
@@ -88,6 +93,7 @@ async function packageDirectory(name, from) {
   }
 }
 async function copyDependency(name, from, destinationParent = stage) {
+  assertPrivateDependencyChain(name, privateDependencies)
   if (forbidden(name)) throw new Error(`Standalone dependency closure includes ${name}`)
   if (bundledDependencies.has(name))
     throw new Error(
@@ -102,7 +108,18 @@ async function copyDependency(name, from, destinationParent = stage) {
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
   const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
-  if (!(values.desktop && (await stageDesktopPdfLib(pkg, source, destination))))
+  const chain = values.desktop
+    ? await stageDesktopDependencyChain(pkg, source, destination)
+    : undefined
+  if (chain) {
+    for (const dependency of chain) privateDependencies.add(dependency)
+    for (const path of installed.keys())
+      assertPrivateDependencyChain(
+        path.split(`${sep}node_modules${sep}`).at(-1).split(sep).join('/'),
+        privateDependencies
+      )
+  }
+  if (!chain && !(values.desktop && (await stageDesktopPdfLib(pkg, source, destination))))
     await cp(source, destination, {
       recursive: true,
       dereference: true,
@@ -121,6 +138,7 @@ async function copyDependency(name, from, destinationParent = stage) {
     await writeFile(join(destination, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
   }
   for (const dependency of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
+    if (chain?.has(dependency)) continue
     if (!isBackendRuntimeDependency(dependency, name)) continue
     try {
       await copyDependency(dependency, source, destination)
