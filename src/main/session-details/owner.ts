@@ -702,6 +702,12 @@ export const createSessionDetailsOwner = (
     retriedAdmissionClaims.add(claimKey)
     let queued: SessionDetailsSession | undefined
     try {
+      // Admission failure is not an inference attempt. Recheck before creating another durable
+      // transition; unchanged unavailability must not rewrite and republish the whole Session.
+      const target = await dependencies.targets
+        .resolve(session)
+        .catch((): ResolvedSessionDetailsTarget => ({ mode: 'unavailable' }))
+      if (target.mode === 'unavailable') return false
       queued = await dependencies.sessions.mutateSession(
         session.projectId,
         session.id,
