@@ -12,6 +12,7 @@ import type {
 } from '@aipoch/literature-discovery/contracts'
 import { LiteratureRelatedLookup } from './LiteratureRelatedLookup'
 import type { LiteratureRendererHost } from '../renderer-host'
+import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../../shared/web-event-connection'
 
 const saveCredential = vi.fn()
 const loadConnectors = vi.fn().mockResolvedValue(undefined)
@@ -64,6 +65,7 @@ const result = (extra: Partial<LiteratureRelatedResult> = {}): LiteratureRelated
   ...extra
 })
 beforeEach(() => {
+  document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
   related
     .mockReset()
     .mockImplementation(async (request) => result({ direction: request.direction }))
@@ -77,7 +79,10 @@ beforeEach(() => {
     value: { literature: { related, transact } }
   })
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+})
 it('starts from one paper, switches relationship direction and stages only explicit selections', async () => {
   render(<LiteratureRelatedLookup item={item} initialDirection="references" onSaved={vi.fn()} />)
   await screen.findByText('Paper b')
@@ -206,6 +211,29 @@ it('requires a fresh lookup when an appended page reports an expired seed', asyn
       expect.objectContaining({ offset: 0, resolutionToken: undefined })
     )
   )
+})
+
+it('keeps remote citation lookup available without exposing a local credential form', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  const close = vi.fn()
+  render(
+    <LiteratureRelatedLookup
+      item={item}
+      initialDirection="references"
+      onSaved={vi.fn()}
+      credentialsOpen
+      onCloseCredentials={close}
+    />
+  )
+  await screen.findByText('Paper b')
+  expect(
+    screen.getByText('This credential can only be configured in the local desktop app.')
+  ).toBeTruthy()
+  expect(screen.queryByLabelText('API key')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save key' })).toBeNull()
+  expect(saveCredential).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(close).toHaveBeenCalledOnce()
 })
 
 it('saves an inline key and retries a failed appended page without losing selections', async () => {

@@ -16,6 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useLiteratureHost } from '../renderer-host'
 import { MaskedPasswordField } from '../../settings/MaskedPasswordField'
 
@@ -537,7 +538,14 @@ function SemanticScholarCredentialForm({
     }
   }, [])
   const submit = async (): Promise<void> => {
-    if (submitting.current || disabled || !key.trim() || !encryptionAvailable) return
+    if (
+      !isDesktopRenderer() ||
+      submitting.current ||
+      disabled ||
+      !key.trim() ||
+      !encryptionAvailable
+    )
+      return
     submitting.current = true
     setBusy(true)
     setError(false)
@@ -553,6 +561,23 @@ function SemanticScholarCredentialForm({
       submitting.current = false
       if (active.current) setBusy(false)
     }
+  }
+  if (!isDesktopRenderer()) {
+    return (
+      <div
+        id={id}
+        role="region"
+        aria-label={t('Semantic Scholar settings')}
+        className="flex shrink-0 items-center justify-between gap-3 border-b border-border-300 bg-muted/30 px-5 py-3"
+      >
+        <p className="text-xs text-muted-foreground">
+          {t('This credential can only be configured in the local desktop app.')}
+        </p>
+        <Button type="button" variant="ghost" size="sm" autoFocus onClick={onCancel}>
+          {t('Cancel')}
+        </Button>
+      </div>
+    )
   }
   return (
     <form

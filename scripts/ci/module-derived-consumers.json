@@ -475,6 +475,7 @@
     ],
     "renderer_preferences": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",

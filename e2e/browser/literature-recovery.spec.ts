@@ -322,6 +322,43 @@ test('suggests an optional citation key before any rate limit and hides it after
   await expect(hint).not.toBeVisible()
 })
 
+for (const limited of [false, true]) {
+  test(`shows a local configuration handoff for remote citation lookup (limited=${limited})`, async ({
+    page
+  }) => {
+    await page.goto(`/literature-recovery.html?mode=files${limited ? '&citation-key' : ''}`)
+    // The Web bootstrap sets this marker before mounting the renderer.
+    await page.evaluate(() =>
+      document.documentElement.setAttribute('data-open-science-web-events', 'true')
+    )
+    await page.getByText('All references', { exact: true }).click()
+    await page
+      .getByRole('button', { name: 'A reference with supporting PDFs', exact: true })
+      .click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('button', { name: 'References', exact: true }).click()
+    await expect(dialog.getByRole('tabpanel')).toHaveAttribute('aria-busy', 'false')
+    await dialog
+      .getByRole('button', {
+        name: limited ? 'Semantic Scholar settings' : 'Configure API key',
+        exact: true
+      })
+      .click()
+    const notice = dialog.getByRole('region', { name: 'Semantic Scholar settings' })
+    await expect(notice).toHaveText(
+      /This credential can only be configured in the local desktop app/
+    )
+    await expect(dialog.getByLabel('API key', { exact: true })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: 'Save key', exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(notice).not.toBeVisible()
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Semantic Scholar settings' })).toBeFocused()
+    if (limited) await expect(dialog.getByRole('button', { name: 'Retry' })).toBeEnabled()
+    else await expect(dialog.getByText('A foundational reference', { exact: true })).toBeVisible()
+  })
+}
+
 test('can enter a citation key while the initial lookup is pending', async ({ page }) => {
   await page.goto('/literature-recovery.html?mode=files&citation-loading')
   await page.getByText('All references', { exact: true }).click()
