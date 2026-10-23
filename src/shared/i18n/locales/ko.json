@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "스페셜리스트의 스킬 또는 커넥터를 불러오지 못했습니다. 다시 전송해 주세요.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "LIPID MAPS에서 지질 분류와 화합물 세부 정보를 가져옵니다.",
     "Query upstream or downstream human protein regulation with OmniPath.": "OmniPath로 인간 단백질의 상위 또는 하위 조절 관계를 조회합니다.",
     "List authorized directories": "허용된 디렉터리 목록 조회",
@@ -7543,6 +7544,12 @@
     "Review discovered references before they enter your library.": "찾은 문헌을 검토한 후 라이브러리에 추가하세요.",
     "Map exact compound identifiers with UniChem.": "UniChem으로 정확히 일치하는 화합물 식별자를 매핑합니다.",
     "Retrieve structure quality and validation statistics from PDBe.": "PDBe에서 구조 품질 및 검증 통계를 가져옵니다.",
+    "Search DepMap cell models and their identity metadata.": "DepMap 세포 모델과 식별 메타데이터를 검색합니다.",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "지정한 유전자와 선택한 세포 모델의 DepMap Chronos 유전자 효과를 가져옵니다.",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "지정한 화합물의 DepMap PRISM 약물 반응 AUC 값을 가져옵니다.",
+    "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "지정한 유전자의 DepMap/CCLE RNA 발현량을 log2(TPM+1) 단위로 가져옵니다.",
+    "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "세포 모델의 배수성 대비 DepMap/CCLE 유전자 복제수를 가져옵니다.",
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터.",
     "Service needs restarting": "서비스를 다시 시작해야 합니다",
     "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "실행 중인 서비스가 이 앱과 호환되지 않습니다. 다른 Open-Science 창에서 진행 중인 작업을 완료한 후 서비스를 다시 시작하여 계속하세요."
   }

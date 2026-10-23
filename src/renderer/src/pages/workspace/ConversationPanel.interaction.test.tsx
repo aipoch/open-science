@@ -1350,6 +1350,35 @@ describe('ConversationPanel header spacing', () => {
 })
 
 describe('ConversationPanel composer errors', () => {
+  it.each(['action', 'composer'] as const)(
+    'shows a retryable capability read failure from %s without claiming the Specialist was removed',
+    (surface) => {
+      const failure =
+        "Error invoking remote method 'acp:send-prompt': DelegateMessagePreAcceptanceError: The Specialist Skills or Connectors could not be loaded. Try sending again."
+      renderPanel({
+        view: { actionError: surface === 'action' ? failure : null },
+        composer: {
+          view: {
+            error: surface === 'composer' ? failure : null,
+            doc: docFromText('Keep this draft')
+          }
+        },
+        conversation: { availability: { submit: true } },
+        specialist: { view: { specialist: { unavailable: false } } }
+      })
+      expect(container.textContent).toContain(
+        'The Specialist Skills or Connectors could not be loaded. Try sending again.'
+      )
+      expect(container.textContent).not.toContain('Error invoking remote method')
+      expect(container.textContent).not.toContain('Choose another Specialist before sending')
+      expect(container.querySelector('.text-status-warning-foreground')).not.toBeNull()
+      expect(getComposerEditor().textContent).toBe('Keep this draft')
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
+      ).toBe(false)
+    }
+  )
+
   it('uses the shared ErrorNotice with the semantic failure tone', () => {
     renderPanel({ composer: { view: { error: 'Annotation payload is too large.' } } })
 
@@ -7678,44 +7707,184 @@ describe('ConversationPanel fix loop lock', () => {
     expect(onDraftDocChange).toHaveBeenCalled()
   })
 
-  it('explains an unavailable Specialist and opens Agent controls to choose another', () => {
-    renderPanel({
-      view: {
-        activeSession: { ...idleSession, specialistId: 'deleted-specialist' }
-      },
+  it('preserves the attachment transfer send block with an unavailable Specialist', () => {
+    const submit = vi.fn()
+    const changeDoc = vi.fn()
+    const panel = (uploading: boolean): DeepPartial<PanelProps> => ({
+      view: { activeSession: { ...idleSession, specialistId: 'literature' } },
       conversation: {
-        availability: {
-          submit: false
-        }
+        availability: { submit: !uploading },
+        actions: { submit: { draft: submit } }
       },
-      specialist: {
+      composer: {
         view: {
-          specialist: {
-            unavailable: true
+          doc: docFromText('Keep this draft'),
+          isUploading: uploading,
+          transfers: uploading
+            ? [
+                {
+                  transferId: 'pending',
+                  name: 'large.csv',
+                  mimeType: 'text/csv',
+                  receivedBytes: 25,
+                  totalBytes: 100,
+                  status: 'uploading'
+                }
+              ]
+            : []
+        },
+        actions: { changeDoc }
+      },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+    renderPanel(panel(true))
+    const send = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
+    expect(send().disabled).toBe(true)
+    act(() => {
+      send().click()
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+    renderPanel(panel(false))
+    expect(send().disabled).toBe(false)
+    act(() => send().click())
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).not.toBeNull()
+    renderPanel(panel(true))
+    expect(send().disabled).toBe(true)
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+    expect(submit).not.toHaveBeenCalled()
+    expect(changeDoc).not.toHaveBeenCalled()
+    expect(getComposerEditor().textContent).toBe('Keep this draft')
+  })
+
+  it.each(['Enter', 'click'] as const)(
+    'shows unavailable Specialist guidance only after %s and preserves the draft',
+    (trigger) => {
+      const submit = vi.fn()
+      const changeDoc = vi.fn()
+      renderPanel({
+        view: {
+          activeSession: { ...idleSession, specialistId: 'deleted-specialist' }
+        },
+        conversation: {
+          availability: {
+            submit: true
+          },
+          actions: { submit: { draft: submit } }
+        },
+        composer: {
+          view: { doc: docFromText('Keep this research draft') },
+          actions: { changeDoc }
+        },
+        specialist: {
+          view: {
+            specialist: {
+              unavailable: true
+            }
           }
         }
+      })
+
+      expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+      const attemptSend = (): void => {
+        act(() => {
+          if (trigger === 'Enter') {
+            getComposerEditor().dispatchEvent(
+              new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+            )
+          } else {
+            container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click()
+          }
+        })
       }
-    })
+      attemptSend()
+      expect(
+        document.querySelectorAll('[data-testid="specialist-unavailable-notice"]')
+      ).toHaveLength(1)
+      const notice = document.querySelector('[data-testid="specialist-unavailable-notice"]')
+      expect(notice?.textContent).toContain('This Specialist is no longer available')
+      expect(notice?.textContent).toContain('Choose another Specialist before sending a message.')
+      expect(notice?.textContent).toContain('Your draft is preserved.')
+      expect(
+        container
+          .querySelector('[data-testid="composer-card-backdrop"]')
+          ?.classList.contains('hidden')
+      ).toBe(true)
 
-    const notice = container.querySelector('[data-testid="specialist-unavailable-notice"]')
-    expect(notice?.textContent).toContain('This Specialist is no longer available')
-    expect(notice?.textContent).toContain('Choose another Specialist before sending a message.')
-    expect(notice?.textContent).toContain('Your draft is preserved.')
-    expect(
-      container
-        .querySelector('[data-testid="composer-card-backdrop"]')
-        ?.classList.contains('hidden')
-    ).toBe(true)
+      const controls = container.querySelector('[data-testid="mock-agent-controls"]')
+      const chooseButton = [...(notice?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+        (button) => button.textContent === 'Choose Specialist'
+      )
+      expect(chooseButton?.closest('[data-testid="specialist-unavailable-notice"]')).toBe(notice)
+      expect(controls?.getAttribute('data-open-request')).toBe('0')
+      act(() => {
+        chooseButton?.click()
+      })
+      expect(controls?.getAttribute('data-open-request')).toBe('1')
+      expect(submit).not.toHaveBeenCalled()
+      expect(changeDoc).not.toHaveBeenCalled()
+      expect(getComposerEditor().textContent).toBe('Keep this research draft')
+    }
+  )
 
-    const controls = container.querySelector('[data-testid="mock-agent-controls"]')
-    const chooseButton = notice?.querySelector<HTMLButtonElement>('button')
-    expect(chooseButton?.closest('[data-testid="specialist-unavailable-notice"]')).toBe(notice)
-    expect(controls?.getAttribute('data-open-request')).toBe('0')
-    act(() => {
-      chooseButton?.click()
-    })
-    expect(controls?.getAttribute('data-open-request')).toBe('1')
-  })
+  it.each(['Enter', 'click'] as const)(
+    'shows unavailable Specialist guidance for an annotation-only draft after %s',
+    (trigger) => {
+      const submit = vi.fn()
+      const changeDoc = vi.fn()
+      const removeAnnotation = vi.fn()
+      renderPanel({
+        view: { activeSession: { ...idleSession, specialistId: 'deleted-specialist' } },
+        conversation: {
+          availability: { submit: true },
+          actions: { submit: { draft: submit } }
+        },
+        composer: {
+          view: {
+            doc: emptyDoc,
+            annotations: [
+              {
+                id: 'retained-annotation',
+                kind: 'text',
+                target: 'agent',
+                quote: 'Quoted research evidence',
+                source: {
+                  kind: 'agent-message',
+                  sessionId: idleSession.id,
+                  messageId: 'message-1'
+                }
+              }
+            ]
+          },
+          actions: { changeDoc, removeAnnotation }
+        },
+        specialist: { view: { specialist: { unavailable: true } } }
+      })
+
+      expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+      act(() => {
+        if (trigger === 'Enter') {
+          getComposerEditor().dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+          )
+        } else {
+          container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click()
+        }
+      })
+
+      const notice = document.querySelector('[data-testid="specialist-unavailable-notice"]')
+      expect(notice).not.toBeNull()
+      expect(notice?.textContent).toContain('Choose another Specialist before sending a message.')
+      expect(container.textContent).toContain('Quoted research evidence')
+      expect(getComposerEditor().textContent).toBe('')
+      expect(submit).not.toHaveBeenCalled()
+      expect(changeDoc).not.toHaveBeenCalled()
+      expect(removeAnnotation).not.toHaveBeenCalled()
+    }
+  )
 
   it('does not show a Specialist unavailable notice for an available session', () => {
     renderPanel({
@@ -7732,6 +7901,130 @@ describe('ConversationPanel fix loop lock', () => {
     })
 
     expect(container.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+  })
+
+  it('forgets the attempted-send bubble after changing session or restoring the Specialist', () => {
+    const panel = (id: string, unavailable: boolean): DeepPartial<PanelProps> => ({
+      view: { activeSession: { ...idleSession, id, specialistId: 'literature' } },
+      conversation: { availability: { submit: true } },
+      composer: { view: { doc: docFromText('Keep this draft') } },
+      specialist: { view: { specialist: { unavailable } } }
+    })
+    const send = (): void =>
+      act(() => {
+        getComposerEditor().dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+        )
+      })
+    renderPanel(panel('first', true))
+    send()
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).not.toBeNull()
+    renderPanel(panel('second', true))
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+    send()
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).not.toBeNull()
+    renderPanel(panel('second', false))
+    renderPanel(panel('second', true))
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+  })
+
+  it('hides then repeats the Specialist bubble on another send and restarts its six-second countdown', async () => {
+    vi.useFakeTimers()
+    renderPanel({
+      view: { activeSession: { ...idleSession, specialistId: 'literature' } },
+      conversation: { availability: { submit: true } },
+      composer: { view: { doc: docFromText('Keep this draft') } },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+    const send = (): void =>
+      act(() => {
+        container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click()
+      })
+    const notice = (): Element | null =>
+      document.querySelector('[data-testid="specialist-unavailable-notice"]')
+    send()
+    expect(notice()).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
+        .dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }))
+    })
+    send()
+    expect(notice()).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(150))
+    expect(notice()).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(5999))
+    expect(notice()).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(notice()).toBeNull()
+    expect(getComposerEditor().textContent).toBe('Keep this draft')
+  })
+
+  it('pauses the Specialist bubble countdown while hovered and resumes its remaining time', async () => {
+    vi.useFakeTimers()
+    const submit = vi.fn()
+    renderPanel({
+      view: { activeSession: { ...idleSession, specialistId: 'literature' } },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } },
+      composer: { view: { doc: docFromText('Keep this draft') } },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+    const notice = (): Element | null =>
+      document.querySelector('[data-testid="specialist-unavailable-notice"]')
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click())
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    const bubble = notice()!.closest('[role="dialog"]')!
+    act(() => bubble.dispatchEvent(new MouseEvent('pointerover', { bubbles: true })))
+    await act(async () => vi.advanceTimersByTimeAsync(7000))
+    expect(notice()).not.toBeNull()
+    act(() =>
+      bubble.dispatchEvent(
+        new MouseEvent('pointerout', { bubbles: true, relatedTarget: document.body })
+      )
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(4999))
+    expect(notice()).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(notice()).toBeNull()
+    expect(getComposerEditor().textContent).toBe('Keep this draft')
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Specialist bubble while focusing its actions and permits dismissal and another attempt', async () => {
+    vi.useFakeTimers()
+    const submit = vi.fn()
+    renderPanel({
+      view: { activeSession: { ...idleSession, specialistId: 'literature' } },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } },
+      composer: { view: { doc: docFromText('Keep this draft') } },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+    const notice = (): Element | null =>
+      document.querySelector('[data-testid="specialist-unavailable-notice"]')
+    const send = (): void =>
+      act(() => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click())
+    send()
+    const choose = [...notice()!.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Choose Specialist'
+    )!
+    act(() => choose.focus())
+    await act(async () => vi.advanceTimersByTimeAsync(7000))
+    expect(notice()).not.toBeNull()
+    const close = notice()!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!
+    act(() => close.focus())
+    await act(async () => vi.advanceTimersByTimeAsync(7000))
+    expect(notice()).not.toBeNull()
+    act(() => close.click())
+    expect(notice()).toBeNull()
+    send()
+    expect(notice()).not.toBeNull()
+    act(() =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    )
+    expect(notice()).toBeNull()
+    expect(getComposerEditor().textContent).toBe('Keep this draft')
+    expect(submit).not.toHaveBeenCalled()
   })
 
   it('adds the enhanced composer edge and compact picker for an available Specialist', () => {
@@ -8015,6 +8308,119 @@ describe('ConversationPanel fix loop lock', () => {
       const slot = container.querySelector('[data-testid="composer-running-control-slot"]')!
       expect(slot.querySelector(':scope > button')?.getAttribute('aria-label')).toBe('Cancel run')
       expect(onQueueMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['Enter', 'click'] as const)(
+    'shows unavailable Specialist guidance for a queued draft after %s',
+    (trigger) => {
+      const submit = vi.fn()
+      renderPanel({
+        view: {
+          activeSession: {
+            ...idleSession,
+            specialistId: 'deleted-specialist',
+            status: 'running',
+            activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+          }
+        },
+        conversation: {
+          availability: { submit: true, submitMode: 'queue' },
+          actions: { submit: { draft: submit } }
+        },
+        composer: { view: { doc: docFromText('Keep this queued draft') } },
+        specialist: { view: { specialist: { unavailable: true } } }
+      })
+      const send = container.querySelector<HTMLButtonElement>(
+        '[data-testid="composer-queue-submit"]'
+      )!
+      expect(send.disabled).toBe(false)
+      act(() => {
+        if (trigger === 'click') send.click()
+        else
+          getComposerEditor().dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+          )
+      })
+      expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).not.toBeNull()
+      expect(submit).not.toHaveBeenCalled()
+      expect(getComposerEditor().textContent).toBe('Keep this queued draft')
+    }
+  )
+
+  it.each(['completed', 'stopped'] as const)(
+    'repeats queued Specialist guidance and preserves the draft after a %s run',
+    async (outcome) => {
+      vi.useFakeTimers()
+      const submit = vi.fn()
+      const cancel = vi.fn(async () => undefined)
+      const panel = (running: boolean, unavailable = true): DeepPartial<PanelProps> => ({
+        view: {
+          activeSession: {
+            ...idleSession,
+            specialistId: 'literature',
+            status: running ? 'running' : 'idle',
+            activeRun: running ? { promptMessageId: 'msg-1', startedAt: 1 } : undefined
+          }
+        },
+        conversation: {
+          availability: { submit: true, submitMode: running ? 'queue' : 'send' },
+          actions: { submit: { draft: submit }, cancel }
+        },
+        composer: { view: { doc: docFromText('Keep this queued draft') } },
+        specialist: { view: { specialist: { unavailable } } }
+      })
+      const notice = (): Element | null =>
+        document.querySelector('[data-testid="specialist-unavailable-notice"]')
+      renderPanel(panel(true))
+      const queue = container.querySelector<HTMLButtonElement>(
+        '[data-testid="composer-queue-submit"]'
+      )!
+      act(() => queue.click())
+      expect(notice()).not.toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(5000))
+      act(() => {
+        queue.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }))
+        queue.click()
+      })
+      expect(notice()).toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(150))
+      expect(notice()).not.toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(5999))
+      expect(notice()).not.toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(notice()).toBeNull()
+      act(() => queue.click())
+      expect(notice()).not.toBeNull()
+      const options = container.querySelector<HTMLButtonElement>(
+        '[data-testid="running-side-chat-menu-trigger"]'
+      )!
+      expect(options.disabled).toBe(false)
+      if (outcome === 'stopped') {
+        await act(async () =>
+          container.querySelector<HTMLButtonElement>('[aria-label="Cancel run"]')!.click()
+        )
+        expect(cancel).toHaveBeenCalledOnce()
+      } else expect(cancel).not.toHaveBeenCalled()
+      renderPanel(panel(false))
+      expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+      expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+      if (outcome === 'stopped') {
+        expect(notice()).toBeNull()
+        act(() =>
+          container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click()
+        )
+      }
+      expect(
+        document.querySelectorAll('[data-testid="specialist-unavailable-notice"]')
+      ).toHaveLength(1)
+      expect(submit).not.toHaveBeenCalled()
+      expect(getComposerEditor().textContent).toBe('Keep this queued draft')
+      renderPanel(panel(false, false))
+      expect(notice()).toBeNull()
+      expect(submit).not.toHaveBeenCalled()
+      act(() => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click())
+      expect(submit).toHaveBeenCalledOnce()
     }
   )
 
@@ -8521,24 +8927,22 @@ describe('ConversationPanel notebook bar', () => {
     expect(container.querySelector('[data-testid="background-tasks-chip"]')).toBeNull()
   })
 
-  it('keeps unavailable Specialist guidance above the joined Notebook and composer dock', () => {
+  it('keeps the Notebook dock and editor usable when Specialist sending is blocked', () => {
     renderPanel({
       view: { activeSession: { ...session, specialistId: 'deleted-specialist' } },
       sessionTools: { notebookReference },
-      conversation: { availability: { submit: false } },
+      conversation: { availability: { submit: true } },
+      composer: { view: { doc: docFromText('Keep this draft') } },
       specialist: { view: { specialist: { unavailable: true } } }
     })
 
-    const notice = container.querySelector('[data-testid="specialist-unavailable-notice"]')!
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
     const notebookBar = container.querySelector('[aria-label="Open notebook"]')!.parentElement!
-    expect(
-      notice.compareDocumentPosition(notebookBar) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
     expect(notebookBar.nextElementSibling?.contains(getComposerForm())).toBe(true)
     expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
     expect(
       container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('places the queue disclosure at the right edge of the Notebook bar', () => {

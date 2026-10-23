@@ -192,6 +192,7 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Die Fähigkeiten oder Konnektoren des Spezialisten konnten nicht geladen werden. Versuchen Sie erneut zu senden.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Lipidklassifikation und Verbindungsdetails aus LIPID MAPS abrufen.",
     "Query upstream or downstream human protein regulation with OmniPath.": "Vorgelagerte oder nachgelagerte Regulation menschlicher Proteine mit OmniPath abfragen.",
     "List authorized directories": "Autorisierte Verzeichnisse auflisten",
@@ -7705,6 +7706,12 @@
     "Review discovered references before they enter your library.": "Prüfen Sie gefundene Referenzen, bevor sie in Ihre Bibliothek gelangen.",
     "Map exact compound identifiers with UniChem.": "Exakte Verbindungskennungen mit UniChem zuordnen.",
     "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen.",
+    "Search DepMap cell models and their identity metadata.": "DepMap-Zellmodelle und ihre Identitätsmetadaten suchen.",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "DepMap-Chronos-Geneffekte für ein Gen und ausgewählte Zellmodelle abrufen.",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "AUC-Werte der DepMap-PRISM-Wirkstoffantwort für eine Verbindung abrufen.",
+    "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "DepMap/CCLE-RNA-Expression eines Gens in log2(TPM+1) abrufen.",
+    "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "DepMap/CCLE-Genkopienzahl relativ zur Ploidie des Zellmodells abrufen.",
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Krebsstudien sowie Omik-, Abhängigkeits- und Wirkstoffantwortdaten von Zellmodellen aus cBioPortal und DepMap/CCLE.",
     "Service needs restarting": "Dienst muss neu gestartet werden",
     "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "Der laufende Dienst ist mit dieser App nicht kompatibel. Beenden Sie laufende Arbeiten in anderen Open-Science-Fenstern und starten Sie dann den Dienst neu, um fortzufahren."
   }

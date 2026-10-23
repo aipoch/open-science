@@ -194,6 +194,7 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Не удалось загрузить Навыки или Коннекторы Специалиста. Попробуйте отправить сообщение ещё раз.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Получить классификацию липидов и сведения о соединениях из LIPID MAPS.",
     "Query upstream or downstream human protein regulation with OmniPath.": "Поиск регуляторных связей белков человека выше или ниже по сигнальному пути с помощью OmniPath.",
     "List authorized directories": "Список разрешённых каталогов",
@@ -8012,6 +8013,12 @@
     "Review discovered references before they enter your library.": "Проверьте найденные источники перед добавлением в библиотеку.",
     "Map exact compound identifiers with UniChem.": "Сопоставить точные идентификаторы соединений с помощью UniChem.",
     "Retrieve structure quality and validation statistics from PDBe.": "Получить показатели качества структуры и статистику валидации из PDBe.",
+    "Search DepMap cell models and their identity metadata.": "Поиск клеточных моделей DepMap и их идентификационных метаданных.",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "Получение эффектов гена по данным DepMap Chronos для выбранных клеточных моделей.",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "Получение значений AUC ответа на препарат по данным DepMap PRISM для соединения.",
+    "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "Получение экспрессии РНК гена из DepMap/CCLE в единицах log2(TPM+1).",
+    "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "Получение числа копий гена из DepMap/CCLE относительно плоидности клеточной модели.",
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Исследования рака, омиксные данные, зависимости и ответы на препараты клеточных моделей из cBioPortal и DepMap/CCLE.",
     "Service needs restarting": "Необходимо перезапустить службу",
     "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "Работающая служба несовместима с этим приложением. Завершите активную работу в других окнах Open-Science, затем перезапустите службу, чтобы продолжить."
   }
