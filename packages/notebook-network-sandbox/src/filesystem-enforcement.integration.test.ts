@@ -43,9 +43,10 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       await mkdir(workspace)
       const ordinary = join(root, 'ordinary.txt')
       const secret = join(root, 'secret.txt')
+      const readOnlyFile = join(root, 'tool.txt')
       const protectedFile = join(root, 'runtime.txt')
       await Promise.all(
-        [ordinary, secret, protectedFile].map((path) => writeFile(path, 'original'))
+        [ordinary, secret, protectedFile, readOnlyFile].map((path) => writeFile(path, 'original'))
       )
       const sandbox = new NotebookNetworkSandbox({
         policy: { allowedDomains: [], deniedDomains: [] },
@@ -59,6 +60,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
             `if printf changed > ${shellQuote(ordinary)}; then test ${restrictFolders ? 1 : 0} = 0 || exit 12; else test ${restrictFolders ? 1 : 0} = 1 || exit 13; fi`,
             `if cat ${shellQuote(secret)} >/dev/null 2>&1; then exit 14; fi`,
             `if printf changed > ${shellQuote(protectedFile)}; then exit 15; fi`,
+            `if printf changed > ${shellQuote(readOnlyFile)}; then exit 16; fi`,
             'exit 0'
           ].join('; '),
           cwd: workspace,
@@ -66,7 +68,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
           filesystem: {
             restrictFolders,
             privateRoot: root,
-            readOnlyRoots: ['/bin', '/usr/bin'],
+            readOnlyRoots: ['/bin', '/usr/bin', readOnlyFile],
             readWriteRoots: [workspace],
             deniedReadRoots: [secret],
             deniedWriteRoots: [protectedFile]
@@ -77,6 +79,7 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
         await wrapped.cleanup('exit', { processesTerminated: true })
         expect(result.code, result.stderr).toBe(0)
         expect(await readFile(protectedFile, 'utf8')).toBe('original')
+        expect(await readFile(readOnlyFile, 'utf8')).toBe('original')
         expect(await readFile(ordinary, 'utf8')).toBe(restrictFolders ? 'original' : 'changed')
       } finally {
         await sandbox.dispose()
