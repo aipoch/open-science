@@ -635,6 +635,8 @@ it.each([
   ['process.env.PASSWORD\n', ' + "actual-secret"'],
   ['[', '"actual-secret"]']
 ])('retains an unfinished assignment beyond the overlap: %s', (prefix, suffix) => {
+  // The provisional exemption must expire well before the 8192-character overlap.
+  expect(findSensitivePackageText(`password = ${prefix}` + ' '.repeat(513), false)).toBeDefined()
   const first = ' '.repeat(65536 - `password = ${prefix}`.length) + `password = ${prefix}`
   const text = first + ' '.repeat(16384) + suffix
   expect(findSensitivePackageText(text)).toBeDefined()
