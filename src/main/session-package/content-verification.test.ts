@@ -24,6 +24,46 @@ const fixture = async (): Promise<{ source: string; alias: string; payload: Buff
   return { source, alias, payload }
 }
 afterEach(async () => {
+  if (process.platform === 'win32') {
+    const observations = await Promise.all(
+      vi.mocked(fs.lstat).mock.results.map(async (result, i) => {
+        const stat = await result.value
+        return {
+          path: String(vi.mocked(fs.lstat).mock.calls[i][0]),
+          ino: String(stat.ino),
+          size: String(stat.size),
+          mtime: String(stat.mtimeNs),
+          ctime: String(stat.ctimeNs)
+        }
+      })
+    )
+    const last = observations.at(-1)
+    if (last && (observations.length === 3 || observations.length === 5)) {
+      const actual = await vi.importActual<typeof fs>('node:fs/promises')
+      const handle = await actual.open(last.path, 'r')
+      try {
+        const stat = await handle.stat({ bigint: true })
+        const digest = createHash('sha256')
+          .update(await handle.readFile())
+          .digest('hex')
+        process.stdout.write(
+          `[DEBUG-quit-ci-handle] ${JSON.stringify({
+            observed: last,
+            opened: {
+              ino: String(stat.ino),
+              size: String(stat.size),
+              mtime: String(stat.mtimeNs),
+              ctime: String(stat.ctimeNs)
+            },
+            digest
+          })}\n`
+        )
+      } finally {
+        await handle.close()
+      }
+    }
+    process.stdout.write(`[DEBUG-quit-ci] ${JSON.stringify(observations)}\n`)
+  }
   vi.mocked(fs.lstat).mockReset()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
@@ -67,44 +107,52 @@ it.each([false, true])(
   }
 )
 
-it('does not trust a replaced source or separately stored legacy object', async () => {
-  const { source, payload } = await fixture()
-  let bytes = 0
-  await withFileIoPacing(
-    async (size) => {
-      bytes += size
-    },
-    async () => {
-      const verify = createPackageContentVerifier()
-      const original = await verify(source, payload.length)
-      const replacement = `${source}.replacement`
-      await writeFile(replacement, payload)
-      expect(await verify(replacement, payload.length)).toEqual(original)
-      expect(bytes).toBe(payload.length * 2)
-      await writeFile(replacement, Buffer.alloc(payload.length, 1))
-      await rename(replacement, source)
-      expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
-      expect(bytes).toBe(payload.length * 3)
-    }
-  )
-})
-
-it('rehashes a same-size in-place edit and rejects edits made while hashing', async () => {
-  const { source, alias, payload } = await fixture()
-  const verify = createPackageContentVerifier()
-  const original = await verify(source, payload.length)
-  await writeFile(alias, Buffer.alloc(payload.length, 1))
-  expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
-  let changed = false
-  await expect(
-    withFileIoPacing(
-      async () => {
-        if (!changed) {
-          changed = true
-          await writeFile(alias, 'changed during read')
-        }
+it(
+  'does not trust a replaced source or separately stored legacy object',
+  { repeats: process.platform === 'win32' ? 99 : 0 },
+  async () => {
+    const { source, payload } = await fixture()
+    let bytes = 0
+    await withFileIoPacing(
+      async (size) => {
+        bytes += size
       },
-      () => createPackageContentVerifier()(source, payload.length)
+      async () => {
+        const verify = createPackageContentVerifier()
+        const original = await verify(source, payload.length)
+        const replacement = `${source}.replacement`
+        await writeFile(replacement, payload)
+        expect(await verify(replacement, payload.length)).toEqual(original)
+        expect(bytes).toBe(payload.length * 2)
+        await writeFile(replacement, Buffer.alloc(payload.length, 1))
+        await rename(replacement, source)
+        expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
+        expect(bytes).toBe(payload.length * 3)
+      }
     )
-  ).rejects.toThrow('changed during validation')
-})
+  }
+)
+
+it(
+  'rehashes a same-size in-place edit and rejects edits made while hashing',
+  { repeats: process.platform === 'win32' ? 99 : 0 },
+  async () => {
+    const { source, alias, payload } = await fixture()
+    const verify = createPackageContentVerifier()
+    const original = await verify(source, payload.length)
+    await writeFile(alias, Buffer.alloc(payload.length, 1))
+    expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
+    let changed = false
+    await expect(
+      withFileIoPacing(
+        async () => {
+          if (!changed) {
+            changed = true
+            await writeFile(alias, 'changed during read')
+          }
+        },
+        () => createPackageContentVerifier()(source, payload.length)
+      )
+    ).rejects.toThrow('changed during validation')
+  }
+)
