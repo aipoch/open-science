@@ -193,6 +193,7 @@
     "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
+    "Retrieve lipid classification and compound details from LIPID MAPS.": "Obtener la clasificación de lípidos y los detalles de compuestos de LIPID MAPS.",
     "Query upstream or downstream human protein regulation with OmniPath.": "Consultar la regulación de proteínas humanas aguas arriba o aguas abajo con OmniPath.",
     "List authorized directories": "Listar directorios autorizados",
     "checked directory access": "consultó el acceso a directorios",

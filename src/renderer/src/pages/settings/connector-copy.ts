@@ -97,6 +97,8 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'chemistry/lipidmaps_get_compound':
+      return t('Retrieve lipid classification and compound details from LIPID MAPS.')
     case 'structures/omnipath_query_regulation':
       return t('Query upstream or downstream human protein regulation with OmniPath.')
     case 'kegg/map_gene':
