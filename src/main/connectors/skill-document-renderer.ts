@@ -1,4 +1,4 @@
-export type ConnectorSkillMetadata = { id: string; useWhen: string }
+export type ConnectorSkillMetadata = { id: string; useWhen: string; accessGuidance?: string }
 export type ConnectorSkillTool = {
   id: string
   description: string
@@ -26,6 +26,9 @@ const SKILL_CONVENTIONS =
 const CUSTOM_SKILL_CONVENTIONS =
   `${SKILL_CONVENTIONS} Do not bypass \`host.mcp\` with raw HTTP or calls from Python/R: ` +
   'the host path enforces approval, tool policy, credentials, and rate limits.'
+
+const ACCESS_CONVENTIONS =
+  'When a documented operation needs an API key, sign-in or dataset approval, explain the requirement and the official setup or application link before asking the user to act. Keep optional keys and public/demo access optional. Configured credentials do not prove dataset approval. Never request secrets in chat or tool arguments. Treat HTTP 401/403 as an access failure to investigate, not proof of a particular approval requirement; follow the documented recovery path rather than retrying unchanged calls.'
 
 // Placeholder value for one JSON-Schema field in a call example: an enum's first choice or the field's
 // own default when present, otherwise a type-keyed stand-in. Rendered as a JSON literal.
@@ -117,7 +120,10 @@ export function renderSkillDoc(
     .join('\n')
   return (
     `${header}\n> This connector is rate-limited at the upstream API.\n\n` +
-    `${CUSTOM_SKILL_CONVENTIONS}${guidance ? ` ${guidance}` : ''}\n\n## Tools\n\n${methods}`
+    `${CUSTOM_SKILL_CONVENTIONS}${guidance ? ` ${guidance}` : ''}\n\n` +
+    `## Access requirements\n\n${ACCESS_CONVENTIONS}\n` +
+    (meta.accessGuidance ? `\n${meta.accessGuidance}\n` : '') +
+    `\n## Tools\n\n${methods}`
   )
 }
 
@@ -181,6 +187,9 @@ export function renderCustomSkillDoc(
     .join('\n')
   return (
     `${header}\n> This connector is rate-limited at the upstream API.\n\n` +
-    `${CUSTOM_SKILL_CONVENTIONS}${authenticationConvention}\n\n## Tools\n\n${methods}`
+    `${CUSTOM_SKILL_CONVENTIONS}${authenticationConvention}\n\n` +
+    `## Access requirements\n\n${ACCESS_CONVENTIONS}\n` +
+    'For this custom server, use only the access requirements, application links and credential fields documented by its tools. If they are absent, ask the user to check the provider documentation; do not invent an API-key requirement or application URL.\n\n' +
+    `## Tools\n\n${methods}`
   )
 }
