@@ -98,12 +98,14 @@ export const isShippableDependencyPath = (relativePath) => {
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
 export function createDesktopDependencyFilter(manifest) {
+  const zod = manifest.name === 'zod' && manifest.version === '4.6.5'
   const runtimeEntries = []
   const collect = (value) => {
     if (typeof value === 'string') runtimeEntries.push(value.replace(/^\.\//, ''))
     else if (value && typeof value === 'object')
       for (const [key, entry] of Object.entries(value))
-        if (key !== 'types' && !key.startsWith('types@')) collect(entry)
+        if (key !== 'types' && !key.startsWith('types@') && !(zod && key === '@zod/source'))
+          collect(entry)
   }
   for (const field of ['main', 'module', 'bin', 'exports', 'imports', 'browser'])
     collect(manifest[field])
@@ -122,6 +124,14 @@ export function createDesktopDependencyFilter(manifest) {
     developmentRoots.add('src')
   if (manifest.name === 'onnxruntime-web' && manifest.version === '1.26.0-dev.20260416-b7804b056c')
     developmentRoots.add('lib')
+  if (zod) developmentRoots.add('src')
+  for (const [name, version, directory] of [
+    ['ajv', '8.20.0', 'lib'],
+    ['onnxruntime-common', '1.24.3', 'lib'],
+    ['flatbuffers', '25.9.23', 'ts'],
+    ['entities', '6.0.1', 'src']
+  ])
+    if (manifest.name === name && manifest.version === version) developmentRoots.add(directory)
   return (relativePath, isDirectory) => {
     // Traverse excluded roots so nested redistribution notices are not lost. Keep first-party
     // artifacts, SDK declarations and diagnostic maps under their existing files allowlists.
@@ -130,6 +140,9 @@ export function createDesktopDependencyFilter(manifest) {
     const path = parts.join('/')
     if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
       return true
+    // Zod's source condition is opt-in development only; its locale wildcard also matches
+    // declarations. Neither is used by packaged Node's normal import/require resolution.
+    if (zod && /^v4\/locales\/[^/]+\.d\.(?:ts|cts)$/.test(path)) return false
     if (runtimeEntries.some((entry) => posix.matchesGlob(path, entry))) return true
     if (/\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(path)) return false
     return (

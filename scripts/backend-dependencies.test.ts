@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   assertBackendImports,
@@ -286,7 +286,11 @@ describe('desktop-only dependency contents', () => {
 
   it.each([
     ['@huggingface/transformers', '4.2.0', 'src'],
-    ['onnxruntime-web', '1.26.0-dev.20260416-b7804b056c', 'lib']
+    ['onnxruntime-web', '1.26.0-dev.20260416-b7804b056c', 'lib'],
+    ['ajv', '8.20.0', 'lib'],
+    ['onnxruntime-common', '1.24.3', 'lib'],
+    ['flatbuffers', '25.9.23', 'ts'],
+    ['entities', '6.0.1', 'src']
   ])('omits audited source trees from desktop %s only', (name, version, source) => {
     const manifest = JSON.parse(readFileSync(`node_modules/${name}/package.json`, 'utf8'))
     expect(manifest.version).toBe(version)
@@ -311,6 +315,162 @@ describe('desktop-only dependency contents', () => {
     ])
       expect(desktop(file, false)).toBe(true)
   })
+
+  it('keeps Zod runtime subpaths without shipping its opt-in development sources or locale types', () => {
+    const manifest = JSON.parse(readFileSync('node_modules/zod/package.json', 'utf8'))
+    expect(manifest.version).toBe('4.6.5')
+    const desktop = createDesktopDependencyFilter(manifest)
+    for (const separator of ['/', '\\']) {
+      for (const file of [
+        'src/index.ts',
+        'src/v4/core/core.ts',
+        'v4/locales/en.d.cts',
+        'v4/locales/en.d.ts'
+      ]) {
+        const path = file.replaceAll('/', separator)
+        expect(desktop(path, false)).toBe(false)
+        expect(backendDependencyIncludes(manifest, path)).toBe(true)
+        expect(createDesktopDependencyFilter({ ...manifest, version: '99' })(path, false)).toBe(
+          true
+        )
+      }
+      for (const file of [
+        'index.cjs',
+        'index.js',
+        'compile.js',
+        'v3/index.cjs',
+        'v4/core/index.js',
+        'v4/locales/en.js',
+        'v4/locales/en.cjs',
+        'src/LICENSE'
+      ])
+        expect(desktop(file.replaceAll('/', separator), false)).toBe(true)
+    }
+    // A new runtime export into src is not the audited development-only condition.
+    const exports = { ...manifest.exports, './runtime': './src/runtime.js' }
+    expect(createDesktopDependencyFilter({ ...manifest, exports })('src/runtime.js', false)).toBe(
+      true
+    )
+    const additionalCondition = { ...manifest, exports: { '.': { unknown: './src/index.ts' } } }
+    expect(createDesktopDependencyFilter(additionalCondition)('src/index.ts', false)).toBe(true)
+  })
+
+  it('runs schema and binary consumers from isolated pruned dependency trees', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-pruned-schemas-'))
+    const dependencies = await realpath('node_modules')
+    const { createRequire } = await import('node:module')
+    const copied = new Set<string>()
+    const copy = async (name: string, from: string): Promise<void> => {
+      let source = dirname(createRequire(join(from, 'package.json')).resolve(name))
+      while (
+        JSON.parse(await readFile(join(source, 'package.json'), 'utf8').catch(() => '{}')).name !==
+        name
+      ) {
+        const parent = dirname(source)
+        if (parent === source) throw new Error(`Missing package: ${name}`)
+        source = parent
+      }
+      if (copied.has(source)) return
+      copied.add(source)
+      const path = relative(dependencies, source)
+      if (isAbsolute(path) || path.split(sep).includes('..'))
+        throw new Error('Dependency outside installed tree')
+      const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+      const desktop = createDesktopDependencyFilter(manifest)
+      await cp(source, join(root, 'node_modules', path), {
+        recursive: true,
+        filter: async (file) =>
+          backendDependencyIncludes(manifest, relative(source, file)) &&
+          desktop(relative(source, file), (await stat(file)).isDirectory())
+      })
+      for (const child of Object.keys(manifest.dependencies ?? {})) await copy(child, source)
+    }
+    try {
+      for (const name of [
+        'zod',
+        'ajv',
+        'ajv-formats',
+        'onnxruntime-common',
+        'flatbuffers',
+        'entities'
+      ])
+        await copy(name, process.cwd())
+      await expect(readFile(join(root, 'node_modules/zod/src/index.ts'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      await expect(
+        readFile(join(root, 'node_modules/zod/v4/locales/en.d.cts'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      const probe = `
+        import assert from 'node:assert/strict';
+        import {createRequire} from 'node:module';
+        import {readdirSync} from 'node:fs';
+        const require = createRequire(import.meta.url);
+        for (const load of [name=>import(name), async name=>require(name)]) {
+          const z = await load('zod');
+          const core = await load('zod/v4/core');
+          assert.equal(z.globalRegistry, core.globalRegistry);
+          assert.equal(z.ZodObject, (await load('zod/v4')).ZodObject);
+          const shape = z.object({name:z.string().min(2),age:z.number().int()});
+          assert.deepEqual(shape.parse({name:'科学',age:2}), {name:'科学',age:2});
+          assert.equal(shape.safeParse({name:'x',age:'2'}).success,false);
+          z.globalRegistry.add(shape,{id:'probe-schema'});
+          assert.equal(core.globalRegistry.get(shape).id,'probe-schema');
+          z.globalRegistry.remove(shape);
+          assert.equal(z.toJSONSchema(shape).properties.age.type,'integer');
+          const v3 = await load('zod/v3');
+          assert.equal(v3.string().safeParse(4).success,false);
+          for(const name of ['zod/mini','zod/v4-mini','zod/v4/mini']) {
+            const mini = await load(name); assert.equal(mini.parse(mini.string(),'ok'),'ok');
+          }
+          for(const name of ['zod/locales','zod/v4/locales']) assert.equal(typeof (await load(name)).en,'function');
+        }
+        for(const name of readdirSync(new URL('node_modules/zod/v4/locales/',import.meta.url)).filter(name=>/\\.(?:cjs|js)$/.test(name)))
+          await import('zod/v4/locales/'+name);
+        for(const entry of ['ajv','ajv/dist/2019.js','ajv/dist/2020.js']) {
+          const Ajv = require(entry);
+          const ajv = new Ajv({code:{source:true}});
+          require('ajv-formats')(ajv);
+          const validate = ajv.compile({type:'object',properties:{name:{type:'string',minLength:2},email:{type:'string',format:'email'}},required:['name'],additionalProperties:false});
+          assert.equal(validate({name:'科学',email:'a@example.test'}),true);
+          assert.equal(validate({name:'x',email:'bad'}),false);
+          const standalone = require('ajv/dist/standalone/index.js')(ajv,validate);
+          const module = {exports:{}};
+          new Function('module','exports','require',standalone)(module,module.exports,require);
+          assert.equal(module.exports({name:'ok'}),true);
+          assert.equal(module.exports({name:4}),false);
+        }
+        const JTD = require('ajv/dist/jtd.js');
+        const jtd = new JTD(); const definition={properties:{name:{type:'string'}}};
+        assert.deepEqual(jtd.compileParser(definition)(jtd.compileSerializer(definition)({name:'科学'})),{name:'科学'});
+        const ort = require('onnxruntime-common');
+        const tensor = new ort.Tensor('float32',new Float32Array([2,4,8]),[3]);
+        assert.deepEqual(tensor.reshape([1,3]).dims,[1,3]);
+        const fb = require('flatbuffers'); const builder = new fb.Builder(64);
+        builder.finish(builder.createString('科学'));
+        assert.equal(new fb.ByteBuffer(builder.asUint8Array()).__string(0),'科学');
+        for (const api of [require('entities'),await import('entities')])
+          assert.equal(api.decodeHTML('&lt;科学 &amp; data&gt;'),'<科学 & data>');
+        assert.equal(require('entities/decode').decodeHTML('&amp;'),'&');
+        assert.equal((await import('entities/escape')).escapeText('<&>'),'&lt;&amp;&gt;');
+        // Opt-in compiler activation still updates the same registry, only when explicitly loaded.
+        assert.equal((await import('zod/v4/core')).globalConfig.postProcessor,undefined);
+        assert.equal(require('zod/v4/core').globalConfig.postProcessor,undefined);
+        for(const load of [name=>import(name),async name=>require(name)]) {
+          const core = await load('zod/v4/core');
+          await load('zod/compile'); assert.equal(typeof core.globalConfig.postProcessor,'function');
+          const z=await load('zod'); assert.equal(z.string().parse('ok'),'ok');
+        }
+        console.log('Isolated pruned schemas, registries, code generation and binary consumers passed');
+      `
+      const file = join(root, 'probe.mjs')
+      await writeFile(file, probe)
+      const { stdout } = await promisify(execFile)(process.execPath, [file], { timeout: 30_000 })
+      expect(stdout).toContain('binary consumers passed')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   it('copies a real dependency tree with nested notices and loadable runtime assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-dependency-'))
