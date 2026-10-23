@@ -33,8 +33,10 @@
     "compute_session_access": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "compute_skill_contract": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "connector_core": [
+      "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts",
+      "packages/connector-builtins/src/tcia.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts"
     ],
     "connector_mcp_client": [

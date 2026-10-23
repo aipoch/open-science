@@ -7495,6 +7495,14 @@
     "No readable article text is available from this source.": "この取得元には読み取り可能な論文本文がありません。",
     "Drop files to attach to this reference": "ファイルをドロップしてこの文献に添付",
     "Partial results": "一部の結果",
-    "Existing attachments are kept. You can also add files from your device.": "既存の添付ファイルは保持されます。お使いのデバイスからファイルを追加することもできます。"
+    "Existing attachments are kept. You can also add files from your device.": "既存の添付ファイルは保持されます。お使いのデバイスからファイルを追加することもできます。",
+    "Public cancer imaging collections and series metadata from TCIA.": "TCIA の公開がん画像コレクションとシリーズのメタデータ。",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG のパスウェイ、エントリ、遺伝子マッピング。学術利用およびライセンスの制限が適用されます。",
+    "Search public TCIA imaging collections.": "TCIA の公開画像コレクションを検索します。",
+    "Retrieve TCIA collection details and download requirements.": "TCIA コレクションの詳細とダウンロード要件を取得します。",
+    "Retrieve public imaging series metadata by UID.": "UID で公開画像シリーズのメタデータを取得します。",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG のパスウェイ、オルソログ、化合物、反応を検索します。",
+    "Retrieve a KEGG entry summary.": "KEGG エントリの概要を取得します。",
+    "Map a KEGG gene to pathways or UniProt.": "KEGG 遺伝子をパスウェイまたは UniProt にマッピングします。"
   }
 }

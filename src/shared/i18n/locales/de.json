@@ -7655,6 +7655,14 @@
     "No readable article text is available from this source.": "Diese Quelle bietet keinen lesbaren Artikeltext.",
     "Drop files to attach to this reference": "Dateien ablegen, um sie dieser Referenz anzuhängen",
     "Partial results": "Teilergebnisse",
-    "Existing attachments are kept. You can also add files from your device.": "Vorhandene Anhänge bleiben erhalten. Sie können auch Dateien von Ihrem Gerät hinzufügen."
+    "Existing attachments are kept. You can also add files from your device.": "Vorhandene Anhänge bleiben erhalten. Sie können auch Dateien von Ihrem Gerät hinzufügen.",
+    "Public cancer imaging collections and series metadata from TCIA.": "Öffentliche Krebsbildsammlungen und Serienmetadaten von TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG-Signalwege, Einträge und Genzuordnungen. Beschränkungen für akademische Nutzung und Lizenzierung gelten.",
+    "Search public TCIA imaging collections.": "Öffentliche TCIA-Bildsammlungen suchen.",
+    "Retrieve TCIA collection details and download requirements.": "Details und Downloadvoraussetzungen einer TCIA-Sammlung abrufen.",
+    "Retrieve public imaging series metadata by UID.": "Metadaten öffentlicher Bildserien anhand der UID abrufen.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG-Signalwege, Orthologe, Verbindungen und Reaktionen suchen.",
+    "Retrieve a KEGG entry summary.": "Zusammenfassung eines KEGG-Eintrags abrufen.",
+    "Map a KEGG gene to pathways or UniProt.": "Ein KEGG-Gen Signalwegen oder UniProt zuordnen."
   }
 }

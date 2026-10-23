@@ -7495,6 +7495,14 @@
     "No readable article text is available from this source.": "此來源暫無可讀取的文章內文。",
     "Drop files to attach to this reference": "拖放檔案以附加至此參考文獻",
     "Partial results": "部分結果",
-    "Existing attachments are kept. You can also add files from your device.": "保留現有附件，也可從裝置新增檔案。"
+    "Existing attachments are kept. You can also add files from your device.": "保留現有附件，也可從裝置新增檔案。",
+    "Public cancer imaging collections and series metadata from TCIA.": "TCIA 公開腫瘤影像資料集與序列中繼資料。",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG 路徑、條目與基因對應。適用學術用途及授權限制。",
+    "Search public TCIA imaging collections.": "搜尋 TCIA 公開影像資料集。",
+    "Retrieve TCIA collection details and download requirements.": "取得 TCIA 資料集詳情與下載要求。",
+    "Retrieve public imaging series metadata by UID.": "透過 UID 取得公開影像序列中繼資料。",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "搜尋 KEGG 路徑、直系同源基因、化合物與反應。",
+    "Retrieve a KEGG entry summary.": "取得 KEGG 條目摘要。",
+    "Map a KEGG gene to pathways or UniProt.": "將 KEGG 基因對應至路徑或 UniProt。"
   }
 }
