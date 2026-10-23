@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import {
@@ -90,6 +90,7 @@ export class LiteratureRelatedFinder {
   private readonly resolutions = new Map<string, Resolution>()
   private nextRequest = 0
   private readonly cooldowns = new Map<string, number>()
+  private readonly cooldownIdentityKey = randomBytes(32)
   constructor(
     private readonly options: {
       catalog: {
@@ -110,8 +111,8 @@ export class LiteratureRelatedFinder {
       if (until <= Date.now()) this.cooldowns.delete(identity)
     const readCredentials = async (): Promise<{ apiKey: string | undefined; identity: string }> => {
       const apiKey = await this.options.apiKey?.()
-      // Retain a fingerprint, not the secret, for each credential's bounded cooldown.
-      const identity = createHash('sha256')
+      // Instance-keyed fingerprints identify temporary cooldowns, never stored credentials.
+      const identity = createHmac('sha256', this.cooldownIdentityKey)
         .update(apiKey ?? '')
         .digest('hex')
       const retryAt = this.cooldowns.get(identity)
