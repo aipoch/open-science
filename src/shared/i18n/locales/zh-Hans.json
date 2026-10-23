@@ -2855,6 +2855,7 @@
     "Skills you imported into Open-Science.": "你导入到 Open-Science 的技能。",
     "Skills you can also delete <muted>(optional)</muted>": "你还可以删除的技能 <muted>（可选）</muted>",
     "Skip": "跳过",
+    "User skipped": "用户跳过",
     "Skip all": "跳过全部",
     "Skip approvals": "跳过批准",
     "Skip approvals for {{name}}": "为 {{name}} 跳过批准",

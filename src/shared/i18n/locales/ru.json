@@ -2895,6 +2895,7 @@
     "Skills start empty and must be added. Skills not listed here are hidden from this specialist, and Skill calls to them are rejected.": "Изначально список навыков пуст: их нужно добавить. Не указанные здесь навыки скрыты от этого специалиста, а обращения к ним отклоняются.",
     "Skills you can also delete <muted>(optional)</muted>": "Навыки, которые также можно удалить <muted>(необязательно)</muted>",
     "Skip": "пропустить",
+    "User skipped": "Пользователь пропустил",
     "Skip all": "Пропустить всё",
     "Skip approvals": "Не запрашивать разрешения",
     "Skip approvals for {{name}}": "Не запрашивать разрешения для {{name}}",

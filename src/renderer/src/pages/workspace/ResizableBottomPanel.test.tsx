@@ -182,4 +182,33 @@ describe('ResizableBottomPanel pointer drag', () => {
     })
     expect(panel.style.height).toBe('400px')
   })
+
+  it('uses inner option overflow to grow a panel with fixed title and footer', () => {
+    act(() =>
+      root.render(
+        <ResizableBottomPanel
+          ariaLabel="Resize question panel"
+          testId="panel"
+          scrollTestId="scroll"
+          constrainGrowthToOverflow
+          contentScrollSelector="[data-options]"
+        >
+          <div>
+            <h3>Question</h3>
+            <div data-options>Choices</div>
+            <button>Submit</button>
+          </div>
+        </ResizableBottomPanel>
+      )
+    )
+    const panel = container.querySelector<HTMLDivElement>('[data-testid="panel"]')!
+    const scroll = container.querySelector<HTMLElement>('[data-testid="scroll"]')!
+    const options = container.querySelector<HTMLElement>('[data-options]')!
+    panel.getBoundingClientRect = () => ({ height: 320 }) as DOMRect
+    Object.defineProperties(scroll, { clientHeight: { value: 288 }, scrollHeight: { value: 288 } })
+    Object.defineProperties(options, { clientHeight: { value: 120 }, scrollHeight: { value: 600 } })
+    const handle = container.querySelector('[role="separator"]')!
+    act(() => handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })))
+    expect(panel.style.height).toBe('352px')
+  })
 })

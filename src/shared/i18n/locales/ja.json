@@ -2768,6 +2768,7 @@
     "Skills you imported into Open-Science.": "Open-Science にインポートしたスキルです。",
     "Skills you can also delete <muted>(optional)</muted>": "スキル <muted>（オプション）</muted> を削除することもできます",
     "Skip": "スキップ",
+    "User skipped": "ユーザーがスキップ",
     "Skip all": "すべてスキップ",
     "Skip approvals": "承認をスキップする",
     "Skip approvals for {{name}}": "{{name}} の承認をスキップ",
