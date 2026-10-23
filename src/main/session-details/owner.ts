@@ -707,7 +707,13 @@ export const createSessionDetailsOwner = (
       const target = await dependencies.targets
         .resolve(session)
         .catch((): ResolvedSessionDetailsTarget => ({ mode: 'unavailable' }))
-      if (target.mode === 'unavailable') return false
+      if (target.mode === 'unavailable') {
+        // No admission was attempted. Let a later save recheck availability without spinning
+        // through saves coalesced during this check or consuming the claim's actual retry.
+        retriedAdmissionClaims.delete(claimKey)
+        pendingAdmissionRetries.delete(claimKey)
+        return false
+      }
       queued = await dependencies.sessions.mutateSession(
         session.projectId,
         session.id,

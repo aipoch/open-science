@@ -799,13 +799,16 @@ describe('SessionDetailsOwner', () => {
     await owner.shutdown()
   })
 
-  it('bounds retries when admission remains unavailable', async () => {
+  it('coalesces concurrent saves without polling when admission remains unavailable', async () => {
     const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
     await first.owner.start()
     expect(first.store.current().sessionDetailsGeneration?.status).toBe('failed')
+    const check = deferred<ResolvedSessionDetailsTarget>()
+    first.resolveTarget.mockReturnValueOnce(check.promise)
     first.owner.afterSessionSaved(first.store.current())
     await waitFor(() => first.resolveTarget.mock.calls.length === 2)
     first.owner.afterSessionSaved(first.store.current())
+    check.resolve({ mode: 'unavailable' })
     first.owner.afterSessionSaved(first.store.current())
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(first.generate).not.toHaveBeenCalled()
@@ -849,6 +852,34 @@ describe('SessionDetailsOwner', () => {
       sessionDetailsSource: 'generated'
     })
     await first.owner.shutdown()
+  })
+
+  it('retries on a later save after an unavailable recheck without restarting', async () => {
+    const first = harness([queuedSession()], { target: { mode: 'unavailable' } })
+    try {
+      await first.owner.start()
+      const failed = first.store.current()
+      first.publish.mockClear()
+      first.owner.afterSessionSaved(failed)
+      await waitFor(() => first.resolveTarget.mock.calls.length === 2)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(first.store.current().revision).toBe(failed.revision)
+      expect(first.publish).not.toHaveBeenCalled()
+      expect(first.generate).not.toHaveBeenCalled()
+
+      first.resolveTarget.mockResolvedValue(admittedTarget)
+      first.owner.afterSessionSaved(first.store.current())
+      await vi.waitFor(() =>
+        expect(first.store.current().sessionDetailsGeneration?.status).toBe('succeeded')
+      )
+      expect(first.generate).toHaveBeenCalledOnce()
+      expect(first.store.current().title).toBe('Generated')
+      expect(first.store.current().sessionDetailsGeneration?.requestId).toBe(
+        failed.sessionDetailsGeneration?.requestId
+      )
+    } finally {
+      await first.owner.shutdown()
+    }
   })
 
   it('preserves a manual edit while retry availability is being checked', async () => {
