@@ -82,44 +82,52 @@ it.each([false, true])(
   }
 )
 
-it('does not trust a replaced source or separately stored legacy object', async () => {
-  const { source, payload } = await fixture()
-  let bytes = 0
-  await withFileIoPacing(
-    async (size) => {
-      bytes += size
-    },
-    async () => {
-      const verify = createPackageContentVerifier()
-      const original = await verify(source, payload.length)
-      const replacement = `${source}.replacement`
-      await writeFile(replacement, payload)
-      expect(await verify(replacement, payload.length)).toEqual(original)
-      expect(bytes).toBe(payload.length * 2)
-      await writeFile(replacement, Buffer.alloc(payload.length, 1))
-      await rename(replacement, source)
-      expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
-      expect(bytes).toBe(payload.length * 3)
-    }
-  )
-})
-
-it('rehashes a same-size in-place edit and rejects edits made while hashing', async () => {
-  const { source, alias, payload } = await fixture()
-  const verify = createPackageContentVerifier()
-  const original = await verify(source, payload.length)
-  await writeFile(alias, Buffer.alloc(payload.length, 1))
-  expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
-  let changed = false
-  await expect(
-    withFileIoPacing(
-      async () => {
-        if (!changed) {
-          changed = true
-          await writeFile(alias, 'changed during read')
-        }
+it(
+  'does not trust a replaced source or separately stored legacy object',
+  { repeats: process.platform === 'win32' ? 99 : 0 },
+  async () => {
+    const { source, payload } = await fixture()
+    let bytes = 0
+    await withFileIoPacing(
+      async (size) => {
+        bytes += size
       },
-      () => createPackageContentVerifier()(source, payload.length)
+      async () => {
+        const verify = createPackageContentVerifier()
+        const original = await verify(source, payload.length)
+        const replacement = `${source}.replacement`
+        await writeFile(replacement, payload)
+        expect(await verify(replacement, payload.length)).toEqual(original)
+        expect(bytes).toBe(payload.length * 2)
+        await writeFile(replacement, Buffer.alloc(payload.length, 1))
+        await rename(replacement, source)
+        expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
+        expect(bytes).toBe(payload.length * 3)
+      }
     )
-  ).rejects.toThrow('changed during validation')
-})
+  }
+)
+
+it(
+  'rehashes a same-size in-place edit and rejects edits made while hashing',
+  { repeats: process.platform === 'win32' ? 99 : 0 },
+  async () => {
+    const { source, alias, payload } = await fixture()
+    const verify = createPackageContentVerifier()
+    const original = await verify(source, payload.length)
+    await writeFile(alias, Buffer.alloc(payload.length, 1))
+    expect((await verify(source, payload.length)).checksum).not.toBe(original.checksum)
+    let changed = false
+    await expect(
+      withFileIoPacing(
+        async () => {
+          if (!changed) {
+            changed = true
+            await writeFile(alias, 'changed during read')
+          }
+        },
+        () => createPackageContentVerifier()(source, payload.length)
+      )
+    ).rejects.toThrow('changed during validation')
+  }
+)
