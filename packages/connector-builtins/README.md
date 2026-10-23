@@ -140,7 +140,7 @@ bytes per request. They do not create application data tables, migration state,
 background jobs or persistent caches. Enablement uses existing host settings.
 
 `./structures-pdb` adds `pdb_search_structure_similarity` to the existing Structures
-family. [RCSB structure search](https://search.rcsb.org/) accepts a deposited PDB ID
+family. [RCSB structure search](https://search.rcsb.org/) accepts a deposited four-character PDB ID
 and `label_asym_id` (not the author chain ID), returning at most 50 experimental
 chain hits with upstream ranking scores and total/truncation counts. This is a
 structure-informed embedding search with global matching, a predicted TM-score

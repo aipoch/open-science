@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const SEARCH_URL = 'https://search.rcsb.org/rcsbsearch/v2/query'
-const pdbPattern = /^(?:[1-9][A-Za-z0-9]{3}|pdb_[A-Za-z0-9]{8})$/i
+const pdbPattern = /^[1-9][A-Za-z0-9]{3}$/
 const argsSchema = z.object({
   pdb_id: z.string().regex(pdbPattern),
   label_asym_id: z
@@ -39,13 +39,13 @@ export const PDB_SIMILARITY_TOOLS: ToolDescriptor[] = [
     connector: 'structures',
     credentialKeys: [],
     description:
-      'Find experimental PDB protein chains similar in 3D to one deposited PDB chain using the RCSB structure-informed embedding search with global matching, predicted TM-score cutoff 0.8 and 10,000 candidates. Supply label_asym_id (RCSB/mmCIF chain ID, not the author chain ID; available from pdb_get_entities). Returns top ranked chain identifiers and upstream scores; the query chain may appear among hits. No coordinate upload, structural alignment, RMSD or locally computed TM-score.',
+      'Find experimental PDB protein chains similar in 3D to one deposited PDB chain using the RCSB structure-informed embedding search with global matching, predicted TM-score cutoff 0.8 and 10,000 candidates. Supply a four-character PDB ID and label_asym_id (RCSB/mmCIF chain ID, not the author chain ID; available from pdb_get_entities). Returns top ranked chain identifiers and upstream scores; the query chain may appear among hits. No coordinate upload, structural alignment, RMSD or locally computed TM-score.',
     input: {
       type: 'object',
       properties: {
         pdb_id: {
           type: 'string',
-          pattern: '^(?:[1-9][A-Za-z0-9]{3}|[Pp][Dd][Bb]_[A-Za-z0-9]{8})$'
+          pattern: '^[1-9][A-Za-z0-9]{3}$'
         },
         label_asym_id: { type: 'string', minLength: 1, maxLength: 16, pattern: '^[A-Za-z0-9]+$' },
         max_rows: { type: 'integer', minimum: 1, maximum: 50, default: 10 }

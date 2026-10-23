@@ -93,6 +93,8 @@ describe('pdb_search_structure_similarity', () => {
   it.each([
     {},
     { ...args, pdb_id: '0XXX' },
+    { ...args, pdb_id: 'pdb_00001cll' },
+    { ...args, pdb_id: 'PDB_00001CLL' },
     { ...args, label_asym_id: 'A/B' },
     { ...args, label_asym_id: '' },
     { ...args, max_rows: 0 },
@@ -123,6 +125,13 @@ describe('pdb_search_structure_similarity', () => {
   it('rejects a non-JSON success body and enforces its response budget', async () => {
     await expect(call(new Response('<html>maintenance</html>'))).rejects.toThrow()
     await expect(call(new Response(' '.repeat(tool.maxResponseBytes! + 1)))).rejects.toThrow()
+  })
+  it('rejects unsupported extended IDs even when invoked without registry validation', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+    await expect(
+      new ParserEngine({ fetchImpl }).call(tool, { ...args, pdb_id: 'pdb_00001cll' }, {})
+    ).rejects.toThrow()
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
   it('honors cancellation without making a request', async () => {
     const controller = new AbortController()
