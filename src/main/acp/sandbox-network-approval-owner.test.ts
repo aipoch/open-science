@@ -573,6 +573,106 @@ describe('durable sandbox destination approvals', () => {
     expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
   })
 
+  it.each(['allow-once', 'always-allow', 'deny', 'cancelled'])(
+    'settles %s after restart with an unnormalized global claim on disk',
+    async (optionId) => {
+      const f = fixture()
+      const settings = attachSettings(f)
+      const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+      const request = await f.pending()
+      f.broker.abandonAllPending()
+      await result
+      const raw = await f.sessions.readSessionRuntimeContext(f.session.projectId, f.session.id)
+      await f.sessions.patchSessionRuntimeContext({
+        projectId: f.session.projectId,
+        sessionId: f.session.id,
+        expectedRevision: raw.revision,
+        patch: {
+          networkApprovals: raw.networkApprovals!.map((approval) => ({
+            ...approval,
+            state: 'continuing',
+            decision: 'always-allow'
+          }))
+        }
+      })
+      const load = f.sessions.loadSessionForContinuation
+      f.sessions.loadSessionForContinuation = async (...args) =>
+        normalizeSessionAfterRestore(await load(...args))
+      const projected = await f.sessions.loadSessionForContinuation(
+        f.session.projectId,
+        f.session.id
+      )
+      expect(projected.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
+      expect(
+        (await f.sessions.readSessionRuntimeContext(f.session.projectId, f.session.id))
+          .networkApprovals?.[0]
+      ).toMatchObject({ state: 'continuing', decision: 'always-allow' })
+      const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
+      const answer = {
+        requestId: request.requestId,
+        ...(optionId === 'cancelled' ? { cancelled: true } : { optionId }),
+        restored: { projectId: f.session.projectId, sessionId: f.session.id }
+      }
+      await restarted.respondRestored(answer, f.session.projectId)
+      if (optionId === 'allow-once') {
+        expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
+          state: 'continuing'
+        })
+        expect(f.session.runtimeContext?.networkApprovals?.[0]).not.toHaveProperty('decision')
+        await expect(restarted.respondRestored(answer, f.session.projectId)).rejects.toThrow(
+          'already answered'
+        )
+        const send = vi.fn(f.send)
+        await expect(restarted.request(f.input, 'prompt-fixture', send)).resolves.toBe('allow-once')
+        expect(send).not.toHaveBeenCalled()
+      }
+      expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+      await expect(restarted.respondRestored(answer, f.session.projectId)).resolves.toBe(false)
+      expect(f.allowDomain).toHaveBeenCalledTimes(optionId === 'always-allow' ? 1 : 0)
+      expect((await settings.get()).allowedDomains.includes('service.example.test')).toBe(
+        optionId === 'always-allow'
+      )
+    }
+  )
+
+  it('does not reconcile a projected global claim while its live transaction is pending', async () => {
+    const f = fixture()
+    const settings = attachSettings(f)
+    const gate = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    f.allowDomain.mockImplementationOnce(async (hostname, assertCurrent, finalize) => {
+      entered.resolve()
+      await gate.promise
+      await settings.allowDomain(hostname, assertCurrent, finalize)
+      return undefined
+    })
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    const response = f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
+    await entered.promise
+    const load = f.sessions.loadSessionForContinuation
+    f.sessions.loadSessionForContinuation = async (...args) =>
+      normalizeSessionAfterRestore(await load(...args))
+    await expect(
+      f.owner.respondRestored(
+        {
+          requestId: request.requestId,
+          optionId: 'deny',
+          restored: { projectId: f.session.projectId, sessionId: f.session.id }
+        },
+        f.session.projectId
+      )
+    ).rejects.toThrow(/already being saved|no longer current/)
+    expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
+      state: 'continuing',
+      decision: 'always-allow'
+    })
+    gate.resolve()
+    await response
+    await result
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
   it('preserves independent destinations and provider permission authority', async () => {
     const f = fixture()
     const first = f.owner.request(f.input, 'prompt-fixture', f.send)

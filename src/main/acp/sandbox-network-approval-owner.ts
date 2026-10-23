@@ -175,6 +175,36 @@ export class SandboxNetworkApprovalOwner {
       )
     )
       throw new Error('Invalid network approval option.')
+    const context = await this.sessions.readSessionRuntimeContext(projectId, approval.sessionId)
+    const raw = context.networkApprovals?.find(({ requestId }) => requestId === approval.requestId)
+    if (raw?.state === 'continuing' && raw.decision === 'always-allow') {
+      // Restore normalizes the card, not the authority file. Re-arm an interrupted Global claim
+      // before applying the new explicit answer, but never steal a live Settings transaction.
+      const canReconcile = (): boolean => {
+        const live = this.globalDecisions.get(approval.requestId)
+        return isCurrent() && (!live || Boolean(live.rollbackFailure))
+      }
+      await this.patch(
+        projectId,
+        approval.sessionId,
+        (runtime) => {
+          const current = runtime.networkApprovals?.find(
+            ({ requestId }) => requestId === approval.requestId
+          )
+          if (current?.state !== 'continuing' || current.decision !== 'always-allow')
+            throw new Error('Network approval was already answered.')
+          return runtime.networkApprovals!.map((candidate) => {
+            if (candidate.requestId !== approval.requestId) return candidate
+            const { decision: _decision, ...rest } = candidate
+            void _decision
+            return { ...rest, state: 'pending' as const }
+          })
+        },
+        approval,
+        true,
+        canReconcile
+      )
+    }
     if (optionId === 'always-allow') {
       await this.grantGlobal(projectId, approval, true, isCurrent)
       return true
