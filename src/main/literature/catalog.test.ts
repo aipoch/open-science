@@ -104,6 +104,35 @@ describe('LiteratureCatalog', () => {
     return new LiteratureCatalog(async () => client!)
   }
 
+  it('deduplicates manually discovered Semantic Scholar papers and preserves dismissal and provenance', async () => {
+    const catalog = await setup()
+    const input = candidate({ provider: 'semantic-scholar', externalId: 'a'.repeat(40) })
+    input.origin = { kind: 'manual-discovery' }
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: input })
+    expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
+    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+      id: staged.id,
+      state: 'pending'
+    })
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged.id })
+    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+      id: staged.id,
+      state: 'dismissed'
+    })
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+      kind: 'item',
+      id: accepted.id,
+      state: 'present'
+    })
+    expect(await catalog.sources(accepted.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: 'semantic-scholar', externalId: 'a'.repeat(40) })
+      ])
+    )
+  })
+
   it('reads current candidate states without changing receipts and follows import, merge, and deletion', async () => {
     const catalog = await setup()
     const receipt = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })

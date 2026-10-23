@@ -170,5 +170,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Captured-stage selection and independent Notebook run reproduction extend the trusted workspace reproducibility source boundary; retain full validation until the expanded boundary is reviewed and trusted."
 }

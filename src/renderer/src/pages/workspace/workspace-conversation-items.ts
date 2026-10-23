@@ -19,6 +19,7 @@ import {
 import { isNotebookExecutionActivity, type ToolExecutionPhase } from './tool-execution-phase'
 import {
   getNotebookMemoryToolDisplayName,
+  isAuthorizedDirectoryTool,
   NOTEBOOK_MEMORY_TOOL_SUFFIXES
 } from './notebook-tool-names'
 
@@ -174,6 +175,8 @@ const formatActivityToolName = (
 ): string => {
   const providerToolName = trimDetail(activity.providerToolName)
   const title = trimDetail(activity.title)
+
+  if (isAuthorizedDirectoryTool(providerToolName, title)) return t('List authorized directories')
 
   const notebookToolName =
     (providerToolName && formatNotebookToolName(providerToolName)) ??

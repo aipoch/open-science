@@ -18,6 +18,7 @@ import {
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { TFunction } from 'i18next'
+import { isAuthorizedDirectoryTool } from './notebook-tool-names'
 import { notebookInput } from './notebook-tool-presentation'
 import { i18next } from '@/i18n'
 
@@ -164,6 +165,7 @@ type ActivityCategory =
   | 'read'
   | 'edit'
   | 'skill'
+  | 'directoryAccess'
   | 'environment'
   | 'call'
   | 'artifact'
@@ -192,6 +194,7 @@ const ACTIVITY_CATEGORY_ORDER: ActivityCategory[] = [
   'read',
   'edit',
   'skill',
+  'directoryAccess',
   'environment',
   'call',
   'artifact',
@@ -226,6 +229,7 @@ const categorizeActivity = (
 
   // A Notebook execution is one run; use the shared provider-name matcher for every ACP backend.
   if (isNotebookExecutionActivity(activity)) return 'notebook'
+  if (isAuthorizedDirectoryTool(activity.providerToolName, activity.title)) return 'directoryAccess'
   if (isSkillActivity(activity)) return 'skill'
   if (providerName === 'save_artifacts' || providerName.includes('artifact')) return 'artifact'
   if (providerName === 'manage_packages' || providerName.includes('package')) return 'environment'
@@ -263,6 +267,8 @@ const formatCategoryClause = (
       return count === 1 ? t('edited a file') : t('edited {{count}} files', { count })
     case 'skill':
       return count === 1 ? t('loaded a skill') : t('loaded {{count}} skills', { count })
+    case 'directoryAccess':
+      return t('checked directory access')
     case 'environment':
       return count === 1 ? t('managed an environment') : t('managed environments')
     case 'call':

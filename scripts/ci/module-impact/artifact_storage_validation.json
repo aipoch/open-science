@@ -500,5 +500,6 @@
   },
   "consumerModules": ["session_persistence"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Frozen workflow validation and runtime-subset candidate storage extend the trusted artifact validation boundary and its filesystem and cryptographic imports; retain full validation until the expanded boundary is reviewed and trusted."
 }

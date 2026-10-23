@@ -732,5 +732,6 @@
     "notebook_network_sandbox",
     "windows_sensitive"
   ],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Conda runtime subset proposals and R checkpoint replay extend the trusted Notebook reproduction boundary and its native process and filesystem imports; retain full validation until the expanded boundary is reviewed and trusted."
 }

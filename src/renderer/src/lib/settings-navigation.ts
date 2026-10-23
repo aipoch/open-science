@@ -17,7 +17,8 @@ export type ComputeView =
       authenticationRequestId?: number
     }
 
-export type CredentialsServiceId = 'github' | 'literature' | 'openalex' | 'unpaywall'
+export type CredentialsServiceId =
+  'github' | 'literature' | 'openalex' | 'unpaywall' | 'semantic-scholar'
 
 export type CredentialsView =
   | { kind: 'list' }

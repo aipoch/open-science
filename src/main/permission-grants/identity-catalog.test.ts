@@ -6,14 +6,14 @@ import {
 } from './identity-catalog'
 
 describe('permission identity catalog', () => {
-  it('contains the closed 51-identity inventory including native web reading and search', () => {
-    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(51)
+  it('contains the closed 52-identity inventory including native web reading and search', () => {
+    expect(PRE_REGISTERED_PERMISSION_IDENTITY_COUNT).toBe(52)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.builtin_tool).toEqual([
       'builtin:web_fetch',
       'builtin:web_search'
     ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.customize_mutation).toHaveLength(8)
-    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(32)
+    expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toHaveLength(33)
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
       'mcp:open-science-notebook/request_network_access'
     )

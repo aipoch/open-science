@@ -20,6 +20,8 @@
     "packages/connector-builtins/src/cellxgene-discover.ts",
     "packages/connector-builtins/src/chembl.test.ts",
     "packages/connector-builtins/src/chembl.ts",
+    "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
+    "packages/connector-builtins/src/chemistry-lipidmaps.ts",
     "packages/connector-builtins/src/chemistry.test.ts",
     "packages/connector-builtins/src/chemistry.ts",
     "packages/connector-builtins/src/clinical-genomics-dgidb.ts",
@@ -168,7 +170,9 @@
     "packages/connector-builtins/src/tcia.ts",
     "packages/connector-builtins/src/tcia.test.ts",
     "packages/connector-builtins/src/kegg.ts",
-    "packages/connector-builtins/src/kegg.test.ts"
+    "packages/connector-builtins/src/kegg.test.ts",
+    "packages/connector-builtins/src/structures-omnipath.ts",
+    "packages/connector-builtins/src/structures-omnipath.test.ts"
   ],
   "interfacePaths": [
     "packages/connector-builtins/package.json",
@@ -263,6 +267,7 @@
       "packages/connector-builtins/src/cellosaurus.test.ts",
       "packages/connector-builtins/src/cellxgene-discover.test.ts",
       "packages/connector-builtins/src/chembl.test.ts",
+      "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
       "packages/connector-builtins/src/chemistry.test.ts",
       "packages/connector-builtins/src/clinical-genomics.test.ts",
       "packages/connector-builtins/src/clinical-trials.test.ts",
@@ -329,7 +334,8 @@
       "packages/connector-builtins/src/scientific-expansion.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/tcia.test.ts",
-      "packages/connector-builtins/src/kegg.test.ts"
+      "packages/connector-builtins/src/kegg.test.ts",
+      "packages/connector-builtins/src/structures-omnipath.test.ts"
     ],
     "contract": [
       "src/main/connectors/boundaries.architecture.test.ts",

@@ -23,6 +23,51 @@ const session = {
 }
 
 describe('ArchiveCoordinator', () => {
+  it.each(['success', 'failure'] as const)(
+    'fences recovery deletion against pending and new work and releases after %s',
+    async (outcome) => {
+      const coordinator = new ArchiveCoordinator(
+        { get: async () => project, updateArchive: vi.fn() },
+        {
+          assertProjectArchivable: vi.fn(),
+          sessionProjectId: async () => project.id,
+          assertSessionAvailable: vi.fn(),
+          updateArchive: vi.fn()
+        },
+        {
+          isSessionBusy: () => false,
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => undefined
+        }
+      )
+      // Compute holds this admission while an approval is pending, before creating its job row.
+      const releasePending = coordinator.admitSessionWork(project.id, session.id)
+      const remove = vi.fn(async () => undefined)
+      await expect(
+        coordinator.withSessionRecoveryDeletion(project.id, session.id, remove)
+      ).rejects.toThrow('Wait for Session work')
+      expect(remove).not.toHaveBeenCalled()
+      releasePending()
+
+      const started = Promise.withResolvers<void>()
+      const finish = Promise.withResolvers<void>()
+      const deletion = coordinator.withSessionRecoveryDeletion(project.id, session.id, async () => {
+        started.resolve()
+        await finish.promise
+        if (outcome === 'failure') throw new Error('Access denied')
+      })
+      const result =
+        outcome === 'failure'
+          ? expect(deletion).rejects.toThrow('Access denied')
+          : expect(deletion).resolves.toBeUndefined()
+      await started.promise
+      expect(() => coordinator.admitSessionWork(project.id, session.id)).toThrow('recovery files')
+      finish.resolve()
+      await result
+      expect(() => coordinator.admitSessionWork(project.id, session.id)()).not.toThrow()
+    }
+  )
+
   it.each(['session', 'project'] as const)(
     'drains background checks on %s archive before admitting more work',
     async (scope) => {

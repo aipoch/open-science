@@ -41,7 +41,10 @@
     "packages/literature-discovery/test/scale.test.ts",
     "packages/literature-discovery/test/supplements.test.ts",
     "packages/literature-discovery/tsconfig.json",
-    "packages/literature-discovery/vitest.config.ts"
+    "packages/literature-discovery/vitest.config.ts",
+    "packages/literature-discovery/src/related-contracts.ts",
+    "packages/literature-discovery/src/related.ts",
+    "packages/literature-discovery/test/related.test.ts"
   ],
   "interfacePaths": [
     "packages/literature-discovery/src/index.ts",
@@ -66,7 +69,8 @@
       "packages/literature-discovery/test/provider-error.test.ts",
       "packages/literature-discovery/test/reference-resolver.test.ts",
       "packages/literature-discovery/test/scale.test.ts",
-      "packages/literature-discovery/test/supplements.test.ts"
+      "packages/literature-discovery/test/supplements.test.ts",
+      "packages/literature-discovery/test/related.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

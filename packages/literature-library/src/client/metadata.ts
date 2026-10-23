@@ -11,7 +11,8 @@ import type {
 } from '../contracts.js'
 import type { LiteratureDetailController } from './detail.js'
 export type LiteratureMetadataIdentifier = { scheme: 'doi' | 'pmid'; value: string }
-export type DetailMode = 'view' | 'edit' | 'complete' | 'citation' | 'full-text' | 'supplements'
+export type DetailMode =
+  'view' | 'edit' | 'complete' | 'citation' | 'full-text' | 'supplements' | 'related'
 export type MetadataSnapshot = {
   mode: DetailMode
   editBase?: LiteratureItemView

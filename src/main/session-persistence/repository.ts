@@ -13,6 +13,9 @@ import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import {
   MAX_PERSISTED_SESSION_BYTES,
+  deleteSessionRecoveryFileRequestSchema,
+  SESSION_RECOVERY_COMPUTE_JOBS_ERROR,
+  type DeleteSessionRecoveryFileRequest,
   SessionDeletionCommittedError,
   SessionRevisionConflictError,
   SessionSizeLimitError,
@@ -230,6 +233,7 @@ type SessionDirectoryEntry = {
 }
 
 type SessionRepositoryDependencies = {
+  hasComputeJobs?(projectId: string, sessionId: string): Promise<boolean>
   hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean
   hasLiveRuntimeSession(projectId: string, sessionId: string): boolean
   maxSessionBytes: number
@@ -347,6 +351,7 @@ class SessionRepository {
     private readonly projection?: SessionProjectionRepository
   ) {
     this.dependencies = {
+      hasComputeJobs: dependencies.hasComputeJobs,
       hasActiveRuntimePrompt:
         dependencies.hasActiveRuntimePrompt ?? DEFAULT_DEPENDENCIES.hasActiveRuntimePrompt,
       hasLiveRuntimeSession:
@@ -391,6 +396,68 @@ class SessionRepository {
 
   recoveryFolderPath(projectId: string): string {
     return this.projectDir(projectId)
+  }
+
+  // Discard only quarantined authority. Ordinary Session deletion still requires readable JSON.
+  async deleteRecoveryFile(request: DeleteSessionRecoveryFileRequest): Promise<void> {
+    const { projectId, fileName } = deleteSessionRecoveryFileRequestSchema.parse(request)
+    const sessionId = fileName.slice(0, -5)
+    return this.operationScheduler.runSession(projectId, sessionId, async () => {
+      const boundary = await this.inspectActiveProjectBoundary(projectId)
+      if (boundary === 'missing') return
+      if (boundary !== 'valid')
+        throw new Error('Session recovery directory is not a regular directory.')
+      const projects = await this.dependencies.readDirectoryEntries(this.sessionsDir)
+      if (!projects.some((entry) => entry.name === projectId && entry.isDirectory())) {
+        throw new Error('Session recovery Project identity does not match its directory.')
+      }
+      if (
+        this.dependencies.hasLiveRuntimeSession(projectId, sessionId) ||
+        this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
+      ) {
+        throw new Error('Cannot discard recovery files for a live Session.')
+      }
+      const primaryPath = this.sessionFilePath(projectId, sessionId)
+      if ((await this.inspectFileBoundary(primaryPath)) !== 'missing') {
+        throw new Error(
+          'The saved conversation changed. Recheck before deleting its recovery files.'
+        )
+      }
+      const entries = await this.dependencies.readDirectoryEntries(this.projectDir(projectId))
+      if (entries.some((entry) => temporarySessionPrimaryName(entry.name) === fileName)) {
+        throw new Error(
+          'The saved conversation has a pending write. Recheck before deleting its recovery files.'
+        )
+      }
+      // Removing the last quarantine would otherwise authorize orphan-job cleanup, including
+      // remote working files. Recovery-copy deletion must never imply that broader consent.
+      if (!this.dependencies.hasComputeJobs)
+        throw new Error('Compute ownership check is unavailable.')
+      if (await this.dependencies.hasComputeJobs(projectId, sessionId)) {
+        throw new Error(SESSION_RECOVERY_COMPUTE_JOBS_ERROR)
+      }
+      const prefix = `${fileName}.invalid-`
+      const quarantines = entries.filter(
+        (entry) =>
+          entry.name.startsWith(prefix) && /^\d+-\d+$/u.test(entry.name.slice(prefix.length))
+      )
+      // Validate every candidate before removing any. Never recurse or follow a link.
+      for (const entry of quarantines) {
+        if (!entry.isFile()) {
+          throw new Error('Session recovery file is not a regular file.')
+        }
+        await this.assertFileBoundary(
+          join(this.projectDir(projectId), entry.name),
+          'Session recovery file'
+        )
+      }
+      for (const entry of quarantines) {
+        await this.dependencies.remove(join(this.projectDir(projectId), entry.name), {
+          recursive: false,
+          force: true
+        })
+      }
+    })
   }
 
   private sessionFilePath(projectId: string, sessionId: string): string {

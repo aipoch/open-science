@@ -4,6 +4,7 @@ import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/sty
 import {
   LiteratureBatchJobs,
   LiteratureFullTextFinder,
+  LiteratureRelatedFinder,
   LiteratureSupplementFinder,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
@@ -81,6 +82,7 @@ export async function composeResearchCatalog({
   literatureReferenceResolver: LiteratureReferenceResolver
   literatureMetadataEnricher: LiteratureMetadataEnricher<LiteratureItemView>
   literatureSupplementAttachments: LiteratureSupplementAttachments
+  literatureRelatedFinder: LiteratureRelatedFinder
   literatureSupplementFinder: LiteratureSupplementFinder
   literatureFullTextFinder: LiteratureFullTextFinder<LiteratureItemView>
   literaturePdfImporter: LiteraturePdfImporter
@@ -185,6 +187,12 @@ export async function composeResearchCatalog({
       (proxy, address, port, signal) => tunnelThroughProxy(proxy, address, port, undefined, signal),
       options
     )
+  const literatureRelatedFinder = new LiteratureRelatedFinder({
+    catalog: literatureCatalog,
+    fetch: netFetchStandard,
+    apiKey: async () =>
+      tryDecryptKey((await settingsService.getConnectors())?.semanticScholarApiKeyRef)
+  })
   const literatureSupplementFinder = new LiteratureSupplementFinder({
     catalog: literatureCatalog,
     fetch: netFetchStandard
@@ -258,6 +266,7 @@ export async function composeResearchCatalog({
     literatureReferenceResolver,
     literatureMetadataEnricher,
     literatureFullTextFinder,
+    literatureRelatedFinder,
     literatureSupplementFinder,
     literatureSupplementAttachments,
     literaturePdfImporter,

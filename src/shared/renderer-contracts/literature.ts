@@ -1,4 +1,6 @@
 import type {
+  LiteratureRelatedRequest,
+  LiteratureRelatedResult,
   LiteratureSupplementRequest,
   LiteratureSupplementAttachmentRequest,
   LiteratureFullTextProgress,
@@ -178,6 +180,9 @@ export const contracts = {
     undefined,
     RUNTIME_VALIDATED
   ]),
+  'literature.related': callable<
+    (request: LiteratureRelatedRequest) => Promise<LiteratureRelatedResult>
+  >()('literature', ['literature:related', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.supplements': callable<
     (request: LiteratureSupplementRequest) => Promise<LiteratureSupplementResult>
   >()('literature', ['literature:supplements', WEB, undefined, undefined, RUNTIME_VALIDATED]),
