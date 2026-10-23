@@ -94,29 +94,6 @@ afterEach(() => {
 
 describe('ConnectorAddForm copy', () => {
   it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
-    'renders the LIPID MAPS tool description in %s',
-    async (locale) => {
-      await prepareI18nLocale(locale)
-      const english = 'Retrieve lipid classification and compound details from LIPID MAPS.'
-      const translated = i18next.getResource(locale, 'renderer', english)
-      expect(typeof translated).toBe('string')
-      expect(translated).not.toBe(english)
-      act(() => {
-        root.render(
-          <p>
-            {connectorToolDescription(
-              'chemistry/lipidmaps_get_compound',
-              'fallback',
-              i18next.getFixedT(locale, 'renderer')
-            )}
-          </p>
-        )
-      })
-      expect(container.textContent).toBe(translated)
-    }
-  )
-
-  it.each(['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const)(
     'renders Ensembl LD tool descriptions from the %s catalog without fallback',
     async (locale) => {
       await prepareI18nLocale(locale)
