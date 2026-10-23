@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises'
 import { link, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { withFileIoPacing } from '../file-io-pacing'
 import { createPackageContentVerifier } from './materialize'
 
@@ -13,20 +13,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 const roots: string[] = []
-beforeEach(async () => {
-  if (process.platform !== 'win32') return
-  const { lstat } = await vi.importActual<typeof fs>('node:fs/promises')
-  vi.mocked(fs.lstat).mockImplementation(async (...args) => {
-    const stat = await lstat(...args)
-    console.info('[DEBUG-quit-ci]', String(args[0]), {
-      ino: String(stat.ino),
-      size: String(stat.size),
-      mtime: String(stat.mtimeMs),
-      ctime: String(stat.ctimeMs)
-    })
-    return stat
-  })
-})
 const fixture = async (): Promise<{ source: string; alias: string; payload: Buffer }> => {
   const root = await mkdtemp(join(tmpdir(), 'package-verify-'))
   roots.push(root)
@@ -38,6 +24,21 @@ const fixture = async (): Promise<{ source: string; alias: string; payload: Buff
   return { source, alias, payload }
 }
 afterEach(async () => {
+  if (process.platform === 'win32') {
+    const observations = await Promise.all(
+      vi.mocked(fs.lstat).mock.results.map(async (result, i) => {
+        const stat = await result.value
+        return {
+          path: String(vi.mocked(fs.lstat).mock.calls[i][0]),
+          ino: String(stat.ino),
+          size: String(stat.size),
+          mtime: String(stat.mtimeNs),
+          ctime: String(stat.ctimeNs)
+        }
+      })
+    )
+    process.stdout.write(`[DEBUG-quit-ci] ${JSON.stringify(observations)}\n`)
+  }
   vi.mocked(fs.lstat).mockReset()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
