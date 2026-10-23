@@ -41,6 +41,8 @@ export function verifiedPdfStructureRegions(
         if (
           unit.fragments.some(
             (f) =>
+              // A clipped navigation intersection cannot establish a whole original crop.
+              f.unclippedRect ||
               f.pageNumber !== candidate.page ||
               !f.items.length ||
               f.items.some((item) => !owners.has(`${f.pageNumber}:${item.index}`))
@@ -93,6 +95,7 @@ export function verifiedPdfStructureRegions(
         if (
           unit.fragments.some(
             (f) =>
+              f.unclippedRect ||
               !structureRegionContains(region, { page: f.pageNumber, ...f.rect }) ||
               !f.items.length ||
               f.items.some((item) => !owners.has(`${f.pageNumber}:${item.index}`))

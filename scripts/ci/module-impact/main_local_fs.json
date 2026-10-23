@@ -7,12 +7,15 @@
     "src/main/local-fs/service.test.ts",
     "src/main/local-fs/service.ts",
     "src/main/local-fs/windows-drive-listing.ts",
-    "src/main/local-fs/notebook-folder-access.integration.test.ts"
+    "src/main/local-fs/notebook-folder-access.integration.test.ts",
+    "src/main/local-fs/authorized-directories.ts",
+    "src/main/local-fs/authorized-directories.test.ts"
   ],
   "interfacePaths": [
     "src/main/local-fs/granted-roots-repository.ts",
     "src/main/local-fs/ipc.ts",
-    "src/main/local-fs/service.ts"
+    "src/main/local-fs/service.ts",
+    "src/main/local-fs/authorized-directories.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -20,13 +23,15 @@
       "src/main/local-fs/granted-roots-repository.test.ts",
       "src/main/local-fs/ipc.test.ts",
       "src/main/local-fs/service.test.ts",
-      "src/main/local-fs/notebook-folder-access.integration.test.ts"
+      "src/main/local-fs/notebook-folder-access.integration.test.ts",
+      "src/main/local-fs/authorized-directories.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
-      "src/main/host-layer-dependencies.architecture.test.ts"
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
     ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
@@ -70,5 +75,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Authorization discovery adds an in-memory session notice owner outside the trusted source boundary; retain full validation until that boundary is reviewed."
 }

@@ -780,7 +780,12 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
+        env:
+          # Portable CPU tests use bundled ONNX binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       - name: Select independent package tests from trusted policy
         uses: ./.github/actions/select-package-tests
         with:
@@ -944,6 +949,45 @@ jobs:
             failed=1
           fi
           exit "$failed"
+
+  # Advisory only: reports what per-file selection would run next to the module plan that runs
+  # today. Outside the gate's needs, writes no plan outputs and cannot fail the workflow.
+  file_test_impact:
+    name: File-level test impact (advisory)
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install parser dependencies
+        run: node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false
+      - name: Compare file-level and module test selection
+        id: file_test_impact
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ needs.preflight.outputs.base }}
+          HEAD_SHA: ${{ needs.preflight.outputs.head }}
+        run: node scripts/ci/file-test-impact.mjs compare --base "$BASE_SHA" --head "$HEAD_SHA" --tier pr --output file-test-impact.json
+      - name: Upload file-level test impact report
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: file-test-impact
+          path: file-test-impact.json
+          retention-days: 30
+          if-no-files-found: ignore
 
   linux_runtime:
     name: Linux Notebook isolation

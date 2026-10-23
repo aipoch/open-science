@@ -49,6 +49,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setSemanticScholarCredential'
   | 'setOpenAlexCredential'
   | 'validateOpenAlexCredential'
   | 'addCustomServer'
@@ -228,6 +229,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'setNcbiCredentials'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'setNcbiCredentials'>
   >('settings:set-ncbi-credentials'),
+  setSemanticScholarCredential: defineApplicationCommand<
+    'settings:set-semantic-scholar-credential',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'setSemanticScholarCredential'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'setSemanticScholarCredential'>
+  >('settings:set-semantic-scholar-credential'),
   setOpenAlexCredential: defineApplicationCommand<
     'settings:set-openalex-credential',
     OwnerArgs<ConnectorIntegrationWorkflows, 'setOpenAlexCredential'>,
@@ -343,6 +349,7 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.setConnectorAutoAllow,
     settingsIntegrationApplicationCommands.setToolPermission,
     settingsIntegrationApplicationCommands.setNcbiCredentials,
+    settingsIntegrationApplicationCommands.setSemanticScholarCredential,
     settingsIntegrationApplicationCommands.setOpenAlexCredential,
     settingsIntegrationApplicationCommands.validateOpenAlexCredential,
     settingsIntegrationApplicationCommands.addCustomServer,
@@ -458,6 +465,10 @@ const registerIntegrationSettingsApplicationCommands = (
         dependencies.connectors.setToolPermission(args[0]),
       'settings:set-ncbi-credentials': ({ args }) =>
         dependencies.connectors.setNcbiCredentials(args[0]),
+      'settings:set-semantic-scholar-credential': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-semantic-scholar-credential')
+        return dependencies.connectors.setSemanticScholarCredential(args[0])
+      },
       'settings:set-openalex-credential': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-openalex-credential')
         return dependencies.connectors.setOpenAlexCredential(args[0])

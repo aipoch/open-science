@@ -2,6 +2,7 @@
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { readSourceRow, hasUniqueRecordTokens } from './literature-pdf-source-records.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
 
 const scalar = '[+−-]?\\d+(?:,\\d{3})*(?:\\.\\d+)?'
 const value = new RegExp(
@@ -396,6 +397,81 @@ export function recoverNativeScalarRecordPlan(table, items, captions, rules, obs
       )
   })
   if (supportedDescriptorCut) return
+
+  // A scalar followed by a bracketed interval is not necessarily one printed
+  // leaf. Preserve an existing boundary when independent whole headings and
+  // every complete native record support it on both sides. This only declines
+  // the replacement plan; the original model/source still receives final review.
+  const supportedValueCut = modelCuts.slice(1, -1).some((cut) => {
+    if (!(cut > first && cut < crop[2])) return false
+    const groups = [header, ...rows],
+      split = (row) =>
+        row.some((i) => i.rect[2] <= cut) &&
+        row.some((i) => i.rect[0] >= cut) &&
+        row.every((i) => i.rect[2] <= cut || i.rect[0] >= cut)
+    if (!groups.every(split)) return false
+    return !cuts
+      .slice(1, -1)
+      .some((own) =>
+        groups.every((row) =>
+          row.every(
+            (i) => i.rect[2] <= own === i.rect[2] <= cut && i.rect[0] >= own === i.rect[0] >= cut
+          )
+        )
+      )
+  })
+  if (supportedValueCut) {
+    // Complete ordinary whole headings already admit the independent late
+    // header/ambiguity review. Do not disable their native row recovery just
+    // because scalar grouping temporarily combines a value and its interval.
+    // Fragmented/scripted headings do not have this whole-source bijection.
+    const nativeHeader = original
+        .filter((i) => i.baseline < divider[1])
+        .sort((a, b) => a.rect[0] - b.rect[0]),
+      nativeBody = original.filter((i) => i.baseline > divider[1]),
+      nativeRows = rows.map((row) =>
+        nativeBody.filter((i) => Math.abs(i.baseline - row[0].baseline) <= h * 0.04)
+      ),
+      fits = (i, n) => i.rect[0] >= modelCuts[n] && i.rect[2] <= modelCuts[n + 1],
+      domains = nativeHeader.map((heading, n) =>
+        box([heading, ...nativeRows.flatMap((row) => row.filter((i) => fits(i, n)))])
+      ),
+      frame = [opening[0], opening[1], opening[2], closing[1]],
+      ordinaryHeaderLeaves =
+        modelCuts.length === nativeHeader.length + 1 &&
+        modelCuts.every(Number.isFinite) &&
+        modelCuts.slice(1).every((x, n) => x > modelCuts[n]) &&
+        proveNativeUniqueWholeFonts(original, items) &&
+        original.every((i) => Math.abs(i.height - h) <= h * 0.04) &&
+        nativeHeader.every((i) => Math.abs(i.baseline - nativeHeader[0].baseline) <= h * 0.04) &&
+        // Model cuts may pass through a long heading. Its whole native box and
+        // the corresponding repeated body leaf must instead form disjoint
+        // ordered domains; no heading is clipped to a quantized model boundary.
+        domains.every((r) => r[0] >= frame[0] && r[2] <= frame[2]) &&
+        domains.slice(1).every((r, n) => r[0] > domains[n][2]) &&
+        nativeRows.flat().length === nativeBody.length &&
+        new Set(nativeRows.flat()).size === nativeBody.length &&
+        nativeRows.every(
+          (row) =>
+            modelCuts.slice(1).every((_, n) => row.some((i) => fits(i, n))) &&
+            row.every((i) => modelCuts.slice(1).filter((_, n) => fits(i, n)).length === 1)
+        ) &&
+        items.every(
+          (i) =>
+            !i.text?.trim() ||
+            (Array.isArray(i.rect) &&
+              i.rect.length === 4 &&
+              i.rect.every(Number.isFinite) &&
+              i.rect[2] > i.rect[0] &&
+              i.rect[3] > i.rect[1] &&
+              (i.rect[0] >= frame[2] ||
+                i.rect[2] <= frame[0] ||
+                i.rect[1] >= frame[3] ||
+                i.rect[3] <= frame[1] ||
+                original.includes(i)))
+        )
+    if (!ordinaryHeaderLeaves) return
+  }
 
   const modelRows = table.structure.objects.filter((o) => o.label === 'table row')
   if (

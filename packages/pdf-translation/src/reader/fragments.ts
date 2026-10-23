@@ -6,6 +6,7 @@ export function pdfTranslationLayoutFragments(
   unit: PdfTranslationResults['source']['units'][number],
   source: PdfTranslationResults['source']
 ): Array<PdfTranslationResults['source']['units'][number]['fragments'][number]> {
+  if (unit.fragments.some((fragment) => fragment.unclippedRect)) return [...unit.fragments]
   const result: Array<PdfTranslationResults['source']['units'][number]['fragments'][number]> = []
   for (const fragment of unit.fragments) {
     const previous = result.at(-1)

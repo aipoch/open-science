@@ -39,7 +39,8 @@ export function selectWindowsMainline(changes, manifest) {
       groups.add(group)
       reasons.add(`${chain} -> ${id} -> ${group}`)
     }
-    for (const consumer of module.consumerModules) visit(consumer, `${chain} -> ${id}`, visited)
+    for (const consumer of module.consumerModules ?? [])
+      visit(consumer, `${chain} -> ${id}`, visited)
   }
   for (const change of changes) {
     for (const path of [change.path, change.previousPath].filter(Boolean)) {

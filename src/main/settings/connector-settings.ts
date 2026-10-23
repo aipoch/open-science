@@ -1,3 +1,4 @@
+import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
@@ -608,6 +609,21 @@ class ConnectorSettingsModule {
 
     await this.repository.setNcbiCredentials(request.contactEmail?.trim() || undefined, apiKeyRef)
 
+    return this.connectorsSnapshot()
+  }
+
+  async setSemanticScholarCredential(
+    request: SetSemanticScholarCredentialRequest
+  ): Promise<ConnectorsSnapshot> {
+    if (
+      !request ||
+      typeof request.apiKey !== 'string' ||
+      request.apiKey.length > 4096 ||
+      /[\s\p{Cc}]/u.test(request.apiKey.trim())
+    )
+      throw new Error('Invalid API key format.')
+    const apiKey = request.apiKey.trim()
+    await this.repository.setSemanticScholarCredential(apiKey ? encryptKey(apiKey) : undefined)
     return this.connectorsSnapshot()
   }
 
@@ -1337,6 +1353,9 @@ class ConnectorSettingsModule {
         : {}),
       reservedCustomServerIds: connectors?.pendingCustomServerDeletionIds ?? [],
       ncbi: this.ncbiView(connectors),
+      semanticScholar: {
+        hasApiKey: tryDecryptKey(connectors?.semanticScholarApiKeyRef) !== undefined
+      },
       openAlex: this.openAlexView(connectors)
     }
   }

@@ -25,3 +25,18 @@ No state/schema changes are required: batch indexes v1/v2/v3 remain readable and
 
 Run `npm run build` and `npm test` inside this package. The repository's isolation check packs the
 package, installs its declared sibling tarball and validates consumption outside the checkout.
+
+## Single-paper citation discovery
+
+`LiteratureRelatedFinder` resolves an existing catalog reference through the Semantic Scholar
+Graph API and pages its references or citing papers. A title-only match requires explicit caller
+confirmation using an expiring, reference-bound token. The host injects the catalog, transport,
+and optional API-key reader; the finder never writes catalog records. UI selections use the
+existing Library candidate-review workflow. Provider full names remain literal creator names.
+
+Requests use a fixed HTTPS origin, a shared one-request-per-second admission schedule, bounded
+responses and timeouts. HTTP 429 respects a capped Retry-After cooldown. Resolution tokens are
+bounded in memory and expire after 15 minutes. Relationship pages contain at most 20 records and each next offset must advance. Returned content is attributed to Semantic
+Scholar; upstream coverage and content rights still apply. See the official
+[Graph API documentation](https://api.semanticscholar.org/api-docs/graph) and
+[API license](https://www.semanticscholar.org/product/api/license).

@@ -62,6 +62,8 @@ Commands:
   session status <session-id>
   session config show <session-id>
   session config update <session-id> --revision <number> [session options]
+  session export <session-id> --project <id-or-name> --output <path>
+  session import <path> [--project <id-or-name> | --new-project <name>] --non-interactive
   settings agent-routing show
   settings agent-routing update [routing options]
   plan show <session-id>
@@ -109,9 +111,11 @@ Options:
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
   --timeout-ms <ms>      Stop waiting after this many milliseconds
+  --output <path>        Destination path (session export, artifacts download)
+  --new-project <name>   Import into a new Project with this name (session import)
+  --non-interactive      Import without an interactive preview confirmation (session import)
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line
-  --output <path>        Artifact download destination
   --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start only)
@@ -160,7 +164,8 @@ const VALUE_OPTIONS = {
   '--description': 'description',
   '--agent-context': 'agentContext',
   '--agent-context-file': 'agentContextFile',
-  '--output': 'output'
+  '--output': 'output',
+  '--new-project': 'newProject'
 }
 
 const TASK_COMMANDS = new Set([
@@ -228,6 +233,8 @@ const POSITIONAL_LIMITS = new Map([
   ['run cancel', 1],
   ['session status', 1],
   ['session config', 2],
+  ['session export', 1],
+  ['session import', 1],
   ['settings agent-routing', 1],
   ['plan show', 1],
   ['plan approve', 1],
@@ -309,6 +316,7 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--wait') options.wait = true
     else if (arg === '--return-on-attention') options.returnOnAttention = true
     else if (arg === '--plan-first') options.planFirst = true
+    else if (arg === '--non-interactive') options.nonInteractive = true
     else if (arg === '--provider-default-model') options.providerDefaultModel = true
     else if (arg === '--clear-compute-hosts') options.clearComputeHosts = true
     else if (arg === '--memory') {
@@ -464,8 +472,18 @@ export const parseCliArgs = (argv) => {
   if (options.jsonl && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--jsonl requires run --wait.')
   }
-  if (options.timeoutMs !== undefined && (command !== 'run' || subcommand || !options.wait)) {
-    throw new CliUsageError('--timeout-ms requires run --wait.')
+  const isPackageTransfer = command === 'session' && ['export', 'import'].includes(subcommand)
+  if (
+    options.timeoutMs !== undefined &&
+    !isPackageTransfer &&
+    (command !== 'run' || subcommand || !options.wait)
+  ) {
+    throw new CliUsageError('--timeout-ms requires run --wait or session export/import.')
+  }
+  if (command === 'session' && subcommand === 'import') {
+    if (!options.nonInteractive) throw new CliUsageError('--non-interactive is required.')
+    if (options.project && options.newProject)
+      throw new CliUsageError('Use only one of --project and --new-project.')
   }
   if (options.returnOnAttention && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--return-on-attention requires run --wait.')
@@ -1538,6 +1556,40 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         expectedRevision: options.revision,
         ...patch
       }),
+      options,
+      deps
+    )
+    return
+  }
+  if (command === 'session' && subcommand === 'export') {
+    const sessionId = positionals[0]
+    if (!sessionId) throw new CliUsageError('Session id is required.')
+    if (!options.project) throw new CliUsageError('--project is required.')
+    if (!options.output) throw new CliUsageError('--output is required.')
+    const projectId = await resolveCliProjectId(client, options.project)
+    outputValue(
+      await client.exportSessionPackage(projectId, sessionId, resolve(options.output), {
+        timeoutMs: options.timeoutMs
+      }),
+      options,
+      deps
+    )
+    return
+  }
+  if (command === 'session' && subcommand === 'import') {
+    const packagePath = positionals[0]
+    if (!packagePath) throw new CliUsageError('Session package path is required.')
+    const resolvedPath = resolve(packagePath)
+    const target = {}
+    if (options.project) target.projectId = await resolveCliProjectId(client, options.project)
+    else if (options.newProject) target.projectName = options.newProject
+    outputValue(
+      await client.importSessionPackage(
+        target,
+        resolvedPath,
+        { nonInteractive: true },
+        { timeoutMs: options.timeoutMs }
+      ),
       options,
       deps
     )

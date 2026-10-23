@@ -2827,3 +2827,183 @@ describe('session persistence repository (per-session files)', () => {
     )
   })
 })
+
+describe('damaged Session recovery file deletion', () => {
+  const request = { projectId: 'project-a', fileName: 'session-1.json' }
+  const setup = async (): Promise<{ root: string; directory: string; copies: string[] }> => {
+    const root = await createStorageRoot()
+    const directory = join(root, 'sessions', request.projectId)
+    await mkdir(directory, { recursive: true })
+    const copies = ['session-1.json.invalid-100-1', 'session-1.json.invalid-200-2']
+    for (const file of copies) await writeFile(join(directory, file), '{broken')
+    return { root, directory, copies }
+  }
+
+  it('removes only the selected recovery copies and clears their warning after restart', async () => {
+    const { root, directory, copies } = await setup()
+    const repository = new SessionRepository(root, { hasComputeJobs: async () => false })
+    await repository.saveSession(createSession({ id: 'healthy' }))
+    await writeFile(join(directory, 'other.json.invalid-300-1'), 'other damaged file')
+    await writeFile(join(directory, 'session-1.json.pre-s2-backup'), 'historical backup')
+    await writeFile(join(directory, 'research.csv'), 'research')
+    expect((await repository.loadAllWithDiagnostics()).warnings).toContainEqual(
+      expect.objectContaining({ fileName: request.fileName, kind: 'corrupt' })
+    )
+    await repository.deleteRecoveryFile(request)
+    await repository.deleteRecoveryFile(request)
+    const files = await readdir(directory)
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'healthy.json',
+        'other.json.invalid-300-1',
+        'session-1.json.pre-s2-backup',
+        'research.csv'
+      ])
+    )
+    for (const copy of copies) expect(files).not.toContain(copy)
+    const restarted = new SessionRepository(root, { hasComputeJobs: async () => false })
+    expect((await restarted.loadAllWithDiagnostics()).warnings).not.toContainEqual(
+      expect.objectContaining({ fileName: request.fileName })
+    )
+    expect(await restarted.loadSessionWithDiagnostics('project-a', 'session-1')).toEqual({
+      status: 'missing'
+    })
+  })
+
+  it.each(['valid', 'corrupt', 'future', 'temporary'] as const)(
+    'rejects a stale request with %s replacement authority',
+    async (kind) => {
+      const { root, directory, copies } = await setup()
+      const repository = new SessionRepository(root, { hasComputeJobs: async () => false })
+      if (kind === 'valid') await repository.saveSession(createSession())
+      else
+        await writeFile(
+          join(directory, kind === 'temporary' ? 'session-1.json.123.tmp' : request.fileName),
+          kind === 'future' ? '{"version":999}' : 'corrupt'
+        )
+      await expect(repository.deleteRecoveryFile(request)).rejects.toThrow(/changed|pending write/)
+      for (const copy of copies)
+        expect(await readFile(join(directory, copy), 'utf8')).toBe('{broken')
+    }
+  )
+
+  it.each(['owned', 'unavailable', 'failed'] as const)(
+    'preserves recovery evidence when compute ownership is %s',
+    async (ownership) => {
+      const { root, directory, copies } = await setup()
+      const hasComputeJobs = vi.fn(async () => {
+        if (ownership === 'failed') throw new Error('Database unavailable')
+        return true
+      })
+      const repository = new SessionRepository(root, {
+        ...(ownership === 'unavailable' ? {} : { hasComputeJobs })
+      })
+      await expect(repository.deleteRecoveryFile(request)).rejects.toThrow(
+        ownership === 'owned'
+          ? 'Session recovery files still own compute jobs.'
+          : ownership === 'failed'
+            ? 'Database unavailable'
+            : 'Compute ownership check is unavailable.'
+      )
+      if (ownership !== 'unavailable')
+        expect(hasComputeJobs).toHaveBeenCalledExactlyOnceWith('project-a', 'session-1')
+      expect(await readdir(directory)).toEqual(copies)
+      // Unreadable ownership keeps the existing orphan-job cleanup fail-closed.
+      expect(await repository.loadSessionWithDiagnostics('project-a', 'session-1')).toMatchObject({
+        status: 'unreadable'
+      })
+    }
+  )
+
+  it('retains partial failures for a safe retry', async () => {
+    const { root, directory, copies } = await setup()
+    let fail = true
+    const repository = new SessionRepository(root, {
+      hasComputeJobs: async () => false,
+      remove: async (path, options) => {
+        if (fail && path === join(directory, copies[1])) throw new Error('Access denied')
+        await rm(path, options)
+      }
+    })
+    await expect(repository.deleteRecoveryFile(request)).rejects.toThrow('Access denied')
+    expect(await readdir(directory)).toContain(copies[1])
+    expect((await repository.loadAllWithDiagnostics()).warnings).toContainEqual(
+      expect.objectContaining({ fileName: request.fileName })
+    )
+    fail = false
+    await repository.deleteRecoveryFile(request)
+    expect(
+      (
+        await new SessionRepository(root, {
+          hasComputeJobs: async () => false
+        }).loadAllWithDiagnostics()
+      ).warnings ?? []
+    ).toEqual([])
+  })
+
+  it('rejects an active runtime without deleting recovery evidence', async () => {
+    const { root, directory, copies } = await setup()
+    const repository = new SessionRepository(root, { hasLiveRuntimeSession: () => true })
+    await expect(repository.deleteRecoveryFile(request)).rejects.toThrow('live Session')
+    expect(await readdir(directory)).toEqual(copies)
+  })
+
+  it.each(['../other', '..\\other', 'C:other', '/absolute', '..', 'project-a.', 'project-a '])(
+    'rejects unsafe project identity %s',
+    async (projectId) => {
+      const { root, directory, copies } = await setup()
+      await expect(
+        new SessionRepository(root, { hasComputeJobs: async () => false }).deleteRecoveryFile({
+          ...request,
+          projectId
+        })
+      ).rejects.toThrow()
+      expect(await readdir(directory)).toEqual(copies)
+    }
+  )
+
+  it.each([
+    '../session-1.json',
+    '..\\session-1.json',
+    'C:session-1.json',
+    'session-1.json.invalid-100-1',
+    '.json',
+    'session-1.json.tmp'
+  ])('rejects unsafe file identity %s', async (fileName) => {
+    const { root, directory, copies } = await setup()
+    await expect(
+      new SessionRepository(root, { hasComputeJobs: async () => false }).deleteRecoveryFile({
+        ...request,
+        fileName
+      })
+    ).rejects.toThrow()
+    expect(await readdir(directory)).toEqual(copies)
+  })
+
+  it('rejects a directory disguised as a recovery file before deleting any copies', async () => {
+    const { root, directory, copies } = await setup()
+    await mkdir(join(directory, 'session-1.json.invalid-400-1'))
+    await expect(
+      new SessionRepository(root, { hasComputeJobs: async () => false }).deleteRecoveryFile(request)
+    ).rejects.toThrow('regular file')
+    for (const copy of copies) expect(await readFile(join(directory, copy), 'utf8')).toBe('{broken')
+  })
+
+  it('rejects a project directory link to external storage', async () => {
+    const root = await createStorageRoot()
+    const external = await createExternalRoot()
+    await writeFile(join(external, 'session-1.json.invalid-100-1'), 'external evidence')
+    await mkdir(join(root, 'sessions'), { recursive: true })
+    await symlink(
+      external,
+      join(root, 'sessions', request.projectId),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await expect(
+      new SessionRepository(root, { hasComputeJobs: async () => false }).deleteRecoveryFile(request)
+    ).rejects.toThrow('regular directory')
+    expect(await readFile(join(external, 'session-1.json.invalid-100-1'), 'utf8')).toBe(
+      'external evidence'
+    )
+  })
+})

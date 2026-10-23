@@ -83,3 +83,19 @@ it('exposes posted ClinicalTrials.gov results through the registry and generated
   expect(doc).toContain('unitOfMeasure')
   expect(doc).toContain('Missing data does not mean zero events or no treatment effect')
 })
+
+describe('LIPID MAPS host integration', () => {
+  it('exposes exact lipid lookup through Chemistry and its generated Skill', () => {
+    const descriptor = getDescriptor('chemistry', 'lipidmaps_get_compound')!
+    expect(getConnectorTools('chemistry')).toContain(descriptor)
+    expect(() => validateToolArguments(descriptor, descriptor.exampleArgs!)).not.toThrow()
+    expect(() =>
+      validateToolArguments(descriptor, { id_type: 'lm_id', identifier: 'LMFA' })
+    ).toThrow('invalid_arguments')
+    expect(ALL_CONNECTOR_IDS).not.toContain('lipidmaps')
+    const doc = renderSkillDoc('chemistry')
+    expect(doc).toContain('### lipidmaps_get_compound')
+    expect(doc).toContain('CC BY 4.0')
+    expect(doc).toContain('records_truncated')
+  })
+})

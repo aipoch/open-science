@@ -323,7 +323,11 @@ test('exports a Session package and opens the imported Session with replay', asy
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
     timeout: 60_000
   })
-  await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(async () => (await window.api.acp.getState()).promptInFlightSessionIds)
+    )
+    .toEqual([])
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   const exportPackage = page.getByRole('menuitem', { name: 'Export Session package', exact: true })
@@ -448,14 +452,17 @@ test('exports a Session package and opens the imported Session with replay', asy
   })
   await page.screenshot({ path: testInfo.outputPath('session-package-import-progress.png') })
   await importing.getByRole('button', { name: 'Hide progress' }).click()
+  await expect(importing).not.toBeVisible()
   const backgroundImport = page.getByRole('region', { name: 'Package progress', exact: true })
   await expect(backgroundImport.getByText('Waiting for import confirmation…')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-import-background.png') })
   await backgroundImport.getByRole('button', { name: 'View progress' }).click()
   await importing.getByRole('button', { name: 'Import', exact: true }).click()
-  await expect(importing.getByText('Session imported', { exact: true })).toBeVisible({
-    timeout: 60_000
-  })
+  await expect(importing.getByRole('status').filter({ hasText: /^Session imported$/ })).toBeVisible(
+    {
+      timeout: 60_000
+    }
+  )
   await expect(page.getByTestId('replay-panel')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-import-completed.png') })
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
@@ -716,7 +723,9 @@ for (const launch of ['cold', 'warm'] as const) {
       })
       await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-confirmation.png`) })
       await dialog.getByRole('button', { name: 'Import', exact: true }).click()
-      await expect(dialog.getByText('Session imported', { exact: true })).toBeVisible({
+      await expect(
+        dialog.getByRole('status').filter({ hasText: /^Session imported$/ })
+      ).toBeVisible({
         timeout: 60_000
       })
       await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-imported.png`) })

@@ -76,6 +76,6 @@ export function usesReviewedBoundary(id, module) {
     resources.every((path) => !/\.(?:[cm]?[jt]sx?|json)$/.test(path)) &&
     paths.length === reviewed.length &&
     reviewed.every((path) => paths.includes(path)) &&
-    module.consumerModules.every((id) => boundary.consumerModules.includes(id))
+    (module.consumerModules ?? []).every((id) => boundary.consumerModules.includes(id))
   )
 }

@@ -1,3 +1,4 @@
+import type { SetSemanticScholarCredentialRequest } from '../settings'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type {
   GitHubTokenStatus,
@@ -201,6 +202,9 @@ export const settingsSetNcbiCredentialsContracts = {
 } as const
 
 export const settingsSetOpenAlexCredentialContracts = {
+  'settings.setSemanticScholarCredential': callable<
+    (request: SetSemanticScholarCredentialRequest) => Promise<ConnectorsSnapshot>
+  >()('settings', ['settings:set-semantic-scholar-credential', LOCAL]),
   'settings.setOpenAlexCredential': callable<
     (request: SetOpenAlexCredentialRequest) => Promise<ConnectorsSnapshot>
   >()('settings', ['settings:set-openalex-credential', LOCAL]),

@@ -58,7 +58,7 @@ describe('ConnectorSettingsModule', () => {
     expect(await service.getConnectors()).toEqual(stored)
   })
 
-  it.each(['orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
+  it.each(['tcia', 'kegg', 'orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
     'persists %s opt-in for views and Skills without changing historical choices',
     async (id) => {
       const existing = ['genes', 'pubmed', 'clinical-genomics', 'rna']
@@ -196,8 +196,10 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.connectors.filter((c) => !c.enabled).map((c) => c.id)).toEqual([
       'biosamples',
       'dailymed',
+      'kegg',
       'orphadata',
       'rxnorm',
+      'tcia',
       'wikipathways'
     ])
     expect(snapshot.connectors.every((c) => !c.autoAllow)).toBe(true)
@@ -1134,6 +1136,19 @@ describe('ConnectorSettingsModule', () => {
       ({ id }) => id === 'credential-unavailable-enable'
     )
     expect(stored?.enabled).toBe(false)
+  })
+
+  it('encrypts Semantic Scholar at rest and exposes only configured state', async () => {
+    let snapshot = await service.setSemanticScholarCredential({ apiKey: 'semantic-scholar-secret' })
+    expect(snapshot.semanticScholar).toEqual({ hasApiKey: true })
+    expect(JSON.stringify(snapshot)).not.toContain('semantic-scholar-secret')
+
+    const raw = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(raw).not.toContain('semantic-scholar-secret')
+    expect(JSON.parse(raw).connectors.semanticScholarApiKeyRef).toMatch(/^enc:/)
+
+    snapshot = await service.setSemanticScholarCredential({ apiKey: '' })
+    expect(snapshot.semanticScholar).toEqual({ hasApiKey: false })
   })
 
   it('encrypts OpenAlex at rest and exposes only configured state', async () => {
