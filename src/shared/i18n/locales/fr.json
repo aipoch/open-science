@@ -7872,6 +7872,9 @@
     "References discovered by you or Agents will appear here for review.": "Les références trouvées par vous ou les Agents apparaîtront ici pour examen.",
     "Review discovered references before they enter your library.": "Examinez les références trouvées avant de les ajouter à votre bibliothèque.",
     "Map exact compound identifiers with UniChem.": "Associer des identifiants exacts de composés avec UniChem.",
-    "Retrieve structure quality and validation statistics from PDBe.": "Récupérer la qualité des structures et les statistiques de validation de PDBe."
+    "Retrieve structure quality and validation statistics from PDBe.": "Récupérer la qualité des structures et les statistiques de validation de PDBe.",
+    "Export screening results (CSV)": "Exporter les résultats du tri (CSV)",
+    "Screening results could not be exported.": "Impossible d’exporter les résultats du tri.",
+    "Screening data changed during export. Please try again.": "Les données du tri ont changé pendant l’exportation. Réessayez."
   }
 }

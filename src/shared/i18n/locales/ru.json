@@ -8011,6 +8011,9 @@
     "References discovered by you or Agents will appear here for review.": "Источники, найденные вами или Агентами, появятся здесь для проверки.",
     "Review discovered references before they enter your library.": "Проверьте найденные источники перед добавлением в библиотеку.",
     "Map exact compound identifiers with UniChem.": "Сопоставить точные идентификаторы соединений с помощью UniChem.",
-    "Retrieve structure quality and validation statistics from PDBe.": "Получить показатели качества структуры и статистику валидации из PDBe."
+    "Retrieve structure quality and validation statistics from PDBe.": "Получить показатели качества структуры и статистику валидации из PDBe.",
+    "Export screening results (CSV)": "Экспортировать результаты отбора (CSV)",
+    "Screening results could not be exported.": "Не удалось экспортировать результаты отбора.",
+    "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку."
   }
 }

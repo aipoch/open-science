@@ -7704,6 +7704,9 @@
     "References discovered by you or Agents will appear here for review.": "Von Ihnen oder Agenten gefundene Referenzen erscheinen hier zur Prüfung.",
     "Review discovered references before they enter your library.": "Prüfen Sie gefundene Referenzen, bevor sie in Ihre Bibliothek gelangen.",
     "Map exact compound identifiers with UniChem.": "Exakte Verbindungskennungen mit UniChem zuordnen.",
-    "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen."
+    "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen.",
+    "Export screening results (CSV)": "Screening-Ergebnisse exportieren (CSV)",
+    "Screening results could not be exported.": "Die Screening-Ergebnisse konnten nicht exportiert werden.",
+    "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut."
   }
 }
