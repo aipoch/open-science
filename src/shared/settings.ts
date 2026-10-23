@@ -613,6 +613,7 @@ export type SettingsSnapshot = {
   // Application-wide proxy preference. Older documents without this field resolve to System.
   networkProxy?: NetworkProxySettings
   // Global Notebook REPL/Bash egress policy. Historical settings resolve to the safe defaults.
+  notebookFolderRestrictionEnabled?: boolean
   notebookNetwork?: NotebookNetworkSettings
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.

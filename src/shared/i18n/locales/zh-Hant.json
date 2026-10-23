@@ -7494,6 +7494,16 @@
     "No readable article text is available from this source.": "此來源暫無可讀取的文章內文。",
     "Drop files to attach to this reference": "拖放檔案以附加至此參考文獻",
     "Partial results": "部分結果",
-    "Existing attachments are kept. You can also add files from your device.": "保留現有附件，也可從裝置新增檔案。"
+    "Existing attachments are kept. You can also add files from your device.": "保留現有附件，也可從裝置新增檔案。",
+    "Notebook and Shell folder access": "Notebook 和命令列資料夾存取",
+    "Restrict WSL2 Shell folders": "限制 WSL2 命令列資料夾存取",
+    "Restrict Notebook and Shell folders": "限制 Notebook 和命令列資料夾存取",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "允許存取工作區、已授權資料夾以及工具所需檔案。此設定不控制智能體原生工具或遠端電腦。",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "變更此設定會停止正在執行的 Notebook 和命令列程序，並清除其記憶體中的變數。",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Windows 原生執行環境一律需要保護模式並保留資料夾限制。此開關僅適用於 WSL2 命令列。",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "無法確認資料夾限制的變更。請重新載入設定後再試。",
+    "Allow broader folder access?": "允許更廣泛的資料夾存取？",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "程式碼可以讀取和修改您的帳戶可存取的其他資料夾。網路規則和應用程式路徑保護仍然生效。",
+    "Allow broader folder access": "允許更廣泛的資料夾存取"
   }
 }

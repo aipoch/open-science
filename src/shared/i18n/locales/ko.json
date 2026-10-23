@@ -7492,6 +7492,16 @@
     "No readable article text is available from this source.": "이 출처에는 읽을 수 있는 논문 본문이 없습니다.",
     "Drop files to attach to this reference": "파일을 끌어다 놓아 이 참고 문헌에 첨부",
     "Partial results": "일부 결과",
-    "Existing attachments are kept. You can also add files from your device.": "기존 첨부 파일은 유지됩니다. 기기에서 파일을 추가할 수도 있습니다."
+    "Existing attachments are kept. You can also add files from your device.": "기존 첨부 파일은 유지됩니다. 기기에서 파일을 추가할 수도 있습니다.",
+    "Notebook and Shell folder access": "Notebook 및 셸 폴더 접근",
+    "Restrict WSL2 Shell folders": "WSL2 셸 폴더 제한",
+    "Restrict Notebook and Shell folders": "Notebook 및 셸 폴더 제한",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "워크스페이스, 승인된 폴더 및 도구에 필요한 파일에 대한 접근을 허용합니다. 에이전트 자체 도구나 원격 컴퓨터에는 적용되지 않습니다.",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "이 설정을 변경하면 실행 중인 Notebook 및 셸 프로세스가 중지되고 메모리의 변수가 지워집니다.",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Windows 기본 런타임은 항상 보호 모드가 필요하며 폴더 제한을 유지합니다. 이 스위치는 WSL2 셸에만 적용됩니다.",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "폴더 제한 변경을 확인하지 못했습니다. 설정을 다시 불러온 후 재시도하세요.",
+    "Allow broader folder access?": "더 넓은 폴더 접근을 허용할까요?",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "코드가 계정에서 접근할 수 있는 다른 폴더를 읽고 변경할 수 있습니다. 네트워크 규칙과 애플리케이션 경로 보호는 계속 적용됩니다.",
+    "Allow broader folder access": "더 넓은 폴더 접근 허용"
   }
 }

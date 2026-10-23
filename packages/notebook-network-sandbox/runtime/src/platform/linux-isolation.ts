@@ -161,7 +161,10 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   const guestRuntime = join(guestRuntimeRoot, basename(process.execPath))
   const runtimeSource = dirname(process.execPath)
   const guestPort = 3128
-  const hiddenTemporaryRoots = ['/tmp', ...(existsSync('/var/tmp') ? ['/var/tmp'] : [])]
+  const hiddenTemporaryRoots =
+    layout.restrictFolders === false
+      ? []
+      : ['/tmp', ...(existsSync('/var/tmp') ? ['/var/tmp'] : [])]
   const argumentsList = [
     '--die-with-parent',
     '--new-session',
@@ -170,7 +173,7 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     'ALL',
     // bubblewrap passes inherited descriptors through to the sandbox command. The descriptor count
     // is consumed by the gateway bridge below so its nested child inherits the same fd range.
-    '--ro-bind',
+    layout.restrictFolders === false ? '--bind' : '--ro-bind',
     '/',
     '/',
     '--tmpfs',
@@ -201,13 +204,17 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
     }
   }
 
-  const sensitiveReadRoots = [
-    '/home',
-    '/mnt',
-    '/media',
-    '/run/media',
-    ...(layout.privateRoot ? [layout.privateRoot] : [])
-  ]
+  const sensitiveReadRoots = (
+    layout.restrictFolders === false
+      ? []
+      : [
+          '/home',
+          '/mnt',
+          '/media',
+          '/run/media',
+          ...(layout.privateRoot ? [layout.privateRoot] : [])
+        ]
+  )
     .filter(
       (root, index, roots) => root !== '/' && roots.indexOf(root) === index && existsSync(root)
     )
@@ -235,7 +242,9 @@ const linuxLaunch = async (request: LinuxLaunchRequest): Promise<LinuxLaunch> =>
   // Only explicit grants may receive a read-only override. Binding an otherwise hidden deny-write path
   // would expose host data and can require creating a target beneath a sealed private root.
   for (const deniedRoot of layout.deniedWriteRoots) {
-    for (const grantedRoot of [...layout.readOnlyRoots, ...layout.readWriteRoots]) {
+    for (const grantedRoot of layout.restrictFolders === false
+      ? ['/']
+      : [...layout.readOnlyRoots, ...layout.readWriteRoots]) {
       const root = contains(grantedRoot, deniedRoot)
         ? deniedRoot
         : contains(deniedRoot, grantedRoot)

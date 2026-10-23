@@ -26,6 +26,48 @@ import { ViolationLog } from '../runtime/src/gateway/violation-log.js'
 const linuxIt = it.skipIf(process.platform === 'win32')
 
 describe('Notebook filesystem policy', () => {
+  it('relaxes folder isolation only when explicitly disabled and preserves explicit denies and network isolation', () => {
+    const root = mkdtempSync(join(tmpdir(), 'open-science-folder-policy-'))
+    try {
+      const denied = join(root, 'secret')
+      const protectedFile = join(root, 'runtime')
+      writeFileSync(denied, 'private')
+      writeFileSync(protectedFile, 'runtime')
+      const filesystem = {
+        privateRoot: root,
+        readOnlyRoots: [],
+        readWriteRoots: [],
+        deniedReadRoots: [denied],
+        deniedWriteRoots: [protectedFile]
+      }
+      for (const restrictFolders of [undefined, true, false]) {
+        const layout = normalizeFilesystemLayout({ ...filesystem, restrictFolders })
+        expect(hiddenByFilesystemLayout(layout, join(root, 'ordinary'))).toBe(
+          restrictFolders !== false
+        )
+        expect(hiddenByFilesystemLayout(layout, denied)).toBe(true)
+        const profile = seatbeltProfile({
+          command: 'true',
+          shell: '/bin/sh',
+          gatewayPort: 3128,
+          gatewayCredentials: { username: 'command', password: 'secret' },
+          env: {},
+          filesystem: { ...filesystem, restrictFolders }
+        })
+        expect(profile).toContain('(deny network*)')
+        expect(profile).toContain(
+          `(deny file-read* (subpath ${JSON.stringify(absolutePhysicalPath(denied))}))`
+        )
+        expect(profile).toContain(
+          `(deny file-write* (subpath ${JSON.stringify(absolutePhysicalPath(protectedFile))}))`
+        )
+        expect(profile.includes('(require-not (subpath')).toBe(restrictFolders !== false)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('deduplicates nested roots without widening them', () => {
     const root = mkdtempSync(join(tmpdir(), 'open-science-fs-'))
     const nested = join(root, 'nested')
@@ -305,81 +347,96 @@ describe('Notebook filesystem policy', () => {
     ).not.toContain('OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED')
   })
 
-  linuxIt('keeps hidden Linux mounts read-only while restoring workspace writes', async () => {
-    const privateRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-mount-'))
-    const readOnlyRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-input-'))
-    const bin = join(privateRoot, 'bin')
-    const workspace = join(privateRoot, 'workspace')
-    mkdirSync(bin)
-    mkdirSync(workspace)
-    for (const executable of ['bwrap', 'sh']) {
-      const path = join(bin, executable)
-      writeFileSync(path, '#!/bin/sh\nexit 0\n')
-      chmodSync(path, 0o755)
-    }
-
-    const launch = await linuxLaunch({
-      command: 'true',
-      shell: 'sh',
-      cwd: workspace,
-      gatewayPort: 9,
-      gatewayCredentials: { username: 'command', password: 'secret' },
-      env: { PATH: bin },
-      inheritedFileDescriptorCount: 1,
-      filesystem: {
-        privateRoot,
-        readOnlyRoots: [readOnlyRoot],
-        readWriteRoots: [workspace],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
+  linuxIt.each([true, false])(
+    'projects Linux folder restriction %s while retaining denied roots',
+    async (restrictFolders) => {
+      const privateRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-mount-'))
+      const readOnlyRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-input-'))
+      const bin = join(privateRoot, 'bin')
+      const workspace = join(privateRoot, 'workspace')
+      mkdirSync(bin)
+      mkdirSync(workspace)
+      for (const executable of ['bwrap', 'sh']) {
+        const path = join(bin, executable)
+        writeFileSync(path, '#!/bin/sh\nexit 0\n')
+        chmodSync(path, 0o755)
       }
-    })
 
-    try {
-      const physicalRoot = realpathSync(privateRoot)
-      const physicalReadOnlyRoot = realpathSync(readOnlyRoot)
-      const physicalWorkspace = realpathSync(workspace)
-      const remountIndex = launch.argv.findIndex(
-        (value, index) => value === '--remount-ro' && launch.argv[index + 1] === physicalRoot
-      )
-      const writableIndex = launch.argv.findIndex(
-        (value, index) =>
-          value === '--bind' &&
-          launch.argv[index + 1] === physicalWorkspace &&
-          launch.argv[index + 2] === physicalWorkspace
-      )
-      const readOnlyIndex = launch.argv.findIndex(
-        (value, index) =>
-          value === '--ro-bind' &&
-          launch.argv[index + 1] === physicalReadOnlyRoot &&
-          launch.argv[index + 2] === physicalReadOnlyRoot
-      )
-
-      expect(remountIndex).toBeGreaterThan(0)
-      expect(writableIndex).toBeGreaterThan(remountIndex)
-      if (process.platform === 'linux') expect(readOnlyIndex).toBeGreaterThan(0)
-      expect(launch.argv).not.toContain('--preserve-fds')
-      expect(launch.argv.slice(-2)).toEqual(['1', ''])
-      for (const temporaryRoot of ['/tmp', '/var/tmp']) {
-        const tmpfsIndex = launch.argv.findIndex(
-          (value, index) => value === '--tmpfs' && launch.argv[index + 1] === temporaryRoot
-        )
-        const temporaryRemountIndex = launch.argv.findIndex(
-          (value, index) => value === '--remount-ro' && launch.argv[index + 1] === temporaryRoot
-        )
-        expect(tmpfsIndex).toBeGreaterThan(0)
-        if (process.platform === 'linux' && physicalReadOnlyRoot.startsWith(`${temporaryRoot}/`)) {
-          expect(readOnlyIndex).toBeGreaterThan(tmpfsIndex)
-          expect(temporaryRemountIndex).toBeGreaterThan(readOnlyIndex)
+      const launch = await linuxLaunch({
+        command: 'true',
+        shell: 'sh',
+        cwd: workspace,
+        gatewayPort: 9,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        env: { PATH: bin },
+        inheritedFileDescriptorCount: 1,
+        filesystem: {
+          restrictFolders,
+          privateRoot,
+          readOnlyRoots: [readOnlyRoot],
+          readWriteRoots: [workspace],
+          deniedReadRoots: [],
+          deniedWriteRoots: [bin]
         }
-        expect(temporaryRemountIndex).toBeGreaterThan(writableIndex)
+      })
+
+      try {
+        const physicalRoot = realpathSync(privateRoot)
+        const physicalReadOnlyRoot = realpathSync(readOnlyRoot)
+        const physicalWorkspace = realpathSync(workspace)
+        const remountIndex = launch.argv.findIndex(
+          (value, index) => value === '--remount-ro' && launch.argv[index + 1] === physicalRoot
+        )
+        const writableIndex = launch.argv.findIndex(
+          (value, index) =>
+            value === '--bind' &&
+            launch.argv[index + 1] === physicalWorkspace &&
+            launch.argv[index + 2] === physicalWorkspace
+        )
+        const readOnlyIndex = launch.argv.findIndex(
+          (value, index) =>
+            value === '--ro-bind' &&
+            launch.argv[index + 1] === physicalReadOnlyRoot &&
+            launch.argv[index + 2] === physicalReadOnlyRoot
+        )
+
+        if (!restrictFolders) {
+          const args = launch.argv.join(' ')
+          expect(args).toContain('--bind / /')
+          expect(args).toContain('--unshare-all')
+          expect(args).not.toContain(`--tmpfs ${physicalRoot}`)
+          expect(args).toContain(`--ro-bind ${realpathSync(bin)} ${realpathSync(bin)}`)
+          return
+        }
+        expect(remountIndex).toBeGreaterThan(0)
+        expect(writableIndex).toBeGreaterThan(remountIndex)
+        if (process.platform === 'linux') expect(readOnlyIndex).toBeGreaterThan(0)
+        expect(launch.argv).not.toContain('--preserve-fds')
+        expect(launch.argv.slice(-2)).toEqual(['1', ''])
+        for (const temporaryRoot of ['/tmp', '/var/tmp']) {
+          const tmpfsIndex = launch.argv.findIndex(
+            (value, index) => value === '--tmpfs' && launch.argv[index + 1] === temporaryRoot
+          )
+          const temporaryRemountIndex = launch.argv.findIndex(
+            (value, index) => value === '--remount-ro' && launch.argv[index + 1] === temporaryRoot
+          )
+          expect(tmpfsIndex).toBeGreaterThan(0)
+          if (
+            process.platform === 'linux' &&
+            physicalReadOnlyRoot.startsWith(`${temporaryRoot}/`)
+          ) {
+            expect(readOnlyIndex).toBeGreaterThan(tmpfsIndex)
+            expect(temporaryRemountIndex).toBeGreaterThan(readOnlyIndex)
+          }
+          expect(temporaryRemountIndex).toBeGreaterThan(writableIndex)
+        }
+      } finally {
+        await launch.release()
+        rmSync(privateRoot, { force: true, recursive: true })
+        rmSync(readOnlyRoot, { force: true, recursive: true })
       }
-    } finally {
-      await launch.release()
-      rmSync(privateRoot, { force: true, recursive: true })
-      rmSync(readOnlyRoot, { force: true, recursive: true })
     }
-  })
+  )
 
   it('reports each recorded violation once for persistent kernels', () => {
     const log = new ViolationLog()

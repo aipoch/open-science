@@ -76,6 +76,10 @@ window.api = {
   }
 } as unknown as typeof window.api
 useSettingsStore.setState({
+  notebookFolderRestrictionEnabled: true,
+  setNotebookFolderRestrictionEnabled: async (enabled) => {
+    useSettingsStore.setState({ notebookFolderRestrictionEnabled: enabled })
+  },
   skills: [],
   previewSkillZip: async () => ({
     previews: [

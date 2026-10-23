@@ -20,6 +20,8 @@ export type NotebookTrustBundle = Readonly<{
 }>
 
 export type NotebookFilesystemPolicy = Readonly<{
+  /** Only an explicit false relaxes folder isolation; explicit deny rules remain enforced. */
+  restrictFolders?: boolean
   privateRoot?: string
   readOnlyRoots: readonly string[]
   /** Incidental Windows PATH directories; inability to grant them must not block the workload. */

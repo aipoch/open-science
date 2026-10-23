@@ -97,6 +97,7 @@ const expectedChannels = [
   'settings:set-app-icon-variant',
   'settings:set-close-preference',
   'settings:set-default-permission-profile',
+  'settings:set-notebook-folder-restriction-enabled',
   'settings:set-notifications-enabled',
   'settings:set-show-notification-content',
   'settings:set-package-mirror',
@@ -803,4 +804,25 @@ it('keeps native Skill sources and Connector export previews behind desktop auth
     })
     expect(serviceMethod(method)).toHaveBeenCalledExactlyOnceWith(...args)
   }
+})
+
+it('keeps folder isolation writes local and validates them before mutation', async () => {
+  const { dependencies, serviceMethod } = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+  const command = settingsCoreApplicationCommands.setNotebookFolderRestrictionEnabled
+  await expect(
+    router.dispatcher.invoke(command, invocation([{ enabled: false }] as const, 'remote'))
+  ).rejects.toThrow()
+  await expect(
+    router.dispatcher.invoke(
+      command,
+      invocation([{ enabled: 'false' as unknown as boolean }] as const)
+    )
+  ).rejects.toThrow('Invalid Notebook folder restriction flag')
+  expect(serviceMethod('setNotebookFolderRestrictionEnabled')).not.toHaveBeenCalled()
+  await router.dispatcher.invoke(command, invocation([{ enabled: false }] as const))
+  expect(serviceMethod('setNotebookFolderRestrictionEnabled')).toHaveBeenCalledExactlyOnceWith(
+    false
+  )
 })

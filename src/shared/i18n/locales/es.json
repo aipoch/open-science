@@ -7822,6 +7822,16 @@
     "No readable article text is available from this source.": "Esta fuente no dispone de un texto del artículo que se pueda leer.",
     "Drop files to attach to this reference": "Soltar archivos para adjuntarlos a esta referencia",
     "Partial results": "Resultados parciales",
-    "Existing attachments are kept. You can also add files from your device.": "Se conservan los archivos adjuntos existentes. También puede añadir archivos desde su equipo."
+    "Existing attachments are kept. You can also add files from your device.": "Se conservan los archivos adjuntos existentes. También puede añadir archivos desde su equipo.",
+    "Notebook and Shell folder access": "Acceso a carpetas de Notebook y la línea de comandos",
+    "Restrict WSL2 Shell folders": "Restringir carpetas de la línea de comandos de WSL2",
+    "Restrict Notebook and Shell folders": "Restringir carpetas de Notebook y la línea de comandos",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "Permitir el espacio de trabajo, las carpetas autorizadas y los archivos necesarios para las herramientas. Esto no controla las herramientas nativas de los agentes ni los equipos remotos.",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "Cambiar este ajuste detiene los procesos de Notebook y la línea de comandos en ejecución y borra sus variables de la memoria.",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Los entornos nativos de Windows siempre requieren el modo protegido y mantienen las restricciones de carpetas. Este interruptor solo se aplica a la línea de comandos de WSL2.",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "No se pudo confirmar el cambio de las restricciones de carpetas. Vuelva a cargar la configuración e inténtelo de nuevo.",
+    "Allow broader folder access?": "¿Permitir un acceso más amplio a las carpetas?",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "El código puede leer y modificar otras carpetas accesibles desde su cuenta. Las reglas de red y la protección de las rutas de la aplicación siguen vigentes.",
+    "Allow broader folder access": "Permitir un acceso más amplio a las carpetas"
   }
 }

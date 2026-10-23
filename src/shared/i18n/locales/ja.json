@@ -7494,6 +7494,16 @@
     "No readable article text is available from this source.": "この取得元には読み取り可能な論文本文がありません。",
     "Drop files to attach to this reference": "ファイルをドロップしてこの文献に添付",
     "Partial results": "一部の結果",
-    "Existing attachments are kept. You can also add files from your device.": "既存の添付ファイルは保持されます。お使いのデバイスからファイルを追加することもできます。"
+    "Existing attachments are kept. You can also add files from your device.": "既存の添付ファイルは保持されます。お使いのデバイスからファイルを追加することもできます。",
+    "Notebook and Shell folder access": "Notebook とシェルのフォルダーアクセス",
+    "Restrict WSL2 Shell folders": "WSL2 シェルのフォルダーを制限",
+    "Restrict Notebook and Shell folders": "Notebook とシェルのフォルダーを制限",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "ワークスペース、承認済みフォルダー、ツールに必要なファイルへのアクセスを許可します。エージェント固有のツールやリモートコンピューターは対象外です。",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "この設定を変更すると、実行中の Notebook とシェルのプロセスが停止し、メモリ内の変数が消去されます。",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Windows ネイティブのランタイムでは常に保護モードが必要で、フォルダー制限が維持されます。このスイッチは WSL2 シェルのみに適用されます。",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "フォルダー制限の変更を確認できませんでした。設定を再読み込みして、もう一度お試しください。",
+    "Allow broader folder access?": "より広いフォルダーアクセスを許可しますか？",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "コードはアカウントがアクセスできる他のフォルダーを読み取り、変更できます。ネットワークルールとアプリケーションパスの保護は引き続き適用されます。",
+    "Allow broader folder access": "より広いフォルダーアクセスを許可"
   }
 }

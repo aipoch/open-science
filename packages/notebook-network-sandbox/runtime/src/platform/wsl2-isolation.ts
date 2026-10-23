@@ -55,6 +55,7 @@ type Wsl2ReleaseResult = Readonly<{
 }>
 
 type MappedFilesystemLayout = Readonly<{
+  restrictFolders?: boolean
   cwd: string
   readOnlyRoots: string[]
   readWriteRoots: string[]
@@ -696,6 +697,7 @@ const mapFilesystemLayout = async (
   request: Wsl2LaunchRequest,
   map: (path: string) => Promise<string>
 ): Promise<MappedFilesystemLayout> => ({
+  ...(request.filesystem.restrictFolders === false ? { restrictFolders: false } : {}),
   cwd: await map(request.cwd),
   readOnlyRoots: await Promise.all(unique(request.filesystem.readOnlyRoots).map(map)),
   readWriteRoots: await Promise.all(unique(request.filesystem.readWriteRoots).map(map)),
@@ -746,7 +748,8 @@ const buildBubblewrapArguments = (
 ): string[] => {
   const { cwd, readOnlyRoots, readWriteRoots, deniedReadRoots, deniedWriteRoots, privateRoot } =
     filesystem
-  const exposedRoots = [...readOnlyRoots, ...readWriteRoots]
+  const restricted = filesystem.restrictFolders !== false
+  const exposedRoots = restricted ? [...readOnlyRoots, ...readWriteRoots] : ['/']
   const needsExplicitDeny = (path: string): boolean =>
     !privateRoot ||
     !containsPosixPath(privateRoot, path) ||
@@ -762,7 +765,7 @@ const buildBubblewrapArguments = (
     '--unshare-all',
     '--cap-drop',
     'ALL',
-    '--ro-bind',
+    restricted ? '--ro-bind' : '--bind',
     '/',
     '/',
     '--tmpfs',
@@ -772,12 +775,7 @@ const buildBubblewrapArguments = (
     '--bind',
     bridgeSocketPath,
     '/run/open-science-notebook/gateway.sock',
-    '--tmpfs',
-    '/home',
-    '--tmpfs',
-    '/mnt',
-    '--tmpfs',
-    '/media',
+    ...(restricted ? ['--tmpfs', '/home', '--tmpfs', '/mnt', '--tmpfs', '/media'] : []),
     '--tmpfs',
     '/tmp',
     '--dir',
@@ -790,12 +788,16 @@ const buildBubblewrapArguments = (
 
   const coveredBySensitiveRoot = (path: string): boolean =>
     ['/home', '/mnt', '/media'].some((root) => containsPosixPath(root, path))
-  const sensitiveRoots = unique([
-    '/home',
-    '/mnt',
-    '/media',
-    ...(privateRoot && !coveredBySensitiveRoot(privateRoot) ? [privateRoot] : [])
-  ])
+  const sensitiveRoots = unique(
+    restricted
+      ? [
+          '/home',
+          '/mnt',
+          '/media',
+          ...(privateRoot && !coveredBySensitiveRoot(privateRoot) ? [privateRoot] : [])
+        ]
+      : []
+  )
   const mountDestinations = unique([
     ...readOnlyRoots,
     ...readWriteRoots,

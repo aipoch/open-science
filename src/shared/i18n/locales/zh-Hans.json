@@ -7494,6 +7494,16 @@
     "No readable article text is available from this source.": "此来源暂无可读取的文章正文。",
     "Drop files to attach to this reference": "拖放文件以附加到此参考文献",
     "Partial results": "部分结果",
-    "Existing attachments are kept. You can also add files from your device.": "保留现有附件，也可从设备添加文件。"
+    "Existing attachments are kept. You can also add files from your device.": "保留现有附件，也可从设备添加文件。",
+    "Notebook and Shell folder access": "Notebook 和命令行文件夹访问",
+    "Restrict WSL2 Shell folders": "限制 WSL2 命令行文件夹访问",
+    "Restrict Notebook and Shell folders": "限制 Notebook 和命令行文件夹访问",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "允许访问工作区、已授权文件夹以及工具所需文件。此设置不控制智能体原生工具或远程计算机。",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "更改此设置会停止正在运行的 Notebook 和命令行进程，并清除其内存中的变量。",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Windows 原生运行时始终需要保护模式并保留文件夹限制。此开关仅适用于 WSL2 命令行。",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "无法确认文件夹限制的更改。请重新加载设置后重试。",
+    "Allow broader folder access?": "允许更广泛的文件夹访问？",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "代码可以读取和修改您的账户可访问的其他文件夹。网络规则和应用程序路径保护仍然生效。",
+    "Allow broader folder access": "允许更广泛的文件夹访问"
   }
 }

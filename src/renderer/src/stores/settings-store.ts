@@ -136,6 +136,7 @@ type SettingsStoreData = RuntimeSetupState &
     // Configured package mirror (conda/pip); undefined means automatic mirror selection.
     packageMirror?: PackageMirror
     networkProxy: NetworkProxySettings
+    notebookFolderRestrictionEnabled?: boolean
     notebookNetwork: NotebookNetworkSettings
     // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
     reasoningEffort: ReasoningEffort
@@ -209,6 +210,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   encryptionAvailable: false,
   packageMirror: undefined,
   networkProxy: DEFAULT_NETWORK_PROXY_SETTINGS,
+  notebookFolderRestrictionEnabled: true,
   notebookNetwork: DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   reviewerModel: { mode: 'inherit' },
@@ -239,6 +241,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   networkProxy: snapshot.networkProxy ?? DEFAULT_NETWORK_PROXY_SETTINGS,
+  notebookFolderRestrictionEnabled: snapshot.notebookFolderRestrictionEnabled !== false,
   notebookNetwork: snapshot.notebookNetwork ?? DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: snapshot.reasoningEffort,
   reviewerModel: snapshot.reviewerModel ?? { mode: 'inherit' },

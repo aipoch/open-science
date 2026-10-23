@@ -19,6 +19,41 @@ const reconciled = async (): Promise<boolean> => true
 afterEach(() => vi.unstubAllEnvs())
 
 describe('WSL2 sandbox adapter', () => {
+  it('relaxes host folder mounts without dropping the network namespace or explicit denies', async () => {
+    const launch = await wsl2Launch({
+      target: { kind: 'wsl2', profileId: 'folder-policy', distro: 'Ubuntu-22.04', user: 'fixture' },
+      command: 'true',
+      cwd: '/mnt/c/workspace',
+      env: {},
+      filesystem: {
+        restrictFolders: false,
+        privateRoot: '/mnt/c/private',
+        readOnlyRoots: [],
+        readWriteRoots: ['/mnt/c/workspace'],
+        deniedReadRoots: ['/mnt/c/private/secret'],
+        deniedWriteRoots: ['/mnt/c/private/runtime']
+      },
+      reconcileGuest: reconciled,
+      mapPath: async (path) => path,
+      gatewayPort: 4312,
+      gatewayCredentials: { username: 'command-user', password: 'command-secret' },
+      openBridge: async () => ({
+        socketPath: '/tmp/fixture/gateway.sock',
+        close: async () => ({ networkClosed: true, temporaryResourcesRemoved: true })
+      })
+    })
+    try {
+      const args = launch.argv.join(' ')
+      expect(args).toContain('--bind / /')
+      expect(args).toContain('--unshare-all')
+      expect(args).not.toContain('--tmpfs /mnt ')
+      expect(args).toContain('--tmpfs /mnt/c/private/secret')
+      expect(args).toContain('--ro-bind /mnt/c/private/runtime /mnt/c/private/runtime')
+    } finally {
+      await launch.release()
+    }
+  })
+
   it('creates standalone read-only mount destinations before sealing the private scaffolding', async () => {
     const roots = ['/mnt/d/app/notebook-inputs/session/attachment', '/mnt/d/app/trust/ca.pem']
     const launch = await wsl2Launch({

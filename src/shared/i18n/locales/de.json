@@ -7654,6 +7654,16 @@
     "No readable article text is available from this source.": "Diese Quelle bietet keinen lesbaren Artikeltext.",
     "Drop files to attach to this reference": "Dateien ablegen, um sie dieser Referenz anzuhängen",
     "Partial results": "Teilergebnisse",
-    "Existing attachments are kept. You can also add files from your device.": "Vorhandene Anhänge bleiben erhalten. Sie können auch Dateien von Ihrem Gerät hinzufügen."
+    "Existing attachments are kept. You can also add files from your device.": "Vorhandene Anhänge bleiben erhalten. Sie können auch Dateien von Ihrem Gerät hinzufügen.",
+    "Notebook and Shell folder access": "Ordnerzugriff für Notebook und Befehlszeile",
+    "Restrict WSL2 Shell folders": "Ordner für die WSL2-Befehlszeile beschränken",
+    "Restrict Notebook and Shell folders": "Ordner für Notebook und Befehlszeile beschränken",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "Zugriff auf den Arbeitsbereich, freigegebene Ordner und für Tools erforderliche Dateien erlauben. Dies steuert weder agenteigene Tools noch entfernte Computer.",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "Eine Änderung beendet laufende Notebook- und Befehlszeilenprozesse und löscht ihre Variablen im Arbeitsspeicher.",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Native Windows-Laufzeitumgebungen erfordern immer den geschützten Modus und behalten Ordnerbeschränkungen bei. Dieser Schalter gilt nur für die WSL2-Befehlszeile.",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "Die Änderung der Ordnerbeschränkung konnte nicht bestätigt werden. Laden Sie die Einstellungen neu und versuchen Sie es erneut.",
+    "Allow broader folder access?": "Umfassenderen Ordnerzugriff erlauben?",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "Code kann andere Ordner lesen und ändern, auf die Ihr Konto zugreifen kann. Netzwerkregeln und geschützte Anwendungspfade bleiben wirksam.",
+    "Allow broader folder access": "Umfassenderen Ordnerzugriff erlauben"
   }
 }

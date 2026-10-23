@@ -697,6 +697,10 @@ class SettingsRepository {
     })
   }
 
+  async setNotebookFolderRestrictionEnabled(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, notebookFolderRestrictionEnabled: enabled }))
+  }
+
   async setNotebookNetwork(value: NotebookNetworkSettings): Promise<StoredSettings> {
     const notebookNetwork = normalizeNotebookNetworkSettings(value)
     return this.mutate((settings) => ({ ...settings, notebookNetwork }))

@@ -258,6 +258,8 @@ export type SettingsServiceOptions = {
   // Projects a persisted proxy preference into the live Electron Session and future child process
   // environment. Tests omit it to keep SettingsService free of host-global side effects.
   applyNetworkProxy?: (settings: NetworkProxySettings) => Promise<void>
+  // Runs the settings commit while interpreter teardown and new execution admission are fenced.
+  withNotebookFolderPolicyChange?: (commit: () => Promise<void>) => Promise<void>
   // Applies a committed Notebook egress policy to live kernels without requiring a restart.
   applyNotebookNetwork?: (settings: NotebookNetworkSettings) => Promise<void>
   validatePackageMirror?: (settings: SetPackageMirrorRequest) => Promise<void>
@@ -455,6 +457,8 @@ class SettingsService {
   private readonly configRoot: string
   private readonly networkProxy: NetworkProxySettingsOwner
   private readonly notebookNetwork: NotebookNetworkSettingsOwner
+  private readonly withNotebookFolderPolicyChange: (commit: () => Promise<void>) => Promise<void>
+  private notebookFolderPolicyWrite: Promise<unknown> = Promise.resolve()
   private readonly packageMirror: PackageMirrorSettingsOwner
   private readonly getNotebookNetworkStatusImpl: () => Promise<NotebookNetworkStatus>
   private readonly installNotebookNetworkImpl: () => Promise<{ cancelled: boolean }>
@@ -506,6 +510,11 @@ class SettingsService {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
     this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
+    this.withNotebookFolderPolicyChange =
+      options.withNotebookFolderPolicyChange ??
+      (async () => {
+        throw new Error('Notebook policy lifecycle is not ready.')
+      })
     this.classification = new ClassificationSettingsOwner(
       this.repository,
       undefined,
@@ -714,6 +723,24 @@ class SettingsService {
 
   setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
     return this.networkProxy.set(request)
+  }
+
+  async getNotebookFolderRestrictionEnabled(): Promise<boolean> {
+    return (await this.repository.getSettings()).notebookFolderRestrictionEnabled !== false
+  }
+
+  setNotebookFolderRestrictionEnabled(enabled: boolean): Promise<SettingsSnapshot> {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid Notebook folder restriction flag.')
+    const operation = this.notebookFolderPolicyWrite.then(async () => {
+      if ((await this.getNotebookFolderRestrictionEnabled()) !== enabled) {
+        await this.withNotebookFolderPolicyChange(async () => {
+          await this.repository.setNotebookFolderRestrictionEnabled(enabled)
+        })
+      }
+      return this.getSettingsView()
+    })
+    this.notebookFolderPolicyWrite = operation.catch(() => undefined)
+    return operation
   }
 
   async setNotebookNetwork(request: SetNotebookNetworkRequest): Promise<NotebookNetworkSettings> {

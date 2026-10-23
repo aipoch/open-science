@@ -288,6 +288,7 @@ export type StoredSettings = {
   // Application-wide proxy preference. Absent in historical documents means follow the system.
   networkProxy?: NetworkProxySettings
   // Application-wide egress policy for Notebook REPL and Notebook Bash processes.
+  notebookFolderRestrictionEnabled?: boolean
   notebookNetwork?: NotebookNetworkSettings
   // A candidate profile only. Selection is not an execution enablement signal.
   wslSelection?: WslSelection

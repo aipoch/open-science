@@ -91,6 +91,7 @@ import {
   readGitHubToken,
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
+  readNotebookFolderRestrictionEnabled,
   readNotificationsEnabled,
   readShowNotificationContent,
   readProjectFilesFilter,
@@ -241,6 +242,13 @@ const registerSettingsIpcHandlers = ({
       log.info('set notifications enabled requested', { enabled })
       return snapshotCommits.currentSnapshotAfter(service.setNotificationsEnabled(enabled))
     }
+  )
+  ipcMainHandle(
+    'settings:set-notebook-folder-restriction-enabled',
+    async (_event, request: { enabled: boolean }) =>
+      snapshotCommits.currentSnapshotAfter(
+        service.setNotebookFolderRestrictionEnabled(readNotebookFolderRestrictionEnabled(request))
+      )
   )
   ipcMainHandle(
     'settings:set-show-notification-content',
