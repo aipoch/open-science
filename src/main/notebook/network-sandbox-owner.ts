@@ -194,6 +194,7 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
+  getFolderRestrictionEnabled?: () => Promise<boolean>
   persistAlwaysAllow: (hostname: string) => Promise<NotebookNetworkSettings>
   requestDecision: (request: NotebookNetworkDecisionRequest) => Promise<NotebookNetworkDecision>
   getParentProxy?: () => Promise<
@@ -558,6 +559,19 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     temporaryOwner: NotebookNetworkSandboxOwner = this
   ): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
+    const restrictFolders =
+      (this.platform === 'win32' && invocation.target?.kind !== 'wsl2') ||
+      (await this.options.getFolderRestrictionEnabled?.()) !== false
+    if (
+      invocation.windowsProtectionRequired === true &&
+      this.platform === 'win32' &&
+      invocation.target?.kind !== 'wsl2' &&
+      !(await this.windowsProtectionConfigured())
+    ) {
+      throw new Error(
+        'Notebook folder restrictions require Windows protected mode. Prepare protection in Settings before running code.'
+      )
+    }
     assertProcessTreeSupport(this.platform)
     const runtimeAccessRevision = this.runtimeAccessRevision
     await this.initialize()
@@ -612,6 +626,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { windowsShellControlPipe: invocation.windowsShellControlPipe }
           : {}),
         filesystem: {
+          restrictFolders,
           privateRoot: homedir(),
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,

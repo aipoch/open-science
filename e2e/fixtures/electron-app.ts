@@ -809,6 +809,20 @@ class ElectronAppHarness implements ElectronApp {
         `\n--- Node backend: ${file} ---\n${await readFile(join(backendLogDirectory, file), 'utf8')}`
       )
     }
+    const sandboxRoot = join(this.roots.storageRoot, 'notebook-sandbox')
+    for (const installation of await readdir(sandboxRoot).catch(() => [])) {
+      const state = await readFile(join(sandboxRoot, installation, 'acl-state.json'), 'utf8').catch(
+        () => undefined
+      )
+      if (!state) continue
+      const { leases } = JSON.parse(state) as {
+        leases: Array<{ grants: Array<{ path: string; access: string }> }>
+      }
+      await appendFile(
+        destination,
+        `\n--- Active Notebook ACL roots ---\n${JSON.stringify(leases.map(({ grants }) => grants.map(({ path, access }) => ({ path, access }))))}\n`
+      )
+    }
     if (this.flushTimeline) {
       await appendFile(
         destination,

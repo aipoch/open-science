@@ -69,7 +69,7 @@ export type NotebookSandboxInvocation = Readonly<{
   superviseProcessTree?: boolean
   /** Native Windows host forwards its stdin into this private Shell control pipe. */
   windowsShellControlPipe?: string
-  /** Transient R admission decision; launch must retain this protection requirement. */
+  /** Execution admission requirement, retained through launch; installers leave mode selection unchanged. */
   windowsProtectionRequired?: boolean
   /** A durable grant used for admission must still be authorized at launch. */
   windowsRuntimeAccessRequired?: boolean

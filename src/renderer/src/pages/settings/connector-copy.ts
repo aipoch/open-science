@@ -5,6 +5,10 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'cancer-models')
+    return t(
+      'Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.'
+    )
   if (connector.id === 'tcia')
     return t('Public cancer imaging collections and series metadata from TCIA.')
   if (connector.id === 'kegg')
@@ -307,6 +311,16 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Run a bounded Bgee SPARQL expression query.')
     case 'expression/bgee_download_links':
       return t('Build official Bgee expression download links.')
+    case 'cancer-models/depmap_search_models':
+      return t('Search DepMap cell models and their identity metadata.')
+    case 'cancer-models/depmap_gene_expression':
+      return t('Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.')
+    case 'cancer-models/depmap_copy_number':
+      return t('Fetch DepMap/CCLE gene copy number relative to cell model ploidy.')
+    case 'cancer-models/depmap_gene_dependency':
+      return t('Fetch DepMap Chronos gene effects for a gene and selected cell models.')
+    case 'cancer-models/depmap_drug_response':
+      return t('Fetch DepMap PRISM drug response AUC values for a compound.')
     case 'cancer-models/cbioportal_mutation_frequency':
       return t('Calculate cBioPortal mutation frequencies using samples profiled for the gene.')
 

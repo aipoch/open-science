@@ -7497,6 +7497,16 @@
     "Drop files to attach to this reference": "파일을 끌어다 놓아 이 참고 문헌에 첨부",
     "Partial results": "일부 결과",
     "Existing attachments are kept. You can also add files from your device.": "기존 첨부 파일은 유지됩니다. 기기에서 파일을 추가할 수도 있습니다.",
+    "Notebook and Shell folder access": "Notebook 및 셸 폴더 접근",
+    "Restrict WSL2 Shell folders": "WSL2 셸 폴더 제한",
+    "Restrict Notebook and Shell folders": "Notebook 및 셸 폴더 제한",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "워크스페이스, 승인된 폴더 및 도구에 필요한 파일에 대한 접근을 허용합니다. 에이전트 자체 도구나 원격 컴퓨터에는 적용되지 않습니다.",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "이 설정을 변경하면 실행 중인 Notebook 및 셸 프로세스가 중지되고 메모리의 변수가 지워집니다.",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Windows 기본 런타임은 항상 보호 모드가 필요하며 폴더 제한을 유지합니다. 이 스위치는 WSL2 셸에만 적용됩니다.",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "폴더 제한 변경을 확인하지 못했습니다. 설정을 다시 불러온 후 재시도하세요.",
+    "Allow broader folder access?": "더 넓은 폴더 접근을 허용할까요?",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "코드가 계정에서 접근할 수 있는 다른 폴더를 읽고 변경할 수 있습니다. 네트워크 규칙과 애플리케이션 경로 보호는 계속 적용됩니다.",
+    "Allow broader folder access": "더 넓은 폴더 접근 허용",
     "Public cancer imaging collections and series metadata from TCIA.": "TCIA의 공개 암 영상 컬렉션 및 시리즈 메타데이터.",
     "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG 경로, 항목 및 유전자 매핑. 학술 용도 및 라이선스 제한이 적용됩니다.",
     "Search public TCIA imaging collections.": "TCIA 공개 영상 컬렉션을 검색합니다.",
@@ -7571,6 +7581,12 @@
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "이 세션이 읽기 전용이거나 사용 중 또는 복구 중이면 재현할 수 없습니다.",
     "Captured R packages: {{count}}_other": "캡처된 R 패키지: {{count}}",
     "Map exact compound identifiers with UniChem.": "UniChem으로 정확히 일치하는 화합물 식별자를 매핑합니다.",
-    "Retrieve structure quality and validation statistics from PDBe.": "PDBe에서 구조 품질 및 검증 통계를 가져옵니다."
+    "Retrieve structure quality and validation statistics from PDBe.": "PDBe에서 구조 품질 및 검증 통계를 가져옵니다.",
+    "Search DepMap cell models and their identity metadata.": "DepMap 세포 모델과 식별 메타데이터를 검색합니다.",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "지정한 유전자와 선택한 세포 모델의 DepMap Chronos 유전자 효과를 가져옵니다.",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "지정한 화합물의 DepMap PRISM 약물 반응 AUC 값을 가져옵니다.",
+    "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "지정한 유전자의 DepMap/CCLE RNA 발현량을 log2(TPM+1) 단위로 가져옵니다.",
+    "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "세포 모델의 배수성 대비 DepMap/CCLE 유전자 복제수를 가져옵니다.",
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터."
   }
 }

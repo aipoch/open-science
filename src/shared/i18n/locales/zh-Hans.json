@@ -7499,6 +7499,16 @@
     "Drop files to attach to this reference": "拖放文件以附加到此参考文献",
     "Partial results": "部分结果",
     "Existing attachments are kept. You can also add files from your device.": "保留现有附件，也可从设备添加文件。",
+    "Notebook and Shell folder access": "Notebook 和命令行文件夹访问",
+    "Restrict WSL2 Shell folders": "限制 WSL2 命令行文件夹访问",
+    "Restrict Notebook and Shell folders": "限制 Notebook 和命令行文件夹访问",
+    "Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.": "允许访问工作区、已授权文件夹以及工具所需文件。此设置不控制智能体原生工具或远程计算机。",
+    "Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.": "更改此设置会停止正在运行的 Notebook 和命令行进程，并清除其内存中的变量。",
+    "Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.": "Windows 原生运行时始终需要保护模式并保留文件夹限制。此开关仅适用于 WSL2 命令行。",
+    "Could not confirm the folder restriction change. Reload Settings and try again.": "无法确认文件夹限制的更改。请重新加载设置后重试。",
+    "Allow broader folder access?": "允许更广泛的文件夹访问？",
+    "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "代码可以读取和修改您的账户可访问的其他文件夹。网络规则和应用程序路径保护仍然生效。",
+    "Allow broader folder access": "允许更广泛的文件夹访问",
     "Public cancer imaging collections and series metadata from TCIA.": "TCIA 公开肿瘤影像数据集和序列元数据。",
     "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG 通路、条目和基因映射。适用学术用途及许可限制。",
     "Search public TCIA imaging collections.": "搜索 TCIA 公开影像数据集。",
@@ -7573,6 +7583,12 @@
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "此会话处于只读、忙碌或恢复状态时，无法复现。",
     "Captured R packages: {{count}}_other": "已捕获的 R 软件包：{{count}}",
     "Map exact compound identifiers with UniChem.": "通过 UniChem 映射精确的化合物标识符。",
-    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。"
+    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。",
+    "Search DepMap cell models and their identity metadata.": "搜索 DepMap 细胞模型及其身份元数据。",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "获取指定基因及所选细胞模型的 DepMap Chronos 基因效应。",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "获取指定化合物的 DepMap PRISM 药物响应 AUC 值。",
+    "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "获取指定基因的 DepMap/CCLE RNA 表达量，单位为 log2(TPM+1)。",
+    "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "获取 DepMap/CCLE 中相对于细胞模型倍性的基因拷贝数。",
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "来自 cBioPortal 和 DepMap/CCLE 的癌症研究及细胞模型组学、依赖性和药物响应数据。"
   }
 }
