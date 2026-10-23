@@ -1,5 +1,6 @@
 import { getPdfTranslationTextContent } from './text-content.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { nativePartialNavigation } from './native-source-geometry.js'
 import { createPdfTranslationSource, type PdfTranslationSource } from './source.js'
 import { groupPdfTranslationPages, type PdfLayoutPage, type PdfLayoutTextItem } from './layout.js'
 import {
@@ -122,6 +123,10 @@ export async function extractPdfTranslationSource({
   const pagesWithoutText: number[] = []
   const exclusions: PdfTranslationExtraction['coverage']['exclusions'][number][] = []
   const unreliableItems = new Set<string>()
+  const partialNavigation = new Map<
+    string,
+    NonNullable<ReturnType<typeof nativePartialNavigation>>
+  >()
   const pageDiagnostics: NonNullable<
     PdfTranslationExtraction['coverage']['pageDiagnostics']
   >[number][] = []
@@ -176,6 +181,8 @@ export async function extractPdfTranslationSource({
       // Express PDF coordinates in the reader's default viewport, including CropBox
       // offsets and UserUnit scaling. Grouping uses a bottom-up virtual PDF axis.
       const [a, b, c, d, x, y] = item.transform
+      const partial = nativePartialNavigation(item, content.styles?.[item.fontName], viewport)
+      if (partial) partialNavigation.set(`${pageNumber}:${index}`, partial)
       const [ma, mb, mc, md, mx, my] = viewport.transform
       const scale = Math.hypot(ma, mb)
       return {
@@ -194,6 +201,7 @@ export async function extractPdfTranslationSource({
         fontName: item.fontName,
         fontAscent: content.styles?.[item.fontName]?.ascent,
         fontDescent: content.styles?.[item.fontName]?.descent,
+        fontVertical: content.styles?.[item.fontName]?.vertical,
         hasEOL: item.hasEOL
       }
     })
@@ -216,9 +224,13 @@ export async function extractPdfTranslationSource({
     signal.throwIfAborted()
   }
   // ponytail: grouping is synchronous; move it to a worker if long-document profiling requires it.
-  const layout = preservePdfMathDiagrams(groupPdfTranslationPages({ pages }), mathDiagrams)
+  const layout = preservePdfMathDiagrams(
+    groupPdfTranslationPages({ pages, pageCount: document.numPages }),
+    mathDiagrams
+  )
   const units: PdfTranslationSource['units'][number][] = []
   const independent: PdfTranslationSource['units'][number][] = []
+  const independentWarnings: PdfTranslationExtraction['coverage']['warnings'][number][] = []
   const warnings: PdfTranslationExtraction['coverage']['warnings'][number][] = []
   const accounted = new Set(
     exclusions.flatMap((entry) => entry.items.map((item) => `${item.pageNumber}:${item.index}`))
@@ -307,15 +319,63 @@ export async function extractPdfTranslationSource({
         continue
       }
     }
-    if (reason)
-      exclusions.push({
-        unitId: unit.id,
-        reason,
-        items: fragments.flatMap((fragment) =>
-          fragment.items.map((item) => ({ ...item, pageNumber: fragment.pageNumber }))
-        )
-      })
-    else {
+    if (reason) {
+      const remaining = fragments.flatMap((fragment) =>
+        fragment.items.flatMap((original) => {
+          if (reason === 'outside-page') {
+            const page = pages[fragment.pageNumber - 1],
+              item = page.items[original.index],
+              style = styles[fragment.pageNumber - 1][item.fontName ?? '']
+            // One overflowing peer must not discard a complete page-in item.
+            // The broken group proves no paragraph contract: retain only a
+            // separately bounded original anchor, using explicit native metrics.
+            const rect =
+              item.fontName &&
+              style?.vertical === false &&
+              Number.isFinite(style.ascent) &&
+              Number.isFinite(style.descent)
+                ? independentRect(item, page, style)
+                : undefined
+            if (rect) {
+              const id = `inpage-p${fragment.pageNumber}-i${original.index}`
+              independent.push({
+                id,
+                source: original.text,
+                sourceOnly: true,
+                fragments: [{ pageNumber: fragment.pageNumber, rect, items: [original] }]
+              })
+              const reasons = [...unit.risks]
+              if (unreliableItems.has(`${fragment.pageNumber}:${original.index}`))
+                reasons.push('unreliable-font-unicode')
+              if (reasons.length)
+                independentWarnings.push(
+                  Object.freeze({ unitId: id, reasons: Object.freeze(reasons) })
+                )
+              return []
+            }
+            const partial = partialNavigation.get(`${fragment.pageNumber}:${original.index}`)
+            if (partial) {
+              const id = `clipped-p${fragment.pageNumber}-i${original.index}`
+              independent.push({
+                id,
+                source: original.text,
+                sourceOnly: true,
+                fragments: [{ pageNumber: fragment.pageNumber, ...partial, items: [original] }]
+              })
+              const reasons = ['partially-outside-page']
+              if (unreliableItems.has(`${fragment.pageNumber}:${original.index}`))
+                reasons.push('unreliable-font-unicode')
+              independentWarnings.push(
+                Object.freeze({ unitId: id, reasons: Object.freeze(reasons) })
+              )
+              return []
+            }
+          }
+          return [{ ...original, pageNumber: fragment.pageNumber }]
+        })
+      )
+      if (remaining.length) exclusions.push({ unitId: unit.id, reason, items: remaining })
+    } else {
       units.push({
         id: unit.id,
         source: unit.source,
@@ -341,6 +401,7 @@ export async function extractPdfTranslationSource({
       a.fragments[0].pageNumber - b.fragments[0].pageNumber ||
       a.fragments[0].items[0].index - b.fragments[0].items[0].index
   )
+  warnings.push(...independentWarnings)
   const excludedItemCount = exclusions.reduce((count, entry) => count + entry.items.length, 0)
   signal.throwIfAborted()
   return Object.freeze({
