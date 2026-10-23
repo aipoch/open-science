@@ -32,7 +32,7 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
       join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0')
     ].join(';')
   }
-  let protectionInstalled = false
+  let protectionAttempted = false
   let page: Page
   await runWithCleanup(
     async () => {
@@ -48,12 +48,12 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
         await window.api.runtime.setEnvironmentEnabled('python', runtime.envId, true)
       }, pythonPath)
       if (process.platform === 'win32') {
+        protectionAttempted = true
         expect(
           await page.evaluate(() => window.api.settings.installNotebookNetwork())
         ).toMatchObject({
           kind: 'ready'
         })
-        protectionInstalled = true
       }
       await createProject(page, 'Measurements research')
       await page.locator('input[type="file"][multiple]').setInputFiles({
@@ -97,7 +97,7 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
     },
     async () => {
       try {
-        if (protectionInstalled) {
+        if (protectionAttempted) {
           expect(
             await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())
           ).toMatchObject({ kind: 'setupRequired' })
