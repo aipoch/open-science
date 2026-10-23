@@ -7707,6 +7707,59 @@ describe('ConversationPanel fix loop lock', () => {
     expect(onDraftDocChange).toHaveBeenCalled()
   })
 
+  it('preserves the attachment transfer send block with an unavailable Specialist', () => {
+    const submit = vi.fn()
+    const changeDoc = vi.fn()
+    const panel = (uploading: boolean): DeepPartial<PanelProps> => ({
+      view: { activeSession: { ...idleSession, specialistId: 'literature' } },
+      conversation: {
+        availability: { submit: !uploading },
+        actions: { submit: { draft: submit } }
+      },
+      composer: {
+        view: {
+          doc: docFromText('Keep this draft'),
+          isUploading: uploading,
+          transfers: uploading
+            ? [
+                {
+                  transferId: 'pending',
+                  name: 'large.csv',
+                  mimeType: 'text/csv',
+                  receivedBytes: 25,
+                  totalBytes: 100,
+                  status: 'uploading'
+                }
+              ]
+            : []
+        },
+        actions: { changeDoc }
+      },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+    renderPanel(panel(true))
+    const send = (): HTMLButtonElement =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
+    expect(send().disabled).toBe(true)
+    act(() => {
+      send().click()
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+    renderPanel(panel(false))
+    expect(send().disabled).toBe(false)
+    act(() => send().click())
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).not.toBeNull()
+    renderPanel(panel(true))
+    expect(send().disabled).toBe(true)
+    expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+    expect(submit).not.toHaveBeenCalled()
+    expect(changeDoc).not.toHaveBeenCalled()
+    expect(getComposerEditor().textContent).toBe('Keep this draft')
+  })
+
   it.each(['Enter', 'click'] as const)(
     'shows unavailable Specialist guidance only after %s and preserves the draft',
     (trigger) => {
@@ -7718,7 +7771,7 @@ describe('ConversationPanel fix loop lock', () => {
         },
         conversation: {
           availability: {
-            submit: false
+            submit: true
           },
           actions: { submit: { draft: submit } }
         },
@@ -7786,7 +7839,7 @@ describe('ConversationPanel fix loop lock', () => {
       renderPanel({
         view: { activeSession: { ...idleSession, specialistId: 'deleted-specialist' } },
         conversation: {
-          availability: { submit: false },
+          availability: { submit: true },
           actions: { submit: { draft: submit } }
         },
         composer: {
@@ -7853,6 +7906,7 @@ describe('ConversationPanel fix loop lock', () => {
   it('forgets the attempted-send bubble after changing session or restoring the Specialist', () => {
     const panel = (id: string, unavailable: boolean): DeepPartial<PanelProps> => ({
       view: { activeSession: { ...idleSession, id, specialistId: 'literature' } },
+      conversation: { availability: { submit: true } },
       composer: { view: { doc: docFromText('Keep this draft') } },
       specialist: { view: { specialist: { unavailable } } }
     })
@@ -7878,6 +7932,7 @@ describe('ConversationPanel fix loop lock', () => {
     vi.useFakeTimers()
     renderPanel({
       view: { activeSession: { ...idleSession, specialistId: 'literature' } },
+      conversation: { availability: { submit: true } },
       composer: { view: { doc: docFromText('Keep this draft') } },
       specialist: { view: { specialist: { unavailable: true } } }
     })
@@ -7911,7 +7966,7 @@ describe('ConversationPanel fix loop lock', () => {
     const submit = vi.fn()
     renderPanel({
       view: { activeSession: { ...idleSession, specialistId: 'literature' } },
-      conversation: { actions: { submit: { draft: submit } } },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } },
       composer: { view: { doc: docFromText('Keep this draft') } },
       specialist: { view: { specialist: { unavailable: true } } }
     })
@@ -7941,7 +7996,7 @@ describe('ConversationPanel fix loop lock', () => {
     const submit = vi.fn()
     renderPanel({
       view: { activeSession: { ...idleSession, specialistId: 'literature' } },
-      conversation: { actions: { submit: { draft: submit } } },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } },
       composer: { view: { doc: docFromText('Keep this draft') } },
       specialist: { view: { specialist: { unavailable: true } } }
     })
@@ -8763,7 +8818,7 @@ describe('ConversationPanel notebook bar', () => {
     renderPanel({
       view: { activeSession: { ...session, specialistId: 'deleted-specialist' } },
       sessionTools: { notebookReference },
-      conversation: { availability: { submit: false } },
+      conversation: { availability: { submit: true } },
       composer: { view: { doc: docFromText('Keep this draft') } },
       specialist: { view: { specialist: { unavailable: true } } }
     })

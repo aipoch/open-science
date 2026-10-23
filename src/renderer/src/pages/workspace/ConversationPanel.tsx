@@ -1342,10 +1342,7 @@ const ConversationPanel = ({
     specialistUnavailable &&
     canEditDraft &&
     !ordinaryComposerBlocked &&
-    !specialistSwitchInFlight &&
-    !isStopping &&
-    !isResuming &&
-    (docToText(draftDoc).trim() || attachments.length > 0 || annotations.length > 0)
+    effectiveCanSend
   )
   const specialistNoticeCurrent = Boolean(
     canExplainUnavailableSpecialist &&
@@ -3448,7 +3445,6 @@ const ConversationPanel = ({
                                       : 'bg-primary text-primary-foreground',
                                     !specialistSwitchInFlight &&
                                       !effectiveCanSend &&
-                                      !canExplainUnavailableSpecialist &&
                                       !canOpenSendOptions &&
                                       'opacity-50'
                                   )}
@@ -3468,9 +3464,7 @@ const ConversationPanel = ({
                                             variant="ghost"
                                             size="icon"
                                             onClick={handleSubmit}
-                                            disabled={
-                                              !effectiveCanSend && !canExplainUnavailableSpecialist
-                                            }
+                                            disabled={!effectiveCanSend}
                                             className={cn(
                                               composerSplitSendPrimaryButtonClassName,
                                               specialistSwitchInFlight && 'text-text-300',
