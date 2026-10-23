@@ -694,9 +694,9 @@ it.each([
   'password = []',
   'credentials = {}',
   'token == expected'
-])('retains literal continuations after a newline: %s', (prefix) => {
-  for (const newline of ['\n', '\r\n']) {
-    const code = prefix + newline + '  + "actual-secret"'
+])('retains literal expression continuations: %s', (prefix) => {
+  for (const suffix of ['\n + "actual-secret"', '\r\n + "actual-secret"', ', "actual-secret"']) {
+    const code = prefix + suffix
     for (const text of [code, JSON.stringify({ content: code })]) {
       expect(findSensitivePackageText(text)).toBeDefined()
       for (let split = 0; split <= text.length; split++) {

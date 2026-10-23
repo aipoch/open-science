@@ -313,7 +313,7 @@ const findPackageTextMatch = (
     const expression = rest.replace(/\\+"/g, '"').replace(/\\+[rn]/g, '\n')
     const expressionEndsAt = (end: number): boolean => {
       const tail = expression.slice(end)
-      if (/^[ \t\r\n]{0,512}(?:[,;}]|$)|^"(?:[},]|$)/.test(tail)) return true
+      if (/^[ \t\r\n]{0,512}(?:[;}]|$)|^"(?:[},]|$)/.test(tail)) return true
       // A following assignment is a separate statement, including indexed writes.
       const nextAssignment =
         /^[ \t]*[\r\n][ \t\r\n]*[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*\[[ \t]*(?:["'][a-zA-Z0-9_]+["']|[a-zA-Z0-9_]+)[ \t]*\])*[ \t]*=(?!=)/.exec(

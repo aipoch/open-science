@@ -154,6 +154,11 @@ it.each([
     Buffer.from(JSON.stringify({ content: prefix + '\n + "actual-secret"' })),
     false
   ]),
+  [
+    'tuple containing an environment reference and a literal credential',
+    Buffer.from('password = os.environ["PASSWORD"], "actual-secret"'),
+    false
+  ],
   ['literal password comparison', Buffer.from('password == "actual-secret"'), false],
   [
     'credential mutation after empty initialization',
