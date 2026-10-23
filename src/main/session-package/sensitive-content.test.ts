@@ -577,6 +577,10 @@ describe('noncredential syntax and metadata', () => {
     'tokens = []\npassword = os.environ["PASSWORD"]',
     'password["value"] = {}\npassword["value"] = os.environ["PASSWORD"]',
     'credentials = {}',
+    'password = os.environ["PASSWORD"]\nprint(password)',
+    'password = process.env.PASSWORD\r\nconsole.log(password)',
+    'tokens = []\nprocessTokens(tokens)',
+    'token == expected\nreport(token)',
     'password["value"] = {}',
     'tokens[0] = []',
     'password["value"] = os.environ["PASSWORD"]',
@@ -707,6 +711,32 @@ it.each([
         scanner.write(text.slice(split))
         expect(scanner.finish(), `split ${split}`).toBeDefined()
       }
+    }
+  }
+})
+
+it.each([
+  'and ("actual-secret")',
+  'or ("actual-secret")',
+  'if (condition) else "actual-secret"',
+  'in ("actual-secret",)',
+  'is ("actual-secret")',
+  'instanceof ("actual-secret")',
+  'as ("actual-secret")',
+  'satisfies ("actual-secret")',
+  '("actual-secret")',
+  '["actual-secret"]',
+  '`actual-secret`',
+  'print(password); password = "actual-secret"'
+])('keeps credentials after a newline visible: %s', (suffix) => {
+  const code = 'password = process.env.PASSWORD\n' + suffix
+  for (const text of [code, JSON.stringify({ content: code })]) {
+    expect(findSensitivePackageText(text)).toBeDefined()
+    for (let split = 0; split <= text.length; split++) {
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, split))
+      scanner.write(text.slice(split))
+      expect(scanner.finish(), `split ${split}`).toBeDefined()
     }
   }
 })

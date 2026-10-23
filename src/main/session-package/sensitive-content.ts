@@ -320,6 +320,17 @@ const findPackageTextMatch = (
           tail
         )
       if (nextAssignment && nextAssignment[0].length <= 512) return true
+      // Named calls start another statement; word operators can still continue this one.
+      const nextCall =
+        /^[ \t]*[\r\n][ \t\r\n]*([a-zA-Z_$][a-zA-Z0-9_$]*)(?:[ \t]*\.[ \t]*[a-zA-Z_$][a-zA-Z0-9_$]*)*[ \t]*\(/.exec(
+          tail
+        )
+      if (
+        nextCall &&
+        nextCall[0].length <= 512 &&
+        !/^(?:and|or|not|is|in|instanceof|if|else|as|satisfies)$/.test(nextCall[1])
+      )
+        return true
       // Keep an incomplete next statement provisional only within the overlap.
       return !complete && tail.length <= 512 && /^[ \t]*(?:[\r\n]|\\+$)/.test(tail)
     }
