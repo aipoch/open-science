@@ -18,6 +18,67 @@ const distro = process.env.OPEN_SCIENCE_WSL_DISTRO
 const user = process.env.OPEN_SCIENCE_WSL_USER
 const enabled = process.platform === 'win32' && Boolean(distro && user)
 
+it
+  .runIf(process.platform === 'linux' && process.env.VITEST_PORTABLE_CI !== '1')
+  .each([true, false])(
+  'enforces existing and missing write-denied roots in the real WSL guest launch (restricted=%s)',
+  async (restrictFolders) => {
+    const root = await mkdtemp(join(tmpdir(), 'wsl-guest-denials-'))
+    const workspace = join(root, 'workspace')
+    const existing = join(workspace, 'existing file')
+    const missing = join(workspace, 'missing folder')
+    const bridgeSocket = join(root, 'gateway.sock')
+    await mkdir(workspace)
+    await writeFile(existing, 'original')
+    // No network request is made: only the production guest launcher and filesystem mounts run.
+    await writeFile(bridgeSocket, '')
+    const launch = await wsl2Launch({
+      target: { kind: 'wsl2', profileId: 'guest-denials', distro: 'fixture', user: 'fixture' },
+      cwd: workspace,
+      command: [
+        'set -eu',
+        'test "$(cat "existing file")" = original',
+        'if { printf changed > "existing file"; } 2>/dev/null; then exit 41; fi',
+        'if touch "missing folder/changed" 2>/dev/null; then exit 42; fi',
+        'printf allowed > output.txt',
+        'printf verified'
+      ].join('\n'),
+      env: {},
+      filesystem: {
+        restrictFolders,
+        readOnlyRoots: [],
+        readWriteRoots: [workspace],
+        deniedReadRoots: [],
+        deniedWriteRoots: [existing, missing]
+      },
+      mapPath: async (path) => path,
+      reconcileGuest: async () => true,
+      gatewayPort: 4312,
+      gatewayCredentials: { username: 'fixture', password: 'fixture' },
+      openBridge: async () => ({
+        socketPath: bridgeSocket,
+        close: async () => ({ networkClosed: true, temporaryResourcesRemoved: true })
+      })
+    })
+    try {
+      // Only wsl.exe dispatch is omitted; run its exact guest command with real bubblewrap.
+      const result = await execute(
+        launch.argv.slice(launch.argv.indexOf('--exec') + 1),
+        process.env,
+        root
+      )
+      expect(result, result.stderr).toEqual({ exitCode: 0, stdout: 'verified', stderr: '' })
+      expect(await readFile(existing, 'utf8')).toBe('original')
+      expect(await readFile(join(workspace, 'output.txt'), 'utf8')).toBe('allowed')
+    } finally {
+      await launch.release()
+      await rm(launch.argv[launch.argv.indexOf('open-science-wsl-execution') + 1]!, { force: true })
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  20_000
+)
+
 const execute = async (
   argv: readonly string[],
   env: NodeJS.ProcessEnv,

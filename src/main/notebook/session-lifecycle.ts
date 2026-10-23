@@ -529,11 +529,27 @@ class NotebookSessionLifecycleOwner {
     }
   }
 
-  shutdownAll(): Promise<{ reaped: boolean }> {
-    if (this.shutdownAllPromise) return this.shutdownAllPromise
+  shutdownAll(afterShutdown?: () => Promise<void>): Promise<{ reaped: boolean }> {
+    if (this.shutdownAllPromise) {
+      if (afterShutdown)
+        return Promise.reject(
+          new Error('Notebook shutdown is already in progress. Retry the settings change.')
+        )
+      return this.shutdownAllPromise
+    }
     this.abortAllOperations(new Error('Notebook runtime is shutting down.'))
     const shutdown = this.options.runtimeBindings
-      .withGlobalTeardown(() => this.options.sessions.shutdownAll())
+      .withGlobalTeardown(async () => {
+        const result = await this.options.sessions.shutdownAll()
+        if (afterShutdown) {
+          if (!result.reaped)
+            throw new Error(
+              'Notebook processes could not be stopped. Folder policy was not changed.'
+            )
+          await afterShutdown()
+        }
+        return result
+      })
       .finally(() => {
         if (this.shutdownAllPromise === shutdown) this.shutdownAllPromise = undefined
       })

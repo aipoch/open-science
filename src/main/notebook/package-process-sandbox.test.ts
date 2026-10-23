@@ -221,6 +221,7 @@ describe('sandboxedPackageSpawn', () => {
       ).resolves.toMatchObject({ code: 0 })
       expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].cwd).toBe(runtimeRoot)
       const invocation = vi.mocked(processSandbox.wrap).mock.calls[0]?.[0]
+      expect(invocation?.windowsProtectionRequired).toBe(platform === 'win32' ? true : undefined)
       expect(invocation?.env.PIP_REPORT).toBeUndefined()
       expect(invocation?.env.PIP_CONFIG_FILE).toBeUndefined()
       expect(invocation?.env.PIP_TARGET).toBeUndefined()

@@ -25,6 +25,7 @@ type SettingsPreferencesState = {
   onboardingCompletedAt?: number
   networkProxy?: NetworkProxySettings
   packageMirror?: PackageMirror
+  notebookFolderRestrictionEnabled?: boolean
   notebookNetwork: NotebookNetworkSettings
   reasoningEffort: ReasoningEffort
   reviewerModel?: ReviewerModelConfiguration
@@ -56,6 +57,7 @@ type OptimisticPreferenceField =
   | 'defaultPermissionProfile'
 
 export type SettingsPreferencesActions = {
+  setNotebookFolderRestrictionEnabled: (enabled: boolean) => Promise<void>
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   setReviewerModel: (configuration: ReviewerModelConfiguration) => Promise<void>
   setSessionDetailsModel: (configuration: SessionDetailsModelConfiguration) => Promise<void>
@@ -101,6 +103,7 @@ type SettingsPreferencesCommands = Pick<
       | 'setSubagentModel'
       | 'setVisionModel'
       | 'setNetworkProxy'
+      | 'setNotebookFolderRestrictionEnabled'
       | 'setNotebookNetwork'
     >
   >
@@ -298,6 +301,12 @@ export const createSettingsPreferencesSlice = ({
       } finally {
         if (write.isCurrent()) setState({ visionModelPending: false })
       }
+    },
+
+    setNotebookFolderRestrictionEnabled: async (enabled) => {
+      const command = getCommands().setNotebookFolderRestrictionEnabled
+      if (!command) throw new Error('Notebook folder policy is unavailable.')
+      reconcileSnapshot(await command({ enabled }))
     },
 
     setReasoningEffort: (effort) =>

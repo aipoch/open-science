@@ -68,6 +68,7 @@ export const buildSettingsSnapshot = (
     onboardingCompletedAt: preferences.onboardingCompletedAt,
     packageMirror: settings.packageMirror,
     networkProxy: resolveNetworkProxySettings(settings.networkProxy),
+    notebookFolderRestrictionEnabled: settings.notebookFolderRestrictionEnabled !== false,
     notebookNetwork: settings.notebookNetwork
       ? normalizeNotebookNetworkSettings(settings.notebookNetwork)
       : DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
