@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID, scrypt } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import {
@@ -90,7 +90,7 @@ export class LiteratureRelatedFinder {
   private readonly resolutions = new Map<string, Resolution>()
   private nextRequest = 0
   private readonly cooldowns = new Map<string, number>()
-  private readonly cooldownIdentityKey = randomBytes(32)
+  private readonly cooldownIdentitySalt = randomBytes(32)
   constructor(
     private readonly options: {
       catalog: {
@@ -111,10 +111,13 @@ export class LiteratureRelatedFinder {
       if (until <= Date.now()) this.cooldowns.delete(identity)
     const readCredentials = async (): Promise<{ apiKey: string | undefined; identity: string }> => {
       const apiKey = await this.options.apiKey?.()
-      // Instance-keyed fingerprints identify temporary cooldowns, never stored credentials.
-      const identity = createHmac('sha256', this.cooldownIdentityKey)
-        .update(apiKey ?? '')
-        .digest('hex')
+      // Derive only temporary cooldown identities; credential storage belongs to the host.
+      const identity = await new Promise<string>((resolve, reject) => {
+        scrypt(apiKey ?? '', this.cooldownIdentitySalt, 32, (error, fingerprint) => {
+          if (error) reject(error)
+          else resolve(fingerprint.toString('hex'))
+        })
+      })
       const retryAt = this.cooldowns.get(identity)
       if (retryAt && retryAt > Date.now()) throw new SourceError('rate-limited', retryAt)
       return { apiKey, identity }
