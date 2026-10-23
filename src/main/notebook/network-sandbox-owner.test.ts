@@ -258,6 +258,7 @@ describe('NotebookNetworkSandboxOwner', () => {
         sessionId: 's',
         projectId: 'p',
         runtime: 'bash',
+        windowsProtectionRequired: true,
         filesystem: {
           readOnlyRoots: [],
           readWriteRoots: [],
@@ -269,6 +270,45 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(backend.wrap).not.toHaveBeenCalled()
     await owner.dispose()
   })
+
+  it.each([false, true])(
+    'preserves installer admission with Windows protection configured: %s',
+    async (configured) => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
+      const root = await mkdtemp(join(tmpdir(), 'os-installer-admission-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const { sandboxedPackageSpawn } = await import('./package-process-sandbox')
+      backend.wrap.mockRejectedValue(new Error('installer reached backend'))
+      try {
+        const spawn = sandboxedPackageSpawn({
+          processSandbox: owner,
+          request: { language: 'python', packages: ['example'] },
+          runtimeRoot: root,
+          storageRoot: root,
+          platform: 'win32'
+        })
+        await expect(spawn(process.execPath, ['-m', 'pip', '--version'], {})).rejects.toThrow(
+          'installer reached backend'
+        )
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            superviseProcessTree: true,
+            windowsProtectionRequired: undefined
+          })
+        )
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
 
   it
     .runIf(process.platform === 'win32')

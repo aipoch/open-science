@@ -484,7 +484,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       (this.platform === 'win32' && invocation.target?.kind !== 'wsl2') ||
       (await this.options.getFolderRestrictionEnabled?.()) !== false
     if (
-      restrictFolders &&
+      invocation.windowsProtectionRequired === true &&
       this.platform === 'win32' &&
       invocation.target?.kind !== 'wsl2' &&
       !(await this.windowsProtectionConfigured())
@@ -530,10 +530,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { executable: invocation.executable, args: invocation.args }
           : {}),
         ...(invocation.electronAsNode ? { electronAsNode: true } : {}),
-        windowsProtectionRequired:
-          this.platform === 'win32' && target.kind !== 'wsl2'
-            ? true
-            : invocation.windowsProtectionRequired,
+        windowsProtectionRequired: invocation.windowsProtectionRequired,
         windowsRuntimeAccessRequired: invocation.windowsRuntimeAccessRequired,
         cwd: invocation.cwd,
         env,

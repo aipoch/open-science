@@ -634,7 +634,7 @@ it.each([
   { name: 'R', request: { language: 'r' as const } },
   { name: 'REPL', request: { language: 'python' as const, kind: 'repl' as const } }
 ])(
-  'requests Windows process-tree supervision for every persistent $name kernel',
+  'requires Windows protection and process-tree supervision for every persistent $name kernel',
   async ({ request: kernelRequest }) => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-supervision-'))
     const request = baseRequest(cwdDir)
@@ -659,7 +659,13 @@ it.each([
     })
     const executor = new NotebookKernelExecutor({
       platform: 'win32',
-      processSandbox: { wrap }
+      processSandbox: {
+        wrap,
+        ensureRuntimeAccess: async () => ({
+          windowsProtectionRequired: false,
+          windowsRuntimeAccessRequired: false
+        })
+      }
     })
     try {
       await expect(
@@ -671,7 +677,9 @@ it.each([
           projectId: 'windows-supervision'
         })
       ).resolves.toMatchObject({ status: 'failed', stderr: 'sandbox invocation captured' })
-      expect(wrap).toHaveBeenCalledWith(expect.objectContaining({ superviseProcessTree: true }))
+      expect(wrap).toHaveBeenCalledWith(
+        expect.objectContaining({ superviseProcessTree: true, windowsProtectionRequired: true })
+      )
     } finally {
       await executor.shutdown()
     }

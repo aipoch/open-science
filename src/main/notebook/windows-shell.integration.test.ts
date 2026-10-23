@@ -131,7 +131,15 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
   let protectionRoot: string
   let protectionOwner: NotebookNetworkSandboxOwner
   const previousStorageRoot = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+  const previousPath = process.env.PATH
   beforeAll(async () => {
+    // Keep unrelated hosted SDK trees out of recursive AppContainer grants.
+    // Production Shell preparation adds the bundled Node/npm paths.
+    process.env.PATH = [
+      join(process.env.SystemRoot!, 'System32'),
+      join(process.env.SystemRoot!, 'System32', 'Wbem'),
+      join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0')
+    ].join(';')
     protectionRoot = await mkdtemp(join(tmpdir(), 'shell-protection-'))
     process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = protectionRoot
     protectionOwner = new NotebookNetworkSandboxOwner({
@@ -151,6 +159,8 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       }
       if (protectionRoot) await rm(protectionRoot, { recursive: true, force: true })
     } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
       if (previousStorageRoot === undefined) delete process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
       else process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = previousStorageRoot
     }
@@ -235,10 +245,14 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           ).name
         ).toBe('fixture-shared-cli')
       } finally {
-        expect(await adapter.shutdown()).toEqual({ reaped: true })
-        await owner.dispose()
-        vi.unstubAllEnvs()
-        await rm(root, { recursive: true, force: true })
+        const shutdown = await adapter.shutdown()
+        try {
+          await owner.dispose()
+        } finally {
+          vi.unstubAllEnvs()
+        }
+        expect.soft(shutdown).toEqual({ reaped: true })
+        if (shutdown.reaped) await rm(root, { recursive: true, force: true })
       }
     }
   )
@@ -306,7 +320,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         vi.unstubAllEnvs()
         expect(shutdown).toEqual({ reaped: true })
         expect(registry.hasReceipts()).toBe(false)
-        if (protectedMode) expect(await readdir(join(root, 'commands'))).toEqual([])
+        if (launches.length > 0) expect(await readdir(join(root, 'commands'))).toEqual([])
         await rm(root, { recursive: true, force: true })
       }
     }

@@ -1,3 +1,4 @@
+import { dirname, join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { expect } from '@playwright/test'
@@ -19,10 +20,23 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
     { encoding: 'utf8' }
   ).trim()
   await app.completeOnboarding()
-  let page = await app.configureFakeAgent()
+  const previousPath = process.env.PATH
+  // This journey needs only its selected Python, Node and Windows tools, not every hosted SDK.
+  // AppContainer grants inherited PATH roots recursively before the kernel can start.
+  if (process.platform === 'win32') {
+    process.env.PATH = [
+      dirname(pythonPath),
+      dirname(process.execPath),
+      join(process.env.SystemRoot!, 'System32'),
+      join(process.env.SystemRoot!, 'System32', 'Wbem'),
+      join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0')
+    ].join(';')
+  }
   let protectionInstalled = false
+  let page: Page
   await runWithCleanup(
     async () => {
+      page = await app.configureFakeAgent()
       // Enable an existing interpreter; the journey never provisions environments or installs packages.
       await page.evaluate(async (path) => {
         await window.api.runtime.registerInterpreter('python', path)
@@ -82,10 +96,15 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
       await sendPrompt(page, 'Continue this research.', 'Deterministic reply:')
     },
     async () => {
-      if (protectionInstalled) {
-        expect(
-          await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())
-        ).toMatchObject({ kind: 'setupRequired' })
+      try {
+        if (protectionInstalled) {
+          expect(
+            await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())
+          ).toMatchObject({ kind: 'setupRequired' })
+        }
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH
+        else process.env.PATH = previousPath
       }
     }
   )

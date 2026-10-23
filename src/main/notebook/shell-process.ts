@@ -400,7 +400,7 @@ const prepareShellLaunchOptions = async (
             ? { windowsShellControlPipe: options.windowsShellControlPipe }
             : {}),
           ...(platform === 'win32' && runtimeBinding.kind === 'powershell'
-            ? { superviseProcessTree: true }
+            ? { superviseProcessTree: true, windowsProtectionRequired: true }
             : {}),
           filesystem: {
             readOnlyRoots: [
