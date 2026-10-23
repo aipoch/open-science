@@ -373,7 +373,8 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/connectors/medical-data-engine.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

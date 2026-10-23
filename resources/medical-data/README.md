@@ -45,6 +45,11 @@ preference does not delete research data. Back up and remove the directory throu
 local file management if it is no longer required. No service, daemon, scheduled task or
 global package is installed. The application-owned MCP manager closes its workers during
 normal application disposal; unfinished jobs are reported as interrupted on restart.
+Runtime readiness checks import the packages and validate Python/package versions before
+dispatch. Idle cached workers are closed and recreated when their interpreter, storage root
+or source credentials change. In-flight requests finish first. Configuration changes cannot
+replace a worker with active background jobs: poll the original job IDs to completion, or
+restart the application to interrupt them.
 
 Tools pass the same bundled Connector enablement, Specialist scope and approval gate
 as existing built-ins. The Python engine enforces source-scoped HTTPS hosts, limits file
@@ -76,3 +81,15 @@ python test/medical-data/verify_mcp.py
 The protocol check exercises all 14 bundled engines using synthetic local files. It never
 downloads or probes personally authorized research data. Host adapter tests additionally
 cover no-Python access guidance, credential isolation, cancellation and runtime failure.
+
+For the real host-adapter and MCP-manager test, set `OPEN_SCIENCE_MEDICAL_TEST_PYTHON`
+to the absolute path of a prepared interpreter and run
+`npm test -- src/main/connectors/medical-data-engine.integration.test.ts`. This opt-in test
+checks all 14 workers through the bundled bootstrap, import/jobs/SQL, patient-row masking,
+write-SQL rejection and storage-root switching; it closes actual child processes on completion.
+Without the explicit prepared interpreter this process-level test is reported as skipped.
+
+`python test/medical-data/verify_public_services.py` performs opt-in live, small public-data
+checks and saves `test-output/builtin-medical-data/live-public/live-validation.json`. It
+reports failures and untested authorization-dependent flows separately. Live network tests
+are not part of the deterministic portable suite and do not prove full credentialed access.

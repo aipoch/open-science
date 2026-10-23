@@ -45,7 +45,9 @@
     "resources/medical-data/server.py",
     "test/medical-data/test_core.py",
     "test/medical-data/test_research.py",
-    "test/medical-data/verify_mcp.py"
+    "test/medical-data/verify_mcp.py",
+    "src/main/connectors/medical-data-engine.integration.test.ts",
+    "test/medical-data/verify_public_services.py"
   ],
   "interfacePaths": [
     "src/main/composition/connector-application.ts",
@@ -137,7 +139,8 @@
       "src/main/connectors/molecule-artifact-adapter.test.ts",
       "src/main/composition/connector-application.test.ts",
       "src/main/connector-reload.test.ts",
-      "src/main/connectors/medical-data-adapter.test.ts"
+      "src/main/connectors/medical-data-adapter.test.ts",
+      "src/main/connectors/medical-data-engine.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
