@@ -6,8 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookShellProcessAdapter, runShellCommand } from './shell-process'
 
-// Never execute the probes: reaching the sandbox boundary is enough to demonstrate a missing
-// preflight check. In particular, this suite must not perform a real host-root traversal.
+// Stop syntax probes at the sandbox boundary; never perform a real host-root traversal.
 describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', () => {
   let root: string
   let cwd: string
@@ -54,8 +53,8 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     return { result, wrap, reachedSandbox }
   }
 
-  it('rejects the whole command before earlier side effects and executes a scoped search', async () => {
-    // Even a regression must not start a host-root search: give the unsafe probe a inert find.
+  it('executes ordinary searches without an additional cwd restriction', async () => {
+    // Keep the host-root probe inert: only the temporary fixture executable may run.
     const probeBin = join(root, 'probe-bin')
     await mkdir(probeBin)
     await writeFile(join(probeBin, 'find'), '#!/bin/sh\nexit 99\n', { mode: 0o700 })
@@ -72,8 +71,8 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
       environment: { PATH: probeBin },
       command: 'printf launched > started; find / -name chart.png'
     })
-    expect(denied.stderr).toMatch(/search scope denied/i)
-    await expect(access(join(cwd, 'started'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(denied).toMatchObject({ exitCode: 99, stderr: '' })
+    await expect(access(join(cwd, 'started'))).resolves.toBeUndefined()
     await writeFile(join(cwd, 'chart.png'), 'fixture')
     const allowed = await runShellCommand({
       ...request,
@@ -82,10 +81,56 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     expect(allowed).toMatchObject({ stdout: './chart.png\n', stderr: '', exitCode: 0 })
   })
 
-  it('does not let a pipeline cd change the inferred parent cwd', async () => {
-    const { result, wrap } = prepare(`cd /; cd '${cwd}' | cat; find .`)
-    await expect(result).rejects.toThrow(/search scope denied/i)
-    expect(wrap).not.toHaveBeenCalled()
+  it('leaves pipeline directory semantics to the shell', async () => {
+    const { result, wrap, reachedSandbox } = prepare(`cd /; cd '${cwd}' | cat; find .`)
+    await expect(result).rejects.toThrow(reachedSandbox.message)
+    expect(wrap).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    'command -v diagnostic-tool',
+    'command -V diagnostic-tool',
+    'command -pv diagnostic-tool',
+    'command -p -v diagnostic-tool',
+    'builtin command -v diagnostic-tool',
+    'echo "$PATH"; command -v diagnostic-tool; ls .'
+  ])('allows executable lookup without treating it as execution: %s', async (command) => {
+    const { result, wrap, reachedSandbox } = prepare(command)
+    await expect(result).rejects.toThrow(reachedSandbox.message)
+    expect(wrap).toHaveBeenCalledOnce()
+  })
+
+  it.each(['echo "$PATH"; ls ~/.diagnostic-tools | head', 'ls ../outside'])(
+    'delegates diagnostic directory access to the sandbox: %s',
+    async (command) => {
+      const { result, wrap, reachedSandbox } = prepare(command)
+      await expect(result).rejects.toThrow(reachedSandbox.message)
+      expect(wrap).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('distinguishes a missing npm on PATH from a search-scope denial', async () => {
+    const bin = join(root, 'diagnostic-bin')
+    await mkdir(bin)
+    const request = {
+      command: 'npm --version; printf done',
+      cwd,
+      handoffDir: cwd,
+      runtimeRoot: join(root, 'runtime'),
+      environment: { PATH: bin },
+      sessionId: 'diagnostic-session',
+      projectId: 'diagnostic-project'
+    }
+    const missing = await runShellCommand(request)
+    expect(missing).toMatchObject({ exitCode: 0, stdout: 'done' })
+    expect(missing.stderr).toMatch(/npm:.*(?:not found|No such file)/)
+    expect(missing.stderr).not.toMatch(/search scope denied/i)
+    await writeFile(join(bin, 'npm'), '#!/bin/sh\nprintf "fixture-version\\n"\n', { mode: 0o700 })
+    expect(await runShellCommand(request)).toMatchObject({
+      exitCode: 0,
+      stdout: 'fixture-version\ndone',
+      stderr: ''
+    })
   })
 
   it.each([
@@ -179,10 +224,10 @@ describe.skipIf(process.platform === 'win32')('POSIX Shell search admission', ()
     'du /',
     'locate chord_diagram.png',
     'mdfind -name chord_diagram.png'
-  ])('rejects out-of-scope discovery before sandbox preparation: %s', async (command) => {
-    const { result, wrap } = prepare(command)
-    await expect(result).rejects.toThrow(/search.*scope/i)
-    expect(wrap).not.toHaveBeenCalled()
+  ])('delegates search syntax to the sandbox without a separate preflight: %s', async (command) => {
+    const { result, wrap, reachedSandbox } = prepare(command)
+    await expect(result).rejects.toThrow(reachedSandbox.message)
+    expect(wrap).toHaveBeenCalledOnce()
   })
 
   it.each([
