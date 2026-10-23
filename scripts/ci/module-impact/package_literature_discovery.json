@@ -22,6 +22,9 @@
     "packages/literature-discovery/src/provider-error.ts",
     "packages/literature-discovery/src/reference-resolver.ts",
     "packages/literature-discovery/src/response-page.ts",
+    "packages/literature-discovery/src/supplement-contracts.ts",
+    "packages/literature-discovery/src/supplement-xml.ts",
+    "packages/literature-discovery/src/supplements.ts",
     "packages/literature-discovery/test/batch-job-journal.test.ts",
     "packages/literature-discovery/test/batch-jobs.test.ts",
     "packages/literature-discovery/test/checkpoint-fixture.ts",
@@ -36,6 +39,7 @@
     "packages/literature-discovery/test/provider-error.test.ts",
     "packages/literature-discovery/test/reference-resolver.test.ts",
     "packages/literature-discovery/test/scale.test.ts",
+    "packages/literature-discovery/test/supplements.test.ts",
     "packages/literature-discovery/tsconfig.json",
     "packages/literature-discovery/vitest.config.ts"
   ],
@@ -61,7 +65,8 @@
       "packages/literature-discovery/test/metadata-enricher.test.ts",
       "packages/literature-discovery/test/provider-error.test.ts",
       "packages/literature-discovery/test/reference-resolver.test.ts",
-      "packages/literature-discovery/test/scale.test.ts"
+      "packages/literature-discovery/test/scale.test.ts",
+      "packages/literature-discovery/test/supplements.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -901,5 +906,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Multi-source supplementary discovery adds provider and XML parsing sources beyond the reviewed discovery boundary; require full CI validation until these sources and their contracts are reviewed."
 }

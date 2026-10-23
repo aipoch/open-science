@@ -58,7 +58,7 @@ describe('ConnectorSettingsModule', () => {
     expect(await service.getConnectors()).toEqual(stored)
   })
 
-  it.each(['orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
+  it.each(['tcia', 'kegg', 'orphadata', 'rxnorm', 'dailymed', 'biosamples', 'wikipathways'])(
     'persists %s opt-in for views and Skills without changing historical choices',
     async (id) => {
       const existing = ['genes', 'pubmed', 'clinical-genomics', 'rna']
@@ -196,8 +196,10 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.connectors.filter((c) => !c.enabled).map((c) => c.id)).toEqual([
       'biosamples',
       'dailymed',
+      'kegg',
       'orphadata',
       'rxnorm',
+      'tcia',
       'wikipathways'
     ])
     expect(snapshot.connectors.every((c) => !c.autoAllow)).toBe(true)

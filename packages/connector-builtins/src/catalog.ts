@@ -16,6 +16,31 @@ export type ConnectorMeta = {
 // Scientific provider metadata, independent of application navigation and presentation.
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'tcia',
+    displayName: 'TCIA',
+    aliases: ['TCIA', 'Cancer Imaging Archive', 'NBIA'],
+    description: 'Public cancer imaging collections and series metadata from TCIA.',
+    useWhen:
+      'Use to discover public TCIA imaging collections by keyword, retrieve collection download requirements and licenses by exact short title, or inspect an existing DICOM SeriesInstanceUID. Returns metadata and download entrypoints, not images or restricted data.',
+    sources: ['TCIA', 'NBIA'],
+    termsUrl: 'https://www.cancerimagingarchive.net/data-usage-policies-and-restrictions/',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'kegg',
+    displayName: 'KEGG',
+    aliases: ['KEGG'],
+    description:
+      'KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.',
+    useWhen:
+      'Use for KEGG pathway, KO, compound and reaction summaries or gene-to-pathway/UniProt mappings. Public API is for eligible academic use only; non-academic use and service provision require appropriate licensing. Enabling this connector does not grant a license. For enrichment use the Genes connector.',
+    sources: ['KEGG'],
+    termsUrl: 'https://www.kegg.jp/kegg/legal.html',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
     id: 'rxnorm',
     displayName: 'RxNorm / RxNav',
     aliases: ['RxNorm', 'RxNav', 'RxCUI'],

@@ -22,14 +22,13 @@ export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
 export const PACKAGE_MAX_FILE_BYTES = 32 * 1024 ** 3
 export const PACKAGE_MAX_BYTES = 256 * 1024 ** 3
 export const PACKAGE_MIN_IO_BYTES_PER_SECOND = 1024 ** 2
-export const PACKAGE_DEFAULT_IO_BYTES_PER_SECOND = 256 * 1024 ** 2
-export const PACKAGE_MAX_IO_BYTES_PER_SECOND = 256 * 1024 ** 2
+export const PACKAGE_DEFAULT_IO_BYTES_PER_SECOND = 1024 ** 3
+export const PACKAGE_MAX_IO_BYTES_PER_SECOND = 1024 ** 3
 export const PACKAGE_IO_RATE_OPTIONS = [
-  4 * 1024 ** 2,
-  16 * 1024 ** 2,
-  64 * 1024 ** 2,
   128 * 1024 ** 2,
-  256 * 1024 ** 2
+  256 * 1024 ** 2,
+  512 * 1024 ** 2,
+  1024 ** 3
 ] as const
 const transferRateSchema = z
   .number()

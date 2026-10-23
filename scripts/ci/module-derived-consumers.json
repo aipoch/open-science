@@ -27,8 +27,10 @@
     ],
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "connector_core": [
+      "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
-      "packages/connector-builtins/src/scientific-expansion.test.ts"
+      "packages/connector-builtins/src/scientific-expansion.test.ts",
+      "packages/connector-builtins/src/tcia.test.ts"
     ],
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
     "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
@@ -104,6 +106,7 @@
       "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
       "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicatesView.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureLibraryCount.test.tsx",
@@ -285,11 +288,14 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
     "package_literature_citations": [
+      "packages/literature-discovery/test/supplements.test.ts",
       "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/literature/supplement-attachments.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
@@ -299,24 +305,13 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "package_literature_discovery": [
-      "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
-      "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/literature/renderer-host.test.tsx",
-      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
-      "src/renderer/src/pages/workspace/agent-authentication-error.test.ts",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
-      "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
-    ],
     "package_literature_library": [
       "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
@@ -354,7 +349,6 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
     "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
     "pdf_annotations": [
       "src/main/artifacts/provenance-user-edit.integration.test.ts",
@@ -652,6 +646,7 @@
     "renderer_ui": [
       "src/renderer/src/components/FileDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -8015,6 +8010,7 @@
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.test.tsx",
       "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
@@ -9011,6 +9007,7 @@
     "workspace_file_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"

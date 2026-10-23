@@ -1,3 +1,4 @@
+import { LiteratureSupplementLookup } from './LiteratureSupplementLookup'
 import type { LiteraturePreviewItem } from '../renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
@@ -194,8 +195,8 @@ export function LiteratureDetailDialog({
                   className={dialogPanelClassName(
                     cn(
                       'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
-                      metadata.mode === 'full-text'
-                        ? 'max-h-[calc(100vh-2rem)]'
+                      metadata.mode === 'full-text' || metadata.mode === 'supplements'
+                        ? 'h-[min(720px,calc(100vh-2rem))]'
                         : 'h-[min(840px,calc(100vh-2rem))]'
                     )
                   )}
@@ -240,7 +241,9 @@ export function LiteratureDetailDialog({
                                   ? t('Complete metadata')
                                   : metadata.mode === 'full-text'
                                     ? t('Find full-text PDF')
-                                    : t('Citation')}
+                                    : metadata.mode === 'supplements'
+                                      ? t('Find supplementary materials')
+                                      : t('Citation')}
                             </Dialog.Title>
                             <Dialog.Description
                               className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
@@ -337,7 +340,19 @@ export function LiteratureDetailDialog({
                     </div>
                   </div>
                   {isAddingPdf ? pdfStaging.notice : null}
-                  {metadata.mode === 'full-text' ? (
+                  {metadata.mode === 'supplements' ? (
+                    <LiteratureSupplementLookup
+                      key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                      item={selectedItem}
+                      onCompleteMetadata={() => changeDetailMode('complete')}
+                      onAdded={(updated) => {
+                        updateMetadataItem(updated)
+                        if (detailController.getSnapshot().generation === generation)
+                          detailController.replace(updated)
+                        void loadEntries(true)
+                      }}
+                    />
+                  ) : metadata.mode === 'full-text' ? (
                     <LiteratureFullTextLookup
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
                       item={selectedItem}

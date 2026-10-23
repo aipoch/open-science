@@ -25,11 +25,7 @@ import {
 
 import { LocalFileFallbackAction } from '../../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../../ManagedFileDownloadButton'
-import {
-  PreviewFallbackCard,
-  PreviewLoadingContent,
-  PreviewUnsupportedContent
-} from '../PreviewFallback'
+import { PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
@@ -158,8 +154,7 @@ type OfficePreviewFrame = {
 }
 
 // Owns isolated iframe coordination; Office bytes and vendor libraries stay in the child runtime.
-// Only artifact/upload sources flow here — local files never reach the LibreOffice pipeline (see
-// the OfficePreviewContent wrapper below).
+// Managed sources use version leases; local files retain their OS fallback below.
 const RemoteOfficePreviewContent = ({
   item,
   source
@@ -181,7 +176,9 @@ const RemoteOfficePreviewContent = ({
   const [frame, setFrame] = useState<OfficePreviewFrame | undefined>(undefined)
   const [frameLoadGeneration, setFrameLoadGeneration] = useState(0)
   const hasSourceIdentity =
-    source === 'notebook-input' || Boolean(item.projectId && item.managedFileId)
+    source === 'notebook-input' ||
+    source === 'literature' ||
+    Boolean(item.projectId && item.managedFileId)
   useRegisterPreviewContextMenuFrame({
     id: `office-preview:${hostId}`,
     frameUrl: frame?.url ?? '',
@@ -203,7 +200,7 @@ const RemoteOfficePreviewContent = ({
   useEffect(() => {
     if (!ownsLease || !hasSourceIdentity) return
     const sourceIdentity =
-      source === 'notebook-input'
+      source === 'notebook-input' || source === 'literature'
         ? { source, path: item.path }
         : {
             source,
@@ -458,8 +455,7 @@ const RemoteOfficePreviewContent = ({
   )
 }
 
-// Source-aware entry: local Office files skip the in-app LibreOffice pipeline (which resolves only
-// managed artifact/upload paths) and offer to open in the OS default app instead.
+// Local Office files use the OS default app; managed sources use the in-app preview pipeline.
 export const OfficePreviewContent = ({
   item,
   source = 'artifact'
@@ -478,9 +474,6 @@ export const OfficePreviewContent = ({
         action={<LocalFileFallbackAction path={item.path} className="mt-3" />}
       />
     )
-  }
-  if (source === 'literature') {
-    return <PreviewUnsupportedContent path={item.path} name={item.name} source={source} />
   }
   if (!window.api.officePreview) {
     return (

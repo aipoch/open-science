@@ -168,6 +168,28 @@ describe('LiteraturePdfImporter', () => {
     expect(options.content.sweep).toHaveBeenCalled()
   })
 
+  it.each([
+    ['notes.txt', 'text/plain'],
+    ['data.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['archive.bin', 'application/octet-stream']
+  ])('attaches %s without invoking PDF processing', async (filename, mimeType) => {
+    const { importer, options, path } = await setup(Buffer.from('ordinary file bytes'))
+    const inspect = vi.spyOn(attachmentMedia, 'inspectPdfPageCount')
+    const parse = vi.spyOn(nativeImport, 'parseNativePdfAnnotations')
+    await expect(
+      importer.import({
+        itemId: item.id,
+        attachment: { ...attachment(path), name: filename, originalName: filename, mimeType }
+      })
+    ).resolves.toEqual({ item })
+    expect(options.catalog.attachContent).toHaveBeenCalledWith(
+      expect.objectContaining({ filename, contentType: mimeType, pageCount: undefined })
+    )
+    expect(inspect).not.toHaveBeenCalled()
+    expect(parse).not.toHaveBeenCalled()
+    expect(options.uploads.deleteUpload).toHaveBeenCalledWith({ path })
+  })
+
   it('rejects non-PDF bytes and still releases their staging copy', async () => {
     const { importer, options, path } = await setup(Buffer.from('not a pdf'))
 

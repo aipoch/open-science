@@ -3,7 +3,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { WEB_MANAGED_FILE_SIZE_LIMIT_ERROR_NAME } from '../../../../../shared/file-save'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import { Download, FileText, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
+import { Download, History, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -94,6 +94,7 @@ const AttachmentPreview = ({
   onPreview: (version: Version) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const { FileTypeIcon } = useLiteratureHost()
   const failure = version?.verificationFailure
   const health =
     version?.availability === 'unavailable'
@@ -118,7 +119,7 @@ const AttachmentPreview = ({
       className="flex w-full min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
       onClick={() => version && onPreview(version)}
     >
-      <FileText className="size-4 shrink-0 text-primary" aria-hidden="true" />
+      <FileTypeIcon name={version?.filename ?? title} mimeType={version?.contentType} />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{title}</span>
         <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
@@ -134,7 +135,10 @@ const AttachmentPreview = ({
             </>
           ) : null}
         </span>
-        {version && !version.pageCount ? (
+        {version &&
+        (version.filename.toLowerCase().endsWith('.pdf') ||
+          version.contentType === 'application/pdf') &&
+        !version.pageCount ? (
           <span className="block text-xs text-muted-foreground">
             {version.sizeBytes > 50 * 1024 * 1024
               ? t('PDF not validated: exceeds the 50 MiB automatic processing limit.')

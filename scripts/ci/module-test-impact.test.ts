@@ -1255,8 +1255,7 @@ describe('Notebook package module boundaries', () => {
     }
     for (const path of [
       'src/main/notebook/runtime-service.ts',
-      'src/main/notebook/dependency-analysis-adapter.ts',
-      'src/main/notebook/scientific-output-analysis.ts'
+      'src/main/notebook/dependency-analysis-adapter.ts'
     ]) {
       const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
       expect(plan.mode).toBe('selective')
@@ -1273,10 +1272,6 @@ describe('Notebook package module boundaries', () => {
     [
       'src/main/notebook/dependency-analysis-adapter.ts',
       'src/main/notebook/dependency-analysis-adapter.test.ts'
-    ],
-    [
-      'src/main/notebook/working-file-observer.ts',
-      'src/main/notebook/working-file-observer.test.ts'
     ],
     ['src/main/storage/content-repository.ts', 'src/main/storage/content-repository.test.ts']
   ])('keeps host integrations without upstream package units for %s', (path, integration) => {
@@ -1414,11 +1409,23 @@ it('separates reviewed dependency tests from inherited platform routing, includi
   ).toBe('full')
 })
 
-it.each([
-  [
-    'src/main/literature/command-owner.ts',
+it('keeps literature command consumers covered by the explicit full fallback', () => {
+  const manifest = loadModuleImpactManifest()
+  const plan = createAffectedTestPlan(
+    [{ path: 'src/main/literature/command-owner.ts', status: 'modified' }],
+    { status: 'not-used', testFiles: [] },
+    manifest
+  )
+  expect(plan.mode).toBe('full')
+  expect(plan.reasonChains).toEqual([
+    `main_literature -> ${manifest.modules.main_literature.fullTestReason} -> full`
+  ])
+  expect(manifest.modules.main_literature.testFiles.consumer).toContain(
     'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx'
-  ],
+  )
+})
+
+it.each([
   [
     'src/main/session-persistence/coordinator.ts',
     'src/renderer/src/hooks/useLifecycleSync.test.tsx'

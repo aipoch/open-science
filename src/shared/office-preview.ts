@@ -45,7 +45,7 @@ export const getOfficePreviewTimeoutMs = (size: number, attempt: number): number
 
 export type OfficePreviewExtension = 'docx' | 'xls' | 'xlsx' | 'pptx'
 export type OfficePreviewRequestedExtension = OfficePreviewExtension | 'spreadsheet'
-export type OfficePreviewSource = 'artifact' | 'upload' | 'notebook-input'
+export type OfficePreviewSource = 'artifact' | 'upload' | 'notebook-input' | 'literature'
 
 type OfficePreviewPresentation = {
   requestId: string
@@ -64,6 +64,10 @@ export type OfficePreviewOpenRequest = OfficePreviewPresentation &
       }
     | {
         source: 'notebook-input'
+        path: string
+      }
+    | {
+        source: 'literature'
         path: string
       }
   )
@@ -196,7 +200,7 @@ export const isOfficePreviewOpenRequest = (value: unknown): value is OfficePrevi
     OFFICE_PREVIEW_EXTENSIONS.has(request.extension as OfficePreviewRequestedExtension) &&
     Number.isSafeInteger(request.attempt) &&
     (request.attempt as number) >= 0 &&
-    (request.source === 'notebook-input'
+    (request.source === 'notebook-input' || request.source === 'literature'
       ? isNonEmptyString(request.path)
       : (request.source === 'artifact' || request.source === 'upload') &&
         isNonEmptyString(request.projectId) &&

@@ -303,6 +303,14 @@
     "./wikipathways": {
       "types": "./dist/wikipathways.d.ts",
       "default": "./dist/wikipathways.js"
+    },
+    "./tcia": {
+      "types": "./dist/tcia.d.ts",
+      "default": "./dist/tcia.js"
+    },
+    "./kegg": {
+      "types": "./dist/kegg.d.ts",
+      "default": "./dist/kegg.js"
     }
   },
   "files": [

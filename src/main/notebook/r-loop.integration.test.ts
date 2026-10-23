@@ -725,15 +725,8 @@ gate('r_loop.R', () => {
             expect(response.error).toBeNull()
             if (name === 'original') captured = response.environmentOverlay
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence).toMatchObject({
-              state: 'available',
-              fileReads: 'complete',
-              writerAttribution: 'complete',
-              reasonCodes: []
-            })
-            expect(evidence.confirmedReadPaths).toEqual([
-              'data/inputs/expression-matrix-444444444444.csv'
-            ])
+            expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+            expect(evidence.confirmedReadPaths).toBeUndefined()
             expect(evidence.workingFiles.map((file) => file.relativePath).sort()).toEqual([
               'data/diagonal_volcano.pdf',
               'data/diagonal_volcano.png',
@@ -880,24 +873,9 @@ gate('r_loop.R', () => {
             expect(result.error).toBeNull()
             if (name === 'original') captured = result.environmentOverlay
             const evidence = await observation.finish()
-            if (name === 'original') {
-              expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
-              expect(evidence.confirmedReadPaths).toBeUndefined()
-            } else {
-              // The replay omits the exploratory is.finite checks on unproven column values.
-              expect(evidence.fileEvidence).toMatchObject({
-                state: 'available',
-                fileReads: 'complete',
-                writerAttribution: 'complete',
-                reasonCodes: []
-              })
-              expect(evidence.confirmedReadPaths?.sort()).toEqual(
-                [
-                  'data/inputs/expression-matrix-444444444444.csv',
-                  'data/inputs/differential-results-333333333333.xlsx'
-                ].sort()
-              )
-            }
+            // Both pipelines retain calls on columns whose dispatch is not statically proven.
+            expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+            expect(evidence.confirmedReadPaths).toBeUndefined()
             expect(evidence.workingFiles.map((f) => f.relativePath).sort()).toEqual([
               'data/diagonal_volcano.pdf',
               'data/diagonal_volcano.png',
@@ -1301,7 +1279,8 @@ write.csv(df,"result.csv",row.names=FALSE)`
               environment: 'r',
               kernelEpochId: runId
             })
-            if (index === 8) expect(context?.serializedValueFiles?.length).toBe(1)
+            // Partial writer evidence must not certify a serialized value for the next kernel.
+            if (index === 8) expect(context?.serializedValueFiles).toBeUndefined()
             const observation = await startWorkingFileObservation({
               dataRoot,
               notebookSessionRoot: sessionRoot,
@@ -1319,17 +1298,10 @@ write.csv(df,"result.csv",row.names=FALSE)`
             expect(result.error, `${name} cell ${index}`).toBeNull()
             if (index === 8 && name === 'original') captured = result.environmentOverlay
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence, `${name} cell ${index}`).toMatchObject({
-              state: 'available',
-              fileReads: 'complete',
-              writerAttribution: 'complete',
-              reasonCodes: []
-            })
-            expect(evidence.confirmedReadPaths).toEqual([
-              index === 7
-                ? 'data/inputs/differential-results-333333333333.xlsx'
-                : 'data/diff_df_clean.rds'
-            ])
+            expect(evidence.fileEvidence, `${name} cell ${index}`).toMatchObject(
+              partialRColumnEvidence
+            )
+            expect(evidence.confirmedReadPaths).toBeUndefined()
             expect(evidence.workingFiles.map((f) => f.relativePath)).toContain(
               index === 7 ? 'data/diff_df_clean.rds' : 'data/diagonal_volcano.png'
             )
@@ -1356,7 +1328,8 @@ write.csv(df,"result.csv",row.names=FALSE)`
               throughRunId: runId
             })
             expect(projection.stalenessByRunId[runId], JSON.stringify(projection)).toEqual({
-              state: 'clear'
+              state: 'unknown',
+              reasons: ['external-state', 'opaque-call']
             })
           } finally {
             child.kill()
@@ -1508,10 +1481,14 @@ write.csv(df,"result.csv",row.names=FALSE)`
               })
               if (scenario.replay.includes(index))
                 expect(projection.stalenessByRunId[runId], JSON.stringify(projection)).toEqual({
-                  state: 'clear'
+                  ...(scenario.label === 'Venn RDS recovery' && name === 'original' && index === 7
+                    ? { state: 'unknown', reasons: ['external-state', 'opaque-call'] }
+                    : { state: 'clear' })
                 })
               if (index === scenario.replay.at(-1))
-                expect(projection.dependenciesByRunId?.[runId]).toEqual([])
+                expect(projection.dependenciesByRunId?.[runId]).toEqual(
+                  scenario.label === 'Venn RDS recovery' && name === 'original' ? undefined : []
+                )
             }
           } finally {
             child.kill()
@@ -1767,24 +1744,8 @@ set.seed(42)`)
             const result = await send(script)
             expect(result.error).toBeNull()
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence).toMatchObject(
-              index === 4
-                ? {
-                    state: 'available',
-                    fileReads: 'complete',
-                    writerAttribution: 'complete',
-                    reasonCodes: []
-                  }
-                : partialRColumnEvidence
-            )
-            expect(evidence.confirmedReadPaths?.sort()).toEqual(
-              index === 4
-                ? [
-                    'data/inputs/expression-matrix-444444444444.csv',
-                    'data/inputs/differential-results-333333333333.xlsx'
-                  ].sort()
-                : undefined
-            )
+            expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+            expect(evidence.confirmedReadPaths).toBeUndefined()
             expect(evidence.workingFiles.map((f) => f.relativePath)).toEqual([
               index === 4 ? 'data/merged_diff_expr.rds' : 'data/diagonal_volcano.png'
             ])
@@ -2028,15 +1989,8 @@ set.seed(42)`)
               const response = await send(script)
               expect(response.error).toBeNull()
               const evidence = await observation.finish()
-              expect(evidence.fileEvidence).toMatchObject({
-                state: 'available',
-                fileReads: 'complete',
-                writerAttribution: 'complete',
-                reasonCodes: []
-              })
-              expect(evidence.confirmedReadPaths).toEqual([
-                index === 0 ? 'data/inputs/edge-weights-222222222222.xlsx' : 'data/chord_matrix.rds'
-              ])
+              expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+              expect(evidence.confirmedReadPaths).toBeUndefined()
               expect(evidence.workingFiles.map((file) => file.relativePath)).toEqual([
                 index === 0 ? 'data/chord_matrix.rds' : 'data/chord_diagram.png'
               ])
@@ -2189,6 +2143,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
       dependencies: [],
       inputCells: [0],
       partialCells: [],
+      columnPartialCells: [0],
       failedCells: [],
       outputs: ['proportional_venn_5sets.png']
     },
@@ -2200,6 +2155,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
       dependencies: [],
       inputCells: [0],
       partialCells: [],
+      columnPartialCells: [0],
       failedCells: [],
       outputs: ['proportional_venn_5sets.png', 'venn_region_counts.csv']
     },
@@ -2217,6 +2173,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
       dependencies: [0],
       inputCells: [1],
       partialCells: [],
+      columnPartialCells: [1],
       failedCells: [],
       outputs: ['proportional_venn_5sets.png']
     },
@@ -2338,16 +2295,26 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
               else expect(response.error, `cell ${index}`).toBeNull()
               const evidence = await observation.finish()
               if (!scenario.partialCells.some((partialIndex) => partialIndex === index)) {
-                expect(evidence.fileEvidence, `cell ${index}`).toMatchObject({
-                  state: 'available',
-                  fileReads: 'complete',
-                  writerAttribution: 'complete',
-                  reasonCodes: []
-                })
-                expect(evidence.confirmedReadPaths ?? []).toEqual(
-                  scenario.inputCells.includes(index)
-                    ? ['data/inputs/set-membership-111111111111.xlsx']
-                    : []
+                expect(evidence.fileEvidence, `cell ${index}`).toMatchObject(
+                  scenario.columnPartialCells?.some((cell) => cell === index)
+                    ? partialRColumnEvidence
+                    : {
+                        state: 'available',
+                        fileReads: 'complete',
+                        writerAttribution: 'complete',
+                        reasonCodes: []
+                      }
+                )
+                expect(
+                  scenario.columnPartialCells?.some((cell) => cell === index)
+                    ? evidence.confirmedReadPaths
+                    : (evidence.confirmedReadPaths ?? [])
+                ).toEqual(
+                  scenario.columnPartialCells?.some((cell) => cell === index)
+                    ? undefined
+                    : scenario.inputCells.includes(index)
+                      ? ['data/inputs/set-membership-111111111111.xlsx']
+                      : []
                 )
                 const files = evidence.workingFiles.map((file) => file.relativePath)
                 if (scenario.logPrefix) {
@@ -2411,11 +2378,15 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
               sessionId: name,
               throughRunId: `${name}-${scenario.replay.at(-1)}`
             })
-            expect(projection.stalenessByRunId[`${name}-${scenario.replay.at(-1)}`]).toEqual({
-              state: 'clear'
-            })
+            expect(projection.stalenessByRunId[`${name}-${scenario.replay.at(-1)}`]).toEqual(
+              scenario.columnPartialCells?.length
+                ? { state: 'unknown', reasons: ['external-state', 'opaque-call'] }
+                : { state: 'clear' }
+            )
             expect(projection.dependenciesByRunId?.[`${name}-${scenario.replay.at(-1)}`]).toEqual(
-              scenario.dependencies.map((index) => `${name}-${index}`)
+              scenario.columnPartialCells?.length
+                ? undefined
+                : scenario.dependencies.map((index) => `${name}-${index}`)
             )
             for (const file of scenario.outputs.filter((file) => file.endsWith('.pdf'))) {
               const pdf = readFileSync(join(dataRoot, file))

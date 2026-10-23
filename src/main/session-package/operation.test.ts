@@ -121,12 +121,19 @@ describe('SessionPackageOperation', () => {
     const completion = deferred()
     const run = owner.run('import', undefined, () => completion.promise)
     const id = owner.snapshot!.id
-    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
     owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 4 * 1024 ** 2 })
     expect(owner.transferBytesPerSecond).toBe(4 * 1024 ** 2)
     expect(owner.snapshot).toMatchObject({ id, state: 'running' })
     expect(() =>
       owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 0 })
+    ).toThrow('Invalid')
+    for (const rate of [512 * 1024 ** 2, 1024 ** 3]) {
+      owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: rate })
+      expect(owner.transferBytesPerSecond).toBe(rate)
+    }
+    expect(() =>
+      owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 1024 ** 3 + 1 })
     ).toThrow('Invalid')
     completion.resolve()
     await run
@@ -140,11 +147,11 @@ describe('SessionPackageOperation', () => {
     const owner = new SessionPackageOperation()
     const completion = deferred()
     const run = owner.run('import', undefined, () => completion.promise)
-    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
 
     await vi.advanceTimersByTimeAsync(2_000)
     owner.reportIo(16 * 1024 ** 2)
-    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
 
     owner.respond({
       action: 'set-speed',
@@ -153,7 +160,7 @@ describe('SessionPackageOperation', () => {
     })
     expect(owner.transferBytesPerSecond).toBe(64 * 1024 ** 2)
     owner.respond({ action: 'set-speed', operationId: owner.snapshot!.id, bytesPerSecond: null })
-    expect(owner.transferBytesPerSecond).toBe(256 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(1024 ** 3)
 
     completion.resolve()
     await run

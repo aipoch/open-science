@@ -121,6 +121,8 @@
     "src/renderer/src/pages/literature/journals/JournalImportMapping.tsx",
     "src/renderer/src/pages/literature/journals/JournalImportReview.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureDetailDialog.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureDetailOverview.tsx",
     "src/renderer/src/pages/literature/journals/journal-field-icons.ts",
     "src/renderer/src/pages/literature/journals/journal-template.ts",
@@ -147,7 +149,8 @@
     "src/renderer/src/pages/literature/collections/LiteratureCollectionDeleteDialog.tsx",
     "src/renderer/src/pages/literature/workflows/LiteratureReadingProjectDialog.tsx",
     "src/renderer/src/pages/literature/public/page.ts",
-    "src/renderer/src/pages/literature/public-boundary.architecture.test.ts"
+    "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
+    "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -172,6 +175,7 @@
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicatesView.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/imports/LiteratureImportIdentity.render.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureLibraryCount.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
@@ -313,5 +317,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Supplementary lookup and shared download rows expand the reviewed literature renderer boundary; require full CI validation until the expanded sources and interaction contracts are reviewed."
 }

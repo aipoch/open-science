@@ -66,7 +66,9 @@
     "src/main/literature/full-text-index-storage.ts",
     "src/main/literature/full-text-index-schema.ts",
     "src/main/literature/full-text-index-storage.test.ts",
-    "src/main/literature/full-text-index-sqlite-fixture.ts"
+    "src/main/literature/full-text-index-sqlite-fixture.ts",
+    "src/main/literature/supplement-attachments.ts",
+    "src/main/literature/supplement-attachments.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -129,7 +131,8 @@
       "src/main/literature/journal-attributes.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",
       "src/main/literature/pdf-structure/engine-adapter.test.ts",
-      "src/main/literature/full-text-index-storage.test.ts"
+      "src/main/literature/full-text-index-storage.test.ts",
+      "src/main/literature/supplement-attachments.test.ts"
     ],
     "contract": [
       "src/main/acp/auto-operation-inventory.test.ts",
@@ -444,5 +447,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Supplementary attachment downloads add a command owner and transfer lifecycle beyond the reviewed literature host boundary; require full CI validation until the expanded sources and runtime contracts are reviewed."
 }
