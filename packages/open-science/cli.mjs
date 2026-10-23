@@ -116,7 +116,6 @@ Options:
   --non-interactive      Import without an interactive preview confirmation (session import)
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line
-  --output <path>        Artifact download destination
   --credential-store <os|file>  Settings credential storage (Linux headless; start only)
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start only)
@@ -473,8 +472,18 @@ export const parseCliArgs = (argv) => {
   if (options.jsonl && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--jsonl requires run --wait.')
   }
-  if (options.timeoutMs !== undefined && (command !== 'run' || subcommand || !options.wait)) {
-    throw new CliUsageError('--timeout-ms requires run --wait.')
+  const isPackageTransfer = command === 'session' && ['export', 'import'].includes(subcommand)
+  if (
+    options.timeoutMs !== undefined &&
+    !isPackageTransfer &&
+    (command !== 'run' || subcommand || !options.wait)
+  ) {
+    throw new CliUsageError('--timeout-ms requires run --wait or session export/import.')
+  }
+  if (command === 'session' && subcommand === 'import') {
+    if (!options.nonInteractive) throw new CliUsageError('--non-interactive is required.')
+    if (options.project && options.newProject)
+      throw new CliUsageError('Use only one of --project and --new-project.')
   }
   if (options.returnOnAttention && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--return-on-attention requires run --wait.')
@@ -1559,7 +1568,9 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!options.output) throw new CliUsageError('--output is required.')
     const projectId = await resolveCliProjectId(client, options.project)
     outputValue(
-      await client.exportSessionPackage(projectId, sessionId, resolve(options.output)),
+      await client.exportSessionPackage(projectId, sessionId, resolve(options.output), {
+        timeoutMs: options.timeoutMs
+      }),
       options,
       deps
     )
@@ -1576,7 +1587,8 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       await client.importSessionPackage(
         target,
         resolvedPath,
-        options.nonInteractive ? { nonInteractive: true } : undefined
+        { nonInteractive: true },
+        { timeoutMs: options.timeoutMs }
       ),
       options,
       deps

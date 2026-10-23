@@ -785,7 +785,8 @@ export class SessionPackageDesktop {
           if (nonInteractive && !sourcePath)
             throw new Error('A package path is required for non-interactive import.')
           if (sourcePath) rememberSource(sourcePath)
-          if (!sourcePath || target.projectId || target.projectName) this.options.assertCanStart?.()
+          if (nonInteractive || !sourcePath || target.projectId || target.projectName)
+            this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
           const recovery = importFile?.recovery
           if (recovery) {

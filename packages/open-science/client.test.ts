@@ -1228,3 +1228,89 @@ describe('OpenScienceClient', () => {
     )
   })
 })
+
+describe('Session package RPC', () => {
+  it('sends the authenticated RPC envelope and propagates server failures', async () => {
+    const fetch = vi
+      .fn()
+      .mockImplementation(async () =>
+        response(200, { protocolVersion: 1, ok: true, result: { saved: true } })
+      )
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'test',
+      fetch
+    })
+    await expect(client.exportSessionPackage('p', 's', '/out.science')).resolves.toEqual({
+      saved: true
+    })
+    expect(fetch).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:44100/rpc/sessions%3Aexport-package',
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: 'Bearer test' }),
+        body: JSON.stringify({
+          protocolVersion: 1,
+          args: [{ projectId: 'p', sessionId: 's' }, '/out.science']
+        })
+      })
+    )
+    await client.importSessionPackage({ projectName: 'Restored' }, '/in.science', {
+      nonInteractive: true
+    })
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({
+      protocolVersion: 1,
+      args: [{ projectName: 'Restored' }, '/in.science', { nonInteractive: true }]
+    })
+    expect(() => client.importSessionPackage({}, '/in.science')).toThrow('explicit confirmation')
+    fetch.mockResolvedValueOnce(
+      response(400, { ok: false, error: { code: 'handler_error', message: 'Package rejected' } })
+    )
+    await expect(client.exportSessionPackage('p', 's', '/out.science')).rejects.toMatchObject({
+      code: 'handler_error',
+      message: 'Package rejected'
+    })
+  })
+
+  it.each(['export', 'import'])(
+    'allows %s beyond thirty seconds and honors an explicit deadline',
+    async (kind) => {
+      vi.useFakeTimers()
+      try {
+        const fetch = vi.fn(
+          (_url: string, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+                once: true
+              })
+            })
+        )
+        const client = new OpenScienceClient({
+          baseUrl: 'http://127.0.0.1:44100',
+          token: 'test',
+          fetch
+        })
+        for (const timeoutMs of [undefined, 60000]) {
+          let outcome: unknown = 'pending'
+          const result =
+            kind === 'export'
+              ? client.exportSessionPackage('p', 's', '/out.science', { timeoutMs })
+              : client.importSessionPackage(
+                  {},
+                  '/in.science',
+                  { nonInteractive: true },
+                  { timeoutMs }
+                )
+          void result.catch((error: unknown) => {
+            outcome = error
+          })
+          await vi.advanceTimersByTimeAsync(30000)
+          expect(outcome).toBe('pending')
+          await vi.advanceTimersByTimeAsync((timeoutMs ?? 3600000) - 30000)
+          expect(outcome).toMatchObject({ code: 'timeout' })
+        }
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+})

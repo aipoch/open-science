@@ -617,7 +617,10 @@ open-science session export <session-id> --project <id-or-name> --output ~/backu
 `--project` resolves a Project by id or name and selects which Session to export. `--output` must
 be an absolute or relative path ending in `.science`; when it is omitted the command fails instead
 of opening a native save dialog, because the CLI runs without a desktop session. The command
-returns the written path and package summary as JSON with `--json`.
+returns the saved status and written path as JSON with `--json`.
+
+Both package commands allow up to one hour by default. Use `--timeout-ms <milliseconds>`
+to adjust the request deadline for large packages or slower disks.
 
 Import a `.science` package. Import is non-interactive by design and requires an explicit
 confirmation flag:

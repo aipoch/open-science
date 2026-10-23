@@ -6,6 +6,7 @@ const defaultSleep = (milliseconds) =>
   new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds))
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+const PACKAGE_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000
 const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 30_000
 const EVENT_RECONNECT_DELAY_MS = 100
 const MAX_BUFFERED_EVENTS = 1_024
@@ -341,19 +342,19 @@ export class OpenScienceClient {
   }
 
   exportSessionPackage(projectId, sessionId, destinationPath, options) {
-    return this.callRpc(
-      'sessions:export-package',
-      [{ projectId, sessionId }, destinationPath],
-      options
-    )
+    return this.callRpc('sessions:export-package', [{ projectId, sessionId }, destinationPath], {
+      ...options,
+      timeoutMs: options?.timeoutMs ?? PACKAGE_REQUEST_TIMEOUT_MS
+    })
   }
 
   importSessionPackage(target, sourcePath, options, rpcOptions) {
-    return this.callRpc(
-      'sessions:import-package',
-      [target, sourcePath, options === undefined ? undefined : { nonInteractive: true }],
-      rpcOptions
-    )
+    if (options?.nonInteractive !== true)
+      throw new TypeError('Non-interactive Session import requires explicit confirmation.')
+    return this.callRpc('sessions:import-package', [target, sourcePath, { nonInteractive: true }], {
+      ...rpcOptions,
+      timeoutMs: rpcOptions?.timeoutMs ?? PACKAGE_REQUEST_TIMEOUT_MS
+    })
   }
 
   updateSessionConfiguration(sessionId, request, options) {
