@@ -204,7 +204,6 @@ describe('package text policy', () => {
     '{"tokens":123,"password":"synthetic-private-value"}',
     '{"estimatedTokens":123,"tokens":"synthetic-private-value"}',
     '{"pass\\u0077ord":"synthetic-private-value"}',
-    'password = os.environ["PASSWORD"]',
     'curl --token synthetic-private-value',
     'curl -token synthetic-private-value',
     '研究：--token synthetic-private-value',
@@ -498,4 +497,114 @@ it.each([
     scanner.write(text.slice(split))
     expect(scanner.finish(), `split ${split}`).toBeDefined()
   }
+})
+
+describe('Python loop headers in research code', () => {
+  const code = 'for token in tokens:\n    groups.setdefault(find(token), []).append(token)'
+  const serialized = JSON.stringify({ content: code })
+
+  it.each([
+    code,
+    serialized,
+    JSON.stringify({ snapshot: serialized }),
+    'for name, value in tokens:\n    print(name, value)',
+    'async for item in tokens:\n    print(item)'
+  ])('accepts loop syntax across every stream split: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeUndefined()
+    for (let split = 0; split <= text.length; split++) {
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, split))
+      scanner.write(text.slice(split))
+      expect(scanner.finish(), `split ${split}`).toBeUndefined()
+    }
+  })
+
+  it('retains the loop prefix when the overlap starts inside the header', () => {
+    for (let shift = -code.indexOf('tokens'); shift <= 6; shift++) {
+      const text =
+        ' '.repeat(65536 - 8192 - code.indexOf('tokens') + shift) + code + ' '.repeat(8192)
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, 65536))
+      scanner.write(text.slice(65536))
+      expect(scanner.finish(), `overlap ${shift}`).toBeUndefined()
+    }
+  })
+
+  it.each([
+    'tokens: synthetic-private-value',
+    'tokens=synthetic-private-value',
+    "'tokens': 'synthetic-private-value'",
+    'for token in tokens: password="synthetic-private-value"',
+    'for token in tokens:\n    password="synthetic-private-value"',
+    'for token in tokens:\n    print("ghp_syntheticprivatevalue")',
+    'for token in tokens:\n    url="https://example.org/?token=synthetic-private-value"',
+    'for token in tokens:\n    tokens="synthetic-private-value"'
+  ])('still detects credentials in and around loops: %s', (code) => {
+    for (const text of [code, JSON.stringify({ content: code })]) {
+      expect(findSensitivePackageText(text)).toBeDefined()
+      for (let split = 0; split <= text.length; split++) {
+        const scanner = new PackageTextScanner()
+        scanner.write(text.slice(0, split))
+        scanner.write(text.slice(split))
+        expect(scanner.finish(), `split ${split}`).toBeDefined()
+      }
+    }
+  })
+})
+
+describe('noncredential syntax and metadata', () => {
+  const safe = [
+    'if token:\n    print(value)',
+    'while tokens:\n    tokens.pop()',
+    'if token:\n    print(value)\nwhile tokens:\n    tokens.pop()',
+    'elif not token:\n    pass',
+    'token == expected',
+    'token => value',
+    'tokens = []',
+    'credentials = {}',
+    '{"tokens":null}',
+    '{"tokens":[]}',
+    '{"credentials": { }}',
+    '{"token_type":"Bearer"}',
+    '{"secretName":"API_KEY"}',
+    'password = os.environ["PASSWORD"]',
+    "token = os.getenv('API_TOKEN')",
+    'apiKey = process.env.API_KEY',
+    'def parse(token: str):\n    return token',
+    'const token: string;'
+  ]
+  it.each([...safe, ...safe.map((content) => JSON.stringify({ content }))])(
+    'accepts proven noncredentials: %s',
+    (text) => {
+      expect(findSensitivePackageText(text)).toBeUndefined()
+      for (let split = 0; split <= text.length; split++) {
+        const scanner = new PackageTextScanner()
+        scanner.write(text.slice(0, split))
+        scanner.write(text.slice(split))
+        expect(scanner.finish(), `split ${split}`).toBeUndefined()
+      }
+    }
+  )
+  it.each([
+    '{"tokens":null',
+    '{"tokens":["actual-secret"]}',
+    '{"tokens":{"password":"actual-secret"}}',
+    '{"token_type":"actual-secret"}',
+    '{"secretName":"ghp_syntheticprivatevalue"}',
+    'token: str',
+    'def parse(token: str = "actual-secret"): pass',
+    'password = os.getenv("PASSWORD", "actual-secret")',
+    'password = os.environ["PASSWORD"] + "actual-secret"',
+    'if token: password="actual-secret"',
+    'token == expected; password="actual-secret"',
+    'tokens = []; password="actual-secret"'
+  ])('keeps literal or ambiguous credentials visible: %s', (text) => {
+    expect(findSensitivePackageText(text)).toBeDefined()
+    for (let split = 0; split <= text.length; split++) {
+      const scanner = new PackageTextScanner()
+      scanner.write(text.slice(0, split))
+      scanner.write(text.slice(split))
+      expect(scanner.finish(), `split ${split}`).toBeDefined()
+    }
+  })
 })

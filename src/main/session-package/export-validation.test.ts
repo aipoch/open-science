@@ -141,6 +141,22 @@ const splitRedaction =
 
 it.each([
   [
+    'Python loop in a message snapshot',
+    Buffer.from(
+      JSON.stringify({
+        content: 'for token in tokens:\n    groups.setdefault(find(token), []).append(token)'
+      })
+    ),
+    true
+  ],
+  [
+    'credential inside a Python loop snapshot',
+    Buffer.from(
+      JSON.stringify({ content: 'for token in tokens:\n    password="synthetic-private-value"' })
+    ),
+    false
+  ],
+  [
     'quoted punctuation in parser diagnostics',
     Buffer.from("SyntaxError: Unexpected token ':' while parsing 'LDHA'"),
     true
@@ -578,6 +594,12 @@ it('preserves context and model-step token counts through native export and impo
 
 it.each([
   serializedRedaction,
+  'if token:\n    print(value)\nwhile tokens:\n    tokens.pop()',
+  'tokens = []\npassword = os.environ["PASSWORD"]',
+  JSON.stringify({ tokens: null, credentials: [], token_type: 'Bearer', secretName: 'API_KEY' }),
+  JSON.stringify({
+    content: 'for token in tokens:\n    groups.setdefault(find(token), []).append(token)'
+  }),
   JSON.stringify([
     "SyntaxError: Unexpected token ':'",
     "Let's inspect protein_annotation",
