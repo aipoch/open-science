@@ -194,6 +194,9 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "An API key is optional but recommended.": "API-ключ необязателен, но рекомендуется.",
+    "Configure API key": "Настроить API-ключ",
+    "Semantic Scholar settings": "Настройки Semantic Scholar",
     "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",
     "Preparing to receive package…": "Подготовка к получению пакета…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Не удалось подготовить импорт из браузера. Устраните ошибку запуска и повторите попытку.",
@@ -7980,8 +7983,8 @@
     "Previously dismissed; review it in Inbox.": "Ранее отклонено; проверьте во входящих.",
     "Same paper, show relationships": "Та же работа, показать связи",
     "Semantic Scholar": "Semantic Scholar",
-    "Semantic Scholar is rate limiting requests. Try again later or add an API key in Settings / Credentials.": "Semantic Scholar ограничивает частоту запросов. Повторите позже или добавьте API-ключ в Настройки / Учётные данные.",
-    "Semantic Scholar rejected the API key. Update it in Settings / Credentials.": "Semantic Scholar отклонил API-ключ. Обновите его в Настройки / Учётные данные.",
+    "Semantic Scholar is rate limiting requests. Try again later or add an API key above.": "Semantic Scholar ограничивает частоту запросов. Повторите позже или добавьте API-ключ выше.",
+    "Semantic Scholar rejected the API key. Update it above.": "Semantic Scholar отклонил API-ключ. Обновите его выше.",
     "Some relationships have no identifiable paper and cannot be added.": "Для некоторых связей невозможно определить работу, поэтому их нельзя добавить.",
     "Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.": "Источник: Semantic Scholar. Охват может быть неполным. Выбранные источники поступят во входящие для проверки.",
     "These results expired. Search again.": "Срок действия результатов истёк. Выполните поиск снова.",

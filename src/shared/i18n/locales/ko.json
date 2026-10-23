@@ -191,6 +191,9 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
+    "An API key is optional but recommended.": "API 키는 선택 사항이지만 설정을 권장합니다.",
+    "Configure API key": "API 키 설정",
+    "Semantic Scholar settings": "Semantic Scholar 설정",
     "Could not load Reviewer log.": "리뷰어 로그를 불러오지 못했습니다.",
     "Preparing to receive package…": "패키지 수신 준비 중…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "브라우저 가져오기를 준비할 수 없습니다. 시작 오류를 해결한 후 다시 시도하세요.",
@@ -7511,8 +7514,8 @@
     "Previously dismissed; review it in Inbox.": "이전에 제외되었습니다. 받은 편지함에서 검토하세요.",
     "Same paper, show relationships": "같은 논문입니다. 인용 관계 표시",
     "Semantic Scholar": "Semantic Scholar",
-    "Semantic Scholar is rate limiting requests. Try again later or add an API key in Settings / Credentials.": "Semantic Scholar가 요청 빈도를 제한하고 있습니다. 나중에 다시 시도하거나 설정 / 자격 증명에서 API 키를 추가하세요.",
-    "Semantic Scholar rejected the API key. Update it in Settings / Credentials.": "Semantic Scholar가 API 키를 거부했습니다. 설정 / 자격 증명에서 업데이트하세요.",
+    "Semantic Scholar is rate limiting requests. Try again later or add an API key above.": "Semantic Scholar가 요청 빈도를 제한하고 있습니다. 나중에 다시 시도하거나 위에서 API 키를 추가하세요.",
+    "Semantic Scholar rejected the API key. Update it above.": "Semantic Scholar가 API 키를 거부했습니다. 위에서 업데이트하세요.",
     "Some relationships have no identifiable paper and cannot be added.": "일부 인용 관계는 논문을 식별할 수 없어 추가할 수 없습니다.",
     "Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.": "출처: Semantic Scholar. 수록 범위가 불완전할 수 있습니다. 선택한 문헌은 검토를 위해 받은 편지함으로 이동합니다.",
     "These results expired. Search again.": "결과가 만료되었습니다. 다시 검색하세요.",

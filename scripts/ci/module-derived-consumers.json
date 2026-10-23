@@ -656,6 +656,7 @@
     ],
     "settings_presentation_primitives": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

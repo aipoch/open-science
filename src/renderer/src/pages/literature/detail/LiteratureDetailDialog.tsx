@@ -27,9 +27,18 @@ import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contr
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import { type LiteratureDetailSnapshot } from '@aipoch/literature-library/client'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { ArrowLeft, Download, MoreHorizontal, Pencil, Quote, Search, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  Download,
+  MoreHorizontal,
+  Pencil,
+  Quote,
+  Search,
+  Settings2,
+  X
+} from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useRef, useSyncExternalStore } from 'react'
+import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
 import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
@@ -64,7 +73,7 @@ export function LiteratureDetailDialog({
   detailTagMenuOpenRef,
   detailSelectOpenRef,
   childLayerDismissGuardUntilRef,
-  closeSelectedItemDetail,
+  closeSelectedItemDetail: closeDetail,
   detailInitiatorRef,
   libraryEntryRef,
   metadata,
@@ -123,6 +132,23 @@ export function LiteratureDetailDialog({
   renderOverview: (item: LiteratureItemView) => React.ReactNode
 }): React.JSX.Element | null {
   const { t } = useTranslation()
+  const [credentialsOpen, setCredentialsOpenState] = useState(false)
+  const credentialsOpenRef = useRef(false)
+  const setCredentialsOpen = (open: boolean): void => {
+    // Radix's capture listener can retain the preceding render's callback.
+    credentialsOpenRef.current = open
+    setCredentialsOpenState(open)
+  }
+  const credentialFormId = useId()
+  const credentialTriggerRef = useRef<HTMLButtonElement>(null)
+  const closeSelectedItemDetail = (): void => {
+    setCredentialsOpen(false)
+    closeDetail()
+  }
+  const closeCredentials = (): void => {
+    setCredentialsOpen(false)
+    credentialTriggerRef.current?.focus()
+  }
   const backdropDismissedChildRef = useRef(false)
   return (
     <LiteratureDetailBoundary controller={detailController}>
@@ -212,6 +238,10 @@ export function LiteratureDetailDialog({
                   }}
                   onEscapeKeyDown={(event) => {
                     event.preventDefault()
+                    if (credentialsOpenRef.current) {
+                      closeCredentials()
+                      return
+                    }
                     if (
                       detailSelectOpenRef.current ||
                       detailTagMenuOpenRef.current ||
@@ -235,6 +265,7 @@ export function LiteratureDetailDialog({
                           disabled={metadata.saving}
                           onClick={() => {
                             const fromRelated = metadata.mode === 'related'
+                            setCredentialsOpen(false)
                             leaveMetadataEditor()
                             if (fromRelated)
                               requestAnimationFrame(() =>
@@ -300,6 +331,20 @@ export function LiteratureDetailDialog({
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      {metadata.mode === 'related' ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('Semantic Scholar settings')}
+                          ref={credentialTriggerRef}
+                          aria-expanded={credentialsOpen}
+                          aria-controls={credentialsOpen ? credentialFormId : undefined}
+                          onClick={() => setCredentialsOpen(!credentialsOpenRef.current)}
+                        >
+                          <Settings2 className="size-4" aria-hidden="true" />
+                        </Button>
+                      ) : null}
                       {metadata.mode === 'view' ? (
                         <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
@@ -365,7 +410,14 @@ export function LiteratureDetailDialog({
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}:${generation}`}
                       item={selectedItem}
                       initialDirection={relatedDirection}
-                      onOpenInbox={onOpenInbox}
+                      credentialFormId={credentialFormId}
+                      credentialsOpen={credentialsOpen}
+                      onOpenCredentials={() => setCredentialsOpen(true)}
+                      onCloseCredentials={closeCredentials}
+                      onOpenInbox={() => {
+                        setCredentialsOpen(false)
+                        onOpenInbox()
+                      }}
                       onSaved={() => void loadEntries(true)}
                     />
                   ) : metadata.mode === 'supplements' ? (

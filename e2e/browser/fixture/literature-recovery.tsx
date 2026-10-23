@@ -9,6 +9,7 @@ import { LiteratureBatchLookupDialog } from '@/pages/literature/workflows/Litera
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import type { LiteratureJobRequest, LiteratureJobView } from '@aipoch/literature-discovery/jobs'
 import {
   literatureItemInputSchema,
@@ -19,6 +20,7 @@ import { createRoot } from 'react-dom/client'
 
 initI18n('en')
 const mode = new URLSearchParams(location.search).get('mode')
+let requiresCitationKey = new URLSearchParams(location.search).has('citation-key')
 const parent = {
   id: 'parent',
   revision: 1,
@@ -119,19 +121,34 @@ window.api = {
   literature: {
     related: async (request: LiteratureRelatedRequest) => {
       fileRequests.push(request)
+      if (new URLSearchParams(location.search).has('citation-loading'))
+        await new Promise<void>((resolve) =>
+          Object.assign(window, { finishCitationLookup: resolve })
+        )
+      if (requiresCitationKey)
+        return {
+          itemId: fileItem.id,
+          metadataRevision: fileItem.metadataRevision,
+          direction: request.direction,
+          state: 'unavailable',
+          issue: 'rate-limited',
+          records: []
+        }
       return {
         itemId: fileItem.id,
         metadataRevision: fileItem.metadataRevision,
         direction: request.direction,
         state: 'ready',
+        nextOffset: request.offset === 0 ? 20 : undefined,
         resolutionToken: '00000000-0000-4000-8000-000000000000',
         records: [
           {
-            paperId: 'a'.repeat(40),
+            paperId: (request.offset ? 'b' : 'a').repeat(40),
             item: literatureItemInputSchema.parse({
               itemType: 'journalArticle',
-              title:
-                request.direction === 'references'
+              title: request.offset
+                ? 'Another related paper'
+                : request.direction === 'references'
                   ? 'A foundational reference'
                   : 'A follow-up study',
               issuedYear: 2025,
@@ -213,6 +230,15 @@ useNavigationStore.setState({
 })
 useProjectStore.setState({ projects: [], isLoaded: true })
 useTagStore.setState({ status: 'ready', revision: 1, tags: [], assignments: [] })
+useSettingsStore.setState({
+  encryptionAvailable: true,
+  connectorsLoaded: true,
+  semanticScholar: { hasApiKey: false },
+  setSemanticScholarCredential: async () => {
+    requiresCitationKey = false
+    useSettingsStore.setState({ semanticScholar: { hasApiKey: true } })
+  }
+})
 createRoot(document.getElementById('root')!).render(
   <LiteratureRendererProvider host={literatureRendererHost}>
     {mode === 'batch' ? (

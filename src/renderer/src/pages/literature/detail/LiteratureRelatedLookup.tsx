@@ -10,31 +10,57 @@ import {
   type LiteratureRelatedResult,
   type LiteratureRelatedRequest
 } from '@aipoch/literature-discovery/contracts'
+import { Tabs } from 'radix-ui'
+import { BookOpen, Quote, Info, LoaderCircle } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { useLiteratureHost } from '../renderer-host'
+import { MaskedPasswordField } from '../../settings/MaskedPasswordField'
 
 export function LiteratureRelatedLookup({
   item,
   initialDirection,
   onSaved,
-  onOpenInbox
+  onOpenInbox,
+  credentialsOpen = false,
+  credentialFormId,
+  onOpenCredentials,
+  onCloseCredentials
 }: {
   item: LiteratureItemView
   initialDirection: LiteratureRelatedRequest['direction']
   onSaved(): void
   onOpenInbox?: () => void
+  credentialsOpen?: boolean
+  credentialFormId?: string
+  onOpenCredentials?: () => void
+  onCloseCredentials?: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const { api } = useLiteratureHost()
+  const { api, useSettingsStore } = useLiteratureHost()
+  const hasApiKey = useSettingsStore((state) => state.semanticScholar?.hasApiKey)
+  const loadConnectors = useSettingsStore((state) => state.loadConnectors)
+  useEffect(() => {
+    // Unknown credential status must not be presented as a missing key.
+    void loadConnectors().catch(() => undefined)
+  }, [loadConnectors])
+  const showCredentialHint = hasApiKey === false && !credentialsOpen && onOpenCredentials
   const [direction, setDirection] = useState(initialDirection)
   const [result, setResult] = useState<LiteratureRelatedResult>()
-  const [offset, setOffset] = useState(0)
-  const [pages, setPages] = useState<number[]>([])
+  const [loadError, setLoadError] = useState<LiteratureRelatedResult>()
+  const scrollRef = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [receipts, setReceipts] = useState<Record<string, LiteratureCatalogReceipt | 'failed'>>({})
   const [busy, setBusy] = useState(false)
+  const [busyVisible, setBusyVisible] = useState(false)
+  useEffect(() => {
+    if (!busy) return
+    // Cached responses and local cooldowns should not flash a loading screen.
+    const timer = setTimeout(() => setBusyVisible(true), 200)
+    return () => clearTimeout(timer)
+  }, [busy])
   const [saving, setSaving] = useState(false)
   const generation = useRef(0)
   const inFlight = useRef(false)
@@ -48,10 +74,15 @@ export function LiteratureRelatedLookup({
       if (inFlight.current || savingRef.current) return
       const current = ++generation.current
       inFlight.current = true
+      setBusyVisible(false)
       setBusy(true)
-      setSelected(new Set())
+      setLoadError(undefined)
+      if (!nextOffset) {
+        setSelected(new Set())
+        setResult((previous) => (previous?.state === 'unavailable' ? previous : undefined))
+        if (scrollRef.current) scrollRef.current.scrollTop = 0
+      }
       setDirection(nextDirection)
-      setOffset(nextOffset)
       try {
         const response = literatureRelatedResultSchema.parse(
           await api.literature.related({
@@ -68,10 +99,27 @@ export function LiteratureRelatedLookup({
           response.direction !== nextDirection
         )
           throw new Error('Citation discovery identity mismatch.')
-        if (current === generation.current) setResult(response)
+        if (current === generation.current) {
+          if (nextOffset && response.state === 'unavailable') setLoadError(response)
+          else
+            setResult((previous) =>
+              nextOffset && previous && response.state === 'ready'
+                ? {
+                    ...response,
+                    records: [
+                      ...previous.records,
+                      ...response.records.filter(
+                        (entry) => !previous.records.some((old) => old.paperId === entry.paperId)
+                      )
+                    ],
+                    omitted: (previous.omitted ?? 0) + (response.omitted ?? 0)
+                  }
+                : response
+            )
+        }
       } catch {
         if (current === generation.current)
-          setResult({
+          (nextOffset ? setLoadError : setResult)({
             itemId: item.id,
             metadataRevision: item.metadataRevision,
             direction: nextDirection,
@@ -151,14 +199,20 @@ export function LiteratureRelatedLookup({
         : receipt.state === 'dismissed'
           ? t('Previously dismissed; review it in Inbox.')
           : t('In Inbox')
-  const issue = result?.issue
+  const issue = loadError?.issue ?? result?.issue
+  const invalidated = issue === 'expired' || issue === 'reference-changed'
+  const credentialAction =
+    !showCredentialHint &&
+    !credentialsOpen &&
+    onOpenCredentials &&
+    (issue === 'rate-limited' || issue === 'authentication')
+      ? { label: t('Configure API key'), onClick: onOpenCredentials }
+      : undefined
   const errorMessage =
     issue === 'rate-limited'
-      ? t(
-          'Semantic Scholar is rate limiting requests. Try again later or add an API key in Settings / Credentials.'
-        )
+      ? t('Semantic Scholar is rate limiting requests. Try again later or add an API key above.')
       : issue === 'authentication'
-        ? t('Semantic Scholar rejected the API key. Update it in Settings / Credentials.')
+        ? t('Semantic Scholar rejected the API key. Update it above.')
         : issue === 'no-match'
           ? t('No matching paper was found in Semantic Scholar.')
           : issue === 'reference-changed'
@@ -167,61 +221,146 @@ export function LiteratureRelatedLookup({
               ? t('These results expired. Search again.')
               : t('Citation discovery is temporarily unavailable. Try again.')
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="space-y-2 border-b border-border-300 px-5 py-3">
-        <div className="flex flex-wrap gap-2" aria-label={t('Citation discovery')}>
+    <Tabs.Root
+      value={direction}
+      activationMode="manual"
+      onValueChange={(value) => {
+        if (value !== direction)
+          void lookup(
+            value as typeof direction,
+            0,
+            result?.state === 'ready' ? result.resolutionToken : undefined
+          )
+      }}
+      className="flex min-h-0 flex-1 flex-col"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-border-300 px-5">
+        <Tabs.List className="flex gap-5" aria-label={t('Citation discovery')}>
+          {(['references', 'citations'] as const).map((value) => {
+            const Icon = value === 'references' ? BookOpen : Quote
+            return (
+              <Tabs.Trigger
+                key={value}
+                value={value}
+                disabled={busy || saving || credentialsOpen}
+                className="flex items-center gap-2 whitespace-nowrap border-b-2 border-transparent py-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none data-[state=active]:border-primary data-[state=active]:text-primary"
+              >
+                <Icon className="size-4" aria-hidden="true" />
+                {value === 'references' ? t('References') : t('Cited by')}
+              </Tabs.Trigger>
+            )
+          })}
+        </Tabs.List>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={t(
+                  'Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.'
+                )}
+                className="flex shrink-0 items-center gap-1 rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="hidden sm:inline">{t('Semantic Scholar')}</span>
+                <Info className="size-3.5" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64">
+              {t(
+                'Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.'
+              )}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+      {showCredentialHint ? (
+        <div
+          data-slot="citation-key-hint"
+          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-300 bg-muted/30 px-5 py-2"
+        >
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Info className="size-3.5 shrink-0" aria-hidden="true" />
+            {t('An API key is optional but recommended.')}
+          </p>
           <Button
+            variant="link"
             size="sm"
-            variant={direction === 'references' ? 'default' : 'outline'}
-            aria-pressed={direction === 'references'}
-            disabled={busy || saving}
-            onClick={() => {
-              setPages([])
-              void lookup(
-                'references',
-                0,
-                result?.state === 'ready' ? result.resolutionToken : undefined
-              )
-            }}
+            className="h-auto p-0 text-xs"
+            onClick={onOpenCredentials}
           >
-            {t('References')}
-          </Button>
-          <Button
-            size="sm"
-            variant={direction === 'citations' ? 'default' : 'outline'}
-            aria-pressed={direction === 'citations'}
-            disabled={busy || saving}
-            onClick={() => {
-              setPages([])
-              void lookup(
-                'citations',
-                0,
-                result?.state === 'ready' ? result.resolutionToken : undefined
-              )
-            }}
-          >
-            {t('Cited by')}
+            {t('Configure API key')}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
+      ) : null}
+      {credentialsOpen && onCloseCredentials ? (
+        <SemanticScholarCredentialForm
+          id={credentialFormId}
+          disabled={busy || saving}
+          onCancel={onCloseCredentials}
+          onSaved={() => {
+            onCloseCredentials()
+            if (loadError)
+              void lookup(
+                direction,
+                invalidated ? 0 : result?.nextOffset,
+                invalidated ? undefined : result?.resolutionToken
+              )
+            else if (result?.state === 'unavailable') void lookup(direction)
+          }}
+        />
+      ) : null}
+      <Tabs.Content
+        forceMount
+        value={direction}
+        ref={scrollRef}
+        className="m-0 min-h-0 flex-1 overflow-y-auto px-5 py-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        aria-busy={busy}
+      >
+        <p className="sr-only">
           {direction === 'references'
             ? t('Papers referenced by this paper.')
             : t('Papers that cite this paper.')}
         </p>
-        <p className="text-xs text-muted-foreground">
-          {t(
-            'Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.'
-          )}
-        </p>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" aria-busy={busy}>
-        {busy ? (
-          <p role="status">{t('Searching…')}</p>
+        {busy && busyVisible && !result ? (
+          <div data-slot="citation-loading" role="status" className="space-y-5">
+            <div className="flex items-start gap-3 py-2">
+              <LoaderCircle
+                className="mt-0.5 size-5 shrink-0 animate-spin text-primary motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('Searching…')}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {direction === 'references'
+                    ? t('Papers referenced by this paper.')
+                    : t('Papers that cite this paper.')}
+                </p>
+              </div>
+            </div>
+            <div aria-hidden="true" className="divide-y divide-border-300">
+              {['w-4/5', 'w-3/5', 'w-5/6', 'w-2/3'].map((width) => (
+                <div key={width} className="flex gap-3 py-5 first:pt-0">
+                  <div className="mt-0.5 size-4 shrink-0 rounded bg-muted" />
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <div className={`h-3.5 rounded bg-muted ${width}`} />
+                    <div className="h-3 w-1/2 rounded bg-muted" />
+                    <div className="h-2.5 w-20 rounded bg-muted" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : result?.state === 'unavailable' ? (
           <ErrorNotice
             role="alert"
             description={errorMessage}
-            primaryButton={{ label: t('Retry'), onClick: () => void lookup(direction, 0) }}
+            secondaryButton={credentialAction}
+            primaryButton={{
+              label: t('Retry'),
+              disabled: busy || saving,
+              loading: busy && busyVisible,
+              onClick: () => void lookup(direction, 0)
+            }}
           />
         ) : result?.state === 'match-required' && result.seed ? (
           <div className="space-y-4">
@@ -246,18 +385,20 @@ export function LiteratureRelatedLookup({
             </Button>
           </div>
         ) : result?.records.length ? (
-          <ul className="space-y-3">
+          <ul className="divide-y divide-border-300">
             {result.records.map((entry) => {
               const receipt = receipts[entry.paperId]
               return (
-                <li key={entry.paperId} className="rounded-lg border border-border-300 p-3">
+                <li key={entry.paperId} className="py-4 first:pt-0 last:pb-0">
                   <div className="flex items-start gap-3">
                     <input
                       type="checkbox"
                       className="mt-1 size-4 shrink-0 accent-primary"
                       aria-label={t('Select {{title}}', { title: entry.item.title })}
                       checked={selected.has(entry.paperId)}
-                      disabled={saving || (receipt !== undefined && receipt !== 'failed')}
+                      disabled={
+                        saving || invalidated || (receipt !== undefined && receipt !== 'failed')
+                      }
                       onChange={(event) =>
                         setSelected((previous) => {
                           const next = new Set(previous)
@@ -304,45 +445,155 @@ export function LiteratureRelatedLookup({
             {t('Some relationships have no identifiable paper and cannot be added.')}
           </p>
         ) : null}
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-300 px-5 py-3">
-        <div className="flex gap-2">
+        {loadError ? (
+          <div className="mt-4">
+            <ErrorNotice
+              inline
+              role="alert"
+              description={errorMessage}
+              secondaryButton={credentialAction}
+              primaryButton={{
+                label: t('Retry'),
+                disabled: busy || saving,
+                loading: busy,
+                onClick: () =>
+                  void lookup(
+                    direction,
+                    invalidated ? 0 : result?.nextOffset,
+                    invalidated ? undefined : result?.resolutionToken
+                  )
+              }}
+            />
+          </div>
+        ) : result?.nextOffset !== undefined ? (
+          <div className="mt-5 flex justify-center">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy || saving}
+              onClick={() => void lookup(direction, result.nextOffset, result.resolutionToken)}
+            >
+              {busy ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
+              {busy ? t('Loading…') : t('Load more')}
+            </Button>
+          </div>
+        ) : null}
+      </Tabs.Content>
+      {result?.records.length ? (
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border-300 px-5 py-3">
+          {onOpenInbox &&
+          Object.values(receipts).some(
+            (receipt) => receipt !== 'failed' && receipt.kind === 'candidate'
+          ) ? (
+            <Button size="sm" variant="outline" disabled={saving} onClick={onOpenInbox}>
+              {t('Open Inbox')}
+            </Button>
+          ) : null}
           <Button
             size="sm"
-            variant="outline"
-            disabled={busy || saving || !pages.length}
-            onClick={() => {
-              const previous = pages.at(-1)!
-              setPages(pages.slice(0, -1))
-              void lookup(direction, previous, result?.resolutionToken)
-            }}
+            disabled={busy || saving || invalidated || !selected.size}
+            onClick={() => void save()}
           >
-            {t('Previous')}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || saving || result?.nextOffset === undefined}
-            onClick={() => {
-              setPages([...pages, offset])
-              void lookup(direction, result!.nextOffset!, result?.resolutionToken)
-            }}
-          >
-            {t('Next')}
+            {saving ? t('Saving…') : t('Add selected to Inbox')}
           </Button>
         </div>
-        {onOpenInbox &&
-        Object.values(receipts).some(
-          (receipt) => receipt !== 'failed' && receipt.kind === 'candidate'
-        ) ? (
-          <Button size="sm" variant="outline" disabled={saving} onClick={onOpenInbox}>
-            {t('Open Inbox')}
-          </Button>
-        ) : null}
-        <Button size="sm" disabled={busy || saving || !selected.size} onClick={() => void save()}>
-          {saving ? t('Saving…') : t('Add selected to Inbox')}
+      ) : null}
+    </Tabs.Root>
+  )
+}
+
+function SemanticScholarCredentialForm({
+  id,
+  disabled,
+  onCancel,
+  onSaved
+}: {
+  id?: string
+  disabled: boolean
+  onCancel(): void
+  onSaved(): void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const { useSettingsStore } = useLiteratureHost()
+  const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
+  const saveCredential = useSettingsStore((state) => state.setSemanticScholarCredential)
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(false)
+  const active = useRef(true)
+  const submitting = useRef(false)
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [])
+  const submit = async (): Promise<void> => {
+    if (submitting.current || disabled || !key.trim() || !encryptionAvailable) return
+    submitting.current = true
+    setBusy(true)
+    setError(false)
+    try {
+      await saveCredential({ apiKey: key.trim() })
+      if (active.current) {
+        setKey('')
+        onSaved()
+      }
+    } catch {
+      if (active.current) setError(true)
+    } finally {
+      submitting.current = false
+      if (active.current) setBusy(false)
+    }
+  }
+  return (
+    <form
+      id={id}
+      aria-label={t('Semantic Scholar settings')}
+      className="shrink-0 space-y-2 border-b border-border-300 bg-muted/30 px-5 py-3"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void submit()
+      }}
+    >
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-medium">{t('API key')}</span>
+        <ExternalTextLink href="https://www.semanticscholar.org/product/api">
+          {t('Get an API key')}
+        </ExternalTextLink>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <MaskedPasswordField
+          aria-label={t('API key')}
+          autoFocus
+          value={key}
+          onChange={setKey}
+          placeholder={t('Paste an API key')}
+          disabled={busy}
+          className="min-w-40 flex-1"
+        />
+        <Button
+          type="submit"
+          size="sm"
+          disabled={busy || disabled || !key.trim() || !encryptionAvailable}
+        >
+          {busy ? t('Saving…') : t('Save key')}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancel}>
+          {t('Cancel')}
         </Button>
       </div>
-    </div>
+      {!encryptionAvailable || error ? (
+        <ErrorNotice
+          inline
+          role="alert"
+          description={
+            !encryptionAvailable
+              ? t('Secure key storage is unavailable. Unlock the system keychain and try again.')
+              : t('Could not save the Semantic Scholar API key.')
+          }
+        />
+      ) : null}
+    </form>
   )
 }

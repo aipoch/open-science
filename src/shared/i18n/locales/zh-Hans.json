@@ -191,6 +191,9 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
+    "An API key is optional but recommended.": "API key 为可选配置，建议添加。",
+    "Configure API key": "配置 API 密钥",
+    "Semantic Scholar settings": "Semantic Scholar 设置",
     "Could not load Reviewer log.": "无法加载审阅器日志。",
     "Preparing to receive package…": "正在准备接收包…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "无法准备浏览器导入。请解决启动错误后重试。",
@@ -7513,8 +7516,8 @@
     "Previously dismissed; review it in Inbox.": "此前已忽略，可在收件箱中查看。",
     "Same paper, show relationships": "是这篇，查看引用关系",
     "Semantic Scholar": "Semantic Scholar",
-    "Semantic Scholar is rate limiting requests. Try again later or add an API key in Settings / Credentials.": "Semantic Scholar 正在限制请求频率。请稍后重试，或在设置 / 凭据中添加 API 密钥。",
-    "Semantic Scholar rejected the API key. Update it in Settings / Credentials.": "Semantic Scholar 拒绝了此 API 密钥。请在设置 / 凭据中更新。",
+    "Semantic Scholar is rate limiting requests. Try again later or add an API key above.": "Semantic Scholar 正在限制请求频率。请稍后重试，或在上方添加 API 密钥。",
+    "Semantic Scholar rejected the API key. Update it above.": "Semantic Scholar 拒绝了此 API 密钥。请在上方更新。",
     "Some relationships have no identifiable paper and cannot be added.": "部分引用关系没有可识别的论文，无法添加。",
     "Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.": "来源：Semantic Scholar，收录可能不完整。所选文献将进入收件箱供审核。",
     "These results expired. Search again.": "这些结果已过期，请重新搜索。",

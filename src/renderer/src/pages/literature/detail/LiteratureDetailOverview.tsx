@@ -10,7 +10,7 @@ import type {
   LiteratureItemView
 } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import { Search } from 'lucide-react'
+import { Search, BookOpen, Quote } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { ResourceTagSummary } from '../../settings/ResourceTagControls'
@@ -154,18 +154,21 @@ export function LiteratureDetailOverview({
         </section>
       )}
       <LiteratureBibliographicDetails selectedItem={selectedItem} itemTypeLabels={itemTypeLabels} />
-      <section className="space-y-2 py-4">
-        <h3 className="font-medium">{t('Citation discovery')}</h3>
-        <p className="text-xs text-muted-foreground">
-          {t('Find references and citing papers through Semantic Scholar.')}
-        </p>
-        <div className="flex flex-wrap gap-2">
+      <section className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div className="space-y-1">
+          <h3 className="font-medium">{t('Citation discovery')}</h3>
+          <p className="text-xs text-muted-foreground">
+            {t('Find references and citing papers through Semantic Scholar.')}
+          </p>
+        </div>
+        <div className="ml-auto flex shrink-0 gap-2">
           <Button
             data-related-entry="references"
             size="sm"
             variant="outline"
             onClick={() => onRelated('references')}
           >
+            <BookOpen className="size-4" aria-hidden="true" />
             {t('References')}
           </Button>
           <Button
@@ -174,6 +177,7 @@ export function LiteratureDetailOverview({
             variant="outline"
             onClick={() => onRelated('citations')}
           >
+            <Quote className="size-4" aria-hidden="true" />
             {t('Cited by')}
           </Button>
         </div>

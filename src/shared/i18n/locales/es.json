@@ -193,6 +193,9 @@
     "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
+    "An API key is optional but recommended.": "La clave de API es opcional, pero se recomienda configurarla.",
+    "Configure API key": "Configurar clave API",
+    "Semantic Scholar settings": "Configuración de Semantic Scholar",
     "Could not load Reviewer log.": "No se pudo cargar el registro del revisor.",
     "Preparing to receive package…": "Preparando la recepción del paquete…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "No se pudo preparar la importación desde el navegador. Resuelva el error de inicio e inténtelo de nuevo.",
@@ -7841,8 +7844,8 @@
     "Previously dismissed; review it in Inbox.": "Descartado anteriormente; revíselo en la bandeja de entrada.",
     "Same paper, show relationships": "Mismo artículo, mostrar relaciones",
     "Semantic Scholar": "Semantic Scholar",
-    "Semantic Scholar is rate limiting requests. Try again later or add an API key in Settings / Credentials.": "Semantic Scholar está limitando las solicitudes. Inténtelo más tarde o añada una clave API en Configuración / Credenciales.",
-    "Semantic Scholar rejected the API key. Update it in Settings / Credentials.": "Semantic Scholar rechazó la clave API. Actualícela en Configuración / Credenciales.",
+    "Semantic Scholar is rate limiting requests. Try again later or add an API key above.": "Semantic Scholar está limitando las solicitudes. Inténtelo más tarde o añada una clave API arriba.",
+    "Semantic Scholar rejected the API key. Update it above.": "Semantic Scholar rechazó la clave API. Actualícela arriba.",
     "Some relationships have no identifiable paper and cannot be added.": "Algunas relaciones no tienen un artículo identificable y no se pueden añadir.",
     "Source: Semantic Scholar. Coverage may be incomplete. Selected references go to Inbox for review.": "Fuente: Semantic Scholar. La cobertura puede ser incompleta. Las referencias seleccionadas se envían a la bandeja de entrada para su revisión.",
     "These results expired. Search again.": "Estos resultados han caducado. Vuelva a buscar.",
