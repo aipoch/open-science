@@ -123,19 +123,40 @@ describe('NotebookNetworkDomainsForm', () => {
     ).toBe(true)
 
     const input = container.querySelector('[aria-label="Domain hostname"]') as HTMLInputElement
-    await typeInput(input, 'https://data.example.org/path')
+    await typeInput(input, 'api.*.example.org')
     await act(async () => button('Add').click())
     expect(container.textContent).toContain(
-      'Enter an exact hostname without a scheme, path, port, wildcard, or IP address.'
+      'Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.'
     )
 
-    await typeInput(input, 'data.example.org')
+    await typeInput(input, 'https://data.example.org:8443/path?q=1#part')
     await act(async () => button('Add').click())
     expect(container.textContent).toContain('data.example.org')
 
     await act(async () => button('Save changes').click())
     expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
       expect.objectContaining({ allowedDomains: ['data.example.org'] }),
+      [],
+      []
+    )
+  })
+
+  it('normalizes wildcard input, detects duplicates, and saves only domain rules', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+    await typeInput(input, ' https://*.EXAMPLE.org:8443/path?q=1#part ')
+    await act(async () => button('Add to list').click())
+    expect(input.value).toBe('')
+    expect(container.querySelector('[aria-label="Custom public domains"]')!.textContent).toContain(
+      '*.example.org'
+    )
+    await typeInput(input, '*.example.org')
+    await act(async () => button('Add to list').click())
+    expect(container.textContent).toContain('This hostname is already in the list.')
+    await typeInput(input, '')
+    await act(async () => button('Save changes').click())
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedDomains: ['*.example.org'] }),
       [],
       []
     )

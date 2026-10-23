@@ -149,6 +149,13 @@ Notebook child environments start from an allowlist. Provider tokens, cloud cred
 complete PEM trust bundle is exposed only through the standard native client variables and is also
 used to verify an HTTPS parent proxy. Leaving it blank uses public/system roots.
 
+Node children receive `NODE_USE_ENV_PROXY=1` so built-in `fetch` and default HTTP(S) agents use
+the authenticated gateway. Native support requires Node 22.21+ or 24.5+ (24.0+ for `fetch` only).
+Older Node versions and clients with custom agents/dispatchers need their own proxy support;
+this setting does not route raw sockets or `dns.lookup()` through the gateway. A failed direct
+DNS lookup inside the sandbox is therefore not a test of an allowlisted HTTP(S) destination.
+Existing long-running processes must restart to receive the updated launch environment.
+
 Only one `NotebookNetworkSandbox` instance may own the platform sandbox at a time. Each wrapped
 command gets a credential-isolated proxy context whose server-side closure binds the approval to
 that command. Commands may run concurrently on every supported platform.

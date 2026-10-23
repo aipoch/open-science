@@ -49,6 +49,68 @@ describe('persistent platform shell cells', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it
+    .skipIf(
+      process.platform === 'win32' ||
+        (process.platform === 'linux' && process.env.VITEST_PORTABLE_CI === '1')
+    )
+    .each(['ro', 'rw'] as const)(
+    'keeps folder authority %s across Shell cd and relaunch',
+    async (access) => {
+      const workspace = join(root, 'workspace')
+      const granted = join(root, 'granted')
+      const outside = join(root, 'ungranted.txt')
+      await mkdir(granted)
+      await writeFile(join(granted, 'data.txt'), 'original')
+      await writeFile(outside, 'private')
+      sandbox = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        temporaryRoot: join(workspace, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => true,
+        getGrantedLocalRoots: async () => [
+          { id: 'folder', name: 'granted', path: await realpath(granted), access }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      adapter = new NotebookShellProcessAdapter(process.platform, sandbox)
+      const execute = (code: string, cwd = workspace): ReturnType<typeof adapter.execute> =>
+        adapter.execute({
+          ...request(code),
+          cwd,
+          notebookSessionRoot: workspace,
+          environment: { PATH: '/usr/bin:/bin' }
+        })
+      expect(await execute(`printf workspace > workspace.txt`)).toMatchObject({ exitCode: 0 })
+      expect(await execute(`cd '${granted}'; cat data.txt`)).toMatchObject({
+        exitCode: 0,
+        stdout: 'original'
+      })
+      for (const restarted of [false, true]) {
+        if (restarted) {
+          expect(await adapter.shutdown()).toEqual({ reaped: true })
+          adapter = new NotebookShellProcessAdapter(process.platform, sandbox)
+        }
+        const cwd = restarted ? granted : workspace
+        expect(await execute('cat data.txt', cwd)).toMatchObject({ exitCode: 0 })
+        const write = await execute('printf changed > data.txt', cwd)
+        expect(write.exitCode === 0).toBe(access === 'rw')
+        expect((await execute(`cat '${outside}'`, cwd)).exitCode).not.toBe(0)
+        expect(
+          await execute(`printf still-writable > '${workspace}/workspace.txt'`, cwd)
+        ).toMatchObject({ exitCode: 0 })
+      }
+      expect(await adapter.shutdown()).toEqual({ reaped: true })
+      adapter = new NotebookShellProcessAdapter(process.platform, sandbox)
+      expect((await execute(`cat '${outside}'`, '/')).exitCode).not.toBe(0)
+      expect(await readFile(join(granted, 'data.txt'), 'utf8')).toBe(
+        access === 'rw' ? 'changed' : 'original'
+      )
+    },
+    30_000
+  )
+
   it.skipIf(process.platform !== 'darwin')(
     'runs diagnostic searches in fresh and live shells while enforcing filesystem grants',
     async () => {

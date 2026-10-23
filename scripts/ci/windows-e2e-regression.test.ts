@@ -41,6 +41,21 @@ const suites = [
   ['e2e_workspace_windows', 'test:e2e:workspace', 3]
 ] as const
 
+it.each([
+  ['PR mainlines', pr.jobs.windows_e2e, 'Run mainline journeys'],
+  ['scheduled regression', workflow.jobs.windows_e2e_setup, 'Pack E2E setup']
+])('builds the candidate native sandbox after staging dependencies for %s', (_, job, consumer) => {
+  const build = step(job, 'Build Windows sandbox native host')
+  expect(build).toEqual({
+    name: 'Build Windows sandbox native host',
+    run: 'node packages/notebook-network-sandbox/vendor/windows/build.mjs x64'
+  })
+  expect(job.steps.indexOf(build)).toBeGreaterThan(
+    job.steps.indexOf(step(job, 'Build Electron application'))
+  )
+  expect(job.steps.indexOf(build)).toBeLessThan(job.steps.indexOf(step(job, consumer)))
+})
+
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
   expect(workflow.on.schedule).toEqual([{ cron: '17 18 * * *' }])
   expect(workflow.on.workflow_dispatch).toEqual({

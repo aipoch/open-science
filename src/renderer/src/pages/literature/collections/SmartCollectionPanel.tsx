@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ErrorNotice } from '@/components/error-notice'
+import { useLiteratureScreeningExport } from '../workflows/useLiteratureScreeningExport'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ActionMenuProvider, ActionMenuTarget, useActionMenu } from '@/components/action-menu'
 
@@ -41,6 +42,7 @@ import type { SmartCollectionView, SmartScope } from '@aipoch/literature-screeni
 const catalog = {
   bibtex: { labelKey: 'BibTeX', icon: FileText },
   ris: { labelKey: 'RIS', icon: FileText },
+  screeningCsv: { labelKey: 'Export screening results (CSV)', icon: Download },
   review: { labelKey: 'Review with agent', icon: Sparkles },
   preview: { labelKey: 'Trial run (up to 20 references)', icon: Eye },
   recompute: { labelKey: 'Re-evaluate all', icon: RotateCcw },
@@ -120,6 +122,7 @@ export function SmartCollectionPanel({
 
   const { t } = useTranslation()
   const progressStatusId = useId()
+  const screeningExport = useLiteratureScreeningExport(collectionId)
   const settingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const view = useSyncExternalStore(state.subscribe, state.getSnapshot)
   const [revision, setRevision] = useState(0)
@@ -544,6 +547,9 @@ export function SmartCollectionPanel({
   )
   return (
     <section className="shrink-0" aria-label={t('Smart collection')}>
+      {screeningExport.error && (
+        <ErrorNotice inline tone="amber" description={screeningExport.error} />
+      )}
       {refreshFailed && (
         <ErrorNotice
           inline
@@ -594,9 +600,17 @@ export function SmartCollectionPanel({
                 icon: Download,
                 actions: ['bibtex', 'ris']
               },
+              { kind: 'action', action: 'screeningCsv' },
               ...recipe
             ]}
             bindings={{
+              screeningCsv: {
+                execute: async () => {
+                  await screeningExport.exportResults()
+                },
+                disabled:
+                  screeningExport.exporting || !view?.sourceAvailable || active || decisionPending
+              },
               bibtex: {
                 execute: async () => {
                   await onExport?.('bibtex')

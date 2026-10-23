@@ -277,7 +277,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Structures and molecular interactions — PDB structures and PDBe validation, AlphaFold predictions, EMDB cryo-EM entries, Complex Portal complexes, IntAct interaction networks, and OmniPath directed regulation.',
     useWhen:
-      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, summaries, polymer entities, ligands), PDBe quality summaries and validation statistics with experimental-method context, AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, IntAct binary interactions and networks, or bounded upstream/downstream signed human protein regulation with OmniPath (query by UniProt accession; mixed-context evidence, not tissue-specific causal proof).',
+      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, 3D chain similarity, summaries, polymer entities, ligands), PDBe quality summaries and validation statistics with experimental-method context, AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, IntAct binary interactions and networks, or bounded upstream/downstream signed human protein regulation with OmniPath (query by UniProt accession; mixed-context evidence, not tissue-specific causal proof).',
     sources: ['PDB', 'PDBe', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct', 'OmniPath'],
     termsUrl: 'https://www.rcsb.org/pages/usage-policy',
     requiresNcbi: false
@@ -374,10 +374,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'cancer-models',
     displayName: 'Cancer Models',
-    description: 'Cancer genomics study records via the cBioPortal REST API.',
+    description:
+      'Cancer genomics studies, cell models, expression, copy number, gene dependencies and drug responses via cBioPortal and DepMap/CCLE.',
     useWhen:
-      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies, samples and patients; retrieving patient/sample clinical values; fetching mRNA expression values for genes; the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints.",
-    sources: ['cBioPortal'],
+      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies, samples and patients; retrieving patient/sample clinical values; fetching mRNA expression values for genes; the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints. Also use for DepMap/CCLE model identity, exact-gene RNA expression (log2(TPM+1)), WGS gene copy number relative to ploidy, Chronos gene effects and exact-compound PRISM secondary AUC profiles; preserve dataset releases, units and missing values.",
+    sources: ['cBioPortal', 'DepMap / CCLE'],
     termsUrl: 'https://www.cbioportal.org/faq',
     requiresNcbi: false
   },
