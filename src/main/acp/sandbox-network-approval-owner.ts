@@ -13,21 +13,27 @@ import {
 import type { AppPermissionRequest } from './permission-broker'
 import type { PermissionWaitSessions, PublishPermissionWaitSession } from './permission-wait-owner'
 
-export type SandboxNetworkApprovalInput = Readonly<{
-  projectId: string
-  executionId: string
-  commandFingerprint: string
-  hostname: string
-  port: number
-  runtime: 'bash'
-}>
-
 // Owns only destination authority. The provider permission slot and its tool replay stay separate.
 export class SandboxNetworkApprovalOwner {
+  private readonly cancellationStates = new Map<string, { active: boolean }>()
+  private readonly globalDecisions = new Map<
+    string,
+    {
+      projectId: string
+      sessionId: string
+      abort: AbortController
+      done: Promise<void>
+      rollbackFailure?: AggregateError
+    }
+  >()
+
   constructor(
     private readonly sessions?: PermissionWaitSessions,
     private readonly publish?: PublishPermissionWaitSession,
-    private readonly allowDomain?: (hostname: string) => Promise<unknown>
+    private readonly allowDomain?: (
+      hostname: string,
+      assertCurrent?: () => Promise<void>
+    ) => Promise<unknown>
   ) {}
 
   async request(
@@ -38,6 +44,7 @@ export class SandboxNetworkApprovalOwner {
   ): Promise<string | undefined> {
     const network = input.networkApproval
     if (!network || !this.sessions || !promptMessageId || input.signal?.aborted) return undefined
+    const current = this.cancellationGuard(network.projectId, input.sessionId, isCurrent)
     const session = materializeSessionConversationGraph(
       await this.sessions.loadSessionForContinuation(network.projectId, input.sessionId)
     )
@@ -77,7 +84,7 @@ export class SandboxNetworkApprovalOwner {
         },
         grant,
         false,
-        isCurrent
+        current
       )
       return input.signal?.aborted ? undefined : 'allow-once'
     }
@@ -91,9 +98,9 @@ export class SandboxNetworkApprovalOwner {
       },
       approval,
       false,
-      isCurrent
+      current
     )
-    if (!isCurrent() || input.signal?.aborted) {
+    if (!current() || input.signal?.aborted) {
       await this.patch(network.projectId, input.sessionId, (context) =>
         (context.networkApprovals ?? []).filter(({ requestId }) => requestId !== approval.requestId)
       )
@@ -107,7 +114,7 @@ export class SandboxNetworkApprovalOwner {
       durable: true,
       beforeRespond: async (optionId) => {
         if (optionId === 'always-allow') {
-          await this.grantGlobal(network.projectId, approval)
+          await this.grantGlobal(network.projectId, approval, false, current)
           return
         }
         await this.patch(
@@ -132,6 +139,7 @@ export class SandboxNetworkApprovalOwner {
   async respondRestored(response: AcpPermissionResponse, projectId: string): Promise<boolean> {
     if (!this.sessions || !response.restored || response.restored.projectId !== projectId)
       return false
+    const isCurrent = this.cancellationGuard(projectId, response.restored.sessionId)
     const session = await this.sessions.loadSessionForContinuation(
       projectId,
       response.restored.sessionId
@@ -150,7 +158,7 @@ export class SandboxNetworkApprovalOwner {
     )
       throw new Error('Invalid network approval option.')
     if (optionId === 'always-allow') {
-      await this.grantGlobal(projectId, approval, true)
+      await this.grantGlobal(projectId, approval, true, isCurrent)
       return true
     }
     await this.patch(
@@ -170,36 +178,106 @@ export class SandboxNetworkApprovalOwner {
         )
       },
       optionId === 'allow-once' ? approval : undefined,
-      true
+      true,
+      isCurrent
     )
     return true
   }
 
   async cancel(projectId: string, sessionId: string): Promise<void> {
     if (!this.sessions) return
-    const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
-    if (!context.networkApprovals?.length) return
-    await this.patch(projectId, sessionId, () => [], undefined, true)
+    const cancellation = { active: true }
+    this.cancellationStates.set(JSON.stringify([projectId, sessionId]), cancellation)
+    try {
+      const decisions = [...this.globalDecisions.values()].filter(
+        (decision) => decision.projectId === projectId && decision.sessionId === sessionId
+      )
+      for (const decision of decisions) decision.abort.abort()
+      // Settings owns a serialized write/rollback transaction. Do not finish cancellation while
+      // a revoked decision can still persist or hot-apply authority.
+      const results = await Promise.allSettled(decisions.map(({ done }) => done))
+      for (const result of results) {
+        // A rejected decision normally means revocation succeeded. Failed Settings rollback is
+        // different: preserve its durable row and surface the failure instead of claiming a Stop.
+        if (result.status === 'rejected' && result.reason instanceof AggregateError)
+          throw result.reason
+      }
+      const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
+      if (!context.networkApprovals?.length) return
+      await this.patch(projectId, sessionId, () => [], undefined, true)
+    } finally {
+      cancellation.active = false
+    }
+  }
+
+  private cancellationGuard(
+    projectId: string,
+    sessionId: string,
+    isCurrent: () => boolean = () => true
+  ): () => boolean {
+    const key = JSON.stringify([projectId, sessionId])
+    const generation = this.cancellationStates.get(key)
+    const admitted = !generation?.active
+    return () => admitted && this.cancellationStates.get(key) === generation && isCurrent()
   }
 
   private assertBound(session: PersistedChatSession, approval: SandboxNetworkApproval): void {
     if (
       !activeSandboxNetworkApprovals({
         ...materializeSessionConversationGraph(session),
-        runtimeContext: { version: 1, revision: 0, networkApprovals: [approval] }
+        runtimeContext: { networkApprovals: [approval] }
       }).length
     )
       throw new Error('Network approval is not on the active Message Branch.')
   }
 
-  private async grantGlobal(
+  private grantGlobal(
     projectId: string,
     approval: SandboxNetworkApproval,
-    restored = false
+    restored = false,
+    isCurrent: () => boolean = () => true
+  ): Promise<void> {
+    const previous = this.globalDecisions.get(approval.requestId)
+    if (previous && !previous.rollbackFailure)
+      return Promise.reject(new Error('Network approval is already being saved.'))
+    const abort = new AbortController()
+    let rollbackFailure: AggregateError | undefined
+    const done = this.commitGlobal(
+      projectId,
+      approval,
+      restored,
+      () => !abort.signal.aborted && isCurrent()
+    )
+      .catch((error: unknown) => {
+        if (error instanceof AggregateError) rollbackFailure = error
+        throw error
+      })
+      .finally(() => {
+        const decision = this.globalDecisions.get(approval.requestId)
+        if (decision?.done !== done) return
+        // A repeated Stop must not erase evidence of an unsuccessful rollback. A new explicit
+        // Global decision can replace the failed operation and reconcile Settings with fresh consent.
+        if (rollbackFailure) decision.rollbackFailure = rollbackFailure
+        else this.globalDecisions.delete(approval.requestId)
+      })
+    this.globalDecisions.set(approval.requestId, {
+      projectId,
+      sessionId: approval.sessionId,
+      abort,
+      done
+    })
+    return done
+  }
+
+  private async commitGlobal(
+    projectId: string,
+    approval: SandboxNetworkApproval,
+    restored: boolean,
+    isCurrent: () => boolean
   ): Promise<void> {
     if (!this.allowDomain) throw new Error('Network settings are unavailable.')
-    // This guarded Session commit is the decision's linearization point. Claim before mutating
-    // settings so duplicate or stale responses cannot grant authority after cancellation.
+    // Claim the durable row before entering the Settings transaction. Both queues revalidate
+    // authority; cancellation during persistence/application rolls Settings back in its queue.
     await this.patch(
       projectId,
       approval.sessionId,
@@ -214,10 +292,30 @@ export class SandboxNetworkApprovalOwner {
             : candidate
         )
       },
-      approval
+      approval,
+      restored,
+      isCurrent
     )
     try {
-      await this.allowDomain(approval.hostname)
+      await this.allowDomain(approval.hostname, async () => {
+        if (!isCurrent()) throw new Error('Network approval execution is no longer current.')
+        const session = await this.sessions!.loadSessionForContinuation(
+          projectId,
+          approval.sessionId
+        )
+        // Ordinary restored-session reads may re-present an uncertain global claim. Check the
+        // unnormalized authority through the runtime-context port, not that UI projection.
+        const context = await this.sessions!.readSessionRuntimeContext(
+          projectId,
+          approval.sessionId
+        )
+        const current = context.networkApprovals?.find(
+          ({ requestId }) => requestId === approval.requestId
+        )
+        if (!isCurrent() || current?.state !== 'continuing' || current.decision !== 'always-allow')
+          throw new Error('Network approval is no longer current.')
+        this.assertBound(session, approval)
+      })
       await this.patch(
         projectId,
         approval.sessionId,

@@ -36,19 +36,26 @@ class NotebookNetworkSettingsOwner {
     return this.enqueue((current) => this.mergeRequest(current, request))
   }
 
-  allowDomain(hostname: string): Promise<NotebookNetworkSettings> {
-    return this.enqueue((current) => ({
-      ...current,
-      allowedDomains: [...new Set([...current.allowedDomains, hostname])]
-    }))
+  allowDomain(
+    hostname: string,
+    assertCurrent?: () => Promise<void>
+  ): Promise<NotebookNetworkSettings> {
+    return this.enqueue(
+      (current) => ({
+        ...current,
+        allowedDomains: [...new Set([...current.allowedDomains, hostname])]
+      }),
+      assertCurrent
+    )
   }
 
   private enqueue(
     update: (
       current: NotebookNetworkSettings
-    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>
+    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>,
+    assertCurrent?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
-    const operation = this.writeTail.then(() => this.commit(update))
+    const operation = this.writeTail.then(() => this.commit(update, assertCurrent))
     this.writeTail = operation.then(
       () => undefined,
       () => undefined
@@ -106,13 +113,18 @@ class NotebookNetworkSettingsOwner {
   private async commit(
     update: (
       current: NotebookNetworkSettings
-    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>
+    ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>,
+    assertCurrent?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
     const previous = await this.get()
-    const stored = await this.options.repository.setNotebookNetwork(await update(previous))
+    const next = await update(previous)
+    await assertCurrent?.()
+    const stored = await this.options.repository.setNotebookNetwork(next)
     const notebookNetwork = normalizeNotebookNetworkSettings(stored.notebookNetwork)
     try {
+      await assertCurrent?.()
       await this.options.apply(notebookNetwork)
+      await assertCurrent?.()
     } catch (error) {
       const rollbackErrors: unknown[] = []
       try {

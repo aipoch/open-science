@@ -22,7 +22,7 @@ const fixture = (): {
   broker: AcpPermissionBroker
   send: (request: AppPermissionRequest) => Promise<string | undefined>
   pending: () => Promise<AcpPermissionRequest>
-  allowDomain: Mock<() => Promise<undefined>>
+  allowDomain: Mock<(hostname: string, assertCurrent?: () => Promise<void>) => Promise<undefined>>
   published: Mock
 } => {
   let context: SessionRuntimeContext = { version: 1, revision: 0 }
@@ -81,7 +81,10 @@ const fixture = (): {
       runtime: 'bash'
     }
   }
-  const allowDomain = vi.fn(async () => undefined)
+  const allowDomain = vi.fn(async (_hostname: string, assertCurrent?: () => Promise<void>) => {
+    await assertCurrent?.()
+    return undefined
+  })
   const published = vi.fn()
   const owner = new SandboxNetworkApprovalOwner(sessions, published, allowDomain)
   const broker = new AcpPermissionBroker((request) => {
@@ -253,6 +256,136 @@ describe('durable sandbox destination approvals', () => {
     await f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
     await expect(result).resolves.toBe('always-allow')
     expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it('cancels a global decision queued for Settings before cancellation finishes', async () => {
+    const f = fixture()
+    let release!: () => void
+    let entered = false
+    let granted = false
+    f.allowDomain.mockImplementationOnce(async (_hostname, assertCurrent) => {
+      entered = true
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      await assertCurrent?.()
+      granted = true
+      return undefined
+    })
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    const response = f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
+    const rejected = expect(response).rejects.toThrow('no longer current')
+    await vi.waitFor(() => expect(entered).toBe(true))
+    let cancelled = false
+    const cancellation = f.owner.cancel(f.session.projectId, f.session.id).then(() => {
+      cancelled = true
+    })
+    await Promise.resolve()
+    expect(cancelled).toBe(false)
+    release()
+    await rejected
+    await cancellation
+    expect(granted).toBe(false)
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+    await f.broker.respond({ requestId: request.requestId, cancelled: true })
+    await result
+  })
+
+  it('revalidates cancellation inside the queued global claim commit', async () => {
+    const f = fixture()
+    let current = true
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send, () => current)
+    const request = await f.pending()
+    const persist = f.sessions.patchSessionRuntimeContext
+    f.sessions.patchSessionRuntimeContext = async (command) => {
+      current = false
+      return persist(command)
+    }
+    await expect(
+      f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
+    ).rejects.toThrow('no longer current')
+    expect(f.allowDomain).not.toHaveBeenCalled()
+    await f.broker.respond({ requestId: request.requestId, cancelled: true })
+    await result
+  })
+
+  it('uses durable authority when restored reads re-present an in-flight global claim', async () => {
+    const f = fixture()
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    f.broker.abandonAllPending()
+    await result
+    const load = f.sessions.loadSessionForContinuation
+    f.sessions.loadSessionForContinuation = async (...args) =>
+      normalizeSessionAfterRestore(await load(...args))
+    await f.owner.respondRestored(
+      {
+        requestId: request.requestId,
+        optionId: 'always-allow',
+        restored: { projectId: f.session.projectId, sessionId: f.session.id }
+      },
+      f.session.projectId
+    )
+    expect(f.allowDomain).toHaveBeenCalledTimes(1)
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it('rejects restored global admission after cancellation has started', async () => {
+    const f = fixture()
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    f.broker.abandonAllPending()
+    await result
+    const cancellation = f.owner.cancel(f.session.projectId, f.session.id)
+    const response = f.owner.respondRestored(
+      {
+        requestId: request.requestId,
+        optionId: 'always-allow',
+        restored: { projectId: f.session.projectId, sessionId: f.session.id }
+      },
+      f.session.projectId
+    )
+    await expect(response).rejects.toThrow(/no longer (current|pending)/)
+    await cancellation
+    expect(f.allowDomain).not.toHaveBeenCalled()
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it('surfaces failed Settings rollback and retains the durable approval on Stop', async () => {
+    const f = fixture()
+    let release!: () => void
+    const failure = new AggregateError([new Error('restore failed')], 'Network rollback failed')
+    f.allowDomain.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      throw failure
+    })
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    const response = f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
+    const rejected = expect(response).rejects.toBe(failure)
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    const cancellation = f.owner.cancel(f.session.projectId, f.session.id)
+    const failedStop = expect(cancellation).rejects.toBe(failure)
+    release()
+    await rejected
+    await failedStop
+    expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
+    await expect(f.owner.cancel(f.session.projectId, f.session.id)).rejects.toBe(failure)
+    expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
+    await f.owner.respondRestored(
+      {
+        requestId: request.requestId,
+        optionId: 'always-allow',
+        restored: { projectId: f.session.projectId, sessionId: f.session.id }
+      },
+      f.session.projectId
+    )
+    await f.broker.respond({ requestId: request.requestId, cancelled: true })
+    await result
+    await expect(f.owner.cancel(f.session.projectId, f.session.id)).resolves.toBeUndefined()
   })
 
   it.each(['allow-once', 'deny'])(

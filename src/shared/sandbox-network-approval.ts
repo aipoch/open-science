@@ -1,6 +1,8 @@
 import type { AcpPermissionRequest } from './acp-permission-contract'
-import { resolveActiveConversationMessages } from './conversation-graph'
-import type { PersistedChatSession } from './session-persistence'
+import {
+  resolveActiveConversationMessages,
+  type PersistedConversationGraph
+} from './conversation-graph'
 
 // A destination decision is authority for one execution, never a replayable shell command.
 export type SandboxNetworkApproval = Readonly<{
@@ -47,8 +49,14 @@ export const sandboxNetworkApprovalRequest = (
   ]
 })
 
+type NetworkApprovalSession = Readonly<{
+  id?: string
+  conversationGraph?: PersistedConversationGraph
+  runtimeContext?: { networkApprovals?: readonly SandboxNetworkApproval[] }
+}>
+
 export const activeSandboxNetworkApprovals = (
-  session: Partial<Pick<PersistedChatSession, 'id' | 'conversationGraph' | 'runtimeContext'>>
+  session: NetworkApprovalSession
 ): readonly SandboxNetworkApproval[] => {
   const graph = session.conversationGraph
   const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
@@ -63,6 +71,5 @@ export const activeSandboxNetworkApprovals = (
   )
 }
 
-export const hasPendingSandboxNetworkApproval = (
-  session: Partial<Pick<PersistedChatSession, 'id' | 'conversationGraph' | 'runtimeContext'>>
-): boolean => activeSandboxNetworkApprovals(session).some(({ state }) => state === 'pending')
+export const hasPendingSandboxNetworkApproval = (session: NetworkApprovalSession): boolean =>
+  activeSandboxNetworkApprovals(session).some(({ state }) => state === 'pending')

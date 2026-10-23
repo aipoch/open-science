@@ -758,8 +758,11 @@ class SettingsService {
     return this.notebookNetwork.get()
   }
 
-  allowNotebookNetworkDomain(hostname: string): Promise<NotebookNetworkSettings> {
-    return this.notebookNetwork.allowDomain(hostname)
+  allowNotebookNetworkDomain(
+    hostname: string,
+    assertCurrent?: () => Promise<void>
+  ): Promise<NotebookNetworkSettings> {
+    return this.notebookNetwork.allowDomain(hostname, assertCurrent)
   }
 
   getNotebookNetworkStatus(): Promise<NotebookNetworkStatus> {

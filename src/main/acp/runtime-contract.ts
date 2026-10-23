@@ -130,7 +130,7 @@ export type AcpRuntimeOptions = {
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
-    allowNetworkDomain?: (hostname: string) => Promise<unknown>
+    allowNetworkDomain?: (hostname: string, assertCurrent?: () => Promise<void>) => Promise<unknown>
     sessions: SessionRuntimeContextCommands &
       Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
       Partial<Pick<SessionCatalog, 'sessionProjectId'> & SessionMutation>

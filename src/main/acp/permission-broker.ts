@@ -2,7 +2,6 @@ import type { RequestPermissionRequest, RequestPermissionResponse } from '@agent
 import { createHash, randomUUID } from 'node:crypto'
 
 import { createLogger } from '@aipoch/diagnostics/node'
-import type { SandboxNetworkApprovalInput } from './sandbox-network-approval-owner'
 import type { AcpPermissionResponse, AcpPermissionSettlementState } from '../../shared/acp'
 import type { AcpPermissionGrant, AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type {
@@ -69,7 +68,14 @@ type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 type AppPermissionRequest = Readonly<{
   requestId?: string
   durable?: true
-  networkApproval?: SandboxNetworkApprovalInput
+  networkApproval?: Readonly<{
+    projectId: string
+    executionId: string
+    commandFingerprint: string
+    hostname: string
+    port: number
+    runtime: 'bash'
+  }>
   canResume?: () => boolean
   beforeRespond?: (optionId: string | undefined) => Promise<void>
   sessionId: string
