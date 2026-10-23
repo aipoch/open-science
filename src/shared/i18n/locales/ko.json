@@ -191,7 +191,6 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
-    "Convert a human variant between identifiers, HGVS and SPDI, preserving separate alleles.": "사람 변이를 식별자, HGVS, SPDI 간에 변환하고 대립유전자를 각각 구분하여 유지합니다.",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "등록된 사슬을 사용하여 유사한 3D 구조를 가진 실험 기반 PDB 사슬을 찾습니다.",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "스페셜리스트의 스킬 또는 커넥터를 불러오지 못했습니다. 다시 전송해 주세요.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "LIPID MAPS에서 지질 분류와 화합물 세부 정보를 가져옵니다.",

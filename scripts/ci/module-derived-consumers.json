@@ -40,7 +40,6 @@
       "packages/connector-builtins/src/cancer-models-depmap.test.ts",
       "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
       "packages/connector-builtins/src/chemistry-unichem.test.ts",
-      "packages/connector-builtins/src/genomes-ensembl-recoder.test.ts",
       "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts",

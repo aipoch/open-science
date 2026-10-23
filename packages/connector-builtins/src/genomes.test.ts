@@ -18,7 +18,6 @@ const EXPECTED_IDS = [
   'ensembl_homology',
   'ensembl_sequence',
   'ensembl_overlap_region',
-  'ensembl_recode_variant',
   'ncbi_resolve_taxon',
   'ncbi_get_assembly_info',
   'ncbi_get_sequence_aliases',

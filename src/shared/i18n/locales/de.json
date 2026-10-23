@@ -192,7 +192,6 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
-    "Convert a human variant between identifiers, HGVS and SPDI, preserving separate alleles.": "Eine menschliche Variante zwischen Kennungen, HGVS und SPDI konvertieren und Allele getrennt beibehalten.",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Experimentell bestimmte PDB-Ketten mit ähnlichen 3D-Strukturen anhand einer hinterlegten Kette finden.",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Die Fähigkeiten oder Konnektoren des Spezialisten konnten nicht geladen werden. Versuchen Sie erneut zu senden.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Lipidklassifikation und Verbindungsdetails aus LIPID MAPS abrufen.",

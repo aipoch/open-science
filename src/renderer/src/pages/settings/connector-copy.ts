@@ -196,10 +196,6 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
     case 'genomes/ensembl_lookup':
       return t('Look up Ensembl genes, transcripts or proteins by identifier, or genes by symbol.')
 
-    case 'genomes/ensembl_recode_variant':
-      return t(
-        'Convert a human variant between identifiers, HGVS and SPDI, preserving separate alleles.'
-      )
     case 'genomes/ensembl_vep_variant':
       return t(
         'Predict variant consequences with Ensembl VEP using variant IDs, genomic coordinates or HGVS notation.'
