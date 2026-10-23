@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
+    "Query upstream or downstream human protein regulation with OmniPath.": "使用 OmniPath 查询人类蛋白质的上游或下游调控关系。",
     "List authorized directories": "列出已授权目录",
     "checked directory access": "已查询目录授权",
     "Could not load Reviewer log.": "无法加载审阅器日志。",

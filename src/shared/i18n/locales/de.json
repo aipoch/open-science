@@ -192,6 +192,7 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
+    "Query upstream or downstream human protein regulation with OmniPath.": "Vorgelagerte oder nachgelagerte Regulation menschlicher Proteine mit OmniPath abfragen.",
     "List authorized directories": "Autorisierte Verzeichnisse auflisten",
     "checked directory access": "Verzeichniszugriff geprüft",
     "Could not load Reviewer log.": "Das Reviewer-Protokoll konnte nicht geladen werden.",

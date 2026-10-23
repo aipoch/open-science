@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { STRUCTURES_TOOLS } from './structures'
 
 // Integration: the aggregate "Structures & Interactions" tool set. Per-tool behavior is covered in
-// structures-{emdb,complexportal,intact,pdb,alphafold}.test.ts.
+// structures-{emdb,complexportal,intact,omnipath,pdb,alphafold}.test.ts.
 const EXPECTED_IDS = [
   'emdb_get_entries',
   'emdb_search_entries',
@@ -14,6 +14,7 @@ const EXPECTED_IDS = [
   'intact_get_interactor',
   'intact_get_interaction_details',
   'intact_build_network',
+  'omnipath_query_regulation',
   'pdb_search_structures',
   'pdb_search_sequence',
   'pdb_get_structures',

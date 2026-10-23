@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
+    "Query upstream or downstream human protein regulation with OmniPath.": "OmniPath로 인간 단백질의 상위 또는 하위 조절 관계를 조회합니다.",
     "List authorized directories": "허용된 디렉터리 목록 조회",
     "checked directory access": "디렉터리 접근 권한 확인",
     "Could not load Reviewer log.": "리뷰어 로그를 불러오지 못했습니다.",

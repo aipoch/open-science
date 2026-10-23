@@ -194,6 +194,7 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "Query upstream or downstream human protein regulation with OmniPath.": "Поиск регуляторных связей белков человека выше или ниже по сигнальному пути с помощью OmniPath.",
     "List authorized directories": "Список разрешённых каталогов",
     "checked directory access": "проверен доступ к каталогам",
     "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",
