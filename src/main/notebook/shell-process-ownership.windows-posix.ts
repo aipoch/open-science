@@ -1,4 +1,4 @@
-import { spawnSync, type ChildProcess } from 'node:child_process'
+import { spawnSync, type ChildProcess, type SpawnSyncReturns } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   closeSync,
@@ -422,17 +422,22 @@ class ShellProcessOwnershipRegistry {
     }
     const exists = this.options.processExists ?? processExists
     if (exists(pid)) {
-      const result = spawnSync(
-        resolveWindowsPowerShellExecutable(),
-        [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`
-        ],
-        { encoding: 'utf8', windowsHide: true, timeout: 5000 }
-      )
+      const queryIdentity = (): SpawnSyncReturns<string> =>
+        spawnSync(
+          resolveWindowsPowerShellExecutable(),
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`
+          ],
+          { encoding: 'utf8', windowsHide: true, timeout: 5000 }
+        )
+      let result = queryIdentity()
+      // Retry a timed-out query once, but still require the receipt before terminating any tree.
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT' && exists(pid))
+        result = queryIdentity()
       if (result.status !== 0 || !result.stdout?.includes(record.receiptId)) {
         if (exists(pid)) {
           const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code
