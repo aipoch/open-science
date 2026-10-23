@@ -272,7 +272,7 @@ describe('NotebookNetworkSandboxOwner', () => {
   })
 
   it.each([false, true])(
-    'preserves installer admission with Windows protection configured: %s',
+    'enforces installer admission with Windows protection configured: %s',
     async (configured) => {
       backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
       const root = await mkdtemp(join(tmpdir(), 'os-installer-admission-'))
@@ -296,14 +296,18 @@ describe('NotebookNetworkSandboxOwner', () => {
           platform: 'win32'
         })
         await expect(spawn(process.execPath, ['-m', 'pip', '--version'], {})).rejects.toThrow(
-          'installer reached backend'
+          configured ? 'installer reached backend' : 'require Windows protected mode'
         )
-        expect(backend.wrap).toHaveBeenCalledWith(
-          expect.objectContaining({
-            superviseProcessTree: true,
-            windowsProtectionRequired: undefined
-          })
-        )
+        if (configured) {
+          expect(backend.wrap).toHaveBeenCalledWith(
+            expect.objectContaining({
+              superviseProcessTree: true,
+              windowsProtectionRequired: true
+            })
+          )
+        } else {
+          expect(backend.wrap).not.toHaveBeenCalled()
+        }
       } finally {
         await owner.dispose()
       }
