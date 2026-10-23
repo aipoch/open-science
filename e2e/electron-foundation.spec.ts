@@ -1,5 +1,5 @@
-import { basename, dirname, join } from 'node:path'
-import { cp, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
@@ -14,26 +14,12 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
 }, testInfo) => {
   test.setTimeout(process.platform === 'win32' ? 360_000 : 180_000)
   const prompt = 'Analyze the attached measurements and save a research report.'
-  let pythonPath = execFileSync(
+  const pythonPath = execFileSync(
     process.platform === 'win32' ? 'python' : 'python3',
     ['-c', 'import sys; print(sys.executable)'],
     { encoding: 'utf8' }
   ).trim()
   await app.completeOnboarding()
-  if (process.platform === 'win32') {
-    // Keep real CPython, but exclude unrelated hosted-runner packages from recursive ACL leases.
-    const pythonRoot = await app.createTestDirectory('research-python')
-    await cp(dirname(pythonPath), pythonRoot, {
-      recursive: true,
-      filter: (source) => basename(source).toLowerCase() !== 'site-packages'
-    })
-    pythonPath = join(pythonRoot, basename(pythonPath))
-    execFileSync(pythonPath, [
-      '-I',
-      '-c',
-      'import csv, json, statistics; assert statistics.mean([2,4,6]) == 4'
-    ])
-  }
   const previousPath = process.env.PATH
   // Interpreters and the fake agent use absolute executables; PATH only needs Windows tools.
   // AppContainer grants inherited PATH roots recursively before the kernel can start.
