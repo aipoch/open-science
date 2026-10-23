@@ -13,6 +13,7 @@ import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'nod
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
+import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const { values } = parseArgs({ options: { desktop: { type: 'boolean', default: false } } })
@@ -101,17 +102,18 @@ async function copyDependency(name, from, destinationParent = stage) {
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
   const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
-  await cp(source, destination, {
-    recursive: true,
-    dereference: true,
-    filter: async (path) => {
-      const file = relative(source, path)
-      return (
-        backendDependencyIncludes(pkg, file) &&
-        (!desktopIncludes || desktopIncludes(file, (await stat(path)).isDirectory()))
-      )
-    }
-  })
+  if (!(values.desktop && (await stageDesktopPdfLib(pkg, source, destination))))
+    await cp(source, destination, {
+      recursive: true,
+      dereference: true,
+      filter: async (path) => {
+        const file = relative(source, path)
+        return (
+          backendDependencyIncludes(pkg, file) &&
+          (!desktopIncludes || desktopIncludes(file, (await stat(path)).isDirectory()))
+        )
+      }
+    })
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
     delete pkg.scripts

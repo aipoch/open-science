@@ -26,7 +26,11 @@ describe('desktop-only dependency contents', () => {
       await writeFile(join(root, file), content)
     }
     try {
-      for (const file of ['scripts/stage-backend.mjs', 'scripts/backend-dependencies.mjs'])
+      for (const file of [
+        'scripts/stage-backend.mjs',
+        'scripts/backend-dependencies.mjs',
+        'scripts/desktop-pdf-lib.mjs'
+      ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
