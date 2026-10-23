@@ -625,14 +625,19 @@ export class SessionPackageDesktop {
       })
   }
 
-  export(request: SessionPackageRequest, callerId?: string): Promise<SessionPackageExportResult> {
-    return this.exportWithPolicy(request, callerId)
+  export(
+    request: SessionPackageRequest,
+    callerId?: string,
+    destinationPath?: string
+  ): Promise<SessionPackageExportResult> {
+    return this.exportWithPolicy(request, callerId, false, destinationPath)
   }
 
   private exportWithPolicy(
     request: SessionPackageRequest,
     callerId?: string,
-    allowSensitiveContent = false
+    allowSensitiveContent = false,
+    destinationPath?: string
   ): Promise<SessionPackageExportResult> {
     let operationSignal: AbortSignal | undefined
     return this.operations
@@ -644,39 +649,49 @@ export class SessionPackageDesktop {
         try {
           return await this.staged(async (directory) => {
             const archive = join(directory, 'session.science')
-            let filePath: string | undefined
+            let filePath: string | undefined = destinationPath
             await this.options.withDataRootWrite(() =>
               this.acceptCleanup(() =>
                 this.options.service.exportTo(request, archive, {
                   ...(allowSensitiveContent ? { allowSensitiveContent: true } : {}),
                   signal,
                   onProgress: this.operations.report,
-                  selectFiles: async (files, budgetSignal, summary, title) => {
-                    const excluded = await this.operations.selectFiles(files, budgetSignal, summary)
-                    this.operations.report({ phase: 'choosing-location' })
-                    signal.throwIfAborted()
-                    const today = new Date()
-                    const date = [
-                      today.getFullYear(),
-                      String(today.getMonth() + 1).padStart(2, '0'),
-                      String(today.getDate()).padStart(2, '0')
-                    ].join('-')
-                    const options = {
-                      title: this.options.translate('Export Session package'),
-                      defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
-                      filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
-                    }
-                    const selected = await this.nativeDialog(
-                      desktopFileInteraction().chooseSavePath(options, callerId),
-                      AbortSignal.any([signal, budgetSignal])
-                    )
-                    if (selected.canceled || !selected.filePath) {
-                      this.operations.cancel()
-                      signal.throwIfAborted()
-                    }
-                    filePath = selected.filePath
-                    return excluded
-                  }
+                  // A supplied destination is a headless caller (CLI / local Web RPC): there is no
+                  // renderer to ask, so include every package file and skip the native save dialog.
+                  ...(destinationPath
+                    ? {}
+                    : {
+                        selectFiles: async (files, budgetSignal, summary, title) => {
+                          const excluded = await this.operations.selectFiles(
+                            files,
+                            budgetSignal,
+                            summary
+                          )
+                          this.operations.report({ phase: 'choosing-location' })
+                          signal.throwIfAborted()
+                          const today = new Date()
+                          const date = [
+                            today.getFullYear(),
+                            String(today.getMonth() + 1).padStart(2, '0'),
+                            String(today.getDate()).padStart(2, '0')
+                          ].join('-')
+                          const options = {
+                            title: this.options.translate('Export Session package'),
+                            defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
+                            filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
+                          }
+                          const selected = await this.nativeDialog(
+                            desktopFileInteraction().chooseSavePath(options, callerId),
+                            AbortSignal.any([signal, budgetSignal])
+                          )
+                          if (selected.canceled || !selected.filePath) {
+                            this.operations.cancel()
+                            signal.throwIfAborted()
+                          }
+                          filePath = selected.filePath
+                          return excluded
+                        }
+                      })
                 })
               )
             )
@@ -708,8 +723,10 @@ export class SessionPackageDesktop {
     originClientId?: string,
     target: import('../../shared/session-package').SessionPackageImportRequest = {},
     sourcePath?: string,
-    validateBeforeTarget = false
+    validateBeforeTarget = false,
+    options?: { readonly nonInteractive?: true }
   ): Promise<SessionPackageImportResult> {
+    const nonInteractive = options?.nonInteractive === true
     let operationSignal: AbortSignal | undefined
     let importFile: NativeImportFile | undefined
     const rememberSource = (path: string): void => {
@@ -765,8 +782,11 @@ export class SessionPackageDesktop {
             (!isAbsolute(sourcePath) || extname(sourcePath).toLowerCase() !== '.science')
           )
             throw new Error('Invalid Session package path.')
+          if (nonInteractive && !sourcePath)
+            throw new Error('A package path is required for non-interactive import.')
           if (sourcePath) rememberSource(sourcePath)
-          if (!sourcePath || target.projectId || target.projectName) this.options.assertCanStart?.()
+          if (nonInteractive || !sourcePath || target.projectId || target.projectName)
+            this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
           const recovery = importFile?.recovery
           if (recovery) {
@@ -825,7 +845,9 @@ export class SessionPackageDesktop {
             }
             signal.throwIfAborted()
           }
-          if (sourcePath && !target.projectId && !target.projectName) {
+          // Headless callers name the destination up front (or accept the automatic
+          // import-<uuid> Project); there is no renderer to run target selection.
+          if (sourcePath && !target.projectId && !target.projectName && !nonInteractive) {
             const selectedTarget = await this.operations.waitForImport({
               requestId: this.operations.snapshot?.importRequestId,
               filename: basename(sourcePath)
@@ -891,14 +913,18 @@ export class SessionPackageDesktop {
                               }
                             : {})
                         }),
-                      async (preview, budgetSignal) => {
-                        await this.operations.waitForImport(
-                          { preview, filename: basename(input) },
-                          budgetSignal
-                        )
-                        confirmed = true
-                        signal.throwIfAborted()
-                      },
+                      // Headless import has no renderer to approve the preview; the caller's
+                      // explicit --non-interactive flag is the confirmation.
+                      nonInteractive
+                        ? undefined
+                        : async (preview, budgetSignal) => {
+                            await this.operations.waitForImport(
+                              { preview, filename: basename(input) },
+                              budgetSignal
+                            )
+                            confirmed = true
+                            signal.throwIfAborted()
+                          },
                       target
                     )
                     .catch((error: unknown) => {

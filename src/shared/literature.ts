@@ -1,4 +1,6 @@
 import {
+  literatureRelatedRequestSchema,
+  literatureRelatedResultSchema,
   literatureFullTextRequestSchema,
   literatureFullTextProgressSchema,
   literatureSupplementRequestSchema,
@@ -129,6 +131,10 @@ const literatureApplicationCommandContracts = Object.freeze({
   supplementAttachment: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureSupplementAttachmentRequestSchema])),
     validationCodec(literatureSupplementAttachmentResultSchema)
+  ),
+  related: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureRelatedRequestSchema])),
+    validationCodec(literatureRelatedResultSchema)
   ),
   supplements: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureSupplementRequestSchema])),

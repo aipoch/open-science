@@ -48,6 +48,54 @@ const root = (id: string, path: string, access: 'ro' | 'rw' = 'ro'): GrantedLoca
 })
 
 describe('granted local roots repository', () => {
+  it('returns record creation times and stable revisions without touching granted paths', async () => {
+    const repository = await createRepository()
+    const empty = await repository.authorizedSnapshot()
+    expect(empty.directories).toEqual([])
+    const before = Date.now()
+    await repository.upsertByPath(root('id-1', '/nonexistent/authorized', 'rw'))
+    const first = await repository.authorizedSnapshot()
+    expect(first.revision).not.toBe(empty.revision)
+    expect(first.directories).toEqual([
+      {
+        path: '/nonexistent/authorized',
+        name: 'authorized',
+        access: 'rw',
+        grantedAt: expect.any(String)
+      }
+    ])
+    const grantedAt = first.directories[0].grantedAt
+    expect(new Date(grantedAt).toISOString()).toBe(grantedAt)
+    expect(Date.parse(grantedAt)).toBeGreaterThanOrEqual(before)
+    expect(await repository.authorizedSnapshot()).toEqual(first)
+    await repository.setAccess('id-1', 'ro')
+    const changed = await repository.authorizedSnapshot()
+    expect(changed.revision).not.toBe(first.revision)
+    expect(changed.directories[0]).toMatchObject({ access: 'ro', grantedAt })
+    await repository.remove('id-1')
+    expect((await repository.authorizedSnapshot()).directories).toEqual([])
+  })
+
+  it('uses import time as the creation time of legacy grants', async () => {
+    const before = Date.now()
+    const repository = await createRepository({
+      getGrantedLocalRoots: async () => [root('legacy', '/legacy')],
+      clearGrantedLocalRoots: async () => {}
+    })
+    const result = await repository.authorizedSnapshot()
+    expect(Date.parse(result.directories[0].grantedAt)).toBeGreaterThanOrEqual(before)
+    expect(Date.parse(result.directories[0].grantedAt)).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('keeps an unchanged grant revision stable across repeated saves', async () => {
+    const repository = await createRepository()
+    await repository.upsertByPath(root('id-1', '/data/one', 'rw'))
+    const before = await repository.authorizedSnapshot()
+    await repository.setAccess('id-1', 'rw')
+    await repository.upsertByPath(root('ignored-new-id', '/data/one', 'rw'))
+    expect(await repository.authorizedSnapshot()).toEqual(before)
+  })
+
   it('starts empty on a fresh database', async () => {
     const repository = await createRepository()
 

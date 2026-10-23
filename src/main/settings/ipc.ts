@@ -1,3 +1,4 @@
+import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
@@ -570,6 +571,11 @@ const registerSettingsIpcHandlers = ({
     'settings:disconnect-device-credential',
     (_event, request: DeviceCredentialAuthenticationRequest) =>
       workflows.connectors.disconnectDeviceCredential(request)
+  )
+  ipcMainHandle(
+    'settings:set-semantic-scholar-credential',
+    (_event, request: SetSemanticScholarCredentialRequest) =>
+      workflows.connectors.setSemanticScholarCredential(request)
   )
   ipcMainHandle(
     'settings:set-openalex-credential',

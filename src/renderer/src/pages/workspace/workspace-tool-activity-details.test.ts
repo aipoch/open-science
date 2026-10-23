@@ -25,6 +25,39 @@ const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
 })
 
 describe('workspace tool activity details', () => {
+  it.each([
+    'mcp__open-science-notebook__list_authorized_directories',
+    'mcp__open_science_notebook__list_authorized_directories',
+    'open-science-notebook.list_authorized_directories',
+    'open-science-notebook/list_authorized_directories',
+    'open-science-notebook_list_authorized_directories'
+  ])('labels authorized directory discovery without exposing its transport: %s', (name) => {
+    for (const identity of [{ providerToolName: name }, { title: name }]) {
+      const details = buildToolActivityDetails(
+        createActivity({
+          ...identity,
+          toolKind: 'execute',
+          rawOutput: { revision: 'v1', directories: [] }
+        })
+      )
+      expect(details?.displayName).toBe('List authorized directories')
+      expect(details?.subtitle).toBeUndefined()
+      expect(details?.sections[0]).toMatchObject({ label: 'Output' })
+    }
+  })
+
+  it('does not relabel an unrelated server with the same tool suffix', () => {
+    const name = 'mcp__open-science-notebook-staging__list_authorized_directories'
+    expect(
+      buildToolActivityDetails(
+        createActivity({
+          providerToolName: name,
+          rawOutput: { directories: [] }
+        })
+      )?.displayName
+    ).toBe(name)
+  })
+
   it('derives a display name from the provider tool name first', () => {
     expect(
       getToolDisplayName(createActivity({ providerToolName: 'Bash', toolKind: 'execute' }))

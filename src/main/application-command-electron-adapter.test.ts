@@ -44,6 +44,7 @@ const validatedChannels = [
   'literature:jobs',
   'literature:journals',
   'literature:lookup-metadata',
+  'literature:related',
   'literature:search',
   'literature:sources',
   'literature:supplement-attachment',

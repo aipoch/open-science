@@ -1081,7 +1081,7 @@ for (const variant of [
         'This passage is translated, but its original layout was retained in the PDF.'
       )
       await expect(warningTip).toContainText(
-        'This PDF contains links or annotations that cannot yet be preserved safely.'
+        'These source pages were kept in their original form because their links could not be remapped safely.'
       )
       await page.screenshot({ path: testInfo.outputPath('retained-paragraph-tip.png') })
       await marker.focus()

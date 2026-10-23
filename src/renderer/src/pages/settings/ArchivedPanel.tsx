@@ -286,6 +286,7 @@ const ArchivedPanel = ({
         inline
         onRetry={onRetryCatalogRecovery}
         onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
+        onDeleteRecoveryFile={window.api.sessions.deleteRecoveryFile}
       />
       {panelError ? (
         <InlineNotice level="error" role="alert">

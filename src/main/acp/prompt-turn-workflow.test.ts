@@ -1,3 +1,4 @@
+import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { ActiveSession, PromptResponse } from '@agentclientprotocol/sdk'
 import { rmSync } from 'node:fs'
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -135,6 +136,7 @@ const planProjection = (): ActivePlanProjection => ({
 
 const createHarness = (
   input: {
+    authorizedDirectories?: AcpPromptTurnWorkflowOptions['environment']['authorizedDirectories']
     serialization?: AcpPromptTurnWorkflowOptions['serialization']
     planPause?: Partial<AcpPromptTurnWorkflowOptions['plan']>
     admitPlan?: AcpPromptTurnWorkflowOptions['plan']['admit']
@@ -333,6 +335,7 @@ const createHarness = (
     contextUsage,
     providerReconnectPending: input.providerReconnectPending ?? (() => false),
     environment: {
+      authorizedDirectories: input.authorizedDirectories,
       backend: () => runtimeBackend,
       tooling: () => ({ artifacts: true, notebook: true, skillImport: true }),
       bridgeSkillsAvailable: () => true,
@@ -1551,4 +1554,81 @@ it('does not dispatch after cancellation is accepted during framework preparatio
     await run
     harness.owner.supersedeAll()
   }
+})
+
+describe('authorization change notices at user prompt admission', () => {
+  it('retries failed sends, coalesces changes, and retains a change during acceptance', async () => {
+    let revision = 'a'
+    const discovery = new AuthorizedDirectoryNotices(async () => ({ revision, directories: [] }))
+    const session = {}
+    await discovery.initialize(session)
+    let failure = false
+    let changeDuringSend = false
+    const harness = createHarness({
+      authorizedDirectories: { prepareNotice: () => discovery.prepareNotice(session) },
+      finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome),
+      execute: async (input) => {
+        if (failure) throw new Error('send failed')
+        if (changeDuringSend) revision = 'd'
+        await input.onAccepted()
+        input.captureStop()
+        return { kind: 'stopped', response: { stopReason: 'end_turn' }, facts: {} }
+      }
+    })
+    const send = (): Promise<PromptResponse> => harness.workflow.run(request(), { kind: 'user' })
+    const reminders = (): readonly string[] | undefined =>
+      harness.preparation.mock.calls.at(-1)?.[0].turnPromptReminders
+    await send()
+    expect(reminders()).toEqual([])
+    revision = 'b'
+    revision = 'c'
+    failure = true
+    await expect(send()).rejects.toThrow('send failed')
+    expect(reminders()).toEqual(['Local directory authorization has changed.'])
+    failure = false
+    changeDuringSend = true
+    await send()
+    changeDuringSend = false
+    await send()
+    expect(reminders()).toEqual(['Local directory authorization has changed.'])
+    await send()
+    expect(reminders()).toEqual([])
+  })
+
+  it.each([
+    [
+      'continuation',
+      {
+        continuation: {
+          kind: 'specialist-handoff' as const,
+          originatingTurnToken: 'prior-turn',
+          targetName: null,
+          completion: { kind: 'returned' as const, value: null }
+        }
+      },
+      { kind: 'user' as const }
+    ],
+    ['background', {}, { kind: 'app-continuation' as const }],
+    ['suppressed', { suppressUserMessage: true }, { kind: 'user' as const }]
+  ])('does not inspect or consume notices for %s turns', async (_name, fields, mode) => {
+    const prepareNotice = vi.fn(async () => ({
+      text: 'Local directory authorization has changed.',
+      commit: vi.fn(async () => {})
+    }))
+    const harness = createHarness({ authorizedDirectories: { prepareNotice } })
+    await harness.workflow.run({ ...request(), ...fields }, mode)
+    expect(prepareNotice).not.toHaveBeenCalled()
+  })
+
+  it('does not commit a notice cancelled before provider acceptance', async () => {
+    const commit = vi.fn(async () => {})
+    const harness = createHarness({
+      authorizedDirectories: {
+        prepareNotice: async () => ({ text: 'Local directory authorization has changed.', commit })
+      },
+      prepare: async () => ({ status: 'cancelled', close: () => {} })
+    })
+    await harness.workflow.run(request(), { kind: 'user' })
+    expect(commit).not.toHaveBeenCalled()
+  })
 })

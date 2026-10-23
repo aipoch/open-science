@@ -33,6 +33,20 @@ const ref = (text: string): string => `enc:${Buffer.from(text).toString('base64'
 afterEach(() => roots.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })))
 
 describe('read-only ciphertext inventory', () => {
+  it('includes the Semantic Scholar credential in startup key validation', () => {
+    const paths = fixture()
+    writeFileSync(
+      join(paths.configRoot, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        connectors: { semanticScholarApiKeyRef: ref('semantic-scholar-ciphertext') }
+      })
+    )
+    expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toContain(
+      'semantic-scholar-ciphertext'
+    )
+  })
+
   it('does not let an inactive journal bypass an unreadable application database', () => {
     const paths = fixture()
     const path = join(paths.configRoot, 'open-science.db')

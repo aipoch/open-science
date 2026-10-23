@@ -386,6 +386,7 @@ describe('Settings backend ownership architecture', () => {
       'setReasoningEffort',
       'setReviewerModel',
       'setRuntimeEnablement',
+      'setSemanticScholarCredential',
       'setSessionDetailsModel',
       'setShowNotificationContent',
       'setSkillEnabled',
@@ -510,7 +511,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
-        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
@@ -637,6 +638,7 @@ describe('Settings backend ownership architecture', () => {
       'listModelsCall',
       'viewImageCall',
       'requestUserInput',
+      'listAuthorizedDirectories',
       'memoryListCategories',
       'memorySearch',
       'memoryRemember'
