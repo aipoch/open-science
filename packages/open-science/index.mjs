@@ -308,6 +308,54 @@ export class OpenScienceClient {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, options)
   }
 
+  // Web RPC seam: authenticated loopback dispatch of one application command channel.
+  // The CLI reaches headless-only commands (Session package export/import) this way.
+  async callRpc(channel, args, options = {}) {
+    return withRequestTimeout(
+      {
+        defaultTimeoutMs: this.requestTimeoutMs,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs
+      },
+      async (signal) => {
+        const response = await this.fetch(`${this.baseUrl}/rpc/${encodeURIComponent(channel)}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.token}`,
+            accept: 'application/json',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ protocolVersion: 1, args }),
+          signal
+        })
+        const payload = await response.json().catch(() => undefined)
+        if (!response.ok || payload?.ok !== true) {
+          throw new OpenScienceApiError(
+            payload?.error?.message ?? `Open-Science Web RPC request failed (${response.status}).`,
+            { code: payload?.error?.code, status: response.status }
+          )
+        }
+        return payload.result
+      }
+    )
+  }
+
+  exportSessionPackage(projectId, sessionId, destinationPath, options) {
+    return this.callRpc(
+      'sessions:export-package',
+      [{ projectId, sessionId }, destinationPath],
+      options
+    )
+  }
+
+  importSessionPackage(target, sourcePath, options, rpcOptions) {
+    return this.callRpc(
+      'sessions:import-package',
+      [target, sourcePath, options === undefined ? undefined : { nonInteractive: true }],
+      rpcOptions
+    )
+  }
+
   updateSessionConfiguration(sessionId, request, options) {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, {
       ...options,

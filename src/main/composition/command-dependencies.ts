@@ -272,14 +272,18 @@ export function composeCommandDependencies({
         exportSessionPackage: (invocation) =>
           sessionPackageSurfaces.sessionPackageDesktop.export(
             invocation.args[0],
-            invocation.callerContext.clientId
+            invocation.callerContext.clientId,
+            invocation.args[1] as string | undefined
           ),
         importSessionPackage: (invocation) =>
           sessionPackageSurfaces.sessionPackageDesktop.import(
             invocation.callerContext.clientId,
             invocation.callerContext.lifecycleClientId,
-            invocation.args[0],
-            invocation.args[1]
+            invocation.args[0] as
+              import('../../shared/session-package').SessionPackageImportRequest | undefined,
+            invocation.args[1] as string | undefined,
+            false,
+            invocation.args[2] as { readonly nonInteractive: true } | undefined
           ),
         exportConversationFromInvokingWindow: (invocation) =>
           sessionPackageSurfaces.conversationExportService.exportConversation(

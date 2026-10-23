@@ -159,11 +159,13 @@ type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
     request: SessionPackage.SessionPackageRequest
   ) => Promise<SessionPackage.SessionPackageRequest | null>
   exportSessionPackage: (
-    request: SessionPackage.SessionPackageRequest
+    request: SessionPackage.SessionPackageRequest,
+    destinationPath?: string
   ) => Promise<SessionPackage.SessionPackageExportResult>
   importSessionPackage: (
     request?: SessionPackage.SessionPackageImportRequest,
-    sourcePath?: string
+    sourcePath?: string,
+    options?: { readonly nonInteractive: true }
   ) => Promise<SessionPackage.SessionPackageImportResult>
   sessionPackageOperation: (
     request: SessionPackage.PackageOperationRequest
@@ -776,6 +778,19 @@ const assertElectronCaller = (
   }
 }
 
+// Package export/import/operation are exposed to local Web callers (CLI over loopback Web RPC).
+// Remote browsers are stopped by the rejecting-stub surface and the local-only RPC gate; this
+// repeats that boundary at the handler so a dispatcher regression cannot widen it.
+const assertElectronOrLocalWebCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  name: string
+): void => {
+  const { surface, location } = invocation.callerContext
+  if (surface === 'electron') return
+  if (surface === 'web' && location === 'local') return
+  throw new Error(`Channel only available from the desktop app or local Web session: ${name}`)
+}
+
 const assertSessionDelegationPolicyCaller = (
   invocation: ApplicationInvocation<readonly unknown[]>,
   name: string
@@ -1026,15 +1041,21 @@ const registerDataContentApplicationCommands = (
         return dependencies.electron.forkSession(invocation)
       },
       'sessions:export-package': (invocation) => {
-        assertElectronCaller(invocation, dataContentApplicationCommands.sessionExportPackage.name)
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.sessionExportPackage.name
+        )
         return dependencies.electron.exportSessionPackage(invocation)
       },
       'sessions:import-package': (invocation) => {
-        assertElectronCaller(invocation, dataContentApplicationCommands.sessionImportPackage.name)
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.sessionImportPackage.name
+        )
         return dependencies.electron.importSessionPackage(invocation)
       },
       'sessions:package-operation': (invocation) => {
-        assertElectronCaller(
+        assertElectronOrLocalWebCaller(
           invocation,
           dataContentApplicationCommands.sessionPackageOperation.name
         )
