@@ -982,6 +982,18 @@ mod windows_host {
         }))
     }
 
+    fn stop_profile_process(process: HANDLE, pid: u32) -> Result<()> {
+        let termination = unsafe { TerminateProcess(process, 1) };
+        // A process can start exiting after enumeration (for example when its job closes).
+        // Windows can then reject TerminateProcess before the handle becomes signaled.
+        // Retain the existing wait budget and require proof from the same opened handle.
+        if unsafe { WaitForSingleObject(process, 15_000) } != WAIT_OBJECT_0 {
+            termination.with_context(|| format!("stop AppContainer process {pid}"))?;
+            bail!("AppContainer process {pid} did not stop before removal");
+        }
+        Ok(())
+    }
+
     fn stop_profile_processes(sid: PSID) -> Result<()> {
         let snapshot = Handle(
             unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
@@ -1004,15 +1016,7 @@ mod windows_host {
             } {
                 let process = Handle(process);
                 if process_uses_profile(process.0, sid)? {
-                    unsafe { TerminateProcess(process.0, 1) }.with_context(|| {
-                        format!("stop AppContainer process {}", entry.th32ProcessID)
-                    })?;
-                    if unsafe { WaitForSingleObject(process.0, 15_000) } != WAIT_OBJECT_0 {
-                        bail!(
-                            "AppContainer process {} did not stop before removal",
-                            entry.th32ProcessID
-                        );
-                    }
+                    stop_profile_process(process.0, entry.th32ProcessID)?;
                 }
             }
             if unsafe { Process32NextW(snapshot.0, &mut entry) }.is_err() {
@@ -2374,6 +2378,89 @@ mod windows_host {
         Ok(entries)
     }
 
+    fn inherited_acl_entries(path: &str) -> Result<Vec<Vec<u8>>> {
+        use windows::Win32::Security::{
+            CreatePrivateObjectSecurityEx, DestroyPrivateObjectSecurity, GENERIC_MAPPING,
+            GROUP_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, SEF_AVOID_OWNER_CHECK,
+            SEF_AVOID_PRIVILEGE_CHECK, SEF_DACL_AUTO_INHERIT,
+        };
+        use windows::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, FILE_GENERIC_WRITE};
+
+        let parent = Path::new(path)
+            .parent()
+            .context("ACL restoration target has no parent")?;
+        let parent_name = wide(&parent.to_string_lossy());
+        let name = wide(path);
+        let mut parent_descriptor = PSECURITY_DESCRIPTOR::default();
+        unsafe {
+            GetNamedSecurityInfoW(
+                PCWSTR(parent_name.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                None,
+                None,
+                &mut parent_descriptor,
+            )
+        }
+        .ok()
+        .context("read parent ACL for restoration")?;
+        let _parent = LocalAllocation(parent_descriptor.0);
+        // Preserve this object's owner/group for CREATOR_OWNER/CREATOR_GROUP mapping.
+        // Do not copy its temporarily protected DACL into the computed descriptor.
+        let mut creator = PSECURITY_DESCRIPTOR::default();
+        unsafe {
+            GetNamedSecurityInfoW(
+                PCWSTR(name.as_ptr()),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION,
+                None,
+                None,
+                None,
+                None,
+                &mut creator,
+            )
+        }
+        .ok()
+        .context("read ACL restoration owner and group")?;
+        let _creator = LocalAllocation(creator.0);
+        let mapping = GENERIC_MAPPING {
+            GenericRead: FILE_GENERIC_READ.0,
+            GenericWrite: FILE_GENERIC_WRITE.0,
+            GenericExecute: FILE_GENERIC_EXECUTE.0,
+            GenericAll: FILE_ALL_ACCESS.0,
+        };
+        let mut inherited = PSECURITY_DESCRIPTOR::default();
+        // Calculate in memory with Windows' inheritance rules; this does not change
+        // permissions or require a privileged token.
+        unsafe {
+            CreatePrivateObjectSecurityEx(
+                Some(parent_descriptor),
+                Some(creator),
+                &mut inherited,
+                None,
+                Path::new(path).is_dir(),
+                SEF_DACL_AUTO_INHERIT | SEF_AVOID_OWNER_CHECK | SEF_AVOID_PRIVILEGE_CHECK,
+                None,
+                &mapping,
+            )
+        }
+        .context("calculate inherited ACL for restoration")?;
+        let result = (|| {
+            let mut present = BOOL::default();
+            let mut defaulted = BOOL::default();
+            let mut dacl = std::ptr::null_mut();
+            unsafe { GetSecurityDescriptorDacl(inherited, &mut present, &mut dacl, &mut defaulted) }?;
+            Ok(acl_entries(dacl)?
+                .into_iter()
+                .filter(|entry| entry[1] & INHERITED_ACE.0 as u8 != 0)
+                .collect())
+        })();
+        unsafe { DestroyPrivateObjectSecurity(&inherited) }.context("release calculated ACL")?;
+        result
+    }
+
     fn restore_acl_snapshot_unchecked(snapshot: &AclSnapshot) -> Result<()> {
         let sddl = wide(&snapshot.dacl_sddl);
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
@@ -2438,8 +2525,22 @@ mod windows_host {
                 })
                 .collect()
         };
-        let propagate =
-            inheritable(&saved_entries, true) != inheritable(&current_entries, snapshot.dacl_protected);
+        let mut current_control = 0u16;
+        let mut revision = 0u32;
+        unsafe { GetSecurityDescriptorControl(current_descriptor, &mut current_control, &mut revision) }
+            .context("read restoration ACL inheritance")?;
+        // A temporary traversal boundary can block an ancestor's grant revocation.
+        // Re-enabling inheritance must refresh these inherited ACEs from the parent,
+        // even when this directory's own inheritable entries have not changed.
+        let restore_inheritance = !snapshot.dacl_protected
+            && current_control & SE_DACL_PROTECTED.0 != 0
+            && inherited_acl_entries(&snapshot.path)?
+                != current_entries.iter()
+                    .filter(|entry| entry[1] & INHERITED_ACE.0 as u8 != 0)
+                    .cloned().collect::<Vec<_>>();
+        let propagate = restore_inheritance
+            || inheritable(&saved_entries, true)
+                != inheritable(&current_entries, snapshot.dacl_protected);
         let inheritance = if snapshot.dacl_protected {
             PROTECTED_DACL_SECURITY_INFORMATION
         } else {
@@ -3929,6 +4030,70 @@ mod windows_host {
     mod tests {
         use super::*;
         use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
+
+        #[test]
+        fn profile_process_stop_accepts_an_already_exited_process() {
+            use std::os::windows::process::CommandExt;
+
+            let mut child =
+                Command::new(Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe"))
+                    .args(["/d", "/c", "exit", "0"])
+                    .creation_flags(0x0800_0000)
+                    .spawn()
+                    .unwrap();
+            child.wait().unwrap();
+            // Retain the same process handle across exit, as profile enumeration does.
+            stop_profile_process(HANDLE(child.as_raw_handle()), child.id()).unwrap();
+        }
+
+        #[test]
+        fn profile_process_stop_preserves_errors_for_a_running_process() {
+            let pid = std::process::id();
+            let process = Handle(
+                unsafe {
+                    OpenProcess(
+                        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                        false,
+                        pid,
+                    )
+                }
+                .unwrap(),
+            );
+            assert_eq!(unsafe { WaitForSingleObject(process.0, 0) }, WAIT_TIMEOUT);
+            // This handle deliberately lacks terminate rights; the test process stays alive.
+            let error = stop_profile_process(process.0, pid).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("stop AppContainer process {pid}"))
+            );
+            assert_eq!(unsafe { WaitForSingleObject(process.0, 0) }, WAIT_TIMEOUT);
+        }
+
+        #[test]
+        fn profile_process_stop_waits_for_a_running_process_to_exit() {
+            use std::os::windows::process::CommandExt;
+            use std::process::Stdio;
+
+            let mut child =
+                Command::new(Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe"))
+                    .args(["/d", "/c", "set /p value="])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .creation_flags(0x0800_0000)
+                    .spawn()
+                    .unwrap();
+            let process = HANDLE(child.as_raw_handle());
+            assert_eq!(unsafe { WaitForSingleObject(process, 0) }, WAIT_TIMEOUT);
+            let result = stop_profile_process(process, child.id());
+            let stopped = unsafe { WaitForSingleObject(process, 0) };
+            // Reap the owned fixture even if the assertion fails.
+            let _ = child.kill();
+            child.wait().unwrap();
+            result.unwrap();
+            assert_eq!(stopped, WAIT_OBJECT_0);
+        }
 
         #[test]
         fn profile_boundary_exemption_does_not_cover_arbitrary_volume_children() {
@@ -5421,6 +5586,43 @@ exit 1"#
             fs::remove_dir_all(&root).unwrap();
 
             assert_eq!(restored, original);
+        }
+
+        #[test]
+        fn acl_restore_revokes_inherited_grants_blocked_by_traversal_protection() {
+            let root = unique_test_root("restore-nested-traversal");
+            let cache = root.join("cache");
+            let notebook = cache.join("notebook");
+            fs::create_dir_all(&notebook).unwrap();
+            let paths = [&root, &cache, &notebook].map(|path| path.to_string_lossy().into_owned());
+            let snapshots = paths
+                .each_ref()
+                .map(|path| capture_acl_snapshot(path).unwrap());
+            let capability =
+                CommandCapability::new(format!("open-science.test.{}", new_resource_key().unwrap()))
+                    .unwrap();
+            let identity = sid_text(capability.sid()).unwrap();
+            apply_acl_grant(&paths[0], &identity, AclGrant::ReadOnlyTree).unwrap();
+            apply_acl_grant(&paths[1], &identity, AclGrant::ReadOnlyDirectory).unwrap();
+            apply_acl_grant(&paths[2], &identity, AclGrant::ModifyTree).unwrap();
+            // Restore parent first, just as rebuild_acl_state does. The traversal grant
+            // temporarily protects the child, blocking the parent's revocation propagation.
+            for snapshot in &snapshots {
+                restore_acl_snapshot(snapshot).unwrap();
+            }
+            // A protected capture includes inherited ACEs, unlike the explicit-only baseline.
+            let mut remaining = Vec::new();
+            for path in &paths {
+                update_command_acl_native(path, &identity, None, true).unwrap();
+                remaining.push(
+                    capture_acl_snapshot(path)
+                        .unwrap()
+                        .dacl_sddl
+                        .contains(&identity),
+                );
+            }
+            fs::remove_dir_all(&root).unwrap();
+            assert_eq!(remaining, vec![false, false, false]);
         }
 
         #[test]
