@@ -7444,12 +7444,12 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
       // Require its preceding source line, matching typography and tight leading.
       if (
         (/^(?:Table|Tab\.)\s+\d+\s+(?:for\s+[a-z]|The\s+)/.test(start.text) ||
-          /^(?:(?:Supplementary|Supplemental)\s+)?(?:(?:Figure|Fig\.)\s+\d+|(?:Table|Tab\.)\s+(?:\d+|[IVXLCDM]+))[.:]\s+[A-Z]/.test(
+          /^(?:(?:Supplementary|Supplemental)\s+)?(?:(?:Figure|Fig\.)\s+\d+|(?:Table|Tab\.)\s+(?:\d+|[IVXLCDM]+))[.:]\s+\p{L}/u.test(
             start.text
           )) &&
         runs.some(
           (line) =>
-            (/(?:\b(?:listed|shown|provided|presented|reported|displayed|conditions) in|\bbetween conditions,|\bin (?:Supplemental|Supplementary)|\b(?:Supplementary |Supplemental )?(?:Table|Figure|Fig\.) \d+ and)$/.test(
+            (/(?:\b(?:listed|shown|provided|presented|reported|displayed|conditions) in|\b(?:shown|indicated|displayed) at the (?:top|bottom) of|\bbetween conditions,|\bin (?:Supplemental|Supplementary)|\b(?:Supplementary |Supplemental )?(?:Table|Figure|Fig\.) \d+ and)$/.test(
               line.text
             ) ||
               // A reference can end a statistical sentence and share its

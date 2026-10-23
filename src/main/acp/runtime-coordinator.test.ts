@@ -295,6 +295,15 @@ const createFakeRuntime = (options: {
     createSession,
     resumeSession,
     resetSessionContext,
+    captureSessionResumeCleanup: vi.fn(({ sessionId }: { sessionId: string }) => async () => {
+      sessionProjects.delete(sessionId)
+      snapshot = {
+        ...snapshot,
+        sessionId: snapshot.sessionId === sessionId ? undefined : snapshot.sessionId,
+        sessionIds: snapshot.sessionIds.filter((id) => id !== sessionId)
+      }
+      options.callbacks.onStateChanged?.(snapshot)
+    }),
     captureHandoffSessionResume: () => async () => undefined,
     switchSpecialist,
     compactSession,
@@ -7540,6 +7549,246 @@ describe.each([
   { path: 'codex-response', frameworkId: 'codex' },
   { path: 'codex-bridge', frameworkId: 'codex' }
 ] as const)('$path coordinator admission ownership', ({ path, frameworkId }) => {
+  it.each(['before admission', 'during validation'] as const)(
+    'serializes an external resume started %s with the scoped continuation resume',
+    async (timing) => {
+      const resumeEntered = createDeferred<void>()
+      const resumeFinished = createDeferred<void>()
+      const turnFinished = createDeferred<unknown>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      let resumes = 0
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          beforeResume: async () => {
+            if (++resumes !== 1) return
+            resumeEntered.resolve()
+            await resumeFinished.promise
+          },
+          prompt: () => turnFinished.promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const request = { sessionId: session.sessionId, cwd: '/workspace' }
+      let external: Promise<unknown> | undefined
+      if (timing === 'before admission') {
+        external = coordinator.resumeSession(request)
+        await resumeEntered.promise
+      }
+      const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'parent message' },
+        async (resume) => {
+          await resume(request)
+        }
+      )
+      await resumeEntered.promise
+      if (timing === 'during validation') external = coordinator.resumeSession(request)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(created.resumeSession).toHaveBeenCalledTimes(1)
+      resumeFinished.resolve()
+      await expect(accepted).resolves.toBe('provider_prompt_accepted')
+      expect(created.resumeSession).toHaveBeenCalledTimes(timing === 'before admission' ? 2 : 1)
+      turnFinished.resolve({ stopReason: 'end_turn' })
+      await external
+      expect(created.resumeSession).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each(['delete', 'cancel', 'handoff'] as const)(
+    'fences a scoped continuation resume superseded by %s',
+    async (operation) => {
+      const resumeAttached = createDeferred<void>()
+      const resumeFinished = createDeferred<void>()
+      let created!: ReturnType<typeof createFakeRuntime>
+      let resumes = 0
+      const observer = vi.fn(async () => undefined)
+      const pauseResume = async (): Promise<void> => {
+        if (++resumes !== 1) return
+        resumeAttached.resolve()
+        await resumeFinished.promise
+      }
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          afterResumeAttached: pauseResume
+        })
+        return created.runtime
+      })
+      coordinator.setSessionResumeObserver(observer)
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const request = { sessionId: session.sessionId, cwd: '/workspace' }
+      const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'parent message' },
+        async (resume) => {
+          await resume(request)
+        }
+      )
+      const rejected = expect(accepted).rejects.toThrow()
+      await resumeAttached.promise
+      if (operation === 'delete') await coordinator.deleteSession(request)
+      else if (operation === 'cancel') await coordinator.cancelPrompt(request)
+      else await coordinator.stopPromptForHandoff(session.sessionId)
+      const external = operation === 'delete' ? undefined : coordinator.resumeSession(request)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(created.resumeSession).toHaveBeenCalledTimes(1)
+      expect(observer).not.toHaveBeenCalled()
+      resumeFinished.resolve()
+      await rejected
+      await external
+      expect(created.sendAppContinuation).not.toHaveBeenCalled()
+      if (operation === 'delete') {
+        expect(observer).not.toHaveBeenCalled()
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+      } else {
+        expect(created.resumeSession).toHaveBeenCalledTimes(2)
+        expect(observer).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
+  it.each(['delete', 'cancel', 'cleanup retry'] as const)(
+    'cleans an incoming targeted runtime after scoped resume is superseded by %s',
+    async (operation) => {
+      const attached = createDeferred<void>()
+      const finishResume = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId,
+          sessionIds: target?.model === 'incoming' ? ['sibling'] : ['session-1'],
+          callbacks,
+          afterResumeAttached: async () => {
+            if (target?.model !== 'incoming') return
+            attached.resolve()
+            await finishResume.promise
+          }
+        })
+        if (frameworkId === 'codex') {
+          Object.assign(fake.runtime, {
+            releaseSessionForTransfer: vi.fn(async () => {
+              fake.setStateSilently({ sessionIds: [], sessionId: undefined })
+              return 'provider-session-1'
+            })
+          })
+        }
+        created.push(fake)
+        return fake.runtime
+      })
+      const target = {
+        frameworkId,
+        providerId: 'provider',
+        model: 'original',
+        reasoningEffort: 'high' as const
+      }
+      const session = await coordinator.createSession({ cwd: '/workspace', agentTarget: target })
+      const owner = created.at(-1)!
+      const observer = vi.fn(async () => undefined)
+      coordinator.setSessionResumeObserver(observer)
+      const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'parent message' },
+        async (resume) => {
+          await resume({
+            sessionId: session.sessionId,
+            cwd: '/workspace',
+            agentTarget: { ...target, model: 'incoming' }
+          })
+        }
+      )
+      const rejected = expect(accepted).rejects.toThrow()
+      await attached.promise
+      const incoming = created.at(-1)!
+      expect(incoming).not.toBe(owner)
+      if (frameworkId !== 'opencode') {
+        await coordinator.createSession({
+          cwd: '/workspace',
+          agentTarget: { ...target, model: 'incoming' }
+        })
+        expect(incoming.runtime.getSnapshot().sessionIds).toContain('sibling')
+      }
+      const originalCapture = vi
+        .mocked(incoming.runtime.captureSessionResumeCleanup)
+        .getMockImplementation()!
+      const cleanupFailure = new Error('provider close failed')
+      const cleanupAttempt = vi.fn<() => Promise<void>>()
+      vi.spyOn(incoming.runtime, 'captureSessionResumeCleanup').mockImplementation((response) => {
+        const clean = originalCapture(response)
+        cleanupAttempt.mockImplementation(clean)
+        if (operation === 'cleanup retry') cleanupAttempt.mockRejectedValueOnce(cleanupFailure)
+        return cleanupAttempt
+      })
+      expect(incoming.runtime.getSnapshot().sessionIds).toContain(session.sessionId)
+      if (operation === 'delete') await coordinator.deleteSession({ sessionId: session.sessionId })
+      else await coordinator.cancelPrompt({ sessionId: session.sessionId })
+      finishResume.resolve()
+      await rejected
+      expect(observer).not.toHaveBeenCalled()
+      expect(incoming.sendAppContinuation).not.toHaveBeenCalled()
+      if (operation === 'cleanup retry') {
+        await vi.waitFor(() => expect(cleanupAttempt).toHaveBeenCalledOnce())
+        expect(incoming.runtime.getSnapshot().sessionIds).toContain(session.sessionId)
+        incoming.emitState({})
+        await coordinator.resumeSession({
+          sessionId: session.sessionId,
+          cwd: '/workspace',
+          agentTarget: target
+        })
+        expect(cleanupAttempt).toHaveBeenCalledTimes(2)
+      }
+      await vi.waitFor(() =>
+        expect(incoming.runtime.getSnapshot().sessionIds).not.toContain(session.sessionId)
+      )
+      if (frameworkId !== 'opencode') {
+        expect(incoming.runtime.getSnapshot().sessionIds).toContain('sibling')
+        expect(coordinator.getSnapshot().sessionIds).toContain('sibling')
+      }
+      incoming.emitState({})
+      if (operation === 'delete') {
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+      }
+    }
+  )
+
+  it('resumes inside continuation admission while external resume waits for the turn', async () => {
+    const finished = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId,
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => finished.promise
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const resumeRequest = { sessionId: session.sessionId, cwd: '/workspace' }
+    let retainedResume!: (request: typeof resumeRequest) => Promise<unknown>
+    const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+      { sessionId: session.sessionId, text: 'parent message' },
+      async (resume) => {
+        retainedResume = resume
+        await expect(resume({ ...resumeRequest, sessionId: 'other-session' })).rejects.toThrow(
+          'admission'
+        )
+        await resume(resumeRequest)
+      }
+    )
+    await expect(accepted).resolves.toBe('provider_prompt_accepted')
+    await expect(retainedResume(resumeRequest)).rejects.toThrow('admission')
+    const calls = created.resumeSession.mock.calls.length
+    const external = coordinator.resumeSession(resumeRequest)
+    await Promise.resolve()
+    expect(created.resumeSession).toHaveBeenCalledTimes(calls)
+    finished.resolve({ stopReason: 'end_turn' })
+    await external
+    expect(created.resumeSession).toHaveBeenCalledTimes(calls + 1)
+  })
+
   it.each(['reaped', 'unreaped', 'rejected'] as const)(
     'retains send, events, cancellation and next-quit process ownership after late %s cleanup',
     async (outcome) => {

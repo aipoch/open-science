@@ -971,9 +971,9 @@ Write-Output "__OPEN_SCIENCE_INTERNAL__=[$env:OPEN_SCIENCE_PSMODULEPATH]"
     async () => {
       const result = await runPowerShell('Write-Output "isolated" `')
 
-      expect(result.exitCode).toBeNull()
+      expect(result.exitCode, JSON.stringify(result)).toBe(1)
       expect(result.stdout).toBe('')
-      expect(result.stderr).toMatch(/parse|syntax/i)
+      expect(result.stderr).toContain('Create')
     },
     POWERSHELL_TEST_TIMEOUT_MS
   )

@@ -87,7 +87,7 @@ test('adds multiple PDFs through the picker and drop area and downloads from the
 }) => {
   await openFileDetail(page)
   const detail = page.getByRole('dialog')
-  const picker = detail.getByLabel('Add PDFs', { exact: true })
+  const picker = detail.getByLabel('Add files', { exact: true })
   await expect(picker).toHaveAttribute('multiple', '')
   await picker.setInputFiles(
     ['translation.pdf', 'supplement.pdf'].map((name) => ({
@@ -111,7 +111,7 @@ test('adds multiple PDFs through the picker and drop area and downloads from the
   const zone = detail.locator('[data-slot="literature-pdf-drop-zone"]')
   await zone.dispatchEvent('dragenter', { dataTransfer: transfer })
   await expect(
-    detail.getByText('Drop PDFs to attach to this reference', { exact: true })
+    detail.getByText('Drop files to attach to this reference', { exact: true })
   ).toBeVisible()
   await zone.dispatchEvent('drop', { dataTransfer: transfer })
   await expect(

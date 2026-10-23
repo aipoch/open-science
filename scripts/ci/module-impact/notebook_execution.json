@@ -1,4 +1,5 @@
 {
+  "fullTestReason": "Removing the shell search preflight changes the trusted source boundary; retain full validation until the reduced boundary is reviewed and trusted.",
   "ownerPaths": [
     "src/main/notebook/windows-runtime-catalog.json",
     "src/main/notebook/windows-runtime-components.ts",
@@ -128,7 +129,6 @@
     "src/main/notebook/shell-process-contract.ts",
     "src/main/notebook/shell-process-ownership.windows-posix.ts",
     "src/main/notebook/shell-process.ts",
-    "src/main/notebook/shell-search-scope.ts",
     "src/main/notebook/trust-bundle.test.ts",
     "src/main/notebook/trust-bundle.ts",
     "src/main/notebook/working-file-observer.ts"

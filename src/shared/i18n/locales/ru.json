@@ -7961,6 +7961,14 @@
     "No readable article text is available from this source.": "В этом источнике нет доступного для чтения текста статьи.",
     "Drop files to attach to this reference": "Перетащите файлы, чтобы прикрепить их к этой ссылке",
     "Partial results": "Частичные результаты",
-    "Existing attachments are kept. You can also add files from your device.": "Существующие вложения сохраняются. Также можно добавить файлы с вашего устройства."
+    "Existing attachments are kept. You can also add files from your device.": "Существующие вложения сохраняются. Также можно добавить файлы с вашего устройства.",
+    "Public cancer imaging collections and series metadata from TCIA.": "Открытые коллекции онкологических изображений и метаданные серий TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "Пути, записи и сопоставления генов KEGG. Действуют ограничения академического использования и лицензирования.",
+    "Search public TCIA imaging collections.": "Поиск открытых коллекций изображений TCIA.",
+    "Retrieve TCIA collection details and download requirements.": "Получение сведений о коллекции TCIA и требований к загрузке.",
+    "Retrieve public imaging series metadata by UID.": "Получение метаданных открытых серий изображений по UID.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "Поиск путей, ортологов, соединений и реакций KEGG.",
+    "Retrieve a KEGG entry summary.": "Получение сводки записи KEGG.",
+    "Map a KEGG gene to pathways or UniProt.": "Сопоставление гена KEGG с путями или UniProt."
   }
 }

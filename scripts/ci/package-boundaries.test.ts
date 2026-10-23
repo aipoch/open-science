@@ -250,8 +250,11 @@ it.each([
   ['workspace_previews', 'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'],
   ['main_literature', 'src/main/literature/command-owner.ts'],
   ['page_literature', 'src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx'],
-  ['package_literature_discovery', 'packages/literature-discovery/src/supplements.ts']
-])('runs unfiltered tests for reclassified %s module and affected plans', async (id, path) => {
+  ['package_literature_discovery', 'packages/literature-discovery/src/supplements.ts'],
+  ['notebook_execution', 'src/main/notebook/windows-runtime-manager.ts'],
+  ['notebook_execution', 'src/main/notebook/scientific-output-analysis.ts'],
+  ['notebook_execution', 'src/main/notebook/working-file-observer.ts']
+])('runs unfiltered tests for reclassified %s and affected path %s', async (id, path) => {
   const { createModuleTestPlan, createAffectedTestPlan, executeModuleTestPlan } =
     await import('./module-test-impact.mjs')
   for (const plan of [
@@ -603,10 +606,6 @@ it('routes download package changes downstream and host adapters without unchang
     [
       'src/main/notebook/environment-download.ts',
       'src/main/notebook/environment-download.contract.test.ts'
-    ],
-    [
-      'src/main/notebook/windows-runtime-manager.ts',
-      'src/main/notebook/windows-runtime-download.contract.test.ts'
     ],
     ['src/main/session-package/transfer.ts', 'src/main/session-package/transfer.test.ts']
   ]) {

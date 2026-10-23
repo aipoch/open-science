@@ -465,3 +465,121 @@ describe('AcpSessionDeletionWorkflow', () => {
     retry.reservation?.release()
   })
 })
+
+describe('captured resume cleanup', () => {
+  const harness = (
+    close = true
+  ): {
+    registry: AcpSessionRegistry
+    dispose: ReturnType<typeof vi.fn>
+    request: ReturnType<typeof vi.fn>
+    notify: ReturnType<typeof vi.fn>
+    deps: ConstructorParameters<typeof AcpSessionDeletionWorkflow>[0]
+    forgetSetupSession: ReturnType<typeof vi.fn>
+    workflow: AcpSessionDeletionWorkflow
+    cleanup: () => Promise<void>
+  } => {
+    const registry = new AcpSessionRegistry()
+    const dispose = vi.fn()
+    publishSession(registry, 'incoming', 'provider-incoming', dispose)
+    publishSession(registry, 'sibling', 'provider-sibling')
+    const request = vi.fn(async () => ({}))
+    const notify = vi.fn(async () => undefined)
+    const connection = { agent: { request, notify } } as unknown as ClientConnection
+    const deps = dependencies(registry, connection, { delete: true, close })
+    const forgetSetupSession = vi.fn(async () => undefined)
+    const workflow = new AcpSessionDeletionWorkflow({
+      ...deps,
+      capabilities: { ...deps.capabilities, forgetSetupSession }
+    })
+    const cleanup = workflow.captureResumeCleanup('incoming', 'provider-incoming')
+    return { registry, dispose, request, notify, deps, forgetSetupSession, workflow, cleanup }
+  }
+
+  it.each([true, false])(
+    'preserves history, setup and siblings with provider close=%s',
+    async (close) => {
+      const h = harness(close)
+      await Promise.all([h.cleanup(), h.cleanup()])
+      await h.cleanup()
+      if (close) {
+        expect(h.request).toHaveBeenCalledOnce()
+        expect(h.request).toHaveBeenCalledWith(
+          acp.methods.agent.session.close,
+          { sessionId: 'provider-incoming' },
+          { cancellationSignal: expect.objectContaining({ aborted: false }) }
+        )
+        expect(h.notify).not.toHaveBeenCalled()
+      } else {
+        expect(h.request).not.toHaveBeenCalled()
+        expect(h.notify).toHaveBeenCalledOnce()
+        expect(h.notify).toHaveBeenCalledWith(acp.methods.agent.session.cancel, {
+          sessionId: 'provider-incoming'
+        })
+      }
+      expect(h.forgetSetupSession).not.toHaveBeenCalled()
+      expect(h.dispose).toHaveBeenCalledOnce()
+      expect(h.registry.lookup('incoming')?.attachment).toBeUndefined()
+      expect(h.registry.lookup('incoming')).toBeDefined()
+      expect(h.registry.lookup('sibling')?.attachment?.providerSessionId).toBe('provider-sibling')
+      expect(h.deps.capabilities.revokeSession).toHaveBeenCalledExactlyOnceWith('incoming')
+    }
+  )
+
+  it('retains the exact attachment after provider close failure and retries cleanup', async () => {
+    const h = harness()
+    const original = h.registry.lookup('incoming')?.attachment
+    h.request.mockRejectedValueOnce(new Error('close failed'))
+    await expect(h.cleanup()).rejects.toThrow('close failed')
+    expect(h.registry.lookup('incoming')?.attachment).toBe(original)
+    expect(h.dispose).not.toHaveBeenCalled()
+    expect(h.deps.capabilities.revokeSession).not.toHaveBeenCalled()
+    await h.cleanup()
+    expect(h.request).toHaveBeenCalledTimes(2)
+    expect(h.dispose).toHaveBeenCalledOnce()
+    expect(h.registry.lookup('incoming')?.attachment).toBeUndefined()
+    expect(h.forgetSetupSession).not.toHaveBeenCalled()
+  })
+
+  it.each(['before cleanup', 'during close'] as const)(
+    'preserves a successor installed %s',
+    async (timing) => {
+      const h = harness()
+      let release!: () => void
+      const closed = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      h.request.mockImplementationOnce(async () => {
+        await closed
+        return {}
+      })
+      const replace = (): void => {
+        const original = h.registry.lookup('incoming')!.attachment!
+        h.registry.detach(original, 'connection')
+        publishSession(h.registry, 'incoming', 'successor-provider')
+      }
+      if (timing === 'before cleanup') replace()
+      const cleaned = h.cleanup()
+      if (timing === 'during close') {
+        await vi.waitFor(() => expect(h.request).toHaveBeenCalledOnce())
+        replace()
+      }
+      release()
+      await cleaned
+      expect(h.registry.lookup('incoming')?.attachment?.providerSessionId).toBe(
+        'successor-provider'
+      )
+      expect(h.deps.capabilities.revokeSession).not.toHaveBeenCalled()
+      expect(h.forgetSetupSession).not.toHaveBeenCalled()
+      if (timing === 'before cleanup') expect(h.request).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not capture an attachment with a different provider identity', async () => {
+    const h = harness()
+    await h.workflow.captureResumeCleanup('incoming', 'different-provider')()
+    expect(h.request).not.toHaveBeenCalled()
+    expect(h.notify).not.toHaveBeenCalled()
+    expect(h.registry.lookup('incoming')?.attachment?.providerSessionId).toBe('provider-incoming')
+  })
+})

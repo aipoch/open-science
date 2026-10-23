@@ -58,7 +58,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   )
   await openAllReferences(page)
   await page.getByText('Native annotation regression', { exact: true }).click()
-  await page.locator('input[aria-label="Add PDF"]').setInputFiles(file)
+  await page.locator('input[aria-label="Add files"]').setInputFiles(file)
   await expect(
     page.getByRole('button', { name: 'Preview native-notes.pdf', exact: true })
   ).toBeEnabled()
@@ -623,7 +623,7 @@ test('shares independently imported native notes without duplication or resurrec
   const other = await app.openAdditionalRenderer()
   await openAllReferences(other)
   await other.getByText('Independent native reference', { exact: true }).click()
-  await other.locator('input[aria-label="Add PDF"]').setInputFiles(path)
+  await other.locator('input[aria-label="Add files"]').setInputFiles(path)
   await expect(other.getByRole('button', { name: 'Preview native.pdf', exact: true })).toBeEnabled()
   const versionId = await other.evaluate(
     async (id) => (await window.api.literature.get(id))!.attachments[0].versions[0].id,
