@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import {
   buildSensitiveContentEvidence,
   findSensitivePackageText,
+  isPrivatePackageField,
   isPrivatePackageValue,
   PackageTextScanner
 } from './sensitive-content'
@@ -573,7 +574,6 @@ describe('noncredential syntax and metadata', () => {
     '{"tokens":[]}',
     '{"credentials": { }}',
     '{"token_type":"Bearer"}',
-    '{"secretName":"API_KEY"}',
     'password = os.environ["PASSWORD"]',
     "token = os.getenv('API_TOKEN')",
     'apiKey = process.env.API_KEY',
@@ -652,3 +652,26 @@ it.each([
     }
   }
 })
+
+// A credential name is not a trusted schema: real secrets can have identifier shapes.
+it.each(['secretName', 'secret_name', 'credentialName', 'credential_name'])(
+  'retains identifier-shaped values under %s',
+  (key) => {
+    for (const value of ['API_KEY', 'ABCDEF1234567890']) {
+      expect(isPrivatePackageField(key, value)).toBe(true)
+      for (const text of [JSON.stringify({ [key]: value }), `${key} = "${value}"`]) {
+        expect(findSensitivePackageText(text)).toBeDefined()
+        for (let split = 0; split <= text.length; split++) {
+          const scanner = new PackageTextScanner()
+          scanner.write(text.slice(0, split))
+          scanner.write(text.slice(split))
+          expect(scanner.finish(), `split ${split}`).toBeDefined()
+        }
+      }
+    }
+    for (const value of ['', '[redacted]']) {
+      expect(isPrivatePackageField(key, value)).toBe(false)
+      expect(findSensitivePackageText(JSON.stringify({ [key]: value }))).toBeUndefined()
+    }
+  }
+)

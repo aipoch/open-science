@@ -19,16 +19,10 @@ export const isPrivatePackageValue = (value: string): boolean => {
   return text !== '' && text !== '[redacted]'
 }
 
-// These names describe a credential, rather than containing its value. Keep both
-// names and value shapes explicit; a metadata suffix alone is not sufficient.
+// Only exempt a known authentication scheme; identifier-shaped values can still be secrets.
 export const isPrivatePackageField = (key: string, value: string): boolean => {
   if (!isSensitiveDiagnosticKey(key) || !isPrivatePackageValue(value)) return false
   if (/^(?:token_type|tokenType)$/.test(key) && /^(?:Bearer|bearer)$/.test(value)) return false
-  if (
-    /^(?:secret_name|secretName|credential_name|credentialName)$/.test(key) &&
-    /^[A-Z][A-Z0-9_]*$/.test(value)
-  )
-    return false
   return true
 }
 
