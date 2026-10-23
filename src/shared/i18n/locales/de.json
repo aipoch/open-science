@@ -7731,6 +7731,8 @@
     "Readiness did not confirm a single run. This check cannot start.": "Die Bereitschaftsprüfung hat keinen einzelnen Lauf bestätigt. Diese Prüfung kann nicht gestartet werden.",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "Eine Reproduktion ist nicht möglich, solange diese Sitzung schreibgeschützt ist, ausgelastet ist oder wiederhergestellt wird.",
     "Captured R packages: {{count}}_one": "Erfasste R-Pakete: {{count}}",
-    "Captured R packages: {{count}}_other": "Erfasste R-Pakete: {{count}}"
+    "Captured R packages: {{count}}_other": "Erfasste R-Pakete: {{count}}",
+    "Map exact compound identifiers with UniChem.": "Exakte Verbindungskennungen mit UniChem zuordnen.",
+    "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen."
   }
 }

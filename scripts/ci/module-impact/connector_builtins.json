@@ -172,7 +172,11 @@
     "packages/connector-builtins/src/kegg.ts",
     "packages/connector-builtins/src/kegg.test.ts",
     "packages/connector-builtins/src/structures-omnipath.ts",
-    "packages/connector-builtins/src/structures-omnipath.test.ts"
+    "packages/connector-builtins/src/structures-omnipath.test.ts",
+    "packages/connector-builtins/src/chemistry-unichem.ts",
+    "packages/connector-builtins/src/chemistry-unichem.test.ts",
+    "packages/connector-builtins/src/structures-pdbe.ts",
+    "packages/connector-builtins/src/structures-pdbe.test.ts"
   ],
   "interfacePaths": [
     "packages/connector-builtins/package.json",
@@ -335,7 +339,9 @@
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/tcia.test.ts",
       "packages/connector-builtins/src/kegg.test.ts",
-      "packages/connector-builtins/src/structures-omnipath.test.ts"
+      "packages/connector-builtins/src/structures-omnipath.test.ts",
+      "packages/connector-builtins/src/chemistry-unichem.test.ts",
+      "packages/connector-builtins/src/structures-pdbe.test.ts"
     ],
     "contract": [
       "src/main/connectors/boundaries.architecture.test.ts",

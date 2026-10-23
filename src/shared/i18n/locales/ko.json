@@ -7568,6 +7568,8 @@
     "This check restores the captured inputs and environment, then executes only this run.": "이 검사는 캡처된 입력과 환경을 복원한 다음 이 실행만 수행합니다.",
     "Readiness did not confirm a single run. This check cannot start.": "준비 상태 검사에서 단일 실행을 확인하지 못했습니다. 이 검사를 시작할 수 없습니다.",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "이 세션이 읽기 전용이거나 사용 중 또는 복구 중이면 재현할 수 없습니다.",
-    "Captured R packages: {{count}}_other": "캡처된 R 패키지: {{count}}"
+    "Captured R packages: {{count}}_other": "캡처된 R 패키지: {{count}}",
+    "Map exact compound identifiers with UniChem.": "UniChem으로 정확히 일치하는 화합물 식별자를 매핑합니다.",
+    "Retrieve structure quality and validation statistics from PDBe.": "PDBe에서 구조 품질 및 검증 통계를 가져옵니다."
   }
 }

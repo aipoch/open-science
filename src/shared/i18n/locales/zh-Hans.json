@@ -7570,6 +7570,8 @@
     "This check restores the captured inputs and environment, then executes only this run.": "此检查会恢复已捕获的输入和环境，然后仅执行此运行。",
     "Readiness did not confirm a single run. This check cannot start.": "就绪性检查未确认单个运行。无法启动此检查。",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "此会话处于只读、忙碌或恢复状态时，无法复现。",
-    "Captured R packages: {{count}}_other": "已捕获的 R 软件包：{{count}}"
+    "Captured R packages: {{count}}_other": "已捕获的 R 软件包：{{count}}",
+    "Map exact compound identifiers with UniChem.": "通过 UniChem 映射精确的化合物标识符。",
+    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。"
   }
 }

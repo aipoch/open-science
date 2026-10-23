@@ -2,6 +2,16 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 import { readPdfFixture } from './read-fixture'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+const { recoverNativeInteriorFenceTables, finalizeNativeInteriorFenceTable } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-interior-fence-table.mjs')).href
+)
+const { collectTableRules } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+)
+const { tableTextToken } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+)
 const {
   recoverPriorCohortContinuation,
   recoverNativeCountContinuationCaption,
@@ -248,4 +258,397 @@ it('preserves ordinary numbered tables, captioned institutions, and independentl
       f.rules
     )
   ).toBe(false)
+})
+
+// One anonymous native program covers the mechanism, including real open
+// stroke gaps and empty cells. No exterior frame or caption is supplied.
+function interiorFenceExample(columns = 17, factor = 1): ReturnType<typeof JSON.parse> {
+  const cuts = [
+    10,
+    ...Array.from({ length: columns - 1 }, (_, i) => 60 + i * 12),
+    60 + (columns - 1) * 12
+  ].map((n) => n * factor)
+  const bands = Array.from({ length: 4 }, (_, r) => [
+    (20 + r * 10) * factor,
+    (29.6 + r * 10) * factor
+  ])
+  const rules: number[][] = []
+  for (const x of cuts.slice(1, -1))
+    for (const [top, bottom] of bands) rules.push([x, top, x, bottom])
+  for (let row = 0; row < 3; row++)
+    rules.push([
+      cuts[0],
+      (bands[row][1] + bands[row + 1][0]) / 2,
+      cuts.at(-1)!,
+      (bands[row][1] + bands[row + 1][0]) / 2
+    ])
+  const blanks = new Set([5, 6, 7, 9, 11, 12]),
+    tokens: ReturnType<typeof JSON.parse>[] = []
+  for (let row = 0; row < 4; row++)
+    for (let column = 0; column < columns; column++) {
+      if (row === 3 && blanks.has(column)) continue
+      const text =
+        column === 0 ? ['Profile', 'Count', 'Rank', 'Ready'][row] : row === 3 ? '✓' : String(column)
+      const baseline = (26 + row * 10) * factor,
+        x = cuts[column] + 2 * factor
+      tokens.push({
+        text,
+        rect: [x, baseline - 4 * factor, x + text.length * 2 * factor, baseline],
+        baseline,
+        height: 4 * factor,
+        horizontal: true,
+        sourceItem: { pageNumber: 1, index: tokens.length, text }
+      })
+    }
+  const width = 300 * factor,
+    height = 100 * factor
+  const viewport = {
+    width,
+    height,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, height],
+    convertToViewportPoint: (x: number, y: number) => [x, height - y]
+  }
+  const content = {
+    items: tokens.map((t) => ({
+      str: t.text,
+      width: t.text.length * 2 * factor,
+      height: 4 * factor,
+      dir: 'ltr',
+      fontName: 'F',
+      transform: [4 * factor, 0, 0, 4 * factor, t.rect[0], height - t.baseline],
+      sourceItem: { ...t.sourceItem }
+    })),
+    styles: { F: { ascent: 0, descent: 0, vertical: false } }
+  }
+  const operators = { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] }
+  for (const item of content.items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      null,
+      ['F', 4 * factor],
+      [new Float32Array([1, 0, 0, 1, item.transform[4], item.transform[5]])],
+      [
+        Array.from(item.str as string, (c) => ({
+          unicode: c,
+          fontChar: c,
+          width: 500,
+          isInFont: true
+        }))
+      ],
+      null
+    )
+  }
+  operators.fnArray.push(OPS.setLineWidth, OPS.setLineCap)
+  operators.argsArray.push([0.398 * factor], [0])
+  const graphicsBounds = rules.map((r) => {
+    const operationIndex = operators.fnArray.length
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [new Float32Array([0, r[0], height - r[1], 1, r[2], height - r[3]])],
+      new Float32Array([r[0], height - r[3], r[2], height - r[1]])
+    ])
+    return {
+      kind: 'path',
+      operationIndex,
+      normalizedRect: r.map((n, i) => n / (i % 2 ? height : width))
+    }
+  })
+  const context = {
+    content,
+    viewport,
+    operators,
+    graphicsBounds,
+    glyphBounds: [
+      {
+        fontName: 'F',
+        glyphs: [...new Set(content.items.flatMap((t) => Array.from(t.str as string)))].map(
+          (c) => ({ fontChar: c, bounds: [0, 0, 0.5, 0.7] })
+        )
+      }
+    ]
+  }
+  return {
+    tokens,
+    rules,
+    cuts,
+    bands,
+    page: { pageNumber: 1, width, height, invalidGraphicsBounds: 0, graphicsBounds },
+    context
+  }
+}
+const recoverInteriorFence = (
+  f: ReturnType<typeof interiorFenceExample>
+): ReturnType<typeof JSON.parse> => recoverNativeInteriorFenceTables(f.page, f.tokens, f.context)
+function prependInteriorPaint(
+  f: ReturnType<typeof interiorFenceExample>,
+  operations: [number, ReturnType<typeof JSON.parse>][]
+): void {
+  f.context.operators.fnArray.unshift(...operations.map(([op]) => op))
+  f.context.operators.argsArray.unshift(...operations.map(([, args]) => args))
+  for (const graphic of f.page.graphicsBounds) graphic.operationIndex += operations.length
+}
+function refineInteriorFence(
+  f: ReturnType<typeof interiorFenceExample>
+): ReturnType<typeof JSON.parse> {
+  const proof = recoverInteriorFence(f)[0]
+  const work = {
+    ...f.context.viewport,
+    scale: 1.5,
+    width: f.page.width * 1.5,
+    height: f.page.height * 1.5,
+    transform: [1.5, 0, 0, -1.5, 0, f.page.height * 1.5],
+    convertToViewportPoint: (x: number, y: number) => [x * 1.5, f.page.height * 1.5 - y * 1.5]
+  }
+  const tokens = f.context.content.items.map((t: ReturnType<typeof JSON.parse>) =>
+    tableTextToken(t, work, 0)
+  )
+  const rules = collectTableRules(f.context.operators, f.context.viewport).map((r: number[]) =>
+    r.map((n) => n * 1.5)
+  )
+  return {
+    proof,
+    table: { ...refineTable(proof.table, tokens, [], [], rules), page: 1, notes: [] }
+  }
+}
+it('recovers native sparse slots without inventing a caption or joining disconnected fences', () => {
+  const f = interiorFenceExample(),
+    before = JSON.stringify(f)
+  expect(
+    recoverRuledTable(
+      f.tokens.map((t: ReturnType<typeof JSON.parse>) => ({
+        ...t,
+        rect: t.rect.map((n: number) => n * 1.5),
+        height: t.height * 1.5,
+        baseline: t.baseline * 1.5
+      })),
+      f.rules.map((r: number[]) => r.map((n) => n * 1.5)),
+      1
+    )
+  ).toBeUndefined()
+  const { proof, table } = refineInteriorFence(f)
+  expect(proof.grid).toHaveLength(4)
+  expect(proof.grid.every((r: string[]) => r.length === 17)).toBe(true)
+  expect(
+    proof.sources.filter((c: ReturnType<typeof JSON.parse>) => !c.sourceItems.length)
+  ).toHaveLength(6)
+  expect(table.grid).toEqual(proof.grid)
+  expect(
+    table.cells.flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems ?? [])
+  ).toHaveLength(62)
+  expect(table.issues).toEqual([])
+  const final = finalizeNativeInteriorFenceTable(table, proof, f.page, f.tokens, f.context, [], [])
+  expect(final.cropRects).toEqual([proof.table.cropRect])
+  expect(final.grid).toEqual(table.grid)
+  expect(final.cells).toEqual(table.cells)
+  expect(final.caption).toBeUndefined()
+  expect(JSON.stringify(f)).toBe(before)
+})
+it('uses the same proof with fewer columns rather than changing the generic column limit', () => {
+  const f = interiorFenceExample(7)
+  expect(recoverInteriorFence(f)[0].grid.every((r: string[]) => r.length === 7)).toBe(true)
+})
+it.each(['transparent', 'translucent', 'white-fill', 'white-stroke', 'unknown-color'])(
+  'requires visible opaque native sparse-table paint: %s',
+  (guard) => {
+    const f = interiorFenceExample()
+    const operation: [number, ReturnType<typeof JSON.parse>] =
+      guard === 'transparent' || guard === 'translucent'
+        ? [OPS.setGState, [[['ca', guard === 'transparent' ? 0 : 0.5]]]]
+        : guard === 'white-stroke'
+          ? [OPS.setStrokeRGBColor, ['#ffffff']]
+          : [OPS.setFillRGBColor, [guard === 'white-fill' ? '#ffffff' : undefined]]
+    prependInteriorPaint(f, [operation])
+    expect(recoverInteriorFence(f)).toEqual([])
+  }
+)
+it('restores the native opaque text state and accepts ordinary nonwhite colors', () => {
+  for (const operations of [
+    [
+      [OPS.save, null],
+      [OPS.setGState, [[['ca', 0]]]],
+      [OPS.setFillRGBColor, ['#ffffff']],
+      [OPS.restore, null]
+    ],
+    [
+      [OPS.setFillRGBColor, ['#336699']],
+      [OPS.setStrokeRGBColor, ['#223344']]
+    ]
+  ] as [number, ReturnType<typeof JSON.parse>][][]) {
+    const f = interiorFenceExample()
+    prependInteriorPaint(f, operations)
+    expect(recoverInteriorFence(f)).toHaveLength(1)
+  }
+})
+it('rejects shared rule endpoints that omit an aligned native terminal lane', () => {
+  const f = interiorFenceExample()
+  for (const graphic of f.page.graphicsBounds.slice(-3)) {
+    f.context.operators.argsArray[graphic.operationIndex][1][0][4] = 237
+    f.context.operators.argsArray[graphic.operationIndex][2][2] = 237
+    graphic.normalizedRect[2] = 237 / 300
+  }
+  expect(recoverInteriorFence(f)).toEqual([])
+})
+it.each([0.005, 0.5])(
+  'checks foreign fill against the actual raster footprint and AA pixel: %s',
+  (gap) => {
+    const f = interiorFenceExample(),
+      top = recoverInteriorFence(f)[0].nativeCrop[3] + gap
+    const bottom = top + 0.1,
+      operationIndex = f.context.operators.fnArray.length
+    f.context.operators.fnArray.push(OPS.constructPath)
+    f.context.operators.argsArray.push([
+      OPS.fill,
+      [
+        new Float32Array([
+          0,
+          80,
+          100 - top,
+          1,
+          150,
+          100 - top,
+          1,
+          150,
+          100 - bottom,
+          1,
+          80,
+          100 - bottom,
+          4
+        ])
+      ],
+      new Float32Array([80, 100 - bottom, 150, 100 - top])
+    ])
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [80 / 300, top / 100, 150 / 300, bottom / 100]
+    })
+    expect(recoverInteriorFence(f)).toHaveLength(gap === 0.005 ? 0 : 1)
+  }
+)
+it('declines a geometrically equivalent table above the conservative initial PNG pixel budget', () => {
+  expect(recoverInteriorFence(interiorFenceExample())).toHaveLength(1)
+  expect(recoverInteriorFence(interiorFenceExample(17, 10))).toEqual([])
+})
+it('binds source rectangles through the original work transform without round-trip tolerance', () => {
+  const f = interiorFenceExample()
+  f.tokens[1].rect[0] = 62.001
+  f.tokens[1].rect[2] = 64.001
+  f.context.content.items[1].transform[4] = 62.001
+  f.context.operators.argsArray[7][0][4] = 62.001
+  const { proof, table } = refineInteriorFence(f)
+  const source = proof.sources.find(
+    (c: { row: number; column: number }) => c.row === 0 && c.column === 1
+  )
+  expect(source.sourceRects[0][2]).toBe(62.001 * 1.5 + 3)
+  expect(source.sourceRects[0][2]).not.toBe(64.001 * 1.5)
+  expect(
+    finalizeNativeInteriorFenceTable(table, proof, f.page, f.tokens, f.context, [], [])
+  ).toBeDefined()
+})
+it.each(['table', 'figure', 'caption'])('rejects a competing native %s owner', (kind) => {
+  const f = interiorFenceExample(),
+    crop = recoverInteriorFence(f)[0].nativeCrop
+  expect(
+    recoverNativeInteriorFenceTables(
+      f.page,
+      f.tokens,
+      f.context,
+      kind === 'caption' ? [] : [crop],
+      kind === 'caption' ? [{ rect: crop }] : []
+    )
+  ).toEqual([])
+})
+it.each([
+  'outline',
+  'packet',
+  'source-id',
+  'source-rect',
+  'duplicate-source',
+  'one-fence',
+  'row-fence',
+  'horizontal-end',
+  'glyph-column',
+  'glyph-row',
+  'empty-letter',
+  'line-cap',
+  'foreign-paint',
+  'unknown-paint'
+])('requires complete native sparse-slot evidence: %s', (guard) => {
+  const f = interiorFenceExample(),
+    o = f.context.operators
+  if (guard === 'outline') f.context.glyphBounds[0].glyphs.pop()
+  if (guard === 'packet') o.fnArray[o.fnArray.indexOf(OPS.endText)] = OPS.dependency
+  if (guard === 'source-id') f.tokens[0].sourceItem.index++
+  if (guard === 'source-rect') f.tokens[0].rect[0]++
+  if (guard === 'duplicate-source') f.tokens.push(structuredClone(f.tokens[0]))
+  if (guard === 'one-fence') o.argsArray[f.page.graphicsBounds[0].operationIndex][0] = OPS.endPath
+  if (guard === 'row-fence') o.argsArray[f.page.graphicsBounds[0].operationIndex][1][0][2]--
+  if (guard === 'horizontal-end')
+    o.argsArray[f.page.graphicsBounds.at(-1).operationIndex][1][0][4]--
+  if (guard === 'glyph-column')
+    f.context.glyphBounds[0].glyphs.find(
+      (g: { fontChar: string }) => g.fontChar === '1'
+    ).bounds[2] = 3
+  if (guard === 'glyph-row')
+    f.context.glyphBounds[0].glyphs.find(
+      (g: { fontChar: string }) => g.fontChar === '1'
+    ).bounds[3] = 3
+  if (guard === 'empty-letter')
+    f.context.glyphBounds[0].glyphs.find((g: { fontChar: string }) => g.fontChar === 'P').bounds = [
+      0, 0, 0, 0
+    ]
+  if (guard === 'line-cap') o.argsArray[o.fnArray.indexOf(OPS.setLineCap)] = [1]
+  if (guard === 'unknown-paint') {
+    o.fnArray.push(OPS.fill)
+    o.argsArray.push(null)
+  }
+  if (guard === 'foreign-paint') {
+    const operationIndex = o.fnArray.length
+    o.fnArray.push(OPS.constructPath)
+    o.argsArray.push([
+      OPS.fill,
+      [new Float32Array([0, 111, 45, 1, 114, 45, 1, 114, 47])],
+      new Float32Array([111, 45, 114, 47])
+    ])
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [111 / 300, 53 / 100, 114 / 300, 55 / 100]
+    })
+  }
+  expect(recoverInteriorFence(f)).toEqual([])
+})
+it.each([
+  'grid',
+  'cell-text',
+  'source-rect',
+  'duplicate-cell',
+  'source-segment',
+  'caption',
+  'note',
+  'new-competitor'
+])('rechecks a recovered sparse table after ordinary passes: %s', (guard) => {
+  const f = interiorFenceExample(),
+    { proof, table } = refineInteriorFence(f)
+  if (guard === 'grid') table.grid[0][1] = 'changed'
+  if (guard === 'cell-text') table.cells[0].text += '?'
+  if (guard === 'source-rect') table.cells[0].sourceRects[0][0]++
+  if (guard === 'duplicate-cell') table.cells.push(structuredClone(table.cells[0]))
+  if (guard === 'source-segment') table.cells[0].sourceSegments = [{ index: 0 }]
+  if (guard === 'caption') table.caption = { lines: ['A competing caption'] }
+  if (guard === 'note') table.notes.push({ lines: ['A separate note'] })
+  expect(
+    finalizeNativeInteriorFenceTable(
+      table,
+      proof,
+      f.page,
+      f.tokens,
+      f.context,
+      guard === 'new-competitor' ? [proof.nativeCrop] : [],
+      []
+    )
+  ).toBeUndefined()
 })

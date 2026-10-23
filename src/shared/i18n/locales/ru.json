@@ -8040,6 +8040,8 @@
     "Captured R packages: {{count}}_one": "Зафиксированные пакеты R: {{count}}",
     "Captured R packages: {{count}}_few": "Зафиксированных пакета R: {{count}}",
     "Captured R packages: {{count}}_many": "Зафиксированных пакетов R: {{count}}",
-    "Captured R packages: {{count}}_other": "Зафиксированных пакета R: {{count}}"
+    "Captured R packages: {{count}}_other": "Зафиксированных пакета R: {{count}}",
+    "Map exact compound identifiers with UniChem.": "Сопоставить точные идентификаторы соединений с помощью UniChem.",
+    "Retrieve structure quality and validation statistics from PDBe.": "Получить показатели качества структуры и статистику валидации из PDBe."
   }
 }

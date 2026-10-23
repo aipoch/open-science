@@ -7900,6 +7900,8 @@
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "La reproducción no está disponible mientras esta sesión sea de solo lectura, esté ocupada o se esté recuperando.",
     "Captured R packages: {{count}}_one": "Paquetes de R capturados: {{count}}",
     "Captured R packages: {{count}}_many": "Paquetes de R capturados: {{count}}",
-    "Captured R packages: {{count}}_other": "Paquetes de R capturados: {{count}}"
+    "Captured R packages: {{count}}_other": "Paquetes de R capturados: {{count}}",
+    "Map exact compound identifiers with UniChem.": "Relacionar identificadores exactos de compuestos con UniChem.",
+    "Retrieve structure quality and validation statistics from PDBe.": "Obtener la calidad estructural y las estadísticas de validación de PDBe."
   }
 }

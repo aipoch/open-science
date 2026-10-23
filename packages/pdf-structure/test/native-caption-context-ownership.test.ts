@@ -12,6 +12,78 @@ const { associateTableCaptions } = await import(
 const fixture = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids/native-caption-context-ownership.jsonl'))
 
+const scriptFooter = (): ReturnType<typeof JSON.parse> => {
+  const page = fixture()[7]
+  page.tableRects = page.tableRects.slice(0, 2)
+  page.tableCaptions = page.tableCaptions.slice(0, 2)
+  page.captionRules = page.captionRules.filter((r: number[]) => r[1] < 450)
+  page.lines = page.lines.filter((l: { y: number }) => l.y < 450)
+  page.lines.find((l: { y: number }) => l.y === 240).height = 13.8
+  Object.assign(
+    page.lines.find((l: { y: number }) => l.y === 254),
+    {
+      text: 'Every source row retains the value ∆',
+      width: 235
+    }
+  )
+  page.lines.push(
+    { text: 'faith', x: 295, y: 253.25, width: 18, height: 8.4, fontSize: 8.4 },
+    { text: 'T', x: 295, y: 260.4, width: 6.6, height: 8.4, fontSize: 8.4 },
+    { text: 'safely.', x: 320, y: 254, width: 50, height: 12, fontSize: 12 }
+  )
+  page.tableCaptions[0].lines[2] = 'Every source row retains the value ∆ faith T safely.'
+  page.tableCaptions[0].rect[3] = 260.4 + 8.4
+  return page
+}
+
+it.each([false, true])(
+  'proves its own complete footer with native scripts (reordered=%s)',
+  (reverse) => {
+    const page = scriptFooter()
+    if (reverse) {
+      page.tableRects.reverse()
+      page.tableCaptions.reverse()
+      page.lines.reverse()
+      page.captionRules.reverse()
+    }
+    const before = structuredClone(page)
+    expect(
+      associateTableCaptions(
+        page,
+        page.tableRects.map((rect: number[]) => ({ rect })),
+        page.tableCaptions,
+        page.captionRules
+      ).map((a: { caption?: { lines: string[] } }) => a.caption?.lines)
+    ).toEqual(page.tableCaptions.map((c: { lines: string[] }) => c.lines))
+    expect(page).toEqual(before)
+  }
+)
+
+it.each(['literal', 'ambiguous parent', 'closing', 'outside script', 'rectangle'])(
+  'keeps a native script footer unresolved without exact %s proof',
+  (missing) => {
+    const page = scriptFooter()
+    if (missing === 'literal') page.tableCaptions[0].lines[2] += ' changed'
+    if (missing === 'ambiguous parent')
+      page.lines.push({ text: 'Other', x: 285, y: 254, width: 10, height: 12, fontSize: 12 })
+    if (missing === 'closing')
+      page.captionRules = page.captionRules.filter((r: number[]) => r[1] !== 200)
+    if (missing === 'outside script')
+      page.lines.find((l: { text: string }) => l.text === 'T').x = 541
+    if (missing === 'rectangle') page.tableCaptions[0].rect[3] += 1
+    const before = structuredClone(page)
+    expect(
+      associateTableCaptions(
+        page,
+        page.tableRects.map((rect: number[]) => ({ rect })),
+        page.tableCaptions,
+        page.captionRules
+      )[0].caption
+    ).toBeUndefined()
+    expect(page).toEqual(before)
+  }
+)
+
 const indentedReferenceParagraph = (): ReturnType<typeof JSON.parse> => ({
   pageNumber: 1,
   width: 600,

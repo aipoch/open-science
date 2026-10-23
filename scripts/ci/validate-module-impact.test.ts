@@ -133,4 +133,23 @@ describe('module ownership and test impact manifest', () => {
       'Unknown fallback capability for workspace_page: unknown_fallback'
     )
   })
+
+  it('accepts a module without consumerModules or testFiles.consumer', () => {
+    const manifest = readManifest()
+    // Remove both optional fields from a module that currently has no consumers.
+    const id = Object.keys(manifest.modules).find(
+      (k) =>
+        manifest.modules[k].consumerModules.length === 0 &&
+        manifest.modules[k].testFiles.consumer.length === 0
+    )!
+    delete manifest.modules[id].consumerModules
+    delete manifest.modules[id].testFiles.consumer
+    expect(validateModuleImpactManifest(manifest)).toBe(manifest)
+  })
+
+  it('still validates consumerModules entries when the field is present', () => {
+    const manifest = readManifest()
+    manifest.modules.workspace_page.consumerModules = ['unknown_module']
+    expect(() => validateModuleImpactManifest(manifest)).toThrow('Unknown consumer module')
+  })
 })

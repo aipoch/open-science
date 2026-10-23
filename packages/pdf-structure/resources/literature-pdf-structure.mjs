@@ -45,6 +45,7 @@ const task = getDocument({
   data: new Uint8Array(bytes),
   standardFontDataUrl: `${join(assetRoot, 'standard_fonts')}/`,
   cMapUrl: `${join(assetRoot, 'cmaps')}/`,
+  wasmUrl: `${join(assetRoot, 'wasm')}/`,
   cMapPacked: true,
   isEvalSupported: false,
   fontExtraProperties: true,

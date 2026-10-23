@@ -64,7 +64,7 @@ function sorted(values) {
 }
 
 function declaredTests(module) {
-  return testKinds.flatMap((kind) => module.testFiles[kind])
+  return testKinds.flatMap((kind) => module.testFiles[kind] ?? [])
 }
 
 export function modulesForPath(manifest, path) {
@@ -86,7 +86,7 @@ export function modulesForPath(manifest, path) {
   // cannot establish ownership; unmatched implementations still fall back to full.
   const ownerTest = path.replace(/(\.[cm]?[jt]sx?)$/, '.test$1')
   return Object.entries(manifest.modules)
-    .filter(([, module]) => module.testFiles.owner.includes(ownerTest))
+    .filter(([, module]) => (module.testFiles.owner ?? []).includes(ownerTest))
     .map(([moduleId]) => moduleId)
 }
 
@@ -96,7 +96,7 @@ function expandConsumers(manifest, seeds, testsOnly = false) {
     if (selected.has(moduleId)) return
     selected.add(moduleId)
     if (testsOnly && usesReviewedBoundary(moduleId, manifest.modules[moduleId])) return
-    for (const consumer of manifest.modules[moduleId].consumerModules) visit(consumer)
+    for (const consumer of manifest.modules[moduleId].consumerModules ?? []) visit(consumer)
   }
   for (const seed of seeds) visit(seed)
   return Object.keys(manifest.modules).filter((moduleId) => selected.has(moduleId))
@@ -278,11 +278,11 @@ export function createAffectedTestPlan(
           ...(!modules.includes(consumer) ? ['capability routing only'] : [])
         ].join(' -> ')
       )
-      for (const next of manifest.modules[consumer].consumerModules) {
+      for (const next of manifest.modules[consumer].consumerModules ?? []) {
         visit(next, [...chain, consumer])
       }
     }
-    for (const consumer of manifest.modules[moduleId].consumerModules) {
+    for (const consumer of manifest.modules[moduleId].consumerModules ?? []) {
       visit(consumer, [moduleId])
     }
   }

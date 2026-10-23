@@ -2824,9 +2824,15 @@ function supportsCompactFacetedOperatorContext(
 // refuses invisible/white paint; no legacy plot selector uses this mode.
 export function completeNativeNodeGlyphProgram(page, tokens, frames, context) {
   return (
-    supportsCompactFacetedOperatorContext(page, tokens, frames, context, false, true) &&
+    completeNativeNodeGlyphState(page, tokens, frames, context) &&
     nativeCompletePlotGlyphBoxes(tokens, context.operators, context.viewport)
   )
+}
+
+// The scoped algorithm caller binds whole claimed advances and every foreign
+// used glyph independently; the legacy node program still requires both gates.
+export function completeNativeNodeGlyphState(page, tokens, frames, context) {
+  return supportsCompactFacetedOperatorContext(page, tokens, frames, context, false, true)
 }
 
 // The scoped closed-array path binds each original whole font to the native
@@ -3210,4 +3216,126 @@ function nativeTwoRowThreeClosedPlots(
   )
     return
   return { caption, rect, graphicsCount: outer.length }
+}
+
+// A complete strip can include panels whose right spine is intentionally absent.
+// A later closed-face selector may own only the closed siblings. Preserve the
+// already accepted crop only when independent rule grids and whole native titles
+// prove the omitted panel; this never supplies new crop edges or glyph ink.
+export function nativePlotStripHasOmittedAxes(
+  page,
+  figure,
+  closed,
+  captions,
+  tables,
+  rules,
+  tokens
+) {
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const inside = (outer, r) => r.every((v, n) => (n < 2 ? v >= outer[n] : v <= outer[n]))
+  if (
+    figure?.reason !== 'native-vector-chart-strip' ||
+    !valid(figure.rect) ||
+    !valid(closed?.rect) ||
+    page.invalidGraphicsBounds !== 0 ||
+    ![captions, tables, rules, tokens].every(Array.isArray)
+  )
+    return false
+  const caption = figure.caption,
+    cap = page.lines.filter((l) => intersection(lineRect(l), caption.rect) > 0)
+  const em = Math.max(...cap.map((l) => l.fontSize))
+  if (
+    !(em > 0) ||
+    !Number.isFinite(em) ||
+    figure.rect[3] >= caption.rect[1] ||
+    tables.some((t) => !valid(t) || intersection(t, figure.rect) > 0) ||
+    captions.some(
+      (c) => c !== caption && c.page === page.pageNumber && intersection(c.rect, figure.rect) > 0
+    ) ||
+    // Both selectors must concern the same band. Preserve the original crop,
+    // rather than borrowing even a narrow unproved strip from the new one.
+    closed.rect[0] < figure.rect[0] ||
+    closed.rect[2] > figure.rect[2] ||
+    closed.rect[3] > figure.rect[3] ||
+    rules.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite))
+  )
+    return false
+  const grids = []
+  for (const r of rules) {
+    if (r[1] !== r[3] || r[2] - r[0] < em * 4 || !inside(figure.rect, r)) continue
+    let grid = grids.find((g) => Math.abs(g.left - r[0]) < 1e-6 && Math.abs(g.right - r[2]) < 1e-6)
+    if (!grid) {
+      grid = { left: r[0], right: r[2], ys: [] }
+      grids.push(grid)
+    }
+    if (!grid.ys.some((y) => Math.abs(y - r[1]) < 1e-6)) grid.ys.push(r[1])
+  }
+  const faces = []
+  for (const grid of grids) {
+    grid.ys.sort((a, b) => a - b)
+    const top = grid.ys[0],
+      bottom = grid.ys.at(-1),
+      face = [grid.left, top, grid.right, bottom]
+    if (
+      grid.ys.length < 3 ||
+      bottom - top < em * 4 ||
+      !rules.some(
+        (r) =>
+          Math.abs(r[0] - grid.left) < 1e-6 &&
+          Math.abs(r[2] - grid.left) < 1e-6 &&
+          Math.abs(r[1] - top) < 1e-6 &&
+          Math.abs(r[3] - bottom) < 1e-6
+      )
+    )
+      continue
+    const titles = tokens.filter(
+      (t) =>
+        t.horizontal === true &&
+        /^[\p{L}][\p{L}\p{N} -]{1,39}$/u.test(t.text ?? '') &&
+        valid(t.rect) &&
+        inside(figure.rect, t.rect) &&
+        t.height >= em * 0.5 &&
+        t.height <= em &&
+        Number.isFinite(t.baseline) &&
+        Math.abs(t.rect[3] - t.baseline) < 1e-6 &&
+        t.rect[3] <= top &&
+        top - t.rect[3] <= em * 2 &&
+        t.rect[0] >= grid.left &&
+        t.rect[2] <= grid.right &&
+        Math.abs((t.rect[0] + t.rect[2] - grid.left - grid.right) / 2) <= em * 2 &&
+        t.sourceItem?.pageNumber === page.pageNumber &&
+        Number.isSafeInteger(t.sourceItem.index) &&
+        t.sourceItem.index >= 0 &&
+        t.sourceItem.text === t.text &&
+        tokens.filter((other) => other.sourceItem?.index === t.sourceItem.index).length === 1
+    )
+    if (titles.length) faces.push({ rect: face, titles })
+  }
+  faces.sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    faces.length < 3 ||
+    faces.length > 8 ||
+    faces.some(
+      (f, n) =>
+        Math.abs(f.rect[1] - faces[0].rect[1]) > em * 0.1 ||
+        Math.abs(f.rect[3] - faces[0].rect[3]) > em * 0.1 ||
+        Math.abs(f.rect[2] - f.rect[0] - faces[0].rect[2] + faces[0].rect[0]) > em * 0.1 ||
+        (n > 0 && f.rect[0] <= faces[n - 1].rect[2])
+    )
+  )
+    return false
+  const sameTitleRow = (a, b) =>
+    Math.abs(a.baseline - b.baseline) < em * 0.01 && Math.abs(a.height - b.height) < em * 0.01
+  const rows = []
+  for (const title of faces.flatMap((f) => f.titles)) {
+    if (rows.some((other) => sameTitleRow(title, other))) continue
+    if (faces.every((f) => f.titles.filter((other) => sameTitleRow(title, other)).length === 1))
+      rows.push(title)
+  }
+  if (rows.length !== 1) return false
+  return (
+    faces.some((f) => intersection(f.rect, closed.rect) === 0) &&
+    faces.filter((f) => inside(closed.rect, f.rect)).length >= 2
+  )
 }

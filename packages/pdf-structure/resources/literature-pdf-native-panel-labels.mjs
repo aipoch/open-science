@@ -3,6 +3,7 @@ import { union, intersection, lineRect } from './literature-pdf-page-geometry.mj
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
+import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
 
 // A fused panel key band belongs to its repeated raster row only with a unique caption owner.
 export function ownedRasterKeyBand(line, page, captions) {
@@ -2451,6 +2452,85 @@ export function nativeCaptionedLabeledRasterStack(
     const labelDomains = labels.map((l) => JSON.stringify(l.rect)).sort()
     if (JSON.stringify(domainsInColumn) !== JSON.stringify(labelDomains)) return
     return { ...nearest, rect, graphicsCount: images.length, issue: undefined }
+  } catch {
+    return
+  }
+}
+
+// Two complete raster panels can have different widths and keys in a shared
+// left column. Their empty native envelope proves the pair independently of
+// the nearby-image heuristics and the equal-width right-key stack above.
+export function nativeCaptionedSideKeyRasterPair(page, figure, captions, tables, tokens, context) {
+  try {
+    const valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+    const contains = (a, b) => b.every((v, i) => (i < 2 ? v >= a[i] - 0.02 : v <= a[i] + 0.02))
+    const caption = figure?.caption
+    if (
+      !valid(figure?.rect) ||
+      figure.graphicsCount !== 1 ||
+      figure.sourceItems?.length ||
+      !valid(caption?.rect) ||
+      caption.page !== page.pageNumber ||
+      !captions.includes(caption) ||
+      !/\(a\)[\s\S]*\(b\)/u.test(caption.lines.join(' ')) ||
+      page.graphicsBounds?.length !== 2 ||
+      page.graphicsBounds.some((g) => g.kind !== 'image')
+    )
+      return
+    const raster = nativeRasterImageInventory(page, context)
+    if (raster?.images.length !== 2) return
+    const inventory = nativePageTextPacketInventory(page, tokens, context, true)
+    if (!inventory || inventory.evidence.paths.size || inventory.evidence.images.length !== 2)
+      return
+    const images = [...raster.images].sort((a, b) => a.rect[1] - b.rect[1])
+    if (
+      images[0].rect[3] >= images[1].rect[1] ||
+      images[1].rect[3] >= caption.rect[1] ||
+      !contains(images[1].rect, figure.rect) ||
+      images[0].operationIndex >= images[1].operationIndex ||
+      images.some(
+        (im) =>
+          !inventory.evidence.images.some(
+            (native) =>
+              native.operationIndex === im.operationIndex &&
+              native.rect.every((v, n) => v === im.rect[n])
+          )
+      )
+    )
+      return
+    const labels = inventory.records.filter((r) => /^\([ab]\)$/u.test(r.r.str))
+    if (
+      labels.length !== 2 ||
+      labels[0].r.str !== '(a)' ||
+      labels[1].r.str !== '(b)' ||
+      labels[0].r.fontName !== labels[1].r.fontName ||
+      labels[0].r.transform.slice(0, 4).some((v, i) => v !== labels[1].r.transform[i])
+    )
+      return
+    const bounds = labels.map((r) => union([r.rect, ...r.part.map((p) => p.g.ink)]))
+    if (
+      Math.max(...bounds.map((r) => r[0])) >= Math.min(...bounds.map((r) => r[2])) ||
+      bounds.some(
+        (r, i) => r[2] >= images[i].rect[0] || r[1] < images[i].rect[1] || r[3] > images[i].rect[3]
+      )
+    )
+      return
+    const rect = union([...images.map((im) => im.rect), ...bounds])
+    const glyphs = new Set(labels.flatMap((r) => r.part.map((p) => p.g)))
+    const corridor = [rect[0], rect[1], rect[2], caption.rect[1]]
+    if (
+      tables.some((r) => !valid(r) || intersection(r, corridor) > 0) ||
+      captions.some(
+        (c) =>
+          c.page === page.pageNumber &&
+          (c !== caption || captions.filter((p) => p === caption).length !== 1) &&
+          (!valid(c.rect) || intersection(c.rect, corridor) > 0)
+      ) ||
+      inventory.glyphs.some((g) => !glyphs.has(g) && intersection(g.ink, corridor) > 0)
+    )
+      return
+    return { ...figure, rect, graphicsCount: 2 }
   } catch {
     return
   }
