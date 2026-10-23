@@ -319,6 +319,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-package-mirror',
     'set-network-proxy',
     'set-notebook-network',
+    'set-notebook-folder-restriction-enabled',
     'set-project-files-filter',
     'switch-local-shell-to-powershell',
     'test-classification',

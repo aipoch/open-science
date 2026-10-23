@@ -354,6 +354,8 @@ describe('Notebook filesystem policy', () => {
       const readOnlyRoot = mkdtempSync(join(tmpdir(), 'open-science-linux-input-'))
       const bin = join(privateRoot, 'bin')
       const workspace = join(privateRoot, 'workspace')
+      const missingProtected = join(privateRoot, 'missing-protected')
+      const missingWriteOnly = join(privateRoot, 'missing-write-only')
       mkdirSync(bin)
       mkdirSync(workspace)
       for (const executable of ['bwrap', 'sh']) {
@@ -375,8 +377,8 @@ describe('Notebook filesystem policy', () => {
           privateRoot,
           readOnlyRoots: [readOnlyRoot],
           readWriteRoots: [workspace],
-          deniedReadRoots: [],
-          deniedWriteRoots: [bin]
+          deniedReadRoots: [missingProtected],
+          deniedWriteRoots: [bin, missingProtected, missingWriteOnly]
         }
       })
 
@@ -404,8 +406,16 @@ describe('Notebook filesystem policy', () => {
           const args = launch.argv.join(' ')
           expect(args).toContain('--bind / /')
           expect(args).toContain('--unshare-all')
-          expect(args).not.toContain(`--tmpfs ${physicalRoot}`)
+          expect(
+            launch.argv.some(
+              (value, index) => value === '--tmpfs' && launch.argv[index + 1] === physicalRoot
+            )
+          ).toBe(false)
           expect(args).toContain(`--ro-bind ${realpathSync(bin)} ${realpathSync(bin)}`)
+          for (const missing of [missingProtected, missingWriteOnly].map(absolutePhysicalPath)) {
+            expect(args).toContain(`--tmpfs ${missing} --remount-ro ${missing}`)
+            expect(args).not.toContain(`--ro-bind ${missing} ${missing}`)
+          }
           return
         }
         expect(remountIndex).toBeGreaterThan(0)

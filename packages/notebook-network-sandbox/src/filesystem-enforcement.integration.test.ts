@@ -45,6 +45,8 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
       const secret = join(root, 'secret.txt')
       const readOnlyFile = join(root, 'tool.txt')
       const protectedFile = join(root, 'runtime.txt')
+      const missingProtected = join(root, 'missing-protected')
+      const missingWriteOnly = join(root, 'missing-write-only')
       await Promise.all(
         [ordinary, secret, protectedFile, readOnlyFile].map((path) => writeFile(path, 'original'))
       )
@@ -61,6 +63,8 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
             `if cat ${shellQuote(secret)} >/dev/null 2>&1; then exit 14; fi`,
             `if printf changed > ${shellQuote(protectedFile)}; then exit 15; fi`,
             `if printf changed > ${shellQuote(readOnlyFile)}; then exit 16; fi`,
+            `if mkdir -p ${shellQuote(join(missingProtected, 'child'))}; then exit 17; fi`,
+            `if mkdir -p ${shellQuote(join(missingWriteOnly, 'child'))}; then exit 18; fi`,
             'exit 0'
           ].join('; '),
           cwd: workspace,
@@ -70,8 +74,8 @@ describe.runIf(platformSupported)('Notebook filesystem enforcement', () => {
             privateRoot: root,
             readOnlyRoots: ['/bin', '/usr/bin', readOnlyFile],
             readWriteRoots: [workspace],
-            deniedReadRoots: [secret],
-            deniedWriteRoots: [protectedFile]
+            deniedReadRoots: [secret, missingProtected],
+            deniedWriteRoots: [protectedFile, missingProtected, missingWriteOnly]
           },
           onNetworkAccessRequest: async () => false
         })

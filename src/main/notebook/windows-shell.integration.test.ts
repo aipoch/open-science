@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import * as processTree from '../process-tree'
 import { build } from 'esbuild'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   NotebookShellProcessAdapter,
@@ -128,11 +128,38 @@ const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runS
   })
 
 describe.runIf(process.platform === 'win32')('Windows notebook shell integration', () => {
+  let protectionRoot: string
+  let protectionOwner: NotebookNetworkSandboxOwner
+  const previousStorageRoot = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+  beforeAll(async () => {
+    protectionRoot = await mkdtemp(join(tmpdir(), 'shell-protection-'))
+    process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = protectionRoot
+    protectionOwner = new NotebookNetworkSandboxOwner({
+      resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+      temporaryRoot: join(protectionRoot, 'commands'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    expect(await protectionOwner.installWindows()).toEqual({ cancelled: false })
+  }, 180_000)
+  afterAll(async () => {
+    try {
+      if (protectionOwner) {
+        expect(await protectionOwner.removeWindows()).toEqual({ cancelled: false })
+        await protectionOwner.dispose()
+      }
+      if (protectionRoot) await rm(protectionRoot, { recursive: true, force: true })
+    } finally {
+      if (previousStorageRoot === undefined) delete process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+      else process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = previousStorageRoot
+    }
+  }, 180_000)
+
   it.for([false, true])(
     'shares npm tools across live Sessions and retains them after Session deletion (protected: %s)',
     { timeout: 180_000 },
-    async (protectedMode, { skip }) => {
-      if (protectedMode && process.env.OPEN_SCIENCE_TEST_PROTECTED_SHELL !== '1') skip()
+    async (protectedMode) => {
       const root = await mkdtemp(join(tmpdir(), 'shell-shared-tools-目录 with spaces-'))
       if (!protectedMode) vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
       const runtimeRoot = join(root, 'runtime')
@@ -173,6 +200,11 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       })
       try {
         const ready = await adapter.execute(request(second, '[Console]::Write("SESSION_READY")'))
+        if (!protectedMode) {
+          expect(ready).toMatchObject({ exitCode: null, stdout: '' })
+          expect(ready.stderr).toContain('require Windows protected mode')
+          return
+        }
         expect(ready, JSON.stringify(ready)).toMatchObject({
           exitCode: 0,
           stdout: 'SESSION_READY'
@@ -214,8 +246,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
   it.for([false, true])(
     'separates PowerShell control input through the native owner (protected: %s)',
     { timeout: 60_000 },
-    async (protectedMode, { skip }) => {
-      if (protectedMode && process.env.OPEN_SCIENCE_TEST_PROTECTED_SHELL !== '1') skip()
+    async (protectedMode) => {
       const root = await mkdtemp(join(tmpdir(), 'shell-native-stdin-'))
       if (!protectedMode) vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
       await mkdir(join(root, 'workspace'))
@@ -243,20 +274,23 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         runtimeRoot: join(root, 'runtime')
       }
       try {
-        const executable = process.execPath.replaceAll("'", "''")
-        const script = `process.stdout.write(require('node:fs').readFileSync(0,'utf8') || 'eof')`
-        const child = `& '${executable}' -e '${script.replaceAll("'", "''")}'`
         const first = await adapter.execute({
           ...request,
-          command: `$value = "kept"; [Console]::Write($null -eq [Console]::ReadLine()); ${protectedMode ? '' : child}`
+          command: '$value = "kept"; [Console]::Write($null -eq [Console]::ReadLine())'
         })
+        if (!protectedMode) {
+          expect(first).toMatchObject({ exitCode: null, stdout: '' })
+          expect(first.stderr).toContain('require Windows protected mode')
+          expect(launches).toEqual([])
+          expect(registry.hasReceipts()).toBe(false)
+          return
+        }
         expect(first, JSON.stringify(first)).toMatchObject({
-          stdout: protectedMode ? 'True' : 'Trueeof',
+          stdout: 'True',
           exitCode: 0
         })
-        // The installed protected runtime checks IPC without depending on this machine's drive
-        // authorization. The isolated standard fixture also checks native invocation and cwd/state.
-        if (!protectedMode) {
+        // The protected runtime must preserve variables across its control messages.
+        {
           const second = await adapter.execute({
             ...request,
             command: `#${'x'.repeat(24_000)}\n[Console]::Write($value)`
@@ -264,7 +298,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           expect(second, JSON.stringify(second)).toMatchObject({ stdout: 'kept', exitCode: 0 })
         }
         expect(registry.hasReceipts()).toBe(true)
-        expect(launches).toEqual([protectedMode ? 'launch' : 'supervise'])
+        expect(launches).toEqual(['launch'])
       } finally {
         const shutdown = await adapter.shutdown()
         await owner.dispose()
@@ -272,15 +306,14 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         vi.unstubAllEnvs()
         expect(shutdown).toEqual({ reaped: true })
         expect(registry.hasReceipts()).toBe(false)
-        expect(await readdir(join(root, 'commands'))).toEqual([])
+        if (protectedMode) expect(await readdir(join(root, 'commands'))).toEqual([])
         await rm(root, { recursive: true, force: true })
       }
     }
   )
 
-  it('persists two real standard REPL commands and releases their native owner on shutdown', async () => {
+  it('persists two real protected REPL commands and releases their native owner on shutdown', async () => {
     const root = await mkdtemp(join(tmpdir(), 'repl-native-persistence-'))
-    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
       temporaryRoot: join(root, 'commands'),
@@ -318,7 +351,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           code: 'console.log(persistedNonce + "_FOLLOWING")'
         })
       ).resolves.toMatchObject({ status: 'completed', stdout: `${nonce}_FOLLOWING\n` })
-      expect(launches).toEqual(['supervise'])
+      expect(launches).toEqual(['launch'])
       const persisted = await new NotebookRunRepository(root).loadOrCreate({
         ...scope,
         projectId: 'native-repl',
@@ -361,7 +394,6 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
     'blocks B until A supplies its original native proof, then persists B exactly once (receipt retry: %s)',
     async (receiptRetry) => {
       const root = await mkdtemp(join(tmpdir(), 'shell-native-admission-'))
-      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
       const info = vi.fn()
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
@@ -394,7 +426,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         .spyOn(NotebookNetworkSandbox.prototype, 'wrap')
         .mockImplementation(async function (this: NotebookNetworkSandbox, request) {
           const wrapped = await launch.call(this, request)
-          expect(wrapped.argv[1]).toBe('supervise')
+          expect(wrapped.argv[1]).toBe('launch')
           expect(wrapped.confirmProcessTreeTermination).toBeTypeOf('function')
           expect(wrapped.confirmProcessState).toBeTypeOf('function')
           const first = proofs.length === 0

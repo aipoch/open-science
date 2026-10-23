@@ -239,3 +239,7 @@ Changing the preference stops live Notebook and Shell processes, clearing their 
 variables. The new value is committed only after successful process cleanup, while new execution
 admission remains closed. Existing persisted Notebook history is retained. This preference does
 not control Agent-native tools or remote compute.
+
+On Linux, masking a protected path that does not exist can create an empty directory at the
+host mount point. The masking filesystem is temporary and read-only; it does not persist
+sandbox writes or change the settings schema.
