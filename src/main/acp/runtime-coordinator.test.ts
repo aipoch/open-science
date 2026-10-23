@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import ts from 'typescript'
+import { RequestError } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -760,6 +761,64 @@ describe('AcpRuntimeCoordinator', () => {
       } else expect(unavailable).not.toHaveBeenCalled()
     }
   )
+
+  it('resumes an idle subscription thread on another model without an active writer conflict', async () => {
+    const sessionId = '01900000-0000-7000-8000-000000000001'
+    let writer: AcpRuntime | undefined
+    const operations: string[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: [sessionId],
+        callbacks,
+        beforeResume: async () => {
+          if (writer && writer !== fake.runtime) {
+            throw RequestError.internalError({
+              details: `thread ${sessionId} already has an active writer`
+            })
+          }
+          operations.push('resume')
+          writer = fake.runtime
+        }
+      })
+      Object.assign(fake.runtime, {
+        releaseSessionForTransfer: vi.fn(async (id: string) => {
+          expect(id).toBe(sessionId)
+          expect(writer).toBe(fake.runtime)
+          operations.push('release')
+          writer = undefined
+          fake.setStateSilently({ sessionIds: [], sessionId: undefined })
+          return sessionId
+        })
+      })
+      const create = fake.runtime.createSession.bind(fake.runtime)
+      fake.runtime.createSession = async (request) => {
+        const response = await create(request)
+        writer = fake.runtime
+        return response
+      }
+      return fake.runtime
+    })
+    const target = {
+      frameworkId: 'codex',
+      providerId: 'builtin-codex-subscription',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high'
+    } as const
+    await coordinator.createSession({ agentTarget: target, projectId: 'project-a' })
+
+    await expect(
+      coordinator.resumeSession({
+        sessionId,
+        providerSessionId: sessionId,
+        previousFrameworkId: 'codex',
+        projectId: 'project-a',
+        cwd: '/workspace',
+        agentTarget: { ...target, model: 'gpt-6-astra' }
+      })
+    ).resolves.toMatchObject({ sessionId })
+    expect(operations).toEqual(['release', 'resume'])
+  })
 
   it.each(
     [false, true].flatMap((draining) =>
