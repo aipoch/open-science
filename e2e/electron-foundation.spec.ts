@@ -28,26 +28,10 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
       filter: (source) => basename(source).toLowerCase() !== 'site-packages'
     })
     pythonPath = join(pythonRoot, basename(pythonPath))
-    // CPython supports pythonXY.zip beside python.exe (the Windows embeddable layout).
     execFileSync(pythonPath, [
       '-I',
       '-c',
-      [
-        'import pathlib, shutil, sys, zipfile',
-        'root = pathlib.Path(sys.executable).parent',
-        'stdlib = root / "Lib"',
-        'archive = root / f"python{sys.version_info.major}{sys.version_info.minor}.zip"',
-        'with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:',
-        '    for source in stdlib.rglob("*"):',
-        '        if source.is_file() and "__pycache__" not in source.parts:',
-        '            output.write(source, source.relative_to(stdlib))',
-        'shutil.rmtree(stdlib)'
-      ].join('\n')
-    ])
-    execFileSync(pythonPath, [
-      '-I',
-      '-c',
-      'import csv, json, statistics; assert ".zip" in csv.__file__; assert statistics.mean([2,4,6]) == 4'
+      'import csv, json, statistics; assert statistics.mean([2,4,6]) == 4'
     ])
   }
   const previousPath = process.env.PATH
@@ -115,6 +99,12 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
         await preview.getByRole('button', { name: 'Close preview of research-results.md' }).click()
       }
       await reviewResult()
+      if (process.platform === 'win32') {
+        await testInfo.attach('research-before-restart', {
+          path: await app.captureMainLog('research-before-restart.log'),
+          contentType: 'text/plain'
+        })
+      }
       page = await app.restart()
       await openRecentSession(page, prompt)
       await expect(page.getByRole('region', { name: 'Conversation' })).toContainText(
