@@ -69,6 +69,7 @@
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
+    "host_command_runtime": ["src/main/desktop-runtime-launcher.integration.test.ts"],
     "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
     "host_process_runtime": ["src/main/notebook/authorized-directories.integration.test.ts"],
     "host_rpc_transport": ["src/main/notebook/authorized-directories.integration.test.ts"],
@@ -133,7 +134,11 @@
     "main_database": ["src/main/session-package/materialize.test.ts"],
     "main_host_sdk": ["src/main/notebook/authorized-directories.integration.test.ts"],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
-    "main_storage": ["src/main/session-package/materialize.test.ts"],
+    "main_storage": [
+      "scripts/dev-isolated.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "main_web_service": ["src/main/desktop-runtime-launcher.integration.test.ts"],
     "managed_version_files": [
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
@@ -271,6 +276,7 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "notebook_network_sandbox": [
+      "scripts/dev-isolated.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts"
     ],
@@ -5655,11 +5661,14 @@
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-client-diagnostics.test.ts",
       "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/desktop-runtime-launcher.integration.test.ts",
+      "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-runtime-recovery.integration.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/host-application-commands.test.ts",
       "src/main/host-sdk/delegate-contract.test.ts",
       "src/main/index-fatal-errors.test.ts",
@@ -8913,6 +8922,7 @@
     ],
     "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "storage_location": [
+      "scripts/dev-isolated.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"

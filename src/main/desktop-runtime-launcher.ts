@@ -1,4 +1,6 @@
 import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
+import { readBackendBuildId } from './backend-build-identity'
+import { connectDesktopRuntime } from './desktop-runtime-client'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
 import {
   isRuntimeProcessAlive,
@@ -63,7 +65,8 @@ export type DesktopBackendLaunch = { endpoint: DesktopEndpoint; startedProcess?:
 export async function discoverDesktopBackend(
   configRoot: string,
   version: string,
-  terminationDeps?: Partial<LegacyTerminationDeps>
+  terminationDeps?: Partial<LegacyTerminationDeps>,
+  compatibility: { buildId?: string; requiredCommands?: readonly string[] } = {}
 ): Promise<DesktopEndpoint | undefined> {
   let owner: z.infer<typeof ownerSchema>
   let token: string
@@ -147,10 +150,23 @@ export async function discoverDesktopBackend(
     startup.success && startup.data.startupOptions.configRoot === configRoot
       ? startup.data.startupOptions
       : undefined
-  if (owner.desktop.version !== version || !startupOptions) {
+  const commands = z
+    .array(z.string())
+    .safeParse('desktopCommands' in proof ? proof.desktopCommands : undefined)
+  const incompatible =
+    (compatibility.buildId !== undefined &&
+      (!('backendBuildId' in proof) || proof.backendBuildId !== compatibility.buildId)) ||
+    (compatibility.requiredCommands !== undefined &&
+      (!commands.success ||
+        compatibility.requiredCommands.some((name) => !commands.data.includes(name))))
+  if (owner.desktop.version !== version || !startupOptions || incompatible) {
     const legacy = !startupOptions
     const issue = {
-      reason: legacy ? ('legacy-service' as const) : ('version-mismatch' as const),
+      reason: legacy
+        ? ('legacy-service' as const)
+        : owner.desktop.version !== version
+          ? ('version-mismatch' as const)
+          : ('runtime-incompatible' as const),
       desktopVersion: version,
       runtimeVersion: owner.desktop.version,
       pid: owner.pid,
@@ -159,7 +175,7 @@ export async function discoverDesktopBackend(
     }
     throw new DesktopRuntimeStartupError(
       issue,
-      'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.',
+      'The running Open-Science server is incompatible. Stop it explicitly before opening this desktop version.',
       async () => {
         // The service may have exited while its confirmation was open. Confirm the
         // released directory and, for modern services, the exact clean-exit receipt.
@@ -220,6 +236,59 @@ export async function discoverDesktopBackend(
                 }
               : undefined
           )
+        if (issue.reason === 'runtime-incompatible') {
+          if (!current) throw new Error('The server control endpoint is unavailable.')
+          const client = await connectDesktopRuntime({
+            endpoint: owner.desktop!,
+            signal: AbortSignal.timeout(5000),
+            onEvent: () => {},
+            onDisconnect: () => {}
+          })
+          let held = false
+          try {
+            if (
+              client.processId() !== owner.pid ||
+              JSON.stringify(client.runtimeInfo().startupOptions) !== JSON.stringify(startupOptions)
+            )
+              throw new Error('The running server changed. Check again before stopping it.')
+            const inspect = async (): Promise<string> => {
+              const work = z
+                .object({
+                  sessions: z.array(z.unknown()),
+                  reviewerActive: z.boolean(),
+                  settingsInstallId: z.string().optional(),
+                  migrationActive: z.boolean(),
+                  packageTransferActive: z.boolean(),
+                  fingerprint: z.string().regex(/^[a-f0-9]{64}$/)
+                })
+                .parse(await client.lifecycle({ operation: 'inspect' }))
+              if (
+                work.sessions.length ||
+                work.reviewerActive ||
+                work.settingsInstallId ||
+                work.migrationActive ||
+                work.packageTransferActive
+              )
+                throw new Error(
+                  'Finish active work in the running Open-Science server before restarting it.'
+                )
+              return work.fingerprint
+            }
+            await inspect()
+            await client.lifecycle({ operation: 'hold' })
+            held = true
+            const fingerprint = await inspect()
+            const outcome = await client.lifecycle({ operation: 'prepare', fingerprint })
+            if (outcome !== 'completed')
+              throw new Error('The server could not finish shutdown preparation.')
+            const lease = await client.stopRuntime()
+            lease.release()
+          } finally {
+            if (held) await client.lifecycle({ operation: 'abort' }).catch(() => {})
+            client.close()
+          }
+          return
+        }
         const graceful = async (): Promise<void> => {
           if (!current) throw new Error('The server control endpoint is unavailable.')
           // The owner endpoint is distinct from the Web service port. Start Web through its
@@ -336,14 +405,19 @@ async function settleStoppingRuntime(
 async function discoverOrWaitForStop(
   configRoot: string,
   version: string,
-  options: { waitMs: number; terminationDeps?: Partial<LegacyTerminationDeps> }
+  options: {
+    waitMs: number
+    terminationDeps?: Partial<LegacyTerminationDeps>
+    buildId?: string
+    requiredCommands?: readonly string[]
+  }
 ): Promise<DesktopEndpoint | undefined> {
   try {
-    return await discoverDesktopBackend(configRoot, version, options.terminationDeps)
+    return await discoverDesktopBackend(configRoot, version, options.terminationDeps, options)
   } catch (error) {
     if (!(error instanceof DesktopRuntimeStoppingError)) throw error
     await settleStoppingRuntime(configRoot, error, options)
-    return discoverDesktopBackend(configRoot, version, options.terminationDeps)
+    return discoverDesktopBackend(configRoot, version, options.terminationDeps, options)
   }
 }
 
@@ -354,6 +428,7 @@ export async function startOrAttachDesktopBackend(options: {
   command: string
   entry: string
   packaged: boolean
+  requiredCommands?: readonly string[]
   args?: readonly string[]
   credentialInventory?: readonly Buffer[]
   credentialInventoryCapturedAt?: number
@@ -366,7 +441,9 @@ export async function startOrAttachDesktopBackend(options: {
 }): Promise<DesktopBackendLaunch> {
   const wait = {
     waitMs: options.ownershipWaitMs ?? OWNERSHIP_RELEASE_WAIT_MS,
-    terminationDeps: options.terminationDeps
+    terminationDeps: options.terminationDeps,
+    buildId: options.packaged ? undefined : await readBackendBuildId(options.entry),
+    requiredCommands: options.requiredCommands
   }
   const existing = await discoverOrWaitForStop(options.configRoot, options.version, wait)
   if (existing) return { endpoint: existing }

@@ -7544,6 +7544,8 @@
     "References discovered by you or Agents will appear here for review.": "ユーザーまたはエージェントが見つけた文献が、確認のためここに表示されます。",
     "Review discovered references before they enter your library.": "見つかった文献を確認してからライブラリに追加します。",
     "Map exact compound identifiers with UniChem.": "UniChem で化合物の完全一致識別子を対応付けます。",
-    "Retrieve structure quality and validation statistics from PDBe.": "PDBe から構造の品質と検証統計を取得します。"
+    "Retrieve structure quality and validation statistics from PDBe.": "PDBe から構造の品質と検証統計を取得します。",
+    "Service needs restarting": "サービスの再起動が必要です",
+    "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "実行中のサービスはこのアプリと互換性がありません。他の Open-Science ウィンドウで実行中の作業を完了してから、サービスを再起動して続行してください。"
   }
 }

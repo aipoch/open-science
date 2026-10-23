@@ -7544,6 +7544,8 @@
     "References discovered by you or Agents will appear here for review.": "您或智能体发现的文献会出现在此处供审核。",
     "Review discovered references before they enter your library.": "审核发现的文献，再将其加入文献库。",
     "Map exact compound identifiers with UniChem.": "通过 UniChem 映射精确的化合物标识符。",
-    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。"
+    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。",
+    "Service needs restarting": "需要重启服务",
+    "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "运行中的服务与此应用不兼容。请先完成其他 Open-Science 窗口中的活动任务，再重启服务以继续。"
   }
 }

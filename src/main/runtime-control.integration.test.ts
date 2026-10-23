@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startRuntimeControl, RUNTIME_OWNER_FILE, type RuntimeOwnerRecord } from './runtime-control'
 import { requestExistingRuntimeWeb } from '../../packages/open-science/runtime-control.mjs'
 import type { DesktopEndpoint } from './desktop-connection'
+import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../shared/renderer-contract-catalog'
 
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -69,7 +70,11 @@ describe('runtime ownership discovery', () => {
         'x-open-science-runtime-generation': record.generation
       }
     })
-    expect(await response.json()).toEqual({ generation: record.generation, pid: record.pid })
+    expect(await response.json()).toEqual({
+      generation: record.generation,
+      pid: record.pid,
+      desktopCommands: ELECTRON_APPLICATION_COMMAND_CHANNELS
+    })
     await control.close()
     await expect(readFile(join(root, RUNTIME_OWNER_FILE))).rejects.toMatchObject({ code: 'ENOENT' })
   })

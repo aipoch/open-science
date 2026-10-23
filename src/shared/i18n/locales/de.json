@@ -7704,6 +7704,8 @@
     "References discovered by you or Agents will appear here for review.": "Von Ihnen oder Agenten gefundene Referenzen erscheinen hier zur Prüfung.",
     "Review discovered references before they enter your library.": "Prüfen Sie gefundene Referenzen, bevor sie in Ihre Bibliothek gelangen.",
     "Map exact compound identifiers with UniChem.": "Exakte Verbindungskennungen mit UniChem zuordnen.",
-    "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen."
+    "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen.",
+    "Service needs restarting": "Dienst muss neu gestartet werden",
+    "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "Der laufende Dienst ist mit dieser App nicht kompatibel. Beenden Sie laufende Arbeiten in anderen Open-Science-Fenstern und starten Sie dann den Dienst neu, um fortzufahren."
   }
 }

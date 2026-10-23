@@ -69,6 +69,25 @@ it('requires confirmation before authenticated startup stop', async () => {
   await click('Continue')
   expect(stop).toHaveBeenCalledOnce()
 })
+it('explains incompatible builds and confirms restart before touching the running service', async () => {
+  state = {
+    phase: 'blocked',
+    issue: {
+      reason: 'runtime-incompatible',
+      desktopVersion: 'test',
+      runtimeVersion: 'test',
+      canStop: true,
+      canRecover: false
+    }
+  }
+  await render()
+  expect(document.body.textContent).toContain('Service needs restarting')
+  expect(document.querySelector('[data-testid="workspace"]')).toBeNull()
+  await click('Continue')
+  expect(stop).not.toHaveBeenCalled()
+  await click('Continue')
+  expect(stop).toHaveBeenCalledOnce()
+})
 it('keeps startup blocked until authoritative readiness', async () => {
   await render()
   await act(async () =>

@@ -18,6 +18,65 @@ afterEach(async () => {
   }
   if (root) await rm(root, { recursive: true, force: true })
 })
+it('normally stops an idle incompatible CLI runtime only after explicit confirmation and preparation', async () => {
+  root = await mkdtemp(join(tmpdir(), 'startup-incompatible-'))
+  const main = resolve('src/main')
+  const entry = join(root, 'fixture.ts')
+  const output = join(root, 'fixture.cjs')
+  await writeFile(
+    entry,
+    `
+import {writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
+import {startRuntimeControl} from ${JSON.stringify(join(main, 'runtime-control.ts'))};
+import {startDesktopRuntimeTransport} from ${JSON.stringify(join(main, 'desktop-runtime-transport.ts'))};
+import {createDesktopRuntimeLifecycle} from ${JSON.stringify(join(main, 'desktop-runtime-lifecycle.ts'))};
+import {ApplicationEventHub} from ${JSON.stringify(join(main, 'application-events.ts'))};
+import {acquireRuntimeDirectorySync} from ${JSON.stringify(join(main, 'runtime-ownership.ts'))};
+import {writeRuntimeExit} from ${JSON.stringify(join(main, 'runtime-stop-confirmation.ts'))};
+const root=process.argv[2], lease=acquireRuntimeDirectorySync(root);
+const startupOptions={configRoot:root,dataRoot:root,profilePath:root,port:0,host:'127.0.0.1',credentialStore:'os'};
+async function main(){
+ const desktop=await startDesktopRuntimeTransport({version:'test',launch:'cli',entryPath:__filename,startupOptions,
+ commands:{commandNames:()=>[],invoke:async()=>null},events:new ApplicationEventHub(),
+ createLifecycle:()=>createDesktopRuntimeLifecycle({detectActiveSessions:()=>[],hasActiveReviewerWork:()=>false,
+ getActiveSettingsInstallId:()=>undefined,isMigrationInProgress:()=>false,hasActivePackageTransfer:()=>false,
+ holdSettingsInstallAdmission:()=>()=>{},abortQuitPreparation:()=>{},prepareForQuit:async()=>{await writeFile(join(root,'prepared'),'yes');return 'completed';}}),
+ requestShutdown:()=>{void stop();}});
+ const control=await startRuntimeControl(root,'node',async()=>{throw Error('Web shutdown is not used');},desktop.endpoint,startupOptions);
+ async function stop(){await control.close();await desktop.close();await writeRuntimeExit(root,{generation:desktop.endpoint.generation,pid:process.pid,outcome:'clean'});lease.release();}
+ process.send('ready');
+}main();`
+  )
+  await build({
+    entryPoints: [entry],
+    outfile: output,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    packages: 'external',
+    logLevel: 'silent'
+  })
+  child = spawn(process.execPath, [output, root], {
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    env: {
+      ...process.env,
+      NODE_PATH: resolve('node_modules'),
+      OPEN_SCIENCE_INSTALLATION_STATE_ROOT: join(root, 'installation-state')
+    }
+  })
+  await once(child, 'message')
+  child.disconnect()
+  const error = await discoverDesktopBackend(root, 'test', undefined, {
+    buildId: 'b'.repeat(64)
+  }).catch((error: unknown) => error)
+  expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
+  expect(child.exitCode).toBeNull()
+  await expect(readFile(join(root, 'prepared'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await (error as DesktopRuntimeStartupError).stopAndContinue()
+  expect(await readFile(join(root, 'prepared'), 'utf8')).toBe('yes')
+  acquireRuntimeDirectorySync(root).release()
+})
 it.each([
   { modern: true, alreadyStopped: false, cleanExit: true },
   { modern: false, alreadyStopped: false, cleanExit: true },

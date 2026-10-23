@@ -62,6 +62,40 @@ async function fixture() {
   return { root, owner, fetcher }
 }
 describe('desktop backend discovery', () => {
+  it('rejects a same-version packaged runtime that lacks the required recovery command', async () => {
+    const { root, owner, fetcher } = await fixture()
+    fetcher.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ...proof(root, owner),
+            desktopCommands: ['projects:list']
+          })
+        )
+    )
+    await expect(
+      discoverDesktopBackend(root, 'test', undefined, {
+        requiredCommands: ['sessions:delete-recovery-file']
+      })
+    ).rejects.toMatchObject({ issue: { reason: 'runtime-incompatible', canStop: true } })
+  })
+
+  it.each([undefined, 'b'.repeat(64)])(
+    'blocks a same-version stale development backend before installing its missing recovery command (%s)',
+    async (backendBuildId) => {
+      const { root, owner, fetcher } = await fixture()
+      fetcher.mockImplementation(
+        async () => new Response(JSON.stringify({ ...proof(root, owner), backendBuildId }))
+      )
+      await expect(
+        discoverDesktopBackend(root, 'test', undefined, { buildId: 'a'.repeat(64) })
+      ).rejects.toMatchObject({
+        issue: { reason: 'runtime-incompatible', canStop: true, canRecover: false }
+      })
+      expect(fetcher).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('authenticates the recorded generation before returning its private attachment', async () => {
     const { root, owner, fetcher } = await fixture()
     await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(owner.desktop)

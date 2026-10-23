@@ -8011,6 +8011,8 @@
     "References discovered by you or Agents will appear here for review.": "Источники, найденные вами или Агентами, появятся здесь для проверки.",
     "Review discovered references before they enter your library.": "Проверьте найденные источники перед добавлением в библиотеку.",
     "Map exact compound identifiers with UniChem.": "Сопоставить точные идентификаторы соединений с помощью UniChem.",
-    "Retrieve structure quality and validation statistics from PDBe.": "Получить показатели качества структуры и статистику валидации из PDBe."
+    "Retrieve structure quality and validation statistics from PDBe.": "Получить показатели качества структуры и статистику валидации из PDBe.",
+    "Service needs restarting": "Необходимо перезапустить службу",
+    "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "Работающая служба несовместима с этим приложением. Завершите активную работу в других окнах Open-Science, затем перезапустите службу, чтобы продолжить."
   }
 }

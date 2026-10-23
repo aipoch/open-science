@@ -2,6 +2,22 @@
 
 AIPOCH Open-Science has an ordinary Node backend and an Electron desktop client, built with React, TypeScript, Prisma/SQLite, and an ACP-based agent runtime.
 
+For concurrent worktrees, use `npm run dev:isolated` (desktop) or `npm run dev:web:isolated`
+(`dev:headless:isolated` is an alias). These opt-in commands keep config, the default data directory
+and Electron profile under that worktree's ignored `.dev-isolate/runtime/` directory and select
+an available Web port. The authenticated Web URL is printed by the backend. Explicit storage,
+profile and port overrides remain authoritative; choosing a shared data directory still enforces
+the existing single-writer lock. Ordinary `npm run dev` keeps its existing data and profile.
+Isolated data persists across restarts; it is not copied from the existing dev dataset or synced
+between worktrees. To remove an isolated dataset, normally stop its backend first and remove only
+that worktree's `.dev-isolate/runtime/` directory. This removes that isolated dataset permanently.
+
+After rebuilding development backend code, a retained process may still run the previous build.
+Desktop startup blocks attachment to incompatible builds and offers a confirmed normal restart.
+Finish active work in the running instance first. Restart does not delete recovery files or projects.
+Packaged apps retain their release-version compatibility checks and separate production defaults;
+independently packaged compatible CLI and desktop artifacts do not need matching development hashes.
+
 Prerequisites for source development:
 
 - Node.js 24 (see [`.nvmrc`](../.nvmrc)) with npm

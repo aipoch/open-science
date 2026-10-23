@@ -3,7 +3,11 @@ import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promise
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ChildProcess } from 'node:child_process'
-import { startOrAttachDesktopBackend } from './desktop-runtime-launcher'
+import { discoverDesktopBackend, startOrAttachDesktopBackend } from './desktop-runtime-launcher'
+import { startRuntimeControl } from './runtime-control'
+import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
+import { ApplicationEventHub } from './application-events'
+import { createDesktopRuntimeLifecycle } from './desktop-runtime-lifecycle'
 import { resolveElectronProfile } from './storage/electron-profile'
 const children = vi.hoisted(() => [] as ChildProcess[])
 vi.mock('node:child_process', async (original) => {
@@ -30,7 +34,8 @@ afterEach(async () => {
 })
 // The subprocess models only discovery/startup. Business ownership races have their own real
 // SQLite-lock integration suite; this test proves actual ChildProcess lifetime and ordinary Node.
-const fixtureSource = `
+const fixtureBuildId = 'a'.repeat(64)
+const fixtureSource = `// open-science-backend-build:${fixtureBuildId}
 const http=require('node:http'), fs=require('node:fs'), path=require('node:path'), crypto=require('node:crypto');
 const root=process.env.OPEN_SCIENCE_CONFIG_ROOT, generation=crypto.randomUUID(), token='x'.repeat(43);
 fs.writeFileSync(path.join(root,'web-token'),token);
@@ -39,12 +44,68 @@ const desktopGeneration=crypto.randomUUID();
 const startupOptions={configRoot:root,dataRoot:root,profilePath:root,port:0,host:'127.0.0.1',credentialStore:'os'};
 const server=http.createServer((req,res)=>{
  if(req.headers.authorization!=='Bearer '+token||req.headers['x-open-science-runtime-generation']!==generation){res.writeHead(403).end();return;}
- res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration,startupOptions}));
+ res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration,startupOptions,backendBuildId:'${fixtureBuildId}'}));
 });
 server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.json'),JSON.stringify({schemaVersion:1,generation,pid:process.pid,host:'node',port:server.address().port,desktop:{path:path.join(root,'fixture.sock'),generation:desktopGeneration,secret:'a'.repeat(64),version:'test'}})));
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it('refuses an incompatible-runtime restart while work is active, without sending shutdown', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-launch-active-'))
+    roots.push(root)
+    const prepareForQuit = vi.fn(async () => 'completed' as const)
+    const shutdown = vi.fn()
+    const startupOptions = {
+      configRoot: root,
+      dataRoot: root,
+      profilePath: root,
+      port: 0,
+      host: '127.0.0.1' as const,
+      credentialStore: 'os' as const
+    }
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      startupOptions,
+      events: new ApplicationEventHub(),
+      commands: { commandNames: () => [], invoke: vi.fn() },
+      requestShutdown: shutdown,
+      createLifecycle: () =>
+        createDesktopRuntimeLifecycle({
+          detectActiveSessions: () => [],
+          hasActiveReviewerWork: () => true,
+          getActiveSettingsInstallId: () => undefined,
+          isMigrationInProgress: () => false,
+          hasActivePackageTransfer: () => false,
+          holdSettingsInstallAdmission: () => () => {},
+          prepareForQuit,
+          abortQuitPreparation: vi.fn()
+        })
+    })
+    const control = await startRuntimeControl(
+      root,
+      'node',
+      async () => {
+        throw new Error('Unexpected Web shutdown')
+      },
+      server.endpoint,
+      startupOptions
+    )
+    try {
+      const error = await discoverDesktopBackend(root, 'test', undefined, {
+        buildId: 'a'.repeat(64)
+      }).catch((error: unknown) => error)
+      expect(error).toHaveProperty('issue.reason', 'runtime-incompatible')
+      await expect(
+        (error as { stopAndContinue(): Promise<void> }).stopAndContinue()
+      ).rejects.toThrow('Finish active work')
+      expect(prepareForQuit).not.toHaveBeenCalled()
+      expect(shutdown).not.toHaveBeenCalled()
+    } finally {
+      await control.close()
+      await server.close()
+    }
+  })
+
   it('hands a target-bound credential snapshot to one backend attempt and removes it after startup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-inventory-'))
     roots.push(root)
@@ -393,6 +454,11 @@ ${fixtureSource}`
     expect(
       (await readdir(root)).filter((name) => name.startsWith('.credential-inventory-'))
     ).toEqual([])
+    await writeFile(entry, fixtureSource.replaceAll(fixtureBuildId, 'b'.repeat(64)))
+    await expect(startOrAttachDesktopBackend(options)).rejects.toMatchObject({
+      issue: { reason: 'runtime-incompatible', pid: first.startedProcess!.pid }
+    })
+    expect(first.startedProcess?.exitCode).toBeNull()
   })
 
   it('removes the snapshot when the executable cannot be spawned', async () => {

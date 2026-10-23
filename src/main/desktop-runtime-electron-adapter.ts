@@ -6,7 +6,10 @@ import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
   RENDERER_CONTRACT_CATALOG
 } from '../shared/renderer-contract-catalog'
-import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  toApplicationCommandErrorEnvelope
+} from '../shared/application-command-contract'
 import type { ApplicationCallerLease } from './application-command-router'
 import { callerLeaseForEvent } from './caller-lifecycle'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
@@ -58,6 +61,11 @@ export function installDesktopRuntimeElectronAdapter(
     }
     if (lease.signal.aborted || !lease.isCurrent())
       throw new Error('Application caller is no longer current.')
+    if (!client.commandNames().includes(channel))
+      throw new ApplicationCommandError(
+        'command-unavailable',
+        `Desktop runtime command is unavailable: ${channel}`
+      )
     // Electron preserves an explicit trailing undefined; JSON encodes it as null. Omit
     // optional trailing slots so the command owner keeps its existing default behavior.
     while (args.length && args[args.length - 1] === undefined) args.pop()
@@ -80,7 +88,12 @@ export function installDesktopRuntimeElectronAdapter(
   }
   try {
     if (client.commandNames().includes(reportChannel)) ipcMain.on(reportChannel, report)
-    for (const channel of client.commandNames()) {
+    // Validated application commands have a stable preload surface even during startup. Missing
+    // capabilities return the normal envelope; private and Electron-native channels stay excluded.
+    for (const channel of new Set([
+      ...client.commandNames(),
+      ...ELECTRON_APPLICATION_COMMAND_CHANNELS
+    ])) {
       if (!rendererChannels.has(channel)) continue
       ipcMainHandle(channel, async (event, ...args) => {
         const invoke = (): Promise<unknown> => forward(event, channel, args)
