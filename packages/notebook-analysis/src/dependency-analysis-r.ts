@@ -132,6 +132,7 @@ type RExpr =
       resolvedFunction?: string
       staticBuiltinShadowed?: boolean
       staticDeviceShadowed?: boolean
+      sourceOffset?: number
       // Syntactic pipe expansion must retain magrittr's package dependency.
       pipedWithMagrittr?: boolean
     }
@@ -147,6 +148,37 @@ const isNull = (expr: RExpr | null | undefined): boolean => !expr || expr.kind =
 const emptySymbol = (): RExpr => ({ kind: 'symbol', name: '' })
 
 const R_MODEL_PARAMETERS: Record<string, string[]> = {
+  loess: [
+    'formula',
+    'data',
+    'weights',
+    'subset',
+    'na.action',
+    'model',
+    'span',
+    'enp.target',
+    'degree',
+    'parametric',
+    'drop.square',
+    'normalize',
+    'family',
+    'method',
+    'control'
+  ],
+  nls: [
+    'formula',
+    'data',
+    'start',
+    'control',
+    'algorithm',
+    'trace',
+    'subset',
+    'weights',
+    'na.action',
+    'model',
+    'lower',
+    'upper'
+  ],
   lm: [
     'formula',
     'data',
@@ -761,6 +793,7 @@ const convertR = (node: Node | null | undefined): RExpr | null => {
       return {
         kind: 'call',
         operator: isSymbol(fn) ? fn.name : null,
+        sourceOffset: node.startIndex,
         callee: fn,
         args,
         names
@@ -906,7 +939,9 @@ const analyzeRSource = (
   contextualAtomicValueNames: readonly string[] = [],
   contextualCopyOnModifyNames: readonly string[] = [],
   verifiedSerializedValues: readonly NotebookSerializedValue[] = [],
-  contextualAtomicTableNames: readonly string[] = []
+  contextualAtomicTableNames: readonly string[] = [],
+  contextualSearchPathUncertain = false,
+  readOnlyMapCalls?: Map<number, boolean>
 ): NotebookRunDependencyFacts => {
   const shadowedCallbackCalls = new Set([
     ...contextualKernelNames,
@@ -917,7 +952,12 @@ const analyzeRSource = (
     const converted = convertR(child)
     return converted ? [converted] : []
   })
-  resolveRStaticCallIdentities(expressions, contextualFunctions, [...shadowedCallbackCalls])
+  resolveRStaticCallIdentities(
+    expressions,
+    contextualFunctions,
+    [...shadowedCallbackCalls],
+    contextualSearchPathUncertain
+  )
   expressions = expressions.map(normalizeRPipes)
   const packageInspections = rPackageInspections(expressions)
   const consoleRedirected = expressions.some(rRedirectsConsole)
@@ -2204,6 +2244,7 @@ const analyzeRSource = (
       if (
         name &&
         copyValueCalls.has(name) &&
+        dataFrameDispatchAvailable(name) &&
         !locals.has(name) &&
         contractAvailable(name, qualifiedCall(value)?.package, 'base')
       )
@@ -2585,11 +2626,16 @@ const analyzeRSource = (
       if (qualified && !knownQualifiedCall(qualified.package, op)) return false
       if (!qualified && locals.has(op)) return false
       if (pureSafe.has(op)) {
+        if (!dataFrameDispatchAvailable(op)) return false
         if (!qualified && (locals.has(op) || defined.includes(op) || shadowedCallbackCalls.has(op)))
           return false
         const name = qualified ? `${qualified.package}::${op}` : op
         reads.add(name)
         calls.add(name)
+        if (op === 'data.frame') {
+          reads.add('as.data.frame.double')
+          calls.add('as.data.frame.double')
+        }
       }
       return value.args.every(inspect)
     }
@@ -2765,13 +2811,22 @@ const analyzeRSource = (
     ) {
       const pkg = expr.args[0].name
       const name = expr.args[1].name
-      if (pureSafe.has(name) && !callbackUnsafeCalls.has(name) && knownQualifiedCall(pkg, name)) {
+      if (
+        pureSafe.has(name) &&
+        !callbackUnsafeCalls.has(name) &&
+        knownQualifiedCall(pkg, name) &&
+        dataFrameDispatchAvailable(name)
+      ) {
         const dependency = `${pkg}::${name}`
+        const dependencies = [
+          dependency,
+          ...(name === 'data.frame' ? ['as.data.frame.double'] : [])
+        ]
         return {
           name: '__call__',
           effect: 'read',
-          usedNames: [dependency],
-          safeCallNames: [dependency],
+          usedNames: dependencies,
+          safeCallNames: dependencies,
           ...(pkg === 'base' && copyValueCalls.has(name) ? { returnCopyArguments: true } : {}),
           ...(valueResultCalls.get(name) === pkg ? { returnType: 'r-value' } : {})
         }
@@ -2783,14 +2838,18 @@ const analyzeRSource = (
       if (
         pureSafe.has(expr.name) &&
         !callbackUnsafeCalls.has(expr.name) &&
+        dataFrameDispatchAvailable(expr.name) &&
         !defined.includes(expr.name) &&
         !shadowedCallbackCalls.has(expr.name)
       )
         return {
           name: '__call__',
           effect: 'read',
-          usedNames: [expr.name],
-          safeCallNames: [expr.name],
+          usedNames: [expr.name, ...(expr.name === 'data.frame' ? ['as.data.frame.double'] : [])],
+          safeCallNames: [
+            expr.name,
+            ...(expr.name === 'data.frame' ? ['as.data.frame.double'] : [])
+          ],
           ...(copyValueCalls.has(expr.name) ? { returnCopyArguments: true } : {}),
           ...(valueResultCalls.has(expr.name) ? { returnType: 'r-value' } : {})
         }
@@ -2828,6 +2887,31 @@ const analyzeRSource = (
         .every(Boolean)
     }
     const summary = resolveCallback(expr, evaluation.formulaParameters, ordinaryInputs)
+    if (!summary && evaluation.phase === 'immediate') {
+      const stored = isSymbol(expr) ? functions.get(expr.name)?.methods[0] : undefined
+      const reference = rQualifiedFunctionReference(expr)
+      const dependencies = isSymbol(expr)
+        ? stored?.effect === 'unknown' && stored.unknownScope === 'namespace'
+          ? (stored.usedNames ?? [])
+          : []
+        : reference
+          ? [reference]
+          : expr
+            ? rSearchPathCallDependencies(expr)
+            : []
+      const usedNames = dependencies.filter((name) =>
+        ['attach', 'detach', 'base::attach', 'base::detach'].includes(name)
+      )
+      // Reject the callback as before. A known immediate consumer may still
+      // invoke its search-path effects; these names grant no safe-call proof.
+      if (usedNames.length)
+        mergeCallbackReads({
+          name: '__call__',
+          effect: 'unknown',
+          unknownScope: 'namespace',
+          usedNames
+        })
+    }
     if (
       !summary ||
       (evaluation.phase === 'deferred' &&
@@ -2855,7 +2939,15 @@ const analyzeRSource = (
   const contractAvailable = (name: string, pkg: string | undefined, expected: string): boolean =>
     pkg
       ? pkg === expected || (expected === 'tidyselect' && pkg === 'dplyr')
-      : !defined.includes(name) && !localNames.includes(name) && !shadowedCallbackCalls.has(name)
+      : !contextualSearchPathUncertain &&
+        !defined.includes(name) &&
+        !localNames.includes(name) &&
+        !shadowedCallbackCalls.has(name)
+
+  // data.frame's base caller keeps existing methods such as .numeric lexical,
+  // but a caller-visible .double can intercept an ordinary double column.
+  const dataFrameDispatchAvailable = (name: string): boolean =>
+    name !== 'data.frame' || contractAvailable('as.data.frame.double', undefined, 'base')
 
   // Only a directly constructed standard identity family is closed here. A
   // stored family or link object can carry arbitrary callbacks and environments.
@@ -2967,6 +3059,7 @@ const analyzeRSource = (
       return -1
     const named = expr.names.indexOf(contract.keyword)
     if (named >= 0) return named
+    if (contract.position < 0) return -1
     if (sameSourceBfgs) {
       // Do not implement R's full named/partial/positional matching here. Only
       // an unshifted par/fn/gr prefix proves a raw positional callback index.
@@ -3084,6 +3177,45 @@ const analyzeRSource = (
     expr.args.every(
       (arg, index) => index === callbackIndex || copyOnModifySources(arg)?.length === 0
     )
+
+  // Copy ownership alone permits S3 classes. Only a directly constructed
+  // primitive matrix rules out apply's input coercion invoking user methods.
+  // This is file-effect proof, not a new numeric or return-ownership contract.
+  const applyInputHasClosedCoercion = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+    const input = expr.args[callbackArgumentIndex(expr, ['X'], [])]
+    return (
+      isCall(input) && intactBaseCall(input, 'matrix') && input.args.every(atomicValueExpression)
+    )
+  }
+
+  // Filter also unlists/coerces predicate results and subsets the original x.
+  // Read-only callbacks or copy ownership alone do not close those dispatches.
+  // Keep a bounded primitive-input/inline-result proof, local to this invocation.
+  const filterHasClosedEvaluation = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+    const matched = rMatchedIoArguments(expr, ['f', 'x'])
+    const input = matched?.get('x')
+    const predicate = matched?.get('f')
+    if (!input || !atomicValueExpression(input) || !isCall(predicate)) return false
+    if (callOperator(predicate) !== 'function') return false
+    const formals = predicate.args[0]
+    const body = predicate.args[1]
+    if (
+      formals?.kind !== 'formals' ||
+      formals.names.length !== 1 ||
+      formals.names[0] === '...' ||
+      formals.values.some((value) => value !== null) ||
+      !body ||
+      resolveCallback(predicate, undefined, true)?.effect !== 'read'
+    )
+      return false
+    const substitute = (value: RExpr): RExpr => {
+      if (isSymbol(value) && value.name === formals.names[0]) return input
+      return isCall(value) ? { ...value, args: value.args.map(substitute) } : value
+    }
+    // Use existing primitive-expression contracts; do not infer atomic results
+    // merely from a read-only function summary or invoke arbitrary factories.
+    return atomicValueExpression(substitute(body))
+  }
 
   // Query forms only. Named font definitions register device state and must not
   // share the contract of the zero-argument inspection used in font diagnostics.
@@ -5192,6 +5324,7 @@ const analyzeRSource = (
     )
       return []
     const resultName = calledName(expr)
+    if (resultName === 'data.frame' && !dataFrameDispatchAvailable(resultName)) return null
     if (resultName === 'venn.diagram' && ordinaryVennFilePlot(expr)) return []
     if (ordinaryVennDataCall(expr)) return []
     if (ordinarySetReduction(expr)) return []
@@ -6368,9 +6501,43 @@ const analyzeRSource = (
       if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
       if (!contractAvailable(resolvedOp, qualified?.package, callback.package))
         unknown.push('opaque-call')
-      else safeCallNames.push(dependencyName)
+      else if (resolvedOp !== 'Filter') safeCallNames.push(dependencyName)
       const index = callbackArgumentIndex(expr, callback.keywords, callback.precedingArguments)
       const argument = expr.args[index]
+      // Mask columns can shadow caller atomic facts; Filter has no closed
+      // input/result proof in this scope. Keep the invocation conservative.
+      const readOnlyMapCallback =
+        ['lapply', 'sapply', 'vapply', 'Reduce', 'mapply', 'Map', 'apply'].includes(resolvedOp) &&
+        (resolvedOp !== 'apply' || applyInputHasClosedCoercion(expr)) &&
+        resolveCallback(
+          argument,
+          callback.formulaParameters,
+          ['Reduce', 'mapply', 'Map'].includes(resolvedOp) &&
+            expr.args.every((arg, i) => i === index || copyOnModifySources(arg)?.length === 0)
+        )?.effect === 'read'
+      if (
+        ['lapply', 'sapply', 'vapply', 'Reduce', 'mapply', 'Map', 'apply', 'Filter'].includes(
+          resolvedOp
+        ) &&
+        expr.sourceOffset !== undefined
+      )
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnlyMapCallback && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      const revokesFileProof =
+        ['lapply', 'sapply', 'vapply', 'Reduce', 'mapply', 'Map', 'apply', 'Filter'].includes(
+          resolvedOp
+        ) &&
+        phase === 'immediate' &&
+        contractAvailable(resolvedOp, qualified?.package, callback.package) &&
+        !expr.staticBuiltinShadowed &&
+        !readOnlyMapCallback
+      if (revokesFileProof) invalidateSerializedValues()
+      if (resolvedOp === 'Filter') {
+        if (readOnlyMapCallback) safeCallNames.push(dependencyName)
+        else unknown.push('external-state', 'opaque-call')
+      }
       if (
         !(callback.optional && (!argument || isNull(argument))) &&
         !consumeCallback(argument, {
@@ -6389,6 +6556,7 @@ const analyzeRSource = (
           walk(expr.args[i], false)
         else walkDataMask(expr.args[i], trackEnvironment, phase)
       }
+      if (revokesFileProof) invalidateSerializedValues()
       return
     }
     if (resolvedOp && R_TIDY_SELECT_CALLS.has(resolvedOp) && dependencyName) {
@@ -6779,6 +6947,21 @@ const analyzeRSource = (
       safeCallNames.push(quoted.dependency)
       return
     }
+    // Record executable search-path changes as ordinary dependency names. The
+    // live projector rebuilds negative lookup evidence from these cached facts;
+    // dormant function/quoted bodies never reach this walk.
+    if (['attach', 'detach'].includes(calledName(expr) ?? '')) {
+      const qualified = rQualifiedCall(expr)
+      const dependency = qualified ? `${qualified.package}::${qualified.name}` : calledName(expr)!
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      unknown.push('dynamic-namespace', 'opaque-call')
+      for (const argument of expr.args) walk(argument)
+      return
+    }
+    // Removal can affect notebook bindings even when its arguments are quoted
+    // names. Qualified calls need the same barrier before generic dispatch.
+    if (['rm', 'remove'].includes(calledName(expr) ?? '')) unknown.push('dynamic-namespace')
     if (
       [
         'source',
@@ -6789,7 +6972,9 @@ const analyzeRSource = (
         'evalq',
         'assign',
         'do.call',
-        'makeActiveBinding'
+        'makeActiveBinding',
+        'rm',
+        'remove'
       ].includes(calledName(expr) ?? '')
     ) {
       atomicCSVTableNames.clear()
@@ -6822,9 +7007,17 @@ const analyzeRSource = (
     if (!op && qualified && knownQualifiedCall(qualified.package, qualified.name))
       op = qualified.name
     const dependencyName = qualified ? `${qualified.package}::${qualified.name}` : op
+    if (op === 'data.frame' && contractAvailable(op, qualified?.package, 'base')) {
+      const method = 'as.data.frame.double'
+      used.push(method)
+      if (!defined.includes(method)) priorUsed.push(method)
+      if (dataFrameDispatchAvailable(op)) safeCallNames.push(method)
+      else unknown.push('opaque-call')
+    }
     if (
       calledName(expr) === 'read.csv' &&
-      contractAvailable('read.csv', qualified?.package, 'utils')
+      contractAvailable('read.csv', qualified?.package, 'utils') &&
+      rTableReaderMayCoerce(expr, true)
     ) {
       const method = 'type.convert.character'
       used.push(method)
@@ -7080,10 +7273,51 @@ const analyzeRSource = (
     const directSolver = directOpaqueSolver(expr)
     if (directSolver) {
       const [name, captureContract] = directSolver
+      const revokesFileProof = rFileCallbackPackage(expr) === captureContract.package
+      // Retain the existing solver capture contract, while withdrawing
+      // file-content proof before it or a lazy argument can replace a cache.
+      if (revokesFileProof) invalidateSerializedValues()
       const solverName = qualified ? `${captureContract.package}::${name}` : name
       used.push(solverName)
       if (!defined.includes(solverName)) priorUsed.push(solverName)
       unknown.push('opaque-call', 'dynamic-namespace')
+      if (name === 'replicate') {
+        const matched = rMatchedIoArguments(expr, ['n', 'expr', 'simplify'])
+        const body = matched?.get('expr')
+        if (matched?.get('n')) walk(matched.get('n')!, false)
+        if (body) {
+          // base::replicate evaluates expr inside a fresh function invocation,
+          // not in the caller. Summarize bounded lexical reads without walking
+          // its assignments into caller bindings or certifying a return value.
+          const scope = rCall('function', [{ kind: 'formals', names: [], values: [] }, body])
+          const captures = summarizeCallback(scope) ?? summarizeOpaqueLexicalCallback(scope)
+          if (captures)
+            mergeCallbackReads({
+              name: '__call__',
+              effect: 'unknown',
+              unknownScope: 'namespace',
+              usedNames: captures.usedNames
+            })
+          else unknown.push('function-scope')
+          // Retain negative search-path evidence even for unsupported bodies
+          // and known opaque helpers; this grants no argument-forcing proof.
+          const searchEffects = new Set(rSearchPathCallDependencies(scope))
+          for (const captured of captures?.usedNames ?? [])
+            for (const dependency of functions.get(captured)?.methods[0]?.usedNames ?? [])
+              if (['attach', 'detach', 'base::attach', 'base::detach'].includes(dependency))
+                searchEffects.add(dependency)
+          if (searchEffects.size)
+            mergeCallbackReads({
+              name: '__call__',
+              effect: 'unknown',
+              unknownScope: 'namespace',
+              usedNames: [...searchEffects]
+            })
+        } else unknown.push('function-scope')
+        if (matched?.get('simplify')) walk(matched.get('simplify')!, false)
+        if (revokesFileProof) invalidateSerializedValues()
+        return
+      }
       const sameSourceBfgs = captureContract.method === 'BFGS'
       const method = expr.args[expr.names.indexOf('method')]
       const methodAvailable =
@@ -7106,6 +7340,7 @@ const analyzeRSource = (
       expr.args.forEach((arg, argumentIndex) => {
         if (!consumed.has(argumentIndex)) walk(arg, false)
       })
+      if (revokesFileProof) invalidateSerializedValues()
       return
     }
     // An opaque local function can shadow a built-in reader or constructor.
@@ -7131,7 +7366,10 @@ const analyzeRSource = (
         [...knownNamespacePackages, 'base', 'stats', 'utils'].some((pkg) =>
           knownQualifiedCall(pkg, op)
         )) &&
-      (defined.includes(op) || shadowedCallbackCalls.has(op) || localNames.includes(op)) &&
+      (contextualSearchPathUncertain ||
+        defined.includes(op) ||
+        shadowedCallbackCalls.has(op) ||
+        localNames.includes(op)) &&
       !functions.has(op) &&
       !localFileWrappers.names.has(op) &&
       !contextualFileWrappers.some((wrapper) => wrapper.name === op)
@@ -7145,6 +7383,56 @@ const analyzeRSource = (
       return
     }
     if (op && !qualified) recordPackageRead(op)
+    const fileCallbackPackage = rFileCallbackPackage(expr)
+    if (
+      fileCallbackPackage &&
+      !functionalCallbacks.has(calledName(expr) ?? '') &&
+      contractAvailable(calledName(expr)!, qualified?.package, fileCallbackPackage) &&
+      !expr.staticBuiltinShadowed
+    ) {
+      // A callback can replace earlier serialized contents, including after
+      // a nested argument saves a file and before the callback fails.
+      invalidateSerializedValues()
+      used.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      unknown.push('external-state', 'opaque-call')
+      const modelName = calledName(expr)
+      const modelParameters =
+        modelName === 'nls' || modelName === 'loess' ? rModelArguments(expr, modelName) : undefined
+      const maskParameters = modelName === 'loess' ? ['formula', 'weights', 'subset'] : ['formula']
+      expr.args.forEach((argument, index) => {
+        // Formula bodies and model.frame weights/subsets run in a data scope. Do not turn
+        // their assignments into caller definitions. Unmatched/dotted calls
+        // retain mask uncertainty rather than guessing argument evaluation.
+        if (
+          (modelName === 'nls' || modelName === 'loess') &&
+          (!modelParameters || maskParameters.includes(modelParameters[index]))
+        )
+          walkDataMask(argument, true)
+        else walk(argument, false)
+      })
+      invalidateSerializedValues()
+      return
+    }
+    if (
+      op &&
+      R_TABLE_READER_NAMES.has(op) &&
+      contractAvailable(op, qualified?.package, 'utils') &&
+      (qualified || !expr.staticBuiltinShadowed) &&
+      rTableReaderMayCoerce(
+        expr,
+        !contractAvailable('type.convert.character', undefined, 'utils') ||
+          functions.has('type.convert.character')
+      )
+    ) {
+      invalidateSerializedValues()
+      used.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      unknown.push('external-state', 'opaque-call', 'dynamic-namespace')
+      expr.args.forEach((argument) => walk(argument, false))
+      invalidateSerializedValues()
+      return
+    }
     if (
       op &&
       R_CONNECTION_IO_PARAMETERS.has(op) &&
@@ -8092,7 +8380,23 @@ const analyzeRSource = (
                   ? 'stats'
                   : 'base') &&
               inputSensitiveStatistics.has(value.args[1].name)
+          const searchPathReference = isSymbol(value)
+            ? ['attach', 'detach'].includes(value.name) &&
+              contractAvailable(value.name, undefined, 'base')
+              ? `base::${value.name}`
+              : undefined
+            : rQualifiedFunctionReference(value)
+          const searchPathCallable =
+            searchPathReference && ['base::attach', 'base::detach'].includes(searchPathReference)
+              ? {
+                  name: '__call__',
+                  effect: 'unknown' as const,
+                  unknownScope: 'namespace' as const,
+                  usedNames: [searchPathReference]
+                }
+              : undefined
           const callable =
+            searchPathCallable ??
             summarizeCallback(value) ??
             // An alias has no proven input type. Preserve that uncertainty in
             // its callable summary so later cells cannot certify class methods.
@@ -8109,7 +8413,8 @@ const analyzeRSource = (
               ? (summarizeOpaqueLexicalCallback(value) ?? {
                   name: '__call__',
                   effect: 'unknown' as const,
-                  unknownScope: 'namespace' as const
+                  unknownScope: 'namespace' as const,
+                  usedNames: rSearchPathCallDependencies(value)
                 })
               : undefined)
           if (callable && controlDepth === 0) {
@@ -8768,6 +9073,8 @@ const analyzeRSource = (
     const callback = op ? functionalCallbacks.get(op) : undefined
     const setReduction = ordinarySetReduction(expr)
     if (setReduction && dependencyName) {
+      if (expr.sourceOffset !== undefined)
+        readOnlyMapCalls?.set(expr.sourceOffset, readOnlyMapCalls.get(expr.sourceOffset) !== false)
       used.push(dependencyName, setReduction.dependency)
       for (const name of [dependencyName, setReduction.dependency])
         if (!defined.includes(name)) priorUsed.push(name)
@@ -8792,6 +9099,41 @@ const analyzeRSource = (
         callback.keywords,
         callback.precedingArguments
       )
+      const ordinaryInputs = ['Reduce', 'mapply', 'Map'].includes(op)
+        ? expr.args.every(
+            (arg, index) =>
+              index === resolvedCallbackIndex || copyOnModifySources(arg)?.length === 0
+          )
+        : ordinaryFunctionalArguments(expr, resolvedCallbackIndex)
+      // Preserve proven read-only value-map callbacks and bounded file maps, while
+      // withdrawing file proof for an unproved immediate callback.
+      const readOnlyMapCallback =
+        op === 'Filter'
+          ? filterHasClosedEvaluation(expr)
+          : ['lapply', 'sapply', 'vapply', 'Reduce', 'mapply', 'Map', 'apply'].includes(op) &&
+            (op !== 'apply' || applyInputHasClosedCoercion(expr)) &&
+            resolveCallback(
+              expr.args[resolvedCallbackIndex],
+              callback.formulaParameters,
+              op !== 'apply' && ordinaryInputs
+            )?.effect === 'read'
+      // The file pass must use this invocation's callback proof, not a whole-cell
+      // safe-call name that could describe a different call or earlier binding.
+      if (
+        ['lapply', 'sapply', 'vapply', 'Reduce', 'mapply', 'Map', 'apply', 'Filter'].includes(op) &&
+        expr.sourceOffset !== undefined
+      )
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnlyMapCallback && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      const revokesFileProof =
+        fileCallbackPackage === callback.package &&
+        contractAvailable(op, qualified?.package, callback.package) &&
+        !expr.staticBuiltinShadowed &&
+        !readOnlyMapCallback
+      if (revokesFileProof) invalidateSerializedValues()
+      if (op === 'Filter' && !readOnlyMapCallback) unknown.push('external-state', 'opaque-call')
       used.push(dependencyName)
       if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
       if (
@@ -8802,9 +9144,9 @@ const analyzeRSource = (
             phase: 'immediate',
             formulaParameters: callback.formulaParameters
           },
-          ['lapply', 'sapply', 'vapply'].includes(op) &&
-            ordinaryFunctionalArguments(expr, resolvedCallbackIndex)
-        )
+          ['lapply', 'sapply', 'vapply', 'Reduce', 'mapply', 'Map'].includes(op) && ordinaryInputs
+        ) &&
+        (op !== 'Filter' || readOnlyMapCallback)
       ) {
         safeCallNames.push(dependencyName)
       } else {
@@ -8821,6 +9163,7 @@ const analyzeRSource = (
         if (op === 'aggregate' && expr.names[index] === 'na.action') unknown.push('opaque-call')
         if (index !== resolvedCallbackIndex) walk(expr.args[index], false)
       }
+      if (revokesFileProof) invalidateSerializedValues()
       return
     }
     if (op === 'function') {
@@ -9541,6 +9884,25 @@ const rQualifiedFunctionReference = (expr: RExpr | null | undefined): string | u
   return packageName && name ? `${packageName}::${name}` : undefined
 }
 
+// Negative evidence only: a called opaque helper can change the search path.
+// Do not infer forcing, purity or return values, or inspect deferred nested bodies.
+const rSearchPathCallDependencies = (fn: RExpr): string[] => {
+  if (!isCall(fn) || rCalledName(fn) !== 'function') return []
+  const names = new Set<string>()
+  const visit = (expr: RExpr | undefined): void => {
+    if (!isCall(expr)) return
+    const name = rCalledName(expr)
+    if (['function', 'quote', 'expression', 'substitute', 'bquote', '~'].includes(name ?? ''))
+      return
+    const qualified = rQualifiedCall(expr)
+    if (['attach', 'detach'].includes(name ?? '') && (!qualified || qualified.package === 'base'))
+      names.add(qualified ? `base::${name}` : name!)
+    for (const argument of expr.args) visit(argument)
+  }
+  visit(fn.args[1])
+  return [...names].sort()
+}
+
 const rSerializationCallName = (expr: RExpr): 'serialize' | 'unserialize' | undefined => {
   if (!isCall(expr)) return undefined
   const qualified = rQualifiedCall(expr)
@@ -9719,7 +10081,8 @@ const rTargetDefinitionOptions = (expr: RExpr): RExpr[] | undefined => {
 const resolveRStaticCallIdentities = (
   expressions: RExpr[],
   functions: NotebookSourceFileAccessContext['rFunctions'] = [],
-  kernelNames: readonly string[] = []
+  kernelNames: readonly string[] = [],
+  searchPathUncertain = false
 ): void => {
   const known = new Map(
     functions
@@ -9731,7 +10094,7 @@ const resolveRStaticCallIdentities = (
   const assigned = new Set(
     [...kernelNames, ...functions.map(({ name }) => name)].filter((name) => !known.has(name))
   )
-  let dynamicBindings = false
+  let dynamicBindings = searchPathUncertain
   const visit = (expr: RExpr, attachAllowed: boolean): void => {
     if (!isCall(expr)) return
     const name = rCalledName(expr)
@@ -10611,11 +10974,10 @@ const R_CONNECTION_IO_PARAMETERS = new Map<string, readonly string[]>([
   ['readRDS', ['file', 'refhook']]
 ])
 
-const rConnectionIoArguments = (
-  expr: Extract<RExpr, { kind: 'call' }>
+const rMatchedIoArguments = (
+  expr: Extract<RExpr, { kind: 'call' }>,
+  parameters: readonly string[] | undefined
 ): Map<string, RExpr> | undefined => {
-  const name = rCalledName(expr) ?? ''
-  const parameters = R_CONNECTION_IO_PARAMETERS.get(name)
   if (
     !parameters ||
     expr.args.length > parameters.length ||
@@ -10648,6 +11010,136 @@ const rConnectionIoArguments = (
     if (!parameter) return undefined
     matched.set(parameter, argument)
   }
+  return matched
+}
+
+const rTapplyMayInvokeCallback = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+  // FUN defaults to NULL (return group indices). Extra arguments and dots do
+  // not establish a closed reducer; R forwards them as lazy promises to FUN.
+  const matched = rMatchedIoArguments(expr, ['X', 'INDEX', 'FUN'])
+  return !matched || (!!matched.get('FUN') && matched.get('FUN')!.kind !== 'null')
+}
+
+const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | undefined => {
+  const name = rCalledName(expr)
+  // These solvers require callbacks; their numerical evaluations can still
+  // perform arbitrary I/O or replace caller bindings before returning/failing.
+  if (name === 'integrate' || name === 'optim' || name === 'uniroot' || name === 'optimize')
+    return 'stats'
+  if (name === 'tapply' && rTapplyMayInvokeCallback(expr)) return 'base'
+  if (name === 'aggregate') return 'stats'
+  // outer can invoke FUN once with expanded vectors; even its product fast
+  // path can dispatch input coercion. Neither grants file authority.
+  if (name === 'outer') return 'base'
+  // sweep invokes FUN on the input and expanded STATS. Unknown inputs and
+  // default operators can dispatch user methods, not just an explicit closure.
+  if (name === 'sweep') return 'base'
+  if (name === 'replicate') return 'base'
+  // by dispatches on data before its group callback. Even a primitive FUN
+  // cannot certify the methods, coercion or lazy arguments of unknown inputs.
+  if (name === 'by') return 'base'
+  // rapply recurses over matching leaves and can invoke f repeatedly. A class
+  // filter or replacement mode does not prove the supplied callback's effects.
+  if (name === 'rapply') return 'base'
+  // combn invokes FUN on each combination (including m=0). Even FUN=NULL
+  // can dispatch unknown input subsetting, so it does not certify file effects.
+  if (name === 'combn') return 'utils'
+  // dendrapply visits internal nodes as well as leaves; its node callback
+  // can change files or caller bindings before returning or failing.
+  if (name === 'dendrapply') return 'stats'
+  // kronecker coerces inputs before outer invokes FUN. Default multiplication
+  // can still dispatch coercion or S4 methods, so it grants no file authority.
+  if (name === 'kronecker') return 'base'
+  // ave invokes FUN even without grouping variables. Its default mean and
+  // split/replacement operations on unknown inputs can dispatch user methods.
+  if (name === 'ave') return 'stats'
+  // Reading environment bindings can invoke active bindings before FUN runs.
+  // A primitive callback or hidden-name filter does not certify those effects.
+  if (name === 'eapply') return 'base'
+  // The single-core path invokes workers through lapply and may dispatch input
+  // conversion. Worker scheduling options do not certify their file effects.
+  if (name === 'mclapply') return 'parallel'
+  // Paired workers, MoreArgs and input [[ methods remain effectful even on
+  // the single-core mapply path. Disabling simplification proves no purity.
+  if (name === 'mcmapply' || name === 'mcMap') return 'parallel'
+  // pvec can invoke FUN on the whole vector in its single-core path. Neither
+  // input validation nor scheduling options certify callback file effects.
+  if (name === 'pvec') return 'parallel'
+  // Objective and optional derivative callbacks can change files or caller
+  // bindings, even when another callback is a known primitive.
+  if (name === 'nlminb') return 'stats'
+  // nlm obtains optional analytic derivatives from the objective's attributes;
+  // supplying those attributes does not make its invocation free of effects.
+  if (name === 'nlm') return 'stats'
+  // numericDeriv repeatedly evaluates an expression in rho while perturbing
+  // parameters. Quoting that expression does not certify its file effects.
+  if (name === 'numericDeriv') return 'stats'
+  // A nonlinear model can evaluate user code from its formula, even when the
+  // solver later fails. Model/data environments do not certify file effects.
+  if (name === 'nls') return 'stats'
+  // loess evaluates formula variables, weights and subset through model.frame.
+  // User transformations and methods can change files or caller state first.
+  if (name === 'loess') return 'stats'
+  // Shared regularize.values may invoke ties on duplicate groups, after
+  // coordinate coercion. Even ordered/default ties cannot certify input methods.
+  if (['approx', 'approxfun', 'spline', 'splinefun'].includes(name ?? '')) return 'stats'
+  // KDE dispatch and as.vector coercion can invoke user methods before the
+  // FFT calculation returns or fails. A numeric bandwidth proves no purity.
+  if (name === 'density' || name === 'density.default') return 'stats'
+  // Multivariate distances can call user as.matrix methods before native
+  // distance/linear-algebra code. Centering or inverse-covariance options
+  // do not establish read-only coordinate conversion.
+  if (name === 'dist' || name === 'mahalanobis') return 'stats'
+  // A GLM family carries executable initialization, link, variance and
+  // validation functions. IRLS can run them before returning or failing.
+  if (name === 'glm.fit') return 'stats'
+  // Numerical Hessians invoke the objective or supplied gradient repeatedly;
+  // perturbing parameters does not bound callback I/O or caller mutations.
+  if (name === 'optimHess') return 'stats'
+  // PCA dispatch and matrix conversion can invoke user methods before SVD.
+  // Centering, scaling or component truncation do not bound their effects.
+  if (name === 'prcomp' || name === 'prcomp.default') return 'stats'
+  // ACF invokes as.ts conversion and na.action before native lag evaluation.
+  // Disabling plotting or demeaning does not bound those user effects.
+  if (name === 'acf') return 'stats'
+  // Clustering coerces coordinates and centers before numerical iteration.
+  // Fixed centers or algorithm choices do not certify user conversion methods.
+  if (name === 'kmeans') return 'stats'
+  // Classical MDS converts dissimilarities before double centering. User
+  // matrix methods can change caller state even without additive correction.
+  if (name === 'cmdscale') return 'stats'
+  // Weighted covariance converts data frames before validating weights.
+  // Unknown conversion methods can change files or caller bindings first.
+  if (name === 'cov.wt') return 'stats'
+  // Periodograms invoke sequence conversion and na.action before the FFT.
+  // Disabling tapering, smoothing or plotting does not bound those effects.
+  if (name === 'spec.pgram' || name === 'spectrum') return 'stats'
+  // Weighted least squares coerces design and response before QR fitting.
+  // Zero weights or intercept options do not certify user matrix methods.
+  if (name === 'lsfit') return 'stats'
+  // Canonical correlations coerce both views before centering and QR/SVD.
+  // Centering options cannot certify arbitrary input conversion methods.
+  if (name === 'cancor') return 'stats'
+  // Kernel smoothing subsets sorted inputs before native window evaluation.
+  // Kernel and bandwidth options do not bound user subsetting methods.
+  if (name === 'ksmooth') return 'stats'
+  // Short-circuit predicates and input [[ methods can change caller state.
+  // Find also subsets the selected element after Position returns an index.
+  if (name === 'Position' || name === 'Find') return 'base'
+  // Filter can dispatch input conversion/subsetting after its predicate returns.
+  if (name === 'Filter') return 'base'
+  if (['lapply', 'sapply', 'vapply', 'Reduce', 'mapply', 'Map', 'apply'].includes(name ?? ''))
+    return 'base'
+  return undefined
+}
+
+const rConnectionIoArguments = (
+  expr: Extract<RExpr, { kind: 'call' }>
+): Map<string, RExpr> | undefined => {
+  const name = rCalledName(expr) ?? ''
+  const parameters = R_CONNECTION_IO_PARAMETERS.get(name)
+  const matched = rMatchedIoArguments(expr, parameters)
+  if (!parameters || !matched) return undefined
   // Line readers default to stdin; line writers require only text and default
   // to stdout. RDS functions require their first formal; binary/character I/O
   // requires both leading formals.
@@ -10656,6 +11148,93 @@ const rConnectionIoArguments = (
   return parameters.slice(0, required).every((parameter) => matched.has(parameter))
     ? matched
     : undefined
+}
+
+const R_TABLE_READER_NAMES = new Set([
+  'read.csv',
+  'read.csv2',
+  'read.delim',
+  'read.delim2',
+  'read.table'
+])
+const R_TABLE_READER_PARAMETERS = [
+  'file',
+  'header',
+  'sep',
+  'quote',
+  'dec',
+  'numerals',
+  'row.names',
+  'col.names',
+  'as.is',
+  'tryLogical',
+  'na.strings',
+  'colClasses',
+  'nrows',
+  'skip',
+  'check.names',
+  'fill',
+  'strip.white',
+  'blank.lines.skip',
+  'comment.char',
+  'allowEscapes',
+  'flush',
+  'stringsAsFactors',
+  'fileEncoding',
+  'encoding',
+  'text',
+  'skipNul'
+]
+const rTableReaderMayCoerce = (
+  expr: Extract<RExpr, { kind: 'call' }>,
+  defaultMethodUncertain = false
+): boolean => {
+  const name = rCalledName(expr)
+  if (!name || !R_TABLE_READER_NAMES.has(name)) return false
+  // CSV/delim wrappers bind these formals before forwarding their dots to
+  // read.table; remaining positionals fill the downstream unbound formals.
+  const wrapper = ['file', 'header', 'sep', 'quote', 'dec', 'fill', 'comment.char']
+  const parameters =
+    name === 'read.table'
+      ? R_TABLE_READER_PARAMETERS
+      : [
+          ...wrapper,
+          ...R_TABLE_READER_PARAMETERS.filter((parameter) => !wrapper.includes(parameter))
+        ]
+  const matched = rMatchedIoArguments(expr, parameters)
+  if (!matched) return true
+  const classes = matched.get('colClasses')
+  // Missing/NA classes dispatch through type.convert.character, including a
+  // caller's replacement method even when the utils reader itself is intact.
+  if (!classes) return defaultMethodUncertain
+  const primitive = (value: RExpr): boolean =>
+    value.kind === 'null' ||
+    (!defaultMethodUncertain &&
+      value.kind === 'atomic' &&
+      value.logical === undefined &&
+      value.number === undefined) ||
+    (isCharacter(value) &&
+      [
+        'logical',
+        'integer',
+        'numeric',
+        'real',
+        'double',
+        'complex',
+        'character',
+        'raw',
+        'NULL'
+      ].includes(value.value))
+  // Other classes reach methods::as (or another dispatched coercion). Unknown
+  // expressions cannot certify that conversion has no namespace/file effects.
+  return !(
+    primitive(classes) ||
+    (isCall(classes) &&
+      rCalledName(classes) === 'c' &&
+      (rQualifiedCall(classes)?.package === 'base' ||
+        (!rQualifiedCall(classes) && !classes.staticBuiltinShadowed)) &&
+      classes.args.every(primitive))
+  )
 }
 
 // RDS options are part of the serialization proof, not just path extraction.
@@ -10954,6 +11533,7 @@ const rLocalFileWrappers = (
       (isCall(body) &&
         ['saveRDS', 'readRDS'].includes(name ?? '') &&
         !rRdsOptionsAreClosed(body)) ||
+      (isCall(body) && rTableReaderMayCoerce(body)) ||
       // cat's optional destination may be stdout or a pipe. A single-path
       // wrapper summary cannot preserve that destination contract.
       name === 'cat' ||
@@ -11044,17 +11624,23 @@ const rInMemoryInput = (
 
 const analyzeRFileAccessTree = (
   root: Node,
-  context?: NotebookSourceFileAccessContext
+  context?: NotebookSourceFileAccessContext,
+  readOnlyMapCalls?: ReadonlyMap<number, boolean>
 ): NotebookSourceFileAccessExtraction => {
   let expressions = root.namedChildren.flatMap((child) => {
     const converted = convertR(child)
     return converted ? [converted] : []
   })
-  resolveRStaticCallIdentities(expressions, context?.rFunctions, [
-    ...(context?.resolvedKernelNames ?? []),
-    ...(context?.staticStrings.map(({ name }) => name) ?? []),
-    ...(context?.staticCollections.map(({ name }) => name) ?? [])
-  ])
+  resolveRStaticCallIdentities(
+    expressions,
+    context?.rFunctions,
+    [
+      ...(context?.resolvedKernelNames ?? []),
+      ...(context?.staticStrings.map(({ name }) => name) ?? []),
+      ...(context?.staticCollections.map(({ name }) => name) ?? [])
+    ],
+    context?.rSearchPathUncertain
+  )
   expressions = expressions.map(normalizeRPipes)
   const packageInspections = rPackageInspections(expressions)
   const consoleRedirected = expressions.some(rRedirectsConsole)
@@ -13268,12 +13854,49 @@ const analyzeRFileAccessTree = (
     const name = rCalledName(expr)
     const qualified = rQualifiedCall(expr)
     const serialization = rSerializationCallName(expr)
+    const fileCallbackPackage = rFileCallbackPackage(expr)
+    if (
+      name &&
+      fileCallbackPackage &&
+      !(expr.sourceOffset !== undefined && readOnlyMapCalls?.get(expr.sourceOffset)) &&
+      !expr.staticBuiltinShadowed &&
+      (qualified?.package === fileCallbackPackage ||
+        (!qualified && !shadowedQuotationNames.has(name) && !localWrappers.names.has(name)))
+    ) {
+      // Callbacks may rebind caller paths/handles or replace prior producers.
+      // Lazy arguments may run after a callback: do not reuse earlier path
+      // authority while visiting them, or revive it from a nested assignment.
+      const revoke = (): void => {
+        definitelyWritten.clear()
+        bindings.clear()
+        collections.clear()
+        namedCollectionKeys.clear()
+        fileConnections.clear()
+        inMemoryInputs.clear()
+        for (const binding of [...activeWrappers.keys()]) invalidateWrapper(binding)
+      }
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      revoke()
+      expr.args.forEach((argument) => visit(argument))
+      revoke()
+      return
+    }
     if (
       ['rm', 'remove'].includes(name ?? '') &&
       (!qualified || qualified.package === 'base') &&
       !expr.staticBuiltinShadowed &&
       !rFileCallLookupDependencies(expr).some((name) => shadowedQuotationNames.has(name))
     ) {
+      // Namespace deletion revokes lookup authority, including dynamic list/
+      // environment forms. Earlier file evidence remains a recorded observation.
+      bindings.clear()
+      collections.clear()
+      namedCollectionKeys.clear()
+      fileConnections.clear()
+      inMemoryInputs.clear()
+      for (const binding of [...activeWrappers.keys()]) invalidateWrapper(binding)
       // A removed BAM handle cannot authorize a later scanBam call.  Only
       // delete direct symbol bindings; dynamic list evaluation remains opaque.
       for (const argument of expr.args) {
@@ -13871,6 +14494,35 @@ const analyzeRFileAccessTree = (
       return
     }
     let fileArgumentOverride: { value: RExpr | undefined } | undefined
+    if (
+      name &&
+      R_TABLE_READER_NAMES.has(name) &&
+      call === R_FILE_CALL_EFFECTS.get(name) &&
+      (qualified ? qualified.package === 'utils' : !expr.staticBuiltinShadowed) &&
+      rTableReaderMayCoerce(
+        expr,
+        Boolean(context?.rSearchPathUncertain) ||
+          shadowedQuotationNames.has('type.convert.character')
+      )
+    ) {
+      // Capture the primary input before user coercion can replace bindings.
+      const argument = rFileCallArgument(expr, call!)
+      const path = fileConnectionPath(argument) ?? rStaticString(argument, bindings, collections)
+      if (path && !isExternalNotebookPath(path) && !path.includes('\0')) reads.add(path)
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      definitelyWritten.clear()
+      expr.args.forEach((argument) => visit(argument))
+      definitelyWritten.clear()
+      bindings.clear()
+      collections.clear()
+      namedCollectionKeys.clear()
+      fileConnections.clear()
+      inMemoryInputs.clear()
+      for (const binding of [...activeWrappers.keys()]) invalidateWrapper(binding)
+      return
+    }
     if (
       name &&
       R_CONNECTION_IO_PARAMETERS.has(name) &&
@@ -14612,7 +15264,8 @@ const analyzeRSources = async (
         context?.rAtomicValueNames,
         context?.rCopyOnModifyNames,
         context?.verifiedSerializedValues,
-        context?.rAtomicTableNames
+        context?.rAtomicTableNames,
+        context?.rSearchPathUncertain
       )
     )
     results.push(
@@ -14634,6 +15287,7 @@ const analyzeRNotebookSource = async (
   fileAccess?: NotebookSourceFileAccessExtraction
 }> => {
   const parsed = await withParsedNotebookSource('r', source, (root) => {
+    const readOnlyMapCalls = new Map<number, boolean>()
     const facts = analyzeRSource(
       root,
       context?.localFileWrappers,
@@ -14644,7 +15298,9 @@ const analyzeRNotebookSource = async (
       context?.rAtomicValueNames,
       context?.rCopyOnModifyNames,
       context?.verifiedSerializedValues,
-      context?.rAtomicTableNames
+      context?.rAtomicTableNames,
+      context?.rSearchPathUncertain,
+      readOnlyMapCalls
     )
     const fileContext = fileContextForFacts ? fileContextForFacts(facts) : context
     // The public caller filters whole-cell definitions from its other context.
@@ -14660,7 +15316,8 @@ const analyzeRNotebookSource = async (
               staticStrings: fileContext?.staticStrings ?? [],
               staticCollections: fileContext?.staticCollections ?? []
             }
-          : fileContext
+          : fileContext,
+        readOnlyMapCalls
       )
     }
   })
@@ -14675,10 +15332,7 @@ const analyzeRFileAccesses = async (
 ): Promise<Array<NotebookSourceFileAccessExtraction | undefined>> => {
   const results: Array<NotebookSourceFileAccessExtraction | undefined> = []
   for (const source of sources) {
-    const parsed = await withParsedNotebookSource('r', source, (root) =>
-      analyzeRFileAccessTree(root, context)
-    )
-    results.push(parsed.state === 'ok' ? parsed.value : undefined)
+    results.push((await analyzeRNotebookSource(source, context)).fileAccess)
   }
   return results
 }
