@@ -10,13 +10,15 @@ import {
   PACKAGE_MAX_FILE_BYTES,
   PACKAGE_RO_CRATE_METADATA,
   sessionPackageManifestSchema,
-  type SessionPackageManifest
+  type SessionPackageManifest,
+  type PackageProgress
 } from '../../shared/session-package'
 import { readFileWithinLimit } from '@aipoch/durable-files'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { pacedFileTransform } from '../file-io-pacing'
 import { assertPackageCapacity, packageCapacityChecker } from './capacity'
+import { createPackageContentVerifier } from './materialize'
 
 // Keep this diagnostic stable across the inspection worker's error-message boundary.
 export const PACKAGE_REQUIRES_UPDATE = 'Session package requires a newer version of Open Science.'
@@ -184,7 +186,8 @@ export const writePackageArchive = async (
 export const readPackageArchive = async (
   path: string,
   directory: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (progress: PackageProgress) => void
 ): Promise<SessionPackageManifest> => {
   const input = await open(path, 'r')
   try {
@@ -276,9 +279,20 @@ export const readPackageArchive = async (
           })
       }
     })
+    let readBytes = 0
+    const source = input.createReadStream({ highWaterMark: 64 * 1024 })
+    source.on('data', (chunk) => {
+      readBytes += Buffer.byteLength(chunk)
+      onProgress?.({
+        phase: 'validating',
+        importStage: 'read-archive',
+        completedBytes: readBytes,
+        totalBytes: metadata.size
+      })
+    })
     try {
       await pipeline(
-        input.createReadStream({ highWaterMark: 16 * 1024 }),
+        source,
         pacedFileTransform(controller.signal),
         extractor as unknown as NodeJS.WritableStream,
         {
@@ -297,7 +311,7 @@ export const readPackageArchive = async (
     }
     if (unknownEntries)
       throw new Error('Session package contains an unsafe, duplicate or oversized entry.')
-    return await validatePackageDirectory(directory, signal, entries)
+    return await validatePackageDirectory(directory, signal, entries, onProgress)
   } finally {
     await input.close()
   }
@@ -306,7 +320,8 @@ export const readPackageArchive = async (
 export const validatePackageDirectory = async (
   directory: string,
   signal?: AbortSignal,
-  entries?: Set<string>
+  entries?: Set<string>,
+  onProgress?: (progress: PackageProgress) => void
 ): Promise<SessionPackageManifest> => {
   const rawManifest: unknown = JSON.parse(
     await readFileWithinLimit(join(directory, 'manifest.json'), MAX_MANIFEST_BYTES)
@@ -333,7 +348,16 @@ export const validatePackageDirectory = async (
     PACKAGE_MAX_BYTES
   )
     throw new Error('Session package exceeds the reconstructed content limit.')
+  const verifyContent = createPackageContentVerifier()
+  let completedFiles = 0
+  onProgress?.({
+    phase: 'validating',
+    importStage: 'verify-archive',
+    completedFiles,
+    totalFiles: manifest.inventory.length
+  })
   for (const entry of manifest.inventory) {
+    signal?.throwIfAborted()
     const existing = contentPaths.get(entry.path)
     if (declared.has(entry.path)) {
       if (
@@ -356,10 +380,16 @@ export const validatePackageDirectory = async (
     if (
       !details.isFile() ||
       details.size !== entry.sizeBytes ||
-      (await fileChecksum(file, signal)) !== entry.checksum
+      (await verifyContent(file, entry.sizeBytes, signal)).checksum !== entry.checksum
     ) {
       throw new Error('Session package content checksum or size mismatch.')
     }
+    onProgress?.({
+      phase: 'validating',
+      importStage: 'verify-archive',
+      completedFiles: ++completedFiles,
+      totalFiles: manifest.inventory.length
+    })
   }
   if (
     !declared.has('session.json') ||

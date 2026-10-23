@@ -931,6 +931,10 @@ class AcpRuntime {
     })
   }
 
+  captureSessionResumeCleanup(response: AcpCreateSessionResponse): () => Promise<void> {
+    return this.sessionDeletion.captureResumeCleanup(response.sessionId, response.providerSessionId)
+  }
+
   hasPendingSessionWriterRelease(sessionId: string): boolean {
     return this.providerSessionResumer.hasPendingWriterRelease(sessionId)
   }

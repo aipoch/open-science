@@ -118,6 +118,10 @@ describe('persisted translated PDF cache', () => {
       usePdfTranslationDocument(f.original, results, undefined, 'reader:0')
     )
     await waitFor(() => expect(f.target.getPage).toHaveBeenCalled())
+    expect(generatePdf.mock.calls[0][0]).toMatchObject({
+      preserveUnsupported: true,
+      preserveUnmatched: true
+    })
     expect(generatePdf.mock.calls[0][0].cache).toEqual({
       source: checkpoint.source,
       checkpointKey: checkpoint.key
@@ -198,7 +202,7 @@ describe('persisted translated PDF cache', () => {
       expect(generatePdf).toHaveBeenCalledTimes(2)
       expect(generatePdf.mock.calls[0][0].cache?.bypass).toBeUndefined()
       expect(generatePdf.mock.calls[1][0].cache?.bypass).toBe(true)
-      expect(f.targetPage.getTextContent).toHaveBeenCalledTimes(2)
+      expect(f.targetPage.getTextContent).toHaveBeenCalledTimes(valid ? 2 : 3)
       expect(recordLayout).toHaveBeenCalledTimes(1)
       expect(recordLayout.mock.calls[0][0]).toEqual(
         valid
@@ -4399,6 +4403,100 @@ it('keeps transient generation failures retryable', async () => {
   expect(generatePdf).toHaveBeenCalledTimes(3)
 })
 
+it('rebuilds a failed verification page as original while keeping other pages translated', async () => {
+  const f = fixture()
+  f.originalPage.getTextContent.mockResolvedValue({ items: [{ ...f.item, str: 'cell' }] })
+  const source = createPdfTranslationSource({
+    ...f.results.source,
+    pages: [1, 2].map(() => ({ width: 600, height: 800 })),
+    units: [1, 2].map((pageNumber) => ({
+      ...f.results.source.units[0],
+      id: `unit-${pageNumber}`,
+      fragments: [{ ...f.results.source.units[0].fragments[0], pageNumber }]
+    }))
+  })
+  const results = {
+    source,
+    checkpoint: { key: '00000000-0000-4000-8000-000000000001', source: 'attachment' },
+    units: source.units.map((unit) => ({
+      id: unit.id,
+      translationSource: 'cell',
+      translation: '细胞'
+    }))
+  }
+  const original = { ...f.original, numPages: 2 } as PDFDocumentProxy
+  let retained = false
+  const generatePdf = vi.fn(async (request: PdfTranslationPdfRequest) => {
+    retained = request.units[0].translation === 'cell'
+    return new Uint8Array([retained ? 2 : 1])
+  })
+  getDocument.mockImplementation(() => ({
+    promise: Promise.resolve({
+      numPages: 2,
+      getPage: async (pageNumber: number) => ({
+        ...f.targetPage,
+        getTextContent: async () => ({
+          items: [{ ...f.item, str: pageNumber === 1 ? (retained ? 'cell' : 'broken') : '细胞' }]
+        })
+      })
+    }),
+    destroy: vi.fn(async () => {})
+  }))
+  const recordLayout = vi.fn(async () => {})
+  vi.stubGlobal('api', {
+    pdfTranslation: { generatePdf, recordLayout, cancelPdf: vi.fn(async () => {}) }
+  })
+  const hook = renderHook(() => usePdfTranslationDocument(original, results, undefined, 'reader:0'))
+  await waitFor(() => expect(hook.result.current.state.status).toBe('ready'))
+  expect(generatePdf).toHaveBeenCalledTimes(2)
+  expect(generatePdf.mock.calls[1][0].units.map((unit) => unit.translation)).toEqual([
+    'cell',
+    '细胞'
+  ])
+  expect(generatePdf.mock.calls[1][0]).not.toHaveProperty('cache')
+  expect(generatePdf.mock.calls[1][0].incremental).toEqual({
+    data: new Uint8Array([1, 2]),
+    pageNumbers: [2]
+  })
+  expect(hook.result.current.ready?.retainedUnitIds).toEqual(['unit-1'])
+  expect(hook.result.current.unfilledUnitIds).toEqual(['unit-1'])
+  expect(hook.result.current.layoutFailures['unit-1']).toMatchObject({
+    code: 'validation-failed',
+    phase: 'verification'
+  })
+  expect(recordLayout).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      units: [
+        expect.objectContaining({
+          sourceIndex: 0,
+          translation: '细胞',
+          failure: expect.objectContaining({ code: 'validation-failed' })
+        }),
+        { sourceIndex: 1, source: 'cell', translation: '细胞' }
+      ]
+    })
+  )
+  expect(results.units.map((unit) => unit.translation)).toEqual(['细胞', '细胞'])
+})
+
+it('stops automatic recovery if the preserved original page still fails verification', async () => {
+  const f = fixture()
+  f.originalPage.getTextContent.mockResolvedValue({ items: [{ ...f.item, str: 'cell' }] })
+  f.targetPage.getTextContent.mockResolvedValue({ items: [{ ...f.item, str: 'broken' }] })
+  const generatePdf = vi.fn(async () => new Uint8Array([1]))
+  vi.stubGlobal('api', { pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) } })
+  const hook = renderHook(() =>
+    usePdfTranslationDocument(f.original, f.results, undefined, 'reader:0')
+  )
+  await waitFor(() => expect(hook.result.current.state.status).toBe('error'))
+  expect(generatePdf).toHaveBeenCalledTimes(1)
+  expect(getDocument).toHaveBeenCalledTimes(2)
+  expect(hook.result.current.ready).toBeUndefined()
+  expect(hook.result.current.state).toMatchObject({
+    failure: { code: 'validation-failed', pageNumber: 1 }
+  })
+})
+
 it('coalesces page completions received during generation without cancelling the active update', async () => {
   const f = fixture()
   f.originalPage.getTextContent.mockResolvedValue({ items: [{ ...f.item, str: 'cell' }] })
@@ -5625,7 +5723,9 @@ it.each(['reuse', 'changed-link', 'full-fallback', 'cache-save', 'cache-hit'] as
       expect(hook.result.current.state.status).toBe(mode === 'changed-link' ? 'error' : 'ready')
     )
     await waitFor(() =>
-      expect(generatePdf.mock.calls.length).toBe(mode === 'full-fallback' ? 3 : 2)
+      expect(generatePdf.mock.calls.length).toBe(
+        mode === 'full-fallback' || mode === 'changed-link' ? 3 : 2
+      )
     )
     expect(generatePdf.mock.calls[1][0]).toMatchObject({
       incremental: { data: new Uint8Array([4, 5]), pageNumbers: [2] }

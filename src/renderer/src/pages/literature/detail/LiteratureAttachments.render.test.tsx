@@ -2,6 +2,7 @@
 import { useLayoutEffect } from 'react'
 import { create } from 'zustand'
 import type { LiteratureRendererHost } from '@/pages/literature/public/host'
+import { FileTypeIcon } from '@/pages/workspace/file-type-icon'
 import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { useAttachmentOperationsStore } from '../workflows/literature-attachment-operations'
 import { createLiteratureDetailController } from '@aipoch/literature-library/client'
@@ -14,6 +15,7 @@ import { LiteratureAttachments } from './LiteratureAttachments'
 
 const { render } = createLiteratureTestRenderer(
   {
+    FileTypeIcon,
     get api() {
       return window.api
     },
@@ -383,6 +385,25 @@ describe('Attachment safety and version access', () => {
       expect(transact).not.toHaveBeenCalled()
     }
   )
+
+  it('previews ordinary attachments without PDF validation warnings', () => {
+    const item = makeItem(1)
+    const file = item.attachments[0].versions[0]
+    file.filename = 'data.docx'
+    file.contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    delete file.pageCount
+    const onPreview = vi.fn()
+    render(
+      <LiteratureAttachments
+        item={item}
+        readItem={window.api.literature.get}
+        onPreview={onPreview}
+      />
+    )
+    expect(screen.queryByText('PDF structure not yet validated.')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Preview data.docx' }))
+    expect(onPreview).toHaveBeenCalledWith(file)
+  })
 
   it('shows version metadata and prevents previewing a missing version', async () => {
     const onPreview = vi.fn()

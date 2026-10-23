@@ -227,21 +227,12 @@ it('PDF workflow sources contain no application source taxonomy or database adap
 
 it('local module and affected plans obey the same downstream package direction as Ubuntu', async () => {
   const { createModuleTestPlan, createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  for (const id of [
-    'main_pdf_translation',
-    'workspace_previews',
-    'main_literature',
-    'page_literature'
-  ])
-    expect(
-      createModuleTestPlan(id).testFiles.filter((path) => path.startsWith('packages/'))
-    ).toEqual([])
-  for (const path of [
-    'src/main/literature/pdf-translation/index.ts',
-    'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
-    'src/main/literature/command-owner.ts',
-    'src/main/literature/journal-attributes.ts'
-  ]) {
+  for (const id of ['main_pdf_translation']) {
+    const plan = createModuleTestPlan(id)
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles.filter((path) => path.startsWith('packages/'))).toEqual([])
+  }
+  for (const path of ['src/main/literature/pdf-translation/index.ts']) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
       status: 'unavailable',
       testFiles: ['packages/pdf-translation/test/checkpoints.test.ts']
@@ -253,6 +244,47 @@ it('local module and affected plans obey the same downstream package direction a
   const plan = createModuleTestPlan('package_pdf_translation')
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-translation/'))).toBe(true)
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
+})
+
+it.each([
+  ['workspace_previews', 'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'],
+  ['main_literature', 'src/main/literature/command-owner.ts'],
+  ['page_literature', 'src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx'],
+  ['package_literature_discovery', 'packages/literature-discovery/src/supplements.ts'],
+  ['notebook_execution', 'src/main/notebook/windows-runtime-manager.ts'],
+  ['notebook_execution', 'src/main/notebook/scientific-output-analysis.ts'],
+  ['notebook_execution', 'src/main/notebook/working-file-observer.ts']
+])('runs unfiltered tests for reclassified %s and affected path %s', async (id, path) => {
+  const { createModuleTestPlan, createAffectedTestPlan, executeModuleTestPlan } =
+    await import('./module-test-impact.mjs')
+  for (const plan of [
+    createModuleTestPlan(id),
+    createAffectedTestPlan(
+      [
+        {
+          path,
+          status: 'modified'
+        }
+      ],
+      { status: 'unavailable', testFiles: ['packages/pdf-translation/test/checkpoints.test.ts'] }
+    )
+  ]) {
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains).toContainEqual(
+      expect.stringMatching(new RegExp(`^${id} -> .+ -> full$`))
+    )
+    const invocations: string[][] = []
+    expect(
+      executeModuleTestPlan(plan, {
+        environment: { npm_execpath: '/fixture/npm-cli.js' },
+        spawn: (_command: string, args: string[]) => {
+          invocations.push(args)
+          return { status: 0 }
+        }
+      })
+    ).toBe(0)
+    expect(invocations).toEqual([['/fixture/npm-cli.js', 'test', '--']])
+  }
 })
 
 const hostBoundaryManifest = loadModuleImpactManifest()
@@ -399,6 +431,16 @@ it('Compute host edits never register or select upstream Compute units', async (
     'packages/compute/src/model.ts'
   ]) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    if (
+      path.startsWith('src/main/literature/') ||
+      path.startsWith('src/renderer/src/pages/literature/')
+    ) {
+      expect(plan.mode, path).toBe('full')
+      expect(plan.reasonChains).toContainEqual(
+        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+      )
+      continue
+    }
     expect(plan.mode, path).toBe('selective')
     expect(plan.testFiles, path).toEqual(
       expect.arrayContaining([
@@ -469,6 +511,16 @@ it('selects durable file consumers downstream without testing unchanged prerequi
     const packagePlan = createPackageTestPlan([path], registry)
     expect([...packagePlan.selected].sort(), path).toEqual([...selected].sort())
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    if (
+      path.startsWith('src/main/literature/') ||
+      path.startsWith('src/renderer/src/pages/literature/')
+    ) {
+      expect(plan.mode, path).toBe('full')
+      expect(plan.reasonChains).toContainEqual(
+        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+      )
+      continue
+    }
     expect(plan.mode, path).toBe('selective')
     for (const entry of registry.packages) {
       const included = plan.testFiles.some((test: string) => test.startsWith(entry.root + '/'))
@@ -554,10 +606,6 @@ it('routes download package changes downstream and host adapters without unchang
     [
       'src/main/notebook/environment-download.ts',
       'src/main/notebook/environment-download.contract.test.ts'
-    ],
-    [
-      'src/main/notebook/windows-runtime-manager.ts',
-      'src/main/notebook/windows-runtime-download.contract.test.ts'
     ],
     ['src/main/session-package/transfer.ts', 'src/main/session-package/transfer.test.ts']
   ]) {

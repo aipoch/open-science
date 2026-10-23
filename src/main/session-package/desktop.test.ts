@@ -1980,9 +1980,9 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           expect(finished).toBe(true)
         }
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         expect(desktop.operations.snapshot?.ioBytesPerSecond).toBe(16 * 1024 ** 2)
-        for (const rate of [128, 256]) {
+        for (const rate of [128, 256, 512, 1024]) {
           desktop.respond({
             action: 'set-speed',
             operationId: desktop.operations.snapshot!.id,
@@ -1995,9 +1995,9 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           operationId: desktop.operations.snapshot!.id,
           bytesPerSecond: null
         })
-        expect(desktop.operations.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         return result
       })
     )
@@ -2326,11 +2326,16 @@ it.each(['valid', 'invalid'] as const)(
       getClient: async () => fixture.client
     })
     const inspect = vi.spyOn(service, 'inspect')
+    const importProgress: number[] = []
     const desktop = new SessionPackageDesktop({
       service,
       translate: englishNativeTranslator,
       withDataRootWrite: async (work) => work(),
-      afterImport: async () => undefined
+      afterImport: async () => undefined,
+      onOperationChanged: (snapshot) => {
+        if (snapshot.progress.overallPercent !== undefined)
+          importProgress.push(snapshot.progress.overallPercent)
+      }
     })
     const progress: number[] = []
     const staging = join(fixture.storageRoot, 'browser-staging')
@@ -2362,11 +2367,13 @@ it.each(['valid', 'invalid'] as const)(
       )
       expect(inspect).toHaveBeenCalledWith(
         expect.stringContaining(await realpath(staging)),
-        expect.any(AbortSignal)
+        expect.any(AbortSignal),
+        expect.any(Function)
       )
       expect(await fixture.client.session.count()).toBe(0)
       expect(dialog.showMessageBox).not.toHaveBeenCalled()
       if (kind === 'valid') {
+        expect(desktop.operations.snapshot?.progress.overallPercent).toBe(10)
         desktop.respond({
           action: 'select-project',
           operationId: desktop.operations.snapshot!.id,
@@ -2375,9 +2382,16 @@ it.each(['valid', 'invalid'] as const)(
         await vi.waitFor(() => expect(desktop.operations.snapshot?.importPreview).toBeDefined())
         expect(desktop.operations.snapshot?.state).toBe('awaiting-selection')
         expect(await fixture.client.session.count()).toBe(0)
+        expect(desktop.operations.snapshot?.progress.overallPercent).toBe(46)
         desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
         await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
         expect(await fixture.client.session.count()).toBe(1)
+        expect(importProgress.length).toBeGreaterThan(3)
+        expect(
+          importProgress.every(
+            (value, index) => value < 100 && (index === 0 || value >= importProgress[index - 1])
+          )
+        ).toBe(true)
         await vi.waitFor(async () => expect(await readdir(staging)).toEqual([]))
       }
     } finally {

@@ -72,6 +72,18 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it('forwards supplement queries and caller cancellation without publishing changes', async () => {
+    const run = vi.fn().mockResolvedValue({ records: [] })
+    const owner = createLiteratureCommandOwner({
+      literatureSupplementFinder: { run }
+    } as unknown as Services)
+    const request = { itemId: 'paper', expectedMetadataRevision: 1, provider: 'datacite' as const }
+    const signal = new AbortController().signal
+    await owner.supplements(request, signal)
+    expect(run).toHaveBeenCalledWith(request, signal)
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
   it('routes exact candidate reads through the catalog without publishing mutations', async () => {
     const result = {
       candidates: [{ candidateId: 'a', state: 'accepted', acceptedItemId: 'paper' }]

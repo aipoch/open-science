@@ -22,14 +22,13 @@ export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
 export const PACKAGE_MAX_FILE_BYTES = 32 * 1024 ** 3
 export const PACKAGE_MAX_BYTES = 256 * 1024 ** 3
 export const PACKAGE_MIN_IO_BYTES_PER_SECOND = 1024 ** 2
-export const PACKAGE_DEFAULT_IO_BYTES_PER_SECOND = 16 * 1024 ** 2
-export const PACKAGE_MAX_IO_BYTES_PER_SECOND = 256 * 1024 ** 2
+export const PACKAGE_DEFAULT_IO_BYTES_PER_SECOND = 1024 ** 3
+export const PACKAGE_MAX_IO_BYTES_PER_SECOND = 1024 ** 3
 export const PACKAGE_IO_RATE_OPTIONS = [
-  4 * 1024 ** 2,
-  16 * 1024 ** 2,
-  64 * 1024 ** 2,
   128 * 1024 ** 2,
-  256 * 1024 ** 2
+  256 * 1024 ** 2,
+  512 * 1024 ** 2,
+  1024 ** 3
 ] as const
 const transferRateSchema = z
   .number()
@@ -98,7 +97,37 @@ export const packageContentBytes = (
     0
   )
 
+// Weights approximate measured local import time; progress advances only with completed work.
+export const PACKAGE_IMPORT_STAGES = {
+  'read-archive': [0, 8],
+  'verify-archive': [8, 12],
+  'prepare-preview': [12, 30],
+  'validate-preview': [30, 40],
+  'import-files': [40, 60],
+  'verify-files': [60, 67],
+  'prepare-validation': [67, 85],
+  'validate-import': [85, 97],
+  publish: [97, 100]
+} as const
+export type PackageImportStage = keyof typeof PACKAGE_IMPORT_STAGES
+
+export const packageImportPercent = (progress: PackageProgress): number | undefined => {
+  if (!progress.importStage) return undefined
+  const [start, end] = PACKAGE_IMPORT_STAGES[progress.importStage]
+  const fraction =
+    progress.stageProgress ??
+    (progress.totalBytes && progress.completedBytes !== undefined
+      ? progress.completedBytes / progress.totalBytes
+      : progress.totalFiles && progress.completedFiles !== undefined
+        ? progress.completedFiles / progress.totalFiles
+        : 0)
+  return Math.min(99, start + (end - start) * Math.max(0, Math.min(1, fraction)))
+}
+
 export type PackageProgress = {
+  importStage?: PackageImportStage
+  stageProgress?: number
+  overallPercent?: number
   phase:
     | 'preparing'
     | 'selecting'
@@ -372,6 +401,11 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
           'confirming',
           'cleaning'
         ]),
+        importStage: z
+          .enum(Object.keys(PACKAGE_IMPORT_STAGES) as [PackageImportStage, ...PackageImportStage[]])
+          .optional(),
+        stageProgress: z.number().min(0).max(1).optional(),
+        overallPercent: z.number().min(0).max(100).optional(),
         completedBytes: z.number().nonnegative().optional(),
         totalBytes: z.number().nonnegative().optional(),
         completedFiles: z.number().int().nonnegative().optional(),

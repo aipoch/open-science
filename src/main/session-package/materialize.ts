@@ -1,9 +1,10 @@
 import { link, lstat, mkdir, rm } from 'node:fs/promises'
-import type { Stats } from 'node:fs'
+import type { BigIntStats, Stats } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { SessionPackageInventoryEntry } from '../../shared/session-package'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+import { assertWithinResourceBudget } from '../resource-budget'
 import { packageCapacityChecker } from './capacity'
 
 // Only immutable execution blobs may share an inode. Working files and metadata are rewritten.
@@ -53,6 +54,7 @@ export const createPackageMaterializer = async (
   await mkdir(destinationRoot, { recursive: true })
   const checkCapacity = await packageCapacityChecker(destinationRoot)
   checkCapacity(allocatedBudget)
+  const verifyContent = createPackageContentVerifier()
   const copies = new Map<string, { path: string; stats: Stats }>()
   return async (entry, targetKey = entry.storageKey!, onProgress) => {
     signal?.throwIfAborted()
@@ -65,7 +67,7 @@ export const createPackageMaterializer = async (
     try {
       if (existing) {
         // Legacy packages may have separate source objects advertising the same digest.
-        const digest = await digestFileWithinBudget(source, entry.sizeBytes, signal)
+        const digest = await verifyContent(source, entry.sizeBytes, signal)
         if (digest.checksum !== entry.checksum || digest.sizeBytes !== entry.sizeBytes)
           throw new Error('Session package content checksum mismatch.')
         if (!sameFile(await lstat(existing.path), existing.stats))
@@ -104,5 +106,33 @@ export const createPackageMaterializer = async (
       if (created) await rm(target, { force: true })
       throw error
     }
+  }
+}
+
+const observation = (stat: BigIntStats): string =>
+  `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`
+
+// Reuse reads only within one validation pass, including immutable hardlink aliases. A changed
+// observation requires a fresh digest; separate calls never trust an earlier import/export.
+export const createPackageContentVerifier = (): typeof digestFileWithinBudget => {
+  const verified = new Map<string, Awaited<ReturnType<typeof digestFileWithinBudget>>>()
+  return async (path, maxBytes, signal) => {
+    signal?.throwIfAborted()
+    const before = await lstat(path, { bigint: true })
+    signal?.throwIfAborted()
+    if (!before.isFile()) throw new Error('Session package content is not a regular file.')
+    assertWithinResourceBudget('file', Number(before.size), maxBytes)
+    const key = observation(before)
+    // Filesystems without a usable inode identity cannot establish that aliases share bytes.
+    const reusable = before.ino > 0n
+    const cached = reusable ? verified.get(key) : undefined
+    if (cached) return cached
+    const digest = await digestFileWithinBudget(path, maxBytes, signal)
+    const after = await lstat(path, { bigint: true })
+    signal?.throwIfAborted()
+    if (!after.isFile() || observation(after) !== key || BigInt(digest.sizeBytes) !== after.size)
+      throw new Error('Session package content changed during validation.')
+    if (reusable) verified.set(key, digest)
+    return digest
   }
 }

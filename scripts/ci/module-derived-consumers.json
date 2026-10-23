@@ -16,14 +16,17 @@
     ],
     "artifact_storage": ["src/main/session-package/materialize.test.ts"],
     "artifact_storage_validation": [
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "compute_domain_contracts": ["src/main/notebook/authorized-directories.integration.test.ts"],
     "connector_core": [
+      "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
-      "packages/connector-builtins/src/scientific-expansion.test.ts"
+      "packages/connector-builtins/src/scientific-expansion.test.ts",
+      "packages/connector-builtins/src/tcia.test.ts"
     ],
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
     "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
@@ -44,6 +47,7 @@
     ],
     "environment_contracts": [
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -51,12 +55,14 @@
     "environment_engine": [
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "host_bounded_io": [
       "src/main/image-preview-resize.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
@@ -102,6 +108,7 @@
       "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
       "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicatesView.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureLibraryCount.test.tsx",
@@ -249,10 +256,6 @@
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "notebook_execution": [
-      "src/main/local-fs/service.test.ts",
-      "src/main/notebook/authorized-directories.integration.test.ts"
-    ],
     "notebook_execution_model": [
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -275,7 +278,6 @@
       "src/main/notebook/authorized-directories.integration.test.ts"
     ],
     "notebook_syntax": [
-      "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
@@ -293,11 +295,14 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
     "package_literature_citations": [
+      "packages/literature-discovery/test/supplements.test.ts",
+      "src/main/literature/supplement-attachments.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
@@ -307,24 +312,13 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "package_literature_discovery": [
-      "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
-      "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/literature/renderer-host.test.tsx",
-      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
-      "src/renderer/src/pages/workspace/agent-authentication-error.test.ts",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
-      "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
-    ],
     "package_literature_library": [
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
@@ -354,13 +348,14 @@
       "src/main/literature/pdf-translation/sqlite-checkpoint-storage.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "page_home": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
     "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
     "pdf_annotations": [
       "src/main/session-package/materialize.test.ts",
@@ -372,19 +367,25 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_documents": ["src/main/session-package/materialize.test.ts"],
     "pdf_preview_runtime": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-preparation.test.tsx"
     ],
     "pdf_structure_engine": [
+      "packages/pdf-translation/test/reader/pdf-translation-structure-source.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-whole-region-retention.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_text": [
       "src/main/composition/session-packages.test.ts",
@@ -644,6 +645,7 @@
     "renderer_ui": [
       "src/renderer/src/components/FileDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -2868,6 +2870,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-narrow-hat.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-numeric-token-links.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-supporting-links.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-checkpoint.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-job.test.tsx",
@@ -7588,6 +7591,7 @@
       "src/main/reviewer/reviewer-resilience.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/session-package/archive.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/desktop-composition.test.ts",
       "src/main/session-package/desktop.test.ts",
@@ -7993,6 +7997,7 @@
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureAttachments.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.test.tsx",
       "src/renderer/src/pages/onboarding/AgentStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/EnvironmentStep.render.test.tsx",
@@ -8883,10 +8888,12 @@
     "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "storage_location": [
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "storage_state": [
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "upload_file_transport": [
@@ -8986,6 +8993,7 @@
     "workspace_file_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -9061,12 +9069,6 @@
     ],
     "workspace_preview_composition": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
-    ],
-    "workspace_previews": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],

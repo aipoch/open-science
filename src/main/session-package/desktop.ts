@@ -6,7 +6,7 @@ import {
 } from './sensitive-content'
 import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '@aipoch/diagnostics'
-import { formatPackageBytes } from '../../shared/session-package'
+import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -812,7 +812,14 @@ export class SessionPackageDesktop {
             this.options.assertCanStart?.()
             this.operations.report({ phase: 'validating' })
             try {
-              await this.acceptCleanup(() => this.options.service.inspect(sourcePath, signal))
+              await this.acceptCleanup(() =>
+                this.options.service.inspect(sourcePath, signal, (progress) =>
+                  this.operations.report({
+                    ...progress,
+                    overallPercent: (packageImportPercent(progress) ?? 0) / 4
+                  })
+                )
+              )
             } catch (error) {
               this.failOperation(error)
             }
@@ -861,22 +868,35 @@ export class SessionPackageDesktop {
               const archive = join(directory, 'session.science')
               await this.copyArchive(input, archive, 'copying', signal)
               this.operations.report({ phase: 'validating' })
+              let confirmed = false
               const result = await this.options.withDataRootWrite(() =>
                 this.acceptCleanup(() =>
                   this.options.service
                     .importFrom(
                       archive,
                       signal,
-                      // Service progress starts after confirmation; final validation belongs to import.
+                      // Inspection reports before confirmation; subsequent validation belongs to import.
                       (progress) =>
-                        this.operations.report(
-                          progress.phase === 'validating' ? { phase: 'importing' } : progress
-                        ),
+                        this.operations.report({
+                          ...progress,
+                          phase:
+                            confirmed && progress.phase === 'validating'
+                              ? 'importing'
+                              : progress.phase,
+                          ...(validateBeforeTarget
+                            ? {
+                                overallPercent:
+                                  10 +
+                                  (packageImportPercent(progress) ?? (confirmed ? 40 : 0)) * 0.9
+                              }
+                            : {})
+                        }),
                       async (preview, budgetSignal) => {
                         await this.operations.waitForImport(
                           { preview, filename: basename(input) },
                           budgetSignal
                         )
+                        confirmed = true
                         signal.throwIfAborted()
                       },
                       target

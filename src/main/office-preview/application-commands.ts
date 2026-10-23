@@ -77,7 +77,7 @@ export function createOfficePreviewCommands(
     { clientId: string; lease: ApplicationCallerLease; release(): void }
   >()
   const toRequest = (request: OfficePreviewOpenRequest): AcquireManagedPreviewRequest =>
-    request.source === 'notebook-input'
+    request.source === 'notebook-input' || request.source === 'literature'
       ? { source: request.source, path: request.path }
       : {
           source: request.source,

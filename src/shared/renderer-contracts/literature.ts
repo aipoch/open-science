@@ -1,4 +1,11 @@
 import type {
+  LiteratureSupplementRequest,
+  LiteratureSupplementAttachmentRequest,
+  LiteratureFullTextProgress,
+  LiteratureSupplementAttachmentResult,
+  LiteratureSupplementResult
+} from '@aipoch/literature-discovery/contracts'
+import type {
   PdfTranslationBeginResult,
   PdfTranslationEdition,
   PdfTranslationOperationRequest,
@@ -151,6 +158,29 @@ export const contracts = {
     'literature',
     ['literature:get', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
+  'literature.supplementAttachmentProgress': callable<
+    (request: LiteratureSupplementAttachmentRequest) => Promise<LiteratureFullTextProgress | null>
+  >()('literature', [
+    'literature:supplement-attachment-progress',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'literature.supplementAttachment': callable<
+    (
+      request: LiteratureSupplementAttachmentRequest
+    ) => Promise<LiteratureSupplementAttachmentResult>
+  >()('literature', [
+    'literature:supplement-attachment',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'literature.supplements': callable<
+    (request: LiteratureSupplementRequest) => Promise<LiteratureSupplementResult>
+  >()('literature', ['literature:supplements', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.fullText': callable<
     (request: LiteratureFullTextRequest) => Promise<LiteratureFullTextResult>
   >()('literature', ['literature:full-text', WEB, undefined, undefined, RUNTIME_VALIDATED]),

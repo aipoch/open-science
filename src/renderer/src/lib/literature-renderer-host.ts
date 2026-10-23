@@ -1,3 +1,5 @@
+import { FileTypeIcon } from '@/pages/workspace/file-type-icon'
+import { getPreviewFormatForFile } from '@/pages/workspace/preview-support'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { createElement, lazy, memo, Suspense, type ComponentProps, type ReactElement } from 'react'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -37,6 +39,8 @@ function LiteratureFilePreview(
 }
 
 export const literatureRendererHost: LiteratureRendererHost = {
+  FileTypeIcon,
+  getPreviewFormatForFile,
   get api() {
     return window.api
   },

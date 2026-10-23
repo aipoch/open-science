@@ -1,5 +1,3 @@
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 import {
   runtimeModuleSpecifiers,
   expectBoundaryPaths
@@ -1160,38 +1158,4 @@ describe('Settings backend ownership architecture', () => {
       ].map((moduleName) => manifest.modules[moduleName].fallbackCapability)
     ).toEqual(['main_runtime', 'main_runtime', 'main_runtime', 'main_runtime'])
   })
-})
-
-it('selects explicit downstream behavior contracts at the reviewed boundary', () => {
-  {
-    const plan = createAffectedTestPlan(
-      [{ path: 'src/main/settings/service.ts', status: 'modified' }],
-      { status: 'not-used', testFiles: [] }
-    )
-    expect(plan.mode).toBe('selective')
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        'src/renderer/src/stores/settings-store.test.ts',
-        'src/renderer/src/stores/settings-runtime-slice.test.ts',
-        'src/main/settings/service.providers.test.ts',
-        'src/main/settings/service.connectors.test.ts',
-        'src/main/settings/runtime-application-commands.test.ts'
-      ])
-    )
-  }
-  {
-    const plan = createAffectedTestPlan(
-      [{ path: 'src/main/settings/backend-resolver.ts', status: 'modified' }],
-      { status: 'not-used', testFiles: [] }
-    )
-    expect(plan.mode).toBe('selective')
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        'src/main/settings/backend-resolver.test.ts',
-        'src/main/agent-framework/claude-code.test.ts',
-        'src/main/agent-framework/codex.test.ts',
-        'src/main/agent-framework/opencode.test.ts'
-      ])
-    )
-  }
 })

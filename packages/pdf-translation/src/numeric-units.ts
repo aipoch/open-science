@@ -122,6 +122,10 @@ const canonicalUnit = (value: string): string =>
     .join('/')
 
 type Quantity = { value: string; unit: string }
+/** Original spelling for content-first literal preservation, without semantic normalization. */
+export function pdfTranslationNumericUnitLiterals(source: string): string[] {
+  return [...source.matchAll(quantity)].map((match) => match[0])
+}
 function quantities(input: string): Quantity[] {
   const text = normalize(input)
   const result: Quantity[] = []

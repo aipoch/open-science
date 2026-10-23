@@ -135,6 +135,9 @@ describe('NetworkPanel offline retry', () => {
     expect(confirmation()?.querySelector<HTMLButtonElement>('button:last-of-type')?.disabled).toBe(
       true
     )
+    for (const input of container.querySelectorAll<HTMLInputElement>('input[id^="mirror-"]')) {
+      expect(input.disabled).toBe(true)
+    }
 
     await act(async () => {
       resolveSave()
@@ -143,6 +146,66 @@ describe('NetworkPanel offline retry', () => {
     expect(confirmation()).toBeNull()
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
   })
+
+  it.each(['success', 'failure'] as const)(
+    'locks mirror drafts until a pending save settles with %s',
+    async (outcome) => {
+      let resolveSave!: () => void
+      let rejectSave!: (error: Error) => void
+      const setPackageMirror = vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              resolveSave = resolve
+              rejectSave = reject
+            })
+        )
+        .mockResolvedValue(undefined)
+      const onNavigate = vi.fn()
+      useSettingsStore.setState({
+        packageMirror: { pypiIndex: 'https://mirror.example/original' },
+        setPackageMirror
+      })
+      await act(async () =>
+        root.render(<NetworkPanel view={{ kind: 'mirror' }} onNavigate={onNavigate} />)
+      )
+      const inputs = [...container.querySelectorAll<HTMLInputElement>('input[id^="mirror-"]')]
+      expect(inputs).toHaveLength(3)
+      const pypiInput = container.querySelector<HTMLInputElement>('#mirror-pypi-index')!
+      await changeInput(pypiInput, 'https://mirror.example/submitted')
+      await act(async () => buttonWithText('Save').click())
+
+      expect(setPackageMirror).toHaveBeenCalledExactlyOnceWith({
+        pypiIndex: 'https://mirror.example/submitted'
+      })
+      expect(inputs.every((input) => input.disabled)).toBe(true)
+      expect(buttonWithText('Cancel').disabled).toBe(true)
+      expect(buttonWithText('Saving…').disabled).toBe(true)
+      expect(onNavigate).not.toHaveBeenCalled()
+
+      await act(async () => {
+        if (outcome === 'success') resolveSave()
+        else rejectSave(new Error('Save failed'))
+      })
+      expect(inputs.every((input) => !input.disabled)).toBe(true)
+      if (outcome === 'success') {
+        expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'list' })
+        return
+      }
+
+      expect(onNavigate).not.toHaveBeenCalled()
+      expect(pypiInput.value).toBe('https://mirror.example/submitted')
+      expect(container.textContent).toContain('Could not save the package mirror.')
+      await changeInput(pypiInput, 'https://mirror.example/retry')
+      await act(async () => buttonWithText('Save').click())
+      expect(setPackageMirror).toHaveBeenLastCalledWith({
+        pypiIndex: 'https://mirror.example/retry'
+      })
+      expect(setPackageMirror).toHaveBeenCalledTimes(2)
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'list' })
+    }
+  )
 
   it('cancels immediately when the mirror draft is clean, but confirms before discarding edits', async () => {
     const onNavigate = vi.fn()

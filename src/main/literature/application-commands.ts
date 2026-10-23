@@ -1,6 +1,11 @@
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
 import {
   type LiteratureFullTextRequest,
+  type LiteratureFullTextProgress,
+  type LiteratureSupplementRequest,
+  type LiteratureSupplementAttachmentRequest,
+  type LiteratureSupplementAttachmentResult,
+  type LiteratureSupplementResult,
   type LiteratureMetadataCompletionRequest
 } from '@aipoch/literature-discovery/contracts'
 import {
@@ -62,6 +67,17 @@ type LiteratureCommandOwner = Readonly<{
   journals(request: JournalRequest): Promise<JournalResult>
   exportRecord(request: LiteratureExportRecordRequest): Promise<LiteratureExportRecordResult>
   jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
+  supplementAttachmentProgress(
+    request: LiteratureSupplementAttachmentRequest
+  ): LiteratureFullTextProgress | null
+  supplementAttachment(
+    request: LiteratureSupplementAttachmentRequest,
+    signal?: AbortSignal
+  ): Promise<LiteratureSupplementAttachmentResult>
+  supplements(
+    request: LiteratureSupplementRequest,
+    signal?: AbortSignal
+  ): Promise<LiteratureSupplementResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
   lookupMetadata(doi: string): Promise<LiteratureItemInput>
   completeMetadata(
@@ -110,6 +126,24 @@ const literatureApplicationCommands = Object.freeze({
     readonly [LiteratureJobRequest],
     LiteratureJobsResult
   >('literature:jobs', literatureJobsContract),
+  supplementAttachmentProgress: defineApplicationCommand<
+    'literature:supplement-attachment-progress',
+    readonly [LiteratureSupplementAttachmentRequest],
+    LiteratureFullTextProgress | null
+  >(
+    'literature:supplement-attachment-progress',
+    literatureApplicationCommandContracts.supplementAttachmentProgress
+  ),
+  supplementAttachment: defineApplicationCommand<
+    'literature:supplement-attachment',
+    readonly [LiteratureSupplementAttachmentRequest],
+    LiteratureSupplementAttachmentResult
+  >('literature:supplement-attachment', literatureApplicationCommandContracts.supplementAttachment),
+  supplements: defineApplicationCommand<
+    'literature:supplements',
+    readonly [LiteratureSupplementRequest],
+    LiteratureSupplementResult
+  >('literature:supplements', literatureApplicationCommandContracts.supplements),
   fullText: defineApplicationCommand<
     'literature:full-text',
     readonly [LiteratureFullTextRequest],
@@ -183,6 +217,9 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.exportRecord,
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
+  literatureApplicationCommands.supplements,
+  literatureApplicationCommands.supplementAttachment,
+  literatureApplicationCommands.supplementAttachmentProgress,
   literatureApplicationCommands.lookupMetadata,
   literatureApplicationCommands.completeMetadata,
   literatureApplicationCommands.citationStyles,
@@ -230,6 +267,20 @@ const registerLiteratureApplicationCommands = (
       'literature:journals': ({ args }) => run(() => owner.journals(args[0])),
       'literature:export-record': ({ args }) => run(() => owner.exportRecord(args[0])),
       'literature:jobs': ({ args }) => run(() => owner.jobs(args[0])),
+      'literature:supplement-attachment-progress': ({ args }) =>
+        run(() => owner.supplementAttachmentProgress(args[0]), false),
+      'literature:supplement-attachment': ({ args, callerLease }) =>
+        run(() =>
+          owner.supplementAttachment(
+            args[0],
+            AbortSignal.any([callerLease.signal, lifetime.signal])
+          )
+        ),
+      'literature:supplements': ({ args, callerLease }) =>
+        run(
+          () => owner.supplements(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
       'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),
       'literature:lookup-metadata': ({ args }) => run(() => owner.lookupMetadata(args[0])),
       'literature:complete-metadata': ({ args }) => run(() => owner.completeMetadata(args[0])),

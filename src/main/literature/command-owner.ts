@@ -2,6 +2,7 @@ import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import type {
   LiteratureBatchJobs,
   LiteratureFullTextFinder,
+  LiteratureSupplementFinder,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
@@ -14,6 +15,7 @@ import type { ContentRepository } from '../storage/content-repository'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { LiteratureCommandOwner } from './application-commands'
 import type { LiteratureCatalog } from './catalog'
+import type { LiteratureSupplementAttachments } from './supplement-attachments'
 import type { LiteratureCitationDocument } from './citation-document'
 import { withCitationStyleErrors } from './citation-errors'
 import type { JournalAttributes } from './journal-attributes'
@@ -29,6 +31,8 @@ type LiteratureCommandServices = Readonly<{
   >
   literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'resolve'>
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher<LiteratureItemView>, 'complete'>
+  literatureSupplementFinder: Pick<LiteratureSupplementFinder, 'run'>
+  literatureSupplementAttachments: Pick<LiteratureSupplementAttachments, 'run' | 'progress'>
   literatureFullTextFinder: Pick<LiteratureFullTextFinder<LiteratureItemView>, 'run'>
   artifactProvenanceRepository: {
     getVersionLiterature(
@@ -64,6 +68,8 @@ export const createLiteratureCommandOwner = ({
   literatureReferenceResolver,
   literatureMetadataEnricher,
   literatureFullTextFinder,
+  literatureSupplementFinder,
+  literatureSupplementAttachments,
   artifactProvenanceRepository,
   managedFileVersionService,
   literatureCitationDocument,
@@ -83,6 +89,10 @@ export const createLiteratureCommandOwner = ({
     return resolved.item
   },
   completeMetadata: (request) => literatureMetadataEnricher.complete(request),
+  supplementAttachmentProgress: (request) => literatureSupplementAttachments.progress(request),
+  supplementAttachment: (request, signal) =>
+    literatureSupplementAttachments.run(request, signal ?? new AbortController().signal),
+  supplements: (request, signal) => literatureSupplementFinder.run(request, signal),
   fullText: (request) => literatureFullTextFinder.run(request),
   formatDocument: async (request) => {
     const literature = await artifactProvenanceRepository.getVersionLiterature({

@@ -160,6 +160,8 @@ import {
 
 import {
   createPdfTranslationBinder,
+  applyPdfContentFirstPolicy,
+  rememberPdfTranslationExtraction,
   isCurrentTranslation,
   isPdfTranslationResultExtension,
   type PdfRendition,
@@ -392,14 +394,12 @@ const updatePdfSearchHighlights = (
   if (!scroll || !query) return
   const allRanges: Range[] = []
   let selectedRange: Range | undefined
-  for (const page of scroll.querySelectorAll<HTMLElement>('[data-page-number]')) {
-    const layer = Array.from(page.querySelectorAll<HTMLElement>('[data-pdf-text-layer]')).find(
-      (element) => Boolean(element.closest('[data-pdf-translated-page]')) === translated
-    )
-    if (!layer) continue
+  for (const layer of scroll.querySelectorAll<HTMLElement>('[data-pdf-text-layer]')) {
+    if (Boolean(layer.closest('[data-pdf-translated-page]')) !== translated) continue
+    const page = layer.closest<HTMLElement>('[data-pdf-page-number]')
     const pageRanges = textRangesForQuery(layer, query)
     allRanges.push(...pageRanges)
-    if (Number(page.dataset.pageNumber) === selected?.pageNumber) {
+    if (Number(page?.dataset.pdfPageNumber) === selected?.pageNumber) {
       selectedRange = pageRanges[selected.occurrence]
     }
   }
@@ -2452,6 +2452,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
           : { aspectRatio: outlineAspectRatio ?? displayedAspectRatio }
       }
       data-page-number={pageMarker ? pageNumber : undefined}
+      data-pdf-page-number={pageNumber}
       data-pdf-page-rotation={pageRotation}
       data-pdf-page-ready={status === 'ready'}
     >
@@ -2527,6 +2528,7 @@ export const PdfPreviewContent = ({
   presentation = 'reader',
   translationSource: suppliedTranslationSource,
   translation: suppliedTranslation,
+  translationLayout,
   translationExecutor,
   translationDocumentSource,
   translationArtifact,
@@ -2558,6 +2560,8 @@ export const PdfPreviewContent = ({
   presentation?: PreviewFileRendererProps['presentation']
   translationSource?: PdfTranslationSource
   translation?: PdfTranslationResults
+  /** Layout for embedded translations without saved translation settings. */
+  translationLayout?: 'reflow'
   translationArtifact?: PdfTranslationArtifact
   translationExecutor?: PdfTranslationExecutor
   translationDocumentSource?: PdfDocumentSource
@@ -2595,8 +2599,9 @@ export const PdfPreviewContent = ({
   const generation = usePreviewResourceGeneration(retainRecoveryViewport)
   const resourceRequestKey = `${requestKey}:${generation}`
   const pendingLinkRef = useRef<
-    { destination: PdfLinkDestination; translated: boolean } | undefined
+    { destination: PdfLinkDestination; translated: boolean; sourcePageNumber?: number } | undefined
   >(undefined)
+  const pendingAnnotationPageRef = useRef<number | undefined>(undefined)
   const [readingHistory, setReadingHistory] = useState<{
     key: string
     back: PdfReadingLocation[]
@@ -2606,6 +2611,7 @@ export const PdfPreviewContent = ({
     setReadingHistory({ key: resourceRequestKey, back: [], forward: [] })
   useLayoutEffect(() => {
     pendingLinkRef.current = undefined
+    pendingAnnotationPageRef.current = undefined
   }, [resourceRequestKey])
   const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -2617,6 +2623,7 @@ export const PdfPreviewContent = ({
   })
   const [panning, setPanning] = useState(false)
   const [rendition, setRendition] = useState<PdfRendition>('original')
+  const [draftContentFirst, setDraftContentFirst] = useState(false)
   const [translationSetupKey, setTranslationSetupKey] = useState<string>()
   const translationSetupOpen = translationSetupKey === resourceRequestKey
   const [translationOpen, setTranslationOpen] = useState(false)
@@ -2646,6 +2653,7 @@ export const PdfPreviewContent = ({
     document: PdfDocument
     status: ReturnType<typeof usePdfTranslationJob>['state']['status']
     language?: string
+    contentFirst?: boolean
   }>()
   const [readingMode, setReadingMode] = useState<'original' | 'figures' | 'notes'>('original')
   const [figuresVisited, setFiguresVisited] = useState(false)
@@ -2719,6 +2727,7 @@ export const PdfPreviewContent = ({
   if (zoomedKey !== requestKey) {
     setZoomedKey(requestKey)
     setRendition('original')
+    setDraftContentFirst(false)
     setTranslationOpen(false)
     setTranslationQuery('')
     setTranslationSearchOpen(false)
@@ -3028,17 +3037,33 @@ export const PdfPreviewContent = ({
   const recoveryCheckpoint = recoverySuppressed ? undefined : recovery.checkpoint
   const recoveryLoading = recovery.selecting || (!recoverySuppressed && recovery.loading)
   const recoveryError = recoverySuppressed ? false : recovery.error
+  const translationStructureContext = useMemo(
+    () =>
+      figuresSource && sourceIdentity
+        ? { source: figuresSource, identity: sourceIdentity }
+        : undefined,
+    [figuresSource, sourceIdentity]
+  )
   const preparation = usePdfTranslationPreparation(
     preparationAvailable ? document : null,
     resourceRequestKey,
     attachmentVersionId,
     sourceIdentity,
-    recoveryCheckpoint
+    recoveryCheckpoint,
+    translationStructureContext
   )
+  const preparedJobSource = useMemo(() => {
+    if (preparation.state.status !== 'ready') return undefined
+    const extraction = preparation.state.extraction
+    if (recoveryCheckpoint || !draftContentFirst) return extraction.source
+    const source = applyPdfContentFirstPolicy(extraction.source)
+    rememberPdfTranslationExtraction({ ...extraction, source })
+    return source
+  }, [preparation.state, recoveryCheckpoint, draftContentFirst])
   const jobSource =
     document && presentation !== 'search'
       ? preparation.state.status === 'ready'
-        ? preparation.state.extraction.source
+        ? preparedJobSource
         : suppliedTranslationSource?.resourceRequestKey === resourceRequestKey &&
             suppliedTranslationSource.fingerprint === document.fingerprints[0]
           ? suppliedTranslationSource
@@ -3174,6 +3199,8 @@ export const PdfPreviewContent = ({
     preparation.state.status !== 'cancelled'
   )
   const translationLanguage = translationJob.state.options?.language ?? recoveryCheckpoint?.language
+  const contentFirst =
+    translationJob.state.options?.contentFirst ?? recoveryCheckpoint?.contentFirst
   const savedTranslationLanguage = switchingEdition
     ? verifiedTranslation?.language
     : translationLanguage
@@ -3185,6 +3212,11 @@ export const PdfPreviewContent = ({
     : t(
         'PDF generation is unavailable for this language. Saved text translations remain available.'
       )
+  const outputLayout = (switchingEdition ? verifiedTranslation?.contentFirst : contentFirst)
+    ? 'reflow'
+    : !translationJob.state.options && !recoveryCheckpoint
+      ? translationLayout
+      : undefined
   const translatedDocument = usePdfTranslationDocument(
     document,
     // Keep the last verified snapshot readable while newly completed paragraphs are checked.
@@ -3193,7 +3225,10 @@ export const PdfPreviewContent = ({
       : undefined,
     translationArtifact,
     resourceRequestKey,
-    captureViewportAnchor
+    captureViewportAnchor,
+    outputLayout,
+    translationStatus === 'running',
+    translationStructureContext
   )
   const pairedDocument = translatedDocument.ready
   const preparingFirstTranslationPdf =
@@ -3236,12 +3271,59 @@ export const PdfPreviewContent = ({
     supportsTranslatedPdf &&
     translatedDocument.state.status === 'error' &&
     !translatedDocument.state.retryUnchanged &&
-    ['busy', 'timeout', 'worker-failed', 'validation-failed'].includes(
+    ['busy', 'timeout', 'worker-failed', 'validation-failed', 'source-mismatch'].includes(
       translatedDocument.state.failure.code
     )
   const effectiveRendition = currentTranslation && pairedDocument ? rendition : 'original'
+  const reflowPageNumbers = pairedDocument?.sourcePageNumbers
+  const reflowSourcePages = pairedDocument?.sourcePages
+  const reflowPageForSource = useCallback(
+    (pageNumber: number): number => {
+      const index = reflowSourcePages
+        ? reflowSourcePages.findIndex((pages) => pages.includes(pageNumber))
+        : (reflowPageNumbers?.indexOf(pageNumber) ?? -1)
+      return index < 0 ? pageNumber : index + 1
+    },
+    [reflowSourcePages, reflowPageNumbers]
+  )
+  const comparisonSourcePages = useMemo(() => {
+    const seen = new Set<number>()
+    return (reflowSourcePages ?? reflowPageNumbers?.map((number) => [number]) ?? []).map((pages) =>
+      pages.filter((number) => {
+        if (seen.has(number)) return false
+        seen.add(number)
+        return true
+      })
+    )
+  }, [reflowSourcePages, reflowPageNumbers])
+  const viewPageCount =
+    effectiveRendition !== 'original' && pairedDocument
+      ? pairedDocument.document.numPages
+      : pageCount
+  const viewPageForSource = useCallback(
+    (pageNumber: number): number => {
+      if (effectiveRendition === 'original' || !reflowPageNumbers) return pageNumber
+      return reflowPageForSource(pageNumber)
+    },
+    [effectiveRendition, reflowPageNumbers, reflowPageForSource]
+  )
+  const sourceCurrentPage =
+    effectiveRendition !== 'original'
+      ? (reflowPageNumbers?.[currentPage - 1] ?? currentPage)
+      : currentPage
+  const reflowUnits = useMemo(
+    () =>
+      currentTranslation?.units.map((unit) => ({
+        ...unit,
+        fragments: pairedDocument?.unitFragments?.[unit.id] ?? unit.fragments
+      })) ?? [],
+    [currentTranslation, pairedDocument]
+  )
   const selectedTranslationUnit = showTranslationSidebar
     ? currentTranslation?.units.find((unit) => unit.id === selectedTranslation)
+    : undefined
+  const selectedReflowUnit = selectedTranslationUnit
+    ? reflowUnits.find((unit) => unit.id === selectedTranslationUnit.id)
     : undefined
   const comparing = effectiveRendition === 'compare'
   const fittedWidth =
@@ -3270,7 +3352,8 @@ export const PdfPreviewContent = ({
                   value,
                   document,
                   status: translationStatus,
-                  language: translationLanguage
+                  language: translationLanguage,
+                  contentFirst
                 }
               : undefined
           )
@@ -3287,7 +3370,8 @@ export const PdfPreviewContent = ({
     presentation,
     bindTranslation,
     translationStatus,
-    translationLanguage
+    translationLanguage,
+    contentFirst
   ])
   const outlineItems =
     outlineState?.requestKey === requestKey ? outlineState.items : EMPTY_OUTLINE_ITEMS
@@ -3336,11 +3420,22 @@ export const PdfPreviewContent = ({
         query: searchQuery,
         match
       }
-      scrollToPage(match.pageNumber)
+      scrollToPage(searchTranslated ? match.pageNumber : viewPageForSource(match.pageNumber))
     },
-    [searchDocument, searchTranslated, resourceRequestKey, searchQuery, scrollToPage]
+    [
+      searchDocument,
+      searchTranslated,
+      resourceRequestKey,
+      searchQuery,
+      scrollToPage,
+      viewPageForSource
+    ]
   )
   const navigateToPage = (pageNumber: number, item?: PdfOutlineItem): void => {
+    if (item && reflowPageNumbers && effectiveRendition !== 'original') {
+      pageNumber = viewPageForSource(pageNumber)
+      item = { ...item, position: undefined }
+    }
     scrollToPage(pageNumber)
     const scroll = scrollRef.current
     const page = scroll?.querySelector<HTMLElement>(`[data-page-number="${pageNumber}"]`)
@@ -3365,7 +3460,7 @@ export const PdfPreviewContent = ({
     setSelectedOutline({ requestKey: resourceRequestKey, id: item.id })
   }
   const navigateToLink = useCallback(
-    (destination: PdfLinkDestination, translated: boolean): void => {
+    (destination: PdfLinkDestination, translated: boolean, sourcePageNumber?: number): void => {
       const anchor = readViewportAnchor(scrollRef.current)
       if (anchor)
         setReadingHistory((history) => ({
@@ -3374,16 +3469,20 @@ export const PdfPreviewContent = ({
           forward: []
         }))
       scrollToPage(destination.pageNumber)
-      pendingLinkRef.current = { destination, translated }
+      pendingLinkRef.current = { destination, translated, sourcePageNumber }
       scrollRef.current?.focus({ preventScroll: true })
     },
     [resourceRequestKey, zoom, rendition, scrollToPage]
   )
   const navigateOriginalLink = useCallback(
     (destination: PdfLinkDestination): void => {
-      navigateToLink(destination, false)
+      navigateToLink(
+        { ...destination, pageNumber: viewPageForSource(destination.pageNumber) },
+        false,
+        destination.pageNumber
+      )
     },
-    [navigateToLink]
+    [navigateToLink, viewPageForSource]
   )
   const navigateTranslatedLink = useCallback(
     (destination: PdfLinkDestination): void => {
@@ -3444,6 +3543,7 @@ export const PdfPreviewContent = ({
         )
           return
         setReadingMode('original')
+        setRendition('original')
         scrollToPage(targetPage)
       }),
     [document, pdfBookmarkSource, scrollToPage]
@@ -3453,6 +3553,7 @@ export const PdfPreviewContent = ({
       subscribePdfReadingReveal((target) => {
         if (target.projectId !== projectId || target.path !== path || !document) return false
         setReadingMode('original')
+        setRendition('original')
         scrollToPage(Math.min(document.numPages, Math.max(1, target.pageNumber)))
         return true
       }),
@@ -3575,7 +3676,7 @@ export const PdfPreviewContent = ({
       : row?.querySelector<HTMLElement>(
           pending.translated
             ? '[data-pdf-translated-page] [data-pdf-page-rotation]'
-            : '[data-pdf-page-rotation]'
+            : `[data-pdf-page-number="${pending.sourcePageNumber ?? pending.destination.pageNumber}"][data-pdf-page-rotation]`
         )
     if (!page || page.dataset.pdfPageReady !== 'true') return
     const bounds = page.getBoundingClientRect()
@@ -3656,7 +3757,11 @@ export const PdfPreviewContent = ({
         const bounds = topPage?.getBoundingClientRect()
         if (topPage && bounds && bounds.height > 0) {
           const next = {
-            pageNumber: Number(topPage.dataset.pageNumber),
+            pageNumber:
+              effectiveRendition !== 'original'
+                ? (reflowPageNumbers?.[Number(topPage.dataset.pageNumber) - 1] ??
+                  Number(topPage.dataset.pageNumber))
+                : Number(topPage.dataset.pageNumber),
             top: Math.max(0, (viewport.top + OUTLINE_TOP_INSET + 2 - bounds.top) / bounds.height)
           }
           setOutlinePosition((current) =>
@@ -3674,7 +3779,13 @@ export const PdfPreviewContent = ({
       }
       if (lastReportedPage === pageNumber) return
       lastReportedPage = pageNumber
-      onReadingPositionChange?.({ pageNumber, pageCount })
+      onReadingPositionChange?.({
+        pageNumber:
+          effectiveRendition !== 'original'
+            ? (reflowPageNumbers?.[pageNumber - 1] ?? pageNumber)
+            : pageNumber,
+        pageCount
+      })
     }
     const schedule = (): void => {
       updateTimer ??= setTimeout(updateReadingPosition, READING_POSITION_UPDATE_MS)
@@ -3690,7 +3801,22 @@ export const PdfPreviewContent = ({
       resizeObserver?.disconnect()
       if (updateTimer !== undefined) clearTimeout(updateTimer)
     }
-  }, [onReadingPositionChange, outlineItems.length, pageCount, pageWidth])
+  }, [
+    onReadingPositionChange,
+    outlineItems.length,
+    pageCount,
+    viewPageCount,
+    pageWidth,
+    effectiveRendition,
+    reflowPageNumbers
+  ])
+
+  useLayoutEffect(() => {
+    const pageNumber = pendingAnnotationPageRef.current
+    if (pageNumber === undefined || effectiveRendition !== 'original') return
+    pendingAnnotationPageRef.current = undefined
+    scrollToPage(pageNumber)
+  }, [effectiveRendition, scrollToPage])
 
   useEffect(() => {
     const item = annotationProps?.item
@@ -3704,15 +3830,15 @@ export const PdfPreviewContent = ({
       ) {
         return
       }
+      const pageNumber = annotation.selector.pageNumber
+      if (!document || pageNumber < 1 || pageNumber > document.numPages) return
       setReadingMode('original')
-      scroll
-        .querySelector<HTMLElement>(`[data-page-number="${annotation.selector.pageNumber}"]`)
-        ?.scrollIntoView({
-          block: 'center',
-          behavior: annotationRevealScrollBehavior()
-        })
+      setRendition('original')
+      // Source page identities become row identities again after the rendition commits.
+      pendingAnnotationPageRef.current = effectiveRendition === 'original' ? undefined : pageNumber
+      scrollToPage(pageNumber)
     })
-  }, [annotationProps?.item])
+  }, [annotationProps?.item, document, effectiveRendition, scrollToPage])
 
   const zoomBy = (delta: number): void => updateZoom((current) => clampZoom(current + delta))
   const changeCursorMode = useCallback((mode: PdfCursorMode): void => {
@@ -3755,6 +3881,11 @@ export const PdfPreviewContent = ({
     pendingLinkRef.current = undefined
     captureViewportAnchor()
     if (next !== 'original' && !pairedDocument) return
+    if (reflowPageNumbers && (next === 'original') !== (effectiveRendition === 'original')) {
+      const target = next === 'original' ? sourceCurrentPage : reflowPageForSource(currentPage)
+      if (target > 0 && viewportAnchorRef.current)
+        viewportAnchorRef.current = { ...viewportAnchorRef.current, pageNumber: target }
+    }
     setRendition(next)
     setFocusedTranslation(next === 'translated')
     if (next === 'translated') changeCursorMode('select')
@@ -3843,7 +3974,18 @@ export const PdfPreviewContent = ({
       setNotesOpen(false)
       setTranslationOpen(true)
       scheduleReaderAction(() => {
-        scrollToPage(unit.fragments[fragmentIndex].pageNumber)
+        const sourcePage = unit.fragments[fragmentIndex].pageNumber
+        const target = reflowUnits.find((value) => value.id === unit.id)
+        const outputPage =
+          effectiveRendition === 'translated' ||
+          (effectiveRendition === 'compare' && focusedTranslation)
+            ? target?.fragments[Math.min(fragmentIndex, target.fragments.length - 1)]?.pageNumber
+            : undefined
+        const mapped =
+          effectiveRendition !== 'original' && reflowPageNumbers
+            ? reflowPageForSource(sourcePage)
+            : sourcePage
+        scrollToPage(outputPage ?? (mapped > 0 ? mapped : sourcePage))
         const anchor = Array.from(
           scrollRef.current?.querySelectorAll<HTMLElement>('[data-translation-highlight]') ?? []
         ).find(
@@ -3868,7 +4010,10 @@ export const PdfPreviewContent = ({
       scrollToPage,
       translationQuery,
       effectiveRendition,
-      focusedTranslation
+      focusedTranslation,
+      reflowUnits,
+      reflowPageNumbers,
+      reflowPageForSource
     ]
   )
   const collapseTranslation = useCallback(() => setSelectedTranslation(undefined), [])
@@ -3914,6 +4059,7 @@ export const PdfPreviewContent = ({
 
   const translationControls = (
     <PdfTranslationControls
+      key={resourceRequestKey}
       executor={effectiveTranslationExecutor}
       state={translationJob.state}
       ready={Boolean(jobSource) && !recoveryLoading && !recoveryError && !switchingEdition}
@@ -3926,9 +4072,11 @@ export const PdfPreviewContent = ({
         })
       }
       onCancel={translationJob.cancel}
+      onContentFirstChange={setDraftContentFirst}
       onSkip={effectiveTranslationExecutor?.skip ? translationJob.skipUnit : undefined}
       onNewTranslation={(options) => {
         if (!document) return
+        setDraftContentFirst(options.contentFirst ?? false)
         setSuppressedRecoveryKey(resourceRequestKey)
         const requestedOptions = {
           ...options,
@@ -3957,8 +4105,12 @@ export const PdfPreviewContent = ({
   )
   const pdfRefreshControl =
     supportsTranslatedPdf &&
-    pairedDocument &&
-    (translatedDocument.updateAvailable || translatedDocument.state.status === 'loading') ? (
+    (outputLayout === 'reflow'
+      ? !switchingEdition &&
+        Boolean(currentTranslation?.units.length || translation?.failedUnitIds?.length) &&
+        (translatedDocument.state.status !== 'error' || canRetryPdfGeneration)
+      : pairedDocument &&
+        (translatedDocument.updateAvailable || translatedDocument.state.status === 'loading')) ? (
       <TooltipProvider delayDuration={100}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -3980,7 +4132,8 @@ export const PdfPreviewContent = ({
                     'animate-spin motion-reduce:animate-none'
                 )}
               />
-              {translatedDocument.state.status !== 'loading' ? (
+              {translatedDocument.updateAvailable &&
+              translatedDocument.state.status !== 'loading' ? (
                 <span
                   aria-hidden="true"
                   className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
@@ -3993,13 +4146,17 @@ export const PdfPreviewContent = ({
               ? translatedDocument.state.phase === 'validating'
                 ? t('Checking translated PDF…')
                 : t('Preparing translated PDF…')
-              : t('New translations are available. Update the PDF when you are ready.')}
+              : translatedDocument.updateAvailable
+                ? t('New translations are available. Update the PDF when you are ready.')
+                : t('Update PDF preview')}
           </TooltipContent>
         </Tooltip>
         <span role="status" className="sr-only">
           {translatedDocument.state.status === 'loading'
             ? t('Preparing translated PDF…')
-            : t('New translations are available. Update the PDF when you are ready.')}
+            : translatedDocument.updateAvailable
+              ? t('New translations are available. Update the PDF when you are ready.')
+              : t('Update PDF preview')}
         </span>
       </TooltipProvider>
     ) : null
@@ -4762,7 +4919,7 @@ export const PdfPreviewContent = ({
                   items={outlineItems}
                   pageCount={pageCount}
                   pageLabels={resolvedPageLabels}
-                  currentPage={currentPage}
+                  currentPage={sourceCurrentPage}
                   position={outlinePosition}
                   selectedId={
                     selectedOutline?.requestKey === resourceRequestKey
@@ -4780,7 +4937,9 @@ export const PdfPreviewContent = ({
                     setOutlineOpen(false)
                     if (floatingNavigation) focusPdfView()
                   }}
-                  onNavigate={navigateToPage}
+                  onNavigate={(page, item) =>
+                    navigateToPage(item ? page : viewPageForSource(page), item)
+                  }
                 />
               ) : null}
               <div
@@ -4886,7 +5045,7 @@ export const PdfPreviewContent = ({
                           : 'items-center'
                       )}
                     >
-                      {Array.from({ length: pageCount }, (_, index) => (
+                      {Array.from({ length: viewPageCount }, (_, index) => (
                         <div
                           key={index + 1}
                           data-page-number={index + 1}
@@ -4904,58 +5063,65 @@ export const PdfPreviewContent = ({
                               onFocusCapture={() => setFocusedTranslation(false)}
                               onPointerDownCapture={() => setFocusedTranslation(false)}
                             >
-                              <div className="relative">
-                                <PdfPageCanvas
-                                  onPageReady={handleTextLayerRendered}
-                                  onNavigate={navigateOriginalLink}
-                                  linksEnabled={cursorMode === 'select'}
-                                  nativeAnnotationRevision={nativeAnnotationRevision}
-                                  document={document}
-                                  outlineAspectRatio={outlineAspectRatios.get(index + 1)}
-                                  pageNumber={index + 1}
-                                  pageWidth={pageWidth}
-                                  geometry={pairedDocument?.pages[index]}
-                                  pageMarker={false}
-                                  registerDisposer={registerPageDisposer}
-                                  annotationProps={annotationProps}
-                                  pdfEvidenceSource={pdfEvidenceSource}
-                                  pdfBookmarkSource={pdfBookmarkSource}
-                                  pdfRevealSource={pdfRevealSource}
-                                  selectedEvidenceId={effectiveSelectedEvidenceId}
-                                  selectedBookmarkId={selectedBookmarkId}
-                                  onSelectEvidence={selectEvidence}
-                                  onSelectBookmark={selectBookmark}
-                                  onTextLayerRendered={handleTextLayerRendered}
-                                  quickTextMark={
-                                    cursorMode === 'text-annotation' ? textMarkStyle : undefined
-                                  }
-                                  regionSelectionIntent={
-                                    proseSelection
-                                      ? 'prose'
-                                      : cursorMode === 'area'
-                                        ? 'agent'
-                                        : cursorMode === 'area-annotation'
-                                          ? 'annotation'
-                                          : undefined
-                                  }
-                                  pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
-                                  proseRegions={pdfProseRegions}
-                                  onProseRegionsChange={onPdfProseRegionsChange}
-                                  onRegionSelected={finishRegionSelection}
-                                />
-                                {currentTranslation && comparing && showParagraphMarkers ? (
-                                  <PdfTranslationMarkers
-                                    units={currentTranslation.units}
-                                    pageNumber={index + 1}
-                                    selectedId={selectedTranslation}
-                                    onSelect={selectTranslation}
+                              {(!comparing || !reflowPageNumbers
+                                ? [index + 1]
+                                : (comparisonSourcePages[index] ?? [])
+                              ).map((sourcePage) => (
+                                <div key={sourcePage} className="relative mb-3 last:mb-0">
+                                  <PdfPageCanvas
+                                    onPageReady={handleTextLayerRendered}
+                                    onNavigate={navigateOriginalLink}
+                                    linksEnabled={cursorMode === 'select'}
+                                    nativeAnnotationRevision={nativeAnnotationRevision}
+                                    document={document}
+                                    outlineAspectRatio={outlineAspectRatios.get(sourcePage)}
+                                    pageNumber={sourcePage}
+                                    pageWidth={pageWidth}
+                                    geometry={
+                                      reflowPageNumbers ? undefined : pairedDocument?.pages[index]
+                                    }
+                                    pageMarker={false}
+                                    registerDisposer={registerPageDisposer}
+                                    annotationProps={annotationProps}
+                                    pdfEvidenceSource={pdfEvidenceSource}
+                                    pdfBookmarkSource={pdfBookmarkSource}
+                                    pdfRevealSource={pdfRevealSource}
+                                    selectedEvidenceId={effectiveSelectedEvidenceId}
+                                    selectedBookmarkId={selectedBookmarkId}
+                                    onSelectEvidence={selectEvidence}
+                                    onSelectBookmark={selectBookmark}
+                                    onTextLayerRendered={handleTextLayerRendered}
+                                    quickTextMark={
+                                      cursorMode === 'text-annotation' ? textMarkStyle : undefined
+                                    }
+                                    regionSelectionIntent={
+                                      proseSelection
+                                        ? 'prose'
+                                        : cursorMode === 'area'
+                                          ? 'agent'
+                                          : cursorMode === 'area-annotation'
+                                            ? 'annotation'
+                                            : undefined
+                                    }
+                                    pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
+                                    proseRegions={pdfProseRegions}
+                                    onProseRegionsChange={onPdfProseRegionsChange}
+                                    onRegionSelected={finishRegionSelection}
                                   />
-                                ) : null}
-                                <PdfTranslationHighlight
-                                  unit={selectedTranslationUnit}
-                                  pageNumber={index + 1}
-                                />
-                              </div>
+                                  {currentTranslation && comparing && showParagraphMarkers ? (
+                                    <PdfTranslationMarkers
+                                      units={currentTranslation.units}
+                                      pageNumber={sourcePage}
+                                      selectedId={selectedTranslation}
+                                      onSelect={selectTranslation}
+                                    />
+                                  ) : null}
+                                  <PdfTranslationHighlight
+                                    unit={selectedTranslationUnit}
+                                    pageNumber={sourcePage}
+                                  />
+                                </div>
+                              ))}
                             </div>
                           ) : null}
                           {effectiveRendition === 'translated' || (comparing && pairedDocument) ? (
@@ -4985,14 +5151,19 @@ export const PdfPreviewContent = ({
                                     onSelectEvidence={ignoreTranslatedEvidence}
                                     onRegionSelected={ignoreTranslatedEvidence}
                                   />
+                                  {pairedDocument.originalPageNumbers?.includes(index + 1) ? (
+                                    <span className="pointer-events-none absolute right-2 top-2 rounded bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm">
+                                      {t('Original')}
+                                    </span>
+                                  ) : null}
                                   <PdfTranslationHighlight
-                                    unit={selectedTranslationUnit}
+                                    unit={selectedReflowUnit ?? selectedTranslationUnit}
                                     pageNumber={index + 1}
                                   />
                                   {showTranslationSidebar && translationReviewOpen ? (
                                     <PdfTranslationMarkers
                                       firstFragmentPerPage
-                                      units={currentTranslation?.units ?? []}
+                                      units={reflowUnits}
                                       visibleUnitIds={pairedDocument.retainedUnitIds}
                                       pageNumber={index + 1}
                                       selectedId={selectedTranslation}
@@ -5094,7 +5265,7 @@ export const PdfPreviewContent = ({
                       onGoForward={() => travelReadingHistory('forward')}
                       zoom={zoom}
                       currentPage={currentPage}
-                      pageCount={pageCount}
+                      pageCount={viewPageCount}
                       onNavigate={navigateToPage}
                       onZoomIn={() => zoomBy(ZOOM_BUTTON_STEP)}
                       onZoomOut={() => zoomBy(-ZOOM_BUTTON_STEP)}
@@ -5128,7 +5299,7 @@ export const PdfPreviewContent = ({
                   onBusyChange={setFiguresBusy}
                   onNavigate={(page) => {
                     setReadingMode('original')
-                    requestAnimationFrame(() => navigateToPage(page))
+                    requestAnimationFrame(() => navigateToPage(viewPageForSource(page)))
                   }}
                 />
               </div>
@@ -5267,7 +5438,7 @@ export const PdfPreviewContent = ({
                         onCancel={preparation.cancel}
                         compact={restoringTranslation}
                         onNavigate={(page) => {
-                          navigateToPage(page)
+                          navigateToPage(viewPageForSource(page))
                           scrollRef.current?.focus({ preventScroll: true })
                         }}
                       />
@@ -5422,7 +5593,11 @@ export const PdfPreviewContent = ({
                     }
                     layoutFailures={translatedDocument.layoutFailures}
                     unchangedLayoutUnitIds={translatedDocument.unchangedLayoutUnitIds}
-                    onRetryLayout={supportsTranslatedPdf ? refreshTranslationPdf : undefined}
+                    onRetryLayout={
+                      supportsTranslatedPdf && outputLayout !== 'reflow'
+                        ? refreshTranslationPdf
+                        : undefined
+                    }
                     layoutBusy={translatedDocument.state.status === 'loading' || switchingEdition}
                     layoutPending={
                       preparingFirstTranslationPdf ||

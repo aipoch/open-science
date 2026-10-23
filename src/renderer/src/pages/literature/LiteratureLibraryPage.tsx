@@ -179,7 +179,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     FilePreviewDialog: LiteratureFilePreviewDialog
   } = useLiteratureHost()
 
-  const { api: hostApi } = useLiteratureHost()
+  const { api: hostApi, getPreviewFormatForFile } = useLiteratureHost()
 
   const journalDatasets = useJournalDatasets()
   const displayedJournalDatasets = useDisplayedJournalDatasets()
@@ -1357,7 +1357,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       source: 'literature',
       managedFileId: attachment.id,
       path: createLiteratureAttachmentVersionReference(version.id),
-      format: 'pdf',
+      format: getPreviewFormatForFile({ name: version.filename, mimeType: version.contentType }),
       name: version.filename,
       mimeType: version.contentType,
       size: version.sizeBytes,
