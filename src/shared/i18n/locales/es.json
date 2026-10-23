@@ -7889,6 +7889,8 @@
     "Fetch DepMap PRISM drug response AUC values for a compound.": "Obtener los valores AUC de respuesta a fármacos de DepMap PRISM para un compuesto.",
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "Obtener la expresión de ARN de DepMap/CCLE para un gen en log2(TPM+1).",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "Obtener el número de copias génicas de DepMap/CCLE relativo a la ploidía del modelo celular.",
-    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Estudios del cáncer y datos ómicos, dependencias y respuestas a fármacos de modelos celulares de cBioPortal y DepMap/CCLE."
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Estudios del cáncer y datos ómicos, dependencias y respuestas a fármacos de modelos celulares de cBioPortal y DepMap/CCLE.",
+    "Service needs restarting": "Es necesario reiniciar el servicio",
+    "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "El servicio en ejecución es incompatible con esta aplicación. Finalice el trabajo activo en otras ventanas de Open-Science y reinicie el servicio para continuar."
   }
 }

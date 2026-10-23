@@ -1,6 +1,7 @@
 // Startup recovery is available before a compatible backend connection exists.
 export type RuntimeStartupIssue = {
-  reason: 'version-mismatch' | 'legacy-service' | 'startup-recovery-required'
+  reason:
+    'version-mismatch' | 'legacy-service' | 'startup-recovery-required' | 'runtime-incompatible'
   desktopVersion: string
   runtimeVersion?: string
   pid?: number

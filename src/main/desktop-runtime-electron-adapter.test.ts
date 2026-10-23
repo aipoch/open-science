@@ -26,17 +26,18 @@ beforeEach(() => {
 })
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function setup() {
+function setup(channels?: readonly string[]) {
   const client = {
     notificationAction: vi.fn(),
     notificationView: vi.fn(),
-    commandNames: () => [
-      'projects:list',
-      'sessions:save-session',
-      'notebook-env:cancel',
-      'office-preview:report-state',
-      'internal:never-renderer'
-    ],
+    commandNames: () =>
+      channels ?? [
+        'projects:list',
+        'sessions:save-session',
+        'notebook-env:cancel',
+        'office-preview:report-state',
+        'internal:never-renderer'
+      ],
     invoke: vi.fn(async (_id: string, _channel: string, args: readonly unknown[]) => args),
     release: vi.fn(),
     close: vi.fn(),
@@ -53,6 +54,49 @@ function setup() {
 }
 
 describe('Electron adapter for the Node runtime', () => {
+  it('forwards supported recovery deletion and keeps native lifecycle methods outside the fallback surface', async () => {
+    const value = setup(['sessions:delete-recovery-file'])
+    const request = { projectId: 'project', fileName: 'session.json' }
+    try {
+      await expect(
+        handlers.get('sessions:delete-recovery-file')!(value.event, request)
+      ).resolves.toEqual({ ok: true, result: [request] })
+      expect(value.client.invoke).toHaveBeenCalledExactlyOnceWith(
+        expect.any(String),
+        'sessions:delete-recovery-file',
+        [request]
+      )
+      for (const channel of [
+        'update:apply',
+        'cli:install',
+        'runtime-startup:stop-and-continue',
+        'settings:list-app-icons',
+        'internal:never-renderer'
+      ])
+        expect(handlers.has(channel)).toBe(false)
+    } finally {
+      value.installed.uninstall()
+    }
+  })
+
+  it('returns deliberate unavailability when a runtime does not advertise recovery deletion', async () => {
+    // The live development runtime still advertises projects:list, but not recovery deletion.
+    const value = setup()
+    const channel = 'sessions:delete-recovery-file'
+    try {
+      expect(handlers.get(channel)).toBeTypeOf('function')
+      await expect(
+        handlers.get(channel)!(value.event, { projectId: 'project', fileName: 'session.json' })
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'command-unavailable' }
+      })
+      expect(value.client.invoke).not.toHaveBeenCalled()
+    } finally {
+      value.installed.uninstall()
+    }
+  })
+
   it('preserves preload envelopes and optional arguments without exposing private control commands', async () => {
     const value = setup()
     expect(handlers.has('internal:never-renderer')).toBe(false)

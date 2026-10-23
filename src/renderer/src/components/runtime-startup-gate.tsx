@@ -99,6 +99,7 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
   const busy = pending || state.phase === 'stopping' || state.phase === 'recovering'
   const legacyService = issue.reason === 'legacy-service'
   const recovery = issue.reason === 'startup-recovery-required'
+  const incompatible = issue.reason === 'runtime-incompatible'
   const perform = async (action: () => Promise<RuntimeStartupState>): Promise<void> => {
     if (busy) return
     const observed = revision.current
@@ -157,7 +158,9 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
                 ? t('An older version is still running')
                 : recovery
                   ? t("Open-Science couldn't start")
-                  : t('Service version mismatch')
+                  : incompatible
+                    ? t('Service needs restarting')
+                    : t('Service version mismatch')
   const description =
     busy && stalled
       ? t('Open-Science is still working on it. You can wait, try again, or save a report.')
@@ -179,9 +182,13 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
                   ? t(
                       'The previous session has not passed safety checks. Check again before opening the app. Interrupted tasks will not restart automatically.'
                     )
-                  : t(
-                      'The running version differs from this app. Finish any work in other Open-Science windows, then stop the service to continue.'
-                    )
+                  : incompatible
+                    ? t(
+                        'The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.'
+                      )
+                    : t(
+                        'The running version differs from this app. Finish any work in other Open-Science windows, then stop the service to continue.'
+                      )
   const fallback = busy && stalled
   const actionable = !busy || fallback
   const stopNow = legacyService && issue.canStop

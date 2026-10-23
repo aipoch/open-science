@@ -7,6 +7,8 @@ import { join } from 'node:path'
 import { loadOrCreateWebToken } from './web-service/auth'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import type { DesktopEndpoint } from './desktop-connection'
+import { runningBackendBuildId } from './backend-build-identity'
+import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../shared/renderer-contract-catalog'
 
 export const RUNTIME_OWNER_FILE = 'runtime-owner.json'
 export type RuntimeOwnerRecord = Readonly<{
@@ -33,6 +35,7 @@ export async function startRuntimeControl(
     : undefined
   const token = Buffer.from(await loadOrCreateWebToken(configRoot))
   const generation = randomUUID()
+  const backendBuildId = runningBackendBuildId()
   const path = join(configRoot, RUNTIME_OWNER_FILE)
   const server = createServer((request, response) => {
     const supplied = Buffer.from(request.headers.authorization?.replace(/^Bearer /, '') ?? '')
@@ -53,6 +56,8 @@ export async function startRuntimeControl(
         JSON.stringify({
           generation,
           pid: process.pid,
+          ...(backendBuildId ? { backendBuildId } : {}),
+          ...(desktop ? { desktopCommands: ELECTRON_APPLICATION_COMMAND_CHANNELS } : {}),
           ...(isStopping?.() ? { stopping: true } : {}),
           ...(verifiedOptions && desktop
             ? {

@@ -7559,6 +7559,8 @@
     "Fetch DepMap PRISM drug response AUC values for a compound.": "지정한 화합물의 DepMap PRISM 약물 반응 AUC 값을 가져옵니다.",
     "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "지정한 유전자의 DepMap/CCLE RNA 발현량을 log2(TPM+1) 단위로 가져옵니다.",
     "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "세포 모델의 배수성 대비 DepMap/CCLE 유전자 복제수를 가져옵니다.",
-    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터."
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터.",
+    "Service needs restarting": "서비스를 다시 시작해야 합니다",
+    "The running service is incompatible with this app. Finish active work in other Open-Science windows, then restart the service to continue.": "실행 중인 서비스가 이 앱과 호환되지 않습니다. 다른 Open-Science 창에서 진행 중인 작업을 완료한 후 서비스를 다시 시작하여 계속하세요."
   }
 }

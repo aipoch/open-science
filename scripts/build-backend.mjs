@@ -4,7 +4,7 @@ import { assertBackendImports, desktopBundledDependencies } from './backend-depe
 import { context } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { resolve, join } from 'node:path'
+import { resolve, join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
@@ -125,6 +125,56 @@ export async function createBackendBuilder({
       await writeFile(join(out, 'native-locales', file), JSON.stringify({ common, native }))
     }
     await writeFile(join(out, 'dependencies.json'), JSON.stringify(metadata, null, 2))
+    if (development) {
+      // Include rebuilt external first-party packages, workers and dependency versions. Git HEAD
+      // cannot distinguish dirty builds, and hashing only index.cjs misses external package edits.
+      const hash = createHash('sha256')
+      const include = async (path) => {
+        hash.update(relative(root, path).replaceAll('\\', '/')).update('\0')
+        hash.update(await readFile(path)).update('\0')
+      }
+      const includeTree = async (directory) => {
+        let entries
+        try {
+          entries = await readdir(directory, { withFileTypes: true })
+        } catch (error) {
+          if (error.code === 'ENOENT') return
+          throw error
+        }
+        for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
+          const path = join(directory, entry.name)
+          if (entry.isDirectory()) await includeTree(path)
+          else if (entry.isFile() && /\.(?:[cm]?js|json|node|wasm)$/.test(entry.name))
+            await include(path)
+        }
+      }
+      await include(join(out, 'index.cjs'))
+      for (const name of [...workers.values()].sort()) await include(join(out, name))
+      const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+      for (const spec of Object.values(manifest.dependencies ?? {})
+        .filter((spec) => spec.startsWith('file:'))
+        .sort()) {
+        const packageRoot = resolve(root, spec.slice(5))
+        await include(join(packageRoot, 'package.json'))
+        await includeTree(join(packageRoot, 'dist'))
+      }
+      try {
+        await include(join(root, 'package-lock.json'))
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+      await includeTree(join(out, 'native-locales'))
+      const buildId = hash.digest('hex')
+      const entry = join(out, 'index.cjs')
+      await writeFile(
+        entry,
+        `// open-science-backend-build:${buildId}\nObject.defineProperty(globalThis, Symbol.for('open-science.backend-build-id'), { value: '${buildId}' });\n${await readFile(entry, 'utf8')}`
+      )
+      const mapPath = `${entry}.map`
+      const map = JSON.parse(await readFile(mapPath, 'utf8'))
+      map.mappings = `;;${map.mappings}`
+      await writeFile(mapPath, JSON.stringify(map))
+    }
     return workers.size
   }
   return {

@@ -82,6 +82,7 @@ import { readCredentialCiphertexts } from './credential-identity/ciphertext-inve
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
 import { startOrAttachDesktopBackend, desktopBackendPaths } from './desktop-runtime-launcher'
+import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../shared/renderer-contract-catalog'
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
@@ -931,6 +932,7 @@ async function startDesktop(): Promise<void> {
       version: app.getVersion(),
       ...initialBackendPaths,
       packaged: app.isPackaged,
+      requiredCommands: ELECTRON_APPLICATION_COMMAND_CHANNELS,
       credentialInventory: startupCredentialCiphertexts,
       credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
       args: [
@@ -1557,6 +1559,7 @@ async function startDesktop(): Promise<void> {
         version: app.getVersion(),
         ...backendPaths,
         packaged: app.isPackaged,
+        requiredCommands: ELECTRON_APPLICATION_COMMAND_CHANNELS,
         args: [
           `--credential-store=${config.credentialStore}`,
           ...(config.passwordStore ? [`--password-store=${config.passwordStore}`] : []),
