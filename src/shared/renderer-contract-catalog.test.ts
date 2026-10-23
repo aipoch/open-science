@@ -258,7 +258,13 @@ describe('renderer contract catalog', () => {
           surfaceInstallation.localWeb === 'web-rpc' &&
           parameterCodec.electron !== parameterCodec.web
       )
-    ).toEqual(['acp.connect', 'acp.createSession', 'notebookEnv.cancel', 'sessions.saveSession'])
+    ).toEqual([
+      'acp.connect',
+      'acp.createSession',
+      'notebookEnv.cancel',
+      'sessions.importPackage',
+      'sessions.saveSession'
+    ])
 
     const explicitEquivalentTransforms = paths(
       ({ parameterCodec }) =>
