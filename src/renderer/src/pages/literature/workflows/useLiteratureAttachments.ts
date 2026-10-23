@@ -6,7 +6,7 @@ import { stageUploadFile as stageComposerFile } from '@/lib/upload-transfer'
 import { pdfImportErrorMessage } from '../imports/useLiteratureImport'
 import { useLiteraturePdfStaging } from '../imports/useLiteraturePdfStaging'
 
-/** Own existing-reference PDF admission and transfer errors; share the page staging lifecycle. */
+/** Own existing-reference file admission and transfer errors; share the page staging lifecycle. */
 export function useLiteratureAttachments({
   detailController,
   pdfStaging,
@@ -33,15 +33,6 @@ export function useLiteratureAttachments({
   const addPdfs = async (files: File[]): Promise<void> => {
     const { item: current, generation, open } = detailController.getSnapshot()
     if (!open || !current || addingPdfRef.current || files.length === 0) return
-    const unsupported = files.filter((file) => !file.name.toLowerCase().endsWith('.pdf'))
-    if (unsupported.length) {
-      setPdfError(
-        t('Only PDF files can be attached. No files were added. Unsupported files: {{names}}', {
-          names: unsupported.map((file) => file.name).join(', ')
-        })
-      )
-      return
-    }
     addingPdfRef.current = true
     setIsAddingPdf(true)
     setPdfError(undefined)
@@ -83,7 +74,7 @@ export function useLiteratureAttachments({
         } catch (error) {
           cancelled = pdfStaging.wasCancelled()
           failures.push(
-            `${file.name}: ${cancelled ? t('PDF upload cancelled. The reference was kept.') : pdfImportErrorMessage(error, t)}`
+            `${file.name}: ${cancelled ? t('Upload cancelled. The reference was kept.') : file.name.toLowerCase().endsWith('.pdf') ? pdfImportErrorMessage(error, t) : t('The attachment operation failed. Try again.')}`
           )
         } finally {
           cancelled ||= pdfStaging.wasCancelled()

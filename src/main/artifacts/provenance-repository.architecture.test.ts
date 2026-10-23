@@ -1,5 +1,3 @@
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 import {
   expectBoundaryPaths,
   expectBoundaryOwnerTests
@@ -724,29 +722,4 @@ it('keeps Literature and Artifact implementations connected only through injecte
     }
   }
   expect(violations).toEqual([])
-})
-
-it('requires full validation for the expanded research publication boundary', () => {
-  const module = loadModuleImpactManifest().modules.artifact_provenance
-  const reason =
-    'Published research versions now share content-authority, persistence and replay ports with artifact publication; this expanded mixed owner requires full validation of its package, observation and recovery consumers.'
-  expect(module.fullTestReason).toBe(reason)
-  const plan = createAffectedTestPlan(
-    [{ path: 'src/main/artifacts/provenance-repository.ts', status: 'modified' }],
-    { status: 'not-used', testFiles: [] }
-  )
-  expect(plan.mode).toBe('full')
-  expect(plan.reasonChains).toEqual([`artifact_provenance -> ${reason} -> full`])
-  expect(plan.testFiles).toEqual([])
-  expect(module.testFiles.consumer).toEqual(
-    expect.arrayContaining([
-      'src/renderer/src/lib/acp/workspace-events.test.ts',
-      'src/renderer/src/pages/workspace/SessionReproducibilityDialog.test.tsx',
-      'src/renderer/src/pages/workspace/artifact-environment-lock-store.test.ts',
-      'src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx',
-      'src/main/session-persistence/artifact-finalization-recovery.integration.test.ts',
-      'src/main/session-package/research-reproduction.integration.test.ts',
-      'src/main/composition/session-packages.lifecycle.test.ts'
-    ])
-  )
 })

@@ -320,8 +320,12 @@ describe('application command composition', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:related',
       'literature:search',
       'literature:sources',
+      'literature:supplement-attachment',
+      'literature:supplement-attachment-progress',
+      'literature:supplements',
       'literature:transact',
       'memory:clear-all',
       'memory:create-category',
@@ -363,6 +367,7 @@ describe('application command composition', () => {
       'session-replay:set-research-membership',
       'session-replay:unlink-session',
       'sessions:cancel-diagnostics',
+      'sessions:delete-recovery-file',
       'sessions:delete-session',
       'sessions:edit-details',
       'sessions:export-diagnostics',
@@ -904,6 +909,97 @@ it('validates bounded reference exports through the shared Web command boundary'
   expect(exportRecord).toHaveBeenCalledWith({ itemId: 'reference' })
   await composition.dispose()
 })
+
+it.each(['electron', 'localWeb', 'remoteWeb'] as const)(
+  'validates supplement queries through %s',
+  async (surface) => {
+    const result = {
+      itemId: 'paper',
+      metadataRevision: 1,
+      provider: 'datacite',
+      state: 'complete',
+      records: [],
+      issues: []
+    }
+    const supplements = vi.fn(async () => result)
+    const composition = createApplicationCommandComposition({
+      ...dependencies(),
+      literature: { supplements } as never
+    })
+    const call = {
+      ...invocation(surface === 'remoteWeb' ? 'remote' : 'local'),
+      args: [{ itemId: 'paper', expectedMetadataRevision: 1, provider: 'datacite' }]
+    }
+    try {
+      await expect(composition[surface].invoke('literature:supplements', call)).resolves.toEqual(
+        result
+      )
+      expect(supplements).toHaveBeenCalledWith(call.args[0], expect.any(AbortSignal))
+      await expect(
+        composition[surface].invoke('literature:supplements', {
+          ...call,
+          args: [{ ...call.args[0], url: 'http://127.0.0.1' }]
+        })
+      ).rejects.toThrow()
+      expect(supplements).toHaveBeenCalledTimes(1)
+    } finally {
+      await composition.dispose()
+    }
+  }
+)
+
+it.each(['electron', 'localWeb', 'remoteWeb'] as const)(
+  'validates supplement attachment requests through %s',
+  async (surface) => {
+    const result = {
+      attachmentId: 'attachment',
+      versionId: 'version'
+    }
+    const supplementAttachment = vi.fn(async () => result)
+    const metrics = { phase: 'downloading', receivedBytes: 512, bytesPerSecond: 128 }
+    const supplementAttachmentProgress = vi.fn(() => metrics)
+    const composition = createApplicationCommandComposition({
+      ...dependencies(),
+      literature: { supplementAttachment, supplementAttachmentProgress } as never
+    })
+    const call = {
+      ...invocation(surface === 'remoteWeb' ? 'remote' : 'local'),
+      args: [
+        {
+          itemId: 'paper',
+          expectedMetadataRevision: 1,
+          downloadId: 'd1b720c7-1000-4000-8000-000000000001'
+        }
+      ]
+    }
+    try {
+      await expect(
+        composition[surface].invoke('literature:supplement-attachment', call)
+      ).resolves.toEqual(result)
+      expect(supplementAttachment).toHaveBeenCalledWith(call.args[0], expect.any(AbortSignal))
+      await expect(
+        composition[surface].invoke('literature:supplement-attachment', {
+          ...call,
+          args: [{ ...call.args[0], url: 'http://127.0.0.1' }]
+        })
+      ).rejects.toThrow()
+      expect(supplementAttachment).toHaveBeenCalledTimes(1)
+      await expect(
+        composition[surface].invoke('literature:supplement-attachment-progress', call)
+      ).resolves.toEqual(metrics)
+      expect(supplementAttachmentProgress).toHaveBeenCalledWith(call.args[0])
+      await expect(
+        composition[surface].invoke('literature:supplement-attachment-progress', {
+          ...call,
+          args: [{ ...call.args[0], url: 'http://127.0.0.1' }]
+        })
+      ).rejects.toThrow()
+      expect(supplementAttachmentProgress).toHaveBeenCalledTimes(1)
+    } finally {
+      await composition.dispose()
+    }
+  }
+)
 
 describe('TB-01 remote preview admission', () => {
   it.each([

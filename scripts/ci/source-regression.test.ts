@@ -161,10 +161,7 @@ it('checks the reported Windows failures in the blocking PR core job', () => {
 })
 
 describe('trusted supplemental selection', () => {
-  it.each([
-    'packages/connector-builtins/src/genes-ontology.ts',
-    'src/main/locale/main-process-messages.ts'
-  ])(
+  it.each(['src/main/locale/main-process-messages.ts'])(
     'keeps portable and core journey coverage without unrelated supplemental groups: %s',
     (path) => {
       const plan = resolveBoundedPlan([path])
@@ -219,29 +216,22 @@ describe('trusted supplemental selection', () => {
     expect(macosGroupsForPlan(plan)).toEqual(expect.arrayContaining(['regressions', 'delegation']))
   })
 
-  it('omits idle presentation jobs but retains runtime and delegation coverage for mixed ontology/Notebook changes', () => {
+  it('retains full validation for the expanded connector boundary mixed with Notebook changes', () => {
     const changes = changesFor([
       'packages/connector-builtins/src/genes-ontology.ts',
       'packages/connector-builtins/src/genes-ontology.test.ts',
       'src/main/notebook/host-mcp.integration.test.ts'
     ])
-    const manifest = supplementalModel()
-    const modules = createAffectedTestPlan(changes, graph, manifest)
-    const plan = resolveAuthoritativePlan(
-      classifyChanges(changes, undefined, { moduleManifest: manifest }),
-      modules
+    const modules = createAffectedTestPlan(changes, graph)
+    const plan = resolveAuthoritativePlan(classifyChanges(changes), modules)
+    expect(modules.mode).toBe('full')
+    expect(modules.reasonChains).toEqual([
+      expect.stringContaining('Optional research providers expand the reviewed source boundary')
+    ])
+    expect(plan.mode).toBe('full')
+    expect(toGitHubOutputPlan(plan).macosGroups).toEqual(
+      expect.arrayContaining(['journeys', 'presentation', 'regressions', 'delegation'])
     )
-    expect(plan.mode).toBe('selective')
-    expect(modules.modules).toEqual(['connector_builtins', 'notebook_application'])
-    expect(modules.testFiles).toEqual(
-      expect.arrayContaining([
-        'src/main/connectors/registry.test.ts',
-        'src/main/connectors/service.test.ts',
-        'src/main/connectors/skill-doc.test.ts',
-        'src/main/notebook/local-rpc-server.mcpcall.test.ts'
-      ])
-    )
-    expect(toGitHubOutputPlan(plan).macosGroups).toEqual(['journeys', 'regressions', 'delegation'])
   })
 
   it('runs the whole browser lane without forcing unrelated Vitest or Electron groups', () => {
@@ -254,11 +244,11 @@ describe('trusted supplemental selection', () => {
     expect(plan.lanes).not.toContain('e2e_workspace_windows')
     expect(toGitHubOutputPlan(plan).macosGroups).toEqual(['presentation'])
     expect(plan.lanes).toContain('e2e_visual_macos')
-    const mixed = resolveBoundedPlan([
+    const mixed = resolvePlan([
       'e2e/browser/settings-undo.spec.ts',
       'packages/connector-builtins/src/genes-ontology.ts'
     ])
-    expect(mixed.mode).toBe('selective')
+    expect(mixed.mode).toBe('full')
     expect(mixed.lanes).toContain('e2e_visual_macos')
     expect(mixed.bundles).toContain('unit')
     const native = resolveBoundedPlan([

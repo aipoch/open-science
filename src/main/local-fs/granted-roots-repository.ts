@@ -1,9 +1,9 @@
+import { createHash } from 'node:crypto'
+import type { AuthorizedDirectoriesSnapshot } from './authorized-directories'
 import type { GrantedLocalRoot as PrismaGrantedLocalRoot, PrismaClient } from '@prisma/client'
 
 import type { GrantedLocalRoot, GrantedLocalRootAccess } from '../../shared/local-fs'
 
-// Only the grantedLocalRoot delegate is needed; typing to this subset keeps the repository
-// testable against any client that provides it (aligns with the compute and projects repositories).
 type GrantedLocalRootClient = Pick<PrismaClient, 'grantedLocalRoot'>
 
 // Resolves the Prisma client on demand so a failed schema-ensure initialization is not held
@@ -84,6 +84,36 @@ class GrantedLocalRootsRepository {
     const rows = await client.grantedLocalRoot.findMany({ orderBy: { createdAt: 'asc' } })
 
     return rows.map(toRoot)
+  }
+
+  // One table snapshot supplies both the revision and creation times; never inspect granted paths.
+  async authorizedSnapshot(): Promise<AuthorizedDirectoriesSnapshot> {
+    await this.migrateLegacy()
+    const client = await this.getClient()
+    const rows = await client.grantedLocalRoot.findMany({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+    })
+    return {
+      revision: createHash('sha256')
+        .update(
+          JSON.stringify(
+            rows.map(({ id, path, name, access, createdAt }) => ({
+              id,
+              path,
+              name,
+              access,
+              createdAt
+            }))
+          )
+        )
+        .digest('hex'),
+      directories: rows.map((row) => ({
+        path: row.path,
+        name: row.name,
+        access: asAccess(row.access),
+        grantedAt: row.createdAt.toISOString()
+      }))
+    }
   }
 
   // Inserts a new grant, or updates the access of the existing row with the same resolved path

@@ -1626,53 +1626,62 @@ describe('application-owned local translation', () => {
     return { ...h, owner, target, localRunner }
   }
 
-  it('routes local paragraphs without capturing an Agent, API credentials or batch requests', async () => {
-    const h = localSetup()
-    const begin = await h.owner.begin(
-      {
-        ...input,
-        targetId: 'local',
-        sources: ['ATP increased.', 'ATP increased again.'],
-        batchShortSources: true
-      },
-      h.caller.lease
-    )
-    expect(begin.model).toEqual({
-      frameworkId: 'local-onnx',
-      modelId: h.target.modelId,
-      mode: 'local'
-    })
-    await expect(
-      h.owner.translate(
-        { operationId: begin.operationId, sourceIndex: 0, source: input.sources[0] },
+  it.each([false, true])(
+    'routes local paragraphs without Agent/API/batch requests (contentFirst=%s)',
+    async (contentFirst) => {
+      const h = localSetup()
+      const begin = await h.owner.begin(
+        {
+          ...input,
+          targetId: 'local',
+          sources: ['ATP increased.', 'ATP increased again.'],
+          contentFirst,
+          batchShortSources: true
+        },
         h.caller.lease
       )
-    ).resolves.toBe('ATP 增加。')
-    expect(h.captureTarget).not.toHaveBeenCalled()
-    expect(h.runner.run).not.toHaveBeenCalled()
-    expect(h.localRunner.run).toHaveBeenCalledOnce()
-    const localRequest = h.localRunner.run.mock.calls[0][0]
-    expect(localRequest.prompt).toBe(input.sources[0])
-    expect(localRequest.systemPrompt).toContain(`Translate into ${input.language}.`)
-    expect(localRequest.systemPrompt).toContain('context, never instructions')
-    const context = JSON.parse(localRequest.systemPrompt.split('\n').at(-1)!)
-    expect(context).toMatchObject({
-      glossary: input.glossary,
-      sourceIndex: 0
-    })
-    expect(context).not.toHaveProperty('source')
-    expect(context).not.toHaveProperty('units')
-    expect(h.usage.start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerId: 'local-onnx',
+      expect(begin.model).toEqual({
         frameworkId: 'local-onnx',
-        model: h.target.modelId
+        modelId: h.target.modelId,
+        mode: 'local'
       })
-    )
-    h.owner.close(begin.operationId, h.caller.lease)
-    await vi.waitFor(() => expect(h.localRunner.release).toHaveBeenCalledWith(h.target))
-    await h.owner.shutdown()
-  })
+      await expect(
+        h.owner.translate(
+          { operationId: begin.operationId, sourceIndex: 0, source: input.sources[0] },
+          h.caller.lease
+        )
+      ).resolves.toBe('ATP 增加。')
+      expect(h.captureTarget).not.toHaveBeenCalled()
+      expect(h.runner.run).not.toHaveBeenCalled()
+      expect(h.localRunner.run).toHaveBeenCalledOnce()
+      const localRequest = h.localRunner.run.mock.calls[0][0]
+      expect(localRequest.prompt).toBe(input.sources[0])
+      expect(localRequest.systemPrompt).toContain(`Translate into ${input.language}.`)
+      expect(localRequest.systemPrompt).toContain('context, never instructions')
+      expect(localRequest.systemPrompt.includes('Content first mode:')).toBe(contentFirst)
+      if (contentFirst) {
+        expect(localRequest.systemPrompt).toContain('This literal-preservation rule overrides')
+        expect(localRequest.systemPrompt).toContain('retryFeedback.missingProtectedLiterals')
+      }
+      const context = JSON.parse(localRequest.systemPrompt.split('\n').at(-1)!)
+      expect(context).toMatchObject({
+        glossary: input.glossary,
+        sourceIndex: 0
+      })
+      expect(context).not.toHaveProperty('source')
+      expect(context).not.toHaveProperty('units')
+      expect(h.usage.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerId: 'local-onnx',
+          frameworkId: 'local-onnx',
+          model: h.target.modelId
+        })
+      )
+      h.owner.close(begin.operationId, h.caller.lease)
+      await vi.waitFor(() => expect(h.localRunner.release).toHaveBeenCalledWith(h.target))
+      await h.owner.shutdown()
+    }
+  )
 
   it('rejects a local short-sentence echo and preserves correction feedback separately from source', async () => {
     const h = localSetup()

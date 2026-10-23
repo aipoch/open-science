@@ -1,3 +1,5 @@
+import { LiteratureRelatedLookup } from './LiteratureRelatedLookup'
+import { LiteratureSupplementLookup } from './LiteratureSupplementLookup'
 import type { LiteraturePreviewItem } from '../renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
@@ -25,9 +27,18 @@ import type { LiteratureMetadataField } from '@aipoch/literature-discovery/contr
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import { type LiteratureDetailSnapshot } from '@aipoch/literature-library/client'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { ArrowLeft, Download, MoreHorizontal, Pencil, Quote, Search, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  Download,
+  MoreHorizontal,
+  Pencil,
+  Quote,
+  Search,
+  Settings2,
+  X
+} from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useRef, useSyncExternalStore } from 'react'
+import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
 import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
@@ -62,7 +73,7 @@ export function LiteratureDetailDialog({
   detailTagMenuOpenRef,
   detailSelectOpenRef,
   childLayerDismissGuardUntilRef,
-  closeSelectedItemDetail,
+  closeSelectedItemDetail: closeDetail,
   detailInitiatorRef,
   libraryEntryRef,
   metadata,
@@ -84,6 +95,8 @@ export function LiteratureDetailDialog({
   citationStyles,
   setJournalsOpen,
   setCitationStylesOpen,
+  onOpenInbox,
+  relatedDirection,
   renderOverview
 }: {
   detailController: LiteratureDetailController
@@ -114,9 +127,35 @@ export function LiteratureDetailDialog({
   citationStyles: LiteratureCitationStyleView[] | undefined
   setJournalsOpen: React.Dispatch<React.SetStateAction<boolean>>
   setCitationStylesOpen: React.Dispatch<React.SetStateAction<boolean>>
+  onOpenInbox: () => void
+  relatedDirection: 'references' | 'citations'
   renderOverview: (item: LiteratureItemView) => React.ReactNode
 }): React.JSX.Element | null {
   const { t } = useTranslation()
+  const [credentialsOpen, setCredentialsOpenState] = useState(false)
+  const credentialsOpenRef = useRef(false)
+  const setCredentialsOpen = (open: boolean): void => {
+    // Radix's capture listener can retain the preceding render's callback.
+    credentialsOpenRef.current = open
+    setCredentialsOpenState(open)
+  }
+  const [relatedSaving, setRelatedSavingState] = useState(false)
+  const relatedSavingRef = useRef(false)
+  const setRelatedSaving = useCallback((saving: boolean): void => {
+    relatedSavingRef.current = saving
+    setRelatedSavingState(saving)
+  }, [])
+  const credentialFormId = useId()
+  const credentialTriggerRef = useRef<HTMLButtonElement>(null)
+  const closeSelectedItemDetail = (): void => {
+    if (relatedSavingRef.current) return
+    setCredentialsOpen(false)
+    closeDetail()
+  }
+  const closeCredentials = (): void => {
+    setCredentialsOpen(false)
+    credentialTriggerRef.current?.focus()
+  }
   const backdropDismissedChildRef = useRef(false)
   return (
     <LiteratureDetailBoundary controller={detailController}>
@@ -194,8 +233,10 @@ export function LiteratureDetailDialog({
                   className={dialogPanelClassName(
                     cn(
                       'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
-                      metadata.mode === 'full-text'
-                        ? 'max-h-[calc(100vh-2rem)]'
+                      metadata.mode === 'full-text' ||
+                        metadata.mode === 'supplements' ||
+                        metadata.mode === 'related'
+                        ? 'h-[min(720px,calc(100vh-2rem))]'
                         : 'h-[min(840px,calc(100vh-2rem))]'
                     )
                   )}
@@ -204,6 +245,11 @@ export function LiteratureDetailDialog({
                   }}
                   onEscapeKeyDown={(event) => {
                     event.preventDefault()
+                    if (relatedSavingRef.current) return
+                    if (credentialsOpenRef.current) {
+                      closeCredentials()
+                      return
+                    }
                     if (
                       detailSelectOpenRef.current ||
                       detailTagMenuOpenRef.current ||
@@ -224,8 +270,21 @@ export function LiteratureDetailDialog({
                           size="icon-sm"
                           className="shrink-0"
                           aria-label={t('Back')}
-                          disabled={metadata.saving}
-                          onClick={leaveMetadataEditor}
+                          disabled={metadata.saving || relatedSaving}
+                          onClick={() => {
+                            if (relatedSavingRef.current) return
+                            const fromRelated = metadata.mode === 'related'
+                            setCredentialsOpen(false)
+                            leaveMetadataEditor()
+                            if (fromRelated)
+                              requestAnimationFrame(() =>
+                                selectedItemDialogRef.current
+                                  ?.querySelector<HTMLButtonElement>(
+                                    `[data-related-entry="${relatedDirection}"]`
+                                  )
+                                  ?.focus()
+                              )
+                          }}
                         >
                           <ArrowLeft className="size-4" aria-hidden="true" />
                         </Button>
@@ -240,7 +299,11 @@ export function LiteratureDetailDialog({
                                   ? t('Complete metadata')
                                   : metadata.mode === 'full-text'
                                     ? t('Find full-text PDF')
-                                    : t('Citation')}
+                                    : metadata.mode === 'supplements'
+                                      ? t('Find supplementary materials')
+                                      : metadata.mode === 'related'
+                                        ? t('Citation discovery')
+                                        : t('Citation')}
                             </Dialog.Title>
                             <Dialog.Description
                               className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
@@ -277,6 +340,21 @@ export function LiteratureDetailDialog({
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      {metadata.mode === 'related' ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('Semantic Scholar settings')}
+                          disabled={relatedSaving}
+                          ref={credentialTriggerRef}
+                          aria-expanded={credentialsOpen}
+                          aria-controls={credentialsOpen ? credentialFormId : undefined}
+                          onClick={() => setCredentialsOpen(!credentialsOpenRef.current)}
+                        >
+                          <Settings2 className="size-4" aria-hidden="true" />
+                        </Button>
+                      ) : null}
                       {metadata.mode === 'view' ? (
                         <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
@@ -329,7 +407,7 @@ export function LiteratureDetailDialog({
                         size="icon-sm"
                         className={dialogCloseButtonClassName}
                         aria-label={t('Close')}
-                        disabled={isAddingPdf || metadata.saving}
+                        disabled={isAddingPdf || metadata.saving || relatedSaving}
                         onClick={closeSelectedItemDetail}
                       >
                         <X className="size-4" aria-hidden="true" />
@@ -337,7 +415,35 @@ export function LiteratureDetailDialog({
                     </div>
                   </div>
                   {isAddingPdf ? pdfStaging.notice : null}
-                  {metadata.mode === 'full-text' ? (
+                  {metadata.mode === 'related' ? (
+                    <LiteratureRelatedLookup
+                      key={`${selectedItem.id}:${selectedItem.metadataRevision}:${generation}`}
+                      item={selectedItem}
+                      initialDirection={relatedDirection}
+                      onSavingChange={setRelatedSaving}
+                      credentialFormId={credentialFormId}
+                      credentialsOpen={credentialsOpen}
+                      onOpenCredentials={() => setCredentialsOpen(true)}
+                      onCloseCredentials={closeCredentials}
+                      onOpenInbox={() => {
+                        setCredentialsOpen(false)
+                        onOpenInbox()
+                      }}
+                      onSaved={() => void loadEntries(true)}
+                    />
+                  ) : metadata.mode === 'supplements' ? (
+                    <LiteratureSupplementLookup
+                      key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
+                      item={selectedItem}
+                      onCompleteMetadata={() => changeDetailMode('complete')}
+                      onAdded={(updated) => {
+                        updateMetadataItem(updated)
+                        if (detailController.getSnapshot().generation === generation)
+                          detailController.replace(updated)
+                        void loadEntries(true)
+                      }}
+                    />
+                  ) : metadata.mode === 'full-text' ? (
                     <LiteratureFullTextLookup
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}`}
                       item={selectedItem}

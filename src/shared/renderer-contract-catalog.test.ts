@@ -272,7 +272,13 @@ describe('renderer contract catalog', () => {
           surfaceInstallation.localWeb === 'web-rpc' &&
           parameterCodec.electron !== parameterCodec.web
       )
-    ).toEqual(['acp.connect', 'acp.createSession', 'notebookEnv.cancel', 'sessions.saveSession'])
+    ).toEqual([
+      'acp.connect',
+      'acp.createSession',
+      'notebookEnv.cancel',
+      'sessions.importPackage',
+      'sessions.saveSession'
+    ])
 
     const explicitEquivalentTransforms = paths(
       ({ parameterCodec }) =>
@@ -540,8 +546,12 @@ describe('renderer contract catalog', () => {
       'literature.jobs',
       'literature.journals',
       'literature.lookupMetadata',
+      'literature.related',
       'literature.search',
       'literature.sources',
+      'literature.supplementAttachment',
+      'literature.supplementAttachmentProgress',
+      'literature.supplements',
       'literature.transact',
       'memory.clearAll',
       'memory.createCategory',
@@ -583,6 +593,7 @@ describe('renderer contract catalog', () => {
       'sessionReplay.setResearchMembership',
       'sessionReplay.unlinkSession',
       'sessions.cancelDiagnostics',
+      'sessions.deleteRecoveryFile',
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportDiagnostics',
@@ -633,8 +644,12 @@ describe('renderer contract catalog', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:related',
       'literature:search',
       'literature:sources',
+      'literature:supplement-attachment',
+      'literature:supplement-attachment-progress',
+      'literature:supplements',
       'literature:transact',
       'memory:clear-all',
       'memory:create-category',
@@ -676,6 +691,7 @@ describe('renderer contract catalog', () => {
       'session-replay:set-research-membership',
       'session-replay:unlink-session',
       'sessions:cancel-diagnostics',
+      'sessions:delete-recovery-file',
       'sessions:delete-session',
       'sessions:edit-details',
       'sessions:export-diagnostics',

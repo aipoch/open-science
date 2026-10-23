@@ -110,6 +110,7 @@ import {
   reportApplicationStartupFailure
 } from './diagnostics/startup'
 import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
+import { ensureWindowsProtocolRegistration } from './windows-protocol-registration'
 import {
   createRendererFailureReporter,
   registerRendererDiagnosticsIpc
@@ -403,6 +404,8 @@ async function startDesktop(): Promise<void> {
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
+  if (!ensureWindowsProtocolRegistration(app))
+    bootstrapLog.warn('Windows open-science protocol association could not be repaired')
   if (process.platform === 'win32')
     prefetchSystemBootIdentity().catch((error: unknown) =>
       bootstrapLog.warn('boot identity prefetch failed', { error: String(error) })

@@ -1,3 +1,4 @@
+import type { SetSemanticScholarCredentialRequest } from '../../../shared/settings'
 import type {
   AddCustomServerRequest,
   CreateDeviceCredentialRequest,
@@ -32,6 +33,7 @@ type SettingsConnectorsProjection = {
   reservedCustomServerIds?: string[]
   skillProjectionStatus?: 'degraded'
   ncbi: NcbiCredentialsView
+  semanticScholar?: { hasApiKey: boolean }
   openAlex?: OpenAlexCredentialView
 }
 
@@ -79,6 +81,7 @@ export type SettingsConnectorsActions = {
   setConnectorAutoAllow: (id: string, autoAllow: boolean) => Promise<void>
   setToolPermission: (toolId: string, permission: ToolPermission) => Promise<ConnectorDetailView>
   setNcbiCredentials: (request: SetNcbiCredentialsRequest) => Promise<void>
+  setSemanticScholarCredential: (request: SetSemanticScholarCredentialRequest) => Promise<void>
   setOpenAlexCredential: (request: SetOpenAlexCredentialRequest) => Promise<void>
   validateOpenAlexCredential: (
     request: ValidateOpenAlexCredentialRequest
@@ -118,6 +121,7 @@ type SettingsConnectorsCommands = Pick<
   | 'setConnectorAutoAllow'
   | 'setToolPermission'
   | 'setNcbiCredentials'
+  | 'setSemanticScholarCredential'
   | 'setOpenAlexCredential'
   | 'validateOpenAlexCredential'
   | 'addCustomServer'
@@ -178,6 +182,7 @@ export const createSettingsConnectorsSlice = ({
   ): NormalizedSettingsConnectorsProjection => ({
     ...projection,
     skillProjectionStatus: projection.skillProjectionStatus,
+    semanticScholar: projection.semanticScholar,
     openAlex: projection.openAlex ?? { hasApiKey: false },
     reservedCustomServerIds: projection.reservedCustomServerIds ?? [],
     connectors: projection.connectors.map((connector) => ({
@@ -568,6 +573,8 @@ export const createSettingsConnectorsSlice = ({
       getCommands().setToolPermission({ toolId, permission }),
     setNcbiCredentials: (request) =>
       reconcileMutation(() => getCommands().setNcbiCredentials(request)),
+    setSemanticScholarCredential: (request) =>
+      reconcileMutation(() => getCommands().setSemanticScholarCredential(request)),
     setOpenAlexCredential: (request) =>
       reconcileMutation(() => getCommands().setOpenAlexCredential(request)),
     validateOpenAlexCredential: (request) => getCommands().validateOpenAlexCredential(request),

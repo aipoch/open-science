@@ -1,3 +1,5 @@
+import { TCIA_TOOLS } from '@aipoch/connector-builtins/tcia'
+import { KEGG_TOOLS } from '@aipoch/connector-builtins/kegg'
 import { RXNORM_TOOLS } from '@aipoch/connector-builtins/rxnorm'
 import { DAILYMED_TOOLS } from '@aipoch/connector-builtins/dailymed'
 import { BIOSAMPLES_TOOLS } from '@aipoch/connector-builtins/biosamples'
@@ -46,6 +48,8 @@ import { ZINC_TOOLS } from '@aipoch/connector-builtins/zinc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...TCIA_TOOLS,
+  ...KEGG_TOOLS,
   ...RXNORM_TOOLS,
   ...DAILYMED_TOOLS,
   ...BIOSAMPLES_TOOLS,

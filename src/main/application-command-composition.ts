@@ -266,9 +266,6 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'sessions:inspect-diagnostics',
   'sessions:export-diagnostics',
   'sessions:cancel-diagnostics',
-  'sessions:export-package',
-  'sessions:import-package',
-  'sessions:package-operation',
   'uploads:stage-local-file'
 ])
 

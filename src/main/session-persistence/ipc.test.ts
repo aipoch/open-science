@@ -1,4 +1,9 @@
 import { createComputeExecution } from '@aipoch/compute/node'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import * as projectDatabase from '../projects/prisma-client'
+import * as storageRoot from '../storage-root'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../../shared/renderer-contract-catalog'
@@ -59,6 +64,7 @@ import { beginMigration, clearMigrationPending } from '../storage/migration-stat
 import {
   canReconcileSessionAbsences,
   coordinateSessionPersistenceWithProjectDeletions,
+  createDefaultSessionRepository,
   createSessionPersistenceHandlers,
   createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
@@ -1410,3 +1416,74 @@ describe('session persistence IPC handlers', () => {
 })
 
 await configureTestElectronHost(await import('electron'))
+
+describe('production recovery deletion compute ownership adapter', () => {
+  it.each([
+    'running',
+    'success',
+    'other-project',
+    'other-session',
+    'database-failure',
+    'project-alias'
+  ])('checks durable ownership before deleting copies: %s', async (scenario) => {
+    const root = await mkdtemp(join(tmpdir(), 'session-recovery-compute-'))
+    const client = projectDatabase.createProjectDbClient(root)
+    const configRoot = vi.spyOn(storageRoot, 'resolveConfigRoot').mockReturnValue(root)
+    const getClient = vi.spyOn(projectDatabase, 'getProjectDbClient').mockResolvedValue(client)
+    try {
+      storageRoot.initDataRoot(root, 1)
+      await projectDatabase.migrateApplicationDatabase(client)
+      await client.computeJob.create({
+        data: {
+          id: 'job-1',
+          providerId: 'ssh:host',
+          shape: 'direct_ssh',
+          projectId: scenario === 'other-project' ? 'project-b' : 'project-a',
+          sessionId: scenario === 'other-session' ? 'session-2' : 'session-1',
+          status: scenario === 'running' ? 'running' : 'success',
+          intent: 'research',
+          command: 'true',
+          commandHash: 'hash',
+          sensitiveDataEncrypted: false
+        }
+      })
+      const directory = join(root, 'sessions', 'project-a')
+      const copy = join(directory, 'session-1.json.invalid-100-1')
+      await mkdir(directory, { recursive: true })
+      await writeFile(copy, '{broken')
+      if (scenario === 'database-failure')
+        getClient.mockRejectedValue(new Error('Database unavailable'))
+      const repository = createDefaultSessionRepository()
+      const deletion = repository.deleteRecoveryFile({
+        projectId: scenario === 'project-alias' ? 'PROJECT-A' : 'project-a',
+        fileName: 'session-1.json'
+      })
+      if (scenario === 'other-project' || scenario === 'other-session') {
+        await expect(deletion).resolves.toBeUndefined()
+        expect(await readdir(directory)).toEqual([])
+      } else if (scenario === 'project-alias') {
+        // Case-insensitive filesystems must reject the alias; others see no such directory.
+        await deletion.catch((error: Error) => {
+          expect(error.message).toContain('identity does not match')
+        })
+        expect(await readFile(copy, 'utf8')).toBe('{broken')
+      } else {
+        await expect(deletion).rejects.toThrow(
+          scenario === 'database-failure'
+            ? 'Database unavailable'
+            : 'Session recovery files still own compute jobs.'
+        )
+        expect(await readFile(copy, 'utf8')).toBe('{broken')
+        expect(await repository.loadSessionWithDiagnostics('project-a', 'session-1')).toMatchObject(
+          { status: 'unreadable' }
+        )
+      }
+      expect(await client.computeJob.count()).toBe(1)
+    } finally {
+      getClient.mockRestore()
+      configRoot.mockRestore()
+      await client.$disconnect()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})

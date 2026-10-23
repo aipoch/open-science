@@ -427,6 +427,10 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          related: vi.fn(),
+          supplements: vi.fn(),
+          supplementAttachment: vi.fn(),
+          supplementAttachmentProgress: vi.fn().mockResolvedValue(null),
           getCandidateStates: vi.fn(async () => ({ candidates: [] })),
           journals: vi.fn(async () => ({ datasets: [], matches: [] })),
           exportRecord: vi.fn(),
@@ -3621,49 +3625,40 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
-  it.each(['notes.txt'])(
-    'reports rejected multi-file PDF drops including %s before staging any file',
-    async (secondName) => {
-      search.mockImplementation(async (request: { scope: string }) =>
-        request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
-      )
-      stageLocalFile.mockResolvedValue({
-        id: 'upload-1',
-        sessionId: '.pending',
-        name: 'first.pdf',
-        originalName: 'first.pdf',
-        path: '/managed/first.pdf',
-        mimeType: 'application/pdf',
-        size: 8
+  it.each(['notes.txt'])('attaches mixed file drops including %s', async (secondName) => {
+    search.mockImplementation(async (request: { scope: string }) =>
+      request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+    )
+    stageLocalFile.mockResolvedValue({
+      id: 'upload-1',
+      sessionId: '.pending',
+      name: 'first.pdf',
+      originalName: 'first.pdf',
+      path: '/managed/first.pdf',
+      mimeType: 'application/pdf',
+      size: 8
+    })
+    importPdf.mockResolvedValue({ item: libraryItem })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(
+      await screen.findByText('Corrective Retrieval Augmented Generation')
+    )
+    await act(async () => {
+      fireEvent.drop(detail.querySelector('[data-slot="literature-pdf-drop-zone"]')!, {
+        dataTransfer: {
+          types: ['Files'],
+          files: [
+            new File(['%PDF-1.7'], 'first.pdf', { type: 'application/pdf' }),
+            new File(['second'], secondName)
+          ]
+        }
       })
-      importPdf.mockResolvedValue({ item: libraryItem })
-      render(<LiteratureLibraryPage />)
-      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-      const detail = await openReferenceDetail(
-        await screen.findByText('Corrective Retrieval Augmented Generation')
-      )
-      await act(async () => {
-        fireEvent.drop(detail.querySelector('[data-slot="literature-pdf-drop-zone"]')!, {
-          dataTransfer: {
-            types: ['Files'],
-            files: [
-              new File(['%PDF-1.7'], 'first.pdf', { type: 'application/pdf' }),
-              new File(['second'], secondName)
-            ]
-          }
-        })
-      })
-      expect(within(detail).getByRole('alert').textContent).toContain(
-        'Only PDF files can be attached. No files were added.'
-      )
-      if (secondName === 'notes.txt')
-        expect(within(detail).getByRole('alert').textContent).toContain(
-          'Unsupported files: notes.txt'
-        )
-      expect(stageLocalFile).not.toHaveBeenCalled()
-      expect(importPdf).not.toHaveBeenCalled()
-    }
-  )
+    })
+    expect(stageLocalFile).toHaveBeenCalledTimes(2)
+    expect(importPdf).toHaveBeenCalledTimes(2)
+    expect(within(detail).queryByRole('alert')).toBeNull()
+  })
 
   it.each(['bib', 'bibtex', 'ris', 'nbib', 'txt'])(
     'routes a dropped %s file to reference preview',
@@ -3786,7 +3781,7 @@ describe('LiteratureLibraryPage', () => {
         fireEvent.drop(detail.querySelector('[data-slot="literature-pdf-drop-zone"]')!, {
           dataTransfer: { types: ['Files'], files }
         })
-      else fireEvent.change(within(detail).getByLabelText('Add PDFs'), { target: { files } })
+      else fireEvent.change(within(detail).getByLabelText('Add files'), { target: { files } })
       await waitFor(() => expect(importPdf).toHaveBeenCalledTimes(3))
       await screen.findByRole('button', { name: 'Preview last.pdf' })
       expect(screen.getByRole('button', { name: 'Preview first.pdf' })).not.toBeNull()
@@ -4103,7 +4098,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    fireEvent.change(screen.getByLabelText('Add PDFs'), {
+    fireEvent.change(screen.getByLabelText('Add files'), {
       target: { files: [new File(['pdf'], 'paper.pdf'), new File(['pdf'], 'next.pdf')] }
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel upload' }))
@@ -4157,7 +4152,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    fireEvent.change(screen.getByLabelText('Add PDFs'), {
+    fireEvent.change(screen.getByLabelText('Add files'), {
       target: { files: [new File(['pdf'], 'paper.pdf'), new File(['pdf'], 'next.pdf')] }
     })
     await waitFor(() => expect(importPdf).toHaveBeenCalledOnce())
@@ -4231,7 +4226,7 @@ describe('LiteratureLibraryPage', () => {
     const page = render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    fireEvent.change(screen.getByLabelText('Add PDFs'), {
+    fireEvent.change(screen.getByLabelText('Add files'), {
       target: { files: [new File(['pdf'], 'paper.pdf')] }
     })
     const request = stageLocalFile.mock.calls[0][1]
@@ -4276,7 +4271,7 @@ describe('LiteratureLibraryPage', () => {
       const file = new File(['pdf'], 'paper.pdf')
       if (owner === 'existing') {
         await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-        fireEvent.change(screen.getByLabelText('Add PDFs'), { target: { files: [file] } })
+        fireEvent.change(screen.getByLabelText('Add files'), { target: { files: [file] } })
       } else {
         fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
         await screen.findByLabelText('Title')
@@ -4287,7 +4282,9 @@ describe('LiteratureLibraryPage', () => {
         rejectStage(new Error('Upload transfer is no longer active.'))
       })
       expect((await screen.findByRole('alert')).textContent).toContain(
-        'PDF upload cancelled. The reference was kept.'
+        owner === 'existing'
+          ? 'Upload cancelled. The reference was kept.'
+          : 'PDF upload cancelled. The reference was kept.'
       )
       expect(importPdf).not.toHaveBeenCalled()
     }
@@ -4341,7 +4338,7 @@ describe('LiteratureLibraryPage', () => {
         await openReferenceDetail(
           await screen.findByText('Corrective Retrieval Augmented Generation')
         )
-        fireEvent.change(screen.getByLabelText('Add PDFs'), { target: { files: [file] } })
+        fireEvent.change(screen.getByLabelText('Add files'), { target: { files: [file] } })
       } else {
         fireEvent.change(screen.getByLabelText('Import PDFs'), { target: { files: [file] } })
         await screen.findByLabelText('Title')
@@ -4374,7 +4371,9 @@ describe('LiteratureLibraryPage', () => {
       expect(importPdf).not.toHaveBeenCalled()
       expect(uploads.finishTransfer).not.toHaveBeenCalled()
       expect((await screen.findByRole('alert')).textContent).toContain(
-        'PDF upload cancelled. The reference was kept.'
+        owner === 'existing'
+          ? 'Upload cancelled. The reference was kept.'
+          : 'PDF upload cancelled. The reference was kept.'
       )
       if (owner === 'new') expect(transact).toHaveBeenCalledTimes(1)
     }
@@ -4427,14 +4426,14 @@ describe('LiteratureLibraryPage', () => {
 
     const file = new File(['%PDF-1.7'], 'paper.pdf', { type: 'application/pdf' })
     expect(
-      screen.getByText('Drop PDFs here to attach to this reference, or choose files.')
+      screen.getByText('Drop files here to attach to this reference, or choose files.')
     ).not.toBeNull()
     expect(screen.getByRole('heading', { name: 'Attachments' })).not.toBeNull()
     expect(screen.queryByRole('heading', { name: 'Files' })).toBeNull()
     const dropZone = document.querySelector<HTMLElement>('[data-slot="literature-pdf-drop-zone"]')!
-    const pdfInput = screen.getByLabelText('Add PDFs') as HTMLInputElement
+    const pdfInput = screen.getByLabelText('Add files') as HTMLInputElement
     const inputClick = vi.spyOn(pdfInput, 'click')
-    fireEvent.click(screen.getByRole('button', { name: 'Add PDFs' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add files' }))
     expect(inputClick).toHaveBeenCalledOnce()
     const dropEvent = new Event('drop', { bubbles: true })
     Object.defineProperty(dropEvent, 'dataTransfer', {
@@ -6295,6 +6294,36 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('starts supplement queries only from the attachment button and supports Back and reopening', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    const supplements = vi.fn(async ({ provider, itemId, expectedMetadataRevision }) => ({
+      itemId,
+      metadataRevision: expectedMetadataRevision,
+      provider,
+      state: 'complete' as const,
+      records: [],
+      issues: []
+    }))
+    window.api.literature.supplements = supplements
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
+    const detail = screen.getByRole('dialog')
+    expect(supplements).not.toHaveBeenCalled()
+    fireEvent.click(within(detail).getByRole('button', { name: 'Find supplementary materials' }))
+    await within(detail).findByText('No supplementary materials found in the searched sources.')
+    expect(supplements).toHaveBeenCalledTimes(3)
+    expect(
+      within(detail).getByRole('heading', { name: 'Find supplementary materials' })
+    ).toBeTruthy()
+    fireEvent.click(within(detail).getByRole('button', { name: 'Back' }))
+    expect(within(detail).getByRole('heading', { name: 'Attachments' })).toBeTruthy()
+    fireEvent.click(within(detail).getByRole('button', { name: 'Find supplementary materials' }))
+    await waitFor(() => expect(supplements).toHaveBeenCalledTimes(6))
+  })
+
   it('finds a full-text PDF and attaches it only after the source is confirmed', async () => {
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
@@ -6328,7 +6357,11 @@ describe('LiteratureLibraryPage', () => {
       'href',
       'https://journal.example/articles/paper'
     )
-    fireEvent.click(within(detail).getByRole('button', { name: 'Add attachment' }))
+    fireEvent.click(
+      within(within(detail).getByRole('region', { name: 'Search results' })).getByRole('button', {
+        name: 'Add attachment'
+      })
+    )
     await waitFor(() =>
       expect(fullText).toHaveBeenCalledWith({
         mode: 'attach',
@@ -6374,7 +6407,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', { name: 'Find full-text PDF' })
     )
-    fireEvent.click(await screen.findByText('Search sources'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Configure OpenAlex' }))
     expect(within(screen.getByRole('dialog')).getByLabelText('OpenAlex API key')).not.toBeNull()
     expect(useSettingsStore.getState().pendingSettingsIntent).toBeUndefined()
@@ -6402,15 +6435,21 @@ describe('LiteratureLibraryPage', () => {
     await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
     const detail = screen.getByRole('dialog')
     fireEvent.click(within(detail).getByRole('button', { name: 'Find full-text PDF' }))
-    fireEvent.click(await within(detail).findByRole('button', { name: 'Add attachment' }))
-    await within(detail).findByRole('alert')
-    expect(within(detail).getByRole('button', { name: 'Add attachment' })).toHaveProperty(
-      'disabled',
-      false
+    fireEvent.click(
+      await within(within(detail).getByRole('region', { name: 'Search results' })).findByRole(
+        'button',
+        { name: 'Add attachment' }
+      )
     )
-    expect(within(detail).getByRole('button', { name: 'Add PDF' })).not.toBeNull()
+    await within(detail).findByRole('alert')
     expect(
-      within(detail).getByText('OpenAlex is unavailable. Results may be incomplete.')
+      within(within(detail).getByRole('region', { name: 'Search results' })).getByRole('button', {
+        name: 'Add attachment'
+      })
+    ).toHaveProperty('disabled', false)
+    expect(within(detail).getAllByRole('button', { name: 'Add attachment' })).toHaveLength(2)
+    expect(
+      within(within(detail).getByRole('region', { name: 'OpenAlex' })).getByRole('status')
     ).not.toBeNull()
   })
 
@@ -12349,7 +12388,7 @@ describe('LiteratureLibraryPage', () => {
       })
       const pending = deferred<{ item: LiteratureItemView }>()
       importPdf.mockReturnValueOnce(pending.promise)
-      fireEvent.change(screen.getByLabelText('Add PDFs'), {
+      fireEvent.change(screen.getByLabelText('Add files'), {
         target: { files: [new File(['%PDF-1.7'], 'paper.pdf', { type: 'application/pdf' })] }
       })
       await waitFor(() => expect(importPdf).toHaveBeenCalledTimes(1))

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi } from 'vitest'
 import { BrowserPackageImport } from './browser-import'
+import { BrowserImportLaunchRelay } from './browser-import-protocol'
 import type { BrowserImportTransfer } from '../../../packages/open-science/browser-import'
 // @ts-expect-error The published ESM entry uses a sibling browser-import.d.ts.
 import * as browserSdk from '../../../packages/open-science/browser-import.mjs'
@@ -11,73 +12,81 @@ const { checkBrowserImportAvailability, prepareBrowserImport } = browserSdk
 
 afterEach(() => vi.unstubAllGlobals())
 
-it('transfers a browser-held Blob over authenticated HTTP without any remote download', async () => {
-  const port = await findBrowserImportPort()
-  const origin = 'https://research.example'
-  const root = await mkdtemp(join(tmpdir(), 'browser-sdk-'))
-  let received: string | undefined
-  const bridge = new BrowserPackageImport({
-    root,
-    receive: (path) => {
-      received = path
+it.each(['cold', 'running'] as const)(
+  'transfers a browser-held Blob through a %s app launch over authenticated HTTP',
+  async (state) => {
+    const port = await findBrowserImportPort()
+    const origin = 'https://research.example'
+    const root = await mkdtemp(join(tmpdir(), 'browser-sdk-'))
+    let received: string | undefined
+    const bridge = new BrowserPackageImport({
+      root,
+      receive: (path) => {
+        received = path
+      }
+    })
+    const realFetch = globalThis.fetch
+    const destinations: string[] = []
+    // Node does not synthesize the browser's Origin header; all network operations still use HTTP.
+    vi.stubGlobal('fetch', (input: string, init: RequestInit) => {
+      destinations.push(String(input))
+      return realFetch(input, { ...init, headers: { ...init.headers, Origin: origin } })
+    })
+    try {
+      const discoveryPort = await findBrowserImportPort()
+      await bridge.startDiscovery(discoveryPort)
+      expect(await checkBrowserImportAvailability({ origin, port: discoveryPort })).toEqual({
+        status: 'available'
+      })
+      const bytes = new Uint8Array(4 * 1024 ** 2 + 17).fill(73)
+      const transfer: BrowserImportTransfer = prepareBrowserImport(new Blob([bytes]), {
+        filename: 'study.science',
+        origin,
+        port
+      })
+      const relay = new BrowserImportLaunchRelay()
+      const argv = ['D:\\Research Apps\\研究\\open-science.exe', transfer.url]
+      // Windows delivers the URL in startup argv or in second-instance argv after binding.
+      if (state === 'cold') relay.receiveArgv(argv)
+      relay.bind((url) => bridge.begin(url))
+      if (state === 'running') relay.receiveArgv(argv)
+      const progress: number[] = []
+      const events: string[] = []
+      expect(
+        await transfer.send({
+          readinessMode: 'wait-for-launch',
+          onPhase: (phase) => events.push(phase),
+          onProgress: ({ sentBytes }) => {
+            events.push('progress')
+            progress.push(sentBytes)
+          }
+        })
+      ).toEqual({ received: true })
+      expect((await readFile(received!)).equals(Buffer.from(bytes))).toBe(true)
+      expect(progress.at(-1)).toBe(bytes.length)
+      expect(events).toEqual(['waiting-for-receiver', 'transferring', 'progress', 'progress'])
+      const count = destinations.length
+      await expect(
+        transfer.send({
+          onPhase: () => {
+            throw new Error('Cached receipt must not announce a new transfer')
+          }
+        })
+      ).resolves.toEqual({ received: true })
+      expect(destinations).toHaveLength(count)
+      expect(
+        destinations.every(
+          (url) =>
+            url.startsWith(`http://127.0.0.1:${port}/`) ||
+            url.startsWith(`http://127.0.0.1:${discoveryPort}/`)
+        )
+      ).toBe(true)
+    } finally {
+      await bridge.close()
+      await rm(root, { recursive: true, force: true })
     }
-  })
-  const realFetch = globalThis.fetch
-  const destinations: string[] = []
-  // Node does not synthesize the browser's Origin header; all network operations still use HTTP.
-  vi.stubGlobal('fetch', (input: string, init: RequestInit) => {
-    destinations.push(String(input))
-    return realFetch(input, { ...init, headers: { ...init.headers, Origin: origin } })
-  })
-  try {
-    const discoveryPort = await findBrowserImportPort()
-    await bridge.startDiscovery(discoveryPort)
-    expect(await checkBrowserImportAvailability({ origin, port: discoveryPort })).toEqual({
-      status: 'available'
-    })
-    const bytes = new Uint8Array(4 * 1024 ** 2 + 17).fill(73)
-    const transfer: BrowserImportTransfer = prepareBrowserImport(new Blob([bytes]), {
-      filename: 'study.science',
-      origin,
-      port
-    })
-    await bridge.begin(transfer.url)
-    const progress: number[] = []
-    const events: string[] = []
-    expect(
-      await transfer.send({
-        readinessMode: 'wait-for-launch',
-        onPhase: (phase) => events.push(phase),
-        onProgress: ({ sentBytes }) => {
-          events.push('progress')
-          progress.push(sentBytes)
-        }
-      })
-    ).toEqual({ received: true })
-    expect((await readFile(received!)).equals(Buffer.from(bytes))).toBe(true)
-    expect(progress.at(-1)).toBe(bytes.length)
-    expect(events).toEqual(['waiting-for-receiver', 'transferring', 'progress', 'progress'])
-    const count = destinations.length
-    await expect(
-      transfer.send({
-        onPhase: () => {
-          throw new Error('Cached receipt must not announce a new transfer')
-        }
-      })
-    ).resolves.toEqual({ received: true })
-    expect(destinations).toHaveLength(count)
-    expect(
-      destinations.every(
-        (url) =>
-          url.startsWith(`http://127.0.0.1:${port}/`) ||
-          url.startsWith(`http://127.0.0.1:${discoveryPort}/`)
-      )
-    ).toBe(true)
-  } finally {
-    await bridge.close()
-    await rm(root, { recursive: true, force: true })
   }
-})
+)
 
 it('resumes a lost chunk acknowledgment with the same transfer and receives exactly once', async () => {
   const port = await findBrowserImportPort()

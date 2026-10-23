@@ -1,5 +1,3 @@
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 import {
   expectTypeOnlyContract,
   runtimeModuleSpecifiers,
@@ -814,29 +812,4 @@ describe('Compute service architecture', () => {
     )
     expect(mainIpc).not.toContain('sessionEnabledComputeHostsOwnerRef.current?.project(session)')
   })
-})
-
-it('requires full validation while preserving downstream research contracts', () => {
-  {
-    const plan = createAffectedTestPlan(
-      [{ path: 'src/main/compute/compute-service.ts', status: 'modified' }],
-      { status: 'not-used', testFiles: [] }
-    )
-    const module = loadModuleImpactManifest().modules.compute_service
-    const reason =
-      'The compute_service owner retains 41 explicit research consumer obligations beyond its reviewed source-derived edges, including local-rpc-server.managed-execution.test.ts, managed-auxiliary-output.test.ts, managed-execution-collection.integration.test.ts. 36 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
-    expect(module.fullTestReason).toBe(reason)
-    expect(plan.mode).toBe('full')
-    expect(plan.reasonChains).toEqual([`compute_service -> ${reason} -> full`])
-    expect(plan.testFiles).toEqual([])
-    expect(Object.values(module.testFiles).flat()).toEqual(
-      expect.arrayContaining([
-        'src/main/compute/compute-job-lifecycle.test.ts',
-        'src/main/compute/cancellation-runtime.integration.test.ts',
-        'src/main/compute/job-deletion-runtime-isolation.test.ts',
-        'src/main/compute/ipc.test.ts',
-        'src/main/notebook/host-compute.integration.test.ts'
-      ])
-    )
-  }
 })

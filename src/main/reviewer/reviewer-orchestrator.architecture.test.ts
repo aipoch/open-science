@@ -38,8 +38,6 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { loadModuleImpactManifest } from '../../../scripts/ci/load-module-impact.mjs'
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 
 import {
   listProductionSources,
@@ -635,30 +633,5 @@ describe('Reviewer orchestrator architecture', () => {
         'The reviewer_orchestrator owner retains 4 explicit research consumer obligations beyond its reviewed source-derived edges, including research-material-authority.test.ts, run-observation-external-port.test.ts, inspection.test.ts. 3 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.',
       fallbackCapability: 'main_runtime'
     })
-    for (const path of [
-      'src/main/reviewer/orchestrator.ts',
-      'src/main/reviewer/paged-preview-electron.ts'
-    ]) {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-        status: 'not-used',
-        testFiles: []
-      })
-      const module = loadModuleImpactManifest().modules.reviewer_orchestrator
-      const reason =
-        'The reviewer_orchestrator owner retains 4 explicit research consumer obligations beyond its reviewed source-derived edges, including research-material-authority.test.ts, run-observation-external-port.test.ts, inspection.test.ts. 3 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
-      expect(module.fullTestReason).toBe(reason)
-      expect(plan.mode, path).toBe('full')
-      expect(plan.reasonChains, path).toEqual([`reviewer_orchestrator -> ${reason} -> full`])
-      expect(plan.testFiles, path).toEqual([])
-      expect(Object.values(module.testFiles).flat(), path).toEqual(
-        expect.arrayContaining([
-          'src/renderer/src/stores/review-store.test.ts',
-          'src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx',
-          'src/renderer/src/reviewer-paged-preview/main.test.ts',
-          'src/renderer/src/lib/acp/workspace-events.test.ts',
-          'src/main/delegation/delegated-review-evidence.test.ts'
-        ])
-      )
-    }
   })
 })

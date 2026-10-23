@@ -184,6 +184,11 @@ describe('Session package desktop composition baseline', () => {
       await expect(
         desktop.import(undefined, 'client', { projectId: identity.projectId })
       ).rejects.toThrow('application handoff')
+      await expect(
+        desktop.import(undefined, 'client', {}, join(tmpdir(), 'input.science'), false, {
+          nonInteractive: true
+        })
+      ).rejects.toThrow('application handoff')
       expect(archive.reserveSessionExport).not.toHaveBeenCalled()
       expect(archive.reserveProjectImport).not.toHaveBeenCalled()
       expect(service.exportTo).not.toHaveBeenCalled()
@@ -194,7 +199,7 @@ describe('Session package desktop composition baseline', () => {
         operationEvents()
           .filter(({ state }) => state === 'failed')
           .map(({ kind }) => kind)
-      ).toEqual(['export', 'import'])
+      ).toEqual(['export', 'import', 'import'])
       // The same instance admits work again once the live gate clears.
       held = false
       clearMigrationPending()
@@ -231,6 +236,32 @@ describe('Session package desktop composition baseline', () => {
       expect(desktop.operations.active).toBe(false)
     }
   )
+
+  it('transfers explicit paths without dialogs or renderer confirmation', async (): Promise<void> => {
+    service.exportTo.mockImplementationOnce(async (_request, path, options) => {
+      expect(options?.selectFiles).toBeUndefined()
+      await writeFile(path, 'package')
+      return preview
+    })
+    const destination = join(root, 'headless.science')
+    await expect(desktop.export(identity, 'cli', destination)).resolves.toEqual({
+      saved: true,
+      filePath: destination
+    })
+    expect(await readFile(destination, 'utf8')).toBe('package')
+    service.importFrom.mockImplementationOnce(async (path, _signal, _progress, confirm, target) => {
+      expect(await readFile(path, 'utf8')).toBe('package')
+      expect(confirm).toBeUndefined()
+      expect(target).toEqual({})
+      return identity
+    })
+    await expect(
+      desktop.import('cli', 'cli', {}, destination, false, { nonInteractive: true })
+    ).resolves.toEqual(identity)
+    expect(native.save).not.toHaveBeenCalled()
+    expect(native.open).not.toHaveBeenCalled()
+    expect(operationEvents().map(({ state }) => state)).not.toContain('awaiting-selection')
+  })
 
   it('exports through archive → persistence → idle, publishes operations, then releases in order', async (): Promise<void> => {
     const pending = desktop.export(identity)

@@ -494,6 +494,47 @@ it('local module and affected plans obey the same downstream package direction a
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
 })
 
+it.each([
+  ['workspace_previews', 'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'],
+  ['main_literature', 'src/main/literature/command-owner.ts'],
+  ['page_literature', 'src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx'],
+  ['package_literature_discovery', 'packages/literature-discovery/src/supplements.ts'],
+  ['notebook_execution', 'src/main/notebook/windows-runtime-manager.ts'],
+  ['notebook_execution', 'src/main/notebook/scientific-output-analysis.ts'],
+  ['notebook_execution', 'src/main/notebook/working-file-observer.ts']
+])('runs unfiltered tests for reclassified %s and affected path %s', async (id, path) => {
+  const { createModuleTestPlan, createAffectedTestPlan, executeModuleTestPlan } =
+    await import('./module-test-impact.mjs')
+  for (const plan of [
+    createModuleTestPlan(id),
+    createAffectedTestPlan(
+      [
+        {
+          path,
+          status: 'modified'
+        }
+      ],
+      { status: 'unavailable', testFiles: ['packages/pdf-translation/test/checkpoints.test.ts'] }
+    )
+  ]) {
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains).toContainEqual(
+      expect.stringMatching(new RegExp(`^${id} -> .+ -> full$`))
+    )
+    const invocations: string[][] = []
+    expect(
+      executeModuleTestPlan(plan, {
+        environment: { npm_execpath: '/fixture/npm-cli.js' },
+        spawn: (_command: string, args: string[]) => {
+          invocations.push(args)
+          return { status: 0 }
+        }
+      })
+    ).toBe(0)
+    expect(invocations).toEqual([['/fixture/npm-cli.js', 'test', '--']])
+  }
+})
+
 const hostBoundaryManifest = loadModuleImpactManifest()
 it('retains dedicated downstream host evidence while excluding independent upstream suites', async () => {
   const { createAffectedTestPlan, createModuleTestPlan } = await import('./module-test-impact.mjs')
@@ -797,10 +838,6 @@ it('routes download package changes downstream and host adapters without unchang
     [
       'src/main/notebook/environment-download.ts',
       'src/main/notebook/environment-download.contract.test.ts'
-    ],
-    [
-      'src/main/notebook/windows-runtime-manager.ts',
-      'src/main/notebook/windows-runtime-download.contract.test.ts'
     ],
     ['src/main/session-package/transfer.ts', 'src/main/session-package/transfer.test.ts']
   ]) {

@@ -83,9 +83,14 @@
     "src/renderer/src/pages/workspace/previews/renderers/pdf-research-table.css",
     "src/renderer/src/pages/workspace/previews/renderers/pdf-search-matches.test.ts",
     "src/renderer/src/pages/workspace/previews/renderers/pdf-search-matches.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.ts",
     "src/renderer/src/pages/workspace/previews/renderers/reaction-markup.test.ts",
     "src/renderer/src/pages/workspace/previews/renderers/reaction-markup.ts",
     "src/renderer/src/pages/workspace/previews/renderers/scientific-preview.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-document-state.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.ts",
     "src/renderer/src/pages/workspace/previews/spreadsheet-cache-policy.test.ts",
     "src/renderer/src/pages/workspace/previews/tiff-preview-preflight.test.ts",
     "src/renderer/src/pages/workspace/previews/tiff-preview-preflight.ts",
@@ -283,6 +288,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-preview-image-cache.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/pdf-search-matches.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/reaction-markup.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/scientific-preview.test.tsx",
       "src/renderer/src/pages/workspace/previews/spreadsheet-cache-policy.test.ts",
@@ -315,7 +321,8 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-numeric-token-links.test.tsx",
       "scripts/pdfjs-resource-scope.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-checkpoint.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -433,5 +440,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "The workspace_previews owner retains 2 explicit research consumer obligations beyond its reviewed source-derived edges, including index-startup-failure.test.ts, index-fatal-errors.test.ts. 2 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
+  "fullTestReason": "Content-first PDF reflow adds renderer state and document-generation sources beyond the reviewed workspace preview boundary; retain full CI validation until the expanded boundary and runtime contracts are reviewed."
 }

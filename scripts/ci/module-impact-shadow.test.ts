@@ -706,7 +706,7 @@ describe('production module shadow contracts', () => {
       module: 'notebook_execution',
       path: 'src/main/notebook/shell-process.ts',
       reason:
-        'Managed research execution adds local-service processes, preload helpers, runtime environments and output redaction to the execution owner; native process, confinement and publication interactions require full validation.'
+        'Removing the shell search preflight changes the trusted source boundary; retain full validation until the reduced boundary is reviewed and trusted.'
     },
     {
       module: 'notebook_network_sandbox',

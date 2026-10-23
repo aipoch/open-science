@@ -30,6 +30,7 @@ import { app } from 'electron'
 
 import { LOCAL_DIR_ENTRY_CAP, type GrantedLocalRoot } from '../../shared/local-fs'
 import { LocalFsService, type GrantedLocalRootsStore } from './service'
+import { NotebookShellProcessAdapter } from '../notebook/shell-process'
 
 // The unmocked fs/promises, for restoring the delegating wrappers after each listDrives test.
 const realFsPromises = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
@@ -340,27 +341,134 @@ describe('LocalFsService granted roots', () => {
     })
     expect(updated[0].id).toMatch(/^[0-9a-f-]{36}$/)
     await expect(grantService.listGrantedRoots()).resolves.toEqual(updated)
-    expect(beforeGrantedRootsChange).toHaveBeenCalledOnce()
+    expect(beforeGrantedRootsChange).not.toHaveBeenCalled()
   })
 
-  it('does not persist a grant when stopping active kernels fails', async () => {
+  it('does not update an existing grant when stopping active kernels fails', async () => {
+    const [granted] = await grantService.grantRoot({ path: join(home, 'Documents'), access: 'rw' })
     beforeGrantedRootsChange.mockRejectedValueOnce(new Error('shutdown failed'))
 
     await expect(
       grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
     ).rejects.toThrow('shutdown failed')
 
-    expect(store).toEqual([])
+    expect(store).toEqual([granted])
   })
 
-  it('does not persist a grant when notebook cleanup is incomplete', async () => {
-    beforeGrantedRootsChange.mockResolvedValueOnce({ reaped: false })
+  it.each(['regrant', 'setAccess', 'remove'] as const)(
+    'blocks %s during incomplete cleanup and allows retry after confirmation',
+    async (operation) => {
+      const [granted] = await grantService.grantRoot({
+        path: join(home, 'Documents'),
+        access: 'rw'
+      })
+      const change = (): Promise<GrantedLocalRoot[]> => {
+        if (operation === 'regrant')
+          return grantService.grantRoot({ path: granted.path, access: 'ro' })
+        if (operation === 'setAccess')
+          return grantService.setGrantedRootAccess({ id: granted.id, access: 'ro' })
+        return grantService.removeGrantedRoot({ id: granted.id })
+      }
+      beforeGrantedRootsChange.mockResolvedValueOnce({ reaped: false })
+      await expect(change()).rejects.toThrow(/cleanup is incomplete/i)
+      expect(store).toEqual([granted])
+      beforeGrantedRootsChange.mockResolvedValueOnce({ reaped: true })
+      await expect(change()).resolves.toEqual(
+        operation === 'remove' ? [] : [{ ...granted, access: 'ro' }]
+      )
+    }
+  )
 
-    await expect(
-      grantService.grantRoot({ path: join(home, 'Documents'), access: 'ro' })
-    ).rejects.toThrow(/cleanup is incomplete/i)
+  it.skipIf(process.platform === 'win32')(
+    'adds B after Bash cleanup is unconfirmed, but blocks downgrade and revoke until retry',
+    async () => {
+      const adapter = new NotebookShellProcessAdapter(process.platform)
+      let cleanupVerified = true
+      beforeGrantedRootsChange.mockImplementation(async () => {
+        const result = await adapter.shutdown()
+        return { reaped: result.reaped && cleanupVerified }
+      })
+      try {
+        const [a] = await grantService.grantRoot({ path: join(home, 'Documents'), access: 'rw' })
+        const run = await adapter.execute({
+          command: 'printf grant-regression',
+          cwd: outside,
+          handoffDir: outside,
+          runtimeRoot: join(outside, 'runtime'),
+          sessionId: 'grant-regression',
+          projectId: 'grant-regression',
+          runtimeBinding: {
+            kind: 'native-posix',
+            shell: process.env.OPEN_SCIENCE_TEST_BASH ?? '/bin/bash'
+          },
+          grantedRoots: await grantService.listGrantedRoots()
+        })
+        expect(run).toMatchObject({ exitCode: 0, stdout: 'grant-regression' })
+        cleanupVerified = false
+        // Simulate an unconfirmed shutdown receipt after a real Bash execution.
+        await expect(beforeGrantedRootsChange()).resolves.toEqual({ reaped: false })
+        beforeGrantedRootsChange.mockClear()
+        const roots = await grantService.grantRoot({ path: outside, access: 'ro' })
+        expect(roots).toHaveLength(2)
+        expect(beforeGrantedRootsChange).not.toHaveBeenCalled()
+        await expect(grantService.grantRoot({ path: a.path, access: 'ro' })).rejects.toThrow(
+          /cleanup is incomplete/i
+        )
+        await expect(grantService.setGrantedRootAccess({ id: a.id, access: 'ro' })).rejects.toThrow(
+          /cleanup is incomplete/i
+        )
+        await expect(grantService.removeGrantedRoot({ id: a.id })).rejects.toThrow(
+          /cleanup is incomplete/i
+        )
+        expect(await grantService.listGrantedRoots()).toEqual(roots)
+        cleanupVerified = true
+        await grantService.grantRoot({ path: a.path, access: 'ro' })
+        await grantService.setGrantedRootAccess({ id: a.id, access: 'rw' })
+        await grantService.removeGrantedRoot({ id: a.id })
+        expect(await grantService.listGrantedRoots()).toEqual([roots[1]])
+      } finally {
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+      }
+    }
+  )
 
-    expect(store).toEqual([])
+  it('does not mistake a concurrent re-grant through a symlink for a new path', async () => {
+    const folder = join(home, 'Documents')
+    const alias = join(outside, 'alias')
+    await symlink(folder, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const upsert = storeStub.upsertByPath
+    vi.spyOn(storeStub, 'upsertByPath').mockImplementationOnce(async (root) => {
+      entered()
+      await gate
+      return upsert(root)
+    })
+    vi.mocked(stat).mockClear()
+    const first = grantService.grantRoot({ path: folder, access: 'rw' })
+    await started
+    beforeGrantedRootsChange.mockResolvedValue({ reaped: false })
+    const second = grantService.grantRoot({ path: alias, access: 'ro' }).then(
+      () => 'accepted',
+      (error: Error) => error.message
+    )
+    try {
+      await vi.waitFor(() =>
+        expect(vi.mocked(stat).mock.calls.filter(([path]) => path === folder)).toHaveLength(2)
+      )
+    } finally {
+      release()
+    }
+    const [granted] = await first
+    expect(await second).toMatch(/cleanup is incomplete/i)
+    expect(store).toEqual([granted])
+    expect(granted.access).toBe('rw')
   })
 
   it('grants a folder inside home even when home itself sits behind a symlink', async () => {

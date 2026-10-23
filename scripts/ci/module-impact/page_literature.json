@@ -121,6 +121,8 @@
     "src/renderer/src/pages/literature/journals/JournalImportMapping.tsx",
     "src/renderer/src/pages/literature/journals/JournalImportReview.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureDetailDialog.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureDetailOverview.tsx",
     "src/renderer/src/pages/literature/journals/journal-field-icons.ts",
     "src/renderer/src/pages/literature/journals/journal-template.ts",
@@ -147,7 +149,10 @@
     "src/renderer/src/pages/literature/collections/LiteratureCollectionDeleteDialog.tsx",
     "src/renderer/src/pages/literature/workflows/LiteratureReadingProjectDialog.tsx",
     "src/renderer/src/pages/literature/public/page.ts",
-    "src/renderer/src/pages/literature/public-boundary.architecture.test.ts"
+    "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
+    "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -172,6 +177,7 @@
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicateBatch.test.tsx",
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicatesView.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/imports/LiteratureImportIdentity.render.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureLibraryCount.test.tsx",
       "src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx",
@@ -198,7 +204,8 @@
       "src/renderer/src/pages/literature/journals/JournalAlignment.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalColumnHeader.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
-      "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx"
+      "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
@@ -338,5 +345,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "The page_literature owner retains 24 explicit research consumer obligations beyond its reviewed source-derived edges, including use-research-run-launcher.test.tsx, ReplayPanel.layout.test.tsx, RecordedRunObservationPreview.test.tsx. 24 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
+  "fullTestReason": "Supplementary lookup and shared download rows expand the reviewed literature renderer boundary; require full CI validation until the expanded sources and interaction contracts are reviewed."
 }

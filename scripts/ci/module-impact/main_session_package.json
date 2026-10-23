@@ -68,7 +68,8 @@
     "src/main/session-package/materialize.test.ts",
     "src/main/session-package/research-reproduction.integration.test.ts",
     "src/main/session-package/headless.test.ts",
-    "src/main/session-package/headless.ts"
+    "src/main/session-package/headless.ts",
+    "src/main/session-package/content-verification.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -114,7 +115,8 @@
       "src/main/session-package/browser-import-sdk.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts",
-      "src/main/session-package/headless.test.ts"
+      "src/main/session-package/headless.test.ts",
+      "src/main/session-package/content-verification.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

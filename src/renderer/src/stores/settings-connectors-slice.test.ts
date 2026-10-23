@@ -102,6 +102,7 @@ const createCommands = (): ConnectorCommands => ({
   setConnectorAutoAllow: vi.fn(async () => snapshot()),
   setToolPermission: vi.fn(async () => detail),
   setNcbiCredentials: vi.fn(async () => snapshot()),
+  setSemanticScholarCredential: vi.fn(async () => snapshot()),
   setOpenAlexCredential: vi.fn(async () => snapshot()),
   validateOpenAlexCredential: vi.fn(async () => ({ valid: true as const })),
   addCustomServer: vi.fn(async () => snapshot()),

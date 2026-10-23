@@ -32,6 +32,7 @@ type Step = {
 }
 
 type Job = {
+  'continue-on-error'?: boolean
   env?: Record<string, string>
   if?: string
   name?: string
@@ -1074,6 +1075,27 @@ describe('PR Gate workflow', () => {
     expect(prepare?.run).toContain('source=bootstrap')
     expect(shadowPrepare).toBeUndefined()
     expect(shadowPublish).toBeUndefined()
+  })
+
+  it('keeps the file-level test impact report advisory and output-free', () => {
+    const job = workflow.jobs.file_test_impact
+    const step = job.steps?.find(({ id }) => id === 'file_test_impact')
+    expect(job).toMatchObject({ needs: 'preflight', 'continue-on-error': true })
+    expect(job['timeout-minutes']).toBeLessThanOrEqual(10)
+    expect(job.outputs).toBeUndefined()
+    expect(job.if).toContain("github.event_name == 'pull_request'")
+    // The gate never waits on or evaluates the report, and no job consumes it.
+    expect(JSON.stringify(workflow.jobs.gate)).not.toContain('file_test_impact')
+    for (const other of Object.values(workflow.jobs))
+      expect([other.needs ?? []].flat()).not.toContain('file_test_impact')
+    expect(step).toMatchObject({ 'continue-on-error': true })
+    expect(step?.run).toContain('node scripts/ci/file-test-impact.mjs compare')
+    // Revisions reach the script through env, never interpolated into the shell.
+    expect(step?.run).not.toContain('${{')
+    for (const { run = '' } of job.steps ?? []) {
+      expect(run).not.toContain('GITHUB_OUTPUT')
+      expect(run).not.toContain('npm run test:affected')
+    }
   })
 
   it('aggregates all deterministic bundles into the stable PR Gate job', () => {

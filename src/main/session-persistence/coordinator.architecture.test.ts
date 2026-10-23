@@ -455,6 +455,7 @@ describe('Session persistence coordinator architecture', () => {
         'containsMessageOnActiveBranch',
         'createChildren',
         'deleteProjectSessions',
+        'deleteRecoveryFile',
         'deleteSession',
         'failTaskRun',
         'getProjectSessionDeletionState',
@@ -731,6 +732,7 @@ describe('Session persistence coordinator architecture', () => {
         'clearSideChat',
         'commitSideChatRelays',
         'containsMessageOnActiveBranch',
+        'deleteRecoveryFile',
         'failTaskRun',
         'loadSessionForContinuation',
         'mutateRuntimeSession',
@@ -836,19 +838,23 @@ describe('Session persistence coordinator architecture', () => {
         continue
       }
       const statements = method.body?.statements
-      if (name === 'adoptPublishedSession') {
+      if (name === 'adoptPublishedSession' || name === 'deleteRecoveryFile') {
         // The package publisher has a different scheduler. Snapshot its handoff synchronously
         // before this owner queues the ordinary read and catalog mutation in the Session lane.
+        // Recovery deletion similarly validates and captures its untrusted identity before queuing.
         expect(statements, name).toHaveLength(2)
         const capture = statements?.[0]
         expect(capture && isVariableStatement(capture)).toBe(true)
         expect(capture?.getText(facadeFile)).toBe(
-          'const { projectId, sessionId, session, pendingProjectImport } = structuredClone(publication)'
+          name === 'adoptPublishedSession'
+            ? 'const { projectId, sessionId, session, pendingProjectImport } = structuredClone(publication)'
+            : 'const validated = deleteSessionRecoveryFileRequestSchema.parse(request)'
         )
       } else {
         expect(statements, name).toHaveLength(1)
       }
-      const statement = statements?.[name === 'adoptPublishedSession' ? 1 : 0]
+      const statement =
+        statements?.[name === 'adoptPublishedSession' || name === 'deleteRecoveryFile' ? 1 : 0]
       expect(statement, name).toBeDefined()
       if (!statement) continue
       expect(isReturnStatement(statement), name).toBe(true)
@@ -886,7 +892,7 @@ describe('Session persistence coordinator architecture', () => {
       expect(methods(owner, 'private')).not.toContain('enqueue')
     }
 
-    expect(expectedSchedulerRoute.size).toBe(51)
+    expect(expectedSchedulerRoute.size).toBe(52)
     const constructorSource = facade.members.filter(isConstructorDeclaration)[0].getText(facadeFile)
     expect(constructorSource).toContain('this.operationScheduler.runSession(')
     expect(constructorSource).toContain('this.operationScheduler.runGlobal(work)')

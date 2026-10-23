@@ -99,6 +99,7 @@ export type ConnectorsSnapshot = {
   ncbi: NcbiCredentialsView
   // Optional only for compatibility with an older main process during local development.
   openAlex?: OpenAlexCredentialView
+  semanticScholar?: { hasApiKey: boolean }
 }
 
 export type DeviceCredentialKind = 'api_key' | 'token' | 'oauth'
@@ -1792,6 +1793,20 @@ export class OpenScienceClient {
     sessionId: string,
     options?: RequestOptions
   ): Promise<SessionConfiguration>
+  /** Export an idle Session to a local .science path; defaults to a one-hour deadline. */
+  exportSessionPackage(
+    projectId: string,
+    sessionId: string,
+    destinationPath: string,
+    options?: Pick<RequestOptions, 'signal' | 'timeoutMs'>
+  ): Promise<{ saved: boolean; filePath?: string }>
+  /** Headless local import requires explicit confirmation; an empty target uses the package name. */
+  importSessionPackage(
+    target: PackageImportTarget | { projectId?: never; projectName?: never },
+    sourcePath: string,
+    options: { nonInteractive: true },
+    rpcOptions?: Pick<RequestOptions, 'signal' | 'timeoutMs'>
+  ): Promise<{ projectId: string; sessionId: string } | null>
   updateSessionConfiguration(
     sessionId: string,
     request: {

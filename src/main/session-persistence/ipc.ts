@@ -327,7 +327,14 @@ const createDefaultSessionRepository = (
 ): SessionRepository =>
   new SessionRepository(
     resolveConfigRoot(),
-    { hasActiveRuntimePrompt, hasLiveRuntimeSession },
+    {
+      hasActiveRuntimePrompt,
+      hasLiveRuntimeSession,
+      hasComputeJobs: async (projectId, sessionId) => {
+        const client = await getProjectDbClient(resolveConfigRoot())
+        return (await client.computeJob.count({ where: { projectId, sessionId } })) > 0
+      }
+    },
     new SessionProjectionRepository(() => getProjectDbClient(resolveConfigRoot()))
   )
 

@@ -15,6 +15,57 @@ type NativeReferenceLine = {
   fontSize: number
 }
 
+it.each([
+  [
+    'The measured response of the sample is displayed in',
+    'Figure 2. φ is the normalized response of the sample.'
+  ],
+  [
+    'The component labels are indicated at the bottom of',
+    'Figure 2. The contributions are shown for each group.'
+  ]
+])('rejects the tightly wrapped body reference after %s', (cue, reference) => {
+  const line = (text: string, y: number): NativeReferenceLine => ({
+    text,
+    x: 50,
+    y,
+    width: 440,
+    height: 10,
+    fontSize: 10
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: [
+      line(cue, 100),
+      line(reference, 114),
+      line('The independent measurements continue here.', 128)
+    ],
+    graphicsBounds: [{ kind: 'path', normalizedRect: [0.2, 0.3, 0.8, 0.7] }]
+  }
+  expect(findCaptionCandidates([page])).toEqual([])
+  // A real title remains eligible without a matching native predecessor.
+  expect(findCaptionCandidates([{ ...page, lines: page.lines.slice(1) }])).toHaveLength(1)
+  expect(findCaptionCandidates([page], new Map([[1, [[50, 112, 490, 112]]]]))).toHaveLength(1)
+  expect(
+    findCaptionCandidates([
+      {
+        ...page,
+        lines: page.lines.map((l, i) => (i ? l : { ...l, x: 510 }))
+      }
+    ])
+  ).toHaveLength(1)
+  expect(
+    findCaptionCandidates([
+      {
+        ...page,
+        lines: page.lines.map((l, i) => (i ? l : { ...l, fontSize: 12 }))
+      }
+    ])
+  ).toHaveLength(1)
+})
+
 it('rejects compact and omitted-label finite references while retaining noun captions', () => {
   expect(captionKind('Fig.3 shows the observed behavior.')).toBeUndefined()
   expect(captionKind('Fig. 2 and 4 illustrate the measured behavior.')).toBeUndefined()

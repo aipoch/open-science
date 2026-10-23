@@ -6,6 +6,7 @@ const defaultSleep = (milliseconds) =>
   new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds))
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+const PACKAGE_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000
 const DEFAULT_EVENT_IDLE_TIMEOUT_MS = 30_000
 const EVENT_RECONNECT_DELAY_MS = 100
 const MAX_BUFFERED_EVENTS = 1_024
@@ -556,6 +557,54 @@ export class OpenScienceClient {
 
   getSessionConfiguration(sessionId, options) {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/config`, options)
+  }
+
+  // Web RPC seam: authenticated loopback dispatch of one application command channel.
+  // The CLI reaches headless-only commands (Session package export/import) this way.
+  async callRpc(channel, args, options = {}) {
+    return withRequestTimeout(
+      {
+        defaultTimeoutMs: this.requestTimeoutMs,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs
+      },
+      async (signal) => {
+        const response = await this.fetch(`${this.baseUrl}/rpc/${encodeURIComponent(channel)}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${this.token}`,
+            accept: 'application/json',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ protocolVersion: 1, args }),
+          signal
+        })
+        const payload = await response.json().catch(() => undefined)
+        if (!response.ok || payload?.ok !== true) {
+          throw new OpenScienceApiError(
+            payload?.error?.message ?? `Open-Science Web RPC request failed (${response.status}).`,
+            { code: payload?.error?.code, status: response.status }
+          )
+        }
+        return payload.result
+      }
+    )
+  }
+
+  exportSessionPackage(projectId, sessionId, destinationPath, options) {
+    return this.callRpc('sessions:export-package', [{ projectId, sessionId }, destinationPath], {
+      ...options,
+      timeoutMs: options?.timeoutMs ?? PACKAGE_REQUEST_TIMEOUT_MS
+    })
+  }
+
+  importSessionPackage(target, sourcePath, options, rpcOptions) {
+    if (options?.nonInteractive !== true)
+      throw new TypeError('Non-interactive Session import requires explicit confirmation.')
+    return this.callRpc('sessions:import-package', [target, sourcePath, { nonInteractive: true }], {
+      ...rpcOptions,
+      timeoutMs: rpcOptions?.timeoutMs ?? PACKAGE_REQUEST_TIMEOUT_MS
+    })
   }
 
   updateSessionConfiguration(sessionId, request, options) {

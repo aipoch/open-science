@@ -6,7 +6,7 @@ import {
 } from './sensitive-content'
 import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '@aipoch/diagnostics'
-import { formatPackageBytes } from '../../shared/session-package'
+import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -625,14 +625,19 @@ export class SessionPackageDesktop {
       })
   }
 
-  export(request: SessionPackageRequest, callerId?: string): Promise<SessionPackageExportResult> {
-    return this.exportWithPolicy(request, callerId)
+  export(
+    request: SessionPackageRequest,
+    callerId?: string,
+    destinationPath?: string
+  ): Promise<SessionPackageExportResult> {
+    return this.exportWithPolicy(request, callerId, false, destinationPath)
   }
 
   private exportWithPolicy(
     request: SessionPackageRequest,
     callerId?: string,
-    allowSensitiveContent = false
+    allowSensitiveContent = false,
+    destinationPath?: string
   ): Promise<SessionPackageExportResult> {
     let operationSignal: AbortSignal | undefined
     return this.operations
@@ -644,39 +649,49 @@ export class SessionPackageDesktop {
         try {
           return await this.staged(async (directory) => {
             const archive = join(directory, 'session.science')
-            let filePath: string | undefined
+            let filePath: string | undefined = destinationPath
             await this.options.withDataRootWrite(() =>
               this.acceptCleanup(() =>
                 this.options.service.exportTo(request, archive, {
                   ...(allowSensitiveContent ? { allowSensitiveContent: true } : {}),
                   signal,
                   onProgress: this.operations.report,
-                  selectFiles: async (files, budgetSignal, summary, title) => {
-                    const excluded = await this.operations.selectFiles(files, budgetSignal, summary)
-                    this.operations.report({ phase: 'choosing-location' })
-                    signal.throwIfAborted()
-                    const today = new Date()
-                    const date = [
-                      today.getFullYear(),
-                      String(today.getMonth() + 1).padStart(2, '0'),
-                      String(today.getDate()).padStart(2, '0')
-                    ].join('-')
-                    const options = {
-                      title: this.options.translate('Export Session package'),
-                      defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
-                      filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
-                    }
-                    const selected = await this.nativeDialog(
-                      desktopFileInteraction().chooseSavePath(options, callerId),
-                      AbortSignal.any([signal, budgetSignal])
-                    )
-                    if (selected.canceled || !selected.filePath) {
-                      this.operations.cancel()
-                      signal.throwIfAborted()
-                    }
-                    filePath = selected.filePath
-                    return excluded
-                  }
+                  // A supplied destination is a headless caller (CLI / local Web RPC): there is no
+                  // renderer to ask, so include every package file and skip the native save dialog.
+                  ...(destinationPath
+                    ? {}
+                    : {
+                        selectFiles: async (files, budgetSignal, summary, title) => {
+                          const excluded = await this.operations.selectFiles(
+                            files,
+                            budgetSignal,
+                            summary
+                          )
+                          this.operations.report({ phase: 'choosing-location' })
+                          signal.throwIfAborted()
+                          const today = new Date()
+                          const date = [
+                            today.getFullYear(),
+                            String(today.getMonth() + 1).padStart(2, '0'),
+                            String(today.getDate()).padStart(2, '0')
+                          ].join('-')
+                          const options = {
+                            title: this.options.translate('Export Session package'),
+                            defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
+                            filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
+                          }
+                          const selected = await this.nativeDialog(
+                            desktopFileInteraction().chooseSavePath(options, callerId),
+                            AbortSignal.any([signal, budgetSignal])
+                          )
+                          if (selected.canceled || !selected.filePath) {
+                            this.operations.cancel()
+                            signal.throwIfAborted()
+                          }
+                          filePath = selected.filePath
+                          return excluded
+                        }
+                      })
                 })
               )
             )
@@ -708,8 +723,10 @@ export class SessionPackageDesktop {
     originClientId?: string,
     target: import('../../shared/session-package').SessionPackageImportRequest = {},
     sourcePath?: string,
-    validateBeforeTarget = false
+    validateBeforeTarget = false,
+    options?: { readonly nonInteractive?: true }
   ): Promise<SessionPackageImportResult> {
+    const nonInteractive = options?.nonInteractive === true
     let operationSignal: AbortSignal | undefined
     let importFile: NativeImportFile | undefined
     const rememberSource = (path: string): void => {
@@ -765,8 +782,11 @@ export class SessionPackageDesktop {
             (!isAbsolute(sourcePath) || extname(sourcePath).toLowerCase() !== '.science')
           )
             throw new Error('Invalid Session package path.')
+          if (nonInteractive && !sourcePath)
+            throw new Error('A package path is required for non-interactive import.')
           if (sourcePath) rememberSource(sourcePath)
-          if (!sourcePath || target.projectId || target.projectName) this.options.assertCanStart?.()
+          if (nonInteractive || !sourcePath || target.projectId || target.projectName)
+            this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
           const recovery = importFile?.recovery
           if (recovery) {
@@ -812,13 +832,22 @@ export class SessionPackageDesktop {
             this.options.assertCanStart?.()
             this.operations.report({ phase: 'validating' })
             try {
-              await this.acceptCleanup(() => this.options.service.inspect(sourcePath, signal))
+              await this.acceptCleanup(() =>
+                this.options.service.inspect(sourcePath, signal, (progress) =>
+                  this.operations.report({
+                    ...progress,
+                    overallPercent: (packageImportPercent(progress) ?? 0) / 4
+                  })
+                )
+              )
             } catch (error) {
               this.failOperation(error)
             }
             signal.throwIfAborted()
           }
-          if (sourcePath && !target.projectId && !target.projectName) {
+          // Headless callers name the destination up front (or accept the automatic
+          // import-<uuid> Project); there is no renderer to run target selection.
+          if (sourcePath && !target.projectId && !target.projectName && !nonInteractive) {
             const selectedTarget = await this.operations.waitForImport({
               requestId: this.operations.snapshot?.importRequestId,
               filename: basename(sourcePath)
@@ -861,24 +890,41 @@ export class SessionPackageDesktop {
               const archive = join(directory, 'session.science')
               await this.copyArchive(input, archive, 'copying', signal)
               this.operations.report({ phase: 'validating' })
+              let confirmed = false
               const result = await this.options.withDataRootWrite(() =>
                 this.acceptCleanup(() =>
                   this.options.service
                     .importFrom(
                       archive,
                       signal,
-                      // Service progress starts after confirmation; final validation belongs to import.
+                      // Inspection reports before confirmation; subsequent validation belongs to import.
                       (progress) =>
-                        this.operations.report(
-                          progress.phase === 'validating' ? { phase: 'importing' } : progress
-                        ),
-                      async (preview, budgetSignal) => {
-                        await this.operations.waitForImport(
-                          { preview, filename: basename(input) },
-                          budgetSignal
-                        )
-                        signal.throwIfAborted()
-                      },
+                        this.operations.report({
+                          ...progress,
+                          phase:
+                            confirmed && progress.phase === 'validating'
+                              ? 'importing'
+                              : progress.phase,
+                          ...(validateBeforeTarget
+                            ? {
+                                overallPercent:
+                                  10 +
+                                  (packageImportPercent(progress) ?? (confirmed ? 40 : 0)) * 0.9
+                              }
+                            : {})
+                        }),
+                      // Headless import has no renderer to approve the preview; the caller's
+                      // explicit --non-interactive flag is the confirmation.
+                      nonInteractive
+                        ? undefined
+                        : async (preview, budgetSignal) => {
+                            await this.operations.waitForImport(
+                              { preview, filename: basename(input) },
+                              budgetSignal
+                            )
+                            confirmed = true
+                            signal.throwIfAborted()
+                          },
                       target
                     )
                     .catch((error: unknown) => {

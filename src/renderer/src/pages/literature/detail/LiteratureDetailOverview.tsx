@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import type { LiteraturePreviewItem } from '../renderer-host'
 import { FileDropZone } from '@/components/FileDropZone'
 import { ErrorNotice } from '@/components/error-notice'
@@ -9,7 +10,7 @@ import type {
   LiteratureItemView
 } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import { Download } from 'lucide-react'
+import { Search, BookOpen, Quote } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { ResourceTagSummary } from '../../settings/ResourceTagControls'
@@ -49,6 +50,7 @@ export function LiteratureDetailOverview({
   displayCollections,
   collectionLinkError,
   setCollectionLink,
+  onRelated,
   changeDetailMode,
   isAddingPdf,
   pdfInputRef,
@@ -85,6 +87,7 @@ export function LiteratureDetailOverview({
   displayCollections: LiteratureCollectionView[]
   collectionLinkError: string | undefined
   setCollectionLink: (targetCollectionId: string, included: boolean) => Promise<boolean>
+  onRelated: (direction: 'references' | 'citations') => void
   changeDetailMode: ReturnType<typeof useLiteratureMetadata>['changeMode']
   isAddingPdf: boolean
   pdfInputRef: React.RefObject<HTMLInputElement | null>
@@ -95,6 +98,7 @@ export function LiteratureDetailOverview({
   pdfProgress: string | undefined
 }): React.JSX.Element | null {
   const { t } = useTranslation()
+  const { getPreviewFormatForFile } = useLiteratureHost()
   return (
     <div className="relative min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
       {selectedCollection?.smart && (
@@ -150,6 +154,34 @@ export function LiteratureDetailOverview({
         </section>
       )}
       <LiteratureBibliographicDetails selectedItem={selectedItem} itemTypeLabels={itemTypeLabels} />
+      <section className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <div className="space-y-1">
+          <h3 className="font-medium">{t('Citation discovery')}</h3>
+          <p className="text-xs text-muted-foreground">
+            {t('Find references and citing papers through Semantic Scholar.')}
+          </p>
+        </div>
+        <div className="ml-auto flex shrink-0 gap-2">
+          <Button
+            data-related-entry="references"
+            size="sm"
+            variant="outline"
+            onClick={() => onRelated('references')}
+          >
+            <BookOpen className="size-4" aria-hidden="true" />
+            {t('References')}
+          </Button>
+          <Button
+            data-related-entry="citations"
+            size="sm"
+            variant="outline"
+            onClick={() => onRelated('citations')}
+          >
+            <Quote className="size-4" aria-hidden="true" />
+            {t('Cited by')}
+          </Button>
+        </div>
+      </section>
       <div className="py-4">
         <ResourceTagSummary
           reference={{
@@ -200,8 +232,12 @@ export function LiteratureDetailOverview({
             className="ml-auto"
             onClick={() => changeDetailMode('full-text')}
           >
-            <Download className="size-3.5" aria-hidden="true" />
+            <Search className="size-3.5" aria-hidden="true" />
             {t('Find full-text PDF')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => changeDetailMode('supplements')}>
+            <Search className="size-3.5" aria-hidden="true" />
+            {t('Find supplementary materials')}
           </Button>
         </div>
         <FileDropZone
@@ -210,11 +246,11 @@ export function LiteratureDetailOverview({
           className="mt-3"
           busy={isAddingPdf}
           onFiles={(files) => void addPdfs(files)}
-          dropLabel={t('Drop PDFs to attach to this reference')}
+          dropLabel={t('Drop files to attach to this reference')}
           picker={{
-            label: t('Add PDFs'),
-            description: t('Drop PDFs here to attach to this reference, or choose files.'),
-            accept: 'application/pdf,.pdf',
+            label: t('Add files'),
+            accept: '',
+            description: t('Drop files here to attach to this reference, or choose files.'),
             multiple: true,
             inputRef: pdfInputRef
           }}
@@ -244,7 +280,10 @@ export function LiteratureDetailOverview({
                 source: 'literature',
                 managedFileId: attachment.id,
                 path: createLiteratureAttachmentVersionReference(version.id),
-                format: 'pdf',
+                format: getPreviewFormatForFile({
+                  name: version.filename,
+                  mimeType: version.contentType
+                }),
                 name: version.filename,
                 mimeType: version.contentType,
                 size: version.sizeBytes,

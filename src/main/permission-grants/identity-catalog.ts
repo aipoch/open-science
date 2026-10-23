@@ -21,6 +21,7 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-notebook/repl_execute',
     'mcp:open-science-notebook/bash_execute',
     'mcp:open-science-notebook/notebook_state',
+    'mcp:open-science-notebook/list_authorized_directories',
     'mcp:open-science-notebook/list_notebook_runtimes',
     'mcp:open-science-notebook/list_memory_categories',
     'mcp:open-science-notebook/search_memories',

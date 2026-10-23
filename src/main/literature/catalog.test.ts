@@ -104,6 +104,35 @@ describe('LiteratureCatalog', () => {
     return new LiteratureCatalog(async () => client!)
   }
 
+  it('deduplicates manually discovered Semantic Scholar papers and preserves dismissal and provenance', async () => {
+    const catalog = await setup()
+    const input = candidate({ provider: 'semantic-scholar', externalId: 'a'.repeat(40) })
+    input.origin = { kind: 'manual-discovery' }
+    const staged = await catalog.transact({ kind: 'stage-candidate', candidate: input })
+    expect(staged).toMatchObject({ kind: 'candidate', state: 'pending' })
+    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+      id: staged.id,
+      state: 'pending'
+    })
+    await catalog.transact({ kind: 'dismiss-candidate', candidateId: staged.id })
+    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+      id: staged.id,
+      state: 'dismissed'
+    })
+    await catalog.transact({ kind: 'restore-candidates', candidateIds: [staged.id] })
+    const accepted = await catalog.transact({ kind: 'accept-candidate', candidateId: staged.id })
+    expect(await catalog.transact({ kind: 'stage-candidate', candidate: input })).toMatchObject({
+      kind: 'item',
+      id: accepted.id,
+      state: 'present'
+    })
+    expect(await catalog.sources(accepted.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: 'semantic-scholar', externalId: 'a'.repeat(40) })
+      ])
+    )
+  })
+
   it('reads current candidate states without changing receipts and follows import, merge, and deletion', async () => {
     const catalog = await setup()
     const receipt = await catalog.transact({ kind: 'stage-candidate', candidate: candidate() })
@@ -155,6 +184,56 @@ describe('LiteratureCatalog', () => {
       candidates: [{ candidateId: receipt.id, state: 'dismissed' }]
     })
   })
+
+  it.each([
+    [
+      'supplementary',
+      'data.docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      0
+    ],
+    ['supplementary', 'supplement.pdf', 'application/pdf', 0],
+    ['fullText', 'paper.pdf', 'application/pdf', 1],
+    ['fullText', 'notes.txt', 'text/plain', 0]
+  ] as const)(
+    'classifies %s %s correctly in full-text filters',
+    async (kind, filename, contentType, fullTextCount) => {
+      const catalog = await setup()
+      const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+      const checksum = 'a'.repeat(64)
+      await client!.contentBlob.create({
+        data: {
+          id: 'ordinary-blob',
+          checksum,
+          storageKey: filename,
+          sizeBytes: 128n,
+          contentType,
+          state: 'available',
+          verifiedAt: new Date()
+        }
+      })
+      await catalog.attachContent({
+        itemId: created.id,
+        kind,
+        contentBlobId: 'ordinary-blob',
+        filename,
+        contentType,
+        sizeBytes: 128,
+        checksum
+      })
+      const item = await catalog.get(created.id)
+      expect(item!.attachments[0].versions[0]).toMatchObject({ filename })
+      expect(
+        (await catalog.search({ scope: 'library', filter: { hasFullText: true } })).entries
+      ).toHaveLength(fullTextCount)
+      expect(
+        (await catalog.search({ scope: 'library', filter: { hasFullText: false } })).entries
+      ).toHaveLength(1 - fullTextCount)
+      expect(
+        (await catalog.search({ scope: 'global-search', entryKind: 'pdf' })).entries
+      ).toHaveLength(fullTextCount)
+    }
+  )
 
   it('creates one reference for concurrent Add PDF requests and rolls back a failed new reference', async () => {
     const catalog = await setup()

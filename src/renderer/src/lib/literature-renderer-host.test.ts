@@ -51,3 +51,13 @@ it('notifies recovery subscribers only when connected again and releases the sub
     useDesktopRuntimeRecoveryStore.setState(previous, true)
   }
 })
+
+it.each([
+  ['paper.pdf', 'pdf'],
+  ['data.docx', 'word'],
+  ['table.xlsx', 'spreadsheet'],
+  ['figure.png', 'image'],
+  ['archive.zip', 'unknown']
+])('routes %s to the %s attachment preview', (name, format) => {
+  expect(literatureRendererHost.getPreviewFormatForFile({ name })).toBe(format)
+})

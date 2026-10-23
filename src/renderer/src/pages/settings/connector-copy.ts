@@ -5,6 +5,12 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'tcia')
+    return t('Public cancer imaging collections and series metadata from TCIA.')
+  if (connector.id === 'kegg')
+    return t(
+      'KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.'
+    )
   if (connector.id === 'rxnorm') {
     return t('Drug name resolution and concept properties from RxNorm.')
   }
@@ -91,6 +97,20 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'structures/omnipath_query_regulation':
+      return t('Query upstream or downstream human protein regulation with OmniPath.')
+    case 'kegg/map_gene':
+      return t('Map a KEGG gene to pathways or UniProt.')
+    case 'kegg/get_entry':
+      return t('Retrieve a KEGG entry summary.')
+    case 'kegg/search_entries':
+      return t('Search KEGG pathways, orthologs, compounds and reactions.')
+    case 'tcia/get_series':
+      return t('Retrieve public imaging series metadata by UID.')
+    case 'tcia/get_collection':
+      return t('Retrieve TCIA collection details and download requirements.')
+    case 'tcia/search_collections':
+      return t('Search public TCIA imaging collections.')
     case 'rxnorm/resolve_name':
       return t('Resolve drug names to RxNorm identifiers.')
     case 'rxnorm/get_concept':

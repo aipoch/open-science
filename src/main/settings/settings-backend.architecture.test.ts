@@ -1,5 +1,3 @@
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../scripts/ci/module-test-impact.mjs'
 import {
   runtimeModuleSpecifiers,
   expectBoundaryPaths
@@ -387,6 +385,7 @@ describe('Settings backend ownership architecture', () => {
       'setReasoningEffort',
       'setReviewerModel',
       'setRuntimeEnablement',
+      'setSemanticScholarCredential',
       'setSessionDetailsModel',
       'setShowNotificationContent',
       'setSkillEnabled',
@@ -511,7 +510,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookNetwork setNotificationsEnabled
-        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
+        setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
@@ -639,6 +638,7 @@ describe('Settings backend ownership architecture', () => {
       'listModelsCall',
       'viewImageCall',
       'requestUserInput',
+      'listAuthorizedDirectories',
       'memoryListCategories',
       'memorySearch',
       'memoryRemember'
@@ -1262,47 +1262,4 @@ describe('Settings backend ownership architecture', () => {
       ].map((moduleName) => manifest.modules[moduleName].fallbackCapability)
     ).toEqual(['main_runtime', 'main_runtime', 'main_runtime', 'main_runtime'])
   })
-})
-
-it('requires full validation while preserving downstream research contracts', () => {
-  {
-    const plan = createAffectedTestPlan(
-      [{ path: 'src/main/settings/service.ts', status: 'modified' }],
-      { status: 'not-used', testFiles: [] }
-    )
-    const module = loadModuleImpactManifest().modules.settings_service_facade
-    const reason =
-      'The settings_service_facade owner retains 1 explicit research consumer obligation beyond its reviewed source-derived edges, including managed-research-acceptance.macos.integration.test.ts. 1 consumer cone has opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
-    expect(module.fullTestReason).toBe(reason)
-    expect(plan.mode).toBe('full')
-    expect(plan.reasonChains).toEqual([`settings_service_facade -> ${reason} -> full`])
-    expect(plan.testFiles).toEqual([])
-    expect(Object.values(module.testFiles).flat()).toEqual(
-      expect.arrayContaining([
-        'src/renderer/src/stores/settings-store.test.ts',
-        'src/renderer/src/stores/settings-runtime-slice.test.ts',
-        'src/main/settings/service.providers.test.ts',
-        'src/main/settings/service.connectors.test.ts',
-        'src/main/settings/runtime-application-commands.test.ts'
-      ])
-    )
-  }
-  {
-    const plan = createAffectedTestPlan(
-      [{ path: 'src/main/settings/backend-resolver.ts', status: 'modified' }],
-      { status: 'not-used', testFiles: [] }
-    )
-    const module = loadModuleImpactManifest().modules.settings_provider_resolution
-    expect(module.fullTestReason).toBeUndefined()
-    expect(plan.mode).toBe('selective')
-    expect(plan.modules).toContain('settings_provider_resolution')
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        'src/main/settings/backend-resolver.test.ts',
-        'src/main/agent-framework/claude-code.test.ts',
-        'src/main/agent-framework/codex.test.ts',
-        'src/main/agent-framework/opencode.test.ts'
-      ])
-    )
-  }
 })

@@ -363,8 +363,15 @@ it('keeps speed settings collapsed and changes the current operation budget', as
   })
   expect(document.body.textContent).toContain('128.0 MiB/s')
   expect(document.body.textContent).toContain('256.0 MiB/s')
+  expect(document.body.textContent).toContain('512.0 MiB/s')
+  expect(document.body.textContent).toContain('1.0 GiB/s')
+  for (const rate of ['4.0 MiB/s', '16.0 MiB/s', '64.0 MiB/s']) {
+    expect(
+      [...document.querySelectorAll('[role="option"]')].some((item) => item.textContent === rate)
+    ).toBe(false)
+  }
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-    (item) => item.textContent === '4.0 MiB/s'
+    (item) => item.textContent === '1.0 GiB/s'
   )!
   expect(option).toBeDefined()
   await act(async () => {
@@ -373,9 +380,59 @@ it('keeps speed settings collapsed and changes the current operation budget', as
   expect(packageOperation).toHaveBeenCalledWith({
     action: 'set-speed',
     operationId: operation.id,
-    bytesPerSecond: 4 * 1024 ** 2
+    bytesPerSecond: 1024 ** 3
   })
 })
+
+it.each([4, 16, 64])(
+  'displays a restored %i MiB/s budget without restoring its preset',
+  async (rate) => {
+    const operation: PackageOperationSnapshot = {
+      id: 'restored-transfer',
+      kind: 'import',
+      state: 'running',
+      progress: { phase: 'validating' },
+      transferBytesPerSecond: rate * 1024 ** 2
+    }
+    const packageOperation = vi.fn(async () => operation)
+    vi.stubGlobal('api', {
+      sessions: { packageOperation, onPackageOperation: () => () => undefined }
+    })
+    usePackageOperationStore.setState({ operation, open: true })
+    await act(async () => root.render(<SessionPackageOperation />))
+    const select = document.querySelector<HTMLElement>('[role="combobox"]')!
+    expect(select.textContent).toBe(`${rate}.0 MiB/s`)
+    expect(packageOperation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'set-speed' })
+    )
+    Element.prototype.scrollIntoView ??= () => undefined
+    await act(async () => {
+      select.closest('details')!.open = true
+      select.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(options.map((item) => item.textContent)).toEqual([
+      'Auto',
+      '128.0 MiB/s',
+      '256.0 MiB/s',
+      '512.0 MiB/s',
+      '1.0 GiB/s'
+    ])
+    await act(async () => options.find((item) => item.textContent === 'Auto')!.click())
+    expect(packageOperation).toHaveBeenCalledWith({
+      action: 'set-speed',
+      operationId: operation.id,
+      bytesPerSecond: null
+    })
+    await act(async () =>
+      usePackageOperationStore.getState().receive({
+        ...operation,
+        transferBytesPerSecond: undefined
+      })
+    )
+    expect(select.textContent).toBe('Auto')
+  }
+)
 
 it('does not relock the source Session while retrying temporary cleanup', () => {
   const session = { id: 's', projectId: 'p' }
@@ -538,6 +595,21 @@ it('distinguishes import checks from the confirmed transfer, including backgroun
   act(() => usePackageOperationStore.getState().setOpen(false))
   expect(document.querySelector('[role="status"]')?.textContent).toBe('Checking Session package…')
   expect(document.body.textContent).toContain('Disk activity: 1.0 KiB/s')
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      progress: { phase: 'validating', completedBytes: 1024, totalBytes: 2048 }
+    })
+  )
+  expect(document.body.textContent).toContain('Reading package…')
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      progress: { phase: 'validating', completedFiles: 2, totalFiles: 10 }
+    })
+  )
+  expect(document.body.textContent).toContain('Checking 2 of 10 files…')
+  expect(document.body.textContent).not.toContain('1.0 KiB / 2.0 KiB')
   act(() =>
     usePackageOperationStore.getState().receive({ ...operation, progress: { phase: 'validating' } })
   )
@@ -2464,4 +2536,46 @@ it('groups verified duplicate evidence and retains expandable source paths', asy
     for (const path of paths)
       expect(requiredFiles.querySelector('details')?.textContent).toContain(path)
   }
+})
+
+it('shows weighted overall import progress through checking, publication and success', async () => {
+  const operation: PackageOperationSnapshot = {
+    id: 'weighted-import',
+    kind: 'import',
+    state: 'running',
+    importFilename: 'research.science',
+    progress: { phase: 'validating', importStage: 'prepare-preview', overallPercent: 21 }
+  }
+  vi.stubGlobal('api', {
+    sessions: { packageOperation: async () => operation, onPackageOperation: () => () => undefined }
+  })
+  usePackageOperationStore.setState({ operation, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  const bar = (): Element | null => document.querySelector('[role="progressbar"]')
+  expect(bar()?.getAttribute('aria-valuenow')).toBe('21')
+  expect(document.body.textContent).toContain('Preparing package preview…')
+  expect(document.body.textContent).toContain('Stage 3 of 9')
+  expect(document.body.textContent).toContain('Overall import progress (estimated)')
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      progress: { phase: 'importing', importStage: 'publish', overallPercent: 99 }
+    })
+  )
+  expect(bar()?.getAttribute('aria-valuenow')).toBe('99')
+  expect(document.body.textContent).toContain('Finishing import…')
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      state: 'succeeded',
+      progress: { phase: 'importing', importStage: 'publish', overallPercent: 99 }
+    })
+  )
+  expect(bar()?.getAttribute('aria-valuenow')).toBe('100')
+  act(() =>
+    usePackageOperationStore
+      .getState()
+      .receive({ ...operation, state: 'cancelling', progress: { phase: 'cleaning' } })
+  )
+  expect(bar()).toBeNull()
 })

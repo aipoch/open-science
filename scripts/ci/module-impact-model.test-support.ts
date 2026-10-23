@@ -15,7 +15,7 @@ export const productionFullReasonContracts = {
   connector_builtins:
     'Optional research providers expand the reviewed source boundary; retain complete validation until the expanded connector boundary is reviewed and reclassified.',
   main_literature:
-    'The main_literature owner retains 45 explicit research consumer obligations beyond its reviewed source-derived edges, including research-reproduction.integration.test.ts, managed-auxiliary-output.test.ts, managed-execution-collection.integration.test.ts. 40 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+    'Supplementary attachment downloads add a command owner and transfer lifecycle beyond the reviewed literature host boundary; require full CI validation until the expanded sources and runtime contracts are reviewed.'
 } as const
 
 type ModelOwner = {

@@ -45,6 +45,7 @@ afterEach(() => {
 
 describe('CredentialsPanel', () => {
   it.each([
+    ['semantic-scholar', 'https://www.semanticscholar.org/product/api'],
     ['openalex', 'https://openalex.org/settings/api'],
     ['literature', 'https://account.ncbi.nlm.nih.gov/settings/']
   ] as const)('links to the official key page for %s', async (serviceId, href) => {
@@ -319,7 +320,7 @@ describe('CredentialsPanel', () => {
     const desktopOnlyButtons = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).filter((button) => button.textContent === 'Desktop only')
-    expect(desktopOnlyButtons).toHaveLength(2)
+    expect(desktopOnlyButtons).toHaveLength(3)
     expect(desktopOnlyButtons.every((button) => button.disabled)).toBe(true)
     expect(
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(

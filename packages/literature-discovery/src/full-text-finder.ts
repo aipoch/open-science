@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { getFullTextFilename } from './contracts.js'
 import type {
   LiteratureFullTextCandidate,
   LiteratureFullTextTransfer,
@@ -398,12 +399,7 @@ class LiteratureFullTextFinder<Item extends DiscoveryReference = DiscoveryRefere
       return await this.options.content.withPublishedContent(
         { sourcePath: path, contentType: 'application/pdf' },
         async (content) => {
-          const filename = `${
-            item.item.title
-              .replace(/[<>:"/\\|?*\p{Cc}]/gu, ' ')
-              .trim()
-              .slice(0, 120) || 'paper'
-          }.pdf`
+          const filename = getFullTextFilename(selected.candidate.url, item.item.title)
           const receipt = await this.options.catalog.attachContent({
             itemId: item.id,
             expectedMetadataRevision: selected.revision,

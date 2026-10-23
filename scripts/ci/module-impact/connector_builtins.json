@@ -164,7 +164,13 @@
     "packages/connector-builtins/src/dailymed.ts",
     "packages/connector-builtins/src/optional-research.test.ts",
     "packages/connector-builtins/src/rxnorm.ts",
-    "packages/connector-builtins/src/wikipathways.ts"
+    "packages/connector-builtins/src/wikipathways.ts",
+    "packages/connector-builtins/src/tcia.ts",
+    "packages/connector-builtins/src/tcia.test.ts",
+    "packages/connector-builtins/src/kegg.ts",
+    "packages/connector-builtins/src/kegg.test.ts",
+    "packages/connector-builtins/src/structures-omnipath.ts",
+    "packages/connector-builtins/src/structures-omnipath.test.ts"
   ],
   "interfacePaths": [
     "packages/connector-builtins/package.json",
@@ -244,7 +250,9 @@
     "packages/connector-builtins/src/biosamples.ts",
     "packages/connector-builtins/src/dailymed.ts",
     "packages/connector-builtins/src/rxnorm.ts",
-    "packages/connector-builtins/src/wikipathways.ts"
+    "packages/connector-builtins/src/wikipathways.ts",
+    "packages/connector-builtins/src/tcia.ts",
+    "packages/connector-builtins/src/kegg.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -321,7 +329,10 @@
       "packages/connector-builtins/src/zenodo.test.ts",
       "packages/connector-builtins/src/zinc.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts",
-      "packages/connector-builtins/src/optional-research.test.ts"
+      "packages/connector-builtins/src/optional-research.test.ts",
+      "packages/connector-builtins/src/tcia.test.ts",
+      "packages/connector-builtins/src/kegg.test.ts",
+      "packages/connector-builtins/src/structures-omnipath.test.ts"
     ],
     "contract": [
       "src/main/connectors/boundaries.architecture.test.ts",

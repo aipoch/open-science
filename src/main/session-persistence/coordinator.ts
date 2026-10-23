@@ -5,6 +5,8 @@ import type { ProjectFileSource, ProjectFilesChangedEvent } from '../../shared/p
 import type { ReconcilePendingArtifactsRequest } from '../../shared/artifacts'
 import {
   SessionDeletionCommittedError,
+  deleteSessionRecoveryFileRequestSchema,
+  type DeleteSessionRecoveryFileRequest,
   type DelegationPolicy,
   type LoadAllSessionsResult,
   type PersistedChatMessage,
@@ -109,6 +111,7 @@ export type PublishedSessionHandoff = {
 
 const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE === '1'
 type SessionMutationRepository = {
+  deleteRecoveryFile?(request: DeleteSessionRecoveryFileRequest): Promise<void>
   loadAllWithDiagnostics(options?: {
     mode?: 'repair' | 'read-only'
     quarantinedIsIncomplete?: boolean
@@ -1536,6 +1539,25 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
           })
         this.clearSessionRecordProblem(projectId, sessionId)
         if (cleanupError) throw cleanupError
+      }
+    )
+  }
+
+  deleteRecoveryFile(request: DeleteSessionRecoveryFileRequest): Promise<void> {
+    const validated = deleteSessionRecoveryFileRequestSchema.parse(request)
+    return this.operationScheduler.runSession(
+      validated.projectId,
+      validated.fileName.slice(0, -5),
+      async () => {
+        if (!this.repository.deleteRecoveryFile)
+          throw new Error('Session recovery deletion is unavailable.')
+        this.assertMutable(validated.projectId, validated.fileName.slice(0, -5), 'mutate')
+        try {
+          await this.repository.deleteRecoveryFile(validated)
+        } finally {
+          // A partial removal must also force the next catalog read to inspect disk again.
+          this.hydrationCache.invalidate()
+        }
       }
     )
   }

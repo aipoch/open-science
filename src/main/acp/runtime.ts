@@ -174,34 +174,6 @@ const errorMessage = (error: unknown): string => {
 
 const log = createLogger('acp')
 
-const safePromptJson = (value: unknown): string =>
-  JSON.stringify(value)
-    .replaceAll('<', '\\u003c')
-    .replaceAll('>', '\\u003e')
-    .replaceAll('&', '\\u0026')
-
-const grantedLocalRootsSystemPromptAppend = (
-  roots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
-): string | undefined => {
-  const normalized = [
-    ...new Map(
-      roots
-        .map(({ path, access }) => ({ path: path.trim(), access }))
-        .filter(({ path }) => path.length > 0)
-        .map((root) => [`${root.access}\0${root.path}`, root] as const)
-    ).values()
-  ].sort(
-    (left, right) => left.path.localeCompare(right.path) || left.access.localeCompare(right.access)
-  )
-  if (normalized.length === 0) return undefined
-
-  return [
-    '<open_science_granted_local_roots>',
-    'The user has authorized the following local roots for this session. Access mode "ro" permits reads only; "rw" permits reads and writes. Use the exact paths when the task requires them. These entries grant no access beyond the stated root and access mode.',
-    `Authorized roots (JSON): ${safePromptJson(normalized)}`,
-    '</open_science_granted_local_roots>'
-  ].join('\n')
-}
 const literatureLog = createLogger('literature-reading-context')
 
 const PERMISSION_DENIED_CONTINUATION_TEXT =
@@ -882,7 +854,12 @@ class AcpRuntime {
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.providerSessionCreator.create(request))
+    return this.withOperationLease(async () => {
+      const created = await this.providerSessionCreator.create(request)
+      const session = this.activeSessionFor(created.sessionId)
+      if (session) await this.options.authorizedDirectories?.initialize(session)
+      return created
+    })
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
@@ -934,6 +911,8 @@ class AcpRuntime {
   ): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
       const resumed = await this.providerSessionResumer.resume(request, writerTransfer)
+      const session = this.activeSessionFor(request.sessionId)
+      if (session) await this.options.authorizedDirectories?.initialize(session)
       if (resumed.contextReset) {
         const contextResetSessionIds =
           this.restoredContinuationContextResetSessionIds ?? new Set<string>()
@@ -950,6 +929,10 @@ class AcpRuntime {
         ? { ...resumed, contextReset: true }
         : resumed
     })
+  }
+
+  captureSessionResumeCleanup(response: AcpCreateSessionResponse): () => Promise<void> {
+    return this.sessionDeletion.captureResumeCleanup(response.sessionId, response.providerSessionId)
   }
 
   hasPendingSessionWriterRelease(sessionId: string): boolean {
@@ -1376,7 +1359,6 @@ class AcpRuntime {
           } catch (error) {
             log.warn('granted local roots unavailable for backend context', errorLogFields(error))
           }
-          const grantedRootsAppend = grantedLocalRootsSystemPromptAppend(grantedLocalRoots)
           const backend: ResolvedAgentBackend | undefined = this.options.resolveBackend
             ? await this.options.resolveBackend({
                 forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
@@ -1384,8 +1366,7 @@ class AcpRuntime {
                   ? { skillWhitelist: [...this.turnSkills.backendPreparation().skillWhitelist!] }
                   : {}),
                 systemPromptAppends: [
-                  ...(await this.sessionEnvironment.backendSystemPromptAppends()),
-                  ...(grantedRootsAppend ? [grantedRootsAppend] : [])
+                  ...(await this.sessionEnvironment.backendSystemPromptAppends())
                 ],
                 grantedLocalRoots
               })

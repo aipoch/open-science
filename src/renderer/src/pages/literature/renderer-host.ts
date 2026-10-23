@@ -15,18 +15,37 @@ import type {
   OpenAlexCredentialView,
   OpenAlexCredentialValidation,
   SetOpenAlexCredentialRequest,
+  SetSemanticScholarCredentialRequest,
   ValidateOpenAlexCredentialRequest
 } from '../../../../shared/settings'
 
+export type LiteraturePreviewFormat =
+  | 'code'
+  | 'markdown'
+  | 'text'
+  | 'json'
+  | 'csv'
+  | 'fasta'
+  | 'html'
+  | 'image'
+  | 'tiff'
+  | 'pdb'
+  | 'molecule'
+  | 'pdf'
+  | 'word'
+  | 'spreadsheet'
+  | 'presentation'
+  | 'unknown'
+
 export type LiteratureProject = Project
-/** Only PDF preview data crosses the feature boundary; workbench state stays in the host. */
+/** Only file preview data crosses the feature boundary; workbench state stays in the host. */
 export type LiteraturePreviewItem = {
   id: string
   projectId?: string
   sessionId: string
   title: string
   type: 'file'
-  format: 'pdf'
+  format: LiteraturePreviewFormat
   source?: 'artifact' | 'upload' | 'notebook-input' | 'literature' | 'local'
   path: string
   name: string
@@ -107,6 +126,8 @@ type SelectorStore<State> = {
 
 export type LiteratureRendererHost = {
   openProjectWorkspace(projectId: string): Promise<boolean>
+  FileTypeIcon: ComponentType<{ name: string; mimeType?: string; className?: string }>
+  getPreviewFormatForFile(file: { name: string; mimeType?: string }): LiteraturePreviewFormat
   readonly api: LiteratureRendererApi
   onRecovered(listener: () => void): () => void
   useNavigationStore: SelectorStore<LiteratureNavigation>
@@ -123,6 +144,7 @@ export type LiteratureRendererHost = {
   }>
   useSettingsStore: SelectorStore<{
     ncbi: NcbiCredentialsView
+    semanticScholar?: { hasApiKey: boolean }
     openAlex: OpenAlexCredentialView
     encryptionAvailable: boolean
     loadConnectors(): Promise<void>
@@ -132,6 +154,7 @@ export type LiteratureRendererHost = {
     setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<void>
     isSettingsOpen: boolean
     openSettingsToClassification(): void
+    setSemanticScholarCredential(request: SetSemanticScholarCredentialRequest): Promise<void>
   }>
   useProjectFormDialog(options?: {
     onCreated?: (project: LiteratureProject) => void

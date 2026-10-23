@@ -543,7 +543,7 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--jsonl'])).toThrow('--jsonl requires run --wait.')
     expect(() => parseCliArgs(['run', '--timeout-ms', '0', '--wait'])).toThrow('Invalid timeout: 0')
     expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
-      '--timeout-ms requires run --wait, package or observations.'
+      '--timeout-ms requires run --wait, package, observations or session export/import.'
     )
     expect(() => parseCliArgs(['run', '--cancel-on-timeout', '--wait'])).toThrow(
       '--cancel-on-timeout requires --timeout-ms.'
@@ -2387,4 +2387,79 @@ it('forwards package timeout and retry identity without implicitly cancelling a 
   expect(() => parseCliArgs(['execution', 'prepare', '--idempotency-key', 'key'])).toThrow(
     CliUsageError
   )
+})
+
+describe('Session package CLI', () => {
+  it('requires confirmation and rejects conflicting destinations', () => {
+    expect(() => parseCliArgs(['session', 'import', 'input.science'])).toThrow(
+      '--non-interactive is required.'
+    )
+    expect(() =>
+      parseCliArgs([
+        'session',
+        'import',
+        'input.science',
+        '--non-interactive',
+        '--project',
+        'existing',
+        '--new-project',
+        'Restored'
+      ])
+    ).toThrow('Use only one of --project and --new-project.')
+  })
+
+  it('passes resolved paths, destinations and transfer deadlines to the SDK', async () => {
+    const client = {
+      listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
+      exportSessionPackage: vi.fn().mockResolvedValue({ saved: true }),
+      importSessionPackage: vi
+        .fn()
+        .mockResolvedValue({ projectId: 'project-2', sessionId: 'session-2' })
+    }
+    const deps = { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+    await runTaskCommand(
+      parseCliArgs([
+        'session',
+        'export',
+        'session-1',
+        '--project',
+        'Research',
+        '--output',
+        'out.science',
+        '--timeout-ms',
+        '7200000'
+      ]),
+      deps
+    )
+    expect(client.exportSessionPackage).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      resolve('out.science'),
+      { timeoutMs: 7200000 }
+    )
+    for (const [flags, target] of [
+      [[], {}],
+      [['--project', 'Research'], { projectId: 'project-1' }],
+      [['--new-project', 'Restored'], { projectName: 'Restored' }]
+    ] as const) {
+      await runTaskCommand(
+        parseCliArgs([
+          'session',
+          'import',
+          'in.science',
+          '--non-interactive',
+          '--timeout-ms',
+          '7200000',
+          ...flags
+        ]),
+        deps
+      )
+      expect(client.importSessionPackage).toHaveBeenLastCalledWith(
+        target,
+        resolve('in.science'),
+        { nonInteractive: true },
+        { timeoutMs: 7200000 }
+      )
+    }
+  })
 })

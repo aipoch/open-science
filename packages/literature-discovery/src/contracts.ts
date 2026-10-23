@@ -133,6 +133,31 @@ export const literatureFullTextCandidateSchema = z
     license: nonEmptyTextSchema.optional()
   })
   .strict()
+// Use only explicit PDF filenames from the source link; otherwise name the attachment after the reference.
+export function getFullTextFilename(url: string, title: string): string {
+  const clean = (name: string): string => name.replace(/[<>:"/\\|?*\p{Cc}]/gu, ' ').trim()
+  try {
+    const link = new URL(url)
+    const pathName = decodeURIComponent(link.pathname.split('/').at(-1) ?? '')
+    for (const name of [
+      pathName,
+      link.searchParams.get('filename'),
+      link.searchParams.get('file')
+    ]) {
+      if (!name || name.length <= 4 || !name.toLowerCase().endsWith('.pdf')) continue
+      const stem = clean(name.slice(0, -4)).slice(0, 120)
+      if (stem && stem !== '.' && stem !== '..') return `${stem}.pdf`
+    }
+  } catch {
+    // A malformed encoded filename must not hide an otherwise usable search result.
+  }
+  return `${
+    clean(title)
+      .replace(/\.pdf$/iu, '')
+      .slice(0, 120) || 'paper'
+  }.pdf`
+}
+
 export const literatureFullTextProgressSchema = z
   .object({
     receivedBytes: z.number().int().nonnegative(),
@@ -255,3 +280,7 @@ export type LiteratureMetadataField = (typeof LITERATURE_METADATA_FIELDS)[number
 export type LiteratureMetadataValue = z.infer<typeof literatureMetadataValueSchema>
 export type LiteratureMetadataConflict = z.infer<typeof literatureMetadataConflictSchema>
 export type LiteratureSourceInput = z.infer<typeof literatureSourceInputSchema>
+
+export * from './supplement-contracts.js'
+
+export * from './related-contracts.js'

@@ -266,19 +266,34 @@ it.skipIf(process.platform === 'win32')(
   }
 )
 
-it.each(['pull_request', 'merge_group'])(
-  'retains every Windows core check for the real full Literature owner on %s',
-  (event) => {
+it.each(
+  ['pull_request', 'merge_group'].flatMap((event) => [
+    {
+      event,
+      owner: 'main_literature',
+      path: 'src/main/literature/catalog.ts',
+      explanation: productionFullReasonContracts.main_literature
+    },
+    {
+      event,
+      owner: 'page_literature',
+      path: 'src/renderer/src/pages/literature/LiteratureLibraryPage.tsx',
+      explanation:
+        'Supplementary lookup and shared download rows expand the reviewed literature renderer boundary; require full CI validation until the expanded sources and interaction contracts are reviewed.'
+    }
+  ])
+)(
+  'retains every Windows core check for the real full $owner on $event',
+  ({ event, owner, path, explanation }) => {
     const manifest = loadModuleImpactManifest()
-    const changes = [{ path: 'src/main/literature/catalog.ts', status: 'modified' }]
+    const changes = [{ path, status: 'modified' }]
     const modulePlan = createAffectedTestPlan(
       changes,
       { status: 'not-requested', testFiles: [] },
       manifest
     )
-    const explanation = productionFullReasonContracts.main_literature
-    expect(manifest.modules.main_literature.fullTestReason).toBe(explanation)
-    const reason = `main_literature -> ${explanation} -> full`
+    expect(manifest.modules[owner].fullTestReason).toBe(explanation)
+    const reason = `${owner} -> ${explanation} -> full`
     expect(modulePlan.mode).toBe('full')
     expect(modulePlan.reasonChains.join('\n')).toContain(reason)
     const selected = selectWindowsCoreChecks(

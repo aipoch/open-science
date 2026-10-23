@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { PACKAGE_MAX_FILE_BYTES } from '../../shared/session-package'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
-import { digestFileWithinBudget } from '../bounded-file-io'
+import { createPackageContentVerifier } from './materialize'
 import { assertPackageSourcePath, fileChecksum, readPackageJson } from './archive'
 import type { PackageRecords } from './records-contract'
 
@@ -102,6 +102,7 @@ export const executionEvidenceKeys = async (
   for (const version of records.tables.ArtifactVersion)
     if (typeof version.executionSnapshotJson === 'string')
       visit(JSON.parse(version.executionSnapshotJson))
+  const verifyContent = createPackageContentVerifier()
   const keys = new Set<string>()
   for (const [key, reference] of references) {
     signal?.throwIfAborted()
@@ -147,8 +148,13 @@ export const executionEvidenceKeys = async (
         const contentKey = `${blobKey}/${entry.name}`
         await assertPackageSourcePath(storageRoot, contentKey)
         if (
-          (await fileChecksum(resolveStorageKey(storageRoot, contentKey), signal)) !==
-          entry.name.slice(7)
+          (
+            await verifyContent(
+              resolveStorageKey(storageRoot, contentKey),
+              PACKAGE_MAX_FILE_BYTES,
+              signal
+            )
+          ).checksum !== entry.name.slice(7)
         )
           throw new Error('Legacy predecessor content checksum mismatch.')
         keys.add(contentKey)
@@ -160,7 +166,7 @@ export const executionEvidenceKeys = async (
       if (!generation.contentStorageKey.startsWith(`${key.split('/')[0]}/${project}/`))
         throw new Error('Execution file generation escapes its Project.')
       await assertPackageSourcePath(storageRoot, generation.contentStorageKey)
-      const digest = await digestFileWithinBudget(
+      const digest = await verifyContent(
         resolveStorageKey(storageRoot, generation.contentStorageKey),
         generation.sizeBytes,
         signal

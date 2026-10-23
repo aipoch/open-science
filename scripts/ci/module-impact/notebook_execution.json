@@ -1,4 +1,5 @@
 {
+  "fullTestReason": "Removing the shell search preflight changes the trusted source boundary; retain full validation until the reduced boundary is reviewed and trusted.",
   "ownerPaths": [
     "src/main/notebook/windows-runtime-catalog.json",
     "src/main/notebook/windows-runtime-components.ts",
@@ -128,7 +129,6 @@
     "src/main/notebook/shell-process-contract.ts",
     "src/main/notebook/shell-process-ownership.windows-posix.ts",
     "src/main/notebook/shell-process.ts",
-    "src/main/notebook/shell-search-scope.ts",
     "src/main/notebook/trust-bundle.test.ts",
     "src/main/notebook/trust-bundle.ts",
     "src/main/notebook/working-file-observer.ts",
@@ -148,7 +148,8 @@
     "src/main/notebook/managed-shell-execution.test.ts",
     "src/main/notebook/managed-shell-execution.ts",
     "src/main/notebook/managed-shell-runtime.test.ts",
-    "src/main/notebook/managed-shell.macos.integration.test.ts"
+    "src/main/notebook/managed-shell.macos.integration.test.ts",
+    "src/main/notebook/shell-search-scope.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -245,7 +246,8 @@
     "src/main/notebook/managed-environment-directory.ts",
     "src/main/notebook/managed-output-redaction.ts",
     "src/main/notebook/managed-research-node-runtime.ts",
-    "src/main/notebook/managed-shell-execution.ts"
+    "src/main/notebook/managed-shell-execution.ts",
+    "src/main/notebook/shell-search-scope.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -923,6 +925,5 @@
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],
-  "fallbackCapability": "main_runtime",
-  "fullTestReason": "Managed research execution adds local-service processes, preload helpers, runtime environments and output redaction to the execution owner; native process, confinement and publication interactions require full validation."
+  "fallbackCapability": "main_runtime"
 }

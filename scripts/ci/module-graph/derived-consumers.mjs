@@ -21,6 +21,9 @@ import { isSourcePath, sourceSnapshot, workingTreeSource } from './source.mjs'
 
 const isTest = (path) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !path.startsWith('e2e/')
 
+// The derived consumer index follows runtime edges only. A test that reaches a contract
+// solely through erased type imports cannot observe its behavior at runtime; typecheck
+// enforces the type contract independently.
 export function consumerDependencyGraph(source, runtimeEdges) {
   for (const [target, consumers] of runtimeEdges) {
     if (
@@ -30,7 +33,7 @@ export function consumerDependencyGraph(source, runtimeEdges) {
     )
       throw Error(`Invalid runtime consumer edge: ${target}`)
   }
-  const inspect = createDependencyReader(source, runtimeEdges)
+  const inspect = createDependencyReader(source, runtimeEdges, { runtimeOnly: true })
   const reverse = new Map()
   for (const path of source.files) {
     if (!/\.[cm]?[jt]sx?$/.test(path)) continue

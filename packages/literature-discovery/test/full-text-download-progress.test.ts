@@ -9,12 +9,18 @@ import { downloadFullText } from '../src/full-text-download.js'
 const fixture = vi.hoisted(() => ({
   headers: {} as Record<string, string>,
   status: 200,
-  requests: 0
+  requests: 0,
+  accept: ''
 }))
 
 vi.mock('node:https', () => ({
-  get: (_url: URL, _options: unknown, callback: (response: Readable) => void) => {
+  get: (
+    _url: URL,
+    options: { headers: { Accept: string } },
+    callback: (response: Readable) => void
+  ) => {
     fixture.requests += 1
+    fixture.accept = options.headers.Accept
     queueMicrotask(() =>
       callback(
         Object.assign(Readable.from([Buffer.from('%PDF-'), Buffer.from('12345')]), {
@@ -130,3 +136,19 @@ it.each(['request', 'timeout'] as const)(
     }
   }
 )
+
+it('allows ordinary file downloads while retaining the PDF default', async () => {
+  fixture.headers = {}
+  await downloadFullText(
+    'https://files.example/supplement',
+    100,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { accept: '*/*', timeoutMs: 180_000 }
+  )
+  expect(fixture.accept).toBe('*/*')
+  await downloadFullText('https://files.example/paper.pdf', 100)
+  expect(fixture.accept).toBe('application/pdf')
+})

@@ -1,5 +1,12 @@
 import {
+  literatureRelatedRequestSchema,
+  literatureRelatedResultSchema,
   literatureFullTextRequestSchema,
+  literatureFullTextProgressSchema,
+  literatureSupplementRequestSchema,
+  literatureSupplementAttachmentRequestSchema,
+  literatureSupplementAttachmentResultSchema,
+  literatureSupplementResultSchema,
   literatureMetadataCompletionRequestSchema
 } from '@aipoch/literature-discovery/contracts'
 
@@ -116,6 +123,22 @@ const literatureApplicationCommandContracts = Object.freeze({
   getCandidateStates: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureCandidateStatesRequestSchema])),
     validationCodec(literatureCandidateStatesResultSchema)
+  ),
+  supplementAttachmentProgress: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureSupplementAttachmentRequestSchema])),
+    validationCodec(literatureFullTextProgressSchema.nullable())
+  ),
+  supplementAttachment: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureSupplementAttachmentRequestSchema])),
+    validationCodec(literatureSupplementAttachmentResultSchema)
+  ),
+  related: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureRelatedRequestSchema])),
+    validationCodec(literatureRelatedResultSchema)
+  ),
+  supplements: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureSupplementRequestSchema])),
+    validationCodec(literatureSupplementResultSchema)
   ),
   fullText: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureFullTextRequestSchema])),

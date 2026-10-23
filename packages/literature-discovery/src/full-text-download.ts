@@ -68,9 +68,10 @@ export const downloadFullText = async (
   onProgress?: (progress: LiteratureFullTextProgress) => void,
   resolveProxy?: (url: string) => Promise<string | undefined>,
   requestSignal?: AbortSignal,
-  tunnel?: ProxyTunnel
+  tunnel?: ProxyTunnel,
+  options: { accept?: string; timeoutMs?: number } = {}
 ): Promise<Buffer> => {
-  const timeout = AbortSignal.timeout(60_000)
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? 60_000)
   const signal = requestSignal ? AbortSignal.any([requestSignal, timeout]) : timeout
   signal.throwIfAborted()
   let url = fullTextUrl(rawUrl)
@@ -125,7 +126,10 @@ export const downloadFullText = async (
         {
           signal,
           ...(agent ? { agent } : {}),
-          headers: { Accept: 'application/pdf', 'User-Agent': 'Open-Science/1.0' },
+          headers: {
+            Accept: options.accept ?? 'application/pdf',
+            'User-Agent': 'Open-Science/1.0'
+          },
           lookup: (hostname, options, callback) => {
             void lookup(hostname, { all: true }).then(
               (addresses) => {

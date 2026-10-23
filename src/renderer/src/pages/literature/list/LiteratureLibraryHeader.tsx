@@ -110,7 +110,7 @@ export function LiteratureLibraryHeader({
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           {section === 'inbox'
-            ? t('Review references found by Agents before they enter your library.')
+            ? t('Review discovered references before they enter your library.')
             : section === 'trash'
               ? t(
                   'Restore references to edit, preview, or export them, or delete them permanently.'

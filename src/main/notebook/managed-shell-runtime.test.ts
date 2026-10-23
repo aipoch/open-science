@@ -154,11 +154,18 @@ describe.skipIf(process.platform === 'win32')(
         ...request(command),
         executionInvocationId: 'ordinary-untrusted-runtime'
       })
-      expect(ordinary).toMatchObject({
-        exitCode: 1,
-        stderr: expect.stringContaining('the command name cannot be resolved')
-      })
-      expect(invocations).toHaveLength(1)
+      expect(ordinary.exitCode).toBe(127)
+      expect(ordinary.stderr).toMatch(/not found/)
+      expect(ordinary.stderr).not.toContain('Shell search scope denied:')
+      expect(invocations).toHaveLength(2)
+      const ordinaryInvocation = invocations[1]
+      expect(ordinaryInvocation.env).not.toHaveProperty('OPEN_SCIENCE_NODE')
+      const ordinaryInputRoot = ordinaryInvocation.env.OPEN_SCIENCE_INPUT_DIR
+      expect(ordinaryInputRoot).toEqual(expect.any(String))
+      expect(ordinaryInputRoot).not.toBe(inputRoot)
+      expect(ordinaryInvocation.filesystem.readOnlyRoots).toContain(ordinaryInputRoot)
+      expect(ordinaryInvocation.filesystem.readOnlyRoots).not.toContain(inputRoot)
+      expect(ordinaryInvocation.filesystem.readWriteRoots).not.toContain(inputRoot)
     })
 
     it.each([

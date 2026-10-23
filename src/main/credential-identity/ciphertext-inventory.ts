@@ -74,6 +74,7 @@ export const readCredentialCiphertexts = (options: {
     const connectors = record(document.connectors)
     collectRef(connectors.ncbiApiKeyRef)
     collectRef(connectors.openAlexApiKeyRef)
+    collectRef(connectors.semanticScholarApiKeyRef)
     for (const item of list(connectors.customMcpServers)) {
       const server = record(item)
       for (const ref of Object.values(record(server.envRefs))) collectRef(ref)

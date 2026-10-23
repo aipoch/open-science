@@ -5,9 +5,9 @@ import { nodeRuntimeEnvironment } from '../node-process-host'
 import { createManagedOutputRedactor, redactManagedOutput } from './managed-output-redaction'
 import { resolveManagedShellExecutionCapability } from './managed-shell-execution'
 import { ShellCellSession } from './shell-cell-session'
+import { assertShellSearchScope } from './shell-search-scope'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
-import { assertShellSearchScope } from './shell-search-scope'
 
 import {
   buildShellProcessEnvironment,
@@ -357,22 +357,22 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimePlatform = shellRuntimePlatform(runtimeBinding, hostPlatform)
-  await assertShellSearchScope(
-    options.command,
-    options.cwd,
-    options.grantedRoots ?? [],
-    runtimePlatform,
-    options.signal,
-    runtimeBinding,
-    managed
-      ? {
-          projectId: managed.projectId,
-          sessionId: managed.sessionId,
-          executionInvocationId: managed.executionInvocationId,
-          capability: options.managedExecution!
-        }
-      : undefined
-  )
+  if (managed) {
+    await assertShellSearchScope(
+      options.command,
+      options.cwd,
+      options.grantedRoots ?? [],
+      runtimePlatform,
+      options.signal,
+      runtimeBinding,
+      {
+        projectId: managed.projectId,
+        sessionId: managed.sessionId,
+        executionInvocationId: managed.executionInvocationId,
+        capability: options.managedExecution!
+      }
+    )
+  }
 
   let shellEnv: NodeJS.ProcessEnv
   let workloadCacheEnv: NodeJS.ProcessEnv
@@ -1417,14 +1417,6 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
           }
         },
         async (cell) => {
-          await assertShellSearchScope(
-            cell.command,
-            cell.cwd,
-            cell.grantedRoots ?? [],
-            shellRuntimePlatform(cell.runtimeBinding!, this.platform),
-            cell.signal,
-            cell.runtimeBinding
-          )
           const mutation = detectManagedRuntimeMutation({
             source: cell.command,
             surface: cell.runtimeBinding?.kind === 'powershell' ? 'powershell' : 'bash',

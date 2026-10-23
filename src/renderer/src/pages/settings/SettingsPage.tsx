@@ -1095,11 +1095,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               t('Credential'))
             : credentialsView.serviceId === 'github'
               ? t('GitHub')
-              : credentialsView.serviceId === 'openalex'
-                ? t('OpenAlex')
-                : credentialsView.serviceId === 'unpaywall'
-                  ? t('Unpaywall')
-                  : t('Literature access')
+              : credentialsView.serviceId === 'semantic-scholar'
+                ? t('Semantic Scholar')
+                : credentialsView.serviceId === 'openalex'
+                  ? t('OpenAlex')
+                  : credentialsView.serviceId === 'unpaywall'
+                    ? t('Unpaywall')
+                    : t('Literature access')
       return {
         rootLabelKey: 'Credentials',
         rootTo: { panel: 'credentials', view: { kind: 'list' } },

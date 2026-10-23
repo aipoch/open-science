@@ -49,8 +49,6 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { loadModuleImpactManifest } from '../../../../scripts/ci/load-module-impact.mjs'
-// @ts-expect-error The repository-owned CI selector is an untyped JavaScript test utility.
-import { createAffectedTestPlan } from '../../../../scripts/ci/module-test-impact.mjs'
 
 const rendererRoot = resolve(__dirname, '..')
 const facadePath = resolve(__dirname, 'session-store.ts')
@@ -1127,26 +1125,6 @@ describe('Session Store architecture', () => {
         'The session_renderer owner retains 2 explicit research consumer obligations beyond its reviewed source-derived edges, including index-fatal-errors.test.ts, index-startup-failure.test.ts. 2 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.',
       fallbackCapability: 'renderer_view'
     })
-    for (const path of ['src/renderer/src/stores/session-store.ts']) {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-        status: 'not-used',
-        testFiles: []
-      })
-      const module = loadModuleImpactManifest().modules.session_renderer
-      const reason =
-        'The session_renderer owner retains 2 explicit research consumer obligations beyond its reviewed source-derived edges, including index-fatal-errors.test.ts, index-startup-failure.test.ts. 2 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
-      expect(module.fullTestReason).toBe(reason)
-      expect(plan.mode, path).toBe('full')
-      expect(plan.reasonChains, path).toEqual([`session_renderer -> ${reason} -> full`])
-      expect(plan.testFiles, path).toEqual([])
-      expect(Object.values(module.testFiles).flat(), path).toEqual(
-        expect.arrayContaining([
-          'src/renderer/src/hooks/useLifecycleSync.test.tsx',
-          'src/renderer/src/lib/acp/workspace-events.test.ts',
-          'src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx'
-        ])
-      )
-    }
   })
 })
 

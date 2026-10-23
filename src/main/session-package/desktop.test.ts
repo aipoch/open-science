@@ -1980,9 +1980,9 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           expect(finished).toBe(true)
         }
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         expect(desktop.operations.snapshot?.ioBytesPerSecond).toBe(16 * 1024 ** 2)
-        for (const rate of [128, 256]) {
+        for (const rate of [128, 256, 512, 1024]) {
           desktop.respond({
             action: 'set-speed',
             operationId: desktop.operations.snapshot!.id,
@@ -1995,9 +1995,9 @@ it('applies Auto and live fixed rate changes to Fork I/O', async () => {
           operationId: desktop.operations.snapshot!.id,
           bytesPerSecond: null
         })
-        expect(desktop.operations.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         await pace(2000)
-        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.transferBytesPerSecond).toBe(1024 ** 3)
         return result
       })
     )
@@ -2331,6 +2331,7 @@ it.each(['valid', 'invalid'] as const)(
     const operationFinished = Promise.withResolvers<void>()
     const sourceCleaned = Promise.withResolvers<void>()
     let sourceConsumed = false
+    const importProgress: number[] = []
     const desktop = new SessionPackageDesktop({
       service,
       translate: englishNativeTranslator,
@@ -2345,6 +2346,8 @@ it.each(['valid', 'invalid'] as const)(
           previewReady.resolve()
           operationFinished.resolve()
         }
+        if (snapshot.progress.overallPercent !== undefined)
+          importProgress.push(snapshot.progress.overallPercent)
       }
     })
     const progress: number[] = []
@@ -2387,11 +2390,13 @@ it.each(['valid', 'invalid'] as const)(
       )
       expect(inspect).toHaveBeenCalledWith(
         expect.stringContaining(await realpath(staging)),
-        expect.any(AbortSignal)
+        expect.any(AbortSignal),
+        expect.any(Function)
       )
       expect(await fixture.client.session.count()).toBe(0)
       expect(dialog.showMessageBox).not.toHaveBeenCalled()
       if (kind === 'valid') {
+        expect(desktop.operations.snapshot?.progress.overallPercent).toBe(10)
         desktop.respond({
           action: 'select-project',
           operationId: desktop.operations.snapshot!.id,
@@ -2401,12 +2406,19 @@ it.each(['valid', 'invalid'] as const)(
         expect(desktop.operations.snapshot?.importPreview).toBeDefined()
         expect(desktop.operations.snapshot?.state).toBe('awaiting-selection')
         expect(await fixture.client.session.count()).toBe(0)
+        expect(desktop.operations.snapshot?.progress.overallPercent).toBe(46)
         desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
         await operationFinished.promise
         expect(desktop.operations.snapshot?.state).toBe('succeeded')
         expect(await fixture.client.session.count()).toBe(1)
         await sourceCleaned.promise
         expect(await readdir(staging)).toEqual([])
+        expect(importProgress.length).toBeGreaterThan(3)
+        expect(
+          importProgress.every(
+            (value, index) => value < 100 && (index === 0 || value >= importProgress[index - 1])
+          )
+        ).toBe(true)
       }
     } finally {
       await desktop.close()
