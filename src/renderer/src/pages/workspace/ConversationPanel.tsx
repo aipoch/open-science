@@ -3316,144 +3316,147 @@ const ConversationPanel = ({
                               onChange={changeModelConfiguration}
                             />
 
-                            {rootTurnBusy ? (
-                              // A sendable draft replaces Stop with queue submission without starting another turn.
-                              // Detached children can outlive a wait=false Main turn, so their durable
-                              // running aggregate keeps the same root cascade reachable after Main settles.
-                              // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
-                              // in a separate ACP session), so fixLoopActive keeps the cancel affordance
-                              // reachable across the whole loop, not just the agent-fix running turn.
-                              <div
-                                data-testid="composer-running-control-slot"
-                                className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={canQueueMessage ? handleSubmit : handleStop}
-                                  disabled={isStopping}
-                                  data-testid={
-                                    canQueueMessage ? 'composer-queue-submit' : undefined
-                                  }
-                                  className={cn(
-                                    composerCancelButtonClassName,
-                                    canQueueMessage &&
-                                      'bg-primary text-primary-foreground hover:bg-primary/90'
-                                  )}
-                                  aria-label={
-                                    canQueueMessage
-                                      ? t('Add message to queue')
-                                      : isStopping
-                                        ? t('Stopping run and subagents')
-                                        : t('Cancel run')
-                                  }
+                            <Popover
+                              open={specialistUnavailableOpen}
+                              onOpenChange={(open) => {
+                                if (!open) setSpecialistNoticeTarget(undefined)
+                              }}
+                            >
+                              {rootTurnBusy ? (
+                                // A sendable draft replaces Stop with queue submission without starting another turn.
+                                // Detached children can outlive a wait=false Main turn, so their durable
+                                // running aggregate keeps the same root cascade reachable after Main settles.
+                                // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
+                                // in a separate ACP session), so fixLoopActive keeps the cancel affordance
+                                // reachable across the whole loop, not just the agent-fix running turn.
+                                <div
+                                  data-testid="composer-running-control-slot"
+                                  className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                                 >
-                                  {canQueueMessage ? (
-                                    <ArrowUp
-                                      className="size-4"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  ) : isStopping ? (
-                                    <Loader2
-                                      className="size-3.5 animate-spin"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  ) : (
-                                    <Square
-                                      className="size-3.5"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  )}
-                                </button>
-                                {stopError ? (
-                                  <span className="sr-only" role="alert">
-                                    {stopError}
-                                  </span>
-                                ) : null}
-                                <DropdownMenu>
-                                  <>
-                                    <Tooltip>
-                                      <TooltipTrigger
-                                        asChild
-                                        onFocus={(event) => {
-                                          if (
-                                            !(event.target instanceof Element) ||
-                                            !event.target.matches(':focus-visible')
-                                          ) {
-                                            event.preventDefault()
-                                          }
-                                        }}
-                                      >
-                                        <span className="inline-flex">
-                                          <DropdownMenuTrigger asChild>
-                                            <button
-                                              type="button"
-                                              className={composerIconButtonClassName}
-                                              disabled={
-                                                !canQueueMessage &&
-                                                !canOpenSideChat &&
-                                                !canStartSideChat &&
-                                                !canRetrySideChatHydration
-                                              }
-                                              aria-label={t('More send options')}
-                                              data-testid="running-side-chat-menu-trigger"
-                                            >
-                                              <ChevronDown
-                                                className="size-3.5"
-                                                aria-hidden="true"
-                                              />
-                                            </button>
-                                          </DropdownMenuTrigger>
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        {canQueueMessage
-                                          ? t('More send options')
-                                          : (sideChatDisabledReason ?? t('More send options'))}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </>
-                                  <DropdownMenuContent side="top" align="end" className="w-64">
-                                    {canQueueMessage ? (
-                                      <DropdownMenuItem
-                                        onSelect={handleStop}
-                                        aria-label={t('Cancel run')}
-                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                      >
-                                        <Square
-                                          className="mr-2 size-4 text-text-300"
+                                  <PopoverAnchor asChild>
+                                    <button
+                                      ref={sendButtonRef}
+                                      type="button"
+                                      onClick={canQueueMessage ? handleSubmit : handleStop}
+                                      disabled={isStopping}
+                                      data-testid={
+                                        canQueueMessage ? 'composer-queue-submit' : undefined
+                                      }
+                                      className={cn(
+                                        composerCancelButtonClassName,
+                                        canQueueMessage &&
+                                          'bg-primary text-primary-foreground hover:bg-primary/90'
+                                      )}
+                                      aria-label={
+                                        canQueueMessage
+                                          ? t('Add message to queue')
+                                          : isStopping
+                                            ? t('Stopping run and subagents')
+                                            : t('Cancel run')
+                                      }
+                                    >
+                                      {canQueueMessage ? (
+                                        <ArrowUp
+                                          className="size-4"
+                                          strokeWidth={2.2}
                                           aria-hidden="true"
                                         />
-                                        {t('Cancel run')}
-                                      </DropdownMenuItem>
-                                    ) : null}
-                                    {sideChatMenuItems}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            ) : (
-                              <>
-                                <div
-                                  role="group"
-                                  aria-label={t('Send message options')}
-                                  className={cn(
-                                    'flex rounded-md [@media(pointer:coarse)]:mx-3',
-                                    specialistSwitchInFlight
-                                      ? 'bg-bg-300 text-text-300'
-                                      : 'bg-primary text-primary-foreground',
-                                    !specialistSwitchInFlight &&
-                                      !effectiveCanSend &&
-                                      !canOpenSendOptions &&
-                                      'opacity-50'
-                                  )}
-                                >
-                                  <Popover
-                                    open={specialistUnavailableOpen}
-                                    onOpenChange={(open) => {
-                                      if (!open) setSpecialistNoticeTarget(undefined)
-                                    }}
+                                      ) : isStopping ? (
+                                        <Loader2
+                                          className="size-3.5 animate-spin"
+                                          strokeWidth={2.2}
+                                          aria-hidden="true"
+                                        />
+                                      ) : (
+                                        <Square
+                                          className="size-3.5"
+                                          strokeWidth={2.2}
+                                          aria-hidden="true"
+                                        />
+                                      )}
+                                    </button>
+                                  </PopoverAnchor>
+                                  {stopError ? (
+                                    <span className="sr-only" role="alert">
+                                      {stopError}
+                                    </span>
+                                  ) : null}
+                                  <DropdownMenu>
+                                    <>
+                                      <Tooltip>
+                                        <TooltipTrigger
+                                          asChild
+                                          onFocus={(event) => {
+                                            if (
+                                              !(event.target instanceof Element) ||
+                                              !event.target.matches(':focus-visible')
+                                            ) {
+                                              event.preventDefault()
+                                            }
+                                          }}
+                                        >
+                                          <span className="inline-flex">
+                                            <DropdownMenuTrigger asChild>
+                                              <button
+                                                type="button"
+                                                className={composerIconButtonClassName}
+                                                disabled={
+                                                  !canQueueMessage &&
+                                                  !canOpenSideChat &&
+                                                  !canStartSideChat &&
+                                                  !canRetrySideChatHydration
+                                                }
+                                                aria-label={t('More send options')}
+                                                data-testid="running-side-chat-menu-trigger"
+                                              >
+                                                <ChevronDown
+                                                  className="size-3.5"
+                                                  aria-hidden="true"
+                                                />
+                                              </button>
+                                            </DropdownMenuTrigger>
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {canQueueMessage
+                                            ? t('More send options')
+                                            : (sideChatDisabledReason ?? t('More send options'))}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </>
+                                    <DropdownMenuContent side="top" align="end" className="w-64">
+                                      {canQueueMessage ? (
+                                        <DropdownMenuItem
+                                          onSelect={handleStop}
+                                          aria-label={t('Cancel run')}
+                                          className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                        >
+                                          <Square
+                                            className="mr-2 size-4 text-text-300"
+                                            aria-hidden="true"
+                                          />
+                                          {t('Cancel run')}
+                                        </DropdownMenuItem>
+                                      ) : null}
+                                      {sideChatMenuItems}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              ) : (
+                                <>
+                                  <div
+                                    role="group"
+                                    aria-label={t('Send message options')}
+                                    className={cn(
+                                      'flex rounded-md [@media(pointer:coarse)]:mx-3',
+                                      specialistSwitchInFlight
+                                        ? 'bg-bg-300 text-text-300'
+                                        : 'bg-primary text-primary-foreground',
+                                      !specialistSwitchInFlight &&
+                                        !effectiveCanSend &&
+                                        !canOpenSendOptions &&
+                                        'opacity-50'
+                                    )}
                                   >
                                     <Tooltip open={specialistUnavailableOpen ? false : undefined}>
                                       <TooltipTrigger asChild>
@@ -3484,134 +3487,134 @@ const ConversationPanel = ({
                                         {t('Send message')}
                                       </TooltipContent>
                                     </Tooltip>
-                                    <PopoverContent
-                                      side="top"
-                                      align="end"
-                                      sideOffset={12}
-                                      collisionPadding={16}
-                                      className="w-80 max-w-[calc(100vw-2rem)] p-4"
-                                      aria-label={t('This Specialist is no longer available')}
-                                      onOpenAutoFocus={(event) => event.preventDefault()}
-                                      onCloseAutoFocus={(event) => event.preventDefault()}
-                                      onInteractOutside={(event) => {
-                                        if (sendButtonRef.current?.contains(event.target as Node)) {
-                                          event.preventDefault()
-                                        }
-                                      }}
-                                      onPointerEnter={() => setSpecialistNoticePointerPaused(true)}
-                                      onPointerLeave={() => setSpecialistNoticePointerPaused(false)}
-                                      onFocusCapture={() => setSpecialistNoticeFocusPaused(true)}
-                                      onBlurCapture={(event) => {
-                                        if (
-                                          !event.currentTarget.contains(
-                                            event.relatedTarget as Node | null
-                                          )
-                                        ) {
-                                          setSpecialistNoticeFocusPaused(false)
-                                        }
-                                      }}
-                                    >
-                                      <ErrorNotice
-                                        inline
-                                        role="status"
-                                        data-testid="specialist-unavailable-notice"
-                                        title={t('This Specialist is no longer available')}
-                                        description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
-                                        primaryButton={{
-                                          label: t('Choose Specialist'),
-                                          variant: 'default',
-                                          onClick: () => {
-                                            setSpecialistNoticeTarget(undefined)
-                                            setAgentControlsOpenRequest((request) => request + 1)
-                                          }
-                                        }}
-                                        dismissButton={{
-                                          label: t('Close'),
-                                          onClick: () => setSpecialistNoticeTarget(undefined)
-                                        }}
-                                      />
-                                      <PopoverPrimitive.Arrow
-                                        width={12}
-                                        height={6}
-                                        className="fill-popover"
-                                      />
-                                    </PopoverContent>
-                                  </Popover>
-                                  <DropdownMenu>
-                                    <Tooltip>
-                                      {/* Same focus guard as the + trigger: a dropdown close returns
+                                    <DropdownMenu>
+                                      <Tooltip>
+                                        {/* Same focus guard as the + trigger: a dropdown close returns
                                       programmatic focus, which must not re-open the tooltip. */}
-                                      <TooltipTrigger
-                                        asChild
-                                        onFocus={(event) => {
-                                          if (!event.currentTarget.matches(':focus-visible')) {
-                                            event.preventDefault()
+                                        <TooltipTrigger
+                                          asChild
+                                          onFocus={(event) => {
+                                            if (!event.currentTarget.matches(':focus-visible')) {
+                                              event.preventDefault()
+                                            }
+                                          }}
+                                        >
+                                          <DropdownMenuTrigger asChild>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              disabled={!canOpenSendOptions}
+                                              className={cn(
+                                                composerSplitSendMenuButtonClassName,
+                                                specialistSwitchInFlight &&
+                                                  'text-text-300 after:bg-text-300/20',
+                                                effectiveCanSend && 'disabled:opacity-50'
+                                              )}
+                                              aria-label={t('More send options')}
+                                              aria-haspopup="menu"
+                                              data-testid="branch-send-menu-trigger"
+                                            >
+                                              <ChevronDown
+                                                className="size-3.5"
+                                                strokeWidth={2.2}
+                                                aria-hidden="true"
+                                              />
+                                            </Button>
+                                          </DropdownMenuTrigger>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {t('More send options')}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                      <DropdownMenuContent side="top" align="end" className="w-56">
+                                        <DropdownMenuItem
+                                          data-testid="menu-plan-first"
+                                          disabled={!canPlanFirst}
+                                          onSelect={handlePlanFirst}
+                                          className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                        >
+                                          <ListChecks
+                                            className="mr-2 size-4 text-text-300"
+                                            aria-hidden="true"
+                                          />
+                                          {t('Plan first')}
+                                        </DropdownMenuItem>
+                                        {sideChatMenuItems}
+                                        <DropdownMenuItem
+                                          data-testid="menu-branch-in-new-session"
+                                          disabled={
+                                            !effectiveCanSend ||
+                                            !onBranchInNewSession ||
+                                            !canBranchInNewSession
                                           }
-                                        }}
-                                      >
-                                        <DropdownMenuTrigger asChild>
-                                          <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            disabled={!canOpenSendOptions}
-                                            className={cn(
-                                              composerSplitSendMenuButtonClassName,
-                                              specialistSwitchInFlight &&
-                                                'text-text-300 after:bg-text-300/20',
-                                              effectiveCanSend && 'disabled:opacity-50'
-                                            )}
-                                            aria-label={t('More send options')}
-                                            aria-haspopup="menu"
-                                            data-testid="branch-send-menu-trigger"
-                                          >
-                                            <ChevronDown
-                                              className="size-3.5"
-                                              strokeWidth={2.2}
-                                              aria-hidden="true"
-                                            />
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        {t('More send options')}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <DropdownMenuContent side="top" align="end" className="w-56">
-                                      <DropdownMenuItem
-                                        data-testid="menu-plan-first"
-                                        disabled={!canPlanFirst}
-                                        onSelect={handlePlanFirst}
-                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                      >
-                                        <ListChecks
-                                          className="mr-2 size-4 text-text-300"
-                                          aria-hidden="true"
-                                        />
-                                        {t('Plan first')}
-                                      </DropdownMenuItem>
-                                      {sideChatMenuItems}
-                                      <DropdownMenuItem
-                                        data-testid="menu-branch-in-new-session"
-                                        disabled={
-                                          !effectiveCanSend ||
-                                          !onBranchInNewSession ||
-                                          !canBranchInNewSession
-                                        }
-                                        onSelect={handleBranchInNewSession}
-                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                      >
-                                        <GitBranch
-                                          className="mr-2 size-4 text-text-300"
-                                          aria-hidden="true"
-                                        />
-                                        {t('Branch in new session')}
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
-                              </>
-                            )}
+                                          onSelect={handleBranchInNewSession}
+                                          className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                        >
+                                          <GitBranch
+                                            className="mr-2 size-4 text-text-300"
+                                            aria-hidden="true"
+                                          />
+                                          {t('Branch in new session')}
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                </>
+                              )}
+                              <PopoverContent
+                                side="top"
+                                align="end"
+                                sideOffset={12}
+                                collisionPadding={16}
+                                className="w-80 max-w-[calc(100vw-2rem)] p-4"
+                                aria-label={t('This Specialist is no longer available')}
+                                onOpenAutoFocus={(event) => event.preventDefault()}
+                                onCloseAutoFocus={(event) => event.preventDefault()}
+                                onInteractOutside={(event) => {
+                                  if (sendButtonRef.current?.contains(event.target as Node)) {
+                                    event.preventDefault()
+                                  }
+                                }}
+                                onPointerEnter={() => setSpecialistNoticePointerPaused(true)}
+                                onPointerLeave={() => setSpecialistNoticePointerPaused(false)}
+                                onFocusCapture={() => setSpecialistNoticeFocusPaused(true)}
+                                onBlurCapture={(event) => {
+                                  if (
+                                    !event.currentTarget.contains(
+                                      event.relatedTarget as Node | null
+                                    )
+                                  ) {
+                                    setSpecialistNoticeFocusPaused(false)
+                                  }
+                                }}
+                              >
+                                <ErrorNotice
+                                  inline
+                                  role="status"
+                                  data-testid="specialist-unavailable-notice"
+                                  title={t('This Specialist is no longer available')}
+                                  description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
+                                  primaryButton={{
+                                    label: t('Choose Specialist'),
+                                    variant: 'default',
+                                    onClick: () => {
+                                      setSpecialistNoticeTarget(undefined)
+                                      setAgentControlsOpenRequest((request) => request + 1)
+                                    }
+                                  }}
+                                  dismissButton={{
+                                    label: t('Close'),
+                                    onClick: () => setSpecialistNoticeTarget(undefined)
+                                  }}
+                                />
+                                <PopoverPrimitive.Arrow
+                                  width={12}
+                                  height={6}
+                                  className="fill-popover"
+                                />
+                              </PopoverContent>
+                            </Popover>
                             {hasRunningSubagents && !rootTurnBusy ? (
                               <>
                                 <Tooltip>

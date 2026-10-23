@@ -8311,6 +8311,119 @@ describe('ConversationPanel fix loop lock', () => {
     }
   )
 
+  it.each(['Enter', 'click'] as const)(
+    'shows unavailable Specialist guidance for a queued draft after %s',
+    (trigger) => {
+      const submit = vi.fn()
+      renderPanel({
+        view: {
+          activeSession: {
+            ...idleSession,
+            specialistId: 'deleted-specialist',
+            status: 'running',
+            activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+          }
+        },
+        conversation: {
+          availability: { submit: true, submitMode: 'queue' },
+          actions: { submit: { draft: submit } }
+        },
+        composer: { view: { doc: docFromText('Keep this queued draft') } },
+        specialist: { view: { specialist: { unavailable: true } } }
+      })
+      const send = container.querySelector<HTMLButtonElement>(
+        '[data-testid="composer-queue-submit"]'
+      )!
+      expect(send.disabled).toBe(false)
+      act(() => {
+        if (trigger === 'click') send.click()
+        else
+          getComposerEditor().dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+          )
+      })
+      expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).not.toBeNull()
+      expect(submit).not.toHaveBeenCalled()
+      expect(getComposerEditor().textContent).toBe('Keep this queued draft')
+    }
+  )
+
+  it.each(['completed', 'stopped'] as const)(
+    'repeats queued Specialist guidance and preserves the draft after a %s run',
+    async (outcome) => {
+      vi.useFakeTimers()
+      const submit = vi.fn()
+      const cancel = vi.fn(async () => undefined)
+      const panel = (running: boolean, unavailable = true): DeepPartial<PanelProps> => ({
+        view: {
+          activeSession: {
+            ...idleSession,
+            specialistId: 'literature',
+            status: running ? 'running' : 'idle',
+            activeRun: running ? { promptMessageId: 'msg-1', startedAt: 1 } : undefined
+          }
+        },
+        conversation: {
+          availability: { submit: true, submitMode: running ? 'queue' : 'send' },
+          actions: { submit: { draft: submit }, cancel }
+        },
+        composer: { view: { doc: docFromText('Keep this queued draft') } },
+        specialist: { view: { specialist: { unavailable } } }
+      })
+      const notice = (): Element | null =>
+        document.querySelector('[data-testid="specialist-unavailable-notice"]')
+      renderPanel(panel(true))
+      const queue = container.querySelector<HTMLButtonElement>(
+        '[data-testid="composer-queue-submit"]'
+      )!
+      act(() => queue.click())
+      expect(notice()).not.toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(5000))
+      act(() => {
+        queue.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }))
+        queue.click()
+      })
+      expect(notice()).toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(150))
+      expect(notice()).not.toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(5999))
+      expect(notice()).not.toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(notice()).toBeNull()
+      act(() => queue.click())
+      expect(notice()).not.toBeNull()
+      const options = container.querySelector<HTMLButtonElement>(
+        '[data-testid="running-side-chat-menu-trigger"]'
+      )!
+      expect(options.disabled).toBe(false)
+      if (outcome === 'stopped') {
+        await act(async () =>
+          container.querySelector<HTMLButtonElement>('[aria-label="Cancel run"]')!.click()
+        )
+        expect(cancel).toHaveBeenCalledOnce()
+      } else expect(cancel).not.toHaveBeenCalled()
+      renderPanel(panel(false))
+      expect(container.querySelector('[data-testid="composer-queue-submit"]')).toBeNull()
+      expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+      if (outcome === 'stopped') {
+        expect(notice()).toBeNull()
+        act(() =>
+          container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click()
+        )
+      }
+      expect(
+        document.querySelectorAll('[data-testid="specialist-unavailable-notice"]')
+      ).toHaveLength(1)
+      expect(submit).not.toHaveBeenCalled()
+      expect(getComposerEditor().textContent).toBe('Keep this queued draft')
+      renderPanel(panel(false, false))
+      expect(notice()).toBeNull()
+      expect(submit).not.toHaveBeenCalled()
+      act(() => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click())
+      expect(submit).toHaveBeenCalledOnce()
+    }
+  )
+
   it('keeps the options menu enabled to stop with a draft when side chat is unavailable', () => {
     renderPanel({
       view: {
