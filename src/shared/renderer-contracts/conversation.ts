@@ -38,6 +38,7 @@ import type {
 
 import type {
   DeleteSessionRequest,
+  DeleteSessionRecoveryFileRequest,
   DelegationPolicy,
   EditSessionDetailsRequest,
   FilterSessionPdfContextCandidatesRequest,
@@ -226,6 +227,9 @@ export const sessionsDeleteSessionContracts = {
   'sessions.openRecoveryFolder': callable<
     (request: OpenSessionRecoveryFolderRequest) => Promise<void>
   >()('sessions', ['sessions:open-recovery-folder', MAPPED_ELECTRON], { optionalMember: true }),
+  'sessions.deleteRecoveryFile': callable<
+    (request: DeleteSessionRecoveryFileRequest) => Promise<void>
+  >()('sessions', ['sessions:delete-recovery-file', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.onCreated': callable<(listener: AcpListener<SessionUpsertEvent>) => RemoveListener>()(
     'sessions',
     ['session:created', EVENT]

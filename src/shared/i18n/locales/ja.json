@@ -7502,6 +7502,12 @@
     "Retrieve public imaging series metadata by UID.": "UID で公開画像シリーズのメタデータを取得します。",
     "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG のパスウェイ、オルソログ、化合物、反応を検索します。",
     "Retrieve a KEGG entry summary.": "KEGG エントリの概要を取得します。",
-    "Map a KEGG gene to pathways or UniProt.": "KEGG 遺伝子をパスウェイまたは UniProt にマッピングします。"
+    "Map a KEGG gene to pathways or UniProt.": "KEGG 遺伝子をパスウェイまたは UniProt にマッピングします。",
+    "Inspect or recover these files, or delete their damaged recovery copies here.": "これらのファイルを確認または復元するか、破損した復元用コピーをここで削除できます。",
+    "Delete damaged file": "破損ファイルを削除",
+    "Permanently delete the recovery copies of \"{{fileName}}\"? This conversation can no longer be recovered from them. The project and research files are kept. This cannot be undone.": "「{{fileName}}」の復元用コピーを完全に削除しますか？これらのコピーからこの会話を復元できなくなります。プロジェクトと研究ファイルは保持されます。この操作は取り消せません。",
+    "Could not delete all recovery copies. Check the remaining files and try again.": "すべての復元用コピーを削除できませんでした。残りのファイルを確認して、もう一度お試しください。",
+    "Permanently delete": "完全に削除",
+    "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "この会話にはまだ計算ジョブがあります。会話を復元するか、そのジョブを削除してから、これらのコピーを削除してください。ジョブのリモートファイルは保持されます。"
   }
 }

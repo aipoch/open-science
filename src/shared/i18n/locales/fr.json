@@ -7830,6 +7830,12 @@
     "Retrieve public imaging series metadata by UID.": "Obtenir les métadonnées d’une série d’images publique par UID.",
     "Search KEGG pathways, orthologs, compounds and reactions.": "Rechercher des voies, orthologues, composés et réactions KEGG.",
     "Retrieve a KEGG entry summary.": "Obtenir le résumé d’une entrée KEGG.",
-    "Map a KEGG gene to pathways or UniProt.": "Associer un gène KEGG à des voies ou à UniProt."
+    "Map a KEGG gene to pathways or UniProt.": "Associer un gène KEGG à des voies ou à UniProt.",
+    "Inspect or recover these files, or delete their damaged recovery copies here.": "Examinez ou restaurez ces fichiers, ou supprimez ici leurs copies de récupération endommagées.",
+    "Delete damaged file": "Supprimer le fichier endommagé",
+    "Permanently delete the recovery copies of \"{{fileName}}\"? This conversation can no longer be recovered from them. The project and research files are kept. This cannot be undone.": "Supprimer définitivement les copies de récupération de « {{fileName}} » ? Cette conversation ne pourra plus être restaurée à partir de ces copies. Le projet et les fichiers de recherche seront conservés. Cette action est irréversible.",
+    "Could not delete all recovery copies. Check the remaining files and try again.": "Impossible de supprimer toutes les copies de récupération. Vérifiez les fichiers restants et réessayez.",
+    "Permanently delete": "Supprimer définitivement",
+    "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "Cette conversation comporte encore des tâches de calcul. Restaurez la conversation ou supprimez ses tâches avant de supprimer ces copies. Leurs fichiers distants sont conservés."
   }
 }

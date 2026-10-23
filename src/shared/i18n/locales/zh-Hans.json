@@ -7502,6 +7502,12 @@
     "Retrieve public imaging series metadata by UID.": "通过 UID 获取公开影像序列元数据。",
     "Search KEGG pathways, orthologs, compounds and reactions.": "搜索 KEGG 通路、直系同源基因、化合物和反应。",
     "Retrieve a KEGG entry summary.": "获取 KEGG 条目摘要。",
-    "Map a KEGG gene to pathways or UniProt.": "将 KEGG 基因映射到通路或 UniProt。"
+    "Map a KEGG gene to pathways or UniProt.": "将 KEGG 基因映射到通路或 UniProt。",
+    "Inspect or recover these files, or delete their damaged recovery copies here.": "可检查或恢复这些文件，也可在此删除损坏的恢复副本。",
+    "Delete damaged file": "删除损坏文件",
+    "Permanently delete the recovery copies of \"{{fileName}}\"? This conversation can no longer be recovered from them. The project and research files are kept. This cannot be undone.": "要永久删除“{{fileName}}”的恢复副本吗？删除后将无法再从这些副本恢复此会话。项目和研究文件会保留。此操作无法撤销。",
+    "Could not delete all recovery copies. Check the remaining files and try again.": "未能删除所有恢复副本。请检查剩余文件后重试。",
+    "Permanently delete": "永久删除",
+    "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "此会话仍有关联的计算任务。请先恢复会话或删除其计算任务，再删除这些副本。任务的远程文件会保留。"
   }
 }

@@ -7969,6 +7969,12 @@
     "Retrieve public imaging series metadata by UID.": "Получение метаданных открытых серий изображений по UID.",
     "Search KEGG pathways, orthologs, compounds and reactions.": "Поиск путей, ортологов, соединений и реакций KEGG.",
     "Retrieve a KEGG entry summary.": "Получение сводки записи KEGG.",
-    "Map a KEGG gene to pathways or UniProt.": "Сопоставление гена KEGG с путями или UniProt."
+    "Map a KEGG gene to pathways or UniProt.": "Сопоставление гена KEGG с путями или UniProt.",
+    "Inspect or recover these files, or delete their damaged recovery copies here.": "Проверьте или восстановите эти файлы либо удалите здесь их повреждённые копии для восстановления.",
+    "Delete damaged file": "Удалить повреждённый файл",
+    "Permanently delete the recovery copies of \"{{fileName}}\"? This conversation can no longer be recovered from them. The project and research files are kept. This cannot be undone.": "Удалить навсегда копии для восстановления файла «{{fileName}}»? Из них больше нельзя будет восстановить этот диалог. Проект и исследовательские файлы сохранятся. Это действие нельзя отменить.",
+    "Could not delete all recovery copies. Check the remaining files and try again.": "Не удалось удалить все копии для восстановления. Проверьте оставшиеся файлы и повторите попытку.",
+    "Permanently delete": "Удалить навсегда",
+    "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "У этого диалога ещё есть вычислительные задания. Восстановите диалог или удалите его задания, прежде чем удалять эти копии. Удалённые файлы заданий сохраняются."
   }
 }

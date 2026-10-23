@@ -231,6 +231,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessionReplay.saveView': 'session-replay:save-view',
   'sessionReplay.unlinkSession': 'session-replay:unlink-session',
   'sessions.cancelDiagnostics': 'sessions:cancel-diagnostics',
+  'sessions.deleteRecoveryFile': 'sessions:delete-recovery-file',
   'sessions.deleteSession': 'sessions:delete-session',
   'sessions.editDetails': 'sessions:edit-details',
   'sessions.exportConversation': 'sessions:export-conversation',

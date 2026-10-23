@@ -100,6 +100,7 @@ type PreviewApplicationCommandOwner = Readonly<{
 }>
 
 type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  deleteRecoveryFile(request: SessionPersistence.DeleteSessionRecoveryFileRequest): Promise<void>
   bindTaskSession(
     request: SessionPersistence.BindTaskSessionRequest
   ): Promise<SessionPersistence.PersistedChatSession>
@@ -469,6 +470,11 @@ const dataContentApplicationCommands = Object.freeze({
     'deleteSession',
     SessionPersistence.sessionApplicationCommandContracts.delete
   ),
+  sessionDeleteRecoveryFile: sessionCommand(
+    'sessions:delete-recovery-file',
+    'deleteRecoveryFile',
+    SessionPersistence.sessionApplicationCommandContracts.deleteRecoveryFile
+  ),
   sessionEditDetails: sessionCommand(
     'sessions:edit-details',
     'editDetails',
@@ -676,6 +682,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('sessions', [
     dataContentApplicationCommands.sessionOpenRecoveryFolder,
     dataContentApplicationCommands.sessionDelete,
+    dataContentApplicationCommands.sessionDeleteRecoveryFile,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
     dataContentApplicationCommands.sessionInspectDiagnostics,
@@ -963,6 +970,8 @@ const registerDataContentApplicationCommands = (
         )
         return dependencies.electron.openRecoveryFolder(invocation)
       },
+      'sessions:delete-recovery-file': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.sessions.deleteRecoveryFile(args[0])),
       'sessions:delete-session': async ({ args }) => {
         const result = await dependencies.sessions.deleteSession(args[0])
         if (result.status === 'deleted') {

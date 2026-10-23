@@ -7500,6 +7500,12 @@
     "Retrieve public imaging series metadata by UID.": "UID로 공개 영상 시리즈 메타데이터를 가져옵니다.",
     "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG 경로, 오솔로그, 화합물 및 반응을 검색합니다.",
     "Retrieve a KEGG entry summary.": "KEGG 항목 요약을 가져옵니다.",
-    "Map a KEGG gene to pathways or UniProt.": "KEGG 유전자를 경로 또는 UniProt에 매핑합니다."
+    "Map a KEGG gene to pathways or UniProt.": "KEGG 유전자를 경로 또는 UniProt에 매핑합니다.",
+    "Inspect or recover these files, or delete their damaged recovery copies here.": "이 파일을 확인하거나 복구할 수 있으며, 손상된 복구 사본을 여기서 삭제할 수도 있습니다.",
+    "Delete damaged file": "손상된 파일 삭제",
+    "Permanently delete the recovery copies of \"{{fileName}}\"? This conversation can no longer be recovered from them. The project and research files are kept. This cannot be undone.": "\"{{fileName}}\"의 복구 사본을 영구 삭제하시겠습니까? 이 사본에서 더 이상 대화를 복구할 수 없습니다. 프로젝트와 연구 파일은 유지됩니다. 이 작업은 되돌릴 수 없습니다.",
+    "Could not delete all recovery copies. Check the remaining files and try again.": "일부 복구 사본을 삭제하지 못했습니다. 남은 파일을 확인하고 다시 시도하세요.",
+    "Permanently delete": "영구 삭제",
+    "This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.": "이 대화에 아직 계산 작업이 있습니다. 대화를 복구하거나 해당 작업을 삭제한 후 이 사본을 삭제하세요. 작업의 원격 파일은 유지됩니다."
   }
 }

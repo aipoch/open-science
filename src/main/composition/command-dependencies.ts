@@ -312,6 +312,16 @@ export function composeCommandDependencies({
       projects: projectLifecycle.projectHandlers,
       sessions: {
         ...sessionSurfaces.sessionPersistenceHandlers,
+        deleteRecoveryFile: async (request) => {
+          await projectLifecycle.projectDeletionCoordinator.waitForProjectOperations([
+            request.projectId
+          ])
+          await projectLifecycle.archiveCoordinator.withSessionRecoveryDeletion(
+            request.projectId,
+            request.fileName.slice(0, -5),
+            () => sessionAuthority.sessionPersistenceCoordinator.deleteRecoveryFile(request)
+          )
+        },
         filterPdfContextCandidates: (request) =>
           documentReading.sessionPdfContextOwner.filterCandidates(request),
         linkPdfContext: (request) =>
