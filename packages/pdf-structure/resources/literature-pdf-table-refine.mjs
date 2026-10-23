@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { proveNativePostfixHeaderCuts } from './literature-pdf-native-postfix-header.mjs'
+import { proveNativeFencedSectionRows } from './literature-pdf-native-fenced-section.mjs'
 import { reviewNativeTableSources } from './literature-pdf-table-source-integrity.mjs'
 import {
   recoverCaptionedRuledTables as recoverExistingCaptionedRuledTables,
@@ -9660,6 +9662,19 @@ export function refineTable(
     uniqueSource: uniqueWholeRecordSource,
     repairs
   })
+  const postfixHeader = proveNativePostfixHeaderCuts({
+    table,
+    items,
+    rows,
+    columnRects,
+    rules: sourceRules,
+    context: nativeRecordContext,
+    recoveredHeaderCuts
+  })
+  if (postfixHeader.qualified) {
+    recoveredHeaderCuts = postfixHeader.cuts
+    repairs.push('native-calibrated-postfix-header-recovered')
+  }
   const baseCells = rows.flatMap((r, row) =>
     columnRects.map((c, column) => ({
       row,
@@ -11571,6 +11586,22 @@ export function refineTable(
     for (let n = unresolvedSpans.length - 1; n >= 0; n--)
       if (unresolvedSpans[n].rect[3] <= sourceHeaderBands.bottom) unresolvedSpans.splice(n, 1)
     repairs.push('header-span-inferred')
+  }
+  const fencedSectionRows = proveNativeFencedSectionRows({
+    table,
+    items,
+    rows,
+    columnRects,
+    spans: proposals.map((proposal) => proposal.slots),
+    rules,
+    context: nativeRecordContext
+  })
+  for (const row of fencedSectionRows ?? []) {
+    proposals.push({
+      slots: baseCells.filter((cell) => cell.row === row),
+      origin: 'source-section'
+    })
+    repairs.push('native-fenced-section-ownership-recovered')
   }
   const cells = resolveTableCellMerges({
     proposals,

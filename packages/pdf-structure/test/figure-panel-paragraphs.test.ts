@@ -1,10 +1,150 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
-const { completeNativePanelParagraphs } = await import(
+const { completeNativePanelParagraphs, completeNativePairedPanelTails } = await import(
   pathToFileURL(resolve('resources/literature-pdf-figure-panel-paragraphs.mjs')).href
 )
+
+const pairedTails = (fault = ''): ReturnType<typeof JSON.parse> => {
+  const fnArray: number[] = [],
+    argsArray: unknown[] = [],
+    items: ReturnType<typeof JSON.parse>[] = []
+  const lines: ReturnType<typeof JSON.parse>[] = [],
+    tokens: ReturnType<typeof JSON.parse>[] = []
+  const graphicsBounds: ReturnType<typeof JSON.parse>[] = []
+  const emit = (op: number, args: unknown = null): number => {
+    fnArray.push(op)
+    argsArray.push(args)
+    return fnArray.length - 1
+  }
+  const text = (str: string, x: number, y: number): void => {
+    const width = str.length * 4,
+      sourceItem = { pageNumber: 1, index: items.length, text: str }
+    items.push({
+      str,
+      width,
+      height: 10,
+      fontName: 'Body',
+      dir: 'ltr',
+      hasEOL: true,
+      transform: [10, 0, 0, 10, x, 800 - y - 10],
+      sourceItem
+    })
+    lines.push({ text: str, x, y, width, height: 10, fontSize: 10 })
+    tokens.push({
+      text: str,
+      rect: [x, y, x + width, y + 10],
+      nativeLabelRect: [x, y + 2, x + width, y + 12],
+      sourceItem,
+      height: 10,
+      horizontal: true,
+      baseline: y + 10
+    })
+    emit(OPS.beginText)
+    emit(OPS.setFont, ['Body', 10])
+    emit(OPS.setTextMatrix, [[1, 0, 0, 1, x, 800 - y - 10]])
+    emit(OPS.showText, [
+      Array.from(str, (unicode) => ({
+        unicode,
+        fontChar: unicode,
+        width: 400,
+        isSpace: unicode === ' ',
+        isInFont: true
+      }))
+    ])
+    emit(OPS.endText)
+  }
+  for (const x of [90, 330]) {
+    emit(OPS.save)
+    emit(OPS.transform, [140, 0, 0, 100, x, 620])
+    const operationIndex = emit(OPS.paintImageXObject, ['sample', 140, 100])
+    emit(OPS.restore)
+    graphicsBounds.push({
+      kind: 'image',
+      operationIndex,
+      normalizedRect: [x / 600, 80 / 800, (x + 140) / 600, 180 / 800],
+      paintedNormalizedRect: [x / 600, 80 / 800, (x + 140) / 600, 180 / 800]
+    })
+  }
+  text(
+    fault === 'terminal parent'
+      ? '(a) First measurement is complete.'
+      : '(a) First measurement across simu-',
+    90,
+    184
+  )
+  text('lations.', 90, 196)
+  if (fault === 'third line') text('another continuation', 90, 208)
+  text('(b) Second measurement across simu-', 330, 184)
+  text('lations.', 330, 196)
+  if (fault === 'foreign ink') text('Note', 270, 196)
+  const caption = { page: 1, lines: ['Figure 1. Two measurements.'], rect: [90, 230, 510, 242] }
+  const glyphs = [...new Set(items.flatMap((i) => [...i.str]))].map((fontChar) => ({
+    fontChar,
+    bounds: fontChar === ' ' ? [0, 0, 0, 0] : [0, -0.2, 0.35, 0.7]
+  }))
+  if (fault === 'missing glyph') glyphs.pop()
+  if (fault === 'unknown effect') emit(OPS.shadingFill, ['unsupported'])
+  return {
+    page: {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      lines,
+      graphicsBounds,
+      invalidGraphicsBounds: 0
+    },
+    figure: {
+      caption,
+      rect: [90, 80, 510, fault === 'already complete' ? 210 : 194],
+      issue: 'native-raster-side-by-side'
+    },
+    captions: [caption],
+    tables: fault === 'table' ? [[90, 196, 150, 207]] : [],
+    tokens,
+    context: {
+      pageNumber: 1,
+      graphicsBounds,
+      content: { items, styles: { Body: { ascent: 0.7, descent: -0.2, vertical: false } } },
+      operators: { fnArray, argsArray },
+      glyphBounds: [{ fontName: 'Body', glyphs }],
+      viewport: {
+        width: 600,
+        height: 800,
+        scale: 1,
+        rotation: 0,
+        transform: [1, 0, 0, -1, 0, 800],
+        convertToViewportPoint: (x: number, y: number): number[] => [x, 800 - y]
+      }
+    }
+  }
+}
+
+it('completes two source-closed wrapped raster labels without changing their ownership', () => {
+  const f = pairedTails(),
+    before = structuredClone(f.figure)
+  expect(
+    completeNativePairedPanelTails(f.page, f.figure, f.captions, f.tables, f.tokens, f.context)
+  ).toEqual([90, 80, 510, 208])
+  expect(f.figure).toEqual(before)
+})
+
+it.each([
+  'terminal parent',
+  'third line',
+  'foreign ink',
+  'missing glyph',
+  'unknown effect',
+  'table',
+  'already complete'
+])('rejects an incomplete paired-label proof: %s', (fault) => {
+  const f = pairedTails(fault)
+  expect(
+    completeNativePairedPanelTails(f.page, f.figure, f.captions, f.tables, f.tokens, f.context)
+  ).toBeUndefined()
+})
 
 type Line = { text: string; x: number; y: number; width: number; height: number; fontSize: number }
 type Caption = { page: number; rect: number[]; lines: string[] }
@@ -140,5 +280,122 @@ it.each(['source', 'panel', 'body', 'caption', 'table', 'line-gap', 'font'])(
     }
     if (kind === 'font') f.tokens[4].fontDescent = NaN
     expect(complete(f)).toBeUndefined()
+  }
+)
+
+const { nativeCaptionedSideKeyRasterPair } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-panel-labels.mjs')).href
+)
+
+const leftKeyPair = (fault = ''): ReturnType<typeof JSON.parse> => {
+  const f = pairedTails(),
+    o = f.context.operators
+  o.fnArray = []
+  o.argsArray = []
+  f.context.content.items = []
+  f.tokens = []
+  f.page.lines = []
+  f.page.graphicsBounds.length = 0
+  const emit = (op: number, args: unknown = null): number => {
+    o.fnArray.push(op)
+    o.argsArray.push(args)
+    return o.fnArray.length - 1
+  }
+  for (const [x, y, width] of [
+    [150, 80, 200],
+    [180, 210, 140]
+  ]) {
+    emit(OPS.save)
+    emit(OPS.transform, [width, 0, 0, 100, x, 800 - y - 100])
+    const operationIndex = emit(OPS.paintImageXObject, ['sample', width, 100])
+    emit(OPS.restore)
+    f.page.graphicsBounds.push({
+      kind: 'image',
+      operationIndex,
+      normalizedRect: [x / 600, y / 800, (x + width) / 600, (y + 100) / 800]
+    })
+  }
+  const text = (str: string, x: number, y: number): void => {
+    const index = f.context.content.items.length,
+      width = str.length * 4
+    const sourceItem = { pageNumber: 1, index, text: str }
+    f.context.content.items.push({
+      str,
+      width,
+      height: 10,
+      fontName: 'Body',
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, 800 - y - 10],
+      sourceItem
+    })
+    f.tokens.push({
+      text: str,
+      rect: [x, y, x + width, y + 10],
+      horizontal: true,
+      height: 10,
+      baseline: y + 10,
+      sourceItem
+    })
+    f.page.lines.push({ text: str, x, y, width, height: 10, fontSize: 10 })
+    emit(OPS.beginText)
+    emit(OPS.setFont, ['Body', 10])
+    emit(OPS.setTextMatrix, [[1, 0, 0, 1, x, 800 - y - 10]])
+    emit(OPS.showText, [
+      Array.from(str, (unicode) => ({
+        unicode,
+        fontChar: unicode,
+        width: 400,
+        isSpace: unicode === ' ',
+        isInFont: true
+      }))
+    ])
+    emit(OPS.endText)
+  }
+  text('(a)', 90, 125)
+  text(fault === 'repeated key' ? '(a)' : '(b)', 90.2, 250)
+  if (fault === 'foreign native text') text('Note', 250, 185)
+  text('Figure 1: (a) First; (b) Second.', 150, 330)
+  f.context.glyphBounds[0].glyphs = [
+    ...new Set<string>(f.context.content.items.flatMap((i: { str: string }) => [...i.str]))
+  ].map((fontChar) => ({
+    fontChar,
+    bounds: fontChar === ' ' ? [0, 0, 0, 0] : [0, -0.2, 0.35, 0.7]
+  }))
+  const caption = {
+    page: 1,
+    rect: [150, 330, 400, 342],
+    lines: ['Figure 1: (a) First; (b) Second.']
+  }
+  f.figure = { caption, rect: [180, 210, 320, 310], graphicsCount: 1 }
+  f.captions = [caption]
+  if (fault === 'table in envelope') f.tables.push([200, 185, 250, 195])
+  if (fault === 'unsupported paint') emit(OPS.shadingFill, ['unknown'])
+  return f
+}
+
+it('recovers two unequal complete raster panels through their native left keys', () => {
+  const f = leftKeyPair(),
+    before = structuredClone(f.figure)
+  const result = nativeCaptionedSideKeyRasterPair(
+    f.page,
+    f.figure,
+    f.captions,
+    f.tables,
+    f.tokens,
+    f.context
+  )
+  expect(result.rect).toEqual([90, 80, 350, 310])
+  expect(result.graphicsCount).toBe(2)
+  expect(result.sourceItems).toBeUndefined()
+  expect(f.figure).toEqual(before)
+})
+
+it.each(['repeated key', 'foreign native text', 'table in envelope', 'unsupported paint'])(
+  'retains the existing crop without complete left-key ownership: %s',
+  (fault) => {
+    const f = leftKeyPair(fault)
+    expect(
+      nativeCaptionedSideKeyRasterPair(f.page, f.figure, f.captions, f.tables, f.tokens, f.context)
+    ).toBeUndefined()
   }
 )

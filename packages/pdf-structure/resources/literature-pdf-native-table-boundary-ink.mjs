@@ -1,10 +1,18 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { isDeepStrictEqual } from 'node:util'
 import { collectClosedFigureFrames, collectTableRules } from './literature-pdf-graphics.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { nativePairedTablePanelCrop } from './literature-pdf-native-table-panel-crop.mjs'
-import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
+import {
+  nativePageTextPacketInventory,
+  nativeWholeCellInkPacket
+} from './literature-pdf-figure-native-plot-labels.mjs'
+import { matchNativeFigureRenderContext } from './literature-pdf-render-bounds.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { groupPageLines } from './literature-pdf-caption-group.mjs'
+import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
+import { visibleNativeHeaderRule } from './literature-pdf-table-layout-conflicts.mjs'
 const finite = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite)
 const valid = (r) => finite(r, 4) && r[0] < r[2] && r[1] < r[3]
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b)
@@ -579,7 +587,7 @@ function nativeVerticalInk(table, context) {
   return result
 }
 
-function nativeTablePacketInk(table, fonts, context) {
+function nativeTablePacketInk(table, fonts, context, withInventory = false) {
   const native = context.nativeGlyphContext,
     scale = context.viewport.scale,
     content = {
@@ -624,7 +632,151 @@ function nativeTablePacketInk(table, fonts, context) {
     if (!valid(r)) return
     ink.set(matches[0], r)
   }
-  return ink
+  return withInventory ? { ink, inventory } : ink
+}
+
+// Repeated leaf headings can survive while their native parent headings are
+// omitted entirely. Prove that contradiction without reconstructing cells or
+// extending the bitmap: all sources, glyphs and intersecting paint stay bound.
+function missingGroupedNativeHeader(table, fonts, horizontal, paint, graphics, context) {
+  try {
+    const cells = table.cells,
+      count = Math.max(...cells.map((c) => c.column)) + 1,
+      rows = Math.max(...cells.map((c) => c.row)) + 1,
+      head = cells.filter((c) => c.row === 0).sort((a, b) => a.column - b.column)
+    if (
+      count < 5 ||
+      rows < 3 ||
+      cells.length !== count * rows ||
+      head.length !== count ||
+      head[0].text !== '' ||
+      head[0].sourceItems?.length ||
+      head[0].sourceRects?.length ||
+      new Set(cells.map((c) => c.row + ':' + c.column)).size !== cells.length ||
+      cells.some(
+        (c) =>
+          !Number.isSafeInteger(c.row) ||
+          !Number.isSafeInteger(c.column) ||
+          c.row < 0 ||
+          c.column < 0 ||
+          c.rowSpan !== 1 ||
+          c.colSpan !== 1 ||
+          c.sourceSegments?.length ||
+          !valid(c.rect) ||
+          (c !== head[0] &&
+            (!c.sourceItems?.length ||
+              !c.text?.trim() ||
+              (c.row > 0 && c.column > 0 && !/^\d+(?:\.\d+)?$/u.test(c.text))))
+      )
+    )
+      return false
+    const leaves = head.slice(1),
+      periods = []
+    for (let size = 2; size <= leaves.length / 2; size++)
+      if (leaves.length % size === 0 && leaves.every((c, i) => c.text === leaves[i % size].text))
+        periods.push(size)
+    if (periods.length !== 1) return false
+    const size = periods[0],
+      groups = leaves.length / size,
+      owned = new Map()
+    for (const cell of cells) {
+      if ((cell.sourceItems?.length ?? 0) !== (cell.sourceRects?.length ?? 0)) return false
+      if ((cell.sourceItems ?? []).map((s) => compact(s.text)).join('') !== compact(cell.text))
+        return false
+      for (const [i, source] of (cell.sourceItems ?? []).entries()) {
+        const matched = fonts.filter((f) => equal(f.source, source))
+        if (
+          matched.length !== 1 ||
+          owned.has(matched[0]) ||
+          !valid(cell.sourceRects[i]) ||
+          matched[0].advance.some((v, n) => Math.abs(v - cell.sourceRects[i][n]) > 1e-6)
+        )
+          return false
+        owned.set(matched[0], cell)
+      }
+    }
+    const caption = context.captions?.filter(
+      (c) => c.page === table.page && c.lines?.join(' ') === table.caption?.text && valid(c.rect)
+    )
+    if (table.caption?.page !== table.page || caption?.length !== 1) return false
+    const indices = [...owned.keys()].map((f) => f.source.index),
+      first = Math.min(...indices),
+      last = Math.max(...indices),
+      candidates = fonts.filter(
+        (f) =>
+          f.source.index < first &&
+          f.advance[3] > caption[0].rect[3] &&
+          f.advance[0] >= table.cropRect[0] &&
+          f.advance[2] <= table.cropRect[2]
+      )
+    if (candidates.length < groups + 1) return false
+    const baseline = candidates[0].advance[3],
+      leafTop = Math.min(...head.map((c) => c.rect[1])),
+      height = Math.max(
+        ...[...owned].filter(([, c]) => c.row === 0).map(([f]) => f.advance[3] - f.advance[1])
+      )
+    if (
+      !Number.isFinite(height) ||
+      height <= 0 ||
+      !(baseline < leafTop) ||
+      leafTop - baseline > height * 2 ||
+      candidates.some((f) => f.advance[3] !== baseline)
+    )
+      return false
+    const claimed = new Set()
+    for (let group = 0; group <= groups; group++) {
+      const columns =
+          group === 0 ? [head[0]] : head.slice(1 + (group - 1) * size, 1 + group * size),
+        band = [
+          columns[0].rect[0],
+          Math.min(...candidates.map((f) => f.advance[1])),
+          columns.at(-1).rect[2],
+          baseline
+        ],
+        members = candidates.filter((f) => inside(band, f.advance))
+      if (!members.length || !members.some((f) => /\p{L}/u.test(f.text))) return false
+      for (const member of members) {
+        if (claimed.has(member)) return false
+        claimed.add(member)
+      }
+    }
+    if (claimed.size !== candidates.length) return false
+    const allOwned = new Set([...owned.keys(), ...candidates]),
+      lower = Math.min(...[...allOwned].map((f) => f.source.index))
+    if (fonts.some((f) => f.source.index >= lower && f.source.index <= last && !allOwned.has(f)))
+      return false
+    const packet = nativeTablePacketInk(table, fonts, context, true)
+    if (!packet) return false
+    const band = [
+        table.cropRect[0],
+        Math.min(table.cropRect[1], ...candidates.map((f) => packet.ink.get(f)[1])),
+        table.cropRect[2],
+        table.cropRect[3]
+      ],
+      bars = horizontal
+        .filter((r) => r[0] >= band[0] && r[2] <= band[2] && r[1] >= band[1] && r[1] <= band[3])
+        .sort((a, b) => a[1] - b[1])
+    if (
+      bars.length !== 2 ||
+      bars.some((r) => !valid(paint(r))) ||
+      [...allOwned].some((f) => !inside(band, packet.ink.get(f))) ||
+      fonts.some((f) => !allOwned.has(f) && over(packet.ink.get(f), band)) ||
+      graphics.some((g) => over(g, band) && !bars.some((r) => equal(paint(r), g)))
+    )
+      return false
+    const headerInk = [...owned].filter(([, c]) => c.row === 0).map(([f]) => packet.ink.get(f)),
+      bodyInk = [...owned].filter(([, c]) => c.row > 0).map(([f]) => packet.ink.get(f)),
+      ink = [...allOwned].map((f) => packet.ink.get(f))
+    return (
+      headerInk.length > 0 &&
+      bodyInk.length > 0 &&
+      headerInk.every((r) => r[3] < paint(bars[0])[1]) &&
+      bodyInk.every((r) => r[1] > paint(bars[0])[3] && r[3] < paint(bars[1])[1]) &&
+      bars.every((r) => ink.every((i) => i[0] >= r[0] && i[2] <= r[2]))
+    )
+  } catch {
+    return false
+  }
 }
 
 // A clipped alphabetical stub can be absent from every grid cell. Three complete
@@ -786,10 +938,210 @@ function missingNativeStubCrop(table, fonts, horizontal, paint, graphics, contex
   return crop
 }
 
+// Repeated method bands can prove an omitted stub independently of the grid.
+// Keep that grid unreliable and use its native closing stroke to exclude the
+// separate explanation below it; neither proximity nor an unclaimed word owns
+// the extra strip.
+function repeatedNativeStubCrop(table, fonts, horizontal, paint, graphics, context) {
+  const old = table.cropRect,
+    grid = table.grid
+  if (!Array.isArray(grid) || grid.length < 5 || !Array.isArray(grid[0]) || grid[0].length < 2)
+    return
+  const packet = nativeTablePacketInk(table, fonts, context, true)
+  if (!packet) return
+  const envelopes = new Map(),
+    owned = new Set()
+  for (const f of fonts) {
+    const item = context.sourceContent.items[f.source.index],
+      style = context.sourceContent.styles[item.fontName],
+      height = item.height * context.viewport.scale
+    if (
+      !Number.isFinite(style.ascent) ||
+      !(style.ascent > 0) ||
+      !Number.isFinite(style.descent) ||
+      style.descent >= style.ascent
+    )
+      return
+    envelopes.set(
+      f,
+      union([
+        f.advance,
+        packet.ink.get(f),
+        [
+          f.advance[0],
+          f.advance[3] - height * style.ascent,
+          f.advance[2],
+          f.advance[3] - height * style.descent
+        ]
+      ])
+    )
+  }
+  for (const cell of table.cells) {
+    if (
+      cell.sourceSegments !== undefined ||
+      !Number.isSafeInteger(cell.row) ||
+      cell.row < 0 ||
+      cell.row >= grid.length ||
+      !Number.isSafeInteger(cell.column) ||
+      cell.column < 0 ||
+      cell.column >= grid[0].length ||
+      cell.rowSpan !== 1 ||
+      cell.colSpan !== 1 ||
+      typeof cell.text !== 'string' ||
+      (cell.sourceItems?.length ?? 0) !== (cell.sourceRects?.length ?? 0)
+    )
+      return
+    const ff = (cell.sourceItems ?? []).map((source, i) =>
+      fonts.filter(
+        (f) =>
+          equal(f.source, source) &&
+          valid(cell.sourceRects[i]) &&
+          f.advance.every((x, n) => Math.abs(x - cell.sourceRects[i][n]) < 1e-6)
+      )
+    )
+    if (
+      ff.some((a) => a.length !== 1) ||
+      compact(ff.map(([f]) => f.text).join('')) !== compact(cell.text)
+    )
+      return
+    for (const [f] of ff) {
+      if (owned.has(f)) return
+      owned.add(f)
+    }
+  }
+  if (!owned.size) return
+  const insideOwned = [...owned],
+    left = Math.min(...insideOwned.map((f) => envelopes.get(f)[0])),
+    right = Math.max(...insideOwned.map((f) => (f.advance[0] + f.advance[2]) / 2)),
+    groups = []
+  for (const r of horizontal) {
+    if (!(r[0] < old[0] && r[0] < left && r[2] >= right && r[2] <= old[2])) continue
+    const bars = horizontal
+      .filter((q) => q[0] === r[0] && q[2] === r[2])
+      .sort((a, b) => a[1] - b[1])
+    if (bars.length < 4 || groups.some((g) => equal(g, bars))) continue
+    const painted = bars.map(paint)
+    if (painted.some((r) => !valid(r)) || painted[0][1] < old[1] || painted.at(-1)[3] >= old[3])
+      continue
+    const frame = [r[0], painted[0][1], old[2], painted.at(-1)[3]],
+      all = fonts.filter((f) => over(envelopes.get(f), frame)),
+      missing = all.filter((f) => !owned.has(f)).sort((a, b) => a.advance[3] - b.advance[3])
+    if (
+      missing.length < 2 ||
+      bars.length !== missing.length + 2 ||
+      insideOwned.some((f) => !all.includes(f)) ||
+      all.some((f) => !inside(frame, envelopes.get(f)))
+    )
+      continue
+    if (
+      missing.some(
+        (f) =>
+          !/\p{L}/u.test(f.text) ||
+          !(f.advance[0] < old[0] && old[0] < f.advance[2]) ||
+          !table.clipped?.some(
+            (c) =>
+              c.text === f.text &&
+              valid(c.rect) &&
+              f.advance.every((x, n) => Math.abs(x - c.rect[n]) < 1e-6)
+          )
+      )
+    )
+      continue
+    const starts = missing.map((f) => {
+        const matches = table.cells.filter(
+          (c) =>
+            c.column === 0 &&
+            c.sourceItems?.length === 1 &&
+            c.sourceItems[0].index !== f.source.index &&
+            c.sourceRects?.[0]?.[0] > f.advance[2] &&
+            Math.abs(c.sourceRects[0][3] - f.advance[3]) < 1e-6
+        )
+        return matches.length === 1 ? matches[0].row : undefined
+      }),
+      first = starts[0],
+      size = starts[1] - first
+    if (
+      !Number.isSafeInteger(first) ||
+      first < 1 ||
+      !Number.isSafeInteger(size) ||
+      size < 2 ||
+      starts.some((row, n) => row !== first + n * size) ||
+      starts.at(-1) + size !== grid.length ||
+      table.cells.some((c) => c.column === 0 && c.row < first && c.text.trim())
+    )
+      continue
+    const pattern = (row) =>
+      Array.from({ length: size }, (_, i) =>
+        table.cells.filter((c) => c.row === row + i && c.column === 0)
+      )
+    const patterns = starts.map(pattern)
+    if (
+      patterns.some((p) => p.some((a) => a.length !== 1 || !a[0].text.trim())) ||
+      patterns.some(
+        (p) =>
+          !equal(
+            p.map(([c]) => c.text),
+            patterns[0].map(([c]) => c.text)
+          )
+      )
+    )
+      continue
+    if (
+      missing.some((f, n) => {
+        const h = f.advance[3] - f.advance[1],
+          item = context.sourceContent.items[f.source.index],
+          firstItem = context.sourceContent.items[missing[0].source.index]
+        return (
+          item.fontName !== firstItem.fontName ||
+          h !== missing[0].advance[3] - missing[0].advance[1] ||
+          Math.abs(f.advance[0] + f.advance[2] - missing[0].advance[0] - missing[0].advance[2]) >
+            h * 0.05 ||
+          f.advance[1] <= bars[n + 1][1] ||
+          patterns[n].some(([c]) =>
+            c.sourceRects.some((r) => r[1] <= bars[n + 1][1] || r[3] >= bars[n + 2][1])
+          )
+        )
+      })
+    )
+      continue
+    const accepted = new Set(all),
+      ids = all.map((f) => f.source.index),
+      lo = Math.min(...ids),
+      hi = Math.max(...ids)
+    if (
+      fonts.some((f) => f.source.index >= lo && f.source.index <= hi && !accepted.has(f)) ||
+      bars.some(
+        (r) =>
+          visibleNativeHeaderRule(
+            r,
+            context,
+            fonts.map((f) => ({ envelope: envelopes.get(f) }))
+          ) !== true
+      )
+    )
+      continue
+    const crop = [Math.min(...painted.map((r) => r[0])), old[1], old[2], painted.at(-1)[3]],
+      added = [crop[0], crop[1], old[0], crop[3]],
+      removed = [old[0], crop[3], old[2], old[3]]
+    if (
+      !inside([0, 0, context.viewport.width, context.viewport.height], crop) ||
+      all.some((f) => !inside(crop, envelopes.get(f))) ||
+      fonts.some((f) => !accepted.has(f) && over(envelopes.get(f), added)) ||
+      graphics.some((g) => over(g, added) && !painted.some((p) => equal(g, p))) ||
+      graphics.some((g) => over(g, removed)) ||
+      [...packet.ink.values()].some((r) => over(r, removed))
+    )
+      continue
+    groups.push(bars)
+    if (groups.length === 1) groups.crop = crop
+  }
+  return groups.length === 1 ? groups.crop : undefined
+}
+
 // Reuse the existing native graphics state observer. Only closed fill rectangles
 // and one axis-aligned stroke can replace a quantized operation box; unknown
 // graphics keep their conservative envelope.
-function preciseGraphics(context) {
+export function preciseNativeGraphicsBounds(context) {
   const p = context.nativeGlyphContext,
     v = context.viewport,
     o = p.operators,
@@ -1520,6 +1872,256 @@ function nativePacketTableBoundary(table, fonts, horizontal, paint, graphics, co
   return { crop, missingHeader: false }
 }
 
+// Complete an already owned terminal lane only when the entire page is a
+// primitive text program. Exact renderer outlines, rather than font ascenders,
+// separate the body from independent text above and below it. This proves only
+// the rendering crop; it does not certify or repair any logical table slots.
+function nativeRuleFreeTerminalCrop(table, fonts, rules, context, bodyScope) {
+  const native = context.nativeGlyphContext,
+    grid = table.grid,
+    old = table.cropRect
+  if (
+    rules.length ||
+    context.rulePaintBounds.size ||
+    !Array.isArray(native.graphicsBounds) ||
+    native.graphicsBounds.length ||
+    context.nativeEvidenceGraphics.length ||
+    !Array.isArray(context.nativePaintIdentityGraphics) ||
+    context.nativePaintIdentityGraphics.length ||
+    !equal(table.sourceViewport, {
+      width: context.viewport.width,
+      height: context.viewport.height,
+      scale: context.viewport.scale
+    }) ||
+    !Array.isArray(grid) ||
+    grid.length < 3 ||
+    grid.length > 64 ||
+    !Array.isArray(grid[0]) ||
+    grid[0].length < 2 ||
+    grid.some((r) => !Array.isArray(r) || r.length !== grid[0].length) ||
+    table.cells.length !== grid.length * grid[0].length
+  )
+    return
+  const allowed = new Set(
+    [
+      'setFillRGBColor',
+      'setStrokeRGBColor',
+      'beginText',
+      'endText',
+      'dependency',
+      'setFont',
+      'moveText',
+      'setTextMatrix',
+      'showText'
+    ].map((name) => OPS[name])
+  )
+  if (native.operators.fnArray.some((op) => !allowed.has(op))) return
+  const owned = new Set(),
+    slots = new Set(),
+    rows = Array.from({ length: grid.length }, () => [])
+  for (const cell of table.cells) {
+    if (
+      !cell ||
+      typeof cell !== 'object' ||
+      !Number.isInteger(cell.row) ||
+      cell.row < 0 ||
+      cell.row >= grid.length ||
+      !Number.isInteger(cell.column) ||
+      cell.column < 0 ||
+      cell.column >= grid[0].length ||
+      cell.rowSpan !== 1 ||
+      cell.colSpan !== 1 ||
+      cell.text !== grid[cell.row][cell.column] ||
+      typeof cell.text !== 'string' ||
+      !cell.text.trim() ||
+      cell.sourceItem != null ||
+      cell.sourceToken != null ||
+      cell.sourceSegment != null ||
+      (cell.sourceSegments !== undefined &&
+        (!Array.isArray(cell.sourceSegments) || cell.sourceSegments.length)) ||
+      !Array.isArray(cell.sourceItems) ||
+      !cell.sourceItems.length ||
+      !Array.isArray(cell.sourceRects) ||
+      cell.sourceItems.length !== cell.sourceRects.length ||
+      slots.has(cell.row + ':' + cell.column)
+    )
+      return
+    slots.add(cell.row + ':' + cell.column)
+    const carriers = []
+    for (const [index, source] of cell.sourceItems.entries()) {
+      const matches = fonts.filter(
+        (f) =>
+          equal(f.source, source) &&
+          valid(cell.sourceRects[index]) &&
+          f.advance.every((x, n) => Math.abs(x - cell.sourceRects[index][n]) < 1e-6)
+      )
+      if (matches.length !== 1 || owned.has(matches[0])) return
+      const font = matches[0]
+      owned.add(font)
+      carriers.push(font)
+      rows[cell.row].push(font)
+    }
+    // Intermediate tokens corroborate whole source owners; they are never
+    // another permission to split, add or drop an original font.
+    if (
+      cell.sourceTokens !== undefined &&
+      (!Array.isArray(cell.sourceTokens) ||
+        cell.sourceTokens.length !== carriers.length ||
+        cell.sourceTokens.some(
+          (token, index) =>
+            !token ||
+            Object.keys(token).some((k) => !['text', 'rect', 'baseline', 'height'].includes(k)) ||
+            token.text !== carriers[index].text ||
+            !valid(token.rect) ||
+            !finite([token.baseline, token.height], 2) ||
+            token.height <= 0 ||
+            !token.rect.every((x, n) => Math.abs(x - carriers[index].advance[n]) < 1e-6) ||
+            Math.abs(token.baseline - carriers[index].advance[3]) >= 1e-6 ||
+            Math.abs(token.height - (carriers[index].advance[3] - carriers[index].advance[1])) >=
+              1e-6
+        ))
+    )
+      return
+  }
+  if (
+    rows.some(
+      (row) => row.length < 2 || row.some((f) => Math.abs(f.advance[3] - row[0].advance[3]) >= 1e-6)
+    ) ||
+    rows.some((row, index) => index && row[0].advance[3] <= rows[index - 1][0].advance[3])
+  )
+    return
+  const source = [...owned],
+    first = Math.min(...source.map((f) => f.source.index)),
+    last = Math.max(...source.map((f) => f.source.index))
+  if (fonts.some((f) => f.source.index >= first && f.source.index <= last && !owned.has(f))) return
+  const packets = nativeTablePacketInk(table, fonts, context, !!bodyScope),
+    ink = bodyScope ? packets?.ink : packets
+  if (!ink || (!bodyScope && !source.some((f) => ink.get(f)[2] > old[2]))) return
+  const crop = [
+      old[0],
+      Math.min(...source.map((f) => ink.get(f)[1])),
+      Math.max(old[2], ...source.flatMap((f) => [f.advance[2], ink.get(f)[2]])),
+      Math.max(...source.flatMap((f) => [f.advance[3], ink.get(f)[3]]))
+    ],
+    pixels = [Math.floor(crop[0]), Math.floor(crop[1]), Math.ceil(crop[2]), Math.ceil(crop[3])],
+    inside = (box, r) => r.every((x, i) => (i < 2 ? x >= box[i] : x <= box[i])),
+    foreign = fonts.filter((f) => !owned.has(f))
+  if (
+    !valid(crop) ||
+    crop[1] <= old[1] ||
+    crop[3] >= old[3] ||
+    !inside([0, 0, context.viewport.width, context.viewport.height], pixels) ||
+    source.some(
+      (f) =>
+        !inside(crop, ink.get(f)) ||
+        ink.get(f)[1] < old[1] ||
+        ink.get(f)[3] > old[3] ||
+        f.advance[0] < crop[0] ||
+        f.advance[2] > crop[2]
+    ) ||
+    foreign.some((f) => over(ink.get(f), pixels)) ||
+    !foreign.some((f) => over(ink.get(f), old) && ink.get(f)[3] < pixels[1]) ||
+    !foreign.some((f) => over(ink.get(f), old) && ink.get(f)[1] > pixels[3])
+  )
+    return
+  if (bodyScope) {
+    // A purely vertical refinement cannot borrow the terminal lane's permission
+    // to expand horizontally. Every original owner and row remains unchanged.
+    if (crop[0] !== old[0] || crop[2] !== old[2]) return
+    const ownedIndices = new Set(source.map((f) => f.source.index)),
+      glyphOwners = new Map(),
+      ownedGlyphs = new Set()
+    for (const record of packets.inventory.records)
+      for (const glyph of new Set(record.part.map((part) => part.g))) {
+        if (glyphOwners.has(glyph) && glyphOwners.get(glyph) !== record.index) return
+        glyphOwners.set(glyph, record.index)
+        if (ownedIndices.has(record.index)) ownedGlyphs.add(glyph)
+      }
+    if (packets.inventory.glyphs.some((g) => (g.text.trim() ? !valid(g.ink) : valid(g.ink)))) return
+    const nativeCrop = crop.map((n) => n / context.viewport.scale),
+      foreignGlyphs = packets.inventory.glyphs
+        .filter((g) => !ownedGlyphs.has(g) && valid(g.ink))
+        .map((g) => [...g.ink])
+    if (
+      bodyScope.competingRects.some((r) => over(r, nativeCrop)) ||
+      bodyScope.captions.some((caption) => over(caption.rect, nativeCrop))
+    )
+      return
+    return {
+      cropRect: crop,
+      nativeCrop,
+      bounds: { width: native.viewport.width, height: native.viewport.height },
+      foreignGlyphs
+    }
+  }
+  // Keep the exact region clipped during every render, including byte-budget
+  // retries whose smaller canvas scale can round past the native rectangle.
+  // The producer already strips these rendering-only regions from transport.
+  return { ...table, cropRect: crop, cropRects: [crop] }
+}
+
+// An optional rendering proof for an existing complete, rule-free table. The
+// terminal path above keeps its original admission and output; this family only
+// removes independently proved exterior ink from both vertical edges.
+export function proveNativeRuleFreeBodyCrop(table, rules, context, scope) {
+  try {
+    const native = context?.nativeGlyphContext,
+      page = scope?.page
+    if (
+      !valid(table?.cropRect) ||
+      table.parts ||
+      table.cropRects ||
+      !Array.isArray(table.cells) ||
+      !Array.isArray(rules) ||
+      !(context?.rulePaintBounds instanceof Map) ||
+      !Array.isArray(context.nativeEvidenceGraphics) ||
+      (table.notes !== undefined && (!Array.isArray(table.notes) || table.notes.length)) ||
+      page?.pageNumber !== table.page ||
+      page.invalidGraphicsBounds !== 0 ||
+      page.renderRotation !== 0 ||
+      !Array.isArray(page.graphicsBounds) ||
+      page.graphicsBounds.length ||
+      page.width !== native?.viewport?.width ||
+      page.height !== native?.viewport?.height ||
+      !Array.isArray(scope.competingRects) ||
+      !scope.competingRects.every(valid) ||
+      !Array.isArray(scope.captions) ||
+      !scope.captions.every((c) => valid(c?.rect))
+    )
+      return
+    const fonts = nativeVerticalInk(table, context)
+    if (!fonts?.length) return
+    // The shared core admits only a default primitive text program, so alpha,
+    // text mode and clipping cannot change. Prove the remaining fill state too.
+    let fill = '#000000'
+    for (const [i, op] of native.operators.fnArray.entries()) {
+      if (op === OPS.setFillRGBColor) fill = native.operators.argsArray[i]?.[0]
+      if (
+        op === OPS.showText &&
+        (typeof fill !== 'string' ||
+          !/^#[0-9a-f]{6}$/iu.test(fill) ||
+          fill.toLowerCase() === '#ffffff')
+      )
+        return
+    }
+    return nativeRuleFreeTerminalCrop(table, fonts, rules, context, scope)
+  } catch {
+    return
+  }
+}
+
+export function validateNativeRuleFreeBodyCropPng(png, proof) {
+  if (!proof || !Array.isArray(proof.foreignGlyphs)) return false
+  const raster = getPdfCropRasterProtectionFromPng(png, proof.nativeCrop, proof.bounds)
+  return (
+    !!raster &&
+    raster.protection.every((n, i) =>
+      i < 2 ? n >= 0 : n <= (i === 2 ? proof.bounds.width : proof.bounds.height)
+    ) &&
+    proof.foreignGlyphs.every((r) => valid(r) && !over(r, raster.protection))
+  )
+}
+
 export function refineNativeTableBoundaryInk(table, rules, context) {
   if (
     !valid(table?.cropRect) ||
@@ -1534,15 +2136,24 @@ export function refineNativeTableBoundaryInk(table, rules, context) {
   const fonts = nativeVerticalInk(table, context),
     old = table.cropRect,
     graphics = fonts?.length
-      ? preciseGraphics(context)
+      ? preciseNativeGraphicsBounds(context)
       : context.nativeEvidenceGraphics.map((g) => g.rect)
   if (!fonts?.length || graphics.some((r) => !valid(r))) return
+  const terminal = nativeRuleFreeTerminalCrop(table, fonts, rules, context)
+  if (terminal) return terminal
   const crop = [...old],
     horizontal = rules.filter((r) => finite(r, 4) && r[1] === r[3] && r[2] > r[0]),
     paint = (r) => context.rulePaintBounds.get(r.join(','))
+  if (missingGroupedNativeHeader(table, fonts, horizontal, paint, graphics, context))
+    return {
+      ...table,
+      issues: [...new Set([...(table.issues ?? []), 'native-table-structure-ambiguous'])],
+      reviewCandidate: false
+    }
   const header =
       omittedHeaderBand(table, fonts, horizontal, paint, graphics, context) ??
-      missingNativeStubCrop(table, fonts, horizontal, paint, graphics, context),
+      missingNativeStubCrop(table, fonts, horizontal, paint, graphics, context) ??
+      repeatedNativeStubCrop(table, fonts, horizontal, paint, graphics, context),
     panels =
       !header && nativePairedTablePanelCrop(table, fonts, horizontal, paint, graphics, context)
   if (header || panels)
@@ -1645,4 +2256,340 @@ export function refineNativeTableBoundaryInk(table, rules, context) {
     crop[3] = footer[3]
   }
   return equal(crop, old) ? undefined : { ...table, cropRect: crop }
+}
+
+// Prove a lost mathematical relation, never a replacement cell, text or crop.
+export function proveNativeFlattenedFraction(table, inventory, rules, context) {
+  if (!context?.nativeGlyphContext || !context.sourceContent) return []
+  try {
+    return certifiedNativeFraction({ table, inventory, rules }, context)
+  } catch {
+    return []
+  }
+}
+
+const fractionSameBounds = (a, b) =>
+  a?.length === 4 && b?.length === 4 && a.every((v, i) => Math.abs(v - b[i]) < 1e-6)
+const fractionSourceKey = (f) => `${f.sourceItem.pageNumber}:${f.sourceItem.index}`
+const fractionLabelBounds = (f) => {
+  if (
+    !f ||
+    !f.horizontal ||
+    !valid(f.rect) ||
+    !Number.isSafeInteger(f.sourceItem?.index) ||
+    f.sourceItem.index < 0 ||
+    f.text !== f.sourceItem.text ||
+    !(f.height > 0) ||
+    !(f.fontAscent > 0) ||
+    !Number.isFinite(f.fontDescent) ||
+    !Number.isFinite(f.baseline)
+  )
+    return undefined
+  const r = [
+    f.rect[0],
+    f.baseline - f.fontAscent * f.height,
+    f.rect[2],
+    f.baseline - f.fontAscent * f.height + f.height
+  ]
+  return fractionSameBounds(r, f.nativeLabelRect) ? r : undefined
+}
+function flattenedNativeScalarFraction({ table, inventory, rules }) {
+  const native = new Map(),
+    counts = new Map(),
+    result = []
+  for (const f of inventory) {
+    const k = fractionSourceKey(f)
+    native.set(k, native.has(k) ? undefined : f)
+  }
+  for (const c of table.cells ?? [])
+    for (const o of c.sourceItems ?? []) {
+      const k = `${o.pageNumber}:${o.index}`
+      counts.set(k, (counts.get(k) ?? 0) + 1)
+    }
+  for (const c of table.cells ?? []) {
+    if (c.rowSpan !== 1 || c.colSpan !== 1 || c.sourceSegments?.length || !c.sourceItems?.length)
+      continue
+    const ff = c.sourceItems.map((o) => native.get(`${o.pageNumber}:${o.index}`))
+    if (
+      ff.some(
+        (f, i) =>
+          !f ||
+          !f.horizontal ||
+          !valid(f.rect) ||
+          !(f.height > 0) ||
+          !Number.isFinite(f.baseline) ||
+          f.sourceItem.pageNumber !== table.page ||
+          f.text !== c.sourceItems[i].text ||
+          counts.get(fractionSourceKey(f)) !== 1 ||
+          !fractionSameBounds(f.rect, c.sourceRects?.[i])
+      ) ||
+      compact(ff.map((f) => f.text).join('')) !== compact(c.text)
+    )
+      continue
+    for (let i = 0; i < ff.length - 2; i++) {
+      const a = ff[i],
+        b = ff[i + 1],
+        base = ff[i + 2],
+        h = a.height,
+        A = fractionLabelBounds(a),
+        B = fractionLabelBounds(b)
+      if (
+        !A ||
+        !B ||
+        !fractionLabelBounds(base) ||
+        !/^\p{N}+$/u.test(a.text) ||
+        !/^[\p{L}\p{N}]+$/u.test(b.text) ||
+        a.height !== b.height ||
+        !(a.height > base.height * 0.5 && a.height < base.height * 0.85) ||
+        !(a.sourceItem.index < b.sourceItem.index && b.sourceItem.index < base.sourceItem.index) ||
+        !(a.baseline < base.baseline && base.baseline < b.baseline) ||
+        base.rect[0] <= Math.max(a.rect[2], b.rect[2]) ||
+        base.rect[0] - Math.max(a.rect[2], b.rect[2]) >= h ||
+        Math.abs((a.rect[0] + a.rect[2] - b.rect[0] - b.rect[2]) / 2) > 0.01
+      )
+        continue
+      const region = [
+        Math.min(A[0], B[0]),
+        Math.min(A[1], B[1]),
+        Math.max(A[2], B[2]),
+        Math.max(A[3], B[3])
+      ]
+      if (
+        !valid(table.cropRect) ||
+        region[0] < table.cropRect[0] ||
+        region[1] < table.cropRect[1] ||
+        region[2] > table.cropRect[2] ||
+        region[3] > table.cropRect[3]
+      )
+        continue
+      const rr = rules.filter(
+        (r) =>
+          r?.length === 4 &&
+          r.every(Number.isFinite) &&
+          r[1] === r[3] &&
+          r[2] > r[0] &&
+          Math.abs(r[0] - region[0]) < 0.01 &&
+          Math.abs(r[2] - region[2]) < 0.01 &&
+          r[1] > a.baseline &&
+          r[1] < B[1]
+      )
+      if (rr.length !== 1) continue
+      if (
+        inventory.some((f) => {
+          if (f === a || f === b || !f.text?.trim()) return false
+          const r = fractionLabelBounds(f) ?? f.rect
+          return (
+            !valid(r) ||
+            (r[0] < region[2] && r[2] > region[0] && r[1] < region[3] && r[3] > region[1])
+          )
+        })
+      )
+        continue
+      if (
+        rules.some(
+          (r) =>
+            r !== rr[0] &&
+            r?.length === 4 &&
+            r[0] < region[2] &&
+            r[2] > region[0] &&
+            Math.min(r[1], r[3]) < region[3] &&
+            Math.max(r[1], r[3]) > region[1]
+        )
+      )
+        continue
+      if (
+        c.textRuns?.length &&
+        (!c.textRuns.every((r) => typeof r.text === 'string') ||
+          c.textRuns.map((r) => r.text).join('') !== c.text ||
+          !c.textRuns.some(
+            (r) => r.position === 'normal' && compact(r.text).includes(a.text + b.text + base.text)
+          ))
+      )
+        continue
+      result.push({
+        row: c.row,
+        column: c.column,
+        numerator: a.sourceItem,
+        denominator: b.sourceItem,
+        bar: rr[0],
+        region
+      })
+    }
+  }
+  return result
+}
+
+const fractionSameNumbers = (a, b) =>
+  a?.length === b?.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-6)
+const fractionInside = (a, b) => b.every((n, i) => (i < 2 ? n >= a[i] - 1e-6 : n <= a[i] + 1e-6))
+function certifiedNativeFraction(input, context) {
+  const candidates = flattenedNativeScalarFraction(input),
+    p = context?.nativeGlyphContext,
+    v = context?.viewport,
+    source = context?.sourceContent
+  if (
+    !candidates.length ||
+    !p ||
+    !v ||
+    p.sourceSha256 !== context.sourceSha256 ||
+    !/^[a-f0-9]{64}$/u.test(p.sourceSha256) ||
+    p.viewport?.scale !== 1 ||
+    p.viewport.rotation !== 0 ||
+    v.rotation !== 0 ||
+    !(v.scale > 0) ||
+    !fractionSameNumbers(v.transform, [v.scale, 0, 0, -v.scale, 0, v.height]) ||
+    !fractionSameNumbers(p.viewport.transform, [1, 0, 0, -1, 0, p.viewport.height]) ||
+    v.width !== p.viewport.width * v.scale ||
+    v.height !== p.viewport.height * v.scale
+  )
+    return []
+  if (
+    !matchNativeFigureRenderContext(
+      p,
+      input.table.page,
+      source,
+      p.viewport,
+      context.sourcePage?.graphicsBounds,
+      context.sourceSha256
+    ) ||
+    source.items.some((r, i) => !isDeepStrictEqual(r.sourceItem, p.content.items[i].sourceItem))
+  )
+    return []
+  if (
+    context.sourcePage?.invalidGraphicsBounds !== 0 ||
+    p.operators.fnArray.some((op, i) => {
+      const a = p.operators.argsArray[i]
+      return (
+        (op === OPS.setGState &&
+          (!Array.isArray(a?.[0]) ||
+            a[0].some((e) => !Array.isArray(e) || !['ca', 'CA'].includes(e[0]) || e[1] !== 1))) ||
+        ([OPS.setFillRGBColor, OPS.setStrokeRGBColor].includes(op) &&
+          (!/^#[a-f0-9]{6}$/iu.test(a?.[0]) || a[0].toLowerCase() === '#ffffff'))
+      )
+    })
+  )
+    return []
+  if (
+    !Array.isArray(context.nativeEvidenceGraphics) ||
+    !Array.isArray(context.nativePaintIdentityGraphics) ||
+    p.graphicsBounds.length !== context.nativeEvidenceGraphics.length ||
+    p.graphicsBounds.length !== context.nativePaintIdentityGraphics.length ||
+    p.graphicsBounds.some(
+      (g, i) =>
+        g.kind !== 'path' ||
+        !Array.isArray(g.normalizedRect) ||
+        g.normalizedRect.length !== 4 ||
+        !g.normalizedRect.every(Number.isFinite) ||
+        !Number.isSafeInteger(g.operationIndex) ||
+        g.operationIndex < 0 ||
+        context.nativeEvidenceGraphics[i].kind !== 'path' ||
+        !fractionSameNumbers(
+          g.normalizedRect.map((n, k) => n * (k % 2 ? v.height : v.width)),
+          context.nativeEvidenceGraphics[i].rect
+        ) ||
+        !fractionSameNumbers(
+          context.nativeEvidenceGraphics[i].rect,
+          context.nativePaintIdentityGraphics[i].rect
+        ) ||
+        context.nativePaintIdentityGraphics[i].operationIndex !== g.operationIndex
+    )
+  )
+    return []
+  const aliases = new Map(p.content.items.map((r, i) => [r.fontName, source.items[i].fontName])),
+    mapped = (a) =>
+      Array.isArray(a) ? a.map(mapped) : typeof a === 'string' ? (aliases.get(a) ?? a) : a
+  if (
+    !isDeepStrictEqual(p.operators.fnArray, context.operators.fnArray) ||
+    !isDeepStrictEqual(mapped(p.operators.argsArray), context.operators.argsArray)
+  )
+    return []
+  const viewport = { ...p.viewport, convertToViewportPoint: (x, y) => [x, p.viewport.height - y] },
+    tokens = p.content.items
+      .filter((i) => i.str?.trim())
+      .map((i) => tableTextToken(i, viewport, 0)),
+    paint = new Map(),
+    rules = collectTableRules(context.operators, v, paint),
+    graphics = preciseNativeGraphicsBounds({ ...context, rulePaintBounds: paint }),
+    out = []
+  if (
+    !isDeepStrictEqual(input.rules, rules) ||
+    graphics.length !== context.nativeEvidenceGraphics.length ||
+    graphics.some((g) => ![...paint.values()].some((r) => fractionSameNumbers(g, r)))
+  )
+    return []
+  for (const candidate of candidates) {
+    const c = input.table.cells.find(
+        (c) => c.row === candidate.row && c.column === candidate.column
+      ),
+      packet = nativeWholeCellInkPacket(context.sourcePage, tokens, { ...p, viewport }, c)
+    if (!packet || packet.records.length !== tokens.length) continue
+    const records = c.sourceItems.map((o, i) =>
+      packet.records.find(
+        (r) =>
+          r.index === o.index &&
+          isDeepStrictEqual(r.r.sourceItem, o) &&
+          r.advanceComplete &&
+          fractionSameNumbers(
+            r.rect.map((x) => x * v.scale),
+            c.sourceRects[i]
+          )
+      )
+    )
+    if (records.some((r) => !r)) continue
+    const a = records.find((r) => r.index === candidate.numerator.index),
+      b = records.find((r) => r.index === candidate.denominator.index),
+      inkA = a.ink.map((x) => x * v.scale),
+      inkB = b.ink.map((x) => x * v.scale),
+      bar = paint.get(candidate.bar.join(',')),
+      region = bar
+        ? candidate.region.map((n, i) => (i < 2 ? Math.min(n, bar[i]) : Math.max(n, bar[i])))
+        : candidate.region
+    if (
+      !bar ||
+      !(inkA[3] < bar[1] && bar[3] < inkB[1]) ||
+      !fractionInside(input.table.cropRect, inkA) ||
+      !fractionInside(input.table.cropRect, inkB) ||
+      ![inkA, inkB].every((r) => r[0] >= bar[0] && r[2] <= bar[2]) ||
+      !fractionInside(region, bar) ||
+      graphics.filter((g) => over(g, region)).length !== 1 ||
+      !graphics.some((g) => fractionSameNumbers(g, bar))
+    )
+      continue
+    if (
+      packet.records.some(
+        (r) =>
+          r !== a &&
+          r !== b &&
+          r.part.some((z) =>
+            over(
+              z.g.ink.map((x) => x * v.scale),
+              region
+            )
+          )
+      )
+    )
+      continue
+    if (
+      packet.glyphs.some(
+        (g) =>
+          over(
+            g.ink.map((x) => x * v.scale),
+            region
+          ) &&
+          !a.part.some((z) => z.g === g) &&
+          !b.part.some((z) => z.g === g)
+      )
+    )
+      continue
+    out.push({
+      ...candidate,
+      claimedSources: records.map((r) => r.index),
+      inkA,
+      inkB,
+      bar,
+      allGlyphs: packet.glyphs.length,
+      allRecords: packet.records.length
+    })
+  }
+  return out
 }
