@@ -132,7 +132,7 @@ const findPackageTextMatch = (
     // before their assignment prefix leaves the bounded streaming overlap.
     const trimmed = decodeEscapes(value)
       .replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-      .trim()
+      .trimStart()
     if (
       ['Bearer', 'Basic', 'Digest', 'Negotiate'].some((scheme) =>
         scheme.toLowerCase().startsWith(trimmed.toLowerCase())
@@ -319,19 +319,19 @@ const findPackageTextMatch = (
     if (
       match[2].trim() === '=' &&
       (/^(?:\[[ \t]*\]|\{[ \t]*\})(?=[ \t]*(?:[,;\r\n}]|$)|\\[rn]|\\?"|\))/.test(rest) ||
-        (!complete && /^[[{][ \t]*$/.test(rest)))
+        (!complete && rest.length <= 512 && /^[[{][ \t]*$/.test(rest)))
     )
       continue
     // Prove a reference without evaluating code; defaults and compound expressions
     // remain candidates. Normalize only serialization quotes for this proof.
-    const expression = rest.slice(0, 512).replace(/\\+"/g, '"')
-    if (
-      match[2].trim() === '=' &&
-      /^(?:os\.environ\[["'][A-Z_][A-Z0-9_]*["']\]|os\.(?:getenv|environ\.get)\(["'][A-Z_][A-Z0-9_]*["']\)|process\.env\.[A-Z_][A-Z0-9_]*)(?=[ \t]*(?:[,;\r\n}]|$)|\\[rn]|"(?:[},]|$))/.test(
+    const expression = rest.replace(/\\+"/g, '"')
+    // A bounded preview's end is not an expression terminator. Fall back to
+    // a finding before an unresolved candidate can leave the streaming overlap.
+    const reference =
+      /^(?:os\.environ\[["'][A-Z_][A-Z0-9_]*["']\]|os\.(?:getenv|environ\.get)\(["'][A-Z_][A-Z0-9_]*["']\)|process\.env\.[A-Z_][A-Z0-9_]*)(?=[ \t]{0,512}(?:[,;\r\n}]|$)|\\[rn]|"(?:[},]|$))/.exec(
         expression
       )
-    )
-      continue
+    if (match[2].trim() === '=' && reference && reference[0].length <= 512) continue
     if (
       !complete &&
       rest.length <= 512 &&

@@ -140,6 +140,16 @@ const splitRedaction =
   serializedRedaction
 
 it.each([
+  ...['os.environ["PASSWORD"]', '['].map<[string, Buffer, boolean]>((prefix) => [
+    `unfinished credential assignment beyond the stream overlap: ${prefix}`,
+    Buffer.from(
+      ' '.repeat(65536 - `password = ${prefix}`.length) +
+        `password = ${prefix}` +
+        ' '.repeat(16384) +
+        ' + "actual-secret"'
+    ),
+    false
+  ]),
   [
     'Python loop in a message snapshot',
     Buffer.from(

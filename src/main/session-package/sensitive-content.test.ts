@@ -608,3 +608,21 @@ describe('noncredential syntax and metadata', () => {
     }
   })
 })
+
+it.each([
+  ['os.environ["PASSWORD"]', ' + "actual-secret"'],
+  ['os.getenv("PASSWORD")', ' or "actual-secret"'],
+  ['process.env.PASSWORD', ' || "actual-secret"'],
+  ['[', '"actual-secret"]']
+])('retains an unfinished assignment beyond the overlap: %s', (prefix, suffix) => {
+  const first = ' '.repeat(65536 - `password = ${prefix}`.length) + `password = ${prefix}`
+  const text = first + ' '.repeat(16384) + suffix
+  expect(findSensitivePackageText(text)).toBeDefined()
+  for (const size of [1, 511, 8192, 65536]) {
+    const scanner = new PackageTextScanner()
+    scanner.write(first)
+    for (let at = first.length; at < text.length; at += size)
+      scanner.write(text.slice(at, at + size))
+    expect(scanner.finish(), `chunk size ${size}`).toBeDefined()
+  }
+})
