@@ -291,7 +291,6 @@
     ],
     "notebook_application": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "notebook_evidence": ["src/main/acp/specialist-capability-resolution.test.ts"],
-    "notebook_execution": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "notebook_execution_model": [
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/session-package/materialize.test.ts"
