@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { ToolContext, ToolDescriptor } from '@aipoch/connector-core'
+import { ENSEMBL_RECODER_TOOLS } from './genomes-ensembl-recoder'
 
 // Ensembl REST — keyless GETs; the engine already sends Accept: application/json for fetchJson, so
 // plain paths return JSON without the ?content-type suffix.
@@ -902,5 +903,6 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
         features
       }
     }
-  }
+  },
+  ...ENSEMBL_RECODER_TOOLS
 ]

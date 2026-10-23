@@ -191,6 +191,8 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "Convert a human variant between identifiers, HGVS and SPDI, preserving separate alleles.": "ヒト変異を識別子、HGVS、SPDIの間で変換し、各アレルを個別に保持します。",
+    "Find experimental PDB chains with similar 3D structures using a deposited chain.": "登録済みの鎖を使って、類似した3D構造を持つ実験由来のPDB鎖を検索します。",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "スペシャリストのスキルまたはコネクタを読み込めませんでした。もう一度送信してください。",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "LIPID MAPS から脂質の分類と化合物の詳細を取得します。",
     "Query upstream or downstream human protein regulation with OmniPath.": "OmniPathでヒトタンパク質の上流または下流の制御関係を照会します。",

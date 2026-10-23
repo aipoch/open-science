@@ -231,7 +231,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Genome annotation, taxon and assembly identity, sequence aliases, variants, homology, sequence, similarity search, multiple sequence alignment and browser tracks — NCBI Datasets/BLAST, EMBL-EBI Clustal Omega, Ensembl REST and the UCSC Genome Browser.',
     useWhen:
-      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, identify an unknown nucleotide or protein sequence with an asynchronous NCBI BLAST search, align three or more uniquely named FASTA protein/DNA/RNA records with EMBL-EBI Clustal Omega and retrieve a downloadable alignment file, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
+      'Use when you need to resolve species or taxon names, validate a versioned NCBI genome assembly and sequence aliases, identify an unknown nucleotide or protein sequence with an asynchronous NCBI BLAST search, align three or more uniquely named FASTA protein/DNA/RNA records with EMBL-EBI Clustal Omega and retrieve a downloadable alignment file, retrieve Ensembl gene/transcript annotation, cross-references, VEP variant consequences, human variant identifier/HGVS/SPDI recoding, orthologues/paralogues, sequence, or region overlaps — or UCSC Genome Browser tracks, track data, conservation scores, TFBS clusters and chromosome sizes.',
     sources: ['NCBI Datasets', 'NCBI BLAST', 'EMBL-EBI Job Dispatcher', 'Ensembl', 'UCSC'],
     termsUrl: 'https://www.ensembl.org/info/about/legal/disclaimer.html',
     requiresNcbi: false
@@ -277,7 +277,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Structures and molecular interactions — PDB structures and PDBe validation, AlphaFold predictions, EMDB cryo-EM entries, Complex Portal complexes, IntAct interaction networks, and OmniPath directed regulation.',
     useWhen:
-      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, summaries, polymer entities, ligands), PDBe quality summaries and validation statistics with experimental-method context, AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, IntAct binary interactions and networks, or bounded upstream/downstream signed human protein regulation with OmniPath (query by UniProt accession; mixed-context evidence, not tissue-specific causal proof).',
+      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, 3D chain similarity, summaries, polymer entities, ligands), PDBe quality summaries and validation statistics with experimental-method context, AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, IntAct binary interactions and networks, or bounded upstream/downstream signed human protein regulation with OmniPath (query by UniProt accession; mixed-context evidence, not tissue-specific causal proof).',
     sources: ['PDB', 'PDBe', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct', 'OmniPath'],
     termsUrl: 'https://www.rcsb.org/pages/usage-policy',
     requiresNcbi: false

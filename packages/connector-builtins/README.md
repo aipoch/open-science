@@ -138,3 +138,24 @@ or Genes Skills. Existing explicit opt-outs still win over explicit opt-ins.
 All eight methods are read-only, credential-free and limited to 2,000,000 response
 bytes per request. They do not create application data tables, migration state,
 background jobs or persistent caches. Enablement uses existing host settings.
+
+`./structures-pdb` adds `pdb_search_structure_similarity` to the existing Structures
+family. [RCSB structure search](https://search.rcsb.org/) accepts a deposited PDB ID
+and `label_asym_id` (not the author chain ID), returning at most 50 experimental
+chain hits with upstream ranking scores and total/truncation counts. This is a
+structure-informed embedding search with global matching, a predicted TM-score
+cutoff of 0.8 and 10,000 candidates, not a returned alignment or RMSD calculation.
+Hit counts reflect these limits and are not an exhaustive inventory of all PDB chains;
+the query chain can appear among the hits. Invalid or unsupported chains remain errors.
+
+`./genomes-ensembl` adds `ensembl_recode_variant` to Genomes.
+[Ensembl Variant Recoder](https://rest.ensembl.org/documentation/info/variant_recoder)
+converts one human rsID, HGVS or genomic SPDI expression into identifiers and
+HGVS/SPDI notations. Alternate alleles stay separate, including transcript-oriented
+allele keys; reference versions are retained but not independently validated.
+It uses the current human service, with no assembly selection or liftover. Results
+are bounded to 10 allele groups and 20 notations per field by default (maximum 100),
+with full counts and explicit truncation. SPDI positions are 0-based. Unknown variants
+and malformed responses are errors, not empty results. Both tools use the existing
+family switches, shared request deadlines, cancellation and response-size budgets;
+neither requires credentials or adds persistence.

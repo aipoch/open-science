@@ -194,6 +194,8 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "Convert a human variant between identifiers, HGVS and SPDI, preserving separate alleles.": "Преобразовать вариант человека между идентификаторами, HGVS и SPDI, сохраняя аллели раздельно.",
+    "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Найти экспериментальные цепи PDB с похожими 3D-структурами по депонированной цепи.",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Не удалось загрузить Навыки или Коннекторы Специалиста. Попробуйте отправить сообщение ещё раз.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Получить классификацию липидов и сведения о соединениях из LIPID MAPS.",
     "Query upstream or downstream human protein regulation with OmniPath.": "Поиск регуляторных связей белков человека выше или ниже по сигнальному пути с помощью OmniPath.",

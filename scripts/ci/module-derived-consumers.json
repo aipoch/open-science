@@ -40,10 +40,12 @@
       "packages/connector-builtins/src/cancer-models-depmap.test.ts",
       "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
       "packages/connector-builtins/src/chemistry-unichem.test.ts",
+      "packages/connector-builtins/src/genomes-ensembl-recoder.test.ts",
       "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts",
       "packages/connector-builtins/src/structures-omnipath.test.ts",
+      "packages/connector-builtins/src/structures-pdb-similarity.test.ts",
       "packages/connector-builtins/src/structures-pdbe.test.ts",
       "packages/connector-builtins/src/tcia.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts"
