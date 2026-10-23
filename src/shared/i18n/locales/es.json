@@ -7873,9 +7873,11 @@
     "Review discovered references before they enter your library.": "Revisar las referencias encontradas antes de añadirlas a la biblioteca.",
     "Map exact compound identifiers with UniChem.": "Relacionar identificadores exactos de compuestos con UniChem.",
     "Retrieve structure quality and validation statistics from PDBe.": "Obtener la calidad estructural y las estadísticas de validación de PDBe.",
-    "Cancer genomics studies and cell model dependencies from cBioPortal and DepMap.": "Estudios de genómica del cáncer y dependencias de modelos celulares de cBioPortal y DepMap.",
     "Search DepMap cell models and their identity metadata.": "Buscar modelos celulares de DepMap y sus metadatos de identificación.",
     "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "Obtener los efectos génicos de DepMap Chronos para un gen y los modelos celulares seleccionados.",
-    "Fetch DepMap PRISM drug response AUC values for a compound.": "Obtener los valores AUC de respuesta a fármacos de DepMap PRISM para un compuesto."
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "Obtener los valores AUC de respuesta a fármacos de DepMap PRISM para un compuesto.",
+    "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "Obtener la expresión de ARN de DepMap/CCLE para un gen en log2(TPM+1).",
+    "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "Obtener el número de copias génicas de DepMap/CCLE relativo a la ploidía del modelo celular.",
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Estudios del cáncer y datos ómicos, dependencias y respuestas a fármacos de modelos celulares de cBioPortal y DepMap/CCLE."
   }
 }

@@ -110,27 +110,57 @@ async function metadata(
     }))
   }
 }
+const profileKinds = {
+  gene: {
+    dataset: 'Chronos_Combined',
+    units: 'Gene Effect (Chronos)',
+    descending: false,
+    interpretation:
+      'Chronos gene effect, not dependency probability. More negative scores indicate stronger growth effects. Empty or null values do not establish biological independence.'
+  },
+  drug: {
+    dataset: 'REPURPOSING_AUC_collapsed',
+    units: 'AUC',
+    descending: false,
+    interpretation:
+      'PRISM secondary screen AUC over the screened dose range, not IC50 or viability. Lower AUC indicates greater sensitivity. Null values are unmeasured, not zero.'
+  },
+  expression: {
+    dataset: 'expression',
+    units: 'log2(TPM+1)',
+    descending: true,
+    interpretation:
+      'DepMap/CCLE RNA expression in log2(TPM+1), not raw TPM, read counts or z-scores. Higher values indicate higher expression within this dataset. Missing values are unknown, not zero expression.'
+  },
+  copy_number: {
+    dataset: 'OmicsCNGeneWGS',
+    units: 'Copy number relative to ploidy',
+    descending: true,
+    interpretation:
+      'DepMap/CCLE WGS gene copy number relative to model ploidy, not absolute chromosome copy count, log2 copy number or a discrete GISTIC call. Values above/below 1 indicate relative gains/losses, not a validated amplification/deletion classification. Missing values are unknown.'
+  }
+} as const
 async function profile(
   ctx: ToolContext,
   feature: string,
-  kind: 'gene' | 'drug',
+  kind: keyof typeof profileKinds,
   models: string[] | undefined,
   limit: number
 ): Promise<unknown> {
   const catalog = await datasets(ctx)
-  const d = dataset(catalog, kind === 'gene' ? 'Chronos_Combined' : 'REPURPOSING_AUC_collapsed')
-  const units = kind === 'gene' ? 'Gene Effect (Chronos)' : 'AUC'
+  const config = profileKinds[kind]
+  const d = dataset(catalog, config.dataset)
   if (
     d.format !== 'matrix_dataset' ||
     d.sample_type_name !== 'depmap_model' ||
-    d.feature_type_name !== (kind === 'gene' ? 'gene' : 'compound_v2') ||
-    d.units !== units
+    d.feature_type_name !== (kind === 'drug' ? 'compound_v2' : 'gene') ||
+    d.units !== config.units
   )
     throw new Error('DepMap returned an incompatible score dataset')
   const raw = z.record(z.string(), z.record(modelId, z.number().finite().nullable())).parse(
     await ctx.postJson(`${API}/datasets/matrix/${d.id}`, {
       features: [feature],
-      feature_identifier: kind === 'gene' ? 'label' : 'id',
+      feature_identifier: kind === 'drug' ? 'id' : 'label',
       ...(models ? { samples: models, sample_identifier: 'id' } : {})
     })
   )
@@ -139,12 +169,14 @@ async function profile(
   const values = raw[feature] ?? {}
   if (
     (models && Object.keys(values).some((id) => !models.includes(id))) ||
-    (kind === 'drug' && Object.values(values).some((v) => v !== null && (v < 0 || v > 1)))
+    (kind !== 'gene' &&
+      Object.values(values).some((v) => v !== null && (v < 0 || (kind === 'drug' && v > 1))))
   )
     throw new Error('DepMap returned inconsistent scores')
   const entries = Object.entries(values).sort(
     ([a, x], [b, y]) =>
-      (x === null ? (y === null ? 0 : 1) : y === null ? -1 : x - y) || a.localeCompare(b)
+      (x === null ? (y === null ? 0 : 1) : y === null ? -1 : config.descending ? y - x : x - y) ||
+      a.localeCompare(b)
   )
   const selected = entries.slice(0, limit)
   const annotations = selected.length
@@ -164,11 +196,8 @@ async function profile(
     returned: selected.length,
     truncated: entries.length > selected.length,
     unavailable_model_ids: models?.filter((id) => !(id in values)) ?? [],
-    sort: 'score_ascending_nulls_last',
-    interpretation:
-      kind === 'gene'
-        ? 'Chronos gene effect, not dependency probability. More negative scores indicate stronger growth effects. Empty or null values do not establish biological independence.'
-        : 'PRISM secondary screen AUC over the screened dose range, not IC50 or viability. Lower AUC indicates greater sensitivity. Null values are unmeasured, not zero.',
+    sort: config.descending ? 'score_descending_nulls_last' : 'score_ascending_nulls_last',
+    interpretation: config.interpretation,
     records: selected.map(([, score], i) => ({ ...annotations!.rows[i], score }))
   }
 }
@@ -293,6 +322,58 @@ export const DEPMAP_TOOLS: ToolDescriptor[] = [
         if (!/^DPC-[0-9]{6}$/u.test(id)) throw new Error('DepMap returned an invalid compound ID')
       }
       return profile(ctx, id, 'drug', args.model_ids, args.limit)
+    }
+  },
+  {
+    ...common,
+    id: 'depmap_gene_expression',
+    description:
+      'Get one exact gene symbol’s current DepMap/CCLE RNA expression profile in log2(TPM+1), optionally restricted to ModelIDs. Returns highest expression first, at most 50 models, with release and model metadata. This is not raw TPM or z-score data. Use depmap_search_models to resolve cell line names to ModelIDs; no full matrix download.',
+    input: {
+      type: 'object',
+      properties: {
+        gene: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' },
+        ...profileInput
+      },
+      required: ['gene'],
+      additionalProperties: false
+    },
+    required: ['gene'],
+    exampleArgs: { gene: 'KRAS', model_ids: ['ACH-000681'] },
+    returns:
+      'Same bounded profile envelope as depmap_gene_dependency, but records.score is RNA expression in dataset.units="log2(TPM+1)", sorted descending with nulls last. Includes release, file, dataset UUID, model metadata provenance, total_models, missing_values, returned, truncated and unavailable_model_ids. Null/absent data are unknown; zero is a measured value.',
+    run: async (ctx, input) => {
+      const args = profileArgs
+        .extend({ gene: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/u) })
+        .strict()
+        .parse(input)
+      return profile(ctx, args.gene, 'expression', args.model_ids, args.limit)
+    }
+  },
+  {
+    ...common,
+    id: 'depmap_copy_number',
+    description:
+      'Get one exact gene symbol’s current DepMap/CCLE WGS gene copy-number profile relative to model ploidy, optionally restricted to ModelIDs. Returns highest relative copy number first, at most 50 models, with release and model metadata. Values are not absolute copies, log2 values or discrete amplification/deletion calls. Use depmap_search_models to resolve cell line names to ModelIDs.',
+    input: {
+      type: 'object',
+      properties: {
+        gene: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$' },
+        ...profileInput
+      },
+      required: ['gene'],
+      additionalProperties: false
+    },
+    required: ['gene'],
+    exampleArgs: { gene: 'MYC', model_ids: ['ACH-000681'] },
+    returns:
+      'Same bounded profile envelope as depmap_gene_dependency, but records.score is dataset.units="Copy number relative to ploidy", sorted descending with nulls last. Includes release, file, dataset UUID, model metadata provenance, total_models, missing_values, returned, truncated and unavailable_model_ids. Null/absent data are unknown; preserve zero. No discrete event classification is inferred.',
+    run: async (ctx, input) => {
+      const args = profileArgs
+        .extend({ gene: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/u) })
+        .strict()
+        .parse(input)
+      return profile(ctx, args.gene, 'copy_number', args.model_ids, args.limit)
     }
   }
 ]

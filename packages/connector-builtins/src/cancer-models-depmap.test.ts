@@ -7,6 +7,8 @@ const API = 'https://depmap.org/portal/breadbox'
 const registry = createConnectorRegistry(CANCER_MODELS_TOOLS)
 const geneId = 'ca558003-70f0-4949-8b2f-667bf30ac22a'
 const drugId = '07b7bda9-ae00-43b3-bca1-336b9607f8f5'
+const expressionId = 'c92ffdd1-3a76-4d9b-8888-48d3b613fa06'
+const copyNumberId = '390b8247-29d0-4085-8227-9ee2869c8d42'
 const metadataId = '9034361b-d4c7-40f6-bf39-edd536c19616'
 const a549 = 'ACH-000681'
 const model2 = 'ACH-000001'
@@ -51,6 +53,36 @@ const catalog = [
     }
   }
 ]
+catalog.push(
+  {
+    format: 'matrix_dataset',
+    feature_type_name: 'gene',
+    sample_type_name: 'depmap_model',
+    id: expressionId,
+    given_id: 'expression',
+    name: 'Expression (Short-read) Public 26Q3',
+    units: 'log2(TPM+1)',
+    dataset_metadata: {
+      download_file_info: {
+        release_name: 'DepMap Public 26Q3',
+        file_name: 'OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv'
+      }
+    }
+  },
+  {
+    format: 'matrix_dataset',
+    feature_type_name: 'gene',
+    sample_type_name: 'depmap_model',
+    id: copyNumberId,
+    given_id: 'OmicsCNGeneWGS',
+    name: 'Copy Number WGS Public 26Q3',
+    units: 'Copy number relative to ploidy',
+    dataset_metadata: {
+      download_file_info: { release_name: 'DepMap Public 26Q3', file_name: 'OmicsCNGeneWGS.csv' }
+    }
+  }
+)
+
 const drugMatch = { type_name: 'compound_v2', id: 'DPC-006587', label: 'TRAMETINIB' }
 const modelMatch = { type_name: 'depmap_model', id: a549, label: 'A549' }
 const descriptor = (id: string): ToolDescriptor => registry.getDescriptor('cancer-models', id)!
@@ -105,9 +137,9 @@ function setup(
 }
 
 describe('DepMap in Cancer Models', () => {
-  it('registers three valid examples in the existing facade without a new connector', () => {
+  it('registers five valid examples in the existing facade without a new connector', () => {
     const tools = CANCER_MODELS_TOOLS.filter((t) => t.id.startsWith('depmap_'))
-    expect(tools).toHaveLength(3)
+    expect(tools).toHaveLength(5)
     for (const tool of tools) {
       registry.validateToolArguments(tool, tool.exampleArgs!)
       expect(tool.credentialKeys).toEqual([])
@@ -338,6 +370,108 @@ describe('DepMap in Cancer Models', () => {
       })
       await expect(engine.call(tool, { gene: 'KRAS' }, {})).rejects.toThrow()
     }
+  })
+
+  describe.each([
+    {
+      tool: 'depmap_gene_expression',
+      datasetId: expressionId,
+      gene: 'KRAS',
+      units: 'log2(TPM+1)',
+      value: 4.522708416,
+      file: 'OmicsExpressionTPMLogp1HumanProteinCodingGenes.csv'
+    },
+    {
+      tool: 'depmap_copy_number',
+      datasetId: copyNumberId,
+      gene: 'MYC',
+      units: 'Copy number relative to ploidy',
+      value: 1.5808494706,
+      file: 'OmicsCNGeneWGS.csv'
+    }
+  ])('CCLE $tool', ({ tool, datasetId, gene, units, value, file }) => {
+    it('preserves native omics values and units using the resolved UUID and selected models', async () => {
+      const { call, fetchImpl } = setup({ matrix: { [gene]: { [a549]: value } } })
+      const result = await call(tool, { gene, model_ids: [a549, model2] })
+      expect(result).toMatchObject({
+        dataset: { id: datasetId, units, file, release: 'DepMap Public 26Q3' },
+        total_models: 1,
+        unavailable_model_ids: [model2],
+        sort: 'score_descending_nulls_last',
+        records: [{ model_id: a549, score: value }]
+      })
+      expect(fetchImpl.mock.calls[1][0]).toBe(`${API}/datasets/matrix/${datasetId}`)
+      expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toEqual({
+        features: [gene],
+        feature_identifier: 'label',
+        samples: [a549, model2],
+        sample_identifier: 'id'
+      })
+    })
+    it('ranks high values first, keeps measured zero distinct from null, and bounds metadata retrieval', async () => {
+      const { call, fetchImpl } = setup({
+        matrix: { [gene]: { [model2]: null, [a549]: value, [model3]: 0 } }
+      })
+      expect(await call(tool, { gene, limit: 2 })).toMatchObject({
+        total_models: 3,
+        returned: 2,
+        truncated: true,
+        missing_values: 1,
+        records: [
+          { model_id: a549, score: value },
+          { model_id: model3, score: 0 }
+        ]
+      })
+      expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body)).indices).toEqual([a549, model3])
+      const complete = await call(tool, { gene })
+      expect(complete.records[2]).toMatchObject({ model_id: model2, score: null })
+    })
+    it('does not substitute an available dataset with incompatible normalization', async () => {
+      const { call } = setup({
+        catalog: catalog.map((d) => (d.id === datasetId ? { ...d, units: 'Z-SCORE' } : d))
+      })
+      await expect(call(tool, { gene })).rejects.toThrow(/incompatible score dataset/)
+    })
+    it('rejects non-gene feature dimensions', async () => {
+      const { call } = setup({
+        catalog: catalog.map((d) =>
+          d.id === datasetId ? { ...d, feature_type_name: 'compound_v2' } : d
+        )
+      })
+      await expect(call(tool, { gene })).rejects.toThrow(/incompatible score dataset/)
+    })
+    it.each([{ matrix: {} }, { matrix: { KRAS: {} }, geneOverride: 'KRAS' }])(
+      'keeps no-data requests empty',
+      async ({ matrix, geneOverride }) => {
+        const { call } = setup({ matrix })
+        expect(await call(tool, { gene: geneOverride ?? gene, model_ids: [a549] })).toMatchObject({
+          returned: 0,
+          records: [],
+          unavailable_model_ids: [a549]
+        })
+      }
+    )
+    it('rejects negative values and feature/model mismatches', async () => {
+      for (const matrix of [
+        { [gene]: { [a549]: -0.1 } },
+        { OTHER: { [a549]: 3 } },
+        { [gene]: { [model2]: 3 } }
+      ]) {
+        const { call } = setup({ matrix })
+        await expect(call(tool, { gene, model_ids: [a549] })).rejects.toThrow()
+      }
+    })
+    it('rejects broad and malformed arguments before transport', async () => {
+      const { call, fetchImpl } = setup()
+      for (const args of [
+        { gene, limit: 51 },
+        { gene, model_ids: [] },
+        { gene: '../TP53' },
+        { gene, dataset_id: 'arbitrary' }
+      ])
+        await expect(call(tool, args)).rejects.toThrow()
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
   })
   it('honors cancellation through the shared transport', async () => {
     const controller = new AbortController()

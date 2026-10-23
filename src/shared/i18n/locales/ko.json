@@ -7543,9 +7543,11 @@
     "Review discovered references before they enter your library.": "찾은 문헌을 검토한 후 라이브러리에 추가하세요.",
     "Map exact compound identifiers with UniChem.": "UniChem으로 정확히 일치하는 화합물 식별자를 매핑합니다.",
     "Retrieve structure quality and validation statistics from PDBe.": "PDBe에서 구조 품질 및 검증 통계를 가져옵니다.",
-    "Cancer genomics studies and cell model dependencies from cBioPortal and DepMap.": "cBioPortal 및 DepMap의 암 유전체 연구와 세포 모델 의존성 데이터.",
     "Search DepMap cell models and their identity metadata.": "DepMap 세포 모델과 식별 메타데이터를 검색합니다.",
     "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "지정한 유전자와 선택한 세포 모델의 DepMap Chronos 유전자 효과를 가져옵니다.",
-    "Fetch DepMap PRISM drug response AUC values for a compound.": "지정한 화합물의 DepMap PRISM 약물 반응 AUC 값을 가져옵니다."
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "지정한 화합물의 DepMap PRISM 약물 반응 AUC 값을 가져옵니다.",
+    "Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.": "지정한 유전자의 DepMap/CCLE RNA 발현량을 log2(TPM+1) 단위로 가져옵니다.",
+    "Fetch DepMap/CCLE gene copy number relative to cell model ploidy.": "세포 모델의 배수성 대비 DepMap/CCLE 유전자 복제수를 가져옵니다.",
+    "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터."
   }
 }
