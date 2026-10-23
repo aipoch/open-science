@@ -50,7 +50,7 @@ export function withDerivedConsumers(manifest, index) {
     const declared = new Set(Object.values(module.testFiles).flat())
     const additions = tests.filter((path) => !declared.has(path)).sort()
     if (!additions.length) continue
-    module.testFiles.consumer.push(...additions)
+    module.testFiles.consumer = [...(module.testFiles.consumer ?? []), ...additions]
     module.derivedConsumerTests = additions
   }
   return effective
