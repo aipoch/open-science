@@ -38,14 +38,16 @@ class NotebookNetworkSettingsOwner {
 
   allowDomain(
     hostname: string,
-    assertCurrent?: () => Promise<void>
+    assertCurrent?: () => Promise<void>,
+    finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
     return this.enqueue(
       (current) => ({
         ...current,
         allowedDomains: [...new Set([...current.allowedDomains, hostname])]
       }),
-      assertCurrent
+      assertCurrent,
+      finalize
     )
   }
 
@@ -53,9 +55,10 @@ class NotebookNetworkSettingsOwner {
     update: (
       current: NotebookNetworkSettings
     ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>,
-    assertCurrent?: () => Promise<void>
+    assertCurrent?: () => Promise<void>,
+    finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
-    const operation = this.writeTail.then(() => this.commit(update, assertCurrent))
+    const operation = this.writeTail.then(() => this.commit(update, assertCurrent, finalize))
     this.writeTail = operation.then(
       () => undefined,
       () => undefined
@@ -114,7 +117,8 @@ class NotebookNetworkSettingsOwner {
     update: (
       current: NotebookNetworkSettings
     ) => NotebookNetworkSettings | Promise<NotebookNetworkSettings>,
-    assertCurrent?: () => Promise<void>
+    assertCurrent?: () => Promise<void>,
+    finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
     const previous = await this.get()
     const next = await update(previous)
@@ -125,6 +129,8 @@ class NotebookNetworkSettingsOwner {
       await assertCurrent?.()
       await this.options.apply(notebookNetwork)
       await assertCurrent?.()
+      // Keep approval finalization inside the same serialized rollback scope.
+      await finalize?.()
     } catch (error) {
       const rollbackErrors: unknown[] = []
       try {

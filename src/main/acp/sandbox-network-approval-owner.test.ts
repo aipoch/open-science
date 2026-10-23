@@ -13,6 +13,9 @@ import { sanitizeSessionRuntimeContext } from '../../shared/session-persistence'
 import { AcpPermissionBroker, type AppPermissionRequest } from './permission-broker'
 import { AcpPermissionWaitOwner, type PermissionWaitSessions } from './permission-wait-owner'
 import { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
+import { NotebookNetworkSettingsOwner } from '../settings/notebook-network-settings-owner'
+import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 
 const fixture = (): {
   sessions: PermissionWaitSessions
@@ -22,7 +25,13 @@ const fixture = (): {
   broker: AcpPermissionBroker
   send: (request: AppPermissionRequest) => Promise<string | undefined>
   pending: () => Promise<AcpPermissionRequest>
-  allowDomain: Mock<(hostname: string, assertCurrent?: () => Promise<void>) => Promise<undefined>>
+  allowDomain: Mock<
+    (
+      hostname: string,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => Promise<undefined>
+  >
   published: Mock
 } => {
   let context: SessionRuntimeContext = { version: 1, revision: 0 }
@@ -81,10 +90,17 @@ const fixture = (): {
       runtime: 'bash'
     }
   }
-  const allowDomain = vi.fn(async (_hostname: string, assertCurrent?: () => Promise<void>) => {
-    await assertCurrent?.()
-    return undefined
-  })
+  const allowDomain = vi.fn(
+    async (
+      _hostname: string,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => {
+      await assertCurrent?.()
+      await finalize?.()
+      return undefined
+    }
+  )
   const published = vi.fn()
   const owner = new SandboxNetworkApprovalOwner(sessions, published, allowDomain)
   const broker = new AcpPermissionBroker((request) => {
@@ -101,7 +117,70 @@ const fixture = (): {
   return { sessions, session, input, owner, broker, send, pending, allowDomain, published }
 }
 
+const attachSettings = (f: ReturnType<typeof fixture>): NotebookNetworkSettingsOwner => {
+  let stored = DEFAULT_NOTEBOOK_NETWORK_SETTINGS
+  const owner = new NotebookNetworkSettingsOwner({
+    repository: {
+      getSettings: async () => ({
+        version: SETTINGS_FILE_VERSION,
+        providers: [],
+        notebookNetwork: stored
+      }),
+      setNotebookNetwork: async (next) => {
+        stored = next
+        return { version: SETTINGS_FILE_VERSION, providers: [], notebookNetwork: stored }
+      }
+    },
+    apply: async () => undefined
+  })
+  f.allowDomain.mockImplementation(async (hostname, assertCurrent, finalize) => {
+    await owner.allowDomain(hostname, assertCurrent, finalize)
+    return undefined
+  })
+  return owner
+}
+
 describe('durable sandbox destination approvals', () => {
+  it.each(['aborted', 'disabled', 'publication-failed'])(
+    'clears only an unadmitted approval when %s',
+    async (mode) => {
+      const f = fixture()
+      const abort = new AbortController()
+      const settled = vi.fn()
+      const broker = new AcpPermissionBroker(
+        () => {
+          if (mode === 'publication-failed') throw new Error('publication failed')
+        },
+        undefined,
+        undefined,
+        settled
+      )
+      const result = f.owner.request(
+        {
+          ...f.input,
+          signal: abort.signal,
+          ...(mode === 'disabled' ? { permissionPrompts: 'none' as const } : {})
+        },
+        'prompt-fixture',
+        (request) => {
+          if (mode === 'aborted') abort.abort()
+          return broker.requestAppPermission(request)
+        }
+      )
+      if (mode === 'publication-failed') await expect(result).rejects.toThrow('publication failed')
+      else await result
+      expect(broker.getPendingRequests()).toEqual([])
+      expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+      if (mode === 'publication-failed') {
+        expect(settled).toHaveBeenCalledExactlyOnceWith(
+          expect.any(String),
+          'cancelled',
+          expect.objectContaining({ appOwned: true })
+        )
+      }
+    }
+  )
+
   it.each(['provider-first', 'network-first'])(
     'preserves interleaved provider authority when settling %s',
     async (order) => {
@@ -237,6 +316,7 @@ describe('durable sandbox destination approvals', () => {
 
   it('keeps global approval actionable when final Session persistence fails', async () => {
     const f = fixture()
+    const settings = attachSettings(f)
     const result = f.owner.request(f.input, 'prompt-fixture', f.send)
     const request = await f.pending()
     const persist = f.sessions.patchSessionRuntimeContext
@@ -251,10 +331,74 @@ describe('durable sandbox destination approvals', () => {
     await expect(
       f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
     ).rejects.toThrow('cleanup write failed')
+    expect((await settings.get()).allowedDomains).not.toContain('service.example.test')
     expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
     expect(f.broker.getPendingRequests()).toHaveLength(1)
     await f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
     await expect(result).resolves.toBe('always-allow')
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it.each(['before-write', 'after-write'])(
+    'rolls back Stop during finalization %s without overwriting later Settings',
+    async (phase) => {
+      const f = fixture()
+      const settings = attachSettings(f)
+      const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+      const request = await f.pending()
+      const gate = Promise.withResolvers<void>()
+      const entered = Promise.withResolvers<void>()
+      const persist = f.sessions.patchSessionRuntimeContext
+      let paused = false
+      f.sessions.patchSessionRuntimeContext = async (command) => {
+        if (!command.patch.networkApprovals && !paused) {
+          paused = true
+          const stored = phase === 'after-write' ? await persist(command) : undefined
+          entered.resolve()
+          await gate.promise
+          return stored ?? persist(command)
+        }
+        return persist(command)
+      }
+      const response = f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
+      const rejected = expect(response).rejects.toThrow('no longer current')
+      await entered.promise
+      const stop = f.owner.cancel(f.session.projectId, f.session.id)
+      const later = settings.allowDomain('later.example.test')
+      gate.resolve()
+      await rejected
+      await stop
+      await later
+      const domains = (await settings.get()).allowedDomains
+      expect(domains).not.toContain('service.example.test')
+      expect(domains).toContain('later.example.test')
+      expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+      await f.broker.respond({ requestId: request.requestId, cancelled: true })
+      await result
+    }
+  )
+
+  it('preserves completed global consent when Stop arrives after the commit point', async () => {
+    const f = fixture()
+    const settings = attachSettings(f)
+    const committed = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<void>()
+    f.allowDomain.mockImplementationOnce(async (hostname, assertCurrent, finalize) => {
+      await settings.allowDomain(hostname, assertCurrent, finalize)
+      committed.resolve()
+      await gate.promise
+      return undefined
+    })
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    const response = f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
+    await committed.promise
+    const stop = f.owner.cancel(f.session.projectId, f.session.id)
+    gate.resolve()
+    await response
+    await stop
+    await expect(result).resolves.toBe('always-allow')
+    expect((await settings.get()).allowedDomains).toContain('service.example.test')
     expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
   })
 

@@ -76,6 +76,7 @@ type AppPermissionRequest = Readonly<{
     port: number
     runtime: 'bash'
   }>
+  onAdmitted?: () => void
   canResume?: () => boolean
   beforeRespond?: (optionId: string | undefined) => Promise<void>
   sessionId: string
@@ -1100,16 +1101,19 @@ class AcpPermissionBroker {
       options: input.options.map((option) => ({ ...option }))
     }
 
-    const response = this.enqueuePermissionRequest({
-      requestId,
-      request,
-      appOwned: true,
-      durablePersisted: input.durable === true,
-      beforeRespond: input.beforeRespond,
-      ...(input.permissionPrompts
-        ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
-        : {})
-    }).then((result) =>
+    const response = this.enqueuePermissionRequest(
+      {
+        requestId,
+        request,
+        appOwned: true,
+        durablePersisted: input.durable === true,
+        beforeRespond: input.beforeRespond,
+        ...(input.permissionPrompts
+          ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
+          : {})
+      },
+      input.onAdmitted
+    ).then((result) =>
       result.outcome.outcome === 'selected' ? result.outcome.optionId : undefined
     )
     const abort = (): void => {
@@ -1472,7 +1476,8 @@ class AcpPermissionBroker {
   }
 
   private enqueuePermissionRequest(
-    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string }
+    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string },
+    onAdmitted?: () => void
   ): Promise<RequestPermissionResponse> {
     if (pending.policyContext?.permissionPrompts === 'none') {
       this.trace(pending, {
@@ -1549,7 +1554,13 @@ class AcpPermissionBroker {
     if (stored.capability) void this.releaseGrantedRequests()
 
     if (!stored.durableCandidate || !this.permissionWaitHooks) {
-      this.emitPermissionRequest(entry.request)
+      try {
+        this.emitPermissionRequest(entry.request)
+        onAdmitted?.()
+      } catch (error) {
+        this.pendingRequests.delete(requestId)
+        this.rejectPending(stored, error, 'cancelled')
+      }
       return response
     }
 

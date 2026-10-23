@@ -461,6 +461,7 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "notebook_network_sandbox": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -1008,6 +1009,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "settings_operations": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/session-details/composition.test.ts"
     ],
@@ -4041,6 +4043,7 @@
       "src/main/acp/opencode-immediate-handoff.integration.test.ts",
       "src/main/acp/runtime-plan-composition.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
