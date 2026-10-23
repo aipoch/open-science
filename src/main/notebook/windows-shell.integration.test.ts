@@ -232,7 +232,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           stdout: 'SHARED_TOOL_READY'
         })
         expect(await adapter.shutdown()).toEqual({ reaped: true })
-        await rm(first, { recursive: true, force: true })
+        await rm(first, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
         adapter = new NotebookShellProcessAdapter('win32', owner)
         expect(await adapter.execute(request(second, 'fixture-cli.cmd'))).toMatchObject({
           exitCode: 0,
@@ -252,7 +252,8 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           vi.unstubAllEnvs()
         }
         expect.soft(shutdown).toEqual({ reaped: true })
-        if (shutdown.reaped) await rm(root, { recursive: true, force: true })
+        if (shutdown.reaped)
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     }
   )
@@ -321,7 +322,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         expect(shutdown).toEqual({ reaped: true })
         expect(registry.hasReceipts()).toBe(false)
         if (launches.length > 0) expect(await readdir(join(root, 'commands'))).toEqual([])
-        await rm(root, { recursive: true, force: true })
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     }
   )
