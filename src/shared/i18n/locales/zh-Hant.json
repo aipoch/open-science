@@ -7504,6 +7504,14 @@
     "Could not confirm the folder restriction change. Reload Settings and try again.": "無法確認資料夾限制的變更。請重新載入設定後再試。",
     "Allow broader folder access?": "允許更廣泛的資料夾存取？",
     "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "程式碼可以讀取和修改您的帳戶可存取的其他資料夾。網路規則和應用程式路徑保護仍然生效。",
-    "Allow broader folder access": "允許更廣泛的資料夾存取"
+    "Allow broader folder access": "允許更廣泛的資料夾存取",
+    "Public cancer imaging collections and series metadata from TCIA.": "TCIA 公開腫瘤影像資料集與序列中繼資料。",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG 路徑、條目與基因對應。適用學術用途及授權限制。",
+    "Search public TCIA imaging collections.": "搜尋 TCIA 公開影像資料集。",
+    "Retrieve TCIA collection details and download requirements.": "取得 TCIA 資料集詳情與下載要求。",
+    "Retrieve public imaging series metadata by UID.": "透過 UID 取得公開影像序列中繼資料。",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "搜尋 KEGG 路徑、直系同源基因、化合物與反應。",
+    "Retrieve a KEGG entry summary.": "取得 KEGG 條目摘要。",
+    "Map a KEGG gene to pathways or UniProt.": "將 KEGG 基因對應至路徑或 UniProt。"
   }
 }

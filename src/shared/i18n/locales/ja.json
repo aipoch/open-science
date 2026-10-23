@@ -7504,6 +7504,14 @@
     "Could not confirm the folder restriction change. Reload Settings and try again.": "フォルダー制限の変更を確認できませんでした。設定を再読み込みして、もう一度お試しください。",
     "Allow broader folder access?": "より広いフォルダーアクセスを許可しますか？",
     "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "コードはアカウントがアクセスできる他のフォルダーを読み取り、変更できます。ネットワークルールとアプリケーションパスの保護は引き続き適用されます。",
-    "Allow broader folder access": "より広いフォルダーアクセスを許可"
+    "Allow broader folder access": "より広いフォルダーアクセスを許可",
+    "Public cancer imaging collections and series metadata from TCIA.": "TCIA の公開がん画像コレクションとシリーズのメタデータ。",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG のパスウェイ、エントリ、遺伝子マッピング。学術利用およびライセンスの制限が適用されます。",
+    "Search public TCIA imaging collections.": "TCIA の公開画像コレクションを検索します。",
+    "Retrieve TCIA collection details and download requirements.": "TCIA コレクションの詳細とダウンロード要件を取得します。",
+    "Retrieve public imaging series metadata by UID.": "UID で公開画像シリーズのメタデータを取得します。",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG のパスウェイ、オルソログ、化合物、反応を検索します。",
+    "Retrieve a KEGG entry summary.": "KEGG エントリの概要を取得します。",
+    "Map a KEGG gene to pathways or UniProt.": "KEGG 遺伝子をパスウェイまたは UniProt にマッピングします。"
   }
 }

@@ -7664,6 +7664,14 @@
     "Could not confirm the folder restriction change. Reload Settings and try again.": "Die Änderung der Ordnerbeschränkung konnte nicht bestätigt werden. Laden Sie die Einstellungen neu und versuchen Sie es erneut.",
     "Allow broader folder access?": "Umfassenderen Ordnerzugriff erlauben?",
     "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "Code kann andere Ordner lesen und ändern, auf die Ihr Konto zugreifen kann. Netzwerkregeln und geschützte Anwendungspfade bleiben wirksam.",
-    "Allow broader folder access": "Umfassenderen Ordnerzugriff erlauben"
+    "Allow broader folder access": "Umfassenderen Ordnerzugriff erlauben",
+    "Public cancer imaging collections and series metadata from TCIA.": "Öffentliche Krebsbildsammlungen und Serienmetadaten von TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "KEGG-Signalwege, Einträge und Genzuordnungen. Beschränkungen für akademische Nutzung und Lizenzierung gelten.",
+    "Search public TCIA imaging collections.": "Öffentliche TCIA-Bildsammlungen suchen.",
+    "Retrieve TCIA collection details and download requirements.": "Details und Downloadvoraussetzungen einer TCIA-Sammlung abrufen.",
+    "Retrieve public imaging series metadata by UID.": "Metadaten öffentlicher Bildserien anhand der UID abrufen.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "KEGG-Signalwege, Orthologe, Verbindungen und Reaktionen suchen.",
+    "Retrieve a KEGG entry summary.": "Zusammenfassung eines KEGG-Eintrags abrufen.",
+    "Map a KEGG gene to pathways or UniProt.": "Ein KEGG-Gen Signalwegen oder UniProt zuordnen."
   }
 }

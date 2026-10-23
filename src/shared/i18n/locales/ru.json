@@ -7971,6 +7971,14 @@
     "Could not confirm the folder restriction change. Reload Settings and try again.": "Не удалось подтвердить изменение ограничений папок. Перезагрузите настройки и повторите попытку.",
     "Allow broader folder access?": "Разрешить более широкий доступ к папкам?",
     "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "Код сможет читать и изменять другие папки, доступные вашей учётной записи. Сетевые правила и защита путей приложения сохраняются.",
-    "Allow broader folder access": "Разрешить более широкий доступ к папкам"
+    "Allow broader folder access": "Разрешить более широкий доступ к папкам",
+    "Public cancer imaging collections and series metadata from TCIA.": "Открытые коллекции онкологических изображений и метаданные серий TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "Пути, записи и сопоставления генов KEGG. Действуют ограничения академического использования и лицензирования.",
+    "Search public TCIA imaging collections.": "Поиск открытых коллекций изображений TCIA.",
+    "Retrieve TCIA collection details and download requirements.": "Получение сведений о коллекции TCIA и требований к загрузке.",
+    "Retrieve public imaging series metadata by UID.": "Получение метаданных открытых серий изображений по UID.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "Поиск путей, ортологов, соединений и реакций KEGG.",
+    "Retrieve a KEGG entry summary.": "Получение сводки записи KEGG.",
+    "Map a KEGG gene to pathways or UniProt.": "Сопоставление гена KEGG с путями или UniProt."
   }
 }

@@ -7832,6 +7832,14 @@
     "Could not confirm the folder restriction change. Reload Settings and try again.": "No se pudo confirmar el cambio de las restricciones de carpetas. Vuelva a cargar la configuración e inténtelo de nuevo.",
     "Allow broader folder access?": "¿Permitir un acceso más amplio a las carpetas?",
     "Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.": "El código puede leer y modificar otras carpetas accesibles desde su cuenta. Las reglas de red y la protección de las rutas de la aplicación siguen vigentes.",
-    "Allow broader folder access": "Permitir un acceso más amplio a las carpetas"
+    "Allow broader folder access": "Permitir un acceso más amplio a las carpetas",
+    "Public cancer imaging collections and series metadata from TCIA.": "Colecciones públicas de imágenes de cáncer y metadatos de series de TCIA.",
+    "KEGG pathways, entries and gene mappings. Academic-use and licensing restrictions apply.": "Vías, entradas y correspondencias de genes de KEGG. Se aplican restricciones de uso académico y licencia.",
+    "Search public TCIA imaging collections.": "Buscar colecciones públicas de imágenes de TCIA.",
+    "Retrieve TCIA collection details and download requirements.": "Obtener detalles y requisitos de descarga de una colección de TCIA.",
+    "Retrieve public imaging series metadata by UID.": "Obtener metadatos de series públicas de imágenes por UID.",
+    "Search KEGG pathways, orthologs, compounds and reactions.": "Buscar vías, ortólogos, compuestos y reacciones de KEGG.",
+    "Retrieve a KEGG entry summary.": "Obtener un resumen de una entrada de KEGG.",
+    "Map a KEGG gene to pathways or UniProt.": "Asignar un gen de KEGG a vías o a UniProt."
   }
 }
