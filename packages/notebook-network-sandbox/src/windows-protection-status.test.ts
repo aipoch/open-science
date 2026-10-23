@@ -159,3 +159,31 @@ it('still requests setup when native status confirms that the fence is missing',
     reasons: ['Notebook AppContainer loopback network fence is not installed']
   })
 })
+
+it.each([false, true])(
+  'preserves check errors after initialization (initial probe fails: %s)',
+  async (initialProbeFails) => {
+    const allocation = await listen(0)
+    helper.port = (allocation.address() as { port: number }).port
+    await close(allocation)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const sandbox = new NotebookNetworkSandbox({
+      policy: { allowedDomains: [], deniedDomains: [] },
+      resources: { root: process.cwd() }
+    })
+    try {
+      if (initialProbeFails) helper.gatewayProbeExitCode = 1
+      await sandbox.initialize()
+      helper.gatewayProbeExitCode = 1
+      await expect(sandbox.status()).resolves.toMatchObject({ kind: 'error' })
+      helper.gatewayProbeExitCode = 0
+      await expect(sandbox.status()).resolves.toMatchObject({ kind: 'ready' })
+      helper.fenceInstalled = false
+      await expect(sandbox.status()).resolves.toMatchObject({ kind: 'setupRequired' })
+    } finally {
+      await sandbox.dispose()
+      Object.defineProperty(process, 'platform', platform)
+    }
+  }
+)
