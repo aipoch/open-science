@@ -1345,7 +1345,7 @@ const ConversationPanel = ({
     !specialistSwitchInFlight &&
     !isStopping &&
     !isResuming &&
-    (docToText(draftDoc).trim() || attachments.length > 0)
+    (docToText(draftDoc).trim() || attachments.length > 0 || annotations.length > 0)
   )
   const specialistNoticeCurrent = Boolean(
     canExplainUnavailableSpecialist &&

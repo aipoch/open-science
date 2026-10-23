@@ -7777,6 +7777,62 @@ describe('ConversationPanel fix loop lock', () => {
     }
   )
 
+  it.each(['Enter', 'click'] as const)(
+    'shows unavailable Specialist guidance for an annotation-only draft after %s',
+    (trigger) => {
+      const submit = vi.fn()
+      const changeDoc = vi.fn()
+      const removeAnnotation = vi.fn()
+      renderPanel({
+        view: { activeSession: { ...idleSession, specialistId: 'deleted-specialist' } },
+        conversation: {
+          availability: { submit: false },
+          actions: { submit: { draft: submit } }
+        },
+        composer: {
+          view: {
+            doc: emptyDoc,
+            annotations: [
+              {
+                id: 'retained-annotation',
+                kind: 'text',
+                target: 'agent',
+                quote: 'Quoted research evidence',
+                source: {
+                  kind: 'agent-message',
+                  sessionId: idleSession.id,
+                  messageId: 'message-1'
+                }
+              }
+            ]
+          },
+          actions: { changeDoc, removeAnnotation }
+        },
+        specialist: { view: { specialist: { unavailable: true } } }
+      })
+
+      expect(document.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
+      act(() => {
+        if (trigger === 'Enter') {
+          getComposerEditor().dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+          )
+        } else {
+          container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click()
+        }
+      })
+
+      const notice = document.querySelector('[data-testid="specialist-unavailable-notice"]')
+      expect(notice).not.toBeNull()
+      expect(notice?.textContent).toContain('Choose another Specialist before sending a message.')
+      expect(container.textContent).toContain('Quoted research evidence')
+      expect(getComposerEditor().textContent).toBe('')
+      expect(submit).not.toHaveBeenCalled()
+      expect(changeDoc).not.toHaveBeenCalled()
+      expect(removeAnnotation).not.toHaveBeenCalled()
+    }
+  )
+
   it('does not show a Specialist unavailable notice for an available session', () => {
     renderPanel({
       view: {
