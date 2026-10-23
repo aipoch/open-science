@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { loadDerivedConsumers, withDerivedConsumers } from './module-graph/policy.mjs'
 import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
 import {
@@ -1202,8 +1203,68 @@ it.each([
   expect(plan.mode).toBe('full')
 })
 
+// These fixtures exercise selection independently of production owners' full-validation policy.
+// Retain the same declared and derived consumer evidence as the default manifest.
+function selectiveManifestFor(moduleIds: string[]): ReturnType<typeof loadModuleImpactManifest> {
+  const manifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
+  for (const id of moduleIds) delete manifest.modules[id].fullTestReason
+  return manifest
+}
+
+it.each([
+  [
+    'environment_engine',
+    'packages/environment/src/conda-lock-subset.ts',
+    'packages/environment/src/conda-lock-subset.test.ts'
+  ],
+  [
+    'notebook_analysis_engine',
+    'packages/notebook-analysis/src/dependency-analysis-r.ts',
+    'packages/notebook-analysis/src/dependency-analysis.contracts.test.ts'
+  ],
+  [
+    'artifact_storage_validation',
+    'src/main/artifacts/provenance-workflow-capture.ts',
+    'src/main/artifacts/provenance-workflow-capture.test.ts'
+  ],
+  [
+    'workspace_reproducibility_surfaces',
+    'src/renderer/src/pages/workspace/step-reproduction-target.ts',
+    'src/renderer/src/pages/workspace/step-reproduction-target.test.ts'
+  ],
+  [
+    'notebook_reproduction',
+    'src/main/notebook/reproduction-runtime-subset.ts',
+    'src/main/notebook/reproduction-runtime-subset.test.ts'
+  ]
+])(
+  'prioritizes the production full-validation reason for %s over selective evidence',
+  (id, path, test) => {
+    const manifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
+    const fullTestReason = manifest.modules[id].fullTestReason
+    expect(fullTestReason).toEqual(expect.any(String))
+    expect(fullTestReason.trim()).not.toBe('')
+    const changes = [{ path, status: 'modified' }]
+    const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+    const plan = createAffectedTestPlan(changes, graph)
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains).toContain(`${id} -> ${fullTestReason} -> full`)
+
+    // Remove only the direct owner's policy marker to prove it takes precedence over
+    // an otherwise valid selective plan; the production manifest remains untouched.
+    const selectiveManifest = structuredClone(manifest)
+    delete selectiveManifest.modules[id].fullTestReason
+    const selective = createAffectedTestPlan(changes, graph, selectiveManifest)
+    expect(selective.mode).toBe('selective')
+    expect(selective.modules).toContain(id)
+    expect(selective.testFiles).toContain(test)
+    expect(manifest.modules[id].fullTestReason).toBe(fullTestReason)
+  }
+)
+
 describe('Notebook package module boundaries', () => {
   const manifest = loadModuleImpactManifest()
+  const selectiveManifest = selectiveManifestFor(['notebook_analysis_engine'])
   const packageModules = [
     'notebook_syntax',
     'notebook_code_risk',
@@ -1296,7 +1357,7 @@ describe('Notebook package module boundaries', () => {
   ])(
     'selects only downstream package suites and host integrations for %s',
     (id, path, selected) => {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, selectiveManifest)
       expect(plan.mode).toBe('selective')
       for (const candidate of packageModules) {
         const owned = manifest.modules[candidate].testFiles.owner
@@ -1317,14 +1378,17 @@ describe('Notebook package module boundaries', () => {
 })
 
 it('separates analysis implementation consumers from broad shared contract consumers', () => {
+  const selectiveManifest = selectiveManifestFor(['notebook_analysis_engine'])
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }
   const implementation = createAffectedTestPlan(
     [{ path: 'packages/notebook-analysis/src/dependency-analysis-python.ts', status: 'modified' }],
-    graph
+    graph,
+    selectiveManifest
   )
   const contract = createAffectedTestPlan(
     [{ path: 'packages/notebook-analysis/src/contracts.ts', status: 'modified' }],
-    graph
+    graph,
+    selectiveManifest
   )
   expect(implementation.modules).toContain('notebook_analysis_engine')
   expect(implementation.modules).not.toContain('notebook_analysis')

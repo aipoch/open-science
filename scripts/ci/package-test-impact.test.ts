@@ -11,6 +11,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join, normalize, sep } from 'node:path'
 import { parse } from 'yaml'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { loadDerivedConsumers, withDerivedConsumers } from './module-graph/policy.mjs'
 import { executeModuleTestPlan } from './module-test-impact.mjs'
 import { describe, expect, it } from 'vitest'
 import {
@@ -552,19 +554,30 @@ it('keeps environment verification directional and requires explicit trusted exc
   expect(() => environmentPackageVerificationPlan([], [42])).toThrow('Invalid')
 })
 
+// Isolate directional selection from production owners' full-validation policy while
+// preserving every declared and derived consumer used by the default manifest.
+function selectiveManifestFor(moduleIds: string[]): ReturnType<typeof loadModuleImpactManifest> {
+  const manifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
+  for (const id of moduleIds) delete manifest.modules[id].fullTestReason
+  return manifest
+}
+
 it('skips unchanged environment units for host edits and retains downstream contracts for package edits', async () => {
   const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+  const selectiveManifest = selectiveManifestFor(['environment_engine'])
   const graph = { status: 'not-used', testFiles: [] }
   const host = createAffectedTestPlan(
     [{ path: 'src/main/notebook/runtime-service.ts', status: 'modified' }],
-    graph
+    graph,
+    selectiveManifest
   )
   expect(host.mode).toBe('selective')
   expect(host.testFiles.some((path) => path.startsWith('packages/environment/'))).toBe(false)
   expect(host.testFiles).toContain('src/main/notebook/runtime-service.test.ts')
   const environment = createAffectedTestPlan(
     [{ path: 'packages/environment/src/environment-state-tracker.ts', status: 'modified' }],
-    graph
+    graph,
+    selectiveManifest
   )
   expect(environment.mode).toBe('selective')
   expect(environment.testFiles).toContain(
@@ -597,10 +610,15 @@ it.each([
   'keeps unchanged reproduction units excluded when only host behavior changes: %s',
   async (path) => {
     const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-      status: 'not-used',
-      testFiles: []
-    })
+    const selectiveManifest = selectiveManifestFor([
+      'artifact_storage_validation',
+      'notebook_reproduction'
+    ])
+    const plan = createAffectedTestPlan(
+      [{ path, status: 'modified' }],
+      { status: 'not-used', testFiles: [] },
+      selectiveManifest
+    )
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles.some((file) => file.startsWith('packages/reproducibility/'))).toBe(false)
   }
