@@ -18740,6 +18740,71 @@ describe('Spearman NumPy scientific delegate boundaries', () => {
   )
 })
 
+describe('Matrix Market builtin opener boundaries', () => {
+  const tainted: NotebookSourceFileAccessContext = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonTaintedNamespaces: ['builtins']
+  }
+  it.each([
+    'from scipy.io import mminfo\nresult=mminfo("input.mtx")',
+    'from scipy.io import mminfo as inspect\nresult=inspect(source="input.mtx")',
+    'from scipy import io as sio\nresult=sio.mminfo("input.mtx")',
+    'from scipy.io import mmread\nresult=mmread("input.mtx")',
+    'from scipy.io import mmread as read\ndef reopen(path):\n    return read(path)\nresult=reopen("input.mtx")'
+  ])('withdraws path authority across a patched builtin: %s', async (call) => {
+    expect(await analyzeNotebookSourceFileAccess('python', call, tainted)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect((await analyzePythonNotebookSource(call, tainted)).facts.state).toBe('unknown')
+    const source = 'path="old.txt"\n' + call + '\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source, tainted)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect((await analyzeNotebookSourceFileAccess('python', source, tainted)).reads).not.toContain(
+      'old.txt'
+    )
+    expect((await analyzePythonNotebookSource(source, tainted)).facts.state).toBe('unknown')
+  })
+  it.each([false, true])(
+    'retains failed builtin replacement across replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        ['import builtins\nbuiltins.open=replacement\nraise RuntimeError()'],
+        [{ status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.pythonTaintedNamespaces).toContain('builtins')
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'from scipy.io import mminfo\ninfo=mminfo("input.mtx")',
+          context
+        )
+      ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+    }
+  )
+  it.each(['mmread', 'mminfo'])('preserves unpatched reads for %s', async (name) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        `from scipy.io import ${name}\nresult=${name}("input.mtx")`
+      )
+    ).toMatchObject({
+      reads: ['input.mtx'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+})
+
 describe('Matrix Market bzip2 delegate boundaries', () => {
   const tainted: NotebookSourceFileAccessContext = {
     staticStrings: [],

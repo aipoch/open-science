@@ -667,6 +667,9 @@ const PYTHON_BUILTIN_OPEN_DELEGATES = new Set([
   'scipy.io.loadmat',
   'scipy.io.savemat',
   'scipy.io.whosmat',
+  // Legacy Matrix Market readers and compressed paths can use builtin open.
+  'scipy.io.mmread',
+  'scipy.io.mminfo',
   'scipy.io.wavfile.read',
   'scipy.io.wavfile.write',
   'scipy.sparse.load_npz',
