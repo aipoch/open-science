@@ -266,6 +266,11 @@ describe('SessionCatalogRecoveryAlert', () => {
     act(() => button('View affected conversations')?.click())
     act(() => button('Delete damaged file')?.click())
     expect(document.body.textContent).toContain('This cannot be undone')
+    expect(document.querySelector('[data-testid="session-recovery-details-dialog"]')).toBeNull()
+    expect(document.body.textContent).not.toContain('second.json')
+    expect(
+      document.querySelectorAll('[data-testid="session-recovery-delete-dialog"] button')
+    ).toHaveLength(2)
     expect(remove).not.toHaveBeenCalled()
     act(() => button('Cancel')?.click())
     expect(button('Permanently delete')).toBeUndefined()
@@ -276,7 +281,8 @@ describe('SessionCatalogRecoveryAlert', () => {
     })
     expect(remove).toHaveBeenCalledExactlyOnceWith(files[0])
     expect(button('Deleting…')?.disabled).toBe(true)
-    expect(button('Close')?.disabled).toBe(true)
+    expect(button('Cancel')?.disabled).toBe(true)
+    expect(button('Close')).toBeUndefined()
     await act(async () => {
       pending.resolve()
       await pending.promise
@@ -288,6 +294,33 @@ describe('SessionCatalogRecoveryAlert', () => {
     expect(document.body.textContent).toContain('second.json')
     act(() => root.render(<SessionCatalogRecoveryAlert recovery={{ kind: 'ready' }} />))
     expect(document.querySelector('[data-testid="session-recovery-details-dialog"]')).toBeNull()
+  })
+
+  it('returns to the remaining files when rechecking resolves the confirmation target', () => {
+    const files = [
+      { projectId: 'p', fileName: 'first.json' },
+      { projectId: 'p', fileName: 'second.json' }
+    ]
+    const render = (affectedFiles = files): void =>
+      root.render(
+        <SessionCatalogRecoveryAlert
+          recovery={{ kind: 'damaged-authority', affectedFiles }}
+          onDeleteRecoveryFile={vi.fn()}
+        />
+      )
+    const button = (name: string): HTMLButtonElement | undefined =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (item) => item.textContent === name
+      )
+    act(() => render())
+    act(() => button('View affected conversations')?.click())
+    act(() => button('Delete damaged file')?.click())
+    expect(document.querySelector('[data-testid="session-recovery-delete-dialog"]')).not.toBeNull()
+    act(() => render([files[1]]))
+    expect(document.querySelector('[data-testid="session-recovery-delete-dialog"]')).toBeNull()
+    expect(document.querySelector('[data-testid="session-recovery-details-dialog"]')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('first.json')
+    expect(document.body.textContent).toContain('second.json')
   })
 
   it('reports deletion failure, rechecks partial removal and permits retry', async () => {

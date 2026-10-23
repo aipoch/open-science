@@ -4,6 +4,7 @@ import * as Dialog from '@/components/ui/dialog'
 
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import {
   dialogOverlayClassName,
   dialogPanelClassName,
@@ -37,6 +38,8 @@ const SessionCatalogRecoveryAlertContent = ({
   const recoveryKey = JSON.stringify(recovery)
   const [dismissedRecoveryKey, setDismissedRecoveryKey] = useState<string>()
   const [deleteTarget, setDeleteTarget] = useState<DeleteSessionRecoveryFileRequest>()
+  const lastDeleteTarget = useRef<DeleteSessionRecoveryFileRequest>(undefined)
+  const recoveryDeleteButtonRef = useRef<HTMLButtonElement>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const deleting = useRef(false)
   const [deleteFailed, setDeleteFailed] = useState(false)
@@ -45,6 +48,19 @@ const SessionCatalogRecoveryAlertContent = ({
   const [recoveryFolderErrorProjectId, setRecoveryFolderErrorProjectId] = useState<string | null>(
     null
   )
+  const activeDeleteTarget =
+    recovery.kind === 'damaged-authority' &&
+    recovery.affectedFiles.some(
+      (file) =>
+        file.projectId === deleteTarget?.projectId && file.fileName === deleteTarget.fileName
+    )
+      ? deleteTarget
+      : undefined
+  // Drop a selection resolved by another window or an authoritative recheck.
+  if (deleteTarget && !activeDeleteTarget) {
+    setDeleteTarget(undefined)
+    setDeleteFailed(false)
+  }
 
   if (recovery.kind === 'ready') return null
   if (!inline && dismissedRecoveryKey === recoveryKey) return null
@@ -70,6 +86,8 @@ const SessionCatalogRecoveryAlertContent = ({
     setComputeJobsBlockDeletion(false)
     try {
       await onDeleteRecoveryFile(deleteTarget)
+      lastDeleteTarget.current = undefined
+      recoveryDeleteButtonRef.current = null
       setDeleteTarget(undefined)
     } catch (error) {
       setDeleteFailed(true)
@@ -164,7 +182,7 @@ const SessionCatalogRecoveryAlertContent = ({
           onDismiss={onDismiss}
         />
         <Dialog.Root
-          open={areRecoveryDetailsOpen}
+          open={areRecoveryDetailsOpen && !activeDeleteTarget}
           onOpenChange={(open) => {
             if (deleting.current) return
             setAreRecoveryDetailsOpen(open)
@@ -182,6 +200,13 @@ const SessionCatalogRecoveryAlertContent = ({
               )}
               data-testid="session-recovery-details-dialog"
               aria-busy={isDeleting}
+              onOpenAutoFocus={(event) => {
+                // Cancelling confirmation returns keyboard focus to the selected file's action.
+                if (recoveryDeleteButtonRef.current) {
+                  event.preventDefault()
+                  recoveryDeleteButtonRef.current.focus()
+                }
+              }}
             >
               <div className="border-b border-border px-5 py-4">
                 <Dialog.Title className={dialogTitleClassName}>
@@ -232,11 +257,19 @@ const SessionCatalogRecoveryAlertContent = ({
                             <span className="min-w-0 break-all font-mono">{fileName}</span>
                             {!isOversized && onDeleteRecoveryFile ? (
                               <Button
+                                ref={(button) => {
+                                  if (
+                                    lastDeleteTarget.current?.projectId === projectId &&
+                                    lastDeleteTarget.current.fileName === fileName
+                                  )
+                                    recoveryDeleteButtonRef.current = button
+                                }}
                                 type="button"
                                 variant="destructive"
                                 size="sm"
                                 disabled={isDeleting}
                                 onClick={() => {
+                                  lastDeleteTarget.current = { projectId, fileName }
                                   setDeleteTarget({ projectId, fileName })
                                   setDeleteFailed(false)
                                   setComputeJobsBlockDeletion(false)
@@ -246,56 +279,6 @@ const SessionCatalogRecoveryAlertContent = ({
                               </Button>
                             ) : null}
                           </div>
-                          {deleteTarget?.projectId === projectId &&
-                          deleteTarget.fileName === fileName ? (
-                            <div className="space-y-3 rounded border border-border p-3">
-                              <p>
-                                {t(
-                                  'Permanently delete the recovery copies of "{{fileName}}"? This conversation can no longer be recovered from them. The project and research files are kept. This cannot be undone.',
-                                  { fileName }
-                                )}
-                              </p>
-                              {deleteFailed ? (
-                                <ErrorNotice
-                                  inline
-                                  role="alert"
-                                  level="error"
-                                  description={
-                                    computeJobsBlockDeletion
-                                      ? t(
-                                          'This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.'
-                                        )
-                                      : t(
-                                          'Could not delete all recovery copies. Check the remaining files and try again.'
-                                        )
-                                  }
-                                />
-                              ) : null}
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isDeleting}
-                                  onClick={() => {
-                                    setDeleteTarget(undefined)
-                                    setDeleteFailed(false)
-                                  }}
-                                >
-                                  {t('Cancel')}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="destructive"
-                                  size="sm"
-                                  disabled={isDeleting}
-                                  onClick={() => void deleteRecoveryFile()}
-                                >
-                                  {isDeleting ? t('Deleting…') : t('Permanently delete')}
-                                </Button>
-                              </div>
-                            </div>
-                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -312,6 +295,47 @@ const SessionCatalogRecoveryAlertContent = ({
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+        <ConfirmActionDialog
+          open={Boolean(activeDeleteTarget)}
+          testId="session-recovery-delete-dialog"
+          title={t('Delete damaged file')}
+          description={t(
+            'Permanently delete the recovery copies of "{{fileName}}"? This conversation can no longer be recovered from them. The project and research files are kept. This cannot be undone.',
+            { fileName: deleteTarget?.fileName ?? '' }
+          )}
+          cancelLabel={t('Cancel')}
+          confirmLabel={t('Permanently delete')}
+          loadingLabel={t('Deleting…')}
+          loading={isDeleting}
+          destructive
+          onCancel={() => {
+            setDeleteTarget(undefined)
+            setDeleteFailed(false)
+          }}
+          onConfirm={() => void deleteRecoveryFile()}
+        >
+          {deleteTarget ? (
+            <p className="mt-3 break-all text-xs text-muted-foreground">
+              {t('Project: {{projectId}}', { projectId: deleteTarget.projectId })}
+            </p>
+          ) : null}
+          {deleteFailed ? (
+            <ErrorNotice
+              inline
+              role="alert"
+              level="error"
+              description={
+                computeJobsBlockDeletion
+                  ? t(
+                      'This conversation still has compute jobs. Recover the conversation or delete its jobs before deleting these copies. Their remote files are kept.'
+                    )
+                  : t(
+                      'Could not delete all recovery copies. Check the remaining files and try again.'
+                    )
+              }
+            />
+          ) : null}
+        </ConfirmActionDialog>
       </>
     )
   }
