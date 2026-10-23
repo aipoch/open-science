@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "Medical and molecular data tools. Data operations require a prepared Python runtime; some sources require personal authorization.": "医療・分子データのツール。データ操作には設定済みの Python 実行環境が必要です。一部のデータソースは個人の利用許可が必要です。",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "LIPID MAPS から脂質の分類と化合物の詳細を取得します。",
     "Query upstream or downstream human protein regulation with OmniPath.": "OmniPathでヒトタンパク質の上流または下流の制御関係を照会します。",
     "List authorized directories": "許可されたディレクトリを一覧表示",
