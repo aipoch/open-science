@@ -147,6 +147,13 @@ it.each([
     Buffer.from(JSON.stringify({ [key]: 'ABCDEF1234567890' })),
     false
   ]),
+  ...['password = process.env.PASSWORD', 'password = []', 'token == expected'].map<
+    [string, Buffer, boolean]
+  >((prefix) => [
+    `literal continuation after newline: ${prefix}`,
+    Buffer.from(JSON.stringify({ content: prefix + '\n + "actual-secret"' })),
+    false
+  ]),
   ['literal password comparison', Buffer.from('password == "actual-secret"'), false],
   [
     'credential mutation after empty initialization',

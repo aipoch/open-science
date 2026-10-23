@@ -574,6 +574,8 @@ describe('noncredential syntax and metadata', () => {
     'token == expected',
     'token => value',
     'tokens = []',
+    'tokens = []\npassword = os.environ["PASSWORD"]',
+    'password["value"] = {}\npassword["value"] = os.environ["PASSWORD"]',
     'credentials = {}',
     'password["value"] = {}',
     'tokens[0] = []',
@@ -630,6 +632,7 @@ it.each([
   ['os.environ["PASSWORD"]', ' + "actual-secret"'],
   ['os.getenv("PASSWORD")', ' or "actual-secret"'],
   ['process.env.PASSWORD', ' || "actual-secret"'],
+  ['process.env.PASSWORD\n', ' + "actual-secret"'],
   ['[', '"actual-secret"]']
 ])('retains an unfinished assignment beyond the overlap: %s', (prefix, suffix) => {
   const first = ' '.repeat(65536 - `password = ${prefix}`.length) + `password = ${prefix}`
@@ -684,3 +687,24 @@ it.each(['secretName', 'secret_name', 'credentialName', 'credential_name'])(
     }
   }
 )
+
+it.each([
+  'password = process.env.PASSWORD',
+  'password = os.environ["PASSWORD"]',
+  'password = []',
+  'credentials = {}',
+  'token == expected'
+])('retains literal continuations after a newline: %s', (prefix) => {
+  for (const newline of ['\n', '\r\n']) {
+    const code = prefix + newline + '  + "actual-secret"'
+    for (const text of [code, JSON.stringify({ content: code })]) {
+      expect(findSensitivePackageText(text)).toBeDefined()
+      for (let split = 0; split <= text.length; split++) {
+        const scanner = new PackageTextScanner()
+        scanner.write(text.slice(0, split))
+        scanner.write(text.slice(split))
+        expect(scanner.finish(), `split ${split}`).toBeDefined()
+      }
+    }
+  }
+})

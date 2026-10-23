@@ -308,33 +308,51 @@ const findPackageTextMatch = (
       continue
     const start = match.index + match[0].length
     const rest = text.slice(start)
+    // Newlines alone cannot terminate JavaScript expressions; serialized code follows
+    // the same bounded check so a later operator cannot hide a literal credential.
+    const expression = rest.replace(/\\+"/g, '"').replace(/\\+[rn]/g, '\n')
+    const expressionEndsAt = (end: number): boolean => {
+      const tail = expression.slice(end)
+      if (/^[ \t\r\n]{0,512}(?:[,;}]|$)|^"(?:[},]|$)/.test(tail)) return true
+      // A following assignment is a separate statement, including indexed writes.
+      const nextAssignment =
+        /^[ \t]*[\r\n][ \t\r\n]*[a-zA-Z_][a-zA-Z0-9_]*(?:[ \t]*\[[ \t]*(?:["'][a-zA-Z0-9_]+["']|[a-zA-Z0-9_]+)[ \t]*\])*[ \t]*=(?!=)/.exec(
+          tail
+        )
+      if (nextAssignment && nextAssignment[0].length <= 512) return true
+      // Keep an incomplete next statement provisional only within the overlap.
+      return !complete && tail.length <= 512 && /^[ \t]*(?:[\r\n]|\\+$)/.test(tail)
+    }
     // Comparisons and arrow syntax do not assign a credential value.
+    const comparison = /^(?:={1,2}|>)[ \t]{0,512}[a-zA-Z_][a-zA-Z0-9_.]{0,127}/.exec(expression)
     if (
       match[2].trim() === '=' &&
-      (/^(?:={1,2}|>)[ \t]{0,512}[a-zA-Z_][a-zA-Z0-9_.]{0,127}(?=[ \t]{0,512}(?:[;,\r\n}]|$)|\\[rn]|"(?:[},]|$))/.test(
-        rest
-      ) ||
+      ((comparison && expressionEndsAt(comparison[0].length)) ||
         (!complete && /^(?:={1,2}|>)[ \t]{0,512}$/.test(rest)))
     )
       continue
     // Empty collections contain no credential. Defer incomplete collection prefixes
     // but still inspect any nonempty contents, including nested literal secrets.
+    const emptyCollection = /^(?:\[[ \t]*\]|\{[ \t]*\})/.exec(expression)
     if (
       match[2].trim() === '=' &&
-      (/^(?:\[[ \t]*\]|\{[ \t]*\})(?=[ \t]*(?:[,;\r\n}]|$)|\\[rn]|\\?"|\))/.test(rest) ||
+      ((emptyCollection && expressionEndsAt(emptyCollection[0].length)) ||
         (!complete && rest.length <= 512 && /^[[{][ \t]*$/.test(rest)))
     )
       continue
     // Prove a reference without evaluating code; defaults and compound expressions
-    // remain candidates. Normalize only serialization quotes for this proof.
-    const expression = rest.replace(/\\+"/g, '"')
-    // A bounded preview's end is not an expression terminator. Fall back to
-    // a finding before an unresolved candidate can leave the streaming overlap.
+    // remain candidates. A bounded preview's end is not an expression terminator.
     const reference =
-      /^(?:os\.environ\[["'][A-Z_][A-Z0-9_]*["']\]|os\.(?:getenv|environ\.get)\(["'][A-Z_][A-Z0-9_]*["']\)|process\.env\.[A-Z_][A-Z0-9_]*)(?=[ \t]{0,512}(?:[,;\r\n}]|$)|\\[rn]|"(?:[},]|$))/.exec(
+      /^(?:os\.environ\[["'][A-Z_][A-Z0-9_]*["']\]|os\.(?:getenv|environ\.get)\(["'][A-Z_][A-Z0-9_]*["']\)|process\.env\.[A-Z_][A-Z0-9_]*)/.exec(
         expression
       )
-    if (match[2].trim() === '=' && reference && reference[0].length <= 512) continue
+    if (
+      match[2].trim() === '=' &&
+      reference &&
+      reference[0].length <= 512 &&
+      expressionEndsAt(reference[0].length)
+    )
+      continue
     if (
       !complete &&
       rest.length <= 512 &&
