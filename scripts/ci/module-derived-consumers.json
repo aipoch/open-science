@@ -23,6 +23,7 @@
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "compute_domain_contracts": ["src/main/notebook/authorized-directories.integration.test.ts"],
     "connector_core": [
+      "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
       "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts",
