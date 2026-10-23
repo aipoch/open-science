@@ -7544,6 +7544,10 @@
     "References discovered by you or Agents will appear here for review.": "您或智能体发现的文献会出现在此处供审核。",
     "Review discovered references before they enter your library.": "审核发现的文献，再将其加入文献库。",
     "Map exact compound identifiers with UniChem.": "通过 UniChem 映射精确的化合物标识符。",
-    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。"
+    "Retrieve structure quality and validation statistics from PDBe.": "从 PDBe 获取结构质量和验证统计数据。",
+    "Cancer genomics studies and cell model dependencies from cBioPortal and DepMap.": "来自 cBioPortal 和 DepMap 的癌症基因组学研究及细胞模型依赖性数据。",
+    "Search DepMap cell models and their identity metadata.": "搜索 DepMap 细胞模型及其身份元数据。",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "获取指定基因及所选细胞模型的 DepMap Chronos 基因效应。",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "获取指定化合物的 DepMap PRISM 药物响应 AUC 值。"
   }
 }

@@ -7544,6 +7544,10 @@
     "References discovered by you or Agents will appear here for review.": "您或智能體發現的文獻會顯示在此處供審核。",
     "Review discovered references before they enter your library.": "審核找到的文獻，再將其加入文獻庫。",
     "Map exact compound identifiers with UniChem.": "透過 UniChem 對應精確的化合物識別碼。",
-    "Retrieve structure quality and validation statistics from PDBe.": "從 PDBe 取得結構品質和驗證統計資料。"
+    "Retrieve structure quality and validation statistics from PDBe.": "從 PDBe 取得結構品質和驗證統計資料。",
+    "Cancer genomics studies and cell model dependencies from cBioPortal and DepMap.": "來自 cBioPortal 和 DepMap 的癌症基因體學研究及細胞模型依賴性資料。",
+    "Search DepMap cell models and their identity metadata.": "搜尋 DepMap 細胞模型及其身分中繼資料。",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "取得指定基因及所選細胞模型的 DepMap Chronos 基因效應。",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "取得指定化合物的 DepMap PRISM 藥物反應 AUC 值。"
   }
 }

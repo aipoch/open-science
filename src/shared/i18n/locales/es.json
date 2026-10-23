@@ -7872,6 +7872,10 @@
     "References discovered by you or Agents will appear here for review.": "Las referencias encontradas por usted o por Agentes aparecerán aquí para su revisión.",
     "Review discovered references before they enter your library.": "Revisar las referencias encontradas antes de añadirlas a la biblioteca.",
     "Map exact compound identifiers with UniChem.": "Relacionar identificadores exactos de compuestos con UniChem.",
-    "Retrieve structure quality and validation statistics from PDBe.": "Obtener la calidad estructural y las estadísticas de validación de PDBe."
+    "Retrieve structure quality and validation statistics from PDBe.": "Obtener la calidad estructural y las estadísticas de validación de PDBe.",
+    "Cancer genomics studies and cell model dependencies from cBioPortal and DepMap.": "Estudios de genómica del cáncer y dependencias de modelos celulares de cBioPortal y DepMap.",
+    "Search DepMap cell models and their identity metadata.": "Buscar modelos celulares de DepMap y sus metadatos de identificación.",
+    "Fetch DepMap Chronos gene effects for a gene and selected cell models.": "Obtener los efectos génicos de DepMap Chronos para un gen y los modelos celulares seleccionados.",
+    "Fetch DepMap PRISM drug response AUC values for a compound.": "Obtener los valores AUC de respuesta a fármacos de DepMap PRISM para un compuesto."
   }
 }

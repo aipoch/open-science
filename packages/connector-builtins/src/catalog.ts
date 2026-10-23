@@ -374,10 +374,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'cancer-models',
     displayName: 'Cancer Models',
-    description: 'Cancer genomics study records via the cBioPortal REST API.',
+    description:
+      'Cancer genomics studies, cell models, gene dependencies and drug responses via cBioPortal and DepMap.',
     useWhen:
-      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies, samples and patients; retrieving patient/sample clinical values; fetching mRNA expression values for genes; the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints.",
-    sources: ['cBioPortal'],
+      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies, samples and patients; retrieving patient/sample clinical values; fetching mRNA expression values for genes; the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints. Also use for DepMap/CCLE model identity, exact-gene Chronos gene effects and exact-compound PRISM secondary AUC profiles; preserve dataset releases, units and missing values.",
+    sources: ['cBioPortal', 'DepMap / CCLE'],
     termsUrl: 'https://www.cbioportal.org/faq',
     requiresNcbi: false
   },
