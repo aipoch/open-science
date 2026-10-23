@@ -780,7 +780,12 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
+        env:
+          # Portable CPU tests use bundled ONNX binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       - name: Select independent package tests from trusted policy
         uses: ./.github/actions/select-package-tests
         with:

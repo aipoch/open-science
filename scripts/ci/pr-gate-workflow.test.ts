@@ -1580,7 +1580,8 @@ describe('PR Gate workflow', () => {
 
   it.each([
     ['runtime_checks', 'Install dependencies'],
-    ['linux_runtime', 'Install application dependencies']
+    ['linux_runtime', 'Install application dependencies'],
+    ['unit_shard', 'Install dependencies']
   ])('avoids optional GPU downloads while retaining native loading in %s', (job, installStep) => {
     const steps = workflow.jobs[job].steps
     expect(steps?.find(({ name }) => name === installStep)).toMatchObject({
