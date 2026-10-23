@@ -192,6 +192,7 @@
   },
   "renderer": {
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "无法读取该专家的技能或连接器。请尝试重新发送。",
+    "Retrieve lipid classification and compound details from LIPID MAPS.": "从 LIPID MAPS 获取脂质分类和化合物详情。",
     "Query upstream or downstream human protein regulation with OmniPath.": "使用 OmniPath 查询人类蛋白质的上游或下游调控关系。",
     "List authorized directories": "列出已授权目录",
     "checked directory access": "已查询目录授权",
