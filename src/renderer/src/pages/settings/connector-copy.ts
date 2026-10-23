@@ -97,6 +97,10 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'chemistry/unichem_map_compound':
+      return t('Map exact compound identifiers with UniChem.')
+    case 'structures/pdbe_get_validation':
+      return t('Retrieve structure quality and validation statistics from PDBe.')
     case 'chemistry/lipidmaps_get_compound':
       return t('Retrieve lipid classification and compound details from LIPID MAPS.')
     case 'structures/omnipath_query_regulation':

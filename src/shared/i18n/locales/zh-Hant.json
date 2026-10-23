@@ -7542,6 +7542,8 @@
     "These results expired. Search again.": "這些結果已過期，請重新搜尋。",
     "This reference changed. Reopen its details and try again.": "此文獻已變更，請重新開啟詳細資料後重試。",
     "References discovered by you or Agents will appear here for review.": "您或智能體發現的文獻會顯示在此處供審核。",
-    "Review discovered references before they enter your library.": "審核找到的文獻，再將其加入文獻庫。"
+    "Review discovered references before they enter your library.": "審核找到的文獻，再將其加入文獻庫。",
+    "Map exact compound identifiers with UniChem.": "透過 UniChem 對應精確的化合物識別碼。",
+    "Retrieve structure quality and validation statistics from PDBe.": "從 PDBe 取得結構品質和驗證統計資料。"
   }
 }

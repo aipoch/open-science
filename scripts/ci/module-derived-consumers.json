@@ -24,10 +24,12 @@
     "compute_domain_contracts": ["src/main/notebook/authorized-directories.integration.test.ts"],
     "connector_core": [
       "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
+      "packages/connector-builtins/src/chemistry-unichem.test.ts",
       "packages/connector-builtins/src/kegg.test.ts",
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts",
       "packages/connector-builtins/src/structures-omnipath.test.ts",
+      "packages/connector-builtins/src/structures-pdbe.test.ts",
       "packages/connector-builtins/src/tcia.test.ts"
     ],
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
