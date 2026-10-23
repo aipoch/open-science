@@ -7906,6 +7906,72 @@ describe('ConversationPanel fix loop lock', () => {
     expect(getComposerEditor().textContent).toBe('Keep this draft')
   })
 
+  it('pauses the Specialist bubble countdown while hovered and resumes its remaining time', async () => {
+    vi.useFakeTimers()
+    const submit = vi.fn()
+    renderPanel({
+      view: { activeSession: { ...idleSession, specialistId: 'literature' } },
+      conversation: { actions: { submit: { draft: submit } } },
+      composer: { view: { doc: docFromText('Keep this draft') } },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+    const notice = (): Element | null =>
+      document.querySelector('[data-testid="specialist-unavailable-notice"]')
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click())
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    const bubble = notice()!.closest('[role="dialog"]')!
+    act(() => bubble.dispatchEvent(new MouseEvent('pointerover', { bubbles: true })))
+    await act(async () => vi.advanceTimersByTimeAsync(7000))
+    expect(notice()).not.toBeNull()
+    act(() =>
+      bubble.dispatchEvent(
+        new MouseEvent('pointerout', { bubbles: true, relatedTarget: document.body })
+      )
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(4999))
+    expect(notice()).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(notice()).toBeNull()
+    expect(getComposerEditor().textContent).toBe('Keep this draft')
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Specialist bubble while focusing its actions and permits dismissal and another attempt', async () => {
+    vi.useFakeTimers()
+    const submit = vi.fn()
+    renderPanel({
+      view: { activeSession: { ...idleSession, specialistId: 'literature' } },
+      conversation: { actions: { submit: { draft: submit } } },
+      composer: { view: { doc: docFromText('Keep this draft') } },
+      specialist: { view: { specialist: { unavailable: true } } }
+    })
+    const notice = (): Element | null =>
+      document.querySelector('[data-testid="specialist-unavailable-notice"]')
+    const send = (): void =>
+      act(() => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!.click())
+    send()
+    const choose = [...notice()!.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Choose Specialist'
+    )!
+    act(() => choose.focus())
+    await act(async () => vi.advanceTimersByTimeAsync(7000))
+    expect(notice()).not.toBeNull()
+    const close = notice()!.querySelector<HTMLButtonElement>('[aria-label="Close"]')!
+    act(() => close.focus())
+    await act(async () => vi.advanceTimersByTimeAsync(7000))
+    expect(notice()).not.toBeNull()
+    act(() => close.click())
+    expect(notice()).toBeNull()
+    send()
+    expect(notice()).not.toBeNull()
+    act(() =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    )
+    expect(notice()).toBeNull()
+    expect(getComposerEditor().textContent).toBe('Keep this draft')
+    expect(submit).not.toHaveBeenCalled()
+  })
+
   it('adds the enhanced composer edge and compact picker for an available Specialist', () => {
     useSpecialistStore.setState({
       items: [
