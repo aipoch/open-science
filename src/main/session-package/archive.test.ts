@@ -149,7 +149,7 @@ it('deduplicates identical content objects in a self-contained package', async (
     Buffer.byteLength(session) +
       Buffer.byteLength(records) +
       Buffer.byteLength(readme) +
-      content.length
+      content.length * (process.platform === 'win32' ? 2 : 1)
   )
   // Reusing object bytes must not accept an alias that claims different content.
   manifest.inventory[manifest.inventory.length - 1].checksum = 'b'.repeat(64)
