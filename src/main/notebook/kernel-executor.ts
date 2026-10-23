@@ -1197,7 +1197,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
             : {}),
           filesystem: {
             readOnlyRoots: presentPaths([
-              request.runtimeRoot,
+              // External Windows kernels need their interpreter, not recursive ACLs over other SDKs.
+              ...(this.platform === 'win32' && request.resolvedInterpreter && kind !== 'repl'
+                ? []
+                : [request.runtimeRoot]),
               request.resolvedInterpreter?.condaPrefix ?? '',
               ...(kind === 'r' ? [request.resolvedInterpreter?.rLibrary ?? ''] : []),
               request.inputRoot ?? '',

@@ -5790,6 +5790,12 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         ).rejects.toBe(stop)
         expect(wrap).toHaveBeenCalledTimes(1)
         expect(wrap.mock.calls[0]?.[0]).not.toHaveProperty('electronAsNode')
+        const filesystem = wrap.mock.calls[0][0].filesystem
+        expect(filesystem.readOnlyRoots).not.toContain(request.runtimeRoot)
+        expect(filesystem.readOnlyRoots).toContain(
+          kernelExecutableReadRoot(process.execPath, kind, 'win32')
+        )
+        expect(filesystem.readWriteRoots).toContain(join(request.runtimeRoot!, 'cache', 'notebook'))
       } finally {
         await executor.shutdown()
       }
