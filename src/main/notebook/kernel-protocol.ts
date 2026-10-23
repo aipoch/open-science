@@ -1,4 +1,5 @@
 // Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
+import { validRStageEnvironmentProof } from '@aipoch/reproducibility'
 import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 
 import type { NotebookEnvironmentPackage } from '@aipoch/environment/contracts'
@@ -8,6 +9,8 @@ import type { NotebookNamespaceVariable } from '../../shared/notebook'
 export type KernelLoopFigure = { mime: string; path: string }
 
 export type KernelLoopResponse = {
+  stageCheckpointCapture?: import('./session-aggregate').NotebookSessionExecutionResult['stageCheckpointCapture']
+  stageComparison?: import('./session-aggregate').NotebookSessionExecutionResult['stageComparison']
   reqId: string
   stdout: string
   stderr: string
@@ -161,6 +164,127 @@ const parseNamespace = (value: unknown): KernelLoopResponse['namespace'] | undef
   }
 }
 
+const parseStageCheckpoint = (value: unknown): KernelLoopResponse['stageCheckpointCapture'] => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const checkpoint = value as Record<string, unknown>
+  if (checkpoint.state === 'unavailable')
+    return {
+      state: 'unavailable',
+      reason:
+        typeof checkpoint.reason === 'string' && checkpoint.reason
+          ? checkpoint.reason.slice(0, 1024)
+          : 'checkpoint-unavailable'
+    }
+  const validNames = (names: unknown): names is string[] =>
+    Array.isArray(names) &&
+    names.length <= 4096 &&
+    names.every((name) => typeof name === 'string' && name.length > 0 && name.length <= 1024) &&
+    new Set(names).size === names.length
+  if (
+    checkpoint.state !== 'available' ||
+    !validNames(checkpoint.input_names) ||
+    !validNames(checkpoint.output_names)
+  )
+    return { state: 'unavailable', reason: 'invalid-checkpoint-response' }
+  let environmentProof: import('@aipoch/reproducibility/contracts').RStageCheckpoint['environmentProof']
+  if ('environment_proof' in checkpoint) {
+    const proof = checkpoint.environment_proof
+    if (
+      typeof proof !== 'object' ||
+      proof === null ||
+      Array.isArray(proof) ||
+      Object.keys(proof).some((key) => !['schema_version', 'packages'].includes(key))
+    )
+      return { state: 'unavailable', reason: 'invalid-checkpoint-environment-proof' }
+    const wire = proof as Record<string, unknown>
+    const candidate = { schemaVersion: wire.schema_version, packages: wire.packages }
+    if (!validRStageEnvironmentProof(candidate))
+      return { state: 'unavailable', reason: 'invalid-checkpoint-environment-proof' }
+    environmentProof = candidate
+  }
+  return {
+    state: 'available',
+    inputNames: checkpoint.input_names,
+    outputNames: checkpoint.output_names,
+    ...(environmentProof ? { environmentProof } : {})
+  }
+}
+
+const parseStageComparison = (value: unknown): KernelLoopResponse['stageComparison'] => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const comparison = value as Record<string, unknown>
+  if (!['equal', 'different', 'unavailable'].includes(String(comparison.outcome))) return undefined
+  const invalid = (): NonNullable<KernelLoopResponse['stageComparison']> => ({
+    outcome: 'unavailable',
+    reason: 'invalid-stage-comparison-response'
+  })
+  const packageNames = (names: unknown): names is string[] =>
+    Array.isArray(names) &&
+    names.length > 0 &&
+    names.length <= 4096 &&
+    names.every(
+      (name) => typeof name === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,127}$/u.test(name)
+    ) &&
+    new Set(names).size === names.length
+  let packageContext: import('../../shared/notebook').NotebookRPackageContext | undefined
+  if ('package_context' in comparison) {
+    const raw = comparison.package_context
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return invalid()
+    const context = raw as Record<string, unknown>
+    if (
+      Object.keys(context).length !== 3 ||
+      context.schema_version !== 1 ||
+      !packageNames(context.source_packages) ||
+      !packageNames(context.target_packages) ||
+      !['equal', 'different'].includes(String(comparison.scientific_outcome)) ||
+      (comparison.outcome === 'equal' && comparison.scientific_outcome !== 'equal')
+    )
+      return invalid()
+    packageContext = {
+      schemaVersion: 1,
+      sourcePackages: context.source_packages,
+      targetPackages: context.target_packages
+    }
+  } else if ('scientific_outcome' in comparison) return invalid()
+  let runtimeFootprint: import('../../shared/notebook').NotebookRStageComparison['runtimeFootprint']
+  if ('runtime_footprint' in comparison) {
+    const raw = comparison.runtime_footprint
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return invalid()
+    const footprint = raw as Record<string, unknown>
+    const packages = { schemaVersion: 1, packages: footprint.packages }
+    if (
+      Object.keys(footprint).length !== 3 ||
+      !Number.isSafeInteger(footprint.process_id) ||
+      Number(footprint.process_id) <= 0 ||
+      !validRStageEnvironmentProof(packages) ||
+      !Array.isArray(footprint.library_paths) ||
+      footprint.library_paths.length > 4096 ||
+      !footprint.library_paths.every(
+        (path) =>
+          typeof path === 'string' && path.length > 0 && path.length <= 4096 && !path.includes('\0')
+      ) ||
+      new Set(footprint.library_paths).size !== footprint.library_paths.length
+    )
+      return invalid()
+    runtimeFootprint = {
+      processId: Number(footprint.process_id),
+      packages: packages.packages,
+      libraryPaths: footprint.library_paths
+    }
+  }
+  return {
+    outcome: comparison.outcome as 'equal' | 'different' | 'unavailable',
+    ...(typeof comparison.reason === 'string' ? { reason: comparison.reason.slice(0, 1024) } : {}),
+    ...(packageContext
+      ? {
+          packageContext,
+          scientificOutcome: comparison.scientific_outcome as 'equal' | 'different'
+        }
+      : {}),
+    ...(runtimeFootprint ? { runtimeFootprint } : {})
+  }
+}
+
 // Parses one loop stdout line (snake_case wire fields -> camelCase). Returns null when the line is
 // not valid JSON or not an object, since loop stdout can contain unrelated noise the driver ignores.
 // Missing/invalid fields fall back to safe defaults rather than throwing.
@@ -181,8 +305,12 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
     : []
   const environmentOverlay = parseEnvironmentOverlay(obj.environment)
   const namespace = parseNamespace(obj.namespace)
+  const stageCheckpointCapture = parseStageCheckpoint(obj.stage_checkpoint)
+  const stageComparison = parseStageComparison(obj.stage_comparison)
 
   return {
+    ...(stageCheckpointCapture ? { stageCheckpointCapture } : {}),
+    ...(stageComparison ? { stageComparison } : {}),
     reqId: typeof obj.req_id === 'string' ? obj.req_id : '',
     stdout: typeof obj.stdout === 'string' ? obj.stdout : '',
     stderr: typeof obj.stderr === 'string' ? obj.stderr : '',
@@ -237,6 +365,63 @@ export function frameRRequest(reqId: string, code: string): Buffer {
   return frameRBody(reqId, code)
 }
 
+export function frameRStageRequest(
+  reqId: string,
+  code: string,
+  options: Pick<
+    import('./session-aggregate').NotebookSessionExecutionRequest,
+    'stageCheckpoint' | 'stageRestore' | 'stageSupplement' | 'stageExpectedOutputPath'
+  >
+): Buffer {
+  return frameRBody(
+    reqId,
+    JSON.stringify({
+      code,
+      ...(options.stageCheckpoint
+        ? {
+            stage_checkpoint: {
+              input_path: options.stageCheckpoint.inputPath,
+              output_path: options.stageCheckpoint.outputPath
+            }
+          }
+        : {}),
+      ...(options.stageRestore
+        ? {
+            stage_restore: {
+              input_path: options.stageRestore.inputPath,
+              expected_output_path: options.stageRestore.expectedOutputPath,
+              ...(options.stageRestore.packageContext
+                ? {
+                    package_context: {
+                      schema_version: options.stageRestore.packageContext.schemaVersion,
+                      source_packages: options.stageRestore.packageContext.sourcePackages,
+                      target_packages: options.stageRestore.packageContext.targetPackages
+                    }
+                  }
+                : {}),
+              ...(options.stageRestore.observeRuntimeFootprint === true
+                ? { observe_runtime_footprint: true }
+                : {})
+            }
+          }
+        : {}),
+      ...(options.stageSupplement
+        ? {
+            stage_supplement: {
+              input_path: options.stageSupplement.inputPath,
+              expected_output_path: options.stageSupplement.expectedOutputPath,
+              names: options.stageSupplement.names
+            }
+          }
+        : {}),
+      ...(options.stageExpectedOutputPath
+        ? { stage_expected_output_path: options.stageExpectedOutputPath }
+        : {})
+    }),
+    'execute_stage'
+  )
+}
+
 const frameRBody = (reqId: string, body: string, operation?: string): Buffer => {
   const bodyBuf = Buffer.from(body, 'utf8')
   const header = Buffer.from(
@@ -248,4 +433,9 @@ const frameRBody = (reqId: string, body: string, operation?: string): Buffer => 
 
 export function frameRNamespaceRequest(reqId: string, includePrivate: boolean): Buffer {
   return frameRBody(reqId, includePrivate ? 'private' : '', 'inspect_namespace')
+}
+
+// Trusted fixed interrupt checkpoint; it carries no user source or executable payload.
+export function frameRInterruptProbeRequest(reqId: string): Buffer {
+  return frameRBody(reqId, '', 'interrupt_probe')
 }

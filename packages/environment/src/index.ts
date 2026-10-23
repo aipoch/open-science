@@ -73,6 +73,11 @@ export {
   parseNotebookEnvironmentLock
 } from './environment-lock'
 export {
+  condaRuntimeSubsetPlanMatchesLock,
+  deriveCondaRuntimeSubsetPlan,
+  selectCondaEnvironmentLock
+} from './conda-lock-subset'
+export {
   nativeLockRestoreState,
   renvRestoreExpression,
   restoreNativeEnvironmentLock
@@ -94,6 +99,7 @@ export { discoverExternalRLibraries, resolveExternalRLibrary } from './external-
 export { NotebookRecoveryCoordinator } from './recovery-coordinator'
 export { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 export {
+  type CondaRuntimeSubsetPlan,
   type DiscoveredInterpreter,
   type DownloadProgress,
   type ProvisionProgress,

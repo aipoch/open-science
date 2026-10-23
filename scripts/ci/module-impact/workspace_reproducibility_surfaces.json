@@ -11,7 +11,9 @@
     "src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx",
     "src/renderer/src/pages/workspace/lazy-r.test.ts",
     "src/renderer/src/pages/workspace/lazy-r.ts",
-    "src/renderer/src/pages/workspace/reproducibility-output-storage-context.ts"
+    "src/renderer/src/pages/workspace/reproducibility-output-storage-context.ts",
+    "src/renderer/src/pages/workspace/step-reproduction-target.test.ts",
+    "src/renderer/src/pages/workspace/step-reproduction-target.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComparisonFieldLabel.tsx",
@@ -29,7 +31,8 @@
     "owner": [
       "src/renderer/src/pages/workspace/OutputComparison.test.tsx",
       "src/renderer/src/pages/workspace/SessionReproducibilityDialog.test.tsx",
-      "src/renderer/src/pages/workspace/lazy-r.test.ts"
+      "src/renderer/src/pages/workspace/lazy-r.test.ts",
+      "src/renderer/src/pages/workspace/step-reproduction-target.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

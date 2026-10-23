@@ -74,6 +74,84 @@ const condaInventory = (...names: string[]): string =>
   )
 
 describe('captureNotebookEnvironmentLock', () => {
+  it('captures a full dependency graph and rechecks metadata on an unchanged lock cache hit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conda-lock-graph-capture-'))
+    try {
+      await mkdir(join(root, 'conda-meta'))
+      await writeFile(join(root, 'conda-meta', 'history'), 'stable history')
+      const records = ['r-base', 'r-jsonlite', 'r-unused'].map((name) => ({
+        name,
+        version: '1.0',
+        build: '0',
+        url: `https://conda.example/osx-arm64/${name}-1.0-0.conda`,
+        md5: 'a'.repeat(32),
+        files: name === 'r-base' ? ['lib/R/library/base/DESCRIPTION'] : [],
+        depends: name === 'r-jsonlite' ? ['r-base >=1.0'] : []
+      }))
+      const description = join(root, 'lib/R/library/base/DESCRIPTION')
+      await mkdir(join(root, 'lib/R/library/base'), { recursive: true })
+      await writeFile(description, 'Package: base\nVersion: 4.5.3\n')
+      for (const pkg of records) {
+        await writeFile(join(root, 'conda-meta', `${pkg.name}-1.0-0.json`), JSON.stringify(pkg))
+      }
+      const execute = vi.fn(async () => JSON.stringify(records))
+      const owner = new EnvironmentLockCaptureOwner()
+      const target = {
+        language: 'r' as const,
+        environmentName: 'analysis-r',
+        runtimeSource: 'managed' as const,
+        condaPrefix: root
+      }
+      const observed = manifest({ kernelKind: 'r', environmentName: 'analysis-r', packages: [] })
+      const options = { micromamba: '/tools/micromamba', execute, environmentFingerprint: 'stable' }
+      const captured = await owner.capture(target, observed, options)
+      expect(captured.state).toBe('captured')
+      if (captured.state !== 'captured') throw new Error('Expected full lock')
+      const component = captured.lock.components[0]!
+      if (component.ecosystem !== 'conda') throw new Error('Expected Conda lock')
+      expect(component.packages).toEqual(['r-base', 'r-jsonlite', 'r-unused'])
+      expect(component.dependencyGraph?.packages).toHaveLength(3)
+      expect(component.dependencyGraph?.rPackageOwnership?.packages).toEqual([
+        { name: 'base', version: '4.5.3', condaPackage: 'r-base' }
+      ])
+      expect(decodeNotebookEnvironmentLock(JSON.stringify(captured.lock)).status).toBe('valid')
+
+      // Installed DESCRIPTION identity is not covered by Conda history/fingerprint.
+      await writeFile(description, 'Package: base\nVersion: 4.5.4\n')
+      const changedDescription = await owner.capture(target, observed, options)
+      if (changedDescription.state !== 'captured') throw new Error('Expected exact lock')
+      const changedComponent = changedDescription.lock.components[0]!
+      if (changedComponent.ecosystem !== 'conda') throw new Error('Expected Conda lock')
+      expect(changedComponent.dependencyGraph?.rPackageOwnership?.packages[0]?.version).toBe(
+        '4.5.4'
+      )
+      expect(changedComponent.explicitLock).toBe(component.explicitLock)
+      await writeFile(description, 'Package: base\nVersion: 4.5.3\n')
+
+      const path = join(root, 'conda-meta', 'r-jsonlite-1.0-0.json')
+      await writeFile(path, JSON.stringify({ ...records[1], depends: ['missing-package'] }))
+      const damaged = await owner.capture(target, observed, options)
+      expect(damaged.state).toBe('captured')
+      if (damaged.state !== 'captured') throw new Error('Expected unchanged exact lock')
+      const damagedComponent = damaged.lock.components[0]!
+      if (damagedComponent.ecosystem !== 'conda') throw new Error('Expected Conda lock')
+      expect(damagedComponent.explicitLock).toBe(component.explicitLock)
+      expect(damagedComponent.dependencyGraph).toBeUndefined()
+      expect(execute).toHaveBeenCalledOnce()
+      expect(component.dependencyGraph?.packages).toHaveLength(3)
+
+      await writeFile(path, JSON.stringify(records[1]))
+      const repaired = await owner.capture(target, observed, options)
+      if (repaired.state !== 'captured') throw new Error('Expected repaired evidence')
+      const repairedComponent = repaired.lock.components[0]!
+      if (repairedComponent.ecosystem !== 'conda') throw new Error('Expected Conda lock')
+      expect(repairedComponent.dependencyGraph).toEqual(component.dependencyGraph)
+      expect(execute).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('captures equivalent certifi release spellings with the exact Conda lock', async () => {
     const result = await captureNotebookEnvironmentLock(
       {

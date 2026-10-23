@@ -118,6 +118,7 @@ import type { PackageRecords } from './records-contract'
 import {
   capturePackageReproducibility,
   installPackageReproducibility,
+  installPackageStageCheckpoints,
   packageReproducibilityExclusions,
   packageReproducibilityKeys
 } from './reproducibility'
@@ -1615,6 +1616,12 @@ export class SessionPackageService {
         undefined,
         onProgress,
         true
+      )
+      await installPackageStageCheckpoints(
+        destinationRoot,
+        this.options.storageRoot,
+        nativeInventory,
+        this.signal
       )
       onProgress?.({ importStage: 'publish', phase: 'importing' })
       await rename(sourceRoot, join(evidenceDirectory, 'source'))

@@ -1,4 +1,11 @@
+import { sealWorkflowCapture } from '@aipoch/reproducibility'
+import { reproductionWorkflowSlices } from './reproducibility-host'
+import { sealArtifactAnalysisRevision } from './provenance-analysis-revision'
+import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import { describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const diagnosticLog = vi.hoisted(() => ({
   info: vi.fn(),
@@ -78,6 +85,290 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe('reproducibility resource lifecycle', () => {
+  it('executes a bound memory-only workflow plan and records executed without a match', async ({
+    onTestFinished
+  }) => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'workflow-admission-test-'))
+    onTestFinished(() => rm(storageRoot, { recursive: true, force: true }))
+    const serializedLock = JSON.stringify({
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'r',
+      environmentName: 'default-r',
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          explicitLock:
+            '@EXPLICIT\nhttps://repo.example.test/r-base-4.5.conda#0123456789abcdef0123456789abcdef\n',
+          packages: ['r-base']
+        }
+      ]
+    })
+    const lockChecksum = sha256(serializedLock)
+    const locksRoot = join(storageRoot, 'runtime', 'provenance', 'environment-locks')
+    await mkdir(locksRoot, { recursive: true })
+    await writeFile(join(locksRoot, lockChecksum + '.json'), serializedLock)
+    const capture = sealWorkflowCapture({
+      schemaVersion: 1,
+      inputFiles: [],
+      runs: [
+        {
+          runId: 'memory-stage',
+          runIndex: 0,
+          agentFrameId: 'agent-1',
+          messageBranchId: 'branch-1',
+          runtimeSegmentId: 'segment-1',
+          promptMessageId: 'prompt-1',
+          kernelKind: 'r',
+          kernelEpochId: 'epoch',
+          environmentLock: {
+            state: 'available',
+            format: 'environment-lock-bundle',
+            lockChecksum
+          },
+          script: 'x <- 1',
+          status: 'completed',
+          startedAt: '2026-09-02T00:00:00.000Z',
+          outputs: [],
+          inputFileVersionKeys: []
+        }
+      ],
+      graph: {
+        schemaVersion: 1,
+        targetEntityId: 'artifact',
+        completeness: 'complete',
+        reasonCodes: [],
+        activities: [
+          {
+            activityId: 'memory-stage',
+            kind: 'notebook-run',
+            sequence: 0,
+            runIndex: 0,
+            inclusion: 'workflow-capture',
+            evidenceState: 'available'
+          },
+          {
+            activityId: 'publication',
+            kind: 'artifact-publication',
+            sequence: 1,
+            inclusion: 'target-closure',
+            evidenceState: 'available'
+          }
+        ],
+        entities: [
+          {
+            entityId: 'artifact',
+            kind: 'artifact-version',
+            versionId: 'version-1',
+            filename: 'result.csv',
+            checksum: 'b'.repeat(64),
+            sizeBytes: 1
+          }
+        ],
+        edges: []
+      }
+    })
+    const workflow = { captureId: capture.captureId, targetRunIds: ['memory-stage'] }
+    const plan = reproductionWorkflowSlices.planWorkflowSlice(capture, workflow)
+    expect(plan.status).toBe('ready')
+    const executeWorkflow = vi.fn<
+      NonNullable<ArtifactReproducibilityAttemptOwnerDependencies['executeWorkflow']>
+    >(async () => ({
+      captureId: capture.captureId,
+      planId: plan.planId,
+      verification: 'execution-only',
+      executionOnlyTargetRunIds: ['memory-stage'],
+      completedStepIds: plan.selectedStepIds,
+      comparisons: []
+    }))
+    const owner = createOwner({
+      storageRoot,
+      loadExecution: async () => ({
+        ...execution,
+        producerRunId: 'memory-stage',
+        provenanceGraph: capture.graph,
+        analysisRevision: sealArtifactAnalysisRevision(capture.graph, true),
+        workflowCapture: { state: 'available', capture }
+      }),
+      executeWorkflow
+    })
+    const batchTarget = {
+      artifactId: request.artifactId,
+      versionId: request.versionId,
+      name: 'Memory stage',
+      workflow
+    }
+    const prepareBatch = (frontierId?: string): ReturnType<typeof owner.sessionCommand> =>
+      owner.sessionCommand(
+        {
+          action: 'prepare',
+          projectId: request.projectId,
+          appSessionId: request.appSessionId,
+          targets: [{ ...batchTarget, ...(frontierId ? { frontierId } : {}) }]
+        },
+        1
+      )
+    // Reproduce the page request through the real batch admission and frozen-lock preflight.
+    const missingFrontier = await prepareBatch()
+    expect(missingFrontier?.targets[0]).toMatchObject({
+      status: 'blocked',
+      reason: 'preflight-failed'
+    })
+    const selectedFrontier = await prepareBatch('workflow-selection')
+    expect(selectedFrontier?.targets).toHaveLength(1)
+    expect(selectedFrontier?.targets[0]).toMatchObject({
+      ...batchTarget,
+      frontierId: 'workflow-selection',
+      status: 'queued',
+      steps: 1,
+      environmentCount: 1
+    })
+    expect(executeWorkflow).not.toHaveBeenCalled()
+    const states: ArtifactReproducibilityCheckState[] = []
+    const selected = {
+      ...request,
+      frontierId: 'workflow-selection',
+      workflow,
+      expectedRecipeId: plan.planId
+    }
+    owner.start(selected, 1, (state) => states.push(state))
+    await vi.waitFor(() => expect(terminalStates(states)).toHaveLength(1))
+    expect(states.at(-1)?.status).toBe('executed')
+    expect(states.at(-1)?.receipt?.workflow).toMatchObject({
+      captureId: capture.captureId,
+      planId: plan.planId,
+      executionOnlyTargetRunIds: ['memory-stage']
+    })
+    expect(states.at(-1)?.receipt?.artifactVersion.targetChecksum).toBe('b'.repeat(64))
+    expect(executeWorkflow).toHaveBeenCalledOnce()
+    const changed = createOwner({
+      loadExecution: async () => ({
+        ...execution,
+        producerRunId: 'memory-stage',
+        provenanceGraph: capture.graph,
+        analysisRevision: sealArtifactAnalysisRevision(capture.graph, true),
+        workflowCapture: { state: 'available', capture }
+      }),
+      executeWorkflow
+    })
+    const changedStates: ArtifactReproducibilityCheckState[] = []
+    changed.start({ ...selected, expectedRecipeId: '0'.repeat(64) }, 1, (state) =>
+      changedStates.push(state)
+    )
+    await vi.waitFor(() => expect(terminalStates(changedStates)).toHaveLength(1))
+    expect(changedStates.at(-1)?.status).toBe('failed')
+    expect(executeWorkflow).toHaveBeenCalledOnce()
+    const oldRevisions = [
+      'execution-dependency-proof-20261020',
+      'execution-causality-roots-20261020',
+      'execution-binding-locality-20261020'
+    ].map((revision) => {
+      const { revisionId, ...fields } = sealArtifactAnalysisRevision(capture.graph, true)
+      expect(revisionId).toHaveLength(64)
+      fields.dependencyAnalyzer = { version: 1, revision }
+      return {
+        ...fields,
+        revisionId: sha256(canonicalJson(fields as unknown as CanonicalJson))
+      }
+    })
+    for (const analysisRevision of [undefined, ...oldRevisions]) {
+      const unsupported = createOwner({
+        storageRoot,
+        loadExecution: async () => ({
+          ...execution,
+          producerRunId: 'memory-stage',
+          provenanceGraph: capture.graph,
+          analysisRevision,
+          workflowCapture: { state: 'available', capture }
+        }),
+        executeWorkflow
+      })
+      const rejected: ArtifactReproducibilityCheckState[] = []
+      unsupported.start(selected, 1, (state) => rejected.push(state))
+      await vi.waitFor(() => expect(terminalStates(rejected)).toHaveLength(1))
+      expect(rejected.at(-1)?.status).toBe('failed')
+      expect(executeWorkflow).toHaveBeenCalledOnce()
+      const prepare = vi.spyOn(reproductionWorkflowSlices, 'prepareWorkflowSlice')
+      const batch = await unsupported.sessionCommand(
+        {
+          action: 'prepare',
+          projectId: request.projectId,
+          appSessionId: request.appSessionId,
+          targets: [
+            {
+              artifactId: selected.artifactId,
+              versionId: selected.versionId,
+              frontierId: selected.frontierId,
+              workflow,
+              name: 'Memory stage'
+            }
+          ]
+        },
+        1
+      )
+      expect(batch?.targets[0]).toMatchObject({ status: 'blocked', reason: 'preflight-failed' })
+      expect(prepare).not.toHaveBeenCalled()
+      prepare.mockRestore()
+    }
+  })
+  it.each([true, false])(
+    'binds a derived restored lock to the selected source lock (valid: %s)',
+    async (valid) => {
+      const states: ArtifactReproducibilityCheckState[] = []
+      const requirement = {
+        requirementId: 'environment:r',
+        kernelKind: 'r' as const,
+        lockChecksum: '4'.repeat(64),
+        lockState: 'available' as const
+      }
+      const restored = {
+        requirementId: requirement.requirementId,
+        kernelKind: 'r' as const,
+        lockChecksum: '5'.repeat(64),
+        sourceLockChecksum: (valid ? '4' : '6').repeat(64)
+      }
+      const selectedExecution: PersistedArtifactExecutionSnapshot = {
+        ...execution,
+        reproducibilityRecipe: {
+          ...execution.reproducibilityRecipe!,
+          steps: [
+            {
+              kind: 'notebook-run',
+              stepId: 'step:run-1',
+              activityId: 'run-1',
+              sequence: 0,
+              runId: 'run-1',
+              runIndex: 0,
+              kernelKind: 'r',
+              sourceChecksum: '2'.repeat(64),
+              environmentRequirementId: requirement.requirementId,
+              inputEntityIds: [],
+              outputEntityIds: []
+            }
+          ],
+          environmentRequirements: [requirement]
+        }
+      }
+      const owner = createOwner({
+        loadExecution: vi.fn(async () => selectedExecution),
+        execute: vi.fn(async () => ({
+          matched: true,
+          completedStepIds: ['step:run-1'],
+          comparisons: [],
+          environmentLocks: [restored]
+        }))
+      })
+      owner.start(request, 1, (state) => states.push(state))
+      await vi.waitFor(() => expect(terminalStates(states)).toHaveLength(1))
+      if (valid) expect(states.at(-1)?.receipt?.environmentLocks).toEqual([restored])
+      else {
+        expect(states.at(-1)?.status).toBe('failed')
+        expect(states.at(-1)?.receipt).toBeUndefined()
+      }
+    }
+  )
   it('reports cleanup failures after cancellation without treating stopped workers as unsafe', async () => {
     const stopped = deferred()
     const execute = vi.fn(async () => {
@@ -840,6 +1131,10 @@ describe('ArtifactReproducibilityAttemptOwner', () => {
     owner.start({ ...request, frontierId: 'checkpoint:run-1' }, 7, (state) => states.push(state))
     await vi.waitFor(() => expect(terminalStates(states)).toHaveLength(1))
 
+    expect(states.at(-1)?.receipt?.frontier).toEqual({
+      frontierId: 'checkpoint:run-1',
+      claimScope: 'downstream-only'
+    })
     expect(states.at(-1)?.receipt?.environmentLocks).toEqual([
       {
         requirementId: 'environment:r',

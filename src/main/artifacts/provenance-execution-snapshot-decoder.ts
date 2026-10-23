@@ -1,7 +1,8 @@
 import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 import type {
   PersistedArtifactExecutionSnapshot,
-  ProvenanceNotebookOutput
+  ProvenanceNotebookOutput,
+  ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
 import {
   decodeVersionedJson,
@@ -14,6 +15,11 @@ import {
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
 import { artifactAnalysisRevisionMatchesGraph } from './provenance-analysis-revision'
 import { reproductionRecipes } from './reproducibility-host'
+import {
+  decodeWorkflowCaptureState,
+  validRunStageCheckpoint,
+  MAX_EXTENDED_EXECUTION_SNAPSHOT_BYTES
+} from './provenance-workflow-capture'
 
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -231,6 +237,7 @@ const executionRunValue = (value: unknown): boolean => {
     (run.environmentLock === undefined || environmentLockCaptureValue(run.environmentLock)) &&
     (run.executionContext === undefined ||
       notebookExecutionContextSchema.safeParse(run.executionContext).success) &&
+    validRunStageCheckpoint(run as unknown as ProvenanceNotebookRun) &&
     (run.scriptTruncated === undefined || run.scriptTruncated === true) &&
     (run.executionCount === undefined ||
       (typeof run.executionCount === 'number' && Number.isFinite(run.executionCount))) &&
@@ -350,7 +357,10 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
       !artifactAnalysisRevisionMatchesGraph(snapshot.analysisRevision, snapshot.provenanceGraph)) ||
     (snapshot.provenanceGraph !== undefined &&
       !graphUnsupported &&
-      !artifactProvenanceGraphValue(snapshot.provenanceGraph)) ||
+      (!artifactProvenanceGraphValue(snapshot.provenanceGraph) ||
+        snapshot.provenanceGraph.activities.some(
+          (activity) => activity.inclusion === 'workflow-capture'
+        ))) ||
     (snapshot.reproducibilityRecipe !== undefined &&
       !recipeUnsupported &&
       (!reproductionRecipes.artifactReproducibilityRecipeValue(snapshot.reproducibilityRecipe) ||
@@ -373,11 +383,25 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
     provenanceGraph: persistedGraph,
     reproducibilityRecipe: persistedRecipe,
     analysisRevision: persistedAnalysis,
+    workflowCapture: persistedWorkflow,
     ...executionFields
   } = persisted
+  const workflowCapture =
+    persistedWorkflow === undefined
+      ? undefined
+      : graphUnsupported || analysisUnsupported
+        ? { state: 'unavailable' as const, reason: 'incomplete-evidence' as const }
+        : decodeWorkflowCaptureState(
+            persistedWorkflow,
+            persisted,
+            executionRunValue,
+            executionInputFileValue
+          )
+  if (persistedWorkflow !== undefined && workflowCapture === undefined) return undefined
   const helperEvidence = decodeSnapshotHelperEvidence(snapshot, persisted.runs)
   const normalizedSnapshot: PersistedArtifactExecutionSnapshot = {
     ...executionFields,
+    ...(workflowCapture ? { workflowCapture } : {}),
     ...(!graphUnsupported && !analysisUnsupported && persistedAnalysis
       ? { analysisRevision: persistedAnalysis }
       : {}),
@@ -415,12 +439,16 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
 
 export const decodeArtifactExecutionSnapshot = (
   value: string
-): VersionedJsonDecodeResult<PersistedArtifactExecutionSnapshot> =>
-  decodeVersionedJson(value, {
+): VersionedJsonDecodeResult<PersistedArtifactExecutionSnapshot> => {
+  if (Buffer.byteLength(value, 'utf8') > MAX_EXTENDED_EXECUTION_SNAPSHOT_BYTES) {
+    return { status: 'corrupt' }
+  }
+  return decodeVersionedJson(value, {
     currentVersion: 2,
     readVersion: (candidate) => recordValue(candidate)?.schemaVersion,
     decode: executionSnapshotValue
   })
+}
 
 export const parseArtifactExecutionSnapshot = (
   value: string

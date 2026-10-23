@@ -1,3 +1,4 @@
+import { validWorkflowCapture } from '@aipoch/reproducibility'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { replayAnnotationId } from '../../shared/replay-reference'
@@ -18,6 +19,8 @@ import {
   createProvenanceTestFixture
 } from '../artifacts/provenance-test-fixtures'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { readArtifactReproducibilityExecutionEvidence } from '../artifacts/provenance-reproducibility-execution-evidence'
+import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ReviewRepository } from '../reviewer/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
@@ -2265,6 +2268,376 @@ it('rejects self-consistent archive hashes when the embedded evidence contradict
   await expect(new ProjectRepository(async () => target.client).list()).resolves.toEqual([])
 })
 
+it('keeps workflow-only foreign input versions when exporting the consuming Session', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  initDataRoot(target.storageRoot)
+  fixtures.push(source, target)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Workflow closure' } })
+  const sessions = new SessionRepository(source.storageRoot)
+  for (const id of ['session-1', 'session-B']) {
+    await sessions.saveSession({
+      id,
+      projectId: 'project-1',
+      title: id,
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    })
+  }
+  await source.client.fileOriginSession.create({
+    data: { projectId: 'project-1', sessionId: 'source-session' }
+  })
+  const content = 'count\n1\n'
+  const input: NotebookRunInputFile = {
+    sourceKind: 'upload-version',
+    inputFileVersionId: 'workflow-input-version',
+    sourceFileId: 'workflow-input',
+    sourceVersionNumber: 1,
+    sourceCreatedAt: '2026-10-20T00:00:00.000Z',
+    sourceProjectId: 'project-1',
+    sourceSessionId: 'source-session',
+    filename: 'counts.csv',
+    sizeBytes: Buffer.byteLength(content),
+    checksum: sha256(content),
+    storageKey:
+      'uploads/project-1/source-session/workflow-input/versions/workflow-input-version/content',
+    association: 'turn-attached'
+  }
+  await mkdir(dirname(join(source.storageRoot, input.storageKey)), { recursive: true })
+  await writeFile(join(source.storageRoot, input.storageKey), content)
+  await source.client.uploadFile.create({
+    data: {
+      id: input.sourceFileId,
+      projectId: input.sourceProjectId,
+      sessionId: input.sourceSessionId,
+      filename: input.filename,
+      originalFilename: input.filename,
+      versions: {
+        create: {
+          id: input.inputFileVersionId,
+          versionNumber: 1,
+          state: 'ready',
+          filename: input.filename,
+          originalFilename: input.filename,
+          contentStorageKey: input.storageKey,
+          sizeBytes: BigInt(input.sizeBytes),
+          checksum: input.checksum,
+          createdAt: new Date(input.sourceCreatedAt!)
+        }
+      }
+    }
+  })
+  const headKey = 'uploads/project-1/source-session/workflow-input/versions/unrelated-head/content'
+  await mkdir(dirname(join(source.storageRoot, headKey)), { recursive: true })
+  await writeFile(join(source.storageRoot, headKey), 'unrelated current bytes')
+  await source.client.uploadVersion.create({
+    data: {
+      id: 'unrelated-head',
+      uploadFileId: input.sourceFileId,
+      versionNumber: 2,
+      basedOnVersionId: input.inputFileVersionId,
+      state: 'ready',
+      filename: input.filename,
+      originalFilename: input.filename,
+      contentStorageKey: headKey,
+      checksum: sha256('unrelated current bytes'),
+      sizeBytes: BigInt(Buffer.byteLength('unrelated current bytes'))
+    }
+  })
+  await source.client.uploadFile.update({
+    where: { id: input.sourceFileId },
+    data: { currentVersionId: 'unrelated-head' }
+  })
+  const anchors = createArtifactVersionRequest()
+  const lane = createFrameNotebookLane('project-1', 'session-1', anchors.agentFrameId)
+  await source.notebookRepository.loadOrCreate({
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    lane,
+    workspaceCwd: source.storageRoot
+  })
+  const runs: NotebookRunRecord[] = []
+  const checkpointBlobs = new Map<string, Buffer>()
+  for (const [index, runId] of ['setup', 'producer'].entries()) {
+    const evidence = {
+      schemaVersion: 1 as const,
+      evidenceId: `evidence-${runId}`,
+      activityId: runId,
+      activityKind: 'notebook-run' as const,
+      state: 'available' as const,
+      observedRoots: ['data'],
+      initialViewState: 'complete' as const,
+      managedRootsFinalState: 'complete' as const,
+      fileReads: 'complete' as const,
+      externalPaths: 'complete' as const,
+      writerAttribution: 'complete' as const,
+      reasonCodes: [],
+      scientificOutputs: [],
+      relations: []
+    }
+    const json = JSON.stringify(evidence)
+    const key = `execution-file-evidence/project-1/session-1/activity-${runId}/evidence.json`
+    await mkdir(dirname(join(source.storageRoot, key)), { recursive: true })
+    await writeFile(join(source.storageRoot, key), json)
+    const run: NotebookRunRecord = {
+      rootFrameId: anchors.rootFrameId,
+      agentFrameId: anchors.agentFrameId,
+      messageBranchId: anchors.messageBranchId,
+      runtimeSegmentId: anchors.runtimeSegmentId,
+      promptMessageId: anchors.promptMessageId,
+      runId,
+      cellId: runId,
+      source: 'agent',
+      kernelKind: 'r',
+      kernelEpochId: 'epoch',
+      kernelDispatched: true,
+      script: index ? 'print(1)' : 'x <- 1',
+      status: 'completed',
+      startedAt: index,
+      endedAt: index + 1,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: [],
+      inputFiles: index ? [] : [input],
+      fileEvidence: {
+        ...evidence,
+        checksum: sha256(json),
+        storageKey: key,
+        relationCount: 0,
+        generationCount: 0,
+        scientificOutputCount: 0,
+        scientificOutputAnalysis: 'complete'
+      }
+    }
+    run.environmentLock = {
+      state: 'available',
+      format: 'environment-lock-bundle',
+      lockChecksum: 'd'.repeat(64)
+    }
+    const blobs = ['input', 'output'].map((kind) => {
+      const bytes = Buffer.from([0x58, 0x0a, index, kind === 'input' ? 1 : 2, 0, 255])
+      const blob = {
+        checksum: sha256(bytes),
+        sizeBytes: bytes.length,
+        storageKey: `runtime/provenance/r-stage-checkpoints/${sha256(bytes)}.rds`
+      }
+      checkpointBlobs.set(blob.storageKey, bytes)
+      return blob
+    })
+    run.stageCheckpoint = {
+      state: 'available',
+      schemaVersion: 1,
+      runId,
+      kernelEpochId: 'epoch',
+      sourceChecksum: sha256(run.script),
+      environmentLockChecksum: 'd'.repeat(64),
+      input: blobs[0]!,
+      output: blobs[1]!,
+      inputNames: ['dds'],
+      outputNames: ['result']
+    }
+    await mkdir(join(source.storageRoot, 'runtime/provenance/r-stage-checkpoints'), {
+      recursive: true
+    })
+    for (const [key, bytes] of checkpointBlobs)
+      await writeFile(join(source.storageRoot, key), bytes)
+    runs.push(run)
+    await source.notebookRepository.appendRun({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      lane,
+      run
+    })
+  }
+  // The producer has no dependency on setup. The complete R Workflow still retains setup's U.
+  const publisher = new ArtifactProvenanceRepository({
+    ...source.repositoryOptions,
+    dependencyAnalyzer: {
+      project: async () => ({
+        stalenessByRunId: { setup: { state: 'clear' }, producer: { state: 'clear' } },
+        dependenciesByRunId: { setup: [], producer: [] },
+        invalidatedByRunId: {}
+      })
+    }
+  })
+  await source.stagePng('workflow-only foreign input')
+  const version = await publisher.createVersion({
+    ...anchors,
+    sourceKind: 'inline',
+    notebookSessionId: 'session-1',
+    producerRunId: 'producer'
+  })
+  const nativeVersion = await source.client.artifactVersion.findUniqueOrThrow({
+    where: { id: version.versionId }
+  })
+  const originalExecution = JSON.parse(nativeVersion.executionSnapshotJson!)
+  expect(originalExecution.workflowCapture.state).toBe('available')
+  expect(validWorkflowCapture(originalExecution.workflowCapture.capture)).toBe(true)
+  expect(originalExecution.workflowCapture.capture.inputFiles).toEqual([input])
+  expect(originalExecution.inputFiles).toEqual([])
+  expect(await source.client.artifactVersionInput.count()).toBe(0)
+
+  // B refers only to V; neither B's Notebook nor its Session refers directly to U.
+  const consumerLane = createFrameNotebookLane('project-1', 'session-B', 'root-frame-session-B')
+  await source.notebookRepository.loadOrCreate({
+    projectId: 'project-1',
+    sessionId: 'session-B',
+    lane: consumerLane,
+    workspaceCwd: source.storageRoot
+  })
+  await source.notebookRepository.appendRun({
+    projectId: 'project-1',
+    sessionId: 'session-B',
+    lane: consumerLane,
+    run: {
+      ...runs[1],
+      rootFrameId: 'root-frame-session-B',
+      agentFrameId: 'root-frame-session-B',
+      runId: 'consumer',
+      cellId: 'consumer',
+      script: 'inspect_plot()',
+      fileEvidence: undefined,
+      stageCheckpoint: undefined,
+      inputFiles: [
+        {
+          sourceKind: 'artifact-version',
+          inputFileVersionId: version.versionId,
+          sourceFileId: version.artifactId,
+          sourceVersionNumber: nativeVersion.versionNumber,
+          sourceCreatedAt: nativeVersion.createdAt.toISOString(),
+          sourceProjectId: 'project-1',
+          sourceSessionId: 'session-1',
+          filename: nativeVersion.filename,
+          sizeBytes: Number(nativeVersion.sizeBytes),
+          checksum: nativeVersion.checksum,
+          storageKey: nativeVersion.contentStorageKey,
+          association: 'resolver-accessed'
+        }
+      ]
+    }
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  try {
+    const archive = join(source.storageRoot, 'consumer.science')
+    const [checkpointKey, checkpointBytes] = [...checkpointBlobs][0]!
+    await writeFile(join(source.storageRoot, checkpointKey), Buffer.alloc(checkpointBytes.length))
+    await expect(
+      exporter.exportTo({ projectId: 'project-1', sessionId: 'session-B' }, archive)
+    ).rejects.toThrow(/checkpoint.*mismatch/i)
+    await fsPromises.rm(join(source.storageRoot, checkpointKey))
+    await expect(
+      exporter.exportTo({ projectId: 'project-1', sessionId: 'session-B' }, archive)
+    ).rejects.toThrow()
+    await writeFile(join(source.storageRoot, checkpointKey), checkpointBytes)
+    await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-B' }, archive)
+    const manifest = await readPackageArchive(archive, join(source.storageRoot, 'expanded'))
+    expect(manifest.source.sessionId).toBe('session-B')
+    expect(
+      manifest.inventory.some((entry) =>
+        entry.storageKey?.startsWith('notebooks/project-1/session-1/')
+      )
+    ).toBe(false)
+    expect(manifest.inventory.some((entry) => entry.storageKey === headKey)).toBe(false)
+    for (const [key, bytes] of checkpointBlobs) {
+      const entry = manifest.inventory.find((entry) => entry.storageKey === key)
+      expect(entry).toMatchObject({ checksum: sha256(bytes), sizeBytes: bytes.length })
+      expect(await readFile(join(source.storageRoot, 'expanded', entry!.path))).toEqual(bytes)
+    }
+    // The archive is self-contained, including the bytes that exist only in V's frozen Workflow.
+    for (const directory of [
+      'artifacts',
+      'uploads',
+      'notebooks',
+      'execution-file-evidence',
+      'runtime/provenance/r-stage-checkpoints'
+    ]) {
+      await fsPromises.rm(join(source.storageRoot, directory), { recursive: true, force: true })
+    }
+    await mkdir(join(target.storageRoot, 'runtime/provenance/r-stage-checkpoints'), {
+      recursive: true
+    })
+    await writeFile(join(target.storageRoot, checkpointKey), Buffer.alloc(checkpointBytes.length))
+    await expect(importer.importFrom(archive)).rejects.toThrow(/checkpoint/i)
+    expect(await readFile(join(target.storageRoot, checkpointKey))).toEqual(
+      Buffer.alloc(checkpointBytes.length)
+    )
+    expect(await new ProjectRepository(async () => target.client).list()).toEqual([])
+    await fsPromises.rm(join(target.storageRoot, checkpointKey))
+    // An already installed equal checkpoint is shared safely and is never overwritten.
+    const [sharedKey, sharedBytes] = [...checkpointBlobs][1]!
+    await writeFile(join(target.storageRoot, sharedKey), sharedBytes)
+    const imported = await importer.importFrom(archive)
+    const origin = await importer.readOrigin(imported)
+    const reader = new ArtifactProvenanceRepository(target.repositoryOptions)
+    const execution = await readArtifactReproducibilityExecutionEvidence(reader, {
+      projectId: imported.projectId,
+      appSessionId: origin.identities['session-1'],
+      artifactId: origin.identities[version.artifactId],
+      versionId: origin.identities[version.versionId]
+    })
+    expect(execution.workflowCapture?.state).toBe('available')
+    if (execution.workflowCapture?.state !== 'available') throw new Error('Workflow unavailable')
+    expect(validWorkflowCapture(execution.workflowCapture.capture)).toBe(true)
+    for (const [key, bytes] of checkpointBlobs)
+      expect(await readFile(join(target.storageRoot, key))).toEqual(bytes)
+    const localProducer = execution.workflowCapture.capture.runs.find(
+      (run) => run.runId === origin.identities.producer
+    )!
+    expect(localProducer.stageCheckpoint).toEqual({
+      ...runs[1]!.stageCheckpoint,
+      runId: origin.identities.producer
+    })
+    const mappedInput = execution.workflowCapture.capture.inputFiles[0]
+    const localVersion = await target.client.uploadVersion.findUniqueOrThrow({
+      where: { id: origin.identities[input.inputFileVersionId] }
+    })
+    expect(mappedInput).toMatchObject({
+      sourceProjectId: imported.projectId,
+      sourceSessionId: origin.identities[input.sourceSessionId],
+      sourceFileId: origin.identities[input.sourceFileId],
+      inputFileVersionId: localVersion.id,
+      storageKey: localVersion.contentStorageKey,
+      checksum: input.checksum,
+      sourceVersionNumber: 1
+    })
+    expect(mappedInput.storageKey).not.toBe(input.storageKey)
+    expect(await readFile(join(target.storageRoot, mappedInput.storageKey))).toEqual(
+      Buffer.from(content)
+    )
+    expect(origin.identities['unrelated-head']).toBeUndefined()
+    expect(await target.client.uploadVersion.count()).toBe(1)
+    expect(await target.client.artifactVersionInput.count()).toBe(0)
+    const importedRuns = await target.notebookRepository.readSessionRuns(
+      imported.projectId,
+      imported.sessionId
+    )
+    expect(importedRuns.map((run) => run.script)).toEqual(['inspect_plot()'])
+    expect(importedRuns[0].inputFiles?.map((file) => file.inputFileVersionId)).toEqual([
+      origin.identities[version.versionId]
+    ])
+    expect(
+      await target.notebookRepository.readSessionRuns(
+        imported.projectId,
+        origin.identities['session-1']
+      )
+    ).toEqual([])
+  } finally {
+    await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
 it.each(['root', 'frame'] as const)(
   'keeps exact cross-Session input bytes and %s Notebook execution evidence after import',
   async (laneKind) => {
@@ -2655,6 +3028,16 @@ it.each(['root', 'frame'] as const)(
     const localVersion = await target.client.artifactVersion.findUniqueOrThrow({
       where: { id: identity.versionId }
     })
+    const sourceWorkflow = JSON.parse(sourceVersion.executionSnapshotJson!).workflowCapture
+    const localWorkflow = JSON.parse(localVersion.executionSnapshotJson!).workflowCapture
+    expect(sourceWorkflow?.state).toBe('available')
+    expect(localWorkflow?.state).toBe('available')
+    expect(validWorkflowCapture(localWorkflow.capture)).toBe(true)
+    expect(localWorkflow.capture.captureId).not.toBe(sourceWorkflow.capture.captureId)
+    expect(localWorkflow.capture.runs[0].runId).toBe(importedRun.runId)
+    expect(localWorkflow.capture.graph.targetEntityId).not.toBe(
+      sourceWorkflow.capture.graph.targetEntityId
+    )
     const sourceRecipe = JSON.parse(sourceVersion.executionSnapshotJson!).reproducibilityRecipe
     const localRecipe = JSON.parse(localVersion.executionSnapshotJson!).reproducibilityRecipe
     expect(localRecipe.targetVersionId).toBe(identity.versionId)

@@ -881,7 +881,7 @@ saveRDS(dds, "outputs/deseq2-object.rds")`
   expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
     reads: ['inputs/gene-counts.csv', 'inputs/sample-sheet.csv'],
     writes: ['outputs/deseq2-object.rds', 'outputs/deseq2-results.csv', 'outputs/rlog-matrix.tsv'],
-    readState: 'partial',
+    readState: 'complete',
     writeState: 'complete'
   })
 })

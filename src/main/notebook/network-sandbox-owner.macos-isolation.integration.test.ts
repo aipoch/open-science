@@ -2,13 +2,125 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import type { NotebookSandboxInvocation, NotebookSandboxedSpawn } from './process-sandbox'
+
+it.skipIf(process.platform !== 'darwin')(
+  'isolates reproduction temp from config storage and cleans cancellation without closing ordinary commands',
+  async () => {
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'os-repro-isolation-')))
+    const storage = join(fixture, 'config')
+    const attempt = join(fixture, 'attempt')
+    await mkdir(storage)
+    await mkdir(attempt)
+    const secret = join(storage, 'original-secret')
+    await writeFile(secret, 'must-not-be-readable')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: join(process.cwd(), 'packages', 'notebook-network-sandbox', 'vendor'),
+      temporaryRoot: join(storage, 'commands'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    const invocation = (script: string, protectedStorage: boolean): NotebookSandboxInvocation => ({
+      executable: '/bin/bash',
+      args: ['--noprofile', '--norc', '-c', script],
+      env: { PATH: '/usr/bin:/bin', HOME: fixture },
+      cwd: attempt,
+      commandText: script,
+      sessionId: protectedStorage ? 'repro' : 'ordinary',
+      projectId: 'project',
+      runtime: 'bash',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: [attempt],
+        deniedReadRoots: protectedStorage ? [storage] : [],
+        deniedWriteRoots: protectedStorage ? [storage] : []
+      }
+    })
+    const processes: Array<{ child: ChildProcessWithoutNullStreams; closed: Promise<unknown[]> }> =
+      []
+    const launch = (wrapped: NotebookSandboxedSpawn): ChildProcessWithoutNullStreams => {
+      const child = spawn(wrapped.executable, [...wrapped.args], {
+        cwd: attempt,
+        env: wrapped.env,
+        stdio: 'pipe'
+      })
+      wrapped.beginExecution?.()
+      processes.push({ child, closed: once(child, 'close') })
+      return child
+    }
+    const scope = owner.createTemporaryScope(join(attempt, 'commands'))
+    const commands: NotebookSandboxedSpawn[] = []
+    try {
+      const ordinary = await owner.wrap(
+        invocation('printf "ordinary-ready\\n"; read -r release; printf "ordinary-alive\\n"', false)
+      )
+      commands.push(ordinary)
+      const originalChild = launch(ordinary)
+      expect((await once(originalChild.stdout, 'data'))[0].toString()).toBe('ordinary-ready\n')
+      const wrapped = await scope.wrap(
+        invocation(
+          `printf 'temp-ok' > "$TMPDIR/probe" || exit 1; if /bin/cat '${secret}'; then exit 2; fi; printf 'protected-temp-ready\\n'; read -r release`,
+          true
+        )
+      )
+      commands.push(wrapped)
+      const tempRoot = wrapped.env.TMPDIR!
+      expect(tempRoot.startsWith(attempt + '/')).toBe(true)
+      const child = launch(wrapped)
+      let stderr = ''
+      child.stderr.on('data', (data) => {
+        stderr += data.toString()
+      })
+      expect((await once(child.stdout, 'data'))[0].toString()).toBe('protected-temp-ready\n')
+      child.kill('SIGKILL')
+      await processes.at(-1)!.closed
+      expect(stderr).toContain('Operation not permitted')
+      await expect(
+        wrapped.cleanup('cancel', { processesTerminated: true, processState: 'started-and-reaped' })
+      ).resolves.toMatchObject({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      await scope.dispose()
+      expect(existsSync(tempRoot)).toBe(false)
+      expect(existsSync(`${tempRoot}.receipt`)).toBe(false)
+      expect(originalChild.exitCode).toBeNull()
+      const continuation = once(originalChild.stdout, 'data')
+      originalChild.stdin.end('release\n')
+      expect((await continuation)[0].toString()).toBe('ordinary-alive\n')
+      await processes[0]!.closed
+      await ordinary.cleanup('exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
+    } finally {
+      for (const { child } of processes)
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await Promise.allSettled(processes.map(({ closed }) => closed))
+      try {
+        for (const command of commands) {
+          await command.cleanup('cancel', {
+            processesTerminated: true,
+            processState: 'started-and-reaped'
+          })
+        }
+        await scope.dispose()
+      } finally {
+        await owner.dispose()
+        await rm(fixture, { recursive: true, force: true })
+      }
+    }
+  },
+  30_000
+)
 
 it.skipIf(process.platform !== 'darwin').each([1, 65])(
   'executes independent Bash beside %i retained native commands, including a live unknown process',

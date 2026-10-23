@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, type Dirent } from 'node:fs'
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { lstat, readFile, readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { validateConversationGraph } from '../../shared/conversation-graph'
@@ -8,6 +8,10 @@ import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
 import { parseNotebookEnvironmentLock } from '@aipoch/environment'
+import type { ProvenanceNotebookRun } from '@aipoch/reproducibility/contracts'
+import { validWorkflowCapture } from '@aipoch/reproducibility'
+import { validRunStageCheckpoint } from '../artifacts/provenance-workflow-capture'
+import { digestFileWithinBudget } from '../bounded-file-io'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { resolveContentStorageKey } from './content-repository'
@@ -89,6 +93,68 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+
+const validateRunStageCheckpoint = async (
+  root: string,
+  value: Record<string, unknown>
+): Promise<void> => {
+  const run = value as unknown as ProvenanceNotebookRun
+  if (!validRunStageCheckpoint(run)) throw new Error('Invalid R stage checkpoint binding.')
+  if (run.stageCheckpoint?.state !== 'available') return
+  for (const file of [run.stageCheckpoint.input, run.stageCheckpoint.output]) {
+    // Storage keys are already constrained by the shared validator. Reject links in each path
+    // component so migration never blesses a blob living outside the copied directory.
+    let path = root
+    const segments = file.storageKey.split('/')
+    for (const [index, segment] of segments.entries()) {
+      path = join(path, segment)
+      const info = await lstat(path)
+      if (
+        info.isSymbolicLink() ||
+        (index === segments.length - 1
+          ? !info.isFile() || info.size !== file.sizeBytes
+          : !info.isDirectory())
+      )
+        throw new Error('Invalid R stage checkpoint storage path or size.')
+    }
+    const actual = await digestFileWithinBudget(path, file.sizeBytes)
+    if (actual.checksum !== file.checksum || actual.sizeBytes !== file.sizeBytes)
+      throw new Error('R stage checkpoint checksum or size mismatch.')
+  }
+}
+
+const validateExecutionStageCheckpoints = async (
+  root: string,
+  execution: Record<string, unknown>
+): Promise<void> => {
+  const workflow = recordValue(execution.workflowCapture)
+  if (
+    execution.workflowCapture !== undefined &&
+    (!workflow || (workflow.state !== 'available' && workflow.state !== 'unavailable'))
+  )
+    throw new Error('Invalid R stage checkpoint Workflow format.')
+  if (workflow?.state === 'available' && !validWorkflowCapture(workflow.capture))
+    throw new Error('Invalid R stage checkpoint Workflow capture.')
+  const capture = recordValue(workflow?.capture)
+  const runs = [
+    ...(Array.isArray(execution.runs) ? execution.runs : []),
+    ...(workflow?.state === 'available' && Array.isArray(capture?.runs) ? capture.runs : [])
+  ]
+  const locks = await collectEnvironmentLocks(root)
+  const validatedLocks = new Set<string>()
+  for (const value of runs) {
+    const run = recordValue(value)
+    if (!run) throw new Error('Invalid execution checkpoint Run.')
+    await validateRunStageCheckpoint(root, run)
+    await validateEnvironmentLockReference(
+      root,
+      run.environmentLock,
+      locks,
+      validatedLocks,
+      `Artifact execution run ${String(run.runId ?? '')}`
+    )
+  }
+}
 
 // Runtime operation journals are the authoritative crash-recovery record for prefix mutations. Unlike
 // the path-keyed Environment inventory cache below, a pending record may identify a still-running child
@@ -204,42 +270,59 @@ const validateReferencedEnvironmentManifests = async (
     if (!project.isDirectory()) continue
     for (const session of await readEntries(join(notebooksRoot, project.name))) {
       if (!session.isDirectory()) continue
-      const runPath = join(notebooksRoot, project.name, session.name, NOTEBOOK_RUN_FILE)
-      if (!(await fileExists(runPath))) continue
-      const document = await readRecord(runPath)
-      const projectId = document.projectId ?? document.projectName
-      if (projectId !== project.name || document.sessionId !== session.name) {
-        throw new Error(`Notebook run ownership is invalid: ${project.name}/${session.name}`)
-      }
-      const runs = Array.isArray(document.runs) ? document.runs : []
-      for (const rawRun of runs) {
-        const run = recordValue(rawRun)
-        if (!run) throw new Error(`Notebook run record is invalid: ${project.name}/${session.name}`)
-        const capture = recordValue(run.environmentCapture)
-        const captureState = capture?.state
-        const checksum =
-          typeof run.environmentManifestChecksum === 'string'
-            ? run.environmentManifestChecksum
-            : captureState === 'available' || captureState === 'partial'
-              ? capture?.manifestChecksum
-              : undefined
-        await validateEnvironmentLockReference(
-          root,
-          run.environmentLock,
-          lockChecksums,
-          validatedLocks,
-          `Notebook run ${String(run.runId ?? '')}`
-        )
-        if (checksum === undefined) continue
-        if (typeof checksum !== 'string' || !SHA256_PATTERN.test(checksum)) {
-          throw new Error(`Notebook Environment reference is invalid: ${String(run.runId ?? '')}`)
+      const validateDocument = async (runPath: string, agentFrameId?: string): Promise<void> => {
+        if (!(await fileExists(runPath))) return
+        const document = await readRecord(runPath)
+        const projectId = document.projectId ?? document.projectName
+        if (projectId !== project.name || document.sessionId !== session.name) {
+          throw new Error(`Notebook run ownership is invalid: ${project.name}/${session.name}`)
         }
-        await validateEnvironmentManifestChecksum(
-          root,
-          checksum,
-          manifestChecksums,
-          validatedManifests
-        )
+        const runs = Array.isArray(document.runs) ? document.runs : []
+        for (const rawRun of runs) {
+          const run = recordValue(rawRun)
+          if (!run)
+            throw new Error(`Notebook run record is invalid: ${project.name}/${session.name}`)
+          if (
+            agentFrameId !== undefined &&
+            run.agentFrameId !== undefined &&
+            run.agentFrameId !== agentFrameId
+          ) {
+            throw new Error(`Notebook run Frame ownership is invalid: ${agentFrameId}`)
+          }
+          await validateRunStageCheckpoint(root, run)
+          const capture = recordValue(run.environmentCapture)
+          const captureState = capture?.state
+          const checksum =
+            typeof run.environmentManifestChecksum === 'string'
+              ? run.environmentManifestChecksum
+              : captureState === 'available' || captureState === 'partial'
+                ? capture?.manifestChecksum
+                : undefined
+          await validateEnvironmentLockReference(
+            root,
+            run.environmentLock,
+            lockChecksums,
+            validatedLocks,
+            `Notebook run ${String(run.runId ?? '')}`
+          )
+          if (checksum === undefined) continue
+          if (typeof checksum !== 'string' || !SHA256_PATTERN.test(checksum)) {
+            throw new Error(`Notebook Environment reference is invalid: ${String(run.runId ?? '')}`)
+          }
+          await validateEnvironmentManifestChecksum(
+            root,
+            checksum,
+            manifestChecksums,
+            validatedManifests
+          )
+        }
+      }
+      const sessionRoot = join(notebooksRoot, project.name, session.name)
+      await validateDocument(join(sessionRoot, NOTEBOOK_RUN_FILE))
+      const framesRoot = join(sessionRoot, 'frames')
+      for (const frame of await readEntries(framesRoot)) {
+        if (!frame.isDirectory()) continue
+        await validateDocument(join(framesRoot, frame.name, NOTEBOOK_RUN_FILE), frame.name)
       }
     }
   }
@@ -301,6 +384,7 @@ const validateArtifactVersions = async (
               throw new Error(`Artifact execution checksum mismatch: ${version.name}`)
             }
             const execution = await readRecord(executionPath)
+            await validateExecutionStageCheckpoints(root, execution)
             if (execution.reproducibilityRecipe !== undefined) {
               const decoded = decodeArtifactExecutionSnapshot(JSON.stringify(execution))
               if (decoded.status !== 'valid' || !decoded.value.reproducibilityRecipe) {
@@ -507,6 +591,12 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
           ) {
             throw new Error(`Artifact execution mirror mismatch: ${agentVersion.id}`)
           }
+          await validateExecutionStageCheckpoints(
+            dataRoot,
+            await readRecord(
+              resolveManagedStorageKey(dataRoot, agentVersion.executionSnapshotStorageKey!)
+            )
+          )
         }
       }
     }

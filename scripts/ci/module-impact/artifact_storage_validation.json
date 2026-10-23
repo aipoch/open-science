@@ -13,7 +13,9 @@
     "src/main/artifacts/provenance-storage.ts",
     "src/main/artifacts/reproducibility-host.test.ts",
     "src/main/artifacts/reproducibility-host.ts",
-    "src/main/artifacts/reproducibility-source.ts"
+    "src/main/artifacts/reproducibility-source.ts",
+    "src/main/artifacts/provenance-workflow-capture.ts",
+    "src/main/artifacts/provenance-workflow-capture.test.ts"
   ],
   "interfacePaths": [
     "src/main/artifacts/artifact-provenance-graph.ts",
@@ -53,14 +55,16 @@
     "src/main/artifacts/session-reproducibility-store.ts",
     "src/main/notebook/reproduction-runtime.ts",
     "src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx",
-    "src/shared/artifact-reproducibility.ts"
+    "src/shared/artifact-reproducibility.ts",
+    "src/main/artifacts/provenance-workflow-capture.ts"
   ],
   "testFiles": {
     "owner": [
       "src/main/artifacts/artifact-provenance-graph.test.ts",
       "src/main/artifacts/artifact-reproducibility-outputs.test.ts",
       "src/main/artifacts/artifact-reproducibility-receipts.test.ts",
-      "src/main/artifacts/provenance-analysis-revision.test.ts"
+      "src/main/artifacts/provenance-analysis-revision.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts"
     ],
     "contract": [
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",

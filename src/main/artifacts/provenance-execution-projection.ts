@@ -9,6 +9,32 @@ export const projectPublicArtifactExecutionSnapshot = (
   persisted: PersistedArtifactExecutionSnapshot,
   inputFiles: ProvenanceExecutionInputFile[]
 ): ArtifactExecutionSnapshot => {
+  const capture =
+    persisted.workflowCapture?.state === 'available' ? persisted.workflowCapture.capture : undefined
+  const notebookRunIds = new Set(capture?.runs.map((run) => run.runId) ?? [])
+  const boundaryIds = new Set(
+    capture?.graph.edges.flatMap((edge) =>
+      edge.kind === 'used' &&
+      edge.authority === 'authoritative' &&
+      notebookRunIds.has(edge.activityId)
+        ? [edge.entityId]
+        : []
+    ) ?? []
+  )
+  // A frozen file-set is an indivisible boundary even when the consumer reads one member.
+  let expanded = true
+  while (expanded) {
+    expanded = false
+    for (const group of capture?.graph.outputGroups ?? []) {
+      if (!group.memberEntityIds.some((id) => boundaryIds.has(id))) continue
+      for (const id of group.memberEntityIds) {
+        if (!boundaryIds.has(id)) {
+          boundaryIds.add(id)
+          expanded = true
+        }
+      }
+    }
+  }
   const reproducibility = projectCapturedArtifactReproducibility(persisted)
   return {
     schemaVersion: persisted.schemaVersion,
@@ -23,6 +49,40 @@ export const projectPublicArtifactExecutionSnapshot = (
     inputFiles,
     runs: persisted.runs,
     ...(reproducibility ? { reproducibility } : {}),
+    ...(persisted.workflowCapture
+      ? {
+          workflow:
+            persisted.workflowCapture.state === 'unavailable'
+              ? persisted.workflowCapture
+              : {
+                  state: 'available' as const,
+                  captureId: persisted.workflowCapture.capture.captureId,
+                  stages: persisted.workflowCapture.capture.runs.map((run) => ({
+                    runId: run.runId,
+                    runIndex: run.runIndex,
+                    kernelKind: run.kernelKind,
+                    outputCount:
+                      capture?.graph.edges.filter(
+                        (edge) => edge.kind === 'generated' && edge.activityId === run.runId
+                      ).length ?? 0
+                  })),
+                  boundaries: persisted.workflowCapture.capture.graph.entities.flatMap((entity) =>
+                    entity.kind === 'file-generation' &&
+                    entity.pathPortability === 'relative' &&
+                    boundaryIds.has(entity.entityId)
+                      ? [
+                          {
+                            entityId: entity.entityId,
+                            relativePath: entity.relativePath,
+                            checksum: entity.checksum,
+                            sizeBytes: entity.sizeBytes
+                          }
+                        ]
+                      : []
+                  )
+                }
+        }
+      : {}),
     ...(persisted.helperModules
       ? {
           helperModules: persisted.helperModules.map((helper) => ({

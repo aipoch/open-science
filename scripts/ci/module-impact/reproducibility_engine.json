@@ -32,7 +32,10 @@
     "packages/reproducibility/tsconfig.test.json",
     "packages/reproducibility/vitest.config.ts",
     "packages/reproducibility/README.md",
-    "packages/reproducibility/src/output-files.test.ts"
+    "packages/reproducibility/src/output-files.test.ts",
+    "packages/reproducibility/src/workflow-slice.ts",
+    "packages/reproducibility/src/workflow-slice.test.ts",
+    "packages/reproducibility/src/r-stage-checkpoint.ts"
   ],
   "interfacePaths": [
     "packages/reproducibility/src/index.ts",
@@ -54,7 +57,8 @@
       "packages/reproducibility/src/r-random-replay.test.ts",
       "packages/reproducibility/src/recipe.test.ts",
       "packages/reproducibility/src/scientific-output-comparison.test.ts",
-      "packages/reproducibility/src/output-files.test.ts"
+      "packages/reproducibility/src/output-files.test.ts",
+      "packages/reproducibility/src/workflow-slice.test.ts"
     ],
     "contract": [],
     "consumer": [

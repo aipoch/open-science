@@ -6,13 +6,18 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "artifact_content_contracts": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "artifact_provenance": ["src/main/session-package/materialize.test.ts"],
+    "artifact_provenance": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "artifact_publication_request": ["src/main/session-package/materialize.test.ts"],
     "artifact_storage": ["src/main/session-package/materialize.test.ts"],
     "artifact_storage_validation": [
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
@@ -26,8 +31,12 @@
     ],
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
     "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
+    "desktop_composition": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
     "durable_files": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/credential-identity/recovery.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/create-strategy.test.ts",
@@ -38,26 +47,59 @@
       "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx"
     ],
     "environment_contracts": [
+      "packages/reproducibility/src/workflow-slice.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/r-stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "environment_engine": [
+      "packages/reproducibility/src/workflow-slice.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/kernel-protocol.test.ts",
+      "src/main/notebook/r-stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "host_bounded_io": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/image-preview-resize.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
-    "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_file_publisher": [
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "host_http_transport": [
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
+    ],
+    "host_process_runtime": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
+    "host_runtime_lifecycle": [
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
+    "host_runtime_ports": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
     "host_value_guards": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "i18n_main_adapter": [
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
     "i18n_renderer_adapter": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -69,6 +111,8 @@
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
     "i18n_shared_runtime": [
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -104,6 +148,10 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "main_background_result_delivery": [
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
+    ],
     "main_database": ["src/main/session-package/materialize.test.ts"],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
     "main_storage": ["src/main/session-package/materialize.test.ts"],
@@ -132,6 +180,7 @@
       "src/main/notebook/cell-execution-input.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/notebook/compute-evidence-recovery.integration.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/heatmap-loop.integration.test.ts",
       "src/main/notebook/host-compute.integration.test.ts",
@@ -178,6 +227,7 @@
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
@@ -203,11 +253,13 @@
       "src/main/notebook/compute-evidence-recovery.integration.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/heatmap-loop.integration.test.ts",
       "src/main/notebook/input-resource-repro.integration.test.ts",
       "src/main/notebook/kernel-file-evidence.integration.test.ts",
       "src/main/notebook/python-loop.integration.test.ts",
       "src/main/notebook/r-loop.integration.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/notebook/run-terminalization.test.ts",
       "src/main/notebook/serialized-file-provenance.test.ts",
       "src/main/notebook/working-file-observer.analysis-contract.integration.test.ts",
@@ -217,17 +269,55 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
+    "native_process_tree": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
     "notebook_analysis": [
+      "packages/notebook-analysis/src/r-minimal-environment.test.ts",
+      "packages/reproducibility/src/workflow-slice.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/r-stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "notebook_analysis_engine": ["src/main/session-package/materialize.test.ts"],
-    "notebook_execution_model": ["src/main/session-package/materialize.test.ts"],
-    "notebook_input_materialization": ["src/main/session-package/materialize.test.ts"],
-    "notebook_repository": ["src/main/session-package/materialize.test.ts"],
-    "notebook_syntax": ["src/main/session-package/materialize.test.ts"],
+    "notebook_analysis_engine": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_application": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
+    "notebook_code_risk": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
+    "notebook_environment_provisioning": [
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
+    ],
+    "notebook_execution_model": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_input_materialization": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_network_sandbox": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
+    "notebook_repository": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_runtime_binding": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
+    "notebook_syntax": [
+      "packages/notebook-analysis/src/r-minimal-environment.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "package_journal_catalog": [
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -347,9 +437,11 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "provider_credentials": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
     "providers_package": [
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/recovery.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
@@ -388,6 +480,7 @@
     "renderer_desktop_recovery": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
+      "src/renderer/src/pages/workspace/SessionReproducibilityDialog.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
@@ -614,13 +707,25 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "reproducibility_contracts": [
+      "packages/reproducibility/src/workflow-slice.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/r-stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "reproducibility_engine": ["src/main/session-package/materialize.test.ts"],
+    "reproducibility_engine": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/kernel-protocol.test.ts",
+      "src/main/notebook/r-stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "reviewer_evidence": ["src/main/session-package/materialize.test.ts"],
     "reviewer_repository": ["src/main/session-package/materialize.test.ts"],
     "reviewer_tool_contracts": ["src/main/session-package/materialize.test.ts"],
@@ -1127,6 +1232,7 @@
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
@@ -1217,6 +1323,7 @@
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/heatmap-loop.integration.test.ts",
       "src/main/notebook/host-compute.integration.test.ts",
@@ -1260,6 +1367,7 @@
       "src/main/notebook/real-notebook-lineage.integration.test.ts",
       "src/main/notebook/real-parquet-lineage.integration.test.ts",
       "src/main/notebook/repl-loop.integration.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",
       "src/main/notebook/reproduction-runtime.test.ts",
       "src/main/notebook/run-terminalization.test.ts",
@@ -1570,6 +1678,7 @@
       "src/renderer/src/pages/workspace/SessionNotebookDialog.render.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayEvidence.test.tsx",
       "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
+      "src/renderer/src/pages/workspace/SessionReproducibilityDialog.test.tsx",
       "src/renderer/src/pages/workspace/SessionReviewerPanel.render.test.tsx",
       "src/renderer/src/pages/workspace/SpecialistSubmenu.render.test.tsx",
       "src/renderer/src/pages/workspace/SubagentReleaseSurfaces.render.test.tsx",
@@ -3665,11 +3774,13 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/notebook/cell-execution-input.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-restoration-sandbox.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/kernel-executor.test.ts",
       "src/main/notebook/local-rpc-server.agents.test.ts",
       "src/main/notebook/local-rpc-server.skills.test.ts",
@@ -4041,6 +4152,7 @@
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
@@ -4107,6 +4219,7 @@
       "src/main/notebook/environment-lifecycle-workflows.test.ts",
       "src/main/notebook/environment-provisioning.contract.test.ts",
       "src/main/notebook/environment-recovery.contract.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/heatmap-loop.integration.test.ts",
       "src/main/notebook/host-compute.integration.test.ts",
@@ -4154,6 +4267,7 @@
       "src/main/notebook/repository-cache-consistency.test.ts",
       "src/main/notebook/repository-kernel-metadata.test.ts",
       "src/main/notebook/repository.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",
       "src/main/notebook/reproduction-runtime.test.ts",
       "src/main/notebook/run-terminalization.test.ts",
@@ -4581,9 +4695,11 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/notebook/cell-execution-input.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/host-compute.integration.test.ts",
       "src/main/notebook/host-frames-service.test.ts",
@@ -6734,8 +6850,10 @@
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/artifact-reproducibility-commands.test.ts",
+      "src/main/artifacts/artifact-reproducibility-export.test.ts",
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
       "src/main/artifacts/artifact-reproducibility-lifecycle.test.ts",
+      "src/main/artifacts/artifact-reproducibility-receipts.test.ts",
       "src/main/artifacts/artifact-save.integration.test.ts",
       "src/main/artifacts/code-reconstruction.test.ts",
       "src/main/artifacts/ipc.test.ts",
@@ -7430,6 +7548,7 @@
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/heatmap-loop.integration.test.ts",
       "src/main/notebook/host-compute.integration.test.ts",
@@ -7713,6 +7832,7 @@
       "src/main/notebook/auto-mode-budget.integration.test.ts",
       "src/main/notebook/cell-execution-input.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/environment-bundle-resources.test.ts",
@@ -7720,6 +7840,7 @@
       "src/main/notebook/environment-resources.test.ts",
       "src/main/notebook/environment-runner.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/host-model-service.test.ts",
       "src/main/notebook/kernel-executor.test.ts",
       "src/main/notebook/local-rpc-server.agents.test.ts",
@@ -8192,6 +8313,7 @@
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
@@ -8288,6 +8410,7 @@
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/environment-capture.contract.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/notebook/full-stack.smoke.test.ts",
       "src/main/notebook/heatmap-loop.integration.test.ts",
       "src/main/notebook/host-compute.integration.test.ts",
@@ -8335,6 +8458,7 @@
       "src/main/notebook/repository-cache-consistency.test.ts",
       "src/main/notebook/repository-kernel-metadata.test.ts",
       "src/main/notebook/repository.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/notebook/reproduction-runtime.integration.test.ts",
       "src/main/notebook/reproduction-runtime.test.ts",
       "src/main/notebook/run-terminalization.test.ts",
@@ -8818,14 +8942,21 @@
     ],
     "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "storage_location": [
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "storage_state": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "upload_file_transport": [
+      "src/main/artifacts/provenance-workflow-capture.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
@@ -9073,6 +9204,10 @@
     "workspace_version_workflow": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+    ],
+    "wsl_runtime_admission": [
+      "src/main/notebook/cross-turn-input-repro.integration.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ]
   }
 }

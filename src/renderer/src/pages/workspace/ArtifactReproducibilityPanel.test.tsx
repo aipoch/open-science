@@ -1821,6 +1821,152 @@ describe('ArtifactReproducibilityPanel', () => {
     expect(container.textContent).toContain('Result reproduced')
   })
 
+  it.each([
+    ['current', true],
+    ['history', true],
+    ['current', false],
+    ['history', false]
+  ] as const)(
+    'shows execution-only %s (file comparisons: %s) without claiming that matching file comparisons verify every target',
+    async (source, hasFileComparisons) => {
+      const saved: ArtifactReproducibilityReceipt = {
+        ...receipt(),
+        outcome: 'executed',
+        comparisons: hasFileComparisons ? receipt().comparisons : [],
+        workflow: {
+          captureId: 'c'.repeat(64),
+          targetRunIds: ['run-1', 'run-memory'],
+          boundaryEntityIds: [],
+          planId: 'd'.repeat(64),
+          verification: 'execution-only',
+          executionOnlyTargetRunIds: ['run-memory']
+        }
+      }
+      const state: ArtifactReproducibilityCheckState = {
+        request: { ...saved.artifactVersion, frontierId: 'workflow-selection' },
+        attemptId: saved.receiptId,
+        startedAt: saved.startedAt,
+        status: 'executed',
+        revision: 1,
+        completedSteps: 2,
+        totalSteps: 2,
+        completedEnvironments: 1,
+        totalEnvironments: 1,
+        totalComparisons: saved.comparisons.length,
+        receipt: saved,
+        comparisons: saved.comparisons
+      }
+      ;(window as unknown as { api: unknown }).api = {
+        artifacts: {
+          startReproducibilityCheck: vi.fn(),
+          cancelReproducibilityCheck: vi.fn(),
+          onReproducibilityCheckChanged: vi.fn(() => () => undefined),
+          getReproducibilityCheck: vi.fn(async () => (source === 'current' ? state : undefined)),
+          listReproducibilityReceipts: vi.fn(async () => ({ receipts: [saved] }))
+        }
+      }
+      await act(async () =>
+        root.render(
+          <ArtifactReproducibilityPanel
+            projection={projection()}
+            artifactVersion={saved.artifactVersion}
+          />
+        )
+      )
+      expect(container.querySelector('#reproducibility-check-title')?.textContent).toBe(
+        'Executed (outputs not fully verified)'
+      )
+      const history = container.querySelector(
+        '[data-reproducibility-history-entry="executed"] summary'
+      )
+      expect(history?.textContent).toContain('Executed (outputs not fully verified)')
+      expect(history?.textContent).not.toContain('Byte-for-byte match')
+      expect(container.textContent).not.toContain('All selected outputs match the captured result.')
+      expect(container.textContent).not.toContain('Result reproduced')
+      expect(container.textContent).not.toContain('Result differs')
+    }
+  )
+
+  it.each([
+    ['matched', 'history'],
+    ['different', 'history'],
+    ['matched', 'receipt'],
+    ['different', 'receipt'],
+    ['matched', 'request'],
+    ['different', 'request']
+  ] as const)(
+    'limits %s workflow conclusions to selected runs from the %s',
+    async (outcome, source) => {
+      const saved: ArtifactReproducibilityReceipt = {
+        ...receipt(outcome),
+        workflow: {
+          captureId: 'c'.repeat(64),
+          targetRunIds: ['early-csv-run', 'side-branch-run'],
+          boundaryEntityIds: [],
+          planId: 'd'.repeat(64),
+          verification: 'file-comparison',
+          executionOnlyTargetRunIds: []
+        }
+      }
+      const state: ArtifactReproducibilityCheckState = {
+        request: {
+          ...saved.artifactVersion,
+          frontierId: 'workflow-selection',
+          ...(source === 'request' ? { workflow: saved.workflow } : {})
+        },
+        attemptId: saved.receiptId,
+        startedAt: saved.startedAt,
+        status: outcome,
+        revision: 1,
+        completedSteps: 2,
+        totalSteps: 2,
+        completedEnvironments: 1,
+        totalEnvironments: 1,
+        totalComparisons: saved.comparisons.length,
+        receipt: source === 'receipt' ? saved : undefined,
+        comparisons: saved.comparisons
+      }
+      ;(window as unknown as { api: unknown }).api = {
+        artifacts: {
+          startReproducibilityCheck: vi.fn(),
+          cancelReproducibilityCheck: vi.fn(),
+          onReproducibilityCheckChanged: vi.fn(() => () => undefined),
+          getReproducibilityCheck: vi.fn(async () => (source === 'history' ? undefined : state)),
+          listReproducibilityReceipts: vi.fn(async () => ({
+            receipts: source === 'request' ? [] : [saved]
+          }))
+        }
+      }
+      await act(async () =>
+        root.render(
+          <ArtifactReproducibilityPanel
+            projection={projection()}
+            artifactVersion={saved.artifactVersion}
+          />
+        )
+      )
+      const title =
+        outcome === 'matched' ? 'Compared outputs reproduced' : 'Compared outputs differ'
+      expect(container.querySelector('#reproducibility-check-title')?.textContent).toBe(title)
+      const scope = container.querySelector('[data-reproducibility-check-conclusion]')?.textContent
+      expect(scope).toContain('Selected captured runs: early-csv-run, side-branch-run')
+      expect(scope).not.toContain('End-to-end claim')
+      expect(scope).not.toContain('Downstream-only claim')
+      if (source !== 'request') {
+        const history = container.querySelector(
+          `[data-reproducibility-history-entry="${outcome}"] summary`
+        )
+        expect(history?.textContent).toContain(title)
+        expect(history?.textContent).toContain(
+          'Selected captured runs: early-csv-run, side-branch-run'
+        )
+        expect(history?.textContent).not.toContain('End-to-end claim')
+      }
+      expect(container.textContent).not.toContain('Result reproduced')
+      expect(container.textContent).not.toContain('Result differs')
+    }
+  )
+
   it('loads durable verification history and keeps its details collapsed by default', async () => {
     const artifactVersion = {
       projectId: 'project-1',

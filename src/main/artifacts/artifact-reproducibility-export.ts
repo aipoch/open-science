@@ -243,13 +243,15 @@ const buildVerificationReport = (
   sourceEvidence = false,
   outputsOmitted = false
 ): string => {
+  const fileComparisons = receipt.comparisons.filter((comparison) => !comparison.stateComparison)
+  const stateComparisons = receipt.comparisons.filter((comparison) => comparison.stateComparison)
   const environmentRows = receipt.environmentLocks.length
     ? receipt.environmentLocks.map(
         (lock) =>
           `| ${markdownCell(lock.kernelKind)} | ${markdownCell(lock.requirementId)} | ${markdownCell(lock.environmentName)} | ${lock.lockChecksum} |`
       )
     : ['| — | — | — | — |']
-  const comparisonRows = receipt.comparisons.map(
+  const comparisonRows = fileComparisons.map(
     (comparison) =>
       `| ${comparisonResult(comparison)} | ${markdownCell(comparison.relativePath)} | ${comparison.expectedChecksum} | ${markdownCell(comparison.actualChecksum)} | ${comparison.expectedSizeBytes} | ${markdownCell(comparison.actualSizeBytes)} | ${markdownCell(comparison.reason)} |`
   )
@@ -257,7 +259,7 @@ const buildVerificationReport = (
   return [
     '# Reproducibility verification record',
     '',
-    `- Conclusion: **${receipt.outcome === 'matched' ? 'Result reproduced' : 'Result differs'}**`,
+    `- Conclusion: **${receipt.outcome === 'executed' ? 'Executed (outputs not fully verified)' : receipt.outcome === 'matched' ? (receipt.workflow ? 'Compared outputs reproduced' : 'Result reproduced') : receipt.workflow ? 'Compared outputs differ' : 'Result differs'}**`,
     `- Started: ${receipt.startedAt}`,
     `- Completed: ${receipt.completedAt}`,
     `- Claim scope: ${receipt.frontier.claimScope}`,
@@ -277,6 +279,14 @@ const buildVerificationReport = (
     '',
     `- Frontier ID: ${markdownCell(receipt.frontier.frontierId)}`,
     `- Recipe ID: ${receipt.recipe.recipeId}`,
+    ...(receipt.workflow
+      ? [
+          `- Workflow capture ID: ${receipt.workflow.captureId}`,
+          `- Selected stages: ${receipt.workflow.targetRunIds.map(markdownCell).join(', ')}`,
+          `- Execution-only stages: ${receipt.workflow.executionOnlyTargetRunIds.map(markdownCell).join(', ')}`,
+          `- Frozen boundaries: ${(receipt.workflow.boundaryEntityIds ?? []).map(markdownCell).join(', ')}`
+        ]
+      : []),
     `- Dependency graph checksum: ${receipt.recipe.graphChecksum}`,
     '',
     '## Environment locks',
@@ -297,10 +307,25 @@ const buildVerificationReport = (
     '',
     '| File | Content result | Reason |',
     '| --- | --- | --- |',
-    ...receipt.comparisons.map((comparison) => {
+    ...fileComparisons.map((comparison) => {
       const report = comparison.contentComparison
       return `| ${markdownCell(comparison.relativePath)} | ${markdownCell(report?.outcome ?? (comparison.contentComparisonUnavailableReason ? 'Unavailable' : comparison.status === 'matched' ? 'Not needed (identical bytes)' : 'Not recorded'))} | ${markdownCell(report?.reason ?? comparison.contentComparisonUnavailableReason)} |`
     }),
+    ...(stateComparisons.length
+      ? [
+          '',
+          '## State comparisons',
+          '',
+          'Normalized R objects are compared separately from file bytes. Byte equality is not assessed for state comparisons.',
+          '',
+          '| State | Result | Reason |',
+          '| --- | --- | --- |',
+          ...stateComparisons.map(
+            (comparison) =>
+              `| ${markdownCell(comparison.relativePath)} | ${comparisonResult(comparison)} | ${comparison.stateComparison!.outcome === 'equal' ? 'Normalized R objects are equal' : 'Normalized R objects differ'} |`
+          )
+        ]
+      : []),
     '',
     sourceEvidence
       ? '> These checks were recorded by the source installation, not rerun here.'

@@ -38,6 +38,69 @@ afterEach(async () => {
 })
 
 describe('DataRootCleanupJournal', () => {
+  it('recovers cleanup of the immutable R state subtree without revoking runtime access', async () => {
+    const directory = join('runtime', 'provenance', 'r-stage-checkpoints')
+    for (const dataRoot of [source, target]) {
+      await mkdir(join(dataRoot, directory), { recursive: true })
+      await writeFile(join(dataRoot, directory, 'state.rds'), 'immutable R state')
+    }
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'cleanup-token',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      migratedDirs: [directory],
+      inventory: await scanInventory(target, [directory])
+    })
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({ token: 'cleanup-token', source, target, dirs: [directory], createdAt: 1 })
+    await journal.markCommitted('cleanup-token')
+    const revoke = vi.fn(async () => undefined)
+    expect(
+      await new DataRootCleanupJournal(configRoot).recover(
+        target,
+        createDataRootSourceCleanup(revoke)
+      )
+    ).toEqual({ pending: false, failureCount: 0 })
+    expect(revoke).not.toHaveBeenCalled()
+    expect(await readFile(join(target, directory, 'state.rds'), 'utf8')).toBe('immutable R state')
+    await expect(readFile(join(source, directory, 'state.rds'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it('retains the whole source runtime if a legacy cleanup receipt omitted its R state', async () => {
+    const directory = join('runtime', 'provenance', 'r-stage-checkpoints')
+    await mkdir(join(source, directory), { recursive: true })
+    await writeFile(join(source, directory, 'state.rds'), 'only R state copy')
+    const migratedDirs = [
+      join('runtime', 'pkgs'),
+      join('runtime', 'provenance', 'environment-manifests')
+    ]
+    for (const dir of migratedDirs) await mkdir(join(target, dir), { recursive: true })
+    await writeMigrationMarker(target, {
+      version: 1,
+      token: 'cleanup-token',
+      source,
+      target,
+      createdAt: 1,
+      status: 'verified',
+      migratedDirs,
+      inventory: await scanInventory(target, migratedDirs)
+    })
+    const journal = new DataRootCleanupJournal(configRoot)
+    await journal.stage({ token: 'cleanup-token', source, target, dirs: ['runtime'], createdAt: 1 })
+    await journal.markCommitted('cleanup-token')
+    const revoke = vi.fn(async () => undefined)
+    const remove = vi.fn(createDataRootSourceCleanup(revoke))
+    expect(await journal.recover(target, remove)).toEqual({ pending: true, failureCount: 0 })
+    expect(remove).not.toHaveBeenCalled()
+    expect(revoke).not.toHaveBeenCalled()
+    expect(await readFile(join(source, directory, 'state.rds'), 'utf8')).toBe('only R state copy')
+  })
+
   it('recovers cleanup of a copied npm prefix after the data-root pointer committed', async () => {
     const directory = join('runtime', 'npm')
     for (const dataRoot of [source, target]) {

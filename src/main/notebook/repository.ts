@@ -1,3 +1,4 @@
+import { validRStageCheckpointForRun } from '@aipoch/reproducibility'
 import { indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
@@ -272,6 +273,18 @@ const notebookRunCandidate = (value: unknown): boolean => {
     ) {
       return false
     }
+  }
+  if (value.stageCheckpoint !== undefined) {
+    if (!isRecord(value.stageCheckpoint)) return false
+    if (value.stageCheckpoint.state === 'available') {
+      if (!validRStageCheckpointForRun(value as unknown as NotebookRunRecord)) return false
+    } else if (
+      value.stageCheckpoint.state !== 'unavailable' ||
+      typeof value.stageCheckpoint.reason !== 'string' ||
+      !value.stageCheckpoint.reason ||
+      value.stageCheckpoint.reason.length > 1024
+    )
+      return false
   }
   if (value.frozenPermissionScope !== undefined) {
     const scope = isRecord(value.frozenPermissionScope) ? value.frozenPermissionScope : undefined

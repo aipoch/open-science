@@ -1,3 +1,4 @@
+import type { WorkflowSelection } from '@aipoch/reproducibility/contracts'
 import type {
   ArtifactReproducibilityCheckComparison,
   ArtifactReproducibilityCheckLog,
@@ -15,6 +16,7 @@ import type { OutputComparisonPolicy } from '@aipoch/reproducibility/comparison'
 export type ArtifactReproducibilityCheckRequest = GetArtifactVersionProvenanceRequest & {
   frontierId: string
   comparisonPolicy?: OutputComparisonPolicy
+  workflow?: WorkflowSelection
   expectedRecipeId?: string
 }
 
@@ -144,7 +146,7 @@ export type ArtifactReproducibilityReceipt = {
   receiptId: string
   startedAt: string
   completedAt: string
-  outcome: 'matched' | 'different'
+  outcome: 'matched' | 'different' | 'executed'
   artifactVersion: {
     projectId: string
     appSessionId: string
@@ -165,7 +167,21 @@ export type ArtifactReproducibilityReceipt = {
     kernelKind: 'python' | 'r'
     environmentName?: string
     lockChecksum: string
+    sourceLockChecksum?: string
+    // A scoped candidate summary, not a completeness certificate or an environment lock.
+    runtimeSubset?: {
+      schemaVersion: 1
+      scopeChecksum: string
+      planChecksum: string
+      archiveNames: string[]
+      missingDependencies: Array<{ packageName: string; dependency: string }>
+    }
   }>
+  workflow?: WorkflowSelection & {
+    planId: string
+    verification: 'file-comparison' | 'state-comparison' | 'execution-only'
+    executionOnlyTargetRunIds: string[]
+  }
   completedStepIds: string[]
   comparisons: ArtifactReproducibilityReceiptComparison[]
   checkLog?: ArtifactReproducibilityCheckLogReference
@@ -177,7 +193,7 @@ export type ArtifactReproducibilityCheckState = {
   startedAt: string
   request: ArtifactReproducibilityCheckRequest
   revision: number
-  status: 'running' | 'matched' | 'different' | 'failed' | 'cancelled'
+  status: 'running' | 'matched' | 'different' | 'executed' | 'failed' | 'cancelled'
   phase?:
     | 'loading-evidence'
     | 'materializing-inputs'

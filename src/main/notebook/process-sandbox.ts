@@ -128,6 +128,10 @@ export type NotebookRuntimeAccessAdmission = Readonly<{
 }>
 
 export interface NotebookProcessSandbox {
+  /** Attempt-owned temp resources; callers must dispose only after their processes are reaped. */
+  createTemporaryScope?(temporaryRoot: string): NotebookProcessSandbox & {
+    dispose(): Promise<void>
+  }
   resolveWindowsRuntime?(request: {
     runtime: 'repl' | 'bash'
     binding?: ShellRuntimeBinding

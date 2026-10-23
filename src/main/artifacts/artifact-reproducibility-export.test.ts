@@ -23,6 +23,7 @@ import {
   verificationArchiveName
 } from './artifact-reproducibility-export'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import { decodeArtifactReproducibilityReceipt } from './artifact-reproducibility-receipts'
 
 const receipt = (): ArtifactReproducibilityReceipt => {
   const draft = {
@@ -67,6 +68,47 @@ const receipt = (): ArtifactReproducibilityReceipt => {
     ...draft,
     receiptChecksum: sha256(canonicalJson(draft as unknown as CanonicalJson))
   }
+}
+
+const decodedReceipt = (value: ArtifactReproducibilityReceipt): ArtifactReproducibilityReceipt => {
+  const payload = Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== 'receiptChecksum')
+  )
+  const checksum = sha256(canonicalJson(payload as unknown as CanonicalJson))
+  return decodeArtifactReproducibilityReceipt(
+    `sha256-${checksum}.json`,
+    JSON.stringify({ ...payload, receiptChecksum: checksum })
+  )
+}
+
+const stateReceipt = (outcome: 'equal' | 'different'): ArtifactReproducibilityReceipt => {
+  const value = receipt()
+  return decodedReceipt({
+    ...value,
+    schemaVersion: 2,
+    outcome: outcome === 'equal' ? 'matched' : 'different',
+    frontier: { frontierId: 'workflow-selection', claimScope: 'downstream-only' },
+    completedStepIds: ['step:de'],
+    workflow: {
+      captureId: '1'.repeat(64),
+      targetRunIds: ['de'],
+      planId: value.recipe.recipeId,
+      verification: 'state-comparison',
+      executionOnlyTargetRunIds: []
+    },
+    comparisons: [
+      {
+        stepId: 'step:de',
+        entityId: 'r-state:de',
+        relativePath: 'R state (de)',
+        expectedChecksum: 'e'.repeat(64),
+        expectedSizeBytes: 256,
+        stateComparison: { outcome },
+        status: outcome === 'equal' ? 'matched' : 'different',
+        ...(outcome === 'different' ? { reason: 'checksum-mismatch' as const } : {})
+      }
+    ]
+  })
 }
 
 const checkLog = (): ArtifactReproducibilityCheckLogRecord => {
@@ -227,6 +269,87 @@ const environmentLockExecution = {
 } as PersistedArtifactExecutionSnapshot
 
 describe('Artifact reproducibility verification export', () => {
+  it.each(['equal', 'different'] as const)(
+    'reports %s normalized R state without implying byte equality',
+    (outcome) => {
+      const value = stateReceipt(outcome)
+      const archive = unzipSync(buildVerificationArchive(value))
+      const report = strFromU8(archive['report.md']!)
+      expect(report).toContain('## State comparisons')
+      expect(report).toContain(
+        `| R state (de) | ${outcome === 'equal' ? 'Matched' : 'Different'} | Normalized R objects ${outcome === 'equal' ? 'are equal' : 'differ'} |`
+      )
+      expect(report).toContain('Byte equality is not assessed for state comparisons.')
+      expect(report).not.toContain('identical bytes')
+      expect(report).not.toContain('checksum-mismatch')
+      expect(report.split('## State comparisons')[0]).not.toContain('R state (de)')
+      expect(JSON.parse(strFromU8(archive['verification-receipt.json']!))).toEqual(value)
+    }
+  )
+
+  it.each(['equal', 'different'] as const)(
+    'exports imported %s R state alongside unchanged file comparison semantics',
+    async (outcome) => {
+      const current = stateReceipt(outcome)
+      const differentFile = receipt().comparisons[0]!
+      const value = decodedReceipt({
+        ...current,
+        outcome: 'different',
+        comparisons: [
+          ...current.comparisons,
+          {
+            ...differentFile,
+            entityId: 'matched-file',
+            relativePath: 'results/matched.csv',
+            status: 'matched',
+            reason: undefined,
+            actualChecksum: differentFile.expectedChecksum,
+            actualSizeBytes: differentFile.expectedSizeBytes
+          },
+          { ...differentFile, relativePath: 'results/different.csv' },
+          {
+            ...differentFile,
+            entityId: 'unavailable-file',
+            relativePath: 'results/unavailable.csv',
+            contentComparisonUnavailableReason: 'comparison-failed'
+          }
+        ]
+      })
+      const local = {
+        ...request(value),
+        projectId: 'import-project',
+        appSessionId: 'import-session',
+        artifactId: 'local-artifact',
+        versionId: 'local-version'
+      }
+      const writeArchive = vi
+        .fn<(path: string, bytes: Uint8Array) => Promise<void>>()
+        .mockResolvedValue(undefined)
+      const exporter = createArtifactReproducibilityReceiptExporter({
+        downloadsDirectory: () => '/downloads',
+        readReceipt: async () => value,
+        readSourceScope: async () => value.artifactVersion,
+        showSaveDialog: async () => ({ canceled: false, filePath: '/exports/source.zip' }),
+        writeArchive
+      })
+      await expect(exporter.export(undefined, local)).resolves.toEqual({ saved: true })
+      const archive = unzipSync(writeArchive.mock.calls[0]![1])
+      const report = strFromU8(archive['report.md']!)
+      expect(report).toContain('source installation, not rerun here')
+      expect(report).toContain(
+        `| Matched | results/matched.csv | ${differentFile.expectedChecksum} | ${differentFile.expectedChecksum} | 10 | 10 | — |`
+      )
+      expect(report).toContain('| results/matched.csv | Not needed (identical bytes) | — |')
+      expect(report).toContain('| results/different.csv | Not recorded | — |')
+      expect(report).toContain('| results/unavailable.csv | Unavailable | comparison-failed |')
+      expect(report).toContain(
+        `| R state (de) | ${outcome === 'equal' ? 'Matched' : 'Different'} | Normalized R objects ${outcome === 'equal' ? 'are equal' : 'differ'} |`
+      )
+      expect(report.split('## State comparisons')[0]).not.toContain('R state (de)')
+      expect(JSON.parse(strFromU8(archive['verification-receipt.json']!))).toEqual(value)
+    }
+  )
+
   it('returns browser-readable TIFF originals and differences on demand', async () => {
     const original = await sharp({
       create: { width: 10, height: 10, channels: 3, background: 'white' }
@@ -283,6 +406,26 @@ describe('Artifact reproducibility verification export', () => {
     })
     expect(preview.differenceImage).toMatch(/^data:image\/png;base64,/u)
   })
+  it('exports workflow execution-only coverage without a reproduced or different conclusion', () => {
+    const value = receipt()
+    value.outcome = 'executed'
+    value.frontier = { frontierId: 'workflow-selection', claimScope: 'downstream-only' }
+    value.workflow = {
+      captureId: '1'.repeat(64),
+      planId: value.recipe.recipeId,
+      targetRunIds: ['memory', 'plot'],
+      boundaryEntityIds: ['de-file'],
+      verification: 'execution-only',
+      executionOnlyTargetRunIds: ['memory']
+    }
+    const report = buildVerificationReport(value)
+    expect(report).toContain('**Executed (outputs not fully verified)**')
+    expect(report).toContain('Execution-only stages: memory')
+    expect(report).toContain('Frozen boundaries: de-file')
+    expect(report).not.toContain('**Result differs**')
+    expect(report).not.toContain('**Result reproduced**')
+  })
+
   it('includes content comparison coverage and a display version without modifying the receipt', () => {
     const value = receipt()
     value.comparisons[0]!.contentComparisonUnavailableReason = 'budget-exceeded'

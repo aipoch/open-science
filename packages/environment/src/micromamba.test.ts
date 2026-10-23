@@ -18,28 +18,63 @@ import {
 import { installArgv } from './micromamba'
 
 describe('micromamba argv builders', () => {
-  it('createFromLockArgv is the offline unified form (no channel)', () => {
-    const argv = createFromLockArgv(
-      '/mm',
-      '/root',
-      '/root/envs/default-python',
-      '/res/default-python.lock'
-    )
-    expect(argv).toEqual([
-      '/mm',
-      '--no-rc',
-      'create',
-      '-p',
-      '/root/envs/default-python',
-      '--file',
-      '/res/default-python.lock',
-      '--offline',
-      '-y',
-      '--root-prefix',
-      '/root'
-    ])
-    expect(argv.join(' ')).not.toContain('conda-forge')
-  })
+  it.each([undefined, { alwaysCopy: false }])(
+    'createFromLockArgv preserves the offline default without forced copying: %j',
+    (options) => {
+      const argv = createFromLockArgv(
+        '/mm',
+        '/root',
+        '/root/envs/default-python',
+        '/res/default-python.lock',
+        options
+      )
+      expect(argv).toEqual([
+        '/mm',
+        '--no-rc',
+        'create',
+        '-p',
+        '/root/envs/default-python',
+        '--file',
+        '/res/default-python.lock',
+        '--offline',
+        '-y',
+        '--root-prefix',
+        '/root'
+      ])
+      expect(argv.join(' ')).not.toContain('conda-forge')
+    }
+  )
+
+  it.each([
+    { offline: undefined, compilePyc: undefined, flags: ['--offline', '--always-copy'] },
+    { offline: true, compilePyc: true, flags: ['--offline', '--always-copy'] },
+    { offline: false, compilePyc: true, flags: ['--always-copy'] },
+    { offline: true, compilePyc: false, flags: ['--offline', '--no-pyc', '--always-copy'] },
+    { offline: false, compilePyc: false, flags: ['--no-pyc', '--always-copy'] }
+  ])(
+    'can force independent copies with offline=$offline and compilePyc=$compilePyc',
+    ({ offline, compilePyc, flags }) => {
+      expect(
+        createFromLockArgv('/mm', '/root', '/root/envs/repro-lock', '/tmp/lock', {
+          alwaysCopy: true,
+          offline,
+          compilePyc
+        })
+      ).toEqual([
+        '/mm',
+        '--no-rc',
+        'create',
+        '-p',
+        '/root/envs/repro-lock',
+        '--file',
+        '/tmp/lock',
+        ...flags,
+        '-y',
+        '--root-prefix',
+        '/root'
+      ])
+    }
+  )
 
   it('can create from an imported explicit lock with network access', () => {
     const argv = createFromLockArgv('/mm', '/root', '/root/envs/repro-lock', '/tmp/lock', {

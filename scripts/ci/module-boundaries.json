@@ -961,7 +961,8 @@
         "packages/environment/src/pip-install-evidence.ts",
         "packages/environment/src/runtime-relocation.ts",
         "packages/environment/src/package-version-comparison.ts",
-        "packages/environment/src/environment-lock.ts"
+        "packages/environment/src/environment-lock.ts",
+        "packages/environment/src/conda-lock-subset.ts"
       ],
       "layer": "package",
       "sourceLayers": {},
@@ -1020,7 +1021,8 @@
         "packages/environment/src/runtime-relocation.test.ts",
         "packages/environment/src/provisioner.startup.test.ts",
         "packages/environment/src/external-environment-lock.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "packages/environment/src/conda-lock-subset.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics",
@@ -2627,7 +2629,8 @@
         "packages/notebook-analysis/test/native/dependency-analysis.r-pipelines.suite.ts",
         "packages/notebook-analysis/test/native/dependency-analysis.structured-results.suite.ts",
         "packages/notebook-analysis/test/native/setup.ts",
-        "packages/notebook-analysis/test/native/vitest.config.ts"
+        "packages/notebook-analysis/test/native/vitest.config.ts",
+        "packages/notebook-analysis/src/r-minimal-environment.ts"
       ],
       "layer": "package",
       "sourceLayers": {},
@@ -2751,7 +2754,8 @@
         "packages/notebook-analysis/src/input-path-analysis.test.ts",
         "packages/notebook-analysis/src/input-resource-analysis.test.ts",
         "src/main/notebook/package-boundaries.architecture.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "packages/notebook-analysis/src/r-minimal-environment.test.ts"
       ],
       "externalImports": [
         "@aipoch/notebook-syntax",
@@ -3095,7 +3099,8 @@
         "src/main/notebook/shell-process-ownership.windows-posix.ts",
         "src/main/notebook/shell-process.ts",
         "src/main/notebook/trust-bundle.ts",
-        "src/main/notebook/working-file-observer.ts"
+        "src/main/notebook/working-file-observer.ts",
+        "src/main/notebook/r-stage-checkpoint.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -3252,7 +3257,9 @@
         "src/main/notebook/package-boundaries.architecture.test.ts",
         "src/main/notebook/powershell-search-parser.test.ts",
         "src/main/notebook/analysis-file-evidence.test.ts",
-        "src/main/notebook-payload.integration.test.ts"
+        "src/main/notebook-payload.integration.test.ts",
+        "src/main/notebook/r-stage-checkpoint.test.ts",
+        "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics/node",
@@ -7863,14 +7870,16 @@
         "src/main/artifacts/provenance-storage-contract.ts",
         "src/main/artifacts/provenance-storage.ts",
         "src/main/artifacts/reproducibility-host.ts",
-        "src/main/artifacts/reproducibility-source.ts"
+        "src/main/artifacts/reproducibility-source.ts",
+        "src/main/artifacts/provenance-workflow-capture.ts"
       ],
       "layer": "application-service",
       "sourceLayers": {
         "src/main/artifacts/artifact-provenance-graph.ts": "record-codec",
         "src/main/artifacts/provenance-analysis-revision.ts": "record-codec",
         "src/main/artifacts/provenance-storage.ts": "host-infrastructure",
-        "src/main/artifacts/reproducibility-source.ts": "repository"
+        "src/main/artifacts/reproducibility-source.ts": "repository",
+        "src/main/artifacts/provenance-workflow-capture.ts": "record-codec"
       },
       "consumerModules": ["session_persistence"],
       "requiredTests": [
@@ -7889,7 +7898,8 @@
         "src/shared/renderer-contract-catalog.test.ts",
         "src/shared/renderer-surface-inventory.test.ts",
         "src/shared/renderer-surface-matrix.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/artifacts/provenance-workflow-capture.test.ts"
       ],
       "externalImports": [
         "@aipoch/durable-files",
@@ -7899,7 +7909,9 @@
         "@aipoch/reproducibility/execution-context",
         "node:fs/promises",
         "node:path",
-        "zod"
+        "zod",
+        "node:fs",
+        "node:crypto"
       ]
     },
     "pdf_documents": {
@@ -8960,7 +8972,8 @@
         "src/renderer/src/pages/workspace/ScientificComparison.tsx",
         "src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx",
         "src/renderer/src/pages/workspace/lazy-r.ts",
-        "src/renderer/src/pages/workspace/reproducibility-output-storage-context.ts"
+        "src/renderer/src/pages/workspace/reproducibility-output-storage-context.ts",
+        "src/renderer/src/pages/workspace/step-reproduction-target.ts"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -8970,14 +8983,16 @@
         "src/renderer/src/pages/workspace/ReproducibilityOutputStorage.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/ReproducibilityProgress.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/ScientificComparison.tsx": "presentation-adapter",
-        "src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx": "presentation-adapter"
+        "src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/step-reproduction-target.ts": "presentation-model"
       },
       "consumerModules": [],
       "requiredTests": [
         "src/renderer/src/pages/workspace/OutputComparison.test.tsx",
         "src/renderer/src/pages/workspace/SessionReproducibilityDialog.test.tsx",
         "src/renderer/src/pages/workspace/lazy-r.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/renderer/src/pages/workspace/step-reproduction-target.test.ts"
       ],
       "externalImports": [
         "@aipoch/reproducibility/comparison",
@@ -11115,7 +11130,10 @@
       "externalImports": ["node:fs", "node:path"]
     },
     "notebook_reproduction": {
-      "sources": ["src/main/notebook/reproduction-runtime.ts"],
+      "sources": [
+        "src/main/notebook/reproduction-runtime.ts",
+        "src/main/notebook/reproduction-runtime-subset.ts"
+      ],
       "layer": "application-service",
       "sourceLayers": {},
       "consumerModules": ["session_persistence"],
@@ -11145,14 +11163,17 @@
         "src/shared/renderer-contract-catalog.test.ts",
         "src/shared/renderer-surface-inventory.test.ts",
         "src/shared/renderer-surface-matrix.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/notebook/reproduction-runtime-subset.test.ts"
       ],
       "externalImports": [
         "@aipoch/environment",
         "@aipoch/reproducibility",
         "node:crypto",
         "node:fs/promises",
-        "node:path"
+        "node:path",
+        "node:child_process",
+        "node:fs"
       ]
     },
     "notebook_host_inference": {

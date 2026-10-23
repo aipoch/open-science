@@ -21,6 +21,7 @@ import { validatePackageRoCrateMetadata } from './ro-crate'
 import { assertNoExcludedContentCopies, validateExcludedFiles } from './selection'
 
 export const assertPortablePackageStorageKey = (key: string): void => {
+  if (/^runtime\/provenance\/r-stage-checkpoints\/[a-f0-9]{64}\.rds$/u.test(key)) return
   const segments = key.split('/')
   if (
     ![

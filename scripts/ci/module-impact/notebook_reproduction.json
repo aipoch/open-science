@@ -2,7 +2,9 @@
   "ownerPaths": [
     "src/main/notebook/reproduction-runtime.integration.test.ts",
     "src/main/notebook/reproduction-runtime.test.ts",
-    "src/main/notebook/reproduction-runtime.ts"
+    "src/main/notebook/reproduction-runtime.ts",
+    "src/main/notebook/reproduction-runtime-subset.ts",
+    "src/main/notebook/reproduction-runtime-subset.test.ts"
   ],
   "interfacePaths": [
     "src/main/artifacts/artifact-provenance-graph.ts",
@@ -95,7 +97,8 @@
   "testFiles": {
     "owner": [
       "src/main/notebook/reproduction-runtime.integration.test.ts",
-      "src/main/notebook/reproduction-runtime.test.ts"
+      "src/main/notebook/reproduction-runtime.test.ts",
+      "src/main/notebook/reproduction-runtime-subset.test.ts"
     ],
     "contract": [
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",

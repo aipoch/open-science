@@ -770,7 +770,18 @@ emit <- function(obj) {
 
 # Observe package bindings without evaluating functions, promises, or user data.
 # These are potential calls in each top-level expression, not an execution trace.
-new_package_observer <- function() {
+new_package_observer <- function(clean_session = FALSE) {
+  # Force the request-start observation before the caller increments its sequence.
+  clean_session <- isTRUE(clean_session)
+  if (clean_session) {
+    startup_args <- commandArgs()
+    args_end <- match("--args", startup_args, nomatch = length(startup_args) + 1L) - 1L
+    clean_session <- "--vanilla" %in% startup_args[seq_len(args_end)] &&
+      !any(grepl("^--default-packages(=|$)", startup_args[seq_len(args_end)])) &&
+      !any(nzchar(Sys.getenv(c("R_DEFAULT_PACKAGES", "R_SCRIPT_DEFAULT_PACKAGES")))) &&
+      all(loadedNamespaces() %in% c("base", "utils", "stats", "graphics", "grDevices",
+        "methods", "datasets", "compiler", "tools", "grid", "jsonlite"))
+  }
   complete <- TRUE
   reads <- list()
   seen <- new.env(parent = emptyenv())
@@ -797,8 +808,9 @@ new_package_observer <- function() {
           env <- as.environment(pos)
           if (!exists(op, envir = env, inherits = FALSE)) next
           label <- environmentName(env)
-          if (startsWith(label, "package:") && !bindingIsActive(op, env)) {
-            pkg <- substring(label, 9L)
+          is_base <- identical(env, baseenv())
+          if ((is_base || startsWith(label, "package:")) && !bindingIsActive(op, env)) {
+            pkg <- if (is_base) "base" else substring(label, 9L)
             key <- paste(pkg, op, sep = ":")
             if (!exists(key, envir = seen, inherits = FALSE)) {
               if (length(reads) >= 256L) { complete <<- FALSE; break }
@@ -811,6 +823,11 @@ new_package_observer <- function() {
       }
       # Do not force missing arguments (e.g. matrix[, 1]).
       args <- as.list(node)
+      # A qualified call has a language object in its head. Observe :: itself without
+      # evaluating the namespace/member or treating arbitrary computed callees as calls.
+      head <- args[[1L]]
+      if (is.call(head) && is.symbol(head[[1L]]) &&
+          as.character(head[[1L]]) %in% c("::", ":::")) walk(head, depth + 1L)
       for (i in seq_along(args)) {
         if (i > 1L && !identical(args[[i]], quote(expr = ))) walk(args[[i]], depth + 1L)
         if (visited > 4096L) break
@@ -820,7 +837,8 @@ new_package_observer <- function() {
   }, error = function(e) { complete <<- FALSE })
   list(record = record, finish = function() {
     after <- attached()
-    list(before = as.list(before), after = as.list(after), reads = reads, complete = complete)
+    list(before = as.list(before), after = as.list(after), reads = reads, complete = complete,
+         cleanSession = isTRUE(clean_session))
   })
 }
 environment(new_package_observer) <- baseenv()
@@ -868,6 +886,1386 @@ capture_execution_context <- local({
   }, error = function(e) NULL)
   }
 })
+
+# A checkpoint is a bounded object closure, never a workspace dump. Its binary envelope is
+# serialized once so reference aliases inside the selected object graph survive together.
+# The host owns path authority, immutable digests, quotas and run/environment identity.
+stage_checkpoint_owner <- base::local({
+  startup_packages <- sub("^package:", "", grep("^package:", search(), value = TRUE))
+  trusted_options <- new.env(parent = emptyenv())
+  trusted_options$functions <- list()
+  seal_options <- function() {
+    if (environmentIsLocked(trusted_options)) return(invisible(NULL))
+    trusted_options$functions <- Filter(is.function, options())
+    lockEnvironment(trusted_options, bindings = TRUE)
+  }
+  context_proof <- "literal-and-reviewed-profiles-v3"
+  # 32 MiB of uncompressed objects, with a fourfold serialization/roundtrip reserve
+  # (128 MiB). This is a conservative observer budget, not a process memory limit.
+  snapshot_budget_bytes <- 32 * 1024^2
+  # Matrix 1.7.6 .onLoad installs this exact constant condition handler. Encode
+  # its proven semantics as base metadata, never as a closure in expected evidence.
+  empty_method_handler <- function(cond) NULL
+  environment(empty_method_handler) <- emptyenv()
+  is_empty_method_handler <- function(value) is.function(value) && typeof(value) == "closure" &&
+    identical(environment(value), emptyenv()) && identical(formals(value), formals(empty_method_handler)) &&
+    is.null(body(value)) && is.null(attributes(value))
+  option_frontier <- new.env(parent = emptyenv())
+  option_frontier$ready <- FALSE
+  option_frontier$owned <- character()
+  check_option_data <- function(value) {
+    if (is.null(value)) return(invisible(NULL))
+    attrs <- attributes(value)
+    if (isS4(value) ||
+        !typeof(value) %in% c("logical", "integer", "double", "complex", "character", "raw", "list"))
+      fail("unsupported-option-data")
+    # Default contrasts has unordered/ordered names. Plain names carry no executable
+    # state; class and all other attributes remain unsupported in the expected envelope.
+    if (!is.null(attrs) && (!identical(names(attrs), "names") ||
+        !is.character(attrs$names) || !is.null(attributes(attrs$names)) ||
+        length(attrs$names) != length(value))) fail("unsupported-option-data")
+    if (is.list(value)) for (member in value) check_option_data(member)
+    invisible(NULL)
+  }
+  validate_options <- function(value) {
+    if (!is.list(value) || !identical(value$proof, context_proof) || !is.list(value$values) ||
+        !is.character(value$functions) || !is.character(value$handlers) ||
+        anyDuplicated(value$handlers) || !all(value$handlers %in% "ambiguousMethodSelection") ||
+        !all(value$handlers %in% names(value$values)) || anyDuplicated(names(value$values)) ||
+        length(value$values) > 0L && is.null(names(value$values)) ||
+        !all(value$functions %in% names(trusted_options$functions)) ||
+        !all(value$functions %in% names(value$values))) fail("invalid-checkpoint-context")
+    # Payloads can carry plain names, but no classes, other attributes or namespace
+    # references: reading expected evidence must load no code.
+    validate(value$values)
+    for (member in value$values) check_option_data(member)
+    invisible(NULL)
+  }
+  apply_options <- function(value, only = names(value$values)) {
+    selected <- value$values[only]
+    for (name in intersect(only, value$functions)) selected[name] <- list(trusted_options$functions[[name]])
+    for (name in intersect(only, value$handlers)) selected[name] <- list(empty_method_handler)
+    if (length(selected)) options(selected)
+    invisible(NULL)
+  }
+  snapshot_options <- function(option_names = character()) {
+    values <- options()[sort(unique(option_names))]
+    names(values) <- sort(unique(option_names))
+    functions <- character()
+    for (name in names(trusted_options$functions)) {
+      if (identical(values[[name]], trusted_options$functions[[name]])) {
+        # The kernel wraps the default graphics device with trusted resource owners.
+        # Rebind that function in this kernel instead of serializing its live connections.
+        functions <- c(functions, name)
+        values[name] <- list(NULL)
+      }
+    }
+    handlers <- character()
+    if ("ambiguousMethodSelection" %in% names(values) && is_empty_method_handler(values$ambiguousMethodSelection)) {
+      handlers <- "ambiguousMethodSelection"
+      values[handlers] <- list(NULL)
+    }
+    result <- list(proof = context_proof, values = values, functions = functions, handlers = handlers)
+    validate_options(result)
+    result
+  }
+  # This is a bounded call contract for the standard differential-expression path.
+  # File authority and package/version locking remain host responsibilities. Package
+  # internals are trusted only for these reviewed entry points, never arbitrary setters.
+  allowed_libraries <- c("DESeq2", "SummarizedExperiment", "S4Vectors", "IRanges", "stats",
+    "utils", "graphics", "grDevices", "methods")
+  safe_base <- c("<-", "=", "->", "{", "(", "[", "[[", "$", "@", "~", "::",
+    "+", "-", "*", "/", "^", "%%", "%/%", "%*%", ":", "!", "==", "!=", "<", ">",
+    "<=", ">=", "&", "&&", "|", "||", "%in%", "c", "list", "pairlist", "matrix", "array",
+    "data.frame", "factor", "ordered", "levels", "nlevels", "droplevels", "as.factor",
+    "as.data.frame", "as.matrix", "as.vector", "as.numeric", "as.double", "as.integer",
+    "as.character", "as.logical", "as.list", "is.na", "is.nan", "is.finite", "is.infinite",
+    "is.numeric", "is.integer", "is.character", "is.logical", "is.matrix", "is.data.frame",
+    "is.null", "isTRUE", "isFALSE", "any", "all", "anyNA", "length", "lengths", "dim",
+    "dimnames", "nrow", "ncol", "names", "rownames", "colnames", "unname", "seq", "seq_len",
+    "seq_along", "rep", "rep_len", "rep.int", "rbind", "cbind", "t", "head", "tail",
+    "which", "which.min", "which.max", "match", "unique", "duplicated", "sort", "sort.int",
+    "order", "rank", "rev", "sum", "prod", "min", "max", "range", "mean", "pmax", "pmin",
+    "rowSums", "colSums", "rowMeans", "colMeans", "sweep", "scale", "abs", "sqrt", "exp",
+    "expm1", "log", "log2", "log10", "log1p", "round", "signif", "floor", "ceiling",
+    "trunc", "sign", "Re", "Im", "Arg", "Conj", "Mod", "paste", "paste0", "sprintf",
+    "format", "formatC", "nchar", "substr", "substring", "sub", "gsub", "grep", "grepl",
+    "strsplit", "trimws", "tolower", "toupper", "chartr", "iconv", "make.names",
+    "make.unique", "file.path", "basename", "dirname", "normalizePath", "path.expand",
+    "file.exists", "dir.exists", "readRDS", "saveRDS", "readLines", "writeLines", "readBin",
+    "writeBin", "file", "close", "unlink", "dir.create", "list.files", "print", "cat",
+    "message", "warning", "stop", "stopifnot", "invisible", "identity", "identical",
+    "all.equal", "set.seed", "RNGkind", "options", "getOption", "getwd", "setwd",
+    "suppressWarnings", "suppressMessages", "suppressPackageStartupMessages", "library",
+    "require", "requireNamespace", "new.env", "rm", "remove", "exists", "structure", "attr",
+    "attributes", "class", "unclass", "typeof", "inherits", "ifelse", "is.unsorted")
+  safe_stats <- c("heatmap", "p.adjust", "na.omit", "na.exclude", "complete.cases", "sd", "var",
+    "median", "quantile", "IQR", "cor", "cov", "dist", "hclust", "prcomp", "model.matrix",
+    "model.frame", "terms", "formula", "as.formula", "relevel", "contrasts", "contr.treatment",
+    "contr.sum", "contr.poly", "setNames", "aggregate", "fisher.test", "t.test", "wilcox.test",
+    "rnorm", "runif", "rnbinom", "rpois", "rgamma", "rbinom", "pnorm", "pchisq", "qnorm",
+    "dnorm", "dnbinom", "dpois", "filter", "predict", "coef", "fitted", "residuals")
+  safe_utils <- c("read.csv", "read.csv2", "read.delim", "read.delim2", "read.table", "write.csv",
+    "write.csv2", "write.table", "head", "tail", "str", "packageVersion", "sessionInfo")
+  safe_graphics <- c("plot", "plot.default", "points", "lines", "abline", "text", "title", "legend", "axis",
+    "box", "hist", "boxplot", "image", "matplot", "pairs", "barplot", "layout", "par")
+  safe_devices <- c("png", "pdf", "svg", "jpeg", "tiff", "bmp", "cairo_pdf", "dev.off",
+    "dev.cur", "dev.list", "palette", "rgb", "hsv", "hcl", "rainbow", "heat.colors",
+    "terrain.colors", "topo.colors", "cm.colors", "hcl.colors", "colorRampPalette", "adjustcolor")
+  safe_deseq <- c("DESeqDataSetFromMatrix", "DESeqDataSet", "DESeq", "results", "resultsNames",
+    "counts", "design", "sizeFactors", "dispersions", "normalizationFactors", "dispersionFunction",
+    "vst", "varianceStabilizingTransformation", "rlog", "plotPCA", "plotCounts", "plotDispEsts",
+    "plotMA", "lfcShrink", "estimateSizeFactors", "estimateDispersions", "nbinomWaldTest", "nbinomLRT")
+  safe_summarized <- c("SummarizedExperiment", "assay", "assays", "colData", "rowData", "rowRanges")
+  safe_bioc_generics <- c("rownames", "colnames", "nrow", "ncol", "dim", "dimnames", "names",
+    "length", "as.data.frame", "as.matrix", "rowSums", "colSums", "rowMeans", "colMeans", "rbind",
+    "cbind", "head", "tail", "t", "sort", "order", "unique", "duplicated", "is.na", "mean",
+    "sum", "any", "all", "pmax", "pmin")
+  call_allowed <- function(package, name) {
+    if (package == "base") return(name %in% safe_base)
+    if (package == "stats") return(name %in% c(safe_stats, safe_base))
+    if (package == "utils") return(name %in% safe_utils)
+    if (package == "graphics") return(name %in% safe_graphics)
+    if (package == "grDevices") return(name %in% safe_devices)
+    if (package == "DESeq2") return(name %in% safe_deseq)
+    if (package == "SummarizedExperiment") return(name %in% c(safe_summarized, safe_bioc_generics))
+    if (package == "S4Vectors") return(name %in% c("DataFrame", "metadata", "mcols", "Rle",
+      "SimpleList", "head", "tail", safe_base))
+    if (package == "IRanges") return(name %in% c("IRanges", safe_bioc_generics))
+    if (package == "methods") return(name %in% c("as", "is", "isS4", "slot", "slotNames"))
+    # Bioconductor attaches generics that mask these standard, read-only operations.
+    if (package %in% c("BiocGenerics", "S4Generics", "MatrixGenerics", "Biobase"))
+      return(name %in% c(safe_base, safe_stats, safe_deseq, safe_summarized))
+    FALSE
+  }
+  # mode="function" forces promises and active bindings even for ordinary execution.
+  # Presence alone is sufficient here: ambiguous/user bindings fail closed without
+  # inspecting their value. R may skip a non-function binding, but admission need not.
+  call_locations <- function(name) {
+    search()[vapply(search(), function(location)
+      exists(name, envir = as.environment(location), inherits = FALSE, mode = "any"), logical(1))]
+  }
+  resolved_call_allowed <- function(name) {
+    locations <- call_locations(name)
+    length(locations) > 0L && startsWith(locations[[1L]], "package:") &&
+      call_allowed(substring(locations[[1L]], 9L), name)
+  }
+  history <- new.env(parent = emptyenv())
+  history$unsupported <- FALSE
+  history$reason <- ""
+  taint <- function(reason) {
+    history$unsupported <- TRUE
+    if (!nzchar(history$reason)) history$reason <- reason
+  }
+  observe <- function(exprs, allow_pending = TRUE) {
+    # Namespace mutation and dynamic evaluation can install hidden S3/S4 methods. Once
+    # observed, this process cannot attest a closed state using object snapshots alone.
+    risky <- c("setMethod", "setGeneric", "setClass", "setOldClass", "registerS3method",
+      "registerS3methods", "assignInNamespace", "unlockBinding", "trace", "untrace",
+      "assign", "makeActiveBinding", "delayedAssign", "eval", "evalq", "eval.parent",
+      "get", "get0", "mget", "dynGet", "do.call", "source", "sys.source", "load",
+      "asNamespace", "getNamespace", "getFromNamespace", "loadNamespace", "environment",
+      "parent.env", "body<-", "environment<-", "formals<-", ":::")
+    declared_package <- FALSE
+    visit <- function(node) {
+      if (is.symbol(node) && as.character(node) %in% risky) taint(paste0("dynamic-symbol:", as.character(node)))
+      if (!is.call(node) && !is.expression(node) && !is.pairlist(node)) return(invisible(NULL))
+      if (is.call(node)) {
+        head <- node[[1L]]
+        op <- if (is.symbol(head)) as.character(head) else if (is.call(head) &&
+          length(head) == 3L && as.character(head[[1L]]) %in% c("::", ":::"))
+          as.character(head[[3L]]) else ""
+        if (op %in% risky) taint(paste0("dynamic-call:", op))
+        qualified <- is.call(head) && length(head) == 3L &&
+          is.symbol(head[[1L]]) && as.character(head[[1L]]) %in% c("::", ":::")
+        if (op %in% c("library", "require", "requireNamespace")) {
+          if (qualified && !call_allowed(as.character(head[[2L]]), op)) taint(paste0("unreviewed-call:", as.character(head[[2L]]), "::", op))
+          args <- as.list(node)[-1L]
+          literal <- if (length(args) > 0L && (is.symbol(args[[1L]]) || is.character(args[[1L]])))
+            as.character(args[[1L]]) else ""
+          if (length(literal) != 1L || !literal %in% allowed_libraries ||
+              (!is.null(args$character.only) && !identical(args$character.only, FALSE)) ||
+              (op == "requireNamespace" && is.symbol(args[[1L]]))) taint(paste0("unreviewed-library:", paste(literal, collapse = ",")))
+          if (op != "requireNamespace") declared_package <<- TRUE
+        } else if (qualified) {
+          if (!call_allowed(as.character(head[[2L]]), op)) taint(paste0("unreviewed-call:", as.character(head[[2L]]), "::", op))
+        } else if (nzchar(op) && !resolved_call_allowed(op)) {
+          locations <- call_locations(op)
+          if (!allow_pending || !declared_package || length(locations) > 0L)
+            taint(paste0("unreviewed-call:", op, ":", paste(locations, collapse = ",")))
+        } else if (!nzchar(op)) taint("computed-call")
+      }
+      parts <- as.list(node)
+      for (i in seq_along(parts)) if ((!is.call(node) || i > 1L) &&
+          !identical(parts[[i]], quote(expr = ))) visit(parts[[i]])
+      invisible(NULL)
+    }
+    tryCatch(visit(exprs), error = function(e) taint(paste0("history-analysis:", conditionMessage(e))))
+    if (isTRUE(history$unsupported)) unavailable(paste0("unsupported-method-history:", history$reason)) else NULL
+  }
+  check_global_methods <- function() {
+    if (isTRUE(history$unsupported)) fail(paste0("unsupported-method-history:", history$reason))
+    user <- union(setdiff(ls(globalenv(), all.names = TRUE), namespace_state$internal_names),
+      namespace_state$written_names)
+    for (name in user) {
+      if (!exists(name, globalenv(), inherits = FALSE)) next
+      if (bindingIsActive(name, globalenv())) fail("active-global-method-binding")
+      if (name %in% namespace_state$lazy_names) fail("lazy-global-method-binding")
+      if (is.function(get(name, globalenv(), inherits = FALSE))) fail("custom-global-method-binding")
+    }
+  }
+  unavailable <- function(reason) list(state = "unavailable", reason = reason)
+  fail <- function(reason) stop(reason, call. = FALSE)
+  attached <- function() sub("^package:", "", grep("^package:", search(), value = TRUE))
+  check_devices <- function(ignored = integer()) {
+    if (length(setdiff(as.integer(grDevices::dev.list()), ignored)) > 0L)
+      fail("open-user-graphics-device")
+  }
+  scalar_path <- function(path) is.character(path) && length(path) == 1L &&
+    !is.na(path) && nzchar(path)
+  # Profiles are for the reviewed R 4.5 / DESeq2 1.50 serial analysis path.
+  # Sources: base format/print/file/library, stats model.frame/model.matrix/heatmap,
+  # grDevices png/dev.new; DESeq2 1.50.2 plus S4Vectors 0.48.1/matrixStats 1.5.0.
+  # These are option names, never guessed defaults. The environment lock owns versions.
+  format_options <- c("digits", "digits.secs", "scipen", "OutDec", "width", "max.print")
+  model_options <- c("contrasts", "na.action")
+  graphics_options <- c("device", "device.ask.default", "bitmapType", "preferRaster", "OutDec")
+  deseq_options <- c(model_options, format_options, "matprod", "warn", "verbose",
+    "ambiguousMethodSelection", "stringsAsFactors", "matrixStats.center.onUse",
+    "matrixStats.center.onScalar", "matrixStats.vars.formula.onMistake", "matrixStats.vars.formula.freq")
+  call_options <- function(op, args) {
+    if (op %in% c(safe_deseq, "library", "require", "requireNamespace")) {
+      if (!identical(paste(R.version$major, strsplit(R.version$minor, ".", fixed = TRUE)[[1L]][[1L]], sep = "."), "4.5"))
+        fail("unreviewed-option-runtime")
+      # No namespace is loaded to validate a profile. Refuse other installed versions
+      # rather than silently treating this reviewed profile as a universal package contract.
+      if (op %in% safe_deseq || length(args) && identical(as.character(args[[1L]]), "DESeq2")) {
+        versions <- c(DESeq2 = "1.50.2", S4Vectors = "0.48.1", SummarizedExperiment = "1.40.0", matrixStats = "1.5.0", Matrix = "1.7.6", locfit = "1.5.9.12")
+        for (package in names(versions)) if (!identical(as.character(utils::packageVersion(package)), versions[[package]]))
+          fail("unreviewed-option-package-version")
+      }
+    }
+    if (op %in% c("library", "require", "requireNamespace"))
+      return(c("verbose", "conflicts.policy", "keep.source.pkgs", "keep.parse.data.pkgs",
+        "checkPackageLicense", "encoding", "matrixStats.envs.min.version"))
+    if (op %in% safe_deseq) {
+      if (!op %in% c("DESeqDataSetFromMatrix", "DESeq", "results", "resultsNames", "counts",
+          "design", "sizeFactors", "dispersions", "normalizationFactors", "dispersionFunction"))
+        fail("unreviewed-option-call")
+      if (op %in% c("DESeq", "results")) {
+        arg_names <- names(args)
+        if (is.null(arg_names)) arg_names <- rep("", length(args))
+        # Exact installed 1.50.2 formals. R accepts abbreviations such as p=TRUE;
+        # checking only args$parallel would miss that implicit parallel branch.
+        exact_args <- if (op == "DESeq") c("object", "test", "fitType", "sfType", "betaPrior", "full",
+          "reduced", "quiet", "minReplicatesForReplace", "modelMatrixType", "useT", "minmu", "parallel", "BPPARAM") else
+          c("object", "contrast", "name", "lfcThreshold", "altHypothesis", "listValues", "cooksCutoff",
+            "independentFiltering", "alpha", "filter", "theta", "pAdjustMethod", "filterFun", "format",
+            "saveCols", "test", "addMLE", "tidy", "parallel", "BPPARAM", "minmu")
+        if (any(!arg_names[nzchar(arg_names)] %in% exact_args) ||
+            length(args) > 1L && any(!nzchar(arg_names[-1L])) ||
+            !is.null(args$parallel) && !identical(args$parallel, FALSE))
+          fail("unreviewed-deseq-option-branch")
+      }
+      if (op == "DESeq" && !is.null(args$fitType) &&
+          !identical(args$fitType, "mean") && !identical(args$fitType, "parametric") &&
+          !identical(args$fitType, "local"))
+        fail("unreviewed-deseq-option-branch")
+      return(deseq_options)
+    }
+    if (op %in% c("model.matrix", "model.frame", "terms", "formula", "as.formula", "contrasts"))
+      return(model_options)
+    if (op %in% c(safe_graphics, "heatmap", "png", "pdf", "svg", "jpeg", "tiff", "bmp", "cairo_pdf"))
+      return(c(graphics_options, format_options, "verbose"))
+    if (op %in% c("read.csv", "read.csv2", "read.delim", "read.delim2", "read.table", "write.csv",
+        "write.csv2", "write.table", "file", "readLines", "writeLines"))
+      return(c("encoding", "stringsAsFactors", "scipen", "OutDec"))
+    if (op %in% c("format", "formatC", "as.character", "paste", "paste0", "sprintf", "print", "cat", "str"))
+      return(format_options)
+    if (op == "%*%") return("matprod")
+    character()
+  }
+  # Optional environment evidence is deliberately weaker than checkpoint admission:
+  # a missing package identity never changes execution or object comparison. Only
+  # names/versions leave this owner; paths are private checks against the live library.
+  environment_proof_observe <- function(proof, callback) {
+    if (is.null(proof) || !isTRUE(proof$complete)) return(invisible(NULL))
+    tryCatch(callback(), error = function(e) { proof$complete <- FALSE })
+    invisible(NULL)
+  }
+  environment_proof_package <- function(proof, package) environment_proof_observe(proof, function() {
+    if (!is.character(package) || length(package) != 1L || is.na(package) ||
+        nchar(package, type = "bytes") > 128L || !grepl("^[A-Za-z][A-Za-z0-9.]*$", package))
+      stop("unproven-package-name")
+    package <- unname(package)
+    root <- normalizePath(.Library, winslash = "/", mustWork = TRUE)
+    expected <- paste0(root, "/", package)
+    found <- find.package(package, quiet = FALSE)
+    path <- normalizePath(found, winslash = "/", mustWork = TRUE)
+    if (!identical(path, expected) ||
+        !identical(normalizePath(dirname(found), winslash = "/", mustWork = TRUE), root))
+      stop("shadowed-package")
+    # The loaded namespace may predate a later .libPaths() change. Check both the
+    # actual namespace and the current search resolution; neither may be shadowed.
+    if (package %in% loadedNamespaces() && package != "base") {
+      namespace_path <- getNamespaceInfo(getNamespace(package), "path")
+      if (!identical(normalizePath(namespace_path, winslash = "/", mustWork = TRUE), expected) ||
+          !identical(normalizePath(dirname(namespace_path), winslash = "/", mustWork = TRUE), root))
+        stop("shadowed-namespace")
+    }
+    description <- paste0(expected, "/DESCRIPTION")
+    info <- file.info(description)
+    if (is.na(info$size) || info$size > 128 * 1024 || isTRUE(info$isdir) ||
+        !identical(normalizePath(description, winslash = "/", mustWork = TRUE), description))
+      stop("unproven-package-metadata")
+    metadata <- read.dcf(description, fields = c("Package", "Version"))
+    if (nrow(metadata) != 1L || !identical(unname(metadata[1L, "Package"]), package))
+      stop("unproven-package-metadata")
+    version <- unname(metadata[1L, "Version"])
+    if (is.na(version) || !nzchar(version) || nchar(version, type = "bytes") > 128L ||
+        !grepl("^[A-Za-z0-9][A-Za-z0-9.+_-]*$", version)) stop("unproven-package-version")
+    if (package %in% loadedNamespaces() &&
+        !identical(package_version(as.character(getNamespaceVersion(package))), package_version(version)))
+      stop("changed-package-version")
+    prior <- proof$packages[[package]]
+    if (!is.null(prior) && !identical(prior, version)) stop("changed-package-version")
+    if (is.null(prior) && length(proof$packages) >= 256L) stop("package-proof-budget")
+    proof$packages[[package]] <- version
+  })
+  new_environment_proof <- function(packages, complete = TRUE) {
+    proof <- new.env(parent = emptyenv())
+    proof$complete <- isTRUE(complete) && identical(paste(R.version$major, strsplit(R.version$minor, ".", fixed = TRUE)[[1L]][[1L]], sep = "."), "4.5")
+    proof$packages <- list()
+    proof$bytes <- 0
+    for (package in unique(c("base", "jsonlite", packages))) environment_proof_package(proof, package)
+    proof
+  }
+  environment_proof_atomic <- function(proof, value) environment_proof_observe(proof, function() {
+    # R 4.5 serialize.c uses tag 238 for special ALTREP serialization. Inspect only
+    # the root type of our own XDR stream, never arbitrary RDS bytes or values via
+    # inspect(). Attributes are visited by validate(). Unknown representations lose
+    # this optional proof; no materialization or namespace loading is performed.
+    # https://github.com/wch/r-source/blob/R-4-5-branch/src/main/serialize.c
+    serialized <- serialize(value, NULL, version = 3L, xdr = TRUE)
+    proof$bytes <- proof$bytes + length(serialized)
+    if (proof$bytes > snapshot_budget_bytes || length(serialized) < 22L ||
+        !identical(serialized[1:2], charToRaw("X\n")) ||
+        !identical(readBin(serialized[3:6], "integer", size = 4L, endian = "big"), 3L))
+      stop("unproven-serialization")
+    encoding_bytes <- readBin(serialized[15:18], "integer", size = 4L, endian = "big")
+    if (is.na(encoding_bytes) || encoding_bytes < 0L || encoding_bytes > 1024L ||
+        length(serialized) < 22L + encoding_bytes) stop("unproven-serialization")
+    expected <- switch(typeof(value), logical = 10L, integer = 13L, double = 14L,
+      complex = 15L, character = 16L, raw = 24L, NULL)
+    if (is.null(expected) || !identical(as.integer(serialized[[22L + encoding_bytes]]), expected))
+      stop("unproven-altrep")
+  })
+  environment_proof_class <- function(proof, value) environment_proof_observe(proof, function() {
+    classes <- attr(value, "class", exact = TRUE)
+    if (is.null(classes)) return(invisible(NULL))
+    if (isS4(value)) {
+      package <- attr(classes, "package", exact = TRUE)
+      if (!is.character(classes) || length(classes) != 1L || !is.character(package) ||
+          length(package) != 1L || !package %in% loadedNamespaces()) stop("unproven-s4-class")
+      # getClassDef searches only an already loaded namespace. A forged package
+      # attribute must not turn an unknown/global class into a package dependency.
+      definition <- methods::getClassDef(classes[[1L]], where = getNamespace(package), inherits = FALSE)
+      if (is.null(definition) || !identical(attr(definition, "package", exact = TRUE), package))
+        stop("unproven-s4-class")
+      environment_proof_package(proof, package)
+    } else {
+      # These standard representations have no hidden package-owned dispatch state.
+      standard <- c("data.frame", "factor", "ordered", "AsIs", "matrix", "array",
+        "table", "Date", "POSIXct", "POSIXlt", "POSIXt", "difftime", "numeric_version",
+        "package_version", "R_system_version", "formula", "terms")
+      if (!is.character(classes) || anyNA(classes) || !all(classes %in% standard))
+        stop("unproven-s3-class")
+      environment_proof_package(proof, if (any(classes %in% c("formula", "terms"))) "stats" else "base")
+    }
+  })
+  finish_environment_proof <- function(proof, packages) {
+    if (is.null(proof)) return(NULL)
+    for (package in unique(c(names(proof$packages), packages))) environment_proof_package(proof, package)
+    if (!isTRUE(proof$complete)) return(NULL)
+    list(schema_version = 1L, packages = lapply(sort(names(proof$packages)), function(package)
+      list(name = package, version = proof$packages[[package]])))
+  }
+  runtime_footprint <- function() tryCatch({
+    # This is an observed candidate inventory, never proof of dependency completeness.
+    packages <- loadedNamespaces()
+    if (length(packages) == 0L || length(packages) > 4096L) return(NULL)
+    proof <- finish_environment_proof(new_environment_proof(packages), packages)
+    if (is.null(proof)) return(NULL)
+    paths <- unique(vapply(getLoadedDLLs(), function(dll) dll[["path"]], character(1)))
+    # R lists its built-in base routines as the pseudo-DLL path "base".
+    paths <- paths[nzchar(paths) & paths != "base"]
+    if (length(paths) > 4096L || any(nchar(paths, type = "bytes") > 4096L)) return(NULL)
+    paths <- sort(unique(normalizePath(paths, winslash = "/", mustWork = TRUE)))
+    list(process_id = Sys.getpid(), packages = proof$packages, library_paths = as.list(paths))
+  }, error = function(e) NULL)
+  package_context <- function(value, fresh_session) {
+    if (is.null(value)) return(NULL)
+    valid_names <- function(names) is.list(names) && length(names) > 0L && length(names) <= 4096L &&
+      all(vapply(names, function(name) is.character(name) && length(name) == 1L &&
+        !is.na(name) && grepl("^[A-Za-z][A-Za-z0-9.]{0,127}$", name), logical(1))) &&
+      !anyDuplicated(unlist(names, use.names = FALSE))
+    if (!is.list(value) || length(value) != 3L ||
+        !setequal(names(value), c("schema_version", "source_packages", "target_packages")) ||
+        !identical(value$schema_version, 1L) || !valid_names(value$source_packages) ||
+        !valid_names(value$target_packages)) fail("invalid-package-context-projection")
+    source <- unlist(value$source_packages, use.names = FALSE)
+    target <- unlist(value$target_packages, use.names = FALSE)
+    if (!isTRUE(fresh_session) || !identical(attached(), startup_packages))
+      fail("package-context-projection-requires-fresh-session")
+    if (!identical(target, startup_packages) ||
+        !all(target %in% c("jsonlite", "stats", "graphics", "grDevices", "utils", "datasets", "methods", "base")))
+      fail("unsupported-package-context-target")
+    list(schema_version = 1L, source_packages = as.list(source), target_packages = as.list(target))
+  }
+  plan <- function(exprs, available_names = ls(globalenv(), all.names = TRUE)) {
+    reads <- writes <- defined <- pending_calls <- option_writes <- character()
+    packages <- character()
+    environment_complete <- TRUE
+    # The kernel prints visible values after evaluation even without a source print().
+    # Visibility is not generally knowable before execution, so retain this finite
+    # formatting contract for every cell, including its input before implicit print.
+    option_names <- format_options
+    declared_package <- FALSE
+    nodes <- 0L
+    blocked <- c("get", "get0", "mget", "dynGet", "eval", "evalq", "eval.parent",
+      "parse", "source", "sys.source", "load", "attach", "detach", "assign", "delayedAssign",
+      "makeActiveBinding", "do.call", "match.fun", "substitute", "bquote", "with", "within",
+      "local", "environment", "globalenv", "parent.frame", "sys.frame", "sys.frames",
+      "sys.function", "as.environment", "asNamespace", "getNamespace", "getFromNamespace",
+      "new.env", "list2env", "rm", "remove", "function", "for", "while", "repeat", "if",
+      "switch", "on.exit", "<<-", "->>", "call", "as.call", ".Internal", ".Call", ".External")
+    read_name <- function(name) {
+      if (name %in% c("", "...", ".GlobalEnv", ".BaseNamespaceEnv")) {
+        if (nzchar(name)) fail("dynamic-object-dependency")
+        return(invisible(NULL))
+      }
+      if (!name %in% defined && name %in% available_names)
+        reads <<- union(reads, name)
+    }
+    root_name <- function(node) {
+      if (is.symbol(node)) return(as.character(node))
+      if (is.call(node) && is.symbol(node[[1L]]) &&
+          as.character(node[[1L]]) %in% c("[", "[[", "$", "@")) return(root_name(node[[2L]]))
+      # S4 replacement generics such as design(dds) <- ~ condition.
+      if (is.call(node) && length(node) == 2L && is.symbol(node[[1L]]))
+        return(root_name(node[[2L]]))
+      fail("unsupported-assignment-target")
+    }
+    walk_argument <- function(node, depth) {
+      # R arguments may be lazy, skipped, or forced out of source order. Their
+      # writes remain possible outputs, but cannot define later reads for the caller.
+      before <- defined
+      walk(node, depth)
+      defined <<- before
+      invisible(NULL)
+    }
+    walk <- function(node, depth = 0L) {
+      nodes <<- nodes + 1L
+      if (nodes > 8192L || depth > 64L) fail("object-analysis-limit")
+      if (is.symbol(node)) { read_name(as.character(node)); return(invisible(NULL)) }
+      if (!is.call(node)) return(invisible(NULL))
+      head <- node[[1L]]
+      qualified <- is.call(head) && length(head) == 3L && is.symbol(head[[1L]]) &&
+        as.character(head[[1L]]) %in% c("::", ":::")
+      if (!is.symbol(head) && !qualified) fail("computed-function-dependency")
+      op <- if (qualified) as.character(head[[3L]]) else as.character(head)
+      if (op %in% blocked) fail(paste0("unsupported-object-dependency:", op))
+      if (qualified && !call_allowed(as.character(head[[2L]]), op))
+        fail("unsupported-package-call")
+      if (qualified) packages <<- union(packages, as.character(head[[2L]]))
+      if (op %in% c("<-", "=", "->")) {
+        lhs <- if (op == "->") node[[3L]] else node[[2L]]
+        rhs <- if (op == "->") node[[2L]] else node[[3L]]
+        walk(rhs, depth + 1L) # RHS must see the old binding before the write is defined.
+        name <- root_name(lhs)
+        if (!is.symbol(lhs)) walk(lhs, depth + 1L)
+        writes <<- union(writes, name)
+        defined <<- union(defined, name)
+        return(invisible(NULL))
+      }
+      if (op %in% c("::", ":::")) return(invisible(NULL))
+      args <- as.list(node)[-1L]
+      if (op == "packageVersion") {
+        # utils::packageVersion(pkg, lib.loc = NULL) reads package metadata even
+        # when it never loads a namespace or leaves an object in this checkpoint.
+        # Match only exact formal names and ordinary positional arguments. Dynamic
+        # targets, library overrides and abbreviations lose optional proof alone.
+        arg_names <- names(args)
+        if (is.null(arg_names)) arg_names <- rep("", length(args))
+        exact_names <- c("pkg", "lib.loc")
+        matched <- integer(2L)
+        proven <- length(args) >= 1L && length(args) <= 2L &&
+          all(arg_names %in% c("", exact_names)) && !anyDuplicated(arg_names[nzchar(arg_names)])
+        if (proven) {
+          for (index in which(nzchar(arg_names))) matched[match(arg_names[[index]], exact_names)] <- index
+          positional <- which(!nzchar(arg_names))
+          remaining <- which(matched == 0L)
+          if (length(positional) > length(remaining)) proven <- FALSE else
+            for (index in seq_along(positional)) matched[remaining[[index]]] <- positional[[index]]
+          proven <- proven && matched[[1L]] != 0L
+        }
+        if (proven) {
+          target <- args[[matched[[1L]]]]
+          proven <- is.character(target) && length(target) == 1L && !is.na(target) && nzchar(target) &&
+            (matched[[2L]] == 0L || is.null(args[[matched[[2L]]]]))
+          if (proven) packages <<- union(packages, target)
+        }
+        environment_complete <<- environment_complete && proven
+      }
+      if (op == "getOption") {
+        key <- if (!is.null(args$x)) args$x else if (length(args)) args[[1L]] else NULL
+        if (!is.character(key) || length(key) != 1L || is.na(key) || !nzchar(key))
+          fail("dynamic-option-dependency")
+        option_names <<- union(option_names, key)
+      }
+      if (op == "options") {
+        if (!length(args)) fail("dynamic-option-dependency")
+        arg_names <- names(args)
+        if (is.null(arg_names)) arg_names <- rep("", length(args))
+        for (i in seq_along(args)) {
+          if (nzchar(arg_names[[i]])) {
+            option_names <<- union(option_names, arg_names[[i]])
+            option_writes <<- union(option_writes, arg_names[[i]])
+          }
+          else if (is.character(args[[i]]) && length(args[[i]]) == 1L &&
+              !is.na(args[[i]]) && nzchar(args[[i]])) option_names <<- union(option_names, args[[i]])
+          else fail("dynamic-option-dependency")
+        }
+      }
+      option_names <<- union(option_names, call_options(op, args))
+      if (op %in% c("library", "require", "requireNamespace")) {
+        if (length(args) == 0L || !(is.symbol(args[[1L]]) || is.character(args[[1L]])) ||
+            (op == "requireNamespace" && is.symbol(args[[1L]])) ||
+            (!is.null(args$character.only) && !identical(args$character.only, FALSE)))
+          fail("dynamic-package-dependency")
+        packages <<- union(packages, as.character(args[[1L]]))
+        for (index in seq_along(args)) if (index > 1L) walk_argument(args[[index]], depth + 1L)
+        if (op %in% c("library", "require")) declared_package <<- TRUE
+        return(invisible(NULL))
+      }
+      if (!qualified) {
+        # Even a possible argument write can replace the callee with a local alias
+        # whose hidden global reads are unproven; must-definition is not needed here.
+        if (op %in% writes || exists(op, globalenv(), inherits = FALSE))
+          fail("user-function-dependency")
+        locations <- call_locations(op)
+        if (length(locations) == 0L) {
+          if (!declared_package) fail("unresolved-function-dependency")
+          # A preceding literal library may expose this binding. Confirm its package
+          # owner after the real cell runs; never attach packages ahead of user code.
+          pending_calls <<- union(pending_calls, op)
+        } else if (!resolved_call_allowed(op)) fail("unsupported-package-call")
+        if (length(locations)) packages <<- union(packages, sub("^package:", "", locations[[1L]]))
+      }
+      args <- as.list(node)[-1L]
+      for (index in seq_along(args)) {
+        if (identical(args[[index]], quote(expr = ))) next
+        if (op %in% c("$", "@") && index == 2L) next
+        # Formula symbols are data-mask variables, not global bindings. Embedded executable
+        # formula calls are checked normally (and any global formula bindings are captured).
+        if (op == "~" && is.symbol(args[[index]])) {
+          read_name(as.character(args[[index]])); next
+        }
+        # Only grouping expressions guarantee evaluation in this source order.
+        if (op %in% c("{", "(")) walk(args[[index]], depth + 1L)
+        else walk_argument(args[[index]], depth + 1L)
+      }
+      invisible(NULL)
+    }
+    for (expr in exprs) walk(expr)
+    list(reads = reads, writes = writes, pending_calls = pending_calls,
+      option_names = sort(option_names), option_writes = sort(option_writes), packages = packages,
+      environment_complete = environment_complete)
+  }
+  # Reviewed codecs retain the actual free data of DESeq2's generated dispersion
+  # closures, not the unrelated fitting call frames (glm/locfit include promises).
+  # Only snapshot copies are changed. Live objects and their statistical fit stay intact.
+  parametric_dispersion <- function(q) coefs[1] + coefs[2]/q
+  local_dispersion <- function(means) exp(predict(fit, data.frame(logMeans = log(means))))
+  mean_dispersion <- function(means) meanDisp
+  identity_transform <- function(x) x
+  dispersion_kind <- function(value) {
+    if (typeof(value) != "closure") return("")
+    kind <- attr(value, "fitType", exact = TRUE)
+    expected <- if (identical(kind, "parametric")) parametric_dispersion else
+      if (identical(kind, "local")) local_dispersion else
+      if (identical(kind, "mean")) mean_dispersion else NULL
+    if (is.null(expected) || !identical(formals(value), formals(expected)) ||
+        !identical(body(value), body(expected))) return("")
+    env <- environment(value)
+    if (!is.environment(env) || !isNamespace(parent.env(env)) ||
+        !identical(as.character(getNamespaceName(parent.env(env))), "DESeq2")) return("")
+    if (!identical(as.character(utils::packageVersion("DESeq2")), "1.50.2"))
+      fail("unreviewed-dispersion-package-version")
+    kind
+  }
+  plain_bindings <- function(env) {
+    nms <- ls(env, all.names = TRUE)
+    if (any(vapply(nms, bindingIsActive, logical(1), env = env))) fail("active-object-binding")
+    if (!"rlang" %in% loadedNamespaces()) fail("unproven-object-binding")
+    if (any(rlang::env_binding_are_lazy(env, nms))) fail("lazy-object-binding")
+    nms
+  }
+  local_fit <- function(fit, env) {
+    if (!identical(as.character(utils::packageVersion("locfit")), "1.5.9.12"))
+      fail("unreviewed-dispersion-package-version")
+    expected_names <- c("eva", "cell", "terms", "nvc", "box", "sty", "deriv", "mi", "dp",
+      "trans", "critval", "vnames", "yname", "call", "frame")
+    if (!is.list(fit) || !identical(class(fit), "locfit") ||
+        !identical(names(fit), expected_names)) fail("unreviewed-local-dispersion-fit")
+    # The default prediction path uses newdata$logMeans and no custom basis code.
+    expected_call <- quote(locfit(formula = logDisps ~ logMeans,
+      data = d[disps >= minDisp * 10, , drop = FALSE], weights = means[disps >= minDisp * 10]))
+    terms <- fit$terms
+    transform <- fit$trans
+    if (!identical(fit$call, expected_call) || !identical(fit$frame, env) ||
+        !inherits(terms, "terms") || !identical(unclass(terms)[[1L]], as.name("~")) ||
+        !identical(terms[[2L]], as.name("logDisps")) || !identical(terms[[3L]], as.name("logMeans")) ||
+        !identical(attr(terms, ".Environment", exact = TRUE), env) ||
+        !identical(fit$vnames, "logMeans") || !identical(fit$yname, "logDisps") ||
+        typeof(transform) != "closure" || !identical(formals(transform), formals(identity_transform)) ||
+        !identical(body(transform), body(identity_transform)) || !is.null(attributes(transform)))
+      fail("unreviewed-local-dispersion-fit")
+    invisible(NULL)
+  }
+  dispersion_projection <- new.env(parent = emptyenv())
+  dispersion_projection$entries <- list()
+  project_dispersion <- function(value) {
+    kind <- dispersion_kind(value)
+    if (!nzchar(kind)) {
+      # body<- drops fitType and other attributes. Admission therefore matches the
+      # official slot implementations themselves; missing metadata cannot bypass it.
+      unfit <- typeof(value) == "closure" && identical(environment(value), globalenv()) &&
+        is.null(formals(value)) && is.null(body(value)) && is.null(attributes(value))
+      if (unfit) return(value)
+      fail("unreviewed-dispersion-closure")
+    }
+    source <- environment(value)
+    nms <- plain_bindings(source)
+    if (kind == "mean") {
+      if (!"meanDisp" %in% nms) fail("unreviewed-dispersion-frame")
+      data <- get("meanDisp", source, inherits = FALSE)
+      if (!is.double(data) || length(data) != 1L || !is.null(attributes(data)) ||
+          !is.finite(data) || data <= 0) fail("unreviewed-mean-dispersion-fit")
+      return(value) # preserve the previously supported official mean graph
+    }
+    needed <- if (kind == "parametric") "coefs" else "fit"
+    original_names <- if (kind == "parametric")
+      c("ans", "coefs", "disps", "fit", "good", "iter", "means", "oldcoefs", "residuals") else
+      c("d", "dispFunction", "disps", "fit", "means", "minDisp")
+    if (!identical(nms, sort(original_names)) && !identical(nms, needed))
+      fail("unreviewed-dispersion-frame")
+    data <- get(needed, source, inherits = FALSE)
+    if (kind == "parametric" && (!is.double(data) || length(data) != 2L ||
+        !identical(names(data), c("asymptDisp", "extraPois")) || any(!is.finite(data) | data <= 0)))
+      fail("unreviewed-parametric-dispersion-fit")
+    if (kind == "local") local_fit(data, source)
+    if (identical(nms, needed)) {
+      validate(list(value), allow_namespace_functions = TRUE)
+      return(value) # restored/canonical frames already own their reference identity
+    }
+    # Weak keys preserve live alias identity without retaining obsolete glm/locfit
+    # frames. Canonical environments remain owned by the existing reference frontier.
+    entries <- Filter(function(entry) !is.null(rlang::wref_key(entry$reference)),
+      dispersion_projection$entries)
+    dispersion_projection$entries <- entries
+    index <- which(vapply(entries, function(entry)
+      identical(rlang::wref_key(entry$reference), source), logical(1)))
+    fresh <- !length(index)
+    target <- new.env(parent = parent.env(source))
+    if (kind == "local") {
+      environment(data$trans) <- emptyenv() # exact function(x) x has no free bindings
+      attr(data$terms, ".Environment") <- target
+      data$frame <- target
+    }
+    assign(needed, data, target)
+    result <- value
+    environment(result) <- target
+    # Validate a candidate before replacing a cached frontier: failure cannot corrupt
+    # an existing alias. Every retained free value is checked before serialization.
+    validate(list(result), allow_namespace_functions = TRUE)
+    bytes <- unclass(utils::object.size(data))
+    retained_bytes <- sum(vapply(entries, function(entry) entry$bytes, numeric(1)))
+    previous_bytes <- if (fresh) 0 else entries[[index[[1L]]]]$bytes
+    if (length(entries) + as.integer(fresh) > 1024L ||
+        retained_bytes - previous_bytes + bytes > snapshot_budget_bytes)
+      fail("object-reference-budget")
+    if (!fresh) {
+      target <- rlang::wref_value(entries[[index[[1L]]]]$reference)
+      if (kind == "local") {
+        attr(data$terms, ".Environment") <- target
+        data$frame <- target
+      }
+      assign(needed, data, target)
+      environment(result) <- target
+      dispersion_projection$entries[[index[[1L]]]]$bytes <- bytes
+    } else {
+      dispersion_projection$entries[[length(entries) + 1L]] <-
+        list(reference = rlang::new_weakref(source, target), bytes = bytes)
+    }
+    result
+  }
+  # Native size estimation does not dispatch methods, force bindings, or follow
+  # closure frames. Check before container reconstruction; retained private frames
+  # are still charged by validate() after the reviewed DESeq projection.
+  object_bytes <- function(value, remaining) {
+    if (!is.object(value) && is.atomic(value)) {
+      width <- switch(typeof(value), raw = 1, logical = 4, integer = 4, double = 8,
+        complex = 16, character = 8, 0)
+      if (length(value) * width > remaining) fail("object-byte-budget")
+    }
+    bytes <- unclass(utils::object.size(value))
+    if (!is.finite(bytes) || bytes > remaining) fail("object-byte-budget")
+    bytes
+  }
+  project_values <- function(values) {
+    object_bytes(values, snapshot_budget_bytes)
+    nodes <- 0L
+    walk <- function(value, depth = 0L) {
+      nodes <<- nodes + 1L
+      if (nodes > 100000L || depth > 128L) fail("object-graph-limit")
+      if (isS4(value) && identical(as.character(class(value)), "DESeqDataSet")) {
+        attrs <- attributes(value)
+        attrs$dispersionFunction <- project_dispersion(attrs$dispersionFunction)
+        attributes(value) <- attrs
+      } else if (is.list(value) && !isS4(value)) {
+        attrs <- attributes(value)
+        pair <- is.pairlist(value)
+        parts <- if (is.object(value)) unclass(value) else value
+        if (pair) parts <- base::as.list.default(parts)
+        for (index in seq_along(parts)) {
+          # Missing formals are language values, not arguments to force. Single
+          # bracket replacement also preserves NULL elements instead of deleting them.
+          if (!identical(parts[[index]], quote(expr = )))
+            parts[index] <- list(walk(parts[[index]], depth + 1L))
+        }
+        value <- if (pair) as.pairlist(parts) else parts
+        attributes(value) <- attrs
+      }
+      value
+    }
+    walk(values)
+  }
+  validate <- function(values, allow_namespace_functions = FALSE, max_bytes = snapshot_budget_bytes,
+      environment_proof = NULL) {
+    # Call the utils native size implementation directly: object.size is not an S3
+    # generic. It does not walk closure environments, which are charged separately.
+    # Check before unclass/as.list and before all serialization/normalization copies.
+    bytes <- 0
+    charge <- function(value) {
+      bytes <<- bytes + object_bytes(value, max_bytes - bytes)
+    }
+    # Native estimation of the root graph does not follow environments or force their
+    # bindings. Per-node lower bounds below also cover expanded atomic payloads.
+    charge(values)
+    visited <- 0L
+    environments <- list()
+    s4_values <- list()
+    proof_atomics <- list()
+    reviewed_environments <- list()
+    check_env <- function(env, depth) {
+      if (isNamespace(env)) environment_proof_package(environment_proof, getNamespaceName(env))
+      if (isNamespace(env) || identical(env, baseenv()) || identical(env, emptyenv())) return()
+      if (identical(env, globalenv())) fail("global-closure-environment")
+      if (startsWith(environmentName(env), "package:")) fail("attached-closure-environment")
+      if (any(vapply(environments, identical, logical(1), y = env))) return()
+      environments[[length(environments) + 1L]] <<- env
+      env_names <- ls(env, all.names = TRUE)
+      if (length(env_names) > 100000L) fail("object-graph-limit")
+      if (any(vapply(env_names, bindingIsActive, logical(1), env = env))) fail("active-object-binding")
+      if (length(env_names)) {
+        # Do not load a namespace as an observer side effect. DESeq2 already loads
+        # rlang; without its non-forcing native binding query this graph is unproven.
+        if (!"rlang" %in% loadedNamespaces()) fail("unproven-object-binding")
+        environment_proof_package(environment_proof, "rlang")
+        if (any(rlang::env_binding_are_lazy(env, env_names))) fail("lazy-object-binding")
+      }
+      for (name in env_names) {
+        member <- get(name, env, inherits = FALSE)
+        charge(member)
+        check(member, depth + 1L, TRUE)
+      }
+      check_env(parent.env(env), depth + 1L)
+    }
+    simple_design <- function(formula, columns) {
+      term <- function(node) {
+        if (is.symbol(node)) return(as.character(node) %in% columns)
+        if (is.numeric(node)) return(length(node) == 1L && node %in% c(0, 1))
+        is.call(node) && length(node) == 3L && identical(node[[1L]], as.name("+")) &&
+          term(node[[2L]]) && term(node[[3L]])
+      }
+      is.call(formula) && length(formula) == 2L && identical(formula[[1L]], as.name("~")) &&
+        term(formula[[2L]])
+    }
+    check <- function(value, depth = 0L, s4_member = FALSE, design_columns = NULL) {
+      visited <<- visited + 1L
+      if (depth > 128L || visited > 100000L) fail("object-graph-limit")
+      if (isS4(value)) {
+        if (any(vapply(s4_values, identical, logical(1), y = value))) return(invisible(NULL))
+        s4_values[[length(s4_values) + 1L]] <<- value
+      }
+      type <- typeof(value)
+      environment_proof_class(environment_proof, value)
+      if (!is.null(environment_proof) && isTRUE(environment_proof$complete) &&
+          is.atomic(value) && !is.null(value))
+        proof_atomics[[length(proof_atomics) + 1L]] <<- value
+      if (!is.object(value) && is.atomic(value)) {
+        width <- switch(type, raw = 1, logical = 4, integer = 4, double = 8, complex = 16, character = 8, 0)
+        if (length(value) * width > max_bytes) fail("object-byte-budget")
+      }
+      if (type == "environment" && any(vapply(reviewed_environments, identical, logical(1), y = value))) {
+        check_env(value, depth + 1L)
+        return(invisible(NULL))
+      }
+      if (inherits(value, "connection") || type %in% c("externalptr", "weakref", "environment"))
+        fail("unsupported-object-reference")
+      if (is.function(value)) {
+        # DESeqDataSet stores a dispersion function with a private, namespace-rooted data
+        # environment. Top-level/user GlobalEnv closures remain unsupported.
+        if (!s4_member && !allow_namespace_functions) fail("unsupported-object-closure")
+        # DESeqDataSet's official unfit prototype contains function() NULL with a
+        # GlobalEnv special reference. It reads no bindings: no parameters/defaults,
+        # executable body, or attributes. Preserve this exact sentinel in the one
+        # serialized graph; every other GlobalEnv closure still fails closed.
+        constant_s4_sentinel <- s4_member && type == "closure" &&
+          identical(environment(value), globalenv()) && is.null(formals(value)) && is.null(body(value)) && is.null(attributes(value))
+        kind <- dispersion_kind(value)
+        if (kind %in% c("parametric", "local")) {
+          env <- environment(value)
+          needed <- if (kind == "parametric") "coefs" else "fit"
+          if (!identical(plain_bindings(env), needed)) fail("unreviewed-dispersion-frame")
+          if (kind == "local") local_fit(get("fit", env, inherits = FALSE), env)
+          reviewed_environments[[length(reviewed_environments) + 1L]] <<- env
+        }
+        if (type == "closure" && !constant_s4_sentinel) check_env(environment(value), depth + 1L)
+        if (type == "closure") {
+          check(formals(value), depth + 1L, s4_member)
+          check(body(value), depth + 1L, s4_member)
+        }
+        function_attrs <- attributes(value)
+        for (name in names(function_attrs)) check(function_attrs[[name]], depth + 1L, s4_member)
+        return(invisible(NULL))
+      }
+      formula <- inherits(value, "formula")
+      if (!isS4(value) && (is.list(value) || is.pairlist(value) || is.expression(value) || is.call(value))) {
+        # S3 list classes (notably package_version in Bioconductor metadata) can make
+        # as.list()/[[ return another object of the same class. Inspect the stored data,
+        # never invoke user/package extraction methods while validating its graph.
+        parts <- as.list(if (is.object(value)) unclass(value) else value)
+        for (i in seq_along(parts)) {
+          if (!identical(parts[[i]], quote(expr = ))) check(parts[[i]], depth + 1L, s4_member)
+        }
+      }
+      attrs <- attributes(value)
+      if (!is.null(attrs)) for (name in names(attrs)) {
+        if (formula && name == ".Environment") {
+          env <- attrs[[name]]
+          if (isNamespace(env)) environment_proof_package(environment_proof, getNamespaceName(env))
+          if (!identical(env, globalenv()) && !identical(env, baseenv()) && !isNamespace(env) &&
+              !any(vapply(reviewed_environments, identical, logical(1), y = env)))
+            fail("unsupported-formula-environment")
+          # GlobalEnv itself is an R serialization special reference, not serialized state.
+          # Only simple design formulas are safe without a hidden lexical closure.
+          symbols <- all.names(value, functions = FALSE, unique = TRUE)
+          proven_design <- !is.null(design_columns) && simple_design(value, design_columns)
+          if (!is.null(design_columns) && !proven_design) fail("unsupported-design-formula")
+          if (identical(env, globalenv()) && !proven_design && any(vapply(symbols, exists, logical(1),
+              envir = globalenv(), inherits = FALSE))) fail("formula-global-dependency")
+        } else {
+          columns <- NULL
+          if (isS4(value) && identical(as.character(class(value)), "DESeqDataSet") && name == "design") {
+            col_data <- attrs[["colData"]]
+            column_values <- if (isS4(col_data)) attr(col_data, "listData", exact = TRUE) else NULL
+            if (is.list(column_values)) columns <- names(column_values)
+            if (is.null(columns)) fail("unsupported-design-data-mask")
+          }
+          check(attrs[[name]], depth + 1L, s4_member || isS4(value), design_columns = columns)
+        }
+      }
+      invisible(NULL)
+    }
+    check(values)
+    # An atomic value can hide an environment/closure in its attributes. Do not
+    # serialize any candidate until the entire original graph and private closure
+    # budget have passed admission; invalid graphs must incur no new serialization.
+    for (value in proof_atomics) environment_proof_atomic(environment_proof, value)
+    invisible(NULL)
+  }
+  # R preserves environment identity inside one serialization, not across snapshots.
+  # Keep original identities separate from replay anchors; neither uses value equality.
+  reference_proof <- "private-environment-identity-v1"
+  capture_refs <- new.env(parent = emptyenv())
+  capture_refs$values <- list()
+  capture_refs$ids <- character()
+  capture_refs$bytes <- 0
+  capture_refs$next_id <- 0
+  capture_refs$pending <- NULL
+  capture_refs$session <- paste0(Sys.getpid(), "-", format(Sys.time(), "%Y%m%d%H%M%OS6", tz = "UTC"))
+  rollback_capture_references <- function(mark) {
+    if (is.null(mark)) return(invisible(NULL))
+    # A failed capture owns only its appended references. Published historical
+    # identities remain valid, and allocated IDs must never be reused.
+    retained <- seq_len(mark$count)
+    capture_refs$values <- capture_refs$values[retained]
+    capture_refs$ids <- capture_refs$ids[retained]
+    capture_refs$bytes <- mark$bytes
+    capture_refs$pending <- NULL
+    invisible(NULL)
+  }
+  replay_refs <- new.env(parent = emptyenv())
+  reset_references <- function() {
+    replay_refs$values <- list()
+    replay_refs$ids <- character()
+    replay_refs$bytes <- 0
+    replay_refs$ready <- FALSE
+  }
+  reset_references()
+  reference_index <- function(values, value) {
+    found <- which(vapply(values, identical, logical(1), y = value))
+    if (length(found)) found[[1L]] else 0L
+  }
+  private_reference <- function(value) is.environment(value) &&
+    !identical(value, globalenv()) && !identical(value, baseenv()) &&
+    !identical(value, emptyenv()) && !isNamespace(value) &&
+    !startsWith(environmentName(value), "package:")
+  collect_references <- function(graph, skip = list()) {
+    values <- list()
+    raw <- serialize(graph, NULL, version = 3L, refhook = function(value) {
+      if (private_reference(value)) {
+        if (reference_index(skip, value)) return("anchored-reference")
+        if (!reference_index(values, value)) {
+          if (length(values) >= 1024L) fail("object-reference-budget")
+          values[[length(values) + 1L]] <<- value
+        }
+      }
+      NULL
+    })
+    if (length(raw) > snapshot_budget_bytes) fail("object-byte-budget")
+    list(values = values, bytes = length(raw))
+  }
+  validate_reference_proof <- function(value) {
+    validate(value)
+    check_option_data(value)
+    if (!is.list(value) || !identical(names(value), c("proof", "ids")) ||
+        !identical(value$proof, reference_proof) || !is.character(value$ids) ||
+        !is.null(attributes(value$ids)) || length(value$ids) > 1024L ||
+        anyNA(value$ids) || anyDuplicated(value$ids) ||
+        any(!nzchar(value$ids) | nchar(value$ids, type = "bytes") > 128L))
+      fail("invalid-object-reference-proof")
+  }
+  capture_reference_proof <- function(graph) {
+    found <- collect_references(graph)
+    ids <- character()
+    fresh <- list()
+    for (value in found$values) {
+      index <- reference_index(capture_refs$values, value)
+      if (index) ids <- c(ids, capture_refs$ids[[index]]) else {
+        capture_refs$next_id <- capture_refs$next_id + 1
+        ids <- c(ids, paste0(capture_refs$session, ":", capture_refs$next_id))
+        fresh[[length(fresh) + 1L]] <- value
+      }
+    }
+    if (length(fresh)) {
+      # Charge the entire bounded graph for every retained batch: conservative even
+      # when the new environments share descendants with previously retained ones.
+      # This is an admission budget, not a heap limit for later user mutations.
+      if (length(capture_refs$values) + length(fresh) > 1024L ||
+          capture_refs$bytes + found$bytes > snapshot_budget_bytes) fail("object-reference-budget")
+      capture_refs$values <- c(capture_refs$values, fresh)
+      capture_refs$ids <- c(capture_refs$ids, setdiff(ids, capture_refs$ids))
+      capture_refs$bytes <- capture_refs$bytes + found$bytes
+    }
+    list(proof = reference_proof, ids = ids)
+  }
+  anchor_references <- function(ids, values, bytes) {
+    if (length(ids) != length(values)) fail("object-reference-topology-mismatch")
+    fresh <- integer()
+    for (i in seq_along(ids)) {
+      index <- match(ids[[i]], replay_refs$ids, nomatch = 0L)
+      reverse <- reference_index(replay_refs$values, values[[i]])
+      if (index && !identical(replay_refs$values[[index]], values[[i]]) ||
+          reverse && !identical(replay_refs$ids[[reverse]], ids[[i]]))
+        fail("object-reference-identity-conflict")
+      if (!index) fresh <- c(fresh, i)
+    }
+    if (length(fresh)) {
+      if (length(replay_refs$values) + length(fresh) > 1024L ||
+          replay_refs$bytes + bytes > snapshot_budget_bytes) fail("object-reference-budget")
+      replay_refs$values <- c(replay_refs$values, values[fresh])
+      replay_refs$ids <- c(replay_refs$ids, ids[fresh])
+      replay_refs$bytes <- replay_refs$bytes + bytes
+    }
+  }
+  supplement_bindings <- function(input, only) {
+    if (!isTRUE(replay_refs$ready)) fail("missing-object-reference-frontier")
+    existing <- setdiff(names(input$bindings), only)
+    expected <- collect_references(input$bindings[existing])$values
+    current_values <- bindings(existing)
+    validate(current_values)
+    current <- collect_references(current_values)$values
+    if (length(expected) != length(current)) fail("object-reference-topology-mismatch")
+    for (i in seq_along(expected)) {
+      index <- reference_index(input$reference_values, expected[[i]])
+      id <- input$references$ids[[index]]
+      anchor <- match(id, replay_refs$ids, nomatch = 0L)
+      if (!anchor) fail("unanchored-object-reference")
+      if (!identical(replay_refs$values[[anchor]], current[[i]])) fail("object-reference-identity-conflict")
+    }
+    fresh_ids <- character()
+    raw <- serialize(input$bindings[only], NULL, version = 3L, refhook = function(value) {
+      if (!private_reference(value)) return(NULL)
+      index <- reference_index(input$reference_values, value)
+      if (!index) fail("unproven-object-reference")
+      id <- input$references$ids[[index]]
+      if (id %in% replay_refs$ids) return(id)
+      fresh_ids <<- union(fresh_ids, id)
+      NULL
+    })
+    if (length(raw) > snapshot_budget_bytes) fail("object-byte-budget")
+    result <- unserialize(raw, refhook = function(id) {
+      if (!is.character(id) || length(id) != 1L || !id %in% replay_refs$ids)
+        fail("unproven-object-reference")
+      replay_refs$values[[match(id, replay_refs$ids)]]
+    })
+    fresh <- collect_references(result, skip = replay_refs$values)
+    anchor_references(fresh_ids, fresh$values, fresh$bytes)
+    result
+  }
+  bindings <- function(names) {
+    values <- vector("list", length(names))
+    names(values) <- names
+    for (name in names) {
+      if (!exists(name, globalenv(), inherits = FALSE)) fail("missing-object-binding")
+      if (bindingIsActive(name, globalenv())) fail("active-object-binding")
+      if (name %in% namespace_state$lazy_names) fail("lazy-object-binding")
+      values[[name]] <- list(get(name, globalenv(), inherits = FALSE))
+    }
+    # Preserve NULL-valued bindings (list[[name]] <- NULL would delete the binding).
+    project_values(lapply(values, `[[`, 1L))
+  }
+  save <- function(path, values, packages, last_value = NULL, option_names = character(), option_writes = character(),
+      environment_proof = NULL) {
+    last_value <- project_values(last_value)
+    validate(list(values, last_value), environment_proof = environment_proof)
+    random <- capture_rng()
+    if (!identical(random$state, "available")) fail("unsupported-checkpoint-random-state")
+    context_options <- snapshot_options(option_names)
+    envelope <- list(schema = 2L, bindings = values, packages = packages, last_value = last_value,
+      references = capture_reference_proof(list(values, last_value)),
+      random = random, options = context_options, option_names = option_names,
+      option_writes = option_writes, palette = grDevices::palette())
+    validate(envelope, allow_namespace_functions = TRUE)
+    saveRDS(envelope, path, version = 3L)
+    context_options
+  }
+  output_snapshot <- function(values, last_value, option_names = character(),
+      input_options = snapshot_options(option_names), option_writes = character(), record_references = TRUE,
+      environment_proof = NULL) {
+    last_value <- project_values(last_value)
+    validate(list(values, last_value), environment_proof = environment_proof)
+    random <- capture_rng()
+    if (!identical(random$state, "available")) fail("unsupported-checkpoint-random-state")
+    # Expected output must never deserialize package objects/functions into the replay
+    # process. Freeze the complete comparable graph once, then store it as opaque bytes.
+    graph <- list(values, last_value, snapshot_options(option_names), grDevices::palette(), random)
+    validate(graph, allow_namespace_functions = TRUE)
+    serialized <- serialize(graph, NULL, version = 3L)
+    if (length(serialized) > snapshot_budget_bytes) fail("object-byte-budget")
+    # R's first serialization of runtime objects can differ from its serialized-restored
+    # representation (e.g. utils' default str callback). Apply the same one-graph
+    # roundtrip to original and replay snapshots; all namespaces referenced by this
+    # actual graph are already loaded, unlike those in expected output from a later state.
+    canonical <- serialize(unserialize(serialized), NULL, version = 3L)
+    if (length(canonical) > snapshot_budget_bytes) fail("object-byte-budget")
+    validate_options(input_options)
+    envelope <- list(schema = 3L, context_proof = context_proof, comparison = canonical,
+      references = if (record_references) capture_reference_proof(list(values, last_value)) else
+        list(proof = reference_proof, ids = character()),
+      input_options = input_options, option_names = option_names, option_writes = option_writes,
+      packages = attached(), output_names = as.character(names(values)))
+    validate(envelope)
+    envelope
+  }
+  expected_path <- function(path) {
+    if (!scalar_path(path) || !file.exists(path) || file.access(path, 4L) != 0L)
+      fail("invalid-expected-output-path")
+    path
+  }
+  load_expected <- function(path) {
+    value <- readRDS(path)
+    if (!is.list(value) || !identical(value$schema, 3L) ||
+        !identical(value$context_proof, context_proof) || !is.raw(value$comparison) ||
+        length(value$comparison) == 0L || !is.character(value$packages) ||
+        !is.character(value$output_names) || anyDuplicated(value$output_names))
+      fail("unsupported-expected-output-format")
+    validate_reference_proof(value$references)
+    validate_options(value$input_options)
+    if (!is.character(value$option_names) || !is.character(value$option_writes) ||
+        !identical(as.character(names(value$input_options$values)), value$option_names) ||
+        !all(value$option_writes %in% value$option_names)) fail("invalid-checkpoint-option-plan")
+    value
+  }
+  check_option_plan <- function(value, selection) {
+    if (!identical(value$option_names, selection$option_names) ||
+        !identical(value$option_writes, selection$option_writes)) fail("checkpoint-option-plan-mismatch")
+  }
+  supplement_options <- function(expected, selection) {
+    if (!isTRUE(option_frontier$ready)) fail("missing-option-frontier")
+    check_option_plan(expected, selection)
+    missing <- setdiff(selection$option_names, option_frontier$owned)
+    apply_options(expected$input_options, missing)
+    option_frontier$owned <- union(option_frontier$owned, missing)
+  }
+  load <- function(path) {
+    if (!scalar_path(path)) fail("invalid-checkpoint-path")
+    value <- readRDS(path)
+    if (!is.list(value) || !identical(value$schema, 2L) || !is.list(value$bindings) ||
+        !is.character(value$packages) || is.null(names(value$bindings)) && length(value$bindings) > 0L ||
+        anyDuplicated(names(value$bindings))) fail("invalid-checkpoint-envelope")
+    validate_reference_proof(value$references)
+    validate(list(value$bindings, value$last_value))
+    found <- collect_references(list(value$bindings, value$last_value))
+    if (length(found$values) != length(value$references$ids)) fail("object-reference-topology-mismatch")
+    value$reference_values <- found$values
+    value$reference_bytes <- found$bytes
+    validate_options(value$options)
+    if (!is.character(value$option_names) || !is.character(value$option_writes) ||
+        !identical(as.character(names(value$options$values)), value$option_names) ||
+        !all(value$option_writes %in% value$option_names) ||
+        !is.character(value$palette) || length(value$palette) < 2L) fail("invalid-checkpoint-context")
+    random <- value$random
+    if (!is.list(random) || !identical(random$state, "available") ||
+        length(random$kinds) != 3L || !all(vapply(random$kinds, is.character, logical(1))) ||
+        length(random$seed) > 1024L || length(random$seed) == 0L ||
+        !all(vapply(random$seed, function(x) is.numeric(x) && length(x) == 1L &&
+          is.finite(x) && x == as.integer(x), logical(1)))) fail("invalid-checkpoint-random-state")
+    value
+  }
+  begin <- function(req, exprs, ignored_devices = integer(), fresh_session = FALSE) {
+    # Cancellation during output harvesting can skip finish entirely. Recover
+    # that unfinished capture before any operation, including ordinary requests.
+    rollback_capture_references(capture_refs$pending)
+    capture <- req$stage_checkpoint
+    restore <- req$stage_restore
+    compare_path <- req$stage_expected_output_path
+    supplement <- req$stage_supplement
+    if (is.null(capture) && is.null(restore) && is.null(compare_path) && is.null(supplement)) {
+      option_frontier$ready <- FALSE
+      option_frontier$owned <- character()
+      reset_references()
+      return(NULL)
+    }
+    if (!is.null(restore) || !is.null(capture)) {
+      reset_references()
+      option_frontier$ready <- FALSE
+      option_frontier$owned <- character()
+    }
+    reference_mark <- if (!is.null(capture))
+      list(count = length(capture_refs$values), bytes = capture_refs$bytes) else NULL
+    capture_refs$pending <- reference_mark
+    reference_transferred <- FALSE
+    on.exit({
+      if (!reference_transferred) rollback_capture_references(reference_mark)
+    }, add = TRUE)
+    tryCatch({
+      if (sum(!vapply(list(capture, restore, compare_path, supplement), is.null, logical(1))) != 1L)
+        fail("conflicting-checkpoint-operations")
+      check_devices(ignored_devices)
+      check_global_methods()
+      if (!is.null(capture)) {
+        if (!scalar_path(capture$input_path) || !scalar_path(capture$output_path) ||
+            identical(capture$input_path, capture$output_path)) fail("invalid-checkpoint-path")
+        selection <- plan(exprs)
+        inputs <- bindings(selection$reads)
+        environment_proof <- new_environment_proof(c(attached(), selection$packages), selection$environment_complete)
+        input_options <- save(capture$input_path, inputs, attached(), option_names = selection$option_names,
+          option_writes = selection$option_writes, environment_proof = environment_proof)
+        state <- list(state = "capturing", reference_mark = reference_mark,
+          environment_proof = environment_proof,
+          selection = selection, input_options = input_options, output_path = capture$output_path,
+          input_names = selection$reads, before_names = ls(globalenv(), all.names = TRUE))
+        reference_transferred <- TRUE
+        state
+      } else if (!is.null(supplement)) {
+        input <- load(supplement$input_path)
+        comparison_path <- expected_path(supplement$expected_output_path)
+        if (!is.list(supplement$names) || length(supplement$names) == 0L ||
+            !all(vapply(supplement$names, function(name) is.character(name) && length(name) == 1L &&
+              !is.na(name) && nzchar(name), logical(1)))) fail("invalid-supplement-names")
+        names <- unlist(supplement$names, use.names = FALSE)
+        if (anyDuplicated(names)) fail("invalid-supplement-names")
+        if (!all(names %in% names(input$bindings))) fail("unknown-supplement-binding")
+        if (any(vapply(names, exists, logical(1), envir = globalenv(), inherits = FALSE)))
+          fail("existing-supplement-binding")
+        selection <- plan(exprs, union(names, ls(globalenv(), all.names = TRUE)))
+        if (!identical(sort(selection$reads), sort(names(input$bindings))))
+          fail("supplement-input-set-mismatch")
+        check_option_plan(input, selection)
+        expected <- load_expected(comparison_path)
+        supplement_options(expected, selection)
+        # Resolve anchored references to current environments before adding missing roots.
+        # No binding or content of an existing current object is restored from input.
+        additions <- supplement_bindings(input, names)
+        list2env(additions, envir = globalenv())
+        list(state = "restoring", expected_path = comparison_path, selection = selection,
+          input_names = names(input$bindings), before_names = ls(globalenv(), all.names = TRUE))
+      } else if (!is.null(compare_path)) {
+        comparison_path <- expected_path(compare_path)
+        selection <- plan(exprs)
+        expected <- load_expected(comparison_path)
+        supplement_options(expected, selection)
+        list(state = "restoring", expected_path = comparison_path, selection = selection,
+          input_names = selection$reads, before_names = ls(globalenv(), all.names = TRUE))
+      } else {
+        # Load only the input before user code. Expected output bytes are host-verified;
+        # deserializing their objects here would preload namespaces and change .onLoad order.
+        projection <- package_context(restore$package_context, fresh_session)
+        input <- load(restore$input_path)
+        if (!is.null(projection) &&
+            (!identical(input$packages, unlist(projection$source_packages, use.names = FALSE)) ||
+              length(input$bindings) != 0L)) fail("package-context-source-mismatch")
+        comparison_path <- expected_path(restore$expected_output_path)
+        current <- attached()
+        required_packages <- if (is.null(projection)) input$packages else
+          unlist(projection$target_packages, use.names = FALSE)
+        missing <- setdiff(required_packages, current)
+        for (package in rev(missing)) suppressPackageStartupMessages(
+          library(package, character.only = TRUE, quietly = TRUE, warn.conflicts = FALSE))
+        if (!identical(attached(), required_packages)) fail("package-attach-order-mismatch")
+        for (name in names(input$bindings)) {
+          if (exists(name, globalenv(), inherits = FALSE) &&
+              (bindingIsActive(name, globalenv()) || bindingIsLocked(name, globalenv())))
+            fail("nonreplaceable-object-binding")
+        }
+        selection <- plan(exprs, union(names(input$bindings), ls(globalenv(), all.names = TRUE)))
+        if (!identical(sort(selection$reads), sort(names(input$bindings))))
+          fail("checkpoint-input-set-mismatch")
+        check_option_plan(input, selection)
+        expected <- load_expected(comparison_path)
+        if (!is.null(projection) &&
+            !identical(expected$packages, unlist(projection$source_packages, use.names = FALSE)))
+          fail("package-context-expected-source-mismatch")
+        check_option_plan(expected, selection)
+        anchor_references(input$references$ids, input$reference_values, input$reference_bytes)
+        replay_refs$ready <- TRUE
+        list2env(input$bindings, envir = globalenv())
+        if (bindingIsActive(".Random.seed", globalenv()) || bindingIsLocked(".Random.seed", globalenv()))
+          fail("nonreplaceable-random-state")
+        do.call(RNGkind, input$random$kinds)
+        assign(".Random.seed", as.integer(unlist(input$random$seed)), envir = globalenv())
+        apply_options(input$options)
+        grDevices::palette(input$palette)
+        option_frontier$ready <- TRUE
+        option_frontier$owned <- selection$option_names
+        list(state = "restoring", expected_path = comparison_path, selection = selection,
+          package_context = projection, observe_runtime_footprint = isTRUE(restore$observe_runtime_footprint),
+          input_names = names(input$bindings), before_names = ls(globalenv(), all.names = TRUE))
+      }
+    }, error = function(e) {
+      option_frontier$ready <- FALSE
+      option_frontier$owned <- character()
+      reset_references()
+      result <- unavailable(conditionMessage(e))
+      if (!is.null(restore) || !is.null(compare_path) || !is.null(supplement)) result$restore <- TRUE
+      result
+    })
+  }
+  finish <- function(state, error, ignored_devices = integer(), last_value = NULL) {
+    if (is.null(state)) {
+      if (!is.null(error)) {
+        option_frontier$ready <- FALSE
+        option_frontier$owned <- character()
+        reset_references()
+      }
+      return(list())
+    }
+    if (identical(state$state, "unavailable")) {
+      option_frontier$ready <- FALSE
+      option_frontier$owned <- character()
+      reset_references()
+      if (isTRUE(state$restore)) return(list(stage_comparison = list(outcome = "unavailable", reason = state$reason)))
+      return(list(stage_checkpoint = state))
+    }
+    reference_committed <- FALSE
+    on.exit({
+      if (state$state == "capturing") {
+        if (!reference_committed) rollback_capture_references(state$reference_mark)
+        capture_refs$pending <- NULL
+      }
+    }, add = TRUE)
+    tryCatch({
+      if (!is.null(error)) fail("cell-execution-failed")
+      check_devices(ignored_devices)
+      check_global_methods()
+      for (op in state$selection$pending_calls) {
+        locations <- call_locations(op)
+        if (!resolved_call_allowed(op)) fail("unresolved-function-dependency")
+        environment_proof_package(state$environment_proof, sub("^package:", "", locations[[1L]]))
+      }
+      names <- sort(unique(c(state$selection$writes, state$input_names,
+        setdiff(ls(globalenv(), all.names = TRUE), state$before_names))))
+      values <- bindings(names)
+      last_value <- project_values(last_value)
+      validate(values)
+      if (state$state == "restoring") option_frontier$owned <- union(option_frontier$owned, state$selection$option_writes)
+      if (state$state == "capturing") {
+        saveRDS(output_snapshot(values, last_value, state$selection$option_names,
+          input_options = state$input_options, option_writes = state$selection$option_writes,
+          environment_proof = state$environment_proof), state$output_path, version = 3L)
+        reference_committed <- TRUE
+        checkpoint <- list(state = "available", input_names = as.list(state$input_names),
+          output_names = as.list(names))
+        proof <- finish_environment_proof(state$environment_proof, attached())
+        if (!is.null(proof)) checkpoint$environment_proof <- proof
+        list(stage_checkpoint = checkpoint)
+      } else {
+        # The expected envelope contains only raw comparison bytes and proven base-data
+        # option inputs. Never deserialize its comparison graph or restore its RNG/palette;
+        # current state remains owned by the preceding selected steps.
+        actual <- output_snapshot(values, last_value, state$selection$option_names,
+          option_writes = state$selection$option_writes, record_references = FALSE)
+        expected <- load_expected(state$expected_path)
+        scientific_equal <- identical(actual$comparison, expected$comparison) &&
+          identical(actual$output_names, expected$output_names)
+        expected_packages <- if (is.null(state$package_context)) expected$packages else
+          unlist(state$package_context$target_packages, use.names = FALSE)
+        if (!is.null(state$package_context) &&
+            !identical(expected$packages, unlist(state$package_context$source_packages, use.names = FALSE)))
+          fail("package-context-expected-source-mismatch")
+        equal <- scientific_equal && identical(actual$packages, expected_packages)
+        if (equal) {
+          found <- collect_references(list(values, last_value))
+          anchor_references(expected$references$ids, found$values, found$bytes)
+        }
+        comparison <- list(outcome = if (equal) "equal" else "different")
+        if (!is.null(state$package_context)) {
+          comparison$scientific_outcome <- if (scientific_equal) "equal" else "different"
+          comparison$package_context <- state$package_context
+        }
+        if (isTRUE(state$observe_runtime_footprint)) {
+          footprint <- runtime_footprint()
+          if (!is.null(footprint)) comparison$runtime_footprint <- footprint
+        }
+        list(stage_comparison = comparison)
+      }
+    }, error = function(e) {
+      option_frontier$ready <- FALSE
+      option_frontier$owned <- character()
+      reset_references()
+      if (state$state == "restoring")
+        list(stage_comparison = list(outcome = "unavailable", reason = conditionMessage(e))) else
+        list(stage_checkpoint = unavailable(conditionMessage(e)))
+    })
+  }
+  list(begin = begin, finish = finish, observe = observe, seal_options = seal_options)
+}, envir = base::list2env(base::list(namespace_state = namespace_state,
+  capture_rng = capture_r_random_state), parent = base::baseenv()))
+lockEnvironment(environment(stage_checkpoint_owner$begin), bindings = TRUE)
 
 capture_environment <- function(execution_context = NULL) {
   loaded <- loadedNamespaces()
@@ -1465,7 +2863,8 @@ run <- base::local({
     if (!base::exists(".Random.seed", envir = base::globalenv(), inherits = FALSE))
       base::set.seed(NULL)
     context_before <- capture_execution_context()
-    package_observer <- new_package_observer()
+    package_observer <- new_package_observer(request_state$sequence == 0L)
+    fresh_package_session <- request_state$sequence == 0L && isTRUE(package_observer$finish()$cleanSession)
     request_state$sequence <- request_state$sequence + 1L
     request_id <- request_state$sequence
     reset_capture_state(request_id = request_id)
@@ -1509,6 +2908,8 @@ run <- base::local({
       }
     }
     error <- NULL
+    stage_state <- NULL
+    last_value <- NULL
     execution_started <- FALSE
     interrupt_ack <- FALSE
     error_line <- NA_integer_
@@ -1533,6 +2934,8 @@ run <- base::local({
       if (inherits(exprs, "condition")) {
         error <- conditionMessage(exprs)
       } else {
+        restoring_request <- !is.null(req$stage_restore) || !is.null(req$stage_supplement)
+        if (!restoring_request) stage_checkpoint_owner$observe(exprs)
         policy_error <- tryCatch({
           lapply(exprs, assert_no_package_mutation)
           NULL
@@ -1540,14 +2943,34 @@ run <- base::local({
         if (inherits(policy_error, "condition")) {
           error <- conditionMessage(policy_error)
         } else {
+          stage_state <- stage_checkpoint_owner$begin(req, exprs,
+            if (is.na(dev_id)) integer() else dev_id, fresh_package_session)
+          restore_failed <- (!is.null(req$stage_restore) || !is.null(req$stage_supplement) ||
+            !is.null(req$stage_expected_output_path)) &&
+            (is.null(stage_state) || identical(stage_state$state, "unavailable"))
+          if (restoring_request && !restore_failed) {
+            source_status <- stage_checkpoint_owner$observe(exprs)
+            if (!is.null(source_status)) {
+              stage_state <- source_status
+              stage_state$restore <- TRUE
+              restore_failed <- TRUE
+            }
+          }
+          if (restore_failed) error <- paste0("Stage restoration failed: ", stage_state$reason)
+          if (!is.null(stage_state) && !restore_failed &&
+              (!is.null(req$stage_restore) || !is.null(req$stage_supplement))) {
+            context_before <- capture_execution_context()
+            package_observer <- new_package_observer(FALSE)
+          }
           refs <- attr(exprs, "srcref")
           idx <- 0L
           tryCatch({
-            for (idx in seq_along(exprs)) {
+            for (idx in if (restore_failed) integer() else seq_along(exprs)) {
               execution_started <- TRUE
               package_observer$record(exprs[[idx]])
               namespace_tracker$prepare(exprs[[idx]])
               res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
+              last_value <- list(value = res$value, visible = res$visible)
               namespace_tracker$commit(exprs[[idx]])
               if (isTRUE(res$visible)) print(res$value)
               mark_recorded_plot()
@@ -1566,6 +2989,7 @@ run <- base::local({
         }
       }
     }
+    if (is.expression(exprs)) stage_checkpoint_owner$observe(exprs, allow_pending = FALSE)
     output_sink_state$protected_depth <- sink_depth
     while (sink.number(type = "output") > sink_depth) kernel_sink(type = "output")
     close(stdout_connection)
@@ -1615,7 +3039,14 @@ run <- base::local({
     } else {
       list()
     }
-    list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
+    stage_result <- stage_checkpoint_owner$finish(stage_state, error, integer(), last_value)
+    if (!is.null(req$stage_checkpoint) && is.null(stage_result$stage_checkpoint))
+      stage_result$stage_checkpoint <- list(state = "unavailable", reason = "cell-not-executed")
+    if ((!is.null(req$stage_restore) || !is.null(req$stage_expected_output_path) ||
+        !is.null(req$stage_supplement)) &&
+        is.null(stage_result$stage_comparison))
+      stage_result$stage_comparison <- list(outcome = "unavailable")
+    c(stage_result, list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
          execution_started = isTRUE(execution_started),
          interrupt_ack = isTRUE(interrupt_ack),
          error_line = if (is.na(error_line)) NULL else error_line,
@@ -1623,7 +3054,7 @@ run <- base::local({
          output_truncated = isTRUE(capture_state$output_truncated),
          environment = capture_environment(list(schemaVersion = 1L, before = context_before,
                                                after = capture_execution_context(),
-                                               rPackages = package_observer$finish())))
+                                               rPackages = package_observer$finish()))))
   }
 }, envir = base::list2env(
   base::list(
@@ -1638,11 +3069,13 @@ run <- base::local({
     new_package_observer = new_package_observer,
     assert_no_package_mutation = assert_no_package_mutation,
     output_sink_policy_env = output_sink_policy_env,
-    namespace_tracker = namespace_tracker
+    namespace_tracker = namespace_tracker,
+    stage_checkpoint_owner = stage_checkpoint_owner
   ),
   parent = base::baseenv()
 ))
 lockEnvironment(environment(run), bindings = TRUE)
+stage_checkpoint_owner$seal_options()
 
 # Capture the loop's trusted startup names once. The inspector hides unchanged bootstrap names but
 # reveals confirmed user shadows, while the request loop keeps private references to trusted code.
@@ -1660,6 +3093,20 @@ base::local({
   # Retain the fully read frame until its response is emitted. A SIGINT can otherwise unwind
   # read_request after consuming the body and discard the request before it is acknowledged.
   state$current_req <- NULL
+
+  # This private control never enters run's user-source observer or checkpoint history.
+  # Capture base's implementation at startup so .GlobalEnv shadows cannot replace it.
+  interrupt_sleep <- Sys.sleep
+  interrupt_probe_response <- function(error = NULL, interrupt_ack = FALSE) {
+    list(stdout = "", stderr = "", error = error, interrupt_ack = interrupt_ack,
+         error_line = NULL, result = NA, cwd = getwd(), figures = list())
+  }
+  interrupt_probe <- function(code) {
+    if (!identical(code, ""))
+      return(interrupt_probe_response("Invalid interrupt probe request"))
+    interrupt_sleep(0.05)
+    interrupt_probe_response()
+  }
 
   read_request <- function() {
     empty_streak <- 0L
@@ -1727,7 +3174,12 @@ base::local({
     }
   }
 
-  interrupted_response <- function(req_id) {
+  interrupted_response <- function(req_id, operation) {
+    if (identical(operation, "interrupt_probe")) {
+      response <- interrupt_probe_response("interrupted", TRUE)
+      response$req_id <- req_id
+      return(response)
+    }
     environment <- tryCatch(
       capture_environment(),
       interrupt = function(cnd) {
@@ -1778,18 +3230,33 @@ base::local({
             {
               if (isTRUE(state$during_read)) {
                 state$during_read <- FALSE
-                interrupted_response(req$req_id)
+                interrupted_response(req$req_id, req$operation)
               } else {
-                result <- if (identical(req$operation, "inspect_namespace")) {
+                result <- if (identical(req$operation, "interrupt_probe")) {
+                  interrupt_probe(req$code)
+                } else if (identical(req$operation, "inspect_namespace")) {
                   list(namespace = inspect_namespace(identical(req$code, "private")))
                 } else {
+                  if (identical(req$operation, "execute_stage")) {
+                    payload <- tryCatch(jsonlite::fromJSON(req$code, simplifyVector = FALSE),
+                      error = function(e) NULL)
+                    if (is.list(payload) && is.character(payload$code) && length(payload$code) == 1L) {
+                      req$code <- payload$code
+                      req$stage_checkpoint <- payload$stage_checkpoint
+                      req$stage_restore <- payload$stage_restore
+                      req$stage_supplement <- payload$stage_supplement
+                      req$stage_expected_output_path <- payload$stage_expected_output_path
+                    } else {
+                      req$code <- "stop('Invalid stage execution request')"
+                    }
+                  }
                   run(req)
                 }
                 result$req_id <- req$req_id
                 result
               }
             },
-            interrupt = function(cnd) interrupted_response(req$req_id)
+            interrupt = function(cnd) interrupted_response(req$req_id, req$operation)
           )
           suspendInterrupts({
             emit(resp)
@@ -1805,7 +3272,7 @@ base::local({
         } else {
           state$during_read <- FALSE
           suspendInterrupts({
-            emit(interrupted_response(req$req_id))
+            emit(interrupted_response(req$req_id, req$operation))
             state$current_req <- NULL
           })
         }

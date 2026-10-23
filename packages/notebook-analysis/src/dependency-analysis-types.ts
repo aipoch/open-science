@@ -37,6 +37,8 @@ type NotebookDependencyTypeBinding = {
   target: string
   typeName: string
   argumentNames?: string[]
+  // Source-proven plain built-in values; never inferred from user class names.
+  rPlainKind?: 'matrix' | 'data-frame'
 }
 
 type NotebookDependencyCopyBinding = {
@@ -145,12 +147,20 @@ type NotebookSourceFileAccessContext = {
   resolvedKernelNames?: string[]
   // Transient callable knowledge rebuilt from same-epoch dependency facts.
   rFunctions?: Array<{ name: string; summary: NotebookDependencyTypeSummary }>
+  // Transient ordered attachments, attested by continuous completed same-epoch history.
+  // Consumers may resolve only bounded package contracts; this is not a call whitelist.
+  rAttachedPackages?: string[]
   // Plain atomic values only; no R objects or vector contents are captured here.
   rAtomicValueNames?: string[]
   // Bounded source evidence: these table bindings have classless atomic columns.
   rAtomicTableNames?: string[]
   // Transient ordinary-value ownership, rebuilt from same-epoch facts; no object contents.
   rCopyOnModifyNames?: string[]
+  // Narrow source provenance, rebuilt transiently from rPlainKind bindings.
+  rMatrixNames?: string[]
+  rDataFrameNames?: string[]
+  // Unknown or method-changing prior source cannot certify later plain-value dispatch.
+  rDispatchUncertain?: true
   // Candidate serialized generations; usable only after matching a captured input checksum.
   serializedValueFiles?: Array<NotebookSerializedValue & { checksum: string }>
   verifiedSerializedValues?: NotebookSerializedValue[]
@@ -189,6 +199,12 @@ type NotebookRunDependencyFacts =
       definedNames: string[]
       conditionallyDefinedNames?: string[]
       usedNames: string[]
+      // External roots read while executing the original code; never erased by later rebinding.
+      executionReadNames?: string[]
+      // Only identified file reads can be discharged by complete source-file evidence.
+      executionExternalState?: 'files-only' | 'unavailable'
+      // Bounded source proof, or a known dispatch conflict that vetoes execution proof.
+      executionFileState?: 'isolated' | 'method-conflict'
       priorUsedNames?: string[]
       possiblyUsedNames?: string[]
       mutatedNames: string[]
@@ -225,6 +241,12 @@ type NotebookRunDependencyFacts =
       definedNames?: string[]
       conditionallyDefinedNames?: string[]
       usedNames?: string[]
+      // External roots read while executing the original code; never erased by later rebinding.
+      executionReadNames?: string[]
+      // Only identified file reads can be discharged by complete source-file evidence.
+      executionExternalState?: 'files-only' | 'unavailable'
+      // Bounded source proof, or a known dispatch conflict that vetoes execution proof.
+      executionFileState?: 'isolated' | 'method-conflict'
       priorUsedNames?: string[]
       possiblyUsedNames?: string[]
       mutatedNames?: string[]
@@ -273,6 +295,9 @@ type NotebookDependencyProjection = {
   stalenessByRunId: Record<string, NotebookRunStaleness>
   invalidatedByRunId: Record<string, NotebookInvalidatedRun[]>
   dependenciesByRunId?: Record<string, string[]>
+  // Direct memory inputs proved at execution time, unaffected by later freshness changes.
+  // An empty list proves no inputs; a missing run key means its closure was not proved.
+  executionDependenciesByRunId?: Record<string, string[]>
   fileDependenciesByRunId?: Record<string, NotebookFileDependency[]>
   // Recomputed from run history; not stored in per-kernel sidecar snapshots.
   unresolvedFileReadRunIds?: string[]

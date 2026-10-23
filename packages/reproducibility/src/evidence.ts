@@ -1,6 +1,29 @@
 import type { OutputComparisonReport } from './comparison-contracts'
 import type { NotebookExecutionContext } from './execution-context'
 import type { NotebookRunEnvironmentLockCapture } from '@aipoch/environment/contracts'
+export type RStageCheckpointFile = {
+  storageKey: string
+  checksum: string
+  sizeBytes: number
+}
+export type RStageEnvironmentProof = {
+  schemaVersion: 1
+  packages: Array<{ name: string; version: string }>
+}
+export type RStageCheckpoint = {
+  state: 'available'
+  schemaVersion: 1
+  runId: string
+  kernelEpochId: string
+  sourceChecksum: string
+  environmentLockChecksum: string
+  environmentProof?: RStageEnvironmentProof
+  input: RStageCheckpointFile
+  output: RStageCheckpointFile
+  inputNames: string[]
+  outputNames: string[]
+}
+export type RStageCheckpointCapture = RStageCheckpoint | { state: 'unavailable'; reason: string }
 export type ReproductionSnapshot = {
   inputFiles: NotebookRunInputFile[]
   runs: ProvenanceNotebookRun[]
@@ -14,6 +37,48 @@ export type ReproductionSnapshot = {
     omittedOutputCount: number
     omittedInputCount: number
   }
+}
+
+// The graph retains the original publication anchor, but contains the complete captured workflow.
+// Slice endpoints are Run identities; they never manufacture an Artifact Version or publication.
+export type WorkflowCapture = {
+  schemaVersion: 1
+  captureId: string
+  // New captures retain helper completeness on every run. Historical captures without
+  // this field continue to use their conservative capture-wide status.
+  runs: Array<ProvenanceNotebookRun & { helperEvidenceStatus?: ArtifactHelperEvidenceStatus }>
+  inputFiles: NotebookRunInputFile[]
+  graph: ArtifactProvenanceGraph
+  activityReasonCodes?: Record<string, ArtifactProvenanceGraphReason[]>
+  helperModules?: NotebookHelperModuleEvidence[]
+  helperEvidenceStatus?: ArtifactHelperEvidenceStatus
+  truncation?: ReproductionSnapshot['truncation']
+}
+
+export type WorkflowSelection = {
+  independent?: true
+  captureId: string
+  targetRunIds: string[]
+  boundaryEntityIds?: string[]
+}
+
+export type WorkflowPlan = {
+  schemaVersion: 1
+  planId: string
+  captureId: string
+  selection: WorkflowSelection
+  selectedStepIds: string[]
+  steps: Array<Extract<ArtifactReproducibilityRecipeStep, { kind: 'notebook-run' }>>
+  crossingFiles: ArtifactReproducibilityRecipeFile[]
+  targetOutputEntityIds: string[]
+  executionOnlyTargetRunIds: string[]
+  stageRestoreRunIds?: string[]
+  stageSupplementNames?: Record<string, string[]>
+  stateComparisonRunIds?: string[]
+  environmentRequirements: ArtifactReproducibilityEnvironmentRequirement[]
+  verification: 'file-comparison' | 'state-comparison' | 'execution-only'
+  status: 'ready' | 'blocked'
+  reasonCodes: string[]
 }
 
 export type NotebookRunInputFile = {
@@ -38,6 +103,7 @@ export type NotebookInputAssociation = 'turn-attached' | 'resolver-accessed'
 export type NotebookInputAccessEvidence = 'resolver' | 'file-evidence'
 
 export type ProvenanceNotebookRun = {
+  stageCheckpoint?: RStageCheckpointCapture
   executionContext?: NotebookExecutionContext
   runId: string
   runIndex: number
@@ -112,7 +178,7 @@ export type ArtifactProvenanceGraphActivity = {
   parentActivityId?: string
   runIndex?: number
   kernelEpochId?: string
-  inclusion: 'target-closure' | 'kernel-epoch-conservative'
+  inclusion: 'target-closure' | 'kernel-epoch-conservative' | 'workflow-capture'
   evidenceState: 'available' | 'partial' | 'unavailable'
   evidenceId?: string
   evidenceChecksum?: string
@@ -421,6 +487,15 @@ export type ArtifactReproducibilityCheckLogBase = {
 }
 
 export type ArtifactReproducibilityReceiptComparison = ArtifactReproducibilityCheckComparison & {
+  stateComparison?: {
+    outcome: 'equal' | 'different'
+    scientificOutcome?: 'equal' | 'different'
+    packageContext?: {
+      schemaVersion: 1
+      sourcePackages: string[]
+      targetPackages: string[]
+    }
+  }
   contentComparison?: OutputComparisonReport
   contentComparisonUnavailableReason?:
     'unsupported-format' | 'budget-exceeded' | 'comparison-failed'

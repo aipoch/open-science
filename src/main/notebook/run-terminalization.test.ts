@@ -264,6 +264,21 @@ const createHarness = (
 }
 
 describe('NotebookRunTerminalizationOwner', () => {
+  it('persists stage checkpoint evidence through terminal result projection', async () => {
+    const harness = createHarness()
+    const stageCheckpoint = {
+      state: 'unavailable' as const,
+      reason: 'checkpoint-publication-failed'
+    }
+    const terminalized = await harness.owner.run({
+      session,
+      runningRun: runningRun('r-capture', 'r'),
+      invoke: async () => ({ ...completedResult(), stageCheckpoint })
+    })
+    expect(terminalized.run.stageCheckpoint).toEqual(stageCheckpoint)
+    expect(harness.document().runs[0].stageCheckpoint).toEqual(stageCheckpoint)
+  })
+
   it('persists failure-time recovery facts for replay and background queries', async () => {
     const harness = createHarness()
     const recovery = { execution: 'not-started', retryAfter: 'cleanup-verified' } as const

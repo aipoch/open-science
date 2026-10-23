@@ -1,4 +1,4 @@
 // Bump the revision whenever dependency or source-file analysis semantics change.
 // The format version is independent: rule additions do not require a data migration.
 export const NOTEBOOK_ANALYZER_VERSION = 1 as const
-export const NOTEBOOK_ANALYZER_REVISION = 'bounded-scientific-lineage-20261021-s3-csv-moves'
+export const NOTEBOOK_ANALYZER_REVISION = 'bounded-lineage-r-stage-source-contracts-20261023'

@@ -1,5 +1,11 @@
 export type {
+  RStageCheckpoint,
+  RStageCheckpointCapture,
+  RStageCheckpointFile,
   ReproductionSnapshot,
+  WorkflowCapture,
+  WorkflowPlan,
+  WorkflowSelection,
   NotebookRunInputFile,
   NotebookInputAssociation,
   NotebookInputAccessEvidence,

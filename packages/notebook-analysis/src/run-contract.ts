@@ -8,6 +8,8 @@ export type NotebookAnalysisRun = {
   status: 'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
   kernelEpochId?: string
   kernelDispatched?: boolean
+  // Session-wide sequence; optional on legacy/imported histories.
+  executionCount?: number
   replPersistentBindings?: true
   runtimeId?: string
   environment?: string

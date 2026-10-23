@@ -217,7 +217,9 @@
     "packages/notebook-analysis/test/native/dependency-analysis.r-pipelines.suite.ts",
     "packages/notebook-analysis/test/native/dependency-analysis.structured-results.suite.ts",
     "packages/notebook-analysis/test/native/setup.ts",
-    "packages/notebook-analysis/test/native/vitest.config.ts"
+    "packages/notebook-analysis/test/native/vitest.config.ts",
+    "packages/notebook-analysis/src/r-minimal-environment.ts",
+    "packages/notebook-analysis/src/r-minimal-environment.test.ts"
   ],
   "interfacePaths": [
     "packages/notebook-analysis/src/analysis-test-support.ts",
@@ -252,7 +254,8 @@
     "packages/notebook-analysis/src/serialized-file-provenance.ts",
     "packages/notebook-analysis/src/source-file-access-analysis.ts",
     "packages/notebook-analysis/src/stdlib-replay.fixture.ts",
-    "packages/notebook-analysis/src/write-scope.ts"
+    "packages/notebook-analysis/src/write-scope.ts",
+    "packages/notebook-analysis/src/r-minimal-environment.ts"
   ],
   "consumerModules": ["notebook_application", "notebook_execution"],
   "testFiles": {
@@ -373,7 +376,8 @@
       "packages/notebook-analysis/src/dependency-analysis.venn-device.test.ts",
       "packages/notebook-analysis/src/dependency-projection.r-packages.test.ts",
       "packages/notebook-analysis/src/input-path-analysis.test.ts",
-      "packages/notebook-analysis/src/input-resource-analysis.test.ts"
+      "packages/notebook-analysis/src/input-resource-analysis.test.ts",
+      "packages/notebook-analysis/src/r-minimal-environment.test.ts"
     ],
     "contract": [
       "src/main/notebook/package-boundaries.architecture.test.ts",

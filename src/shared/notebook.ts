@@ -4,6 +4,7 @@ import type {
   NotebookRunEnvironmentCapture,
   NotebookRunEnvironmentLockCapture
 } from '@aipoch/environment/contracts'
+import type { RStageCheckpointCapture } from '@aipoch/reproducibility/contracts'
 import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
 import { z } from 'zod'
 import type { NotebookLanguage } from './notebook-language-contract'
@@ -11,6 +12,25 @@ import { NOTEBOOK_LANGUAGES } from './notebook-language-contract'
 export { NOTEBOOK_LANGUAGES, type NotebookLanguage } from './notebook-language-contract'
 export type NotebookEnvironmentManifest = EnvironmentManifest<NotebookExecutionContext>
 export type NotebookLiveEnvironmentOverlay = EnvironmentOverlay<NotebookExecutionContext>
+
+// Trusted, run-bound replay policy. Historical checkpoint bytes remain unchanged.
+export type NotebookRPackageContext = {
+  schemaVersion: 1
+  sourcePackages: string[]
+  targetPackages: string[]
+}
+export type NotebookRStageComparison = {
+  outcome: 'equal' | 'different' | 'unavailable'
+  reason?: string
+  scientificOutcome?: 'equal' | 'different'
+  packageContext?: NotebookRPackageContext
+  // Observed process footprint is a candidate hint, never a dependency-completeness proof.
+  runtimeFootprint?: {
+    processId: number
+    packages: Array<{ name: string; version: string }>
+    libraryPaths: string[]
+  }
+}
 
 import {
   defineApplicationCommandContract,
@@ -475,6 +495,7 @@ export type NotebookRunRecord = {
   // Immutable package lock used to reconstruct this run's managed environment. Optional keeps
   // historical run.json documents readable without fabricating restore coverage.
   environmentLock?: NotebookRunEnvironmentLockCapture
+  stageCheckpoint?: RStageCheckpointCapture
   // Trusted turn/Branch attribution injected by the main-process RPC bridge. Legacy and user-run
   // records may omit it. An Artifact producer must share root/agent identity, belong to the trusted
   // Branch and message ancestry, and match the active Runtime Segment for the active prompt.

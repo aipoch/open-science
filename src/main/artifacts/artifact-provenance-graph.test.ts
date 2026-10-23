@@ -24,6 +24,7 @@ import { artifactAnalysisRevisionMatchesGraph } from './provenance-analysis-revi
 import {
   artifactProvenanceGraphValue,
   sealArtifactProvenanceGraph,
+  sealArtifactWorkflowProvenanceGraph,
   type ArtifactProvenanceComputeActivityInput,
   type ArtifactProvenanceNotebookActivityInput,
   type SealArtifactProvenanceGraphInput
@@ -186,6 +187,207 @@ const recipeRun = (
 })
 
 describe('artifact provenance graph', () => {
+  describe('captured R state dependency proof', () => {
+    const capturedInput = (
+      options: Parameters<typeof evidence>[2] = {}
+    ): SealArtifactProvenanceGraphInput => {
+      const activity = notebookActivity(
+        'run-2',
+        2,
+        [
+          {
+            relation: 'created',
+            relativePath: 'result.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-target', 'result.csv', checksum('b'))
+          }
+        ],
+        { ...options, kernelKind: 'r', script: 'result <- 42' }
+      )
+      activity.run.environmentLock = {
+        state: 'available',
+        format: 'environment-lock-bundle',
+        lockChecksum: checksum('e')
+      }
+      activity.run.stageCheckpoint = {
+        state: 'available',
+        schemaVersion: 1,
+        runId: 'run-2',
+        kernelEpochId: 'epoch-1',
+        sourceChecksum: sha256(activity.run.script),
+        environmentLockChecksum: checksum('e'),
+        input: {
+          storageKey: `runtime/provenance/r-stage-checkpoints/${checksum('a')}.rds`,
+          checksum: checksum('a'),
+          sizeBytes: 10
+        },
+        output: {
+          storageKey: `runtime/provenance/r-stage-checkpoints/${checksum('b')}.rds`,
+          checksum: checksum('b'),
+          sizeBytes: 10
+        },
+        inputNames: [],
+        outputNames: ['result']
+      }
+      return {
+        target: target(),
+        notebookActivities: [activity],
+        computeActivities: [],
+        notebookDependencies: {
+          stalenessByRunId: { 'run-2': { state: 'unknown', reasons: ['opaque-call'] } },
+          invalidatedByRunId: {},
+          unresolvedFileReadRunIds: ['run-2']
+        }
+      }
+    }
+
+    it('accepts bound state with complete independent file authority without inventing upstream runs', () => {
+      const input = capturedInput()
+      const result = sealArtifactWorkflowProvenanceGraph(input)
+      expect(result.graph.completeness).toBe('complete')
+      expect(result.graph.reasonCodes).toEqual([])
+      expect(result.graph.edges.filter((edge) => edge.kind === 'depends-on')).toEqual([])
+      // Ablation: file authority alone cannot replace the missing memory proof.
+      delete input.notebookActivities[0]!.run.stageCheckpoint
+      expect(sealArtifactWorkflowProvenanceGraph(input).graph.reasonCodes).toEqual(
+        expect.arrayContaining(['history-truncated', 'kernel-dependencies-unavailable'])
+      )
+    })
+
+    it.each([
+      { state: 'partial' as const, fileReads: 'partial' as const },
+      { writerAttribution: 'partial' as const }
+    ])('does not promote partial file evidence %j', (options) => {
+      expect(sealArtifactWorkflowProvenanceGraph(capturedInput(options)).graph.reasonCodes).toEqual(
+        expect.arrayContaining(['history-truncated', 'kernel-dependencies-unavailable'])
+      )
+    })
+
+    it('rejects corrupt file evidence and transplanted state', () => {
+      const corrupt = capturedInput()
+      corrupt.notebookActivities[0]!.evidenceJson += 'corrupt'
+      expect(sealArtifactWorkflowProvenanceGraph(corrupt).graph.reasonCodes).toContain(
+        'activity-evidence-corrupt'
+      )
+      const transplanted = capturedInput()
+      transplanted.notebookActivities[0]!.run.script += '\nresult <- 0'
+      expect(sealArtifactWorkflowProvenanceGraph(transplanted).graph.reasonCodes).toContain(
+        'kernel-dependencies-unavailable'
+      )
+    })
+
+    it.each(['missing', 'cross-epoch', 'future'] as const)(
+      'preserves explicit %s dependency failures despite captured state',
+      (kind) => {
+        const input = capturedInput()
+        const dependencyId = kind === 'missing' ? 'missing' : 'run-1'
+        if (kind !== 'missing')
+          input.notebookActivities.unshift(
+            notebookActivity('run-1', kind === 'future' ? 3 : 1, [], {
+              kernelEpochId: kind === 'cross-epoch' ? 'other-epoch' : 'epoch-1'
+            })
+          )
+        input.notebookDependencies!.executionDependenciesByRunId = {
+          'run-1': [],
+          'run-2': [dependencyId]
+        }
+        expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+          'history-truncated'
+        )
+      }
+    )
+
+    it('preserves actual omitted history and unresolved file producers', () => {
+      const input = capturedInput()
+      input.omittedLeadingActivityCount = 1
+      expect(sealArtifactWorkflowProvenanceGraph(input).graph.reasonCodes).toContain(
+        'history-truncated'
+      )
+      delete input.omittedLeadingActivityCount
+      input.notebookDependencies!.fileDependenciesByRunId = {
+        'run-2': [
+          {
+            producerRunId: 'missing',
+            generationId: 'missing',
+            confidence: 'verified',
+            checksum: checksum('c'),
+            path: '/missing/input.csv'
+          }
+        ]
+      }
+      expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+        'history-truncated'
+      )
+    })
+  })
+  it('captures workflow side branches, sibling generations and runs without outputs', () => {
+    const created = (id: string, path: string, digest: string): Record<string, unknown> => ({
+      relation: 'created',
+      relativePath: path,
+      pathPortability: 'relative',
+      authority: 'advisory',
+      generation: generation(id, path, checksum(digest))
+    })
+    const setup = notebookActivity('setup', 0, [])
+    const side = notebookActivity('side-plot', 1, [created('g-side', 'qc.png', 'a')])
+    const noOutput = notebookActivity('inspect', 2, [])
+    const producer = notebookActivity('run-2', 3, [
+      created('g-target', 'result.csv', 'b'),
+      created('g-sibling', 'volcano.png', 'c')
+    ])
+    const input: SealArtifactProvenanceGraphInput = {
+      target: target(),
+      notebookActivities: [setup, side, noOutput, producer],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: Object.fromEntries(
+          ['setup', 'side-plot', 'inspect', 'run-2'].map((id) => [id, { state: 'clear' }])
+        ),
+        invalidatedByRunId: {},
+        dependenciesByRunId: { setup: [], 'side-plot': ['setup'], inspect: [], 'run-2': [] },
+        executionDependenciesByRunId: {
+          setup: [],
+          'side-plot': ['setup'],
+          inspect: [],
+          'run-2': []
+        }
+      }
+    }
+    const artifact = sealArtifactProvenanceGraph(input)
+    expect(artifact.activities.map((activity) => activity.activityId)).toEqual([
+      'run-2',
+      'artifact-publication:version-1'
+    ])
+    expect(
+      artifact.entities.some((entity) => entity.entityId === 'file-generation:g-sibling')
+    ).toBe(false)
+
+    const workflow = sealArtifactProvenanceGraph({ ...input, captureScope: 'workflow' })
+    expect(workflow.completeness).toBe('complete')
+    expect(artifactProvenanceGraphValue(workflow)).toBe(true)
+    expect(workflow.activities.filter((activity) => activity.kind === 'notebook-run')).toEqual(
+      expect.arrayContaining(
+        ['setup', 'side-plot', 'inspect', 'run-2'].map((activityId) =>
+          expect.objectContaining({ activityId, inclusion: 'workflow-capture' })
+        )
+      )
+    )
+    expect(workflow.entities.map((entity) => entity.entityId)).toEqual(
+      expect.arrayContaining(['file-generation:g-side', 'file-generation:g-sibling'])
+    )
+    expect(workflow.edges).toContainEqual({
+      kind: 'depends-on',
+      activityId: 'side-plot',
+      dependencyActivityId: 'setup',
+      authority: 'authoritative',
+      evidenceSource: 'dependency-analysis'
+    })
+    expect(
+      workflow.activities.filter((activity) => activity.kind === 'artifact-publication')
+    ).toHaveLength(1)
+  })
+
   it('retains advisory cross-language file dependencies from notebook projection', () => {
     const graph = sealArtifactProvenanceGraph({
       target: target(),
@@ -227,6 +429,261 @@ describe('artifact provenance graph', () => {
       dependencyActivityId: 'run-1',
       authority: 'advisory',
       evidenceSource: 'dependency-analysis'
+    })
+  })
+
+  describe('runtime coverage of static file dependencies', () => {
+    const dataRoot = join(tmpdir(), 'static-file-dependency-session', 'data')
+    const capturedInput = (
+      producerOptions: Parameters<typeof notebookActivity>[3] = {},
+      readerOptions: Parameters<typeof notebookActivity>[3] = {}
+    ): SealArtifactProvenanceGraphInput => ({
+      target: target(),
+      notebookActivities: [
+        notebookActivity(
+          'run-1',
+          0,
+          [
+            {
+              relation: 'created',
+              relativePath: 'data/clean.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-clean', 'data/clean.csv', checksum('c'))
+            }
+          ],
+          {
+            cwdBefore: dataRoot,
+            workingFiles: [
+              {
+                path: join(dataRoot, 'clean.csv'),
+                relativePath: 'data/clean.csv',
+                kind: 'other',
+                createdByRunId: 'run-1',
+                generationId: 'g-clean',
+                checksum: checksum('c'),
+                change: 'created'
+              }
+            ],
+            ...producerOptions
+          }
+        ),
+        notebookActivity(
+          'run-2',
+          2,
+          [
+            {
+              relation: 'present-before',
+              relativePath: 'data/clean.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-reader-clean', 'data/clean.csv', checksum('c'))
+            },
+            {
+              relation: 'created',
+              relativePath: 'result.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-target', 'result.csv', checksum('b'))
+            }
+          ],
+          { kernelKind: 'r', cwdBefore: dataRoot, ...readerOptions }
+        )
+      ],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: { 'run-1': { state: 'clear' }, 'run-2': { state: 'clear' } },
+        invalidatedByRunId: {},
+        dependenciesByRunId: { 'run-1': [], 'run-2': [] },
+        fileDependenciesByRunId: {
+          'run-2': [
+            {
+              producerRunId: 'run-1',
+              path: 'clean.csv',
+              generationId: 'g-clean',
+              checksum: checksum('c'),
+              confidence: 'verified'
+            }
+          ]
+        }
+      }
+    })
+
+    it.each(['relative to cwd', 'absolute', 'legacy exact relative path'])(
+      'uses the frozen file boundary when the static path is %s',
+      (pathKind) => {
+        const input = capturedInput()
+        const dependency = input.notebookDependencies!.fileDependenciesByRunId!['run-2']![0]!
+        if (pathKind === 'absolute') dependency.path = join(dataRoot, 'clean.csv')
+        if (pathKind === 'legacy exact relative path') {
+          input.notebookActivities[1]!.run.cwdBefore = undefined
+          dependency.path = 'data/clean.csv'
+        }
+        const graph = sealArtifactProvenanceGraph(input)
+        expect(graph.edges).toContainEqual(
+          expect.objectContaining({
+            kind: 'used',
+            activityId: 'run-2',
+            entityId: 'file-generation:g-clean',
+            observedGenerationId: 'g-reader-clean',
+            authority: 'authoritative'
+          })
+        )
+        expect(graph.edges.some((edge) => edge.kind === 'depends-on')).toBe(false)
+        expect(
+          projectArtifactReproducibility(graph, []).startFrontiers.find(
+            (frontier) => frontier.frontierId === 'checkpoint:run-1'
+          )
+        ).toMatchObject({ eligibility: 'available', reasonCodes: [] })
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
+          provenanceGraph: graph,
+          inputFiles: [],
+          runs: [recipeRun('run-1', 0), recipeRun('run-2', 2, { kernelKind: 'r' })]
+        })
+        expect(
+          reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(
+            recipe,
+            'checkpoint:run-1'
+          )
+        ).toMatchObject({
+          frontier: { claimScope: 'downstream-only' },
+          steps: [{ stepId: 'step:run-2' }]
+        })
+      }
+    )
+
+    it.each([
+      'missing generation',
+      'different generation',
+      'missing checksum',
+      'different checksum',
+      'advisory confidence',
+      'different path',
+      'unknown cwd',
+      'different cwd',
+      'missing working-file identity',
+      'another uncovered file from the same producer',
+      'another path for the same generation'
+    ])('keeps the file dependency barrier for %s', (condition) => {
+      const input = capturedInput()
+      const dependency = input.notebookDependencies!.fileDependenciesByRunId!['run-2']![0]!
+      if (condition === 'missing generation') delete dependency.generationId
+      if (condition === 'different generation') dependency.generationId = 'g-reader-clean'
+      if (condition === 'missing checksum') delete dependency.checksum
+      if (condition === 'different checksum') dependency.checksum = checksum('d')
+      if (condition === 'advisory confidence') dependency.confidence = 'advisory'
+      if (condition === 'different path') dependency.path = 'other.csv'
+      if (condition === 'unknown cwd') input.notebookActivities[1]!.run.cwdBefore = undefined
+      if (condition === 'different cwd')
+        input.notebookActivities[1]!.run.cwdBefore = join(tmpdir(), 'other-file-dependency-session')
+      if (condition === 'missing working-file identity')
+        input.notebookActivities[0]!.run.workingFiles = []
+      if (condition === 'another uncovered file from the same producer')
+        input.notebookDependencies!.fileDependenciesByRunId!['run-2']!.push({
+          ...dependency,
+          path: 'unobserved.csv',
+          generationId: 'g-unobserved'
+        })
+      if (condition === 'another path for the same generation')
+        input.notebookDependencies!.fileDependenciesByRunId!['run-2']!.push({
+          ...dependency,
+          path: 'unobserved.csv'
+        })
+      const graph = sealArtifactProvenanceGraph(input)
+      expect(graph.edges).toContainEqual({
+        kind: 'depends-on',
+        activityId: 'run-2',
+        dependencyActivityId: 'run-1',
+        authority: 'advisory',
+        evidenceSource: 'dependency-analysis'
+      })
+      expect(
+        projectArtifactReproducibility(graph, []).startFrontiers.find(
+          (frontier) => frontier.frontierId === 'checkpoint:run-1'
+        )
+      ).toMatchObject({ eligibility: 'blocked' })
+    })
+
+    it.each(['partial reads', 'partial writer', 'partial producer evidence'])(
+      'keeps the file dependency barrier with %s',
+      (condition) => {
+        const graph = sealArtifactProvenanceGraph(
+          capturedInput(
+            {
+              ...(condition === 'partial writer' ? { writerAttribution: 'partial' } : {}),
+              ...(condition === 'partial producer evidence' ? { state: 'partial' } : {})
+            },
+            condition === 'partial reads' ? { fileReads: 'partial' } : {}
+          )
+        )
+        expect(graph.edges).toContainEqual(
+          expect.objectContaining({
+            kind: 'depends-on',
+            activityId: 'run-2',
+            dependencyActivityId: 'run-1',
+            authority: 'advisory'
+          })
+        )
+        expect(
+          projectArtifactReproducibility(graph, []).startFrontiers.find(
+            (frontier) => frontier.frontierId === 'checkpoint:run-1'
+          )
+        ).toMatchObject({ eligibility: 'blocked' })
+      }
+    )
+
+    it('retains a kernel dependency on the same producer even when its file is covered', () => {
+      const input = capturedInput({}, { kernelKind: 'python' })
+      input.notebookDependencies!.dependenciesByRunId!['run-2'] = ['run-1']
+      const graph = sealArtifactProvenanceGraph(input)
+      expect(graph.edges).toContainEqual({
+        kind: 'depends-on',
+        activityId: 'run-2',
+        dependencyActivityId: 'run-1',
+        authority: 'authoritative',
+        evidenceSource: 'dependency-analysis'
+      })
+      expect(
+        projectArtifactReproducibility(graph, []).startFrontiers.find(
+          (frontier) => frontier.frontierId === 'checkpoint:run-1'
+        )
+      ).toMatchObject({ eligibility: 'blocked', reasonCodes: ['advisory-boundary'] })
+    })
+
+    it('does not attribute a newer generation with identical bytes to the earlier producer', () => {
+      const input = capturedInput()
+      input.notebookActivities.splice(
+        1,
+        0,
+        notebookActivity('run-newer', 1, [
+          {
+            relation: 'created',
+            relativePath: 'data/clean.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-newer', 'data/clean.csv', checksum('c'))
+          }
+        ])
+      )
+      input.notebookDependencies!.stalenessByRunId['run-newer'] = { state: 'clear' }
+      input.notebookDependencies!.dependenciesByRunId!['run-newer'] = []
+      const graph = sealArtifactProvenanceGraph(input)
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'used',
+          activityId: 'run-2',
+          entityId: 'file-generation:g-newer',
+          authority: 'authoritative'
+        })
+      )
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'depends-on',
+          activityId: 'run-2',
+          dependencyActivityId: 'run-1',
+          authority: 'advisory'
+        })
+      )
     })
   })
 
@@ -1902,6 +2359,64 @@ describe('artifact provenance graph', () => {
       eligibility: 'blocked',
       reasonCodes: expect.arrayContaining(['writer-attribution-unavailable', 'advisory-boundary'])
     })
+  })
+
+  it('uses execution-time proof only for Workflow and keeps missing historical proof conservative', () => {
+    const first = notebookActivity('run-1', 1, [])
+    const producer = notebookActivity('run-2', 2, [
+      {
+        relation: 'created',
+        relativePath: 'result.csv',
+        pathPortability: 'relative',
+        authority: 'advisory',
+        generation: generation('g-target', 'result.csv', checksum('b'))
+      }
+    ])
+    const input: SealArtifactProvenanceGraphInput = {
+      target: target(),
+      notebookActivities: [first, producer],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: {
+          'run-1': { state: 'clear' },
+          'run-2': { state: 'unknown', reasons: ['opaque-call'] }
+        },
+        invalidatedByRunId: {},
+        dependenciesByRunId: { 'run-1': [] },
+        executionDependenciesByRunId: { 'run-1': [], 'run-2': ['run-1'] }
+      }
+    }
+    const historical = sealArtifactWorkflowProvenanceGraph(input)
+    expect(historical.graph.reasonCodes).not.toContain('kernel-dependencies-unavailable')
+    expect(historical.graph.edges).toContainEqual({
+      kind: 'depends-on',
+      activityId: 'run-2',
+      dependencyActivityId: 'run-1',
+      authority: 'authoritative',
+      evidenceSource: 'dependency-analysis'
+    })
+    expect(sealArtifactProvenanceGraph(input).reasonCodes).toContain(
+      'kernel-dependencies-unavailable'
+    )
+    input.notebookDependencies!.executionDependenciesByRunId = { 'run-1': [] }
+    expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+      'kernel-dependencies-unavailable'
+    )
+    delete input.notebookDependencies!.executionDependenciesByRunId
+    expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+      'kernel-dependencies-unavailable'
+    )
+    input.notebookDependencies!.stalenessByRunId['run-2'] = { state: 'clear' }
+    input.notebookDependencies!.dependenciesByRunId!['run-2'] = []
+    for (const historical of [undefined, {}]) {
+      input.notebookDependencies!.executionDependenciesByRunId = historical
+      expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+        'kernel-dependencies-unavailable'
+      )
+      expect(sealArtifactProvenanceGraph(input).reasonCodes).not.toContain(
+        'kernel-dependencies-unavailable'
+      )
+    }
   })
 
   it('marks unknown kernel dependencies without adding unrelated same-epoch runs', () => {

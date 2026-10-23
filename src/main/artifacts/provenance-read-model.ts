@@ -42,11 +42,12 @@ import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-versio
 import { toReview } from '../reviewer/repository'
 import { loadReviewSubmissionProjection } from '../reviewer/review-submission-read-model'
 import type { FileDurability } from '@aipoch/durable-files'
+import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import {
   parseArtifactExecutionSnapshot,
   validateArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
-import { sha256 } from './provenance-canonical'
+import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import { validateArtifactCoreEvidence } from './provenance-core-evidence'
 import {
   decodeArtifactMessageSnapshot,
@@ -193,6 +194,8 @@ type ArtifactVersionReproductionProvenance = Omit<ArtifactVersionProvenance, 'ex
 
 type ArtifactProvenanceReadModelOptions = {
   storageRoot: string
+  inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'> &
+    Partial<Pick<ImmutableInputAuthority, 'validateIdentity'>>
   getClient: () => Promise<PrismaClient>
   loadSession?: (
     projectId: string,
@@ -426,6 +429,7 @@ class ArtifactProvenanceReadModel {
         evidence
       })
       validateArtifactExecutionInputs(persistedExecution, evidence, version.inputs)
+      await this.validateWorkflowInputs(projectId, persistedExecution)
       if (options?.includePrivateExecution) {
         execution = persistedExecution
       } else {
@@ -775,6 +779,34 @@ class ArtifactProvenanceReadModel {
     if (value !== canonical || sha256(bytes) !== checksum)
       throw new ProvenanceIntegrityError(corruptMessage)
     return value
+  }
+
+  private async validateWorkflowInputs(
+    projectId: string,
+    snapshot: PersistedArtifactExecutionSnapshot
+  ): Promise<void> {
+    if (snapshot.workflowCapture?.state !== 'available') return
+    // Authenticate native identity without making every captured input's bytes a prerequisite
+    // for reading execution metadata. Replay checks content only for its selected file closure.
+    // Older injected authorities retain their existing stricter validation behavior.
+    const validated = new Set(
+      snapshot.inputFiles.map((input) => canonicalJson(input as unknown as CanonicalJson))
+    )
+    for (const input of snapshot.workflowCapture.capture.inputFiles) {
+      if (input.sourceProjectId !== projectId) {
+        throw new ProvenanceIntegrityError('Artifact workflow input belongs to another Project.')
+      }
+      const metadata = canonicalJson(input as unknown as CanonicalJson)
+      if (validated.has(metadata)) continue
+      const authority = this.options.inputAuthority
+      const validation = await (authority.validateIdentity
+        ? authority.validateIdentity(projectId, input)
+        : authority.validateVersion(projectId, input))
+      if (validation.state !== 'available') {
+        throw new ProvenanceIntegrityError('Artifact workflow input identity is corrupt.')
+      }
+      validated.add(metadata)
+    }
   }
 
   private async projectExecutionInput(

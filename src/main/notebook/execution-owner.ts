@@ -62,6 +62,7 @@ import {
   defaultShellRuntimeBinding,
   shellRuntimePlatform
 } from './shell-runtime'
+import { prepareRStageCheckpoint } from './r-stage-checkpoint'
 import { startWorkingFileObservation } from './working-file-observer'
 
 type NotebookControlResult = Pick<
@@ -889,101 +890,130 @@ class NotebookExecutionOwner {
                       'Notebook runtime changed while code approval was pending. Retry against the current runtime.'
                     )
                   }
-                  reachedExecutor = true
-                  let executionResult = await session
-                    .execute({
-                      runId,
-                      code: durableAdmission.run.script,
-                      ...(helperPlan.injections.length
-                        ? { helperModules: helperPlan.injections }
-                        : {}),
-                      cwd: cwdBefore,
-                      language: cell.language,
-                      environment,
-                      notebookSessionRoot: session.notebookSessionRoot,
-                      inputRoot: this.inputRoot(session),
-                      dataRoot: session.dataRoot,
-                      ...this.fileEvidenceLocation(session),
-                      runtimeRoot: session.runtimeRoot,
-                      protectedDirs: [
-                        getAppClaudeConfigDir(this.options.configRoot),
-                        ...helperPlan.protectedGenerationRoots
-                      ],
-                      timeoutMs: request.timeoutMs,
-                      signal,
-                      resolvedInterpreter,
-                      sessionId: session.sessionId,
-                      projectId: session.projectId,
-                      inputRunLeaseId: request.inputRunLeaseId,
-                      ...(durableAdmission.run.inputFiles?.length
-                        ? { registeredInputFiles: durableAdmission.run.inputFiles }
-                        : {}),
-                      ...(sourceFileAccessContext ? { sourceFileAccessContext } : {})
-                    })
-                    .catch((error: unknown) => {
-                      if (error instanceof NotebookExecutionStopError) throw error
-                      executedOnLiveKernel = false
-                      const fallback =
-                        session.consumeForceStopped(processKey) || signal?.aborted
-                          ? cancelledExecutionResult(cwdBefore)
-                          : errorToExecutionResult(error, cwdBefore)
-                      return { ...fallback, kernelDispatched: true }
-                    })
-                  const forceStopped = session.consumeForceStopped(processKey)
-                  if (forceStopped && executionResult.status !== 'completed') {
-                    executionResult = {
-                      ...cancelledExecutionResult(cwdBefore),
-                      kernelDispatched: executionResult.kernelDispatched ?? true
+                  const stageCapture =
+                    cell.language === 'r'
+                      ? await prepareRStageCheckpoint(
+                          session.notebookSessionRoot,
+                          this.options.storageRoot
+                        ).catch(() => undefined)
+                      : undefined
+                  const sealStage = async (
+                    result: NotebookSessionExecutionResult
+                  ): Promise<NotebookSessionExecutionResult> => {
+                    if (cell.language !== 'r') return result
+                    return {
+                      ...result,
+                      stageCheckpoint: stageCapture
+                        ? await stageCapture.seal(executionRun, result)
+                        : { state: 'unavailable', reason: 'checkpoint-preparation-failed' }
                     }
                   }
-                  this.options.helperModules.commitInitialized(
-                    kernelEpoch,
-                    executionResult.helperModulesInitialized ?? []
-                  )
-                  const resultWithEvidence = {
-                    ...executionResult,
-                    ...this.options.helperModules.loadedEvidence(kernelEpoch)
-                  }
-                  const result =
-                    resultWithEvidence.kernelDispatched === undefined
-                      ? { ...resultWithEvidence, kernelDispatched: true }
-                      : resultWithEvidence
-                  if (result.status !== 'completed') return result
                   try {
-                    const capture = await this.options.environmentStateTracker.captureCompletedRun(
-                      target,
-                      result.environmentOverlay,
-                      environmentRunStart,
-                      {
-                        sessionRoot: session.notebookSessionRoot,
-                        searchRoots: [result.cwdAfter ?? cwdBefore, session.notebookSessionRoot]
+                    reachedExecutor = true
+                    let executionResult = await session
+                      .execute({
+                        runId,
+                        kernelEpochId,
+                        ...(stageCapture ? { stageCheckpoint: stageCapture.paths } : {}),
+                        code: durableAdmission.run.script,
+                        ...(helperPlan.injections.length
+                          ? { helperModules: helperPlan.injections }
+                          : {}),
+                        cwd: cwdBefore,
+                        language: cell.language,
+                        environment,
+                        notebookSessionRoot: session.notebookSessionRoot,
+                        inputRoot: this.inputRoot(session),
+                        dataRoot: session.dataRoot,
+                        ...this.fileEvidenceLocation(session),
+                        runtimeRoot: session.runtimeRoot,
+                        protectedDirs: [
+                          getAppClaudeConfigDir(this.options.configRoot),
+                          ...helperPlan.protectedGenerationRoots
+                        ],
+                        timeoutMs: request.timeoutMs,
+                        signal,
+                        resolvedInterpreter,
+                        sessionId: session.sessionId,
+                        projectId: session.projectId,
+                        inputRunLeaseId: request.inputRunLeaseId,
+                        ...(durableAdmission.run.inputFiles?.length
+                          ? { registeredInputFiles: durableAdmission.run.inputFiles }
+                          : {}),
+                        ...(sourceFileAccessContext ? { sourceFileAccessContext } : {})
+                      })
+                      .catch((error: unknown) => {
+                        if (error instanceof NotebookExecutionStopError) throw error
+                        executedOnLiveKernel = false
+                        const fallback =
+                          session.consumeForceStopped(processKey) || signal?.aborted
+                            ? cancelledExecutionResult(cwdBefore)
+                            : errorToExecutionResult(error, cwdBefore)
+                        return { ...fallback, kernelDispatched: true }
+                      })
+                    const forceStopped = session.consumeForceStopped(processKey)
+                    if (forceStopped && executionResult.status !== 'completed') {
+                      executionResult = {
+                        ...cancelledExecutionResult(cwdBefore),
+                        kernelDispatched: executionResult.kernelDispatched ?? true
                       }
+                    }
+                    this.options.helperModules.commitInitialized(
+                      kernelEpoch,
+                      executionResult.helperModulesInitialized ?? []
                     )
-                    return {
-                      ...result,
-                      environmentCapture: {
-                        state:
-                          capture.manifest.captureStatus === 'complete' ? 'available' : 'partial',
-                        manifestChecksum: capture.checksum,
-                        ...(capture.manifest.warnings?.length
-                          ? { warnings: [...capture.manifest.warnings] }
-                          : {})
-                      },
-                      environmentManifest: capture.manifest,
-                      environmentManifestChecksum: capture.checksum,
-                      environmentLock: capture.environmentLock
+                    const resultWithEvidence = {
+                      ...executionResult,
+                      ...this.options.helperModules.loadedEvidence(kernelEpoch)
                     }
-                  } catch (error) {
-                    return {
-                      ...result,
-                      environmentCapture: {
-                        state: 'unavailable',
-                        reason:
-                          error instanceof EnvironmentManifestPublicationError
-                            ? 'environment-manifest-publication-failed'
-                            : 'environment-capture-failed'
-                      }
+                    const result =
+                      resultWithEvidence.kernelDispatched === undefined
+                        ? { ...resultWithEvidence, kernelDispatched: true }
+                        : resultWithEvidence
+                    if (result.status !== 'completed') return await sealStage(result)
+                    try {
+                      const capture =
+                        await this.options.environmentStateTracker.captureCompletedRun(
+                          target,
+                          result.environmentOverlay,
+                          environmentRunStart,
+                          {
+                            sessionRoot: session.notebookSessionRoot,
+                            searchRoots: [result.cwdAfter ?? cwdBefore, session.notebookSessionRoot]
+                          }
+                        )
+                      return await sealStage({
+                        ...result,
+                        environmentCapture: {
+                          state:
+                            capture.manifest.captureStatus === 'complete' ? 'available' : 'partial',
+                          manifestChecksum: capture.checksum,
+                          ...(capture.manifest.warnings?.length
+                            ? { warnings: [...capture.manifest.warnings] }
+                            : {})
+                        },
+                        environmentManifest: capture.manifest,
+                        environmentManifestChecksum: capture.checksum,
+                        environmentLock: capture.environmentLock
+                      })
+                    } catch (error) {
+                      return await sealStage({
+                        ...result,
+                        environmentCapture: {
+                          state: 'unavailable',
+                          reason:
+                            error instanceof EnvironmentManifestPublicationError
+                              ? 'environment-manifest-publication-failed'
+                              : 'environment-capture-failed'
+                        }
+                      })
                     }
+                  } finally {
+                    await stageCapture?.dispose().catch(() => {
+                      this.options.logger.error('R stage checkpoint temporary cleanup failed', {
+                        runId
+                      })
+                    })
                   }
                 }
               ),

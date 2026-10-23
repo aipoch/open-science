@@ -19,6 +19,8 @@ import type {
   NotebookLiveEnvironmentOverlay,
   NotebookNamespaceVariable,
   NotebookOutput,
+  NotebookRPackageContext,
+  NotebookRStageComparison,
   NotebookRunInputFile,
   NotebookRunSource,
   NotebookRunStatus,
@@ -101,6 +103,16 @@ export type NotebookSessionExecutionRequest = {
   // binds this domain epoch to the OS process owner so startup recovery never adopts a stale writer.
   kernelEpochId?: string
   code: string
+  // Trusted host-owned paths; never accepted from cell/request user arguments.
+  stageCheckpoint?: { inputPath: string; outputPath: string }
+  stageRestore?: {
+    inputPath: string
+    expectedOutputPath: string
+    packageContext?: NotebookRPackageContext
+    observeRuntimeFootprint?: true
+  }
+  stageSupplement?: { inputPath: string; expectedOutputPath: string; names: string[] }
+  stageExpectedOutputPath?: string
   pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState']
   helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
@@ -155,6 +167,16 @@ export type NotebookSessionExecutionResult = {
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   environmentLock?: NotebookRunEnvironmentLockCapture
+  stageCheckpoint?: import('@aipoch/reproducibility/contracts').RStageCheckpointCapture
+  stageCheckpointCapture?:
+    | {
+        state: 'available'
+        inputNames: string[]
+        outputNames: string[]
+        environmentProof?: import('@aipoch/reproducibility/contracts').RStageCheckpoint['environmentProof']
+      }
+    | { state: 'unavailable'; reason: string }
+  stageComparison?: NotebookRStageComparison
   // Dispatch evidence persisted onto data runs and exposed in Agent results. Optional keeps injected/legacy executors
   // source-compatible; the execution owner treats a missing value after dispatch conservatively.
   kernelDispatched?: boolean

@@ -26,7 +26,8 @@ const ALLOWED_CLEANUP_DIRS = new Set([
   join('runtime', 'npm'),
   join('runtime', '.repair-required.json'),
   join('runtime', 'provenance', 'environment-manifests'),
-  join('runtime', 'provenance', 'environment-locks')
+  join('runtime', 'provenance', 'environment-locks'),
+  join('runtime', 'provenance', 'r-stage-checkpoints')
 ])
 
 type CleanupInventory = Awaited<ReturnType<typeof scanInventory>>
@@ -247,14 +248,25 @@ const refreshEntryIdentity = async (
   return { ...entry, dev, ino, birthtimeNs: stats.birthtimeNs.toString() }
 }
 
-const markerAllowsCleanup = (
+const markerAllowsCleanup = async (
   verifiedDirs: readonly string[],
   intent: DataRootCleanupIntent
-): boolean => {
+): Promise<boolean> => {
   const markerDirs = new Set(verifiedDirs)
   const runtimeCleanupAllowed =
     markerDirs.has(join('runtime', 'pkgs')) &&
     markerDirs.has(join('runtime', 'provenance', 'environment-manifests'))
+  // A legacy receipt cannot authorize removal of immutable state it never copied, even when
+  // it preserved an offline environment bundle and therefore permits deleting the runtime.
+  const checkpointDir = join('runtime', 'provenance', 'r-stage-checkpoints')
+  if (intent.entries.some(({ dir, present }) => present && dir === 'runtime')) {
+    try {
+      await lstat(join(intent.source, checkpointDir))
+      if (!markerDirs.has(checkpointDir)) return false
+    } catch (error) {
+      if (!missingPathError(error)) return false
+    }
+  }
   return intent.entries.every(
     ({ dir, present }) =>
       !present ||
@@ -468,7 +480,8 @@ class DataRootCleanupJournal {
     if (marker.status !== 'verified' || marker.token !== intent.token || !marker.inventory) {
       return undefined
     }
-    if (!markerAllowsCleanup(marker.migratedDirs ?? marker.inventory.dirs, intent)) return undefined
+    if (!(await markerAllowsCleanup(marker.migratedDirs ?? marker.inventory.dirs, intent)))
+      return undefined
     let markerSource: string
     let markerTarget: string
     try {

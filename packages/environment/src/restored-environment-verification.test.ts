@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
-import type { NotebookEnvironmentLock } from './contracts'
+import type { CondaRuntimeSubsetPlan, NotebookEnvironmentLock } from './contracts'
+import { deriveCondaRuntimeSubsetPlan } from './conda-lock-subset'
 import { verifyRestoredEnvironment } from './restored-environment-verification'
 import { defaultSpawn } from './process-test-support'
 import { type InstallSpawn } from './package-manager'
@@ -112,7 +113,149 @@ const fixture = async (
   return { prefix, lock, record, recordPath, observed, spawn, env: {} }
 }
 
+const runtimeSubsetFixture = async (): Promise<
+  Awaited<ReturnType<typeof fixture>> & { runtimeSubset: CondaRuntimeSubsetPlan }
+> => {
+  const input = await fixture('r')
+  delete input.lock.untrackedPackages
+  const component = input.lock.components[0]!
+  if (component.ecosystem !== 'conda') throw new Error('Expected Conda component')
+  const packages = [
+    { ...input.record, depends: ['runtime-support >=1.0'] },
+    {
+      name: 'r-jsonlite',
+      version: '2.0.0',
+      build: 'test_0',
+      url: 'https://repo.example.test/r-jsonlite-2.0.0-test_0.conda',
+      md5: '2'.repeat(32),
+      depends: ['r-base']
+    },
+    {
+      name: 'runtime-support',
+      version: '1.0',
+      build: 'test_0',
+      url: 'https://repo.example.test/runtime-support-1.0-test_0.conda',
+      md5: '3'.repeat(32),
+      depends: []
+    }
+  ] as NonNullable<typeof component.dependencyGraph>['packages']
+  component.packages = packages.map((pkg) => pkg.name)
+  component.explicitLock =
+    '@EXPLICIT\n' + packages.map((pkg) => `${pkg.url}#${pkg.md5}`).join('\n') + '\n'
+  component.dependencyGraph = {
+    schemaVersion: 1,
+    packages,
+    rPackageOwnership: {
+      schemaVersion: 1,
+      packages: [
+        { name: 'base', version: '4.4.3', condaPackage: 'r-base' },
+        { name: 'jsonlite', version: '2.0.0', condaPackage: 'r-jsonlite' },
+        { name: 'Unused', version: '1.0', condaPackage: 'runtime-support' }
+      ]
+    }
+  }
+  input.lock.components = [component]
+  await writeFile(
+    join(input.prefix, 'conda-meta', 'r-jsonlite-2.0.0-test_0.json'),
+    JSON.stringify(packages[1])
+  )
+  input.observed.packages = [
+    { name: 'base', version: '4.4.3', path: join(input.prefix, 'lib/R/library/base'), sha: '' },
+    {
+      name: 'jsonlite',
+      version: '2.0.0',
+      path: join(input.prefix, 'lib/R/library/jsonlite'),
+      sha: ''
+    }
+  ]
+  const runtimeSubset = deriveCondaRuntimeSubsetPlan(input.lock, 'a'.repeat(64), 'b'.repeat(64), [
+    'r-base-4.4.3-test_0.conda',
+    'r-jsonlite-2.0.0-test_0.conda'
+  ])!
+  expect(runtimeSubset).toBeDefined()
+  return { ...input, runtimeSubset }
+}
+
 describe('restored environment metadata verification', () => {
+  it('verifies only selected archives and their R ownership while default verification still requires the full lock', async () => {
+    const input = await runtimeSubsetFixture()
+    const original = JSON.stringify(input.lock)
+    await expect(verifyRestoredEnvironment(input)).resolves.toBeUndefined()
+    const probe = input.spawn.mock.calls[0]![1].at(-1)!
+    expect(probe).toContain('jsonlite')
+    expect(probe).not.toContain('Unused')
+    expect(JSON.stringify(input.lock)).toBe(original)
+    input.spawn.mockClear()
+    await expect(
+      verifyRestoredEnvironment({ ...input, runtimeSubset: undefined })
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(input.spawn).not.toHaveBeenCalled()
+  })
+
+  it.each(['plan-edges', 'plan-ownership', 'metadata', 'version', 'path', 'inventory'])(
+    'rejects selected subset drift: %s',
+    async (scenario) => {
+      const input = await runtimeSubsetFixture()
+      if (scenario === 'plan-edges') input.runtimeSubset.packages[0]!.depends = []
+      if (scenario === 'plan-ownership') input.runtimeSubset.rPackageOwnership!.packages.pop()
+      if (scenario === 'metadata')
+        await writeFile(input.recordPath, JSON.stringify({ ...input.record, md5: '4'.repeat(32) }))
+      if (scenario === 'version') input.observed.packages[1]!.version = '9.0'
+      if (scenario === 'path')
+        input.observed.packages[1]!.path = join(input.prefix, '..', 'external-library')
+      if (scenario === 'inventory') input.observed.packages.pop()
+      await expect(verifyRestoredEnvironment(input)).rejects.toThrow(
+        /Runtime subset|captured identity|version or location|incomplete/u
+      )
+      if (scenario.startsWith('plan-') || scenario === 'metadata')
+        expect(input.spawn).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['exact', 'version', 'location', 'case', 'collision'])(
+    'verifies captured R archive ownership with the existing metadata probe: %s',
+    async (scenario) => {
+      const input = await fixture('r')
+      input.lock.components.splice(1)
+      delete input.lock.untrackedPackages
+      const component = input.lock.components[0]!
+      if (component.ecosystem !== 'conda') throw new Error('Expected Conda component')
+      component.dependencyGraph = {
+        schemaVersion: 1,
+        packages: [
+          { ...input.record, depends: [] } as unknown as NonNullable<
+            typeof component.dependencyGraph
+          >['packages'][number]
+        ],
+        rPackageOwnership: {
+          schemaVersion: 1,
+          packages: [
+            { name: 'base', version: '4.4.3', condaPackage: 'r-base' },
+            ...(scenario === 'collision'
+              ? [{ name: 'Base', version: '4.4.3', condaPackage: 'r-base' }]
+              : [])
+          ]
+        }
+      }
+      input.observed.packages = [
+        {
+          name: scenario === 'case' ? 'BASE' : 'base',
+          version: scenario === 'version' ? '4.4.4' : '4.4.3',
+          path: join(input.prefix, scenario === 'location' ? 'other' : 'lib/R/library', 'base'),
+          sha: ''
+        }
+      ]
+      if (scenario === 'exact') {
+        await expect(verifyRestoredEnvironment(input)).resolves.toBeUndefined()
+        expect(input.spawn.mock.calls[0]![1].at(-1)).toContain('base')
+      } else {
+        await expect(verifyRestoredEnvironment(input)).rejects.toThrow(
+          /ownership is ambiguous|version or location/u
+        )
+        if (scenario === 'collision') expect(input.spawn).not.toHaveBeenCalled()
+      }
+    }
+  )
   it.each(['uv-lock', 'poetry-lock'] as const)(
     'does not require the intentionally omitted project root from a %s',
     async (format) => {
@@ -270,9 +413,55 @@ describe('restored environment metadata verification', () => {
     await expect(verifyRestoredEnvironment(input)).rejects.toThrow('source revision')
   })
 
+  it.each(['python', 'r'] as const)(
+    'verifies every %s package when distinct Conda metadata exceeds 32 MiB',
+    async (language) => {
+      const input = await fixture(language)
+      const conda = input.lock.components.find((component) => component.ecosystem === 'conda')!
+      const lines: string[] = []
+      let metadataBytes = 0
+      let lastRecord = input.record
+      let lastPath = input.recordPath
+      for (let index = 0; index < 6; index++) {
+        const name = index === 0 ? input.record.name : `large-package-${index}`
+        const archive = `${name}-${input.record.version}-${input.record.build}.conda`
+        const record = { ...input.record, name, url: `https://repo.example.test/${archive}` }
+        const recordPath = join(input.prefix, 'conda-meta', archive.replace('.conda', '.json'))
+        const content = JSON.stringify({ ...record, files: ['x'.repeat(6 * 1024 * 1024)] })
+        expect(Buffer.byteLength(content)).toBeLessThan(8 * 1024 * 1024)
+        metadataBytes += Buffer.byteLength(content)
+        await writeFile(recordPath, content)
+        lines.push(`${record.url}#${record.md5}`)
+        lastRecord = record
+        lastPath = recordPath
+      }
+      expect(metadataBytes).toBeGreaterThan(32 * 1024 * 1024)
+      conda.explicitLock = `@EXPLICIT\n${lines.join('\n')}\n`
+      await expect(verifyRestoredEnvironment(input)).resolves.toBeUndefined()
+      expect(input.spawn).toHaveBeenCalledOnce()
+
+      // Corruption after the old threshold must not be skipped to accept the lock.
+      await writeFile(
+        lastPath,
+        JSON.stringify({ ...lastRecord, md5: 'changed', files: ['x'.repeat(6 * 1024 * 1024)] })
+      )
+      input.spawn.mockClear()
+      await expect(verifyRestoredEnvironment(input)).rejects.toThrow('captured identity')
+      expect(input.spawn).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the captured package count bound before starting a probe', async () => {
+    const input = await fixture()
+    const conda = input.lock.components.find((component) => component.ecosystem === 'conda')!
+    conda.explicitLock = '@EXPLICIT\n' + `${input.record.url}#${input.record.md5}\n`.repeat(10001)
+    await expect(verifyRestoredEnvironment(input)).rejects.toThrow('inventory is empty or exceeds')
+    expect(input.spawn).not.toHaveBeenCalled()
+  })
+
   it('rejects oversized metadata and truncated probes', async () => {
     const input = await fixture()
-    await writeFile(input.recordPath, ' '.repeat(4 * 1024 * 1024 + 1))
+    await writeFile(input.recordPath, ' '.repeat(8 * 1024 * 1024 + 1))
     await expect(verifyRestoredEnvironment(input)).rejects.toThrow('limits')
     await writeFile(input.recordPath, JSON.stringify(input.record))
     await expect(

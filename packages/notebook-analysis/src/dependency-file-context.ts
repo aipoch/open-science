@@ -51,6 +51,9 @@ const projectNotebookFileContext = (
   const rAtomicValueNames = new Set<string>()
   const rAtomicTableNames = new Set<string>()
   const rCopyOnModifyNames = new Set<string>()
+  const rMatrixNames = new Set<string>()
+  const rDataFrameNames = new Set<string>()
+  let rDispatchUncertain = false
   const pythonTaintedNamespaces = new Set<string>()
   let pythonMayHaveWritableMappings = false
   const pythonBindings = new Map<
@@ -149,6 +152,9 @@ const projectNotebookFileContext = (
       rAtomicValueNames.clear()
       rAtomicTableNames.clear()
       rCopyOnModifyNames.clear()
+      rMatrixNames.clear()
+      rDataFrameNames.clear()
+      if (language === 'r') rDispatchUncertain = true
       rFunctions.clear()
       pythonBindings.clear()
       // These names convey uncertainty only; they must not regain trusted library
@@ -236,6 +242,8 @@ const projectNotebookFileContext = (
       rAtomicValueNames.delete(name)
       rAtomicTableNames.delete(name)
       rCopyOnModifyNames.delete(name)
+      rMatrixNames.delete(name)
+      rDataFrameNames.delete(name)
       const binding = pythonBindings.get(name)
       if (
         definedNames.has(name) ||
@@ -282,6 +290,27 @@ const projectNotebookFileContext = (
           !facts.copyOnModifyInvalidatedNames?.includes(name)
         )
           rAtomicTableNames.add(name)
+      const dispatchChanged =
+        facts.typeSummaries?.some(
+          (summary) => summary.kind === 'r-function' || summary.complete === false
+        ) ||
+        facts.usedNames?.some((name) =>
+          [
+            'setClass',
+            'setMethod',
+            'setGeneric',
+            'setReplaceMethod',
+            'removeMethod',
+            'removeGeneric'
+          ].some((setter) => name === setter || name === `methods::${setter}`)
+        )
+      if (dispatchChanged) rDispatchUncertain = true
+      // Class/attribute writes and newly installed methods can invalidate the
+      // pre-dispatch guarantee, including values reached through aliases.
+      if (dispatchChanged || mutatedNames.size > 0 || facts.memberWrites?.length) {
+        rMatrixNames.clear()
+        rDataFrameNames.clear()
+      }
       const uncertainMutations = new Set([
         ...(facts.possiblyMutatedNames ?? []),
         ...(facts.receiverCalls ?? []).flatMap((call) => [
@@ -311,6 +340,17 @@ const projectNotebookFileContext = (
         if (definedNames.has(name) && !conditionalNames.has(name) && !mutatedNames.has(name))
           rAtomicValueNames.add(name)
       for (const binding of facts.typeBindings ?? []) {
+        if (
+          !rDispatchUncertain &&
+          mutatedNames.size === 0 &&
+          !facts.memberWrites?.length &&
+          safeValue(binding.target)
+        ) {
+          if (binding.rPlainKind === 'matrix' && binding.typeName === 'matrix')
+            rMatrixNames.add(binding.target)
+          if (binding.rPlainKind === 'data-frame' && binding.typeName === 'data.frame')
+            rDataFrameNames.add(binding.target)
+        }
         const summary = facts.typeSummaries?.find((item) => item.name === binding.typeName)
         if (
           summary?.kind === 'r-function' &&
@@ -481,7 +521,8 @@ const projectNotebookFileContext = (
     !available &&
     !pythonTaintedNamespaces.size &&
     !replNamespaceUncertain &&
-    !pythonMayHaveWritableMappings
+    !pythonMayHaveWritableMappings &&
+    !rDispatchUncertain
   )
     return undefined
   const specializedNames = new Set([
@@ -518,6 +559,9 @@ const projectNotebookFileContext = (
     ...(rAtomicValueNames.size ? { rAtomicValueNames: [...rAtomicValueNames].sort() } : {}),
     ...(rAtomicTableNames.size ? { rAtomicTableNames: [...rAtomicTableNames].sort() } : {}),
     ...(rCopyOnModifyNames.size ? { rCopyOnModifyNames: [...rCopyOnModifyNames].sort() } : {}),
+    ...(rMatrixNames.size ? { rMatrixNames: [...rMatrixNames].sort() } : {}),
+    ...(rDataFrameNames.size ? { rDataFrameNames: [...rDataFrameNames].sort() } : {}),
+    ...(rDispatchUncertain ? { rDispatchUncertain: true as const } : {}),
     ...(remainingKernelNames.length ? { resolvedKernelNames: remainingKernelNames } : {}),
     ...(pythonTaintedNamespaces.size
       ? { pythonTaintedNamespaces: [...pythonTaintedNamespaces].sort() }

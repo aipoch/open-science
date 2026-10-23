@@ -81,3 +81,60 @@ it('does not trust a DESeq2 constructor from another namespace', async () => {
   expect(facts.state).toBe('unknown')
   expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
 })
+
+it('resolves only bounded unqualified DESeq2 calls from attested attachment order', async () => {
+  const context = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    resolvedKernelNames: ['clean', 'samples', 'dds'],
+    rAttachedPackages: ['DESeq2', 'stats', 'base']
+  }
+  for (const [source, name] of [
+    [
+      'dds <- DESeqDataSetFromMatrix(countData=clean, colData=samples, design=~condition)',
+      'DESeqDataSetFromMatrix'
+    ],
+    ['dds <- DESeq(dds, fitType="mean", quiet=TRUE)', 'DESeq'],
+    ['res <- results(dds, contrast=c("condition","treated","control"))', 'results']
+  ]) {
+    const { facts } = await analyzeRNotebookSource(source!, context)
+    expect(facts.state).toBe('available')
+    expect(facts.safeCallNames).toContain(`DESeq2::${name}`)
+    expect(facts.priorUsedNames).not.toContain('condition')
+  }
+})
+
+it('does not infer DESeq2 ownership through a masking attachment or global binding', async () => {
+  for (const context of [
+    { rAttachedPackages: ['unknownPackage', 'DESeq2'] },
+    { rAttachedPackages: ['DESeq2'], resolvedKernelNames: ['DESeq'] }
+  ]) {
+    const { facts } = await analyzeRNotebookSource('dds <- DESeq(dds)', {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      ...context
+    })
+    expect(facts.safeCallNames ?? []).not.toContain('DESeq2::DESeq')
+    expect(facts.priorUsedNames).toContain('DESeq')
+  }
+})
+
+it.each([
+  'DESeq <- function(x) system("touch marker"); dds <- DESeq(dds)',
+  'library(limma); dds <- DESeq(dds)',
+  'dds <- DESeqDataSetFromMatrix(clean, samples, design_formula)',
+  'dds <- DESeqDataSetFromMatrix(clean, samples, ~condition + get("dynamic"))',
+  'res <- results(dds, contrast=get_contrast())',
+  'dds <- DESeq(dds, callback=function(x) x)'
+])('keeps dynamic or rebound attached DESeq2 calls conservative: %s', async (source) => {
+  const { facts } = await analyzeRNotebookSource(source, {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    rAttachedPackages: ['DESeq2'],
+    resolvedKernelNames: ['clean', 'samples', 'dds']
+  })
+  expect(facts.state).toBe('unknown')
+})

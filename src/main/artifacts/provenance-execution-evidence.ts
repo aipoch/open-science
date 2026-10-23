@@ -3,6 +3,7 @@ import type {
   ArtifactVersionEnvironmentEvidence,
   ArtifactVersionEvidence,
   ArtifactVersionInputEvidence,
+  ArtifactHelperEvidenceStatus,
   PersistedArtifactExecutionSnapshot,
   ProvenanceNotebookOutput,
   ProvenanceNotebookRun
@@ -20,7 +21,12 @@ import type {
   NotebookRunRecord
 } from '../../shared/notebook'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
-import { artifactProvenanceGraphMatchesTarget } from './artifact-provenance-graph'
+import {
+  artifactProvenanceGraphMatchesTarget,
+  sealArtifactWorkflowProvenanceGraph,
+  type SealArtifactProvenanceGraphInput
+} from './artifact-provenance-graph'
+import { sealBoundedWorkflowCapture } from './provenance-workflow-capture'
 import {
   decodeArtifactExecutionSnapshot,
   parseArtifactExecutionSnapshot
@@ -162,6 +168,14 @@ const sanitizeRun = (
       ? { executionContext: run.environmentManifest.executionContext }
       : {}),
     script,
+    ...(run.stageCheckpoint
+      ? {
+          stageCheckpoint:
+            script === run.script || run.stageCheckpoint.state === 'unavailable'
+              ? run.stageCheckpoint
+              : { state: 'unavailable' as const, reason: 'source-truncated' }
+        }
+      : {}),
     ...(script !== run.script ? { scriptTruncated: true } : {}),
     status: run.status,
     ...(run.executionCount !== undefined ? { executionCount: run.executionCount } : {}),
@@ -203,15 +217,21 @@ function collectHelperEvidence(eligibleRuns: EligibleNotebookRun[]): {
   helperModulesByKey: Map<string, NotebookHelperModuleEvidence>
   helperEvidenceReasons: Set<HelperEvidenceReason>
   runHelperKeys: Map<string, string[]>
+  runHelperStatuses: Map<string, ArtifactHelperEvidenceStatus>
 } {
   const helperModulesByKey = new Map<string, NotebookHelperModuleEvidence>()
-  const helperEvidenceReasons = new Set<HelperEvidenceReason>()
+  const reasonsByRun = new Map<string, Set<HelperEvidenceReason>>()
+  const helperOwners = new Map<string, Set<string>>()
+  const conflictingHelpers = new Set<string>()
   const runHelperKeys = new Map<string, string[]>()
 
   for (const { run } of eligibleRuns) {
+    const helperEvidenceReasons = new Set<HelperEvidenceReason>()
+    reasonsByRun.set(run.runId, helperEvidenceReasons)
     const rawHelpers = run.helperModules as unknown
     const rawStatus = recordValue(run.helperEvidenceStatus)
     if (rawStatus?.state === 'incomplete' && Array.isArray(rawStatus.reasons)) {
+      if (rawStatus.reasons.length === 0) helperEvidenceReasons.add('source-corrupt')
       for (const reason of rawStatus.reasons) {
         if (
           reason === 'source-missing' ||
@@ -253,16 +273,33 @@ function collectHelperEvidence(eligibleRuns: EligibleNotebookRun[]): {
         canonicalJson(existing as unknown as CanonicalJson) !==
           canonicalJson(helper as unknown as CanonicalJson)
       ) {
+        conflictingHelpers.add(key)
         helperEvidenceReasons.add('source-corrupt')
+        for (const owner of helperOwners.get(key) ?? []) {
+          reasonsByRun.get(owner)!.add('source-corrupt')
+        }
         continue
       }
       helperModulesByKey.set(key, helper)
+      const owners = helperOwners.get(key) ?? new Set<string>()
+      owners.add(run.runId)
+      helperOwners.set(key, owners)
+      if (conflictingHelpers.has(key)) helperEvidenceReasons.add('source-corrupt')
       keys.push(key)
     }
     if (keys.length) runHelperKeys.set(run.runId, [...new Set(keys)].sort())
   }
 
-  return { helperModulesByKey, helperEvidenceReasons, runHelperKeys }
+  const runHelperStatuses = new Map<string, ArtifactHelperEvidenceStatus>(
+    [...reasonsByRun].map(([runId, reasons]) => [
+      runId,
+      reasons.size ? { state: 'incomplete', reasons: [...reasons].sort() } : { state: 'complete' }
+    ])
+  )
+  const helperEvidenceReasons = new Set(
+    [...reasonsByRun.values()].flatMap((reasons) => [...reasons])
+  )
+  return { helperModulesByKey, helperEvidenceReasons, runHelperKeys, runHelperStatuses }
 }
 
 function helperEvidenceFields(
@@ -281,6 +318,55 @@ function helperEvidenceFields(
   return { ...fields, helperEvidenceStatus: { state: 'complete' } }
 }
 
+const captureArtifactWorkflow = (
+  input: SealArtifactProvenanceGraphInput,
+  eligibleRuns: EligibleNotebookRun[]
+): NonNullable<PersistedArtifactExecutionSnapshot['workflowCapture']> => {
+  const inputIdentities = new Map<string, string>()
+  for (const { run } of eligibleRuns) {
+    for (const inputFile of run.inputFiles ?? []) {
+      const { association: _association, accessEvidence: _access, ...identity } = inputFile
+      void _association
+      void _access
+      const key = `${inputFile.sourceKind}\0${inputFile.inputFileVersionId}`
+      const content = canonicalJson(identity as unknown as CanonicalJson)
+      if (inputIdentities.has(key) && inputIdentities.get(key) !== content) {
+        return { state: 'unavailable', reason: 'incomplete-evidence' }
+      }
+      inputIdentities.set(key, content)
+    }
+  }
+  const { helperModulesByKey, helperEvidenceReasons, runHelperKeys, runHelperStatuses } =
+    collectHelperEvidence(eligibleRuns)
+  const helperModules = [...helperModulesByKey.values()].sort((left, right) =>
+    notebookHelperEvidenceKey(left).localeCompare(notebookHelperEvidenceKey(right))
+  )
+  const runs = eligibleRuns.map(({ run, runIndex }) => {
+    const materialized = sanitizeRun(
+      run,
+      runIndex,
+      run.outputs.flatMap(sanitizeOutput).map(boundExecutionOutput),
+      runHelperKeys.get(run.runId)
+    )
+    // Workflow code is immutable replay evidence; never apply the legacy display-script clip.
+    materialized.script = run.script
+    if (run.stageCheckpoint) materialized.stageCheckpoint = run.stageCheckpoint
+    delete materialized.scriptTruncated
+    // All working-file generations live in the unpruned graph, rather than this run preview.
+    delete materialized.hasOmittedFiles
+    return { ...materialized, helperEvidenceStatus: runHelperStatuses.get(run.runId)! }
+  })
+  const { graph, activityReasonCodes } = sealArtifactWorkflowProvenanceGraph(input)
+  return sealBoundedWorkflowCapture({
+    schemaVersion: 1,
+    runs,
+    inputFiles: mergeExecutionInputs(eligibleRuns),
+    graph,
+    activityReasonCodes,
+    ...helperEvidenceFields(helperModules, helperModulesByKey.size, helperEvidenceReasons)
+  })
+}
+
 const buildBoundedExecutionSnapshot = (
   base: Omit<
     PersistedArtifactExecutionSnapshot,
@@ -288,6 +374,8 @@ const buildBoundedExecutionSnapshot = (
   >,
   eligibleRuns: EligibleNotebookRun[]
 ): PersistedArtifactExecutionSnapshot => {
+  // An additive workflow must not evict legacy Artifact runs, inputs, outputs or helpers.
+  const { workflowCapture, ...artifactBase } = base
   const { helperModulesByKey, helperEvidenceReasons, runHelperKeys } =
     collectHelperEvidence(eligibleRuns)
   let helperModules = [...helperModulesByKey.values()].sort((left, right) =>
@@ -366,7 +454,7 @@ const buildBoundedExecutionSnapshot = (
   }
   const snapshot = (): PersistedArtifactExecutionSnapshot => {
     const execution = {
-      ...base,
+      ...artifactBase,
       inputFiles,
       runs: materializedRuns,
       ...helperEvidenceFields(helperModules, helperModulesByKey.size, helperEvidenceReasons),
@@ -443,7 +531,7 @@ const buildBoundedExecutionSnapshot = (
   if (snapshotBytes() > MAX_EXECUTION_SNAPSHOT_BYTES) {
     throw new Error('Artifact execution evidence exceeds the bounded snapshot limit.')
   }
-  return snapshot()
+  return { ...snapshot(), ...(workflowCapture ? { workflowCapture } : {}) }
 }
 
 const inputEvidence = (
@@ -678,6 +766,7 @@ const validateArtifactExecutionSnapshot = (
 
 export {
   buildBoundedExecutionSnapshot,
+  captureArtifactWorkflow,
   decodeArtifactExecutionSnapshot,
   environmentEvidence,
   inputEvidence,

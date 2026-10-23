@@ -1,3 +1,4 @@
+import { isAbsolute, normalize, resolve } from 'node:path'
 import type {
   ArtifactProvenanceGraph,
   ArtifactProvenanceGraphActivity,
@@ -13,8 +14,12 @@ import {
   type ScientificOutputRisk
 } from '../../shared/execution-file-evidence'
 import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
-import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
+import type {
+  NotebookDependencyProjection,
+  NotebookFileDependency
+} from '@aipoch/notebook-analysis'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import { validRStageCheckpointForRun } from '@aipoch/reproducibility'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
 const MAX_GRAPH_BYTES = 1024 * 1024
@@ -124,6 +129,8 @@ type ArtifactProvenanceComputeActivityInput = {
 }
 
 type SealArtifactProvenanceGraphInput = {
+  /** Workflow capture retains eligible side branches and runs without persistent outputs. */
+  captureScope?: 'target-closure' | 'workflow'
   target: {
     versionId: string
     filename: string
@@ -730,9 +737,13 @@ const completenessFor = (
       : 'complete'
 }
 
-const sealArtifactProvenanceGraph = (
+const captureArtifactProvenanceGraph = (
   input: SealArtifactProvenanceGraphInput
-): ArtifactProvenanceGraph => {
+): {
+  graph: ArtifactProvenanceGraph
+  activityReasonCodes: Record<string, ArtifactProvenanceGraphReason[]>
+} => {
+  const workflow = input.captureScope === 'workflow'
   const notebookInputs = [...input.notebookActivities].sort(
     (left, right) => left.runIndex - right.runIndex || left.run.runId.localeCompare(right.run.runId)
   )
@@ -770,7 +781,7 @@ const sealArtifactProvenanceGraph = (
         sequence: sequence++,
         runIndex: notebook.runIndex,
         ...(notebook.run.kernelEpochId ? { kernelEpochId: notebook.run.kernelEpochId } : {}),
-        inclusion: 'target-closure',
+        inclusion: workflow ? 'workflow-capture' : 'target-closure',
         evidenceState: decodedEvidence.state,
         ...(decodedEvidence.evidenceId ? { evidenceId: decodedEvidence.evidenceId } : {}),
         ...(decodedEvidence.checksum ? { evidenceChecksum: decodedEvidence.checksum } : {}),
@@ -796,7 +807,7 @@ const sealArtifactProvenanceGraph = (
           kind: 'compute-job',
           sequence: sequence++,
           ...(compute.parentActivityId ? { parentActivityId: compute.parentActivityId } : {}),
-          inclusion: 'target-closure',
+          inclusion: workflow ? 'workflow-capture' : 'target-closure',
           evidenceState: computeEvidence.state,
           ...(computeEvidence.evidenceId ? { evidenceId: computeEvidence.evidenceId } : {}),
           ...(computeEvidence.checksum ? { evidenceChecksum: computeEvidence.checksum } : {}),
@@ -818,15 +829,22 @@ const sealArtifactProvenanceGraph = (
     )
   )
   const completeKernelDependencyActivityIds = new Set<string>()
-  const missingDependencyActivityIds = new Set(
+  const unresolvedProjectionActivityIds = new Set(
     input.notebookDependencies?.unresolvedFileReadRunIds ?? []
   )
+  // Explicit broken references remain missing history even when a captured R
+  // boundary can replace the analyzer's unresolved in-memory dependency proof.
+  const missingDependencyActivityIds = new Set<string>()
   if (input.notebookDependencies) {
     for (const [activityId, candidate] of notebookCandidateById) {
-      const dependencies = input.notebookDependencies.dependenciesByRunId?.[activityId]
+      // Workflow replay requires an explicit execution proof. Live freshness cannot
+      // certify a historical closure, including when its displayed value is clear.
+      const dependencies = workflow
+        ? input.notebookDependencies.executionDependenciesByRunId?.[activityId]
+        : input.notebookDependencies.dependenciesByRunId?.[activityId]
       if (
-        input.notebookDependencies.stalenessByRunId[activityId]?.state !== 'clear' ||
-        dependencies === undefined
+        dependencies === undefined ||
+        (!workflow && input.notebookDependencies.stalenessByRunId[activityId]?.state !== 'clear')
       ) {
         continue
       }
@@ -848,32 +866,6 @@ const sealArtifactProvenanceGraph = (
           activityId,
           dependencyActivityId,
           authority: 'authoritative',
-          evidenceSource: 'dependency-analysis'
-        })
-      }
-    }
-    for (const [activityId, dependencies] of Object.entries(
-      input.notebookDependencies.fileDependenciesByRunId ?? {}
-    )) {
-      const candidate = notebookCandidateById.get(activityId)
-      if (!candidate) continue
-      for (const dependency of dependencies) {
-        const dependencyCandidate = notebookCandidateById.get(dependency.producerRunId)
-        if (
-          !dependencyCandidate ||
-          dependencyCandidate.activity.sequence >= candidate.activity.sequence
-        ) {
-          missingDependencyActivityIds.add(activityId)
-          continue
-        }
-        // Static source analysis plus an observed generation identifies the producer, but does
-        // not prove that the runtime opened this exact path. Keep the edge advisory so replay
-        // barriers remain conservative when runtime file evidence is incomplete.
-        mergeEdge(edges, {
-          kind: 'depends-on',
-          activityId,
-          dependencyActivityId: dependency.producerRunId,
-          authority: 'advisory',
           evidenceSource: 'dependency-analysis'
         })
       }
@@ -909,8 +901,10 @@ const sealArtifactProvenanceGraph = (
       ])
     )
     for (const relation of candidate.decodedEvidence.relations) {
-      if (relation.generation)
+      if (relation.generation) {
         generations.set(relation.generation.generationId, relation.generation)
+        if (workflow) entities.set(relation.generation.entityId, relation.generation)
+      }
     }
 
     const resolveUsedEntity = (
@@ -1063,6 +1057,98 @@ const sealArtifactProvenanceGraph = (
     }
   }
 
+  const runtimeCoversFileDependency = (
+    candidate: CandidateActivity,
+    producer: CandidateActivity,
+    dependency: NotebookFileDependency
+  ): boolean => {
+    if (
+      dependency.confidence !== 'verified' ||
+      !dependency.generationId ||
+      !dependency.checksum ||
+      candidate.decodedEvidence.state !== 'available' ||
+      candidate.decodedEvidence.failure ||
+      candidate.decodedEvidence.fileReads !== 'complete' ||
+      producer.decodedEvidence.state !== 'available' ||
+      producer.decodedEvidence.failure ||
+      producer.decodedEvidence.writerAttribution !== 'complete'
+    )
+      return false
+    const entityId = `file-generation:${dependency.generationId}`
+    const entity = entities.get(entityId)
+    if (entity?.kind !== 'file-generation' || entity.checksum !== dependency.checksum) return false
+    const generation = producer.decodedEvidence.relations.find(
+      (relation) =>
+        (relation.relation === 'created' ||
+          relation.relation === 'modified' ||
+          relation.relation === 'harvested-output') &&
+        relation.generation?.generationId === dependency.generationId
+    )?.generation
+    if (
+      !generation ||
+      generation.checksum !== entity.checksum ||
+      generation.sizeBytes !== entity.sizeBytes ||
+      pathKey(generation.relativePath) !== pathKey(entity.relativePath)
+    )
+      return false
+    const writers = [...edges.values()].filter(
+      (edge) => edge.kind === 'generated' && edge.entityId === entityId
+    )
+    if (writers.length !== 1 || writers[0]!.activityId !== dependency.producerRunId) return false
+    const used = edges.get(`used\0${candidate.activity.activityId}\0${entityId}`)
+    if (
+      used?.kind !== 'used' ||
+      used.authority !== 'authoritative' ||
+      used.evidenceSource !== 'runtime-observation' ||
+      used.pathPortability !== 'relative' ||
+      !used.relativePath ||
+      pathKey(used.relativePath) !== pathKey(entity.relativePath)
+    )
+      return false
+    const cwd = candidate.notebookRun?.cwdBefore ?? candidate.notebookRun?.frozenShellContext?.cwd
+    if (!cwd && !isAbsolute(dependency.path))
+      return pathKey(dependency.path) === pathKey(used.relativePath)
+    if (!isAbsolute(dependency.path) && (!cwd || !isAbsolute(cwd))) return false
+    const dependencyPath = normalize(
+      isAbsolute(dependency.path) ? dependency.path : resolve(cwd!, dependency.path)
+    )
+    // Source paths are relative to the captured cwd; evidence paths are relative to the Session.
+    // Bridge them only through the producer's recorded path for this exact immutable generation.
+    return (
+      producer.notebookRun?.workingFiles.some(
+        (file) =>
+          file.generationId === dependency.generationId &&
+          file.checksum === dependency.checksum &&
+          pathKey(file.relativePath) === pathKey(entity.relativePath) &&
+          isAbsolute(file.path) &&
+          normalize(file.path) === dependencyPath
+      ) ?? false
+    )
+  }
+  for (const [activityId, dependencies] of Object.entries(
+    input.notebookDependencies?.fileDependenciesByRunId ?? {}
+  )) {
+    const candidate = notebookCandidateById.get(activityId)
+    if (!candidate) continue
+    for (const dependency of dependencies) {
+      const producer = notebookCandidateById.get(dependency.producerRunId)
+      if (!producer || producer.activity.sequence >= candidate.activity.sequence) {
+        missingDependencyActivityIds.add(activityId)
+        continue
+      }
+      // Decide per file before merging activity edges. A different file or a genuine kernel
+      // dependency on the same producer must retain its own conservative replay barrier.
+      if (runtimeCoversFileDependency(candidate, producer, dependency)) continue
+      mergeEdge(edges, {
+        kind: 'depends-on',
+        activityId,
+        dependencyActivityId: dependency.producerRunId,
+        authority: 'advisory',
+        evidenceSource: 'dependency-analysis'
+      })
+    }
+  }
+
   const publicationActivityId = `artifact-publication:${input.target.versionId}`
   const targetEntityId = `artifact-version:${input.target.versionId}`
   const publicationActivity: ArtifactProvenanceGraphActivity = {
@@ -1092,7 +1178,29 @@ const sealArtifactProvenanceGraph = (
   mergeEdge(edges, publicationGenerated)
 
   const reasons = new Set<ArtifactProvenanceGraphReason>()
+  const reasonsByNotebookActivity = new Map(
+    notebookInputs.map(({ run }) => [run.runId, new Set<ArtifactProvenanceGraphReason>()])
+  )
+  const recordActivityReason = (
+    activityId: string,
+    reason: ArtifactProvenanceGraphReason
+  ): void => {
+    reasons.add(reason)
+    const parentId = candidates.find((candidate) => candidate.activity.activityId === activityId)
+      ?.activity.parentActivityId
+    const owner = reasonsByNotebookActivity.has(activityId) ? activityId : parentId
+    if (owner) reasonsByNotebookActivity.get(owner)?.add(reason)
+  }
   if ((input.omittedLeadingActivityCount ?? 0) > 0) reasons.add('history-truncated')
+  if (
+    workflow &&
+    computeInputs.some(
+      (compute) =>
+        !candidates.some((candidate) => candidate.activity.activityId === compute.activityId)
+    )
+  ) {
+    reasons.add('history-truncated')
+  }
   const sourceEntityId = input.target.sourceGenerationId
     ? `file-generation:${input.target.sourceGenerationId}`
     : undefined
@@ -1108,7 +1216,7 @@ const sealArtifactProvenanceGraph = (
         } satisfies ArtifactProvenanceGraphEdge)
       : undefined
   if (publicationUsed) mergeEdge(edges, publicationUsed)
-  else reasons.add('target-generation-unavailable')
+  else recordActivityReason(input.target.producerRunId, 'target-generation-unavailable')
 
   const candidateById = new Map(
     candidates.map((candidate) => [candidate.activity.activityId, candidate])
@@ -1138,6 +1246,10 @@ const sealArtifactProvenanceGraph = (
   const selectedActivityIds = new Set([publicationActivityId, input.target.producerRunId])
   const requiredEdgeKeys = new Set([edgeKey(publicationGenerated)])
   if (publicationUsed) requiredEdgeKeys.add(edgeKey(publicationUsed))
+  if (workflow) {
+    for (const candidate of candidates) selectedActivityIds.add(candidate.activity.activityId)
+    for (const edge of allEdges) requiredEdgeKeys.add(edgeKey(edge))
+  }
   const queue: string[] = [publicationActivityId, input.target.producerRunId]
 
   const expandDependencies = (): void => {
@@ -1168,34 +1280,52 @@ const sealArtifactProvenanceGraph = (
     const candidate = candidateById.get(activityId)
     if (!candidate?.notebookRun) continue
     const fileReadsComplete = candidate.decodedEvidence.fileReads === 'complete'
-    const kernelDependenciesComplete = input.notebookDependencies
-      ? completeKernelDependencyActivityIds.has(activityId)
-      : fileReadsComplete
-    const missingDependency = missingDependencyActivityIds.has(activityId)
-    if (missingDependency) reasons.add('history-truncated')
+    const evidence = candidate.decodedEvidence
+    const checkpointDependenciesComplete =
+      workflow &&
+      validRStageCheckpointForRun(candidate.notebookRun) &&
+      evidence.state === 'available' &&
+      !evidence.failure &&
+      fileReadsComplete &&
+      evidence.writerAttribution === 'complete' &&
+      candidate.notebookRun.fileEvidence?.externalPaths === 'complete'
+    const kernelDependenciesComplete =
+      checkpointDependenciesComplete ||
+      (input.notebookDependencies
+        ? completeKernelDependencyActivityIds.has(activityId)
+        : !workflow && fileReadsComplete)
+    const missingDependency =
+      missingDependencyActivityIds.has(activityId) ||
+      (unresolvedProjectionActivityIds.has(activityId) && !checkpointDependenciesComplete)
+    if (missingDependency) recordActivityReason(activityId, 'history-truncated')
     if (kernelDependenciesComplete && !missingDependency) continue
-    if (!fileReadsComplete) reasons.add('file-reads-unavailable')
+    if (!fileReadsComplete) recordActivityReason(activityId, 'file-reads-unavailable')
     if (!kernelDependenciesComplete) {
-      if (!candidate.notebookRun.kernelEpochId) reasons.add('kernel-epoch-unknown')
-      reasons.add('kernel-dependencies-unavailable')
+      if (!candidate.notebookRun.kernelEpochId)
+        recordActivityReason(activityId, 'kernel-epoch-unknown')
+      recordActivityReason(activityId, 'kernel-dependencies-unavailable')
     }
   }
 
   for (const activityId of selectedActivityIds) {
     const evidence = candidateById.get(activityId)?.decodedEvidence
     if (!evidence) continue
-    if (evidence.failure === 'corrupt') reasons.add('activity-evidence-corrupt')
-    else if (evidence.failure === 'unavailable') reasons.add('activity-evidence-unavailable')
-    if (evidence.state === 'partial') reasons.add('activity-evidence-partial')
-    if (evidence.fileReads !== 'complete') reasons.add('file-reads-unavailable')
-    if (evidence.writerAttribution !== 'complete') reasons.add('writer-attribution-unavailable')
+    if (evidence.failure === 'corrupt')
+      recordActivityReason(activityId, 'activity-evidence-corrupt')
+    else if (evidence.failure === 'unavailable')
+      recordActivityReason(activityId, 'activity-evidence-unavailable')
+    if (evidence.state === 'partial') recordActivityReason(activityId, 'activity-evidence-partial')
+    if (evidence.fileReads !== 'complete')
+      recordActivityReason(activityId, 'file-reads-unavailable')
+    if (evidence.writerAttribution !== 'complete')
+      recordActivityReason(activityId, 'writer-attribution-unavailable')
     if (
       evidence.reasonCodes.includes('absolute-path-not-frozen') ||
       evidence.relations.some(
         (relation) => relation.pathPortability === 'absolute' && !relation.generation
       )
     ) {
-      reasons.add('absolute-path-unfrozen')
+      recordActivityReason(activityId, 'absolute-path-unfrozen')
     }
   }
 
@@ -1217,6 +1347,7 @@ const sealArtifactProvenanceGraph = (
   const requiredEdges = allEdges.filter((edge) => requiredEdgeKeys.has(edgeKey(edge)))
   const requiredEntityIds = new Set([
     targetEntityId,
+    ...(workflow ? entities.keys() : []),
     ...requiredEdges.flatMap((edge) => (edge.kind === 'depends-on' ? [] : [edge.entityId]))
   ])
   const selectedActivities = [
@@ -1251,8 +1382,25 @@ const sealArtifactProvenanceGraph = (
       outputGroups: []
     })
   }
-  return graph
+  return {
+    graph,
+    activityReasonCodes: Object.fromEntries(
+      [...reasonsByNotebookActivity].map(([activityId, activityReasons]) => [
+        activityId,
+        [...activityReasons].sort()
+      ])
+    )
+  }
 }
+
+const sealArtifactProvenanceGraph = (
+  input: SealArtifactProvenanceGraphInput
+): ArtifactProvenanceGraph => captureArtifactProvenanceGraph(input).graph
+
+const sealArtifactWorkflowProvenanceGraph = (
+  input: SealArtifactProvenanceGraphInput
+): ReturnType<typeof captureArtifactProvenanceGraph> =>
+  captureArtifactProvenanceGraph({ ...input, captureScope: 'workflow' })
 
 const artifactProvenanceGraphValue = (value: unknown): value is ArtifactProvenanceGraph => {
   const graph = recordValue(value)
@@ -1287,7 +1435,7 @@ const artifactProvenanceGraphValue = (value: unknown): value is ArtifactProvenan
   }
   const activityKinds = new Set(['notebook-run', 'compute-job', 'artifact-publication'])
   const evidenceStates = new Set(['available', 'partial', 'unavailable'])
-  const inclusions = new Set(['target-closure', 'kernel-epoch-conservative'])
+  const inclusions = new Set(['target-closure', 'kernel-epoch-conservative', 'workflow-capture'])
   const activities = graph.activities as unknown[]
   if (
     activities.some((value) => {
@@ -1579,7 +1727,8 @@ const artifactProvenanceGraphMatchesTarget = (
 export {
   artifactProvenanceGraphMatchesTarget,
   artifactProvenanceGraphValue,
-  sealArtifactProvenanceGraph
+  sealArtifactProvenanceGraph,
+  sealArtifactWorkflowProvenanceGraph
 }
 export type {
   ArtifactProvenanceComputeActivityInput,

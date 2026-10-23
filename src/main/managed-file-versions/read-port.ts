@@ -72,6 +72,11 @@ export type ManagedFileLeaseSnapshot = {
 }
 
 export type ManagedFileVersionReadPort = {
+  // Identity only: does not establish content availability or integrity.
+  resolveVersionIdentity?(
+    request: ManagedFileIdentity,
+    versionId: string
+  ): Promise<ResolvedManagedFileVersion>
   openLatest(request: ManagedFileIdentity): Promise<ManagedFileReadLease>
   openVersion(request: ManagedFileIdentity, versionId: string): Promise<ManagedFileReadLease>
   openProducerVersion(

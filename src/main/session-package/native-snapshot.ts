@@ -1,9 +1,14 @@
+import { sealWorkflowCapture, validRStageCheckpointForRun } from '@aipoch/reproducibility'
+import type { RStageCheckpointFile } from '@aipoch/reproducibility/contracts'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
-import { type PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
+import {
+  type PersistedArtifactExecutionSnapshot,
+  type ProvenanceNotebookRun
+} from '../../shared/artifact-provenance'
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator
@@ -26,9 +31,15 @@ import { COLUMNS } from './records-contract'
 import { packageReproducibilitySchema } from './reproducibility-contract'
 export { type NativeRow, type NativeTable, type PackageRecords } from './records-contract'
 
-import type { NotebookRunDocument } from '../../shared/notebook'
+import type {
+  NotebookRunDocument,
+  NotebookRunInputFile,
+  NotebookRunRecord
+} from '../../shared/notebook'
+import { parseArtifactExecutionSnapshot } from '../artifacts/provenance-execution-snapshot-decoder'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { createPackageMaterializer } from './materialize'
+import { digestFileWithinBudget } from '../bounded-file-io'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
 import { assertPackageSourcePath, readPackageJson } from './archive'
@@ -90,6 +101,7 @@ export const captureNativeRecords = async (
   const visitedUploads = new Set<string>()
   const visitedReviews = new Set<string>()
   const visitedFindings = new Set<string>()
+  const workflowInputs: Array<{ input: NotebookRunInputFile; producerArtifactId: string }> = []
   const resolvedSources = new Set(additionalVersionIds)
   const unvisited = (ids: Set<string>, visited: Set<string>): string[] => {
     const next = [...ids].filter((id) => !visited.has(id))
@@ -108,7 +120,12 @@ export const captureNativeRecords = async (
     const versions = nextArtifacts.length
       ? await client.artifactVersion.findMany({
           where: { id: { in: nextArtifacts } },
-          select: { basedOnVersionId: true }
+          select: {
+            basedOnVersionId: true,
+            artifactId: true,
+            executionSnapshotJson: true,
+            executionSnapshotChecksum: true
+          }
         })
       : []
     const uploads = nextUploads.length
@@ -173,7 +190,25 @@ export const captureNativeRecords = async (
         throw new Error('Review references missing source evidence.')
       for (const id of sourceIds) resolvedSources.add(id)
     }
-    for (const row of versions) if (row.basedOnVersionId) artifactIds.add(row.basedOnVersionId)
+    for (const row of versions) {
+      if (row.basedOnVersionId) artifactIds.add(row.basedOnVersionId)
+      // Only retained workflow evidence adds dependencies. Keep legacy snapshots and explicit
+      // unavailable captures on their existing closure path.
+      if (
+        !row.executionSnapshotJson ||
+        JSON.parse(row.executionSnapshotJson).workflowCapture?.state !== 'available'
+      )
+        continue
+      if (sha256(row.executionSnapshotJson) !== row.executionSnapshotChecksum)
+        throw new Error('Artifact workflow execution snapshot checksum mismatch.')
+      const execution = parseArtifactExecutionSnapshot(row.executionSnapshotJson)
+      if (execution.workflowCapture?.state !== 'available') continue
+      for (const input of execution.workflowCapture.capture.inputFiles) {
+        workflowInputs.push({ input, producerArtifactId: row.artifactId })
+        if (input.sourceKind === 'artifact-version') artifactIds.add(input.inputFileVersionId)
+        else uploadIds.add(input.inputFileVersionId)
+      }
+    }
     for (const row of uploads) if (row.basedOnVersionId) uploadIds.add(row.basedOnVersionId)
     for (const row of inputs) {
       if (row.sourceArtifactVersionId) artifactIds.add(row.sourceArtifactVersionId)
@@ -212,6 +247,36 @@ export const captureNativeRecords = async (
     where: { id: { in: uploadVersions.map((row) => row.uploadFileId) } },
     orderBy: { id: 'asc' }
   })
+  // Resolve through the actual native owner as well as the captured Project declaration. A
+  // resealed claim must not pull another Project's Version into the package under a local label.
+  const artifactVersionsById = new Map(versions.map((row) => [row.id, row]))
+  const uploadVersionsById = new Map(uploadVersions.map((row) => [row.id, row]))
+  const lineagesById = new Map(lineages.map((row) => [row.id, row]))
+  const uploadsById = new Map(uploads.map((row) => [row.id, row]))
+  for (const { input, producerArtifactId } of workflowInputs) {
+    if (input.sourceProjectId !== lineagesById.get(producerArtifactId)?.projectId)
+      throw new Error('Artifact workflow input belongs to another Project.')
+    const version =
+      input.sourceKind === 'artifact-version'
+        ? artifactVersionsById.get(input.inputFileVersionId)
+        : uploadVersionsById.get(input.inputFileVersionId)
+    const owner =
+      input.sourceKind === 'artifact-version'
+        ? lineagesById.get(artifactVersionsById.get(input.inputFileVersionId)?.artifactId ?? '')
+        : uploadsById.get(uploadVersionsById.get(input.inputFileVersionId)?.uploadFileId ?? '')
+    if (
+      !version ||
+      !owner ||
+      owner.projectId !== input.sourceProjectId ||
+      owner.sessionId !== input.sourceSessionId ||
+      owner.id !== input.sourceFileId ||
+      version.versionNumber !== input.sourceVersionNumber ||
+      version.checksum !== input.checksum ||
+      Number(version.sizeBytes) !== input.sizeBytes ||
+      version.contentStorageKey !== input.storageKey
+    )
+      throw new Error('Artifact workflow input identity does not match its native Version.')
+  }
   const inputs = await client.artifactVersionInput.findMany({
     where: { artifactVersionId: { in: [...artifactIds] } },
     orderBy: { id: 'asc' }
@@ -318,16 +383,79 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
   return value as PackageRecords
 }
 
+const stageCheckpointFiles = (
+  runs: readonly (NotebookRunRecord | ProvenanceNotebookRun)[]
+): RStageCheckpointFile[] =>
+  runs.flatMap((run) => {
+    if (run.stageCheckpoint === undefined || run.stageCheckpoint.state === 'unavailable') return []
+    if (!validRStageCheckpointForRun(run)) throw new Error('Invalid R stage checkpoint binding.')
+    return [run.stageCheckpoint.input, run.stageCheckpoint.output]
+  })
+
+const nativeStageCheckpointFiles = (records: PackageRecords): RStageCheckpointFile[] =>
+  records.tables.ArtifactVersion.flatMap((version) => {
+    if (typeof version.executionSnapshotJson !== 'string') return []
+    const value = JSON.parse(version.executionSnapshotJson)
+    const runs = [
+      ...(value.runs ?? []),
+      ...(value.workflowCapture?.state === 'available' ? value.workflowCapture.capture.runs : [])
+    ]
+    if (!runs.some((run: ProvenanceNotebookRun) => run.stageCheckpoint !== undefined)) return []
+    if (sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum)
+      throw new Error('R stage execution snapshot checksum mismatch.')
+    const snapshot = parseArtifactExecutionSnapshot(version.executionSnapshotJson)
+    return stageCheckpointFiles([
+      ...snapshot.runs,
+      ...(snapshot.workflowCapture?.state === 'available'
+        ? snapshot.workflowCapture.capture.runs
+        : [])
+    ])
+  })
+
+const validateStageCheckpointFiles = async (
+  storageRoot: string,
+  files: readonly RStageCheckpointFile[],
+  signal?: AbortSignal
+): Promise<void> => {
+  const seen = new Map<string, RStageCheckpointFile>()
+  for (const file of files) {
+    const previous = seen.get(file.storageKey)
+    if (previous) {
+      if (previous.checksum !== file.checksum || previous.sizeBytes !== file.sizeBytes)
+        throw new Error('Conflicting R stage checkpoint metadata.')
+      continue
+    }
+    seen.set(file.storageKey, file)
+    signal?.throwIfAborted()
+    await assertPackageSourcePath(storageRoot, file.storageKey)
+    const digest = await digestFileWithinBudget(
+      resolveStorageKey(storageRoot, file.storageKey),
+      file.sizeBytes,
+      signal
+    )
+    if (digest.checksum !== file.checksum || digest.sizeBytes !== file.sizeBytes)
+      throw new Error('R stage checkpoint checksum or size mismatch.')
+  }
+}
+
+export const validatePackageStageCheckpoints = async (
+  storageRoot: string,
+  records: PackageRecords,
+  signal?: AbortSignal
+): Promise<void> =>
+  validateStageCheckpointFiles(storageRoot, nativeStageCheckpointFiles(records), signal)
+
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
-  ...new Set(
-    Object.values(records.tables).flatMap((rows) =>
+  ...new Set([
+    ...nativeStageCheckpointFiles(records).map((file) => file.storageKey),
+    ...Object.values(records.tables).flatMap((rows) =>
       rows.flatMap((row) =>
         Object.entries(row).flatMap(([key, value]) =>
           /(?:StorageKey|storageKey)$/.test(key) && typeof value === 'string' ? [value] : []
         )
       )
     )
-  )
+  ])
 ]
 
 export const notebookStorageKeys = async (
@@ -350,6 +478,14 @@ export const notebookStorageKeys = async (
         throw error
       })
     for (const entry of entries) {
+      // Capture scratch space is never portable evidence. Only the immutable references on
+      // completed Runs select RDS blobs; a crash may leave an unsealed temporary capture.
+      if (
+        entry.isDirectory() &&
+        entry.name === '.r-stage-checkpoints' &&
+        notebookDocumentIdentity(`${key}/run.json`)
+      )
+        continue
       const child = `${key}/${entry.name}`
       if (entry.isDirectory()) await visit(child, depth + 1)
       else if (entry.isFile()) keys.push(child)
@@ -358,7 +494,13 @@ export const notebookStorageKeys = async (
     }
   }
   await visit(`notebooks/${request.projectId}/${request.sessionId}`)
-  return keys.sort()
+  const notebooks = await readPackageNotebooks(storageRoot, keys)
+  keys.push(
+    ...stageCheckpointFiles(notebooks.flatMap((document) => document.runs)).map(
+      (file) => file.storageKey
+    )
+  )
+  return [...new Set(keys)].sort()
 }
 
 export const notebookDocumentIdentity = (
@@ -391,6 +533,7 @@ export const readPackageNotebooks = async (
     if (document.runs.length > 10000) throw new Error('Notebook history exceeds the package limit.')
     if (document.runs.some((run) => run.status === 'running' || run.status === 'queued'))
       throw new Error('Wait for Notebook runs to finish before exporting.')
+    await validateStageCheckpointFiles(storageRoot, stageCheckpointFiles(document.runs))
     documents.push(document)
   }
   return documents
@@ -432,6 +575,7 @@ export const sessionFileVersionIds = (session: PersistedChatSession): string[] =
 }
 
 export const remapStorageKey = (key: string, identities: Record<string, string>): string => {
+  if (/^runtime\/provenance\/r-stage-checkpoints\/[a-f0-9]{64}\.rds$/u.test(key)) return key
   const segments = key.split('/')
   const map = (index: number): void => {
     segments[index] = identities[segments[index]] ?? segments[index]
@@ -505,6 +649,25 @@ export const mapPackageReferences = (
   checksums: Record<string, string> = {}
 ): unknown => {
   if (key === 'sourceScope' || key === 'sourceSessionCheck') return value
+  // RDS bytes, object names and digests are immutable. Only the owning Run/epoch is local.
+  if (
+    key === 'stageCheckpoint' &&
+    value &&
+    typeof value === 'object' &&
+    'state' in value &&
+    value.state === 'available'
+  ) {
+    const checkpoint = value as Record<string, unknown>
+    return {
+      ...checkpoint,
+      runId: identities[String(checkpoint.runId)] ?? checkpoint.runId,
+      kernelEpochId: identities[String(checkpoint.kernelEpochId)] ?? checkpoint.kernelEpochId
+    }
+  }
+  if (key === 'activityReasonCodes' && value && typeof value === 'object' && !Array.isArray(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([runId, reasons]) => [identities[runId] ?? runId, reasons])
+    )
   if (['content', 'text', 'script', 'code', 'outputs', 'structuredOutputEvidence'].includes(key))
     return value
   if (typeof value === 'string') {
@@ -778,6 +941,11 @@ export const prepareNativeImport = async (
         // The source snapshot was validated before remapping. Its derived local graph now has
         // different identities, so seal the recipe again before computing the outer checksum.
         const snapshot = value as unknown as PersistedArtifactExecutionSnapshot
+        if (snapshot.workflowCapture?.state === 'available') {
+          const { captureId, ...draft } = snapshot.workflowCapture.capture
+          void captureId
+          snapshot.workflowCapture = { state: 'available', capture: sealWorkflowCapture(draft) }
+        }
         if (snapshot.analysisRevision && snapshot.provenanceGraph) {
           // Preserve the source analyzer revisions; remapping does not rerun analysis.
           const fields = {

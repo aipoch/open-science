@@ -84,9 +84,14 @@
     "packages/environment/src/runtime-relocation.ts",
     "packages/environment/src/package-version-comparison.ts",
     "packages/environment/src/environment-lock.ts",
-    "packages/environment/src/external-environment-lock.test.ts"
+    "packages/environment/src/external-environment-lock.test.ts",
+    "packages/environment/src/conda-lock-subset.ts",
+    "packages/environment/src/conda-lock-subset.test.ts"
   ],
-  "interfacePaths": ["packages/environment/src/index.ts"],
+  "interfacePaths": [
+    "packages/environment/src/index.ts",
+    "packages/environment/src/conda-lock-subset.ts"
+  ],
   "consumerModules": [
     "notebook_application",
     "notebook_execution",
@@ -142,7 +147,8 @@
       "packages/environment/src/environment-lease-manager.test.ts",
       "packages/environment/src/runtime-relocation.test.ts",
       "packages/environment/src/provisioner.startup.test.ts",
-      "packages/environment/src/external-environment-lock.test.ts"
+      "packages/environment/src/external-environment-lock.test.ts",
+      "packages/environment/src/conda-lock-subset.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

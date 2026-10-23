@@ -5,7 +5,55 @@ import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { NotebookRunInputFile } from '../shared/notebook'
 import { ImmutableInputAuthority } from './immutable-input-authority'
+import { ManagedFileVersionError } from './managed-file-versions/error'
+import type { ResolvedManagedFileVersion } from './managed-file-versions/read-port'
+
+const identityRecord = (): ResolvedManagedFileVersion => ({
+  logicalFile: {
+    source: 'upload',
+    id: 'upload-1',
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    displayName: 'upload.csv',
+    currentVersionId: 'upload-version-2'
+  },
+  version: {
+    id: 'upload-version-1',
+    fileId: 'upload-1',
+    versionNumber: 1,
+    state: 'ready',
+    originKind: 'legacy',
+    basedOnVersionId: null,
+    storageTag: null,
+    storedFilename: null,
+    writeOperationId: null,
+    contentStorageKey: 'uploads/project-1/session-1/upload-1/upload-version-1/content',
+    filename: 'stored.csv',
+    originalFilename: 'upload.csv',
+    contentType: 'text/csv',
+    sizeBytes: 8n,
+    checksum: 'a'.repeat(64),
+    createdAt: new Date('2026-08-26T00:00:00.000Z')
+  }
+})
+
+const inputIdentity = (): NotebookRunInputFile => ({
+  inputFileVersionId: 'upload-version-1',
+  sourceKind: 'upload-version',
+  sourceFileId: 'upload-1',
+  sourceVersionNumber: 1,
+  sourceCreatedAt: '2026-08-26T00:00:00.000Z',
+  sourceProjectId: 'project-1',
+  sourceSessionId: 'session-1',
+  filename: 'upload.csv',
+  contentType: 'text/csv',
+  sizeBytes: 8,
+  checksum: 'a'.repeat(64),
+  storageKey: 'uploads/project-1/session-1/upload-1/upload-version-1/content',
+  association: 'turn-attached'
+})
 
 describe('ImmutableInputAuthority', () => {
   let storageRoot: string | undefined
@@ -13,6 +61,125 @@ describe('ImmutableInputAuthority', () => {
   afterEach(async () => {
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
     storageRoot = undefined
+  })
+
+  it('validates identity through metadata without opening or verifying content', async () => {
+    const resolveVersionIdentity = vi.fn().mockResolvedValue(identityRecord())
+    const openVersion = vi.fn().mockRejectedValue(new Error('bytes must not be opened'))
+    const authority = new ImmutableInputAuthority({
+      storageRoot: '/storage',
+      managedFileVersions: { openVersion, resolveVersionIdentity }
+    })
+
+    await expect(authority.validateIdentity('project-1', inputIdentity())).resolves.toEqual({
+      state: 'available',
+      input: inputIdentity()
+    })
+    expect(resolveVersionIdentity).toHaveBeenCalledExactlyOnceWith(
+      { source: 'upload', projectId: 'project-1', fileId: 'upload-1' },
+      'upload-version-1'
+    )
+    expect(openVersion).not.toHaveBeenCalled()
+    await expect(authority.validateIdentity('another-project', inputIdentity())).resolves.toEqual({
+      state: 'project-mismatch'
+    })
+    expect(resolveVersionIdentity).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { sourceFileId: 'another-file' },
+    { sourceSessionId: 'another-session' },
+    { sourceVersionNumber: 2 },
+    { storageKey: 'another/key' },
+    { checksum: 'b'.repeat(64) },
+    { sizeBytes: 9 }
+  ])('rejects changed immutable identity metadata %j', async (changed) => {
+    const openVersion = vi.fn()
+    const authority = new ImmutableInputAuthority({
+      storageRoot: '/storage',
+      managedFileVersions: {
+        openVersion,
+        resolveVersionIdentity: vi.fn().mockResolvedValue(identityRecord())
+      }
+    })
+    await expect(
+      authority.validateIdentity('project-1', { ...inputIdentity(), ...changed })
+    ).resolves.toEqual({ state: 'identity-mismatch' })
+    expect(openVersion).not.toHaveBeenCalled()
+  })
+
+  it('rejects resolved metadata owned by another Project', async () => {
+    const resolved = identityRecord()
+    resolved.logicalFile.projectId = 'another-project'
+    const authority = new ImmutableInputAuthority({
+      storageRoot: '/storage',
+      managedFileVersions: {
+        openVersion: vi.fn(),
+        resolveVersionIdentity: vi.fn().mockResolvedValue(resolved)
+      }
+    })
+    await expect(authority.validateIdentity('project-1', inputIdentity())).resolves.toEqual({
+      state: 'identity-mismatch'
+    })
+  })
+
+  it.each(['FILE_NOT_FOUND', 'FILE_DELETED', 'VERSION_NOT_FOUND', 'VERSION_NOT_IN_FILE'] as const)(
+    'keeps metadata resolution failures unavailable for %s',
+    async (code) => {
+      const openVersion = vi.fn()
+      const authority = new ImmutableInputAuthority({
+        storageRoot: '/storage',
+        managedFileVersions: {
+          openVersion,
+          resolveVersionIdentity: vi.fn().mockRejectedValue(new ManagedFileVersionError(code, code))
+        }
+      })
+      await expect(authority.validateIdentity('project-1', inputIdentity())).resolves.toEqual({
+        state: 'unavailable'
+      })
+      expect(openVersion).not.toHaveBeenCalled()
+    }
+  )
+
+  it('propagates unexpected metadata errors without falling back to byte access', async () => {
+    const error = new ManagedFileVersionError('INVALID_REQUEST', 'invalid identity')
+    const openVersion = vi.fn()
+    const authority = new ImmutableInputAuthority({
+      storageRoot: '/storage',
+      managedFileVersions: {
+        openVersion,
+        resolveVersionIdentity: vi.fn().mockRejectedValue(error)
+      }
+    })
+    await expect(authority.validateIdentity('project-1', inputIdentity())).rejects.toBe(error)
+    expect(openVersion).not.toHaveBeenCalled()
+  })
+
+  it('keeps legacy read ports strict when metadata resolution is absent', async () => {
+    const verifyUnchanged = vi.fn().mockResolvedValue(undefined)
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openVersion = vi.fn().mockResolvedValue({ ...identityRecord(), verifyUnchanged, close })
+    const authority = new ImmutableInputAuthority({
+      storageRoot: '/storage',
+      managedFileVersions: { openVersion }
+    })
+    await expect(authority.validateIdentity('project-1', inputIdentity())).resolves.toEqual({
+      state: 'available',
+      input: inputIdentity()
+    })
+    expect(verifyUnchanged).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+
+    await expect(
+      authority.validateIdentity('project-1', { ...inputIdentity(), checksum: 'c'.repeat(64) })
+    ).resolves.toEqual({ state: 'identity-mismatch' })
+    expect(verifyUnchanged).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledTimes(2)
+
+    const error = new ManagedFileVersionError('CONTENT_INTEGRITY_FAILED', 'missing bytes')
+    openVersion.mockRejectedValueOnce(error)
+    await expect(authority.validateIdentity('project-1', inputIdentity())).rejects.toBe(error)
+    expect(openVersion).toHaveBeenCalledTimes(3)
   })
 
   it('resolves an exact Notebook input through a verified managed Version lease', async () => {

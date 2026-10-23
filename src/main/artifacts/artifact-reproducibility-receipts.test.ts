@@ -56,6 +56,54 @@ const draft: ArtifactReproducibilityReceiptDraft = {
   ]
 }
 
+const contextReceiptDraft = (): ArtifactReproducibilityReceiptDraft => ({
+  ...structuredClone(draft),
+  schemaVersion: 2,
+  frontier: { frontierId: 'workflow-selection', claimScope: 'downstream-only' },
+  workflow: {
+    captureId: '1'.repeat(64),
+    targetRunIds: ['de'],
+    planId: draft.recipe.recipeId,
+    verification: 'state-comparison',
+    executionOnlyTargetRunIds: []
+  },
+  environmentLocks: [
+    {
+      requirementId: 'r:analysis',
+      kernelKind: 'r',
+      lockChecksum: 'd'.repeat(64),
+      sourceLockChecksum: 'e'.repeat(64),
+      runtimeSubset: {
+        schemaVersion: 1,
+        scopeChecksum: '2'.repeat(64),
+        planChecksum: '3'.repeat(64),
+        archiveNames: ['r-base-4.5.3-test_0.conda', 'r-jsonlite-2.0.0-test_0.tar.bz2'],
+        missingDependencies: [{ packageName: 'r-base', dependency: 'runtime-support >=1.0' }]
+      }
+    }
+  ],
+  completedStepIds: ['step:de'],
+  comparisons: [
+    {
+      stepId: 'step:de',
+      entityId: 'r-state:de',
+      relativePath: 'R state (de)',
+      expectedChecksum: 'e'.repeat(64),
+      expectedSizeBytes: 256,
+      status: 'matched',
+      stateComparison: {
+        outcome: 'equal',
+        scientificOutcome: 'equal',
+        packageContext: {
+          schemaVersion: 1,
+          sourcePackages: ['DESeq2', 'stats', 'base'],
+          targetPackages: ['stats', 'base']
+        }
+      }
+    }
+  ]
+})
+
 const createStore = async (): Promise<{
   root: string
   store: ArtifactReproducibilityReceiptStore
@@ -75,6 +123,255 @@ afterEach(async () => {
 })
 
 describe('ArtifactReproducibilityReceiptStore', () => {
+  it.each([
+    { outcome: 'equal', scientificOutcome: 'equal' },
+    { outcome: 'different', scientificOutcome: 'equal' },
+    { outcome: 'different', scientificOutcome: 'different' }
+  ] as const)(
+    'round-trips scoped subset summaries and package context with $outcome/$scientificOutcome outcomes',
+    async ({ outcome, scientificOutcome }) => {
+      const { root, store } = await createStore()
+      const candidate = contextReceiptDraft()
+      const comparison = candidate.comparisons[0]!
+      comparison.stateComparison!.outcome = outcome
+      comparison.stateComparison!.scientificOutcome = scientificOutcome
+      if (outcome === 'different') {
+        candidate.outcome = 'different'
+        comparison.status = 'different'
+        comparison.reason = 'checksum-mismatch'
+      }
+      const saved = await store.append(request, candidate)
+      const reopened = new ArtifactReproducibilityReceiptStore({
+        resolveVersionDirectory: async () => root
+      })
+      expect((await reopened.list(request)).receipts[0]).toEqual(saved)
+      expect(saved.comparisons[0]!.stateComparison!.packageContext!.sourcePackages).toEqual([
+        'DESeq2',
+        'stats',
+        'base'
+      ])
+      expect((await reopened.packageFiles(request)).lockChecksums.sort()).toEqual([
+        'd'.repeat(64),
+        'e'.repeat(64)
+      ])
+      expect((await reopened.packageFiles(request)).lockChecksums).not.toContain('3'.repeat(64))
+    }
+  )
+
+  it.each([
+    'science-missing',
+    'science-without-context',
+    'science-conflict',
+    'science-unknown',
+    'state-extra',
+    'context-schema',
+    'context-extra',
+    'empty',
+    'duplicate',
+    'invalid-name',
+    'non-string',
+    'oversized',
+    'long-name'
+  ])('rejects malformed package context evidence: %s', async (scenario) => {
+    const { store } = await createStore()
+    const candidate = contextReceiptDraft()
+    const state = candidate.comparisons[0]!.stateComparison!
+    const context = state.packageContext!
+    if (scenario === 'science-missing') delete state.scientificOutcome
+    if (scenario === 'science-without-context') delete state.packageContext
+    if (scenario === 'science-conflict') state.scientificOutcome = 'different'
+    if (scenario === 'science-unknown') Object.assign(state, { scientificOutcome: 'unknown' })
+    if (scenario === 'state-extra') Object.assign(state, { certified: true })
+    if (scenario === 'context-schema') Object.assign(context, { schemaVersion: 2 })
+    if (scenario === 'context-extra') Object.assign(context, { ignored: true })
+    if (scenario === 'empty') context.sourcePackages = []
+    if (scenario === 'duplicate') context.targetPackages.push('base')
+    if (scenario === 'invalid-name') context.sourcePackages[0] = '../DESeq2'
+    if (scenario === 'non-string') Object.assign(context, { sourcePackages: [1] })
+    if (scenario === 'oversized')
+      context.targetPackages = Array.from({ length: 4097 }, (_, i) => `Package${i}`)
+    if (scenario === 'long-name') context.sourcePackages[0] = 'A'.repeat(129)
+    await expect(store.append(request, candidate)).rejects.toThrow(
+      'Invalid reproducibility receipt'
+    )
+  })
+
+  it.each([
+    'schema',
+    'scope-hash',
+    'plan-hash',
+    'extra',
+    'python',
+    'empty',
+    'duplicate',
+    'path',
+    'windows-path',
+    'url',
+    'extension',
+    'long-archive',
+    'many-archives',
+    'edge-extra',
+    'edge-name',
+    'edge-spec',
+    'edge-long',
+    'edge-duplicate',
+    'many-edges'
+  ])('rejects malformed runtime subset summaries: %s', async (scenario) => {
+    const { store } = await createStore()
+    const candidate = contextReceiptDraft()
+    const lock = candidate.environmentLocks[0]!
+    const summary = lock.runtimeSubset!
+    if (scenario === 'schema') Object.assign(summary, { schemaVersion: 2 })
+    if (scenario === 'scope-hash') summary.scopeChecksum = 'invalid'
+    if (scenario === 'plan-hash') summary.planChecksum = 'F'.repeat(64)
+    if (scenario === 'extra') Object.assign(summary, { certified: true })
+    if (scenario === 'python') lock.kernelKind = 'python'
+    if (scenario === 'empty') summary.archiveNames = []
+    if (scenario === 'duplicate') summary.archiveNames.push(summary.archiveNames[0]!)
+    if (scenario === 'path') summary.archiveNames[0] = '../r-base-4.5.3-test_0.conda'
+    if (scenario === 'windows-path')
+      summary.archiveNames[0] = 'C:\\cache\\r-base-4.5.3-test_0.conda'
+    if (scenario === 'url')
+      summary.archiveNames[0] = 'https://example.test/r-base-4.5.3-test_0.conda'
+    if (scenario === 'extension') summary.archiveNames[0] = 'r-base-4.5.3-test_0.zip'
+    if (scenario === 'long-archive')
+      summary.archiveNames[0] = `r-${'a'.repeat(1024)}-1.0-test_0.conda`
+    if (scenario === 'many-archives')
+      summary.archiveNames = Array.from({ length: 10001 }, (_, i) => `pkg${i}-1.0-test_0.conda`)
+    if (scenario === 'edge-extra') Object.assign(summary.missingDependencies[0]!, { ignored: true })
+    if (scenario === 'edge-name') summary.missingDependencies[0]!.packageName = '../r-base'
+    if (scenario === 'edge-spec') summary.missingDependencies[0]!.dependency = 'support\nother'
+    if (scenario === 'edge-long') summary.missingDependencies[0]!.dependency = 'x'.repeat(4097)
+    if (scenario === 'edge-duplicate')
+      summary.missingDependencies.push({ ...summary.missingDependencies[0]! })
+    if (scenario === 'many-edges')
+      summary.missingDependencies = Array.from({ length: 10001 }, (_, i) => ({
+        packageName: 'r-base',
+        dependency: `pkg${i}`
+      }))
+    await expect(store.append(request, candidate)).rejects.toThrow(
+      'Invalid reproducibility receipt'
+    )
+  })
+
+  it('detects tampering with a persisted subset scope even when its new digest has a valid format', async () => {
+    const { root, store } = await createStore()
+    const saved = await store.append(request, contextReceiptDraft())
+    const filePath = join(root, 'reproducibility-checks', `sha256-${saved.receiptChecksum}.json`)
+    const changed = JSON.parse(await readFile(filePath, 'utf8'))
+    changed.environmentLocks[0].runtimeSubset.scopeChecksum = '9'.repeat(64)
+    await writeFile(filePath, JSON.stringify(changed))
+    await expect(store.get(request, saved.receiptChecksum)).rejects.toThrow(
+      'receipt checksum mismatch'
+    )
+  })
+
+  it.each(['equal', 'different'] as const)(
+    'persists verified R object outputs: %s',
+    async (outcome) => {
+      const { store } = await createStore()
+      const stateDraft: ArtifactReproducibilityReceiptDraft = {
+        ...draft,
+        schemaVersion: 2,
+        outcome: outcome === 'equal' ? 'matched' : 'different',
+        frontier: { frontierId: 'workflow-selection', claimScope: 'downstream-only' },
+        workflow: {
+          captureId: '1'.repeat(64),
+          targetRunIds: ['de'],
+          planId: draft.recipe.recipeId,
+          verification: 'state-comparison',
+          executionOnlyTargetRunIds: []
+        },
+        completedStepIds: ['step:de'],
+        comparisons: [
+          {
+            stepId: 'step:de',
+            entityId: 'r-state:de',
+            relativePath: 'R state (de)',
+            expectedChecksum: 'e'.repeat(64),
+            expectedSizeBytes: 256,
+            stateComparison: { outcome },
+            status: outcome === 'equal' ? 'matched' : 'different',
+            ...(outcome === 'different' ? { reason: 'checksum-mismatch' as const } : {})
+          }
+        ]
+      }
+      const receipt = await store.append(request, stateDraft)
+      expect((await store.list(request)).receipts[0]).toEqual(receipt)
+      await expect(
+        store.append(request, {
+          ...stateDraft,
+          workflow: { ...stateDraft.workflow!, verification: 'file-comparison' }
+        })
+      ).rejects.toThrow()
+      await expect(
+        store.append(request, {
+          ...stateDraft,
+          comparisons: [
+            { ...stateDraft.comparisons[0]!, status: outcome === 'equal' ? 'different' : 'matched' }
+          ]
+        })
+      ).rejects.toThrow()
+      const mixed = await store.append(request, {
+        ...stateDraft,
+        receiptId: `mixed-${outcome}`,
+        outcome: 'executed',
+        completedStepIds: ['step:de', 'step:python-memory'],
+        workflow: {
+          ...stateDraft.workflow!,
+          targetRunIds: ['de', 'python-memory'],
+          verification: 'execution-only',
+          executionOnlyTargetRunIds: ['python-memory']
+        }
+      })
+      expect((await store.list(request)).receipts).toContainEqual(mixed)
+    }
+  )
+  it('round-trips execution-only workflow receipts without claiming a match', async () => {
+    const { store } = await createStore()
+    const workflow = {
+      captureId: '1'.repeat(64),
+      targetRunIds: ['memory-stage'],
+      planId: draft.recipe.recipeId,
+      verification: 'execution-only' as const,
+      executionOnlyTargetRunIds: ['memory-stage']
+    }
+    const saved = await store.append(request, {
+      ...draft,
+      schemaVersion: 2,
+      frontier: { frontierId: 'workflow-selection', claimScope: 'downstream-only' },
+      outcome: 'executed',
+      workflow,
+      comparisons: []
+    })
+    expect((await store.list(request)).receipts[0]).toEqual(saved)
+    await expect(
+      store.append(request, { ...draft, outcome: 'executed', comparisons: [] })
+    ).rejects.toThrow()
+    await expect(
+      store.append(request, { ...draft, workflow, outcome: 'matched' })
+    ).rejects.toThrow()
+  })
+  it('preserves the actual derived lock and its source when reopening and packaging receipts', async () => {
+    const { root, store } = await createStore()
+    const environmentLocks = [{ ...draft.environmentLocks[0]!, sourceLockChecksum: 'a'.repeat(64) }]
+    const receipt = await store.append(request, { ...draft, schemaVersion: 2, environmentLocks })
+    const reopened = new ArtifactReproducibilityReceiptStore({
+      resolveVersionDirectory: async () => root
+    })
+    expect((await reopened.list(request)).receipts[0]).toEqual(receipt)
+    expect((await reopened.list(request)).receipts[0]!.environmentLocks).toEqual(environmentLocks)
+    expect((await reopened.packageFiles(request)).lockChecksums.sort()).toEqual([
+      'a'.repeat(64),
+      'd'.repeat(64)
+    ])
+    await expect(
+      store.append(request, {
+        ...draft,
+        environmentLocks: [{ ...environmentLocks[0]!, sourceLockChecksum: 'invalid' }]
+      })
+    ).rejects.toThrow()
+  })
   it.each(['unsupported-format', 'budget-exceeded', 'comparison-failed'] as const)(
     'persists the unavailable content comparison reason %s',
     async (reason) => {
@@ -450,53 +747,77 @@ describe('ArtifactReproducibilityReceiptStore', () => {
   })
 })
 
-it('reads original output through an imported source-to-local entity mapping', async () => {
-  const { root } = await createStore()
-  const {
-    bindArtifactReproducibilityExecutionEvidence,
-    readArtifactReproducibilityOriginalOutput
-  } = await import('./provenance-reproducibility-execution-evidence')
-  const { bindArtifactReproducibilityReceipts } =
-    await import('./artifact-reproducibility-receipts')
-  const owner = {}
-  const bytes = Buffer.from('retained original output')
-  await writeFile(join(root, 'original.bin'), bytes)
-  await writeFile(
-    join(root, 'reproducibility-source.json'),
-    JSON.stringify({
-      sourceScope: request,
-      entityIds: { 'file-generation:source': 'file-generation:local' },
-      omittedOutputChecksums: [],
-      lockChecksums: []
-    })
-  )
-  bindArtifactReproducibilityReceipts(
-    owner,
-    new ArtifactReproducibilityReceiptStore({ resolveVersionDirectory: async () => root })
-  )
-  bindArtifactReproducibilityExecutionEvidence(
-    owner,
-    async () =>
-      ({
-        provenanceGraph: {
-          entities: [
-            {
-              entityId: 'file-generation:local',
-              kind: 'file-generation',
-              contentStorageKey: 'original.bin',
-              checksum: sha256(bytes),
-              sizeBytes: bytes.length
-            }
-          ]
-        }
-      }) as unknown as import('../../shared/artifact-provenance').PersistedArtifactExecutionSnapshot
-  )
-  await expect(
-    readArtifactReproducibilityOriginalOutput(
-      owner,
-      root,
-      { ...request, versionId: 'local-version' },
-      'file-generation:source'
+it.each(['artifact', 'workflow'] as const)(
+  'reads %s original output through an imported source-to-local entity mapping',
+  async (kind) => {
+    const { root } = await createStore()
+    const {
+      bindArtifactReproducibilityExecutionEvidence,
+      readArtifactReproducibilityOriginalOutput
+    } = await import('./provenance-reproducibility-execution-evidence')
+    const { bindArtifactReproducibilityReceipts } =
+      await import('./artifact-reproducibility-receipts')
+    const owner = {}
+    const bytes = Buffer.from('retained original output')
+    await writeFile(join(root, 'original.bin'), bytes)
+    await writeFile(
+      join(root, 'reproducibility-source.json'),
+      JSON.stringify({
+        sourceScope: request,
+        entityIds: { 'file-generation:source': 'file-generation:local' },
+        omittedOutputChecksums: [],
+        lockChecksums: []
+      })
     )
-  ).resolves.toEqual(bytes)
-})
+    bindArtifactReproducibilityReceipts(
+      owner,
+      new ArtifactReproducibilityReceiptStore({ resolveVersionDirectory: async () => root })
+    )
+    bindArtifactReproducibilityExecutionEvidence(
+      owner,
+      async () =>
+        ({
+          [kind === 'workflow' ? 'workflowCapture' : 'provenanceGraph']:
+            kind === 'workflow'
+              ? {
+                  state: 'available',
+                  capture: {
+                    graph: {
+                      entities: [
+                        {
+                          entityId: 'file-generation:local',
+                          kind: 'file-generation',
+                          contentStorageKey: 'original.bin',
+                          checksum: sha256(bytes),
+                          sizeBytes: bytes.length
+                        }
+                      ]
+                    }
+                  }
+                }
+              : {
+                  entities: [
+                    {
+                      entityId: 'file-generation:local',
+                      kind: 'file-generation',
+                      contentStorageKey: 'original.bin',
+                      checksum: sha256(bytes),
+                      sizeBytes: bytes.length
+                    }
+                  ]
+                }
+        }) as unknown as import('../../shared/artifact-provenance').PersistedArtifactExecutionSnapshot
+    )
+    await expect(
+      readArtifactReproducibilityOriginalOutput(
+        owner,
+        root,
+        { ...request, versionId: 'local-version' },
+        'file-generation:source'
+      )
+    ).resolves.toEqual(bytes)
+    await expect(
+      readArtifactReproducibilityOriginalOutput(owner, root, request, 'outside-capture')
+    ).rejects.toThrow('Original output is unavailable')
+  }
+)
