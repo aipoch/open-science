@@ -40,7 +40,7 @@ const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
-  "Host SDK discovery in `repl_execute`: `await host.help()` is the role-aware catalog with field descriptions; query only needed topics. Main/root agents may call `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
+  "Host SDK: `await host.help()` provides the role-aware catalog and field descriptions. Query needed topics only; do not prefetch topics. Main/root agents: `await host.help('delegate')`. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
@@ -228,9 +228,9 @@ const INSPECT_PACKAGES_DOC = [
 ].join('\n')
 
 const MANAGE_PACKAGES_DOC = [
-  'Install packages in the session-bound runtime through this trusted tool only. Select with language="python" or language="r", usePip=true only for PyPI-only packages, and pass channels only when needed.',
-  'For managed R runtimes, installer="biocmanager" accepts Bioconductor package names and installer="github" accepts owner/repository or owner/repository@ref. Both are verified from the target R library inventory after installation.',
-  'conda installs resolve conda-forge + bioconda by default. A CRAN R package is installed by its plain name (e.g. "dplyr" → r-dplyr); a Bioconductor R package must be named by its bioconda package id "bioconductor-<name>" in lowercase (e.g. DESeq2 → "bioconductor-deseq2"), which is left as-is (not r- prefixed).',
+  'Install only through this trusted tool in the session-bound runtime. language="python" or language="r"; usePip=true only for PyPI-only packages; channels as needed.',
+  'Managed R: installer="biocmanager" takes Bioconductor names; installer="github" takes owner/repository or owner/repository@ref. Both are verified against the target R library inventory after installation.',
+  'conda defaults to conda-forge + bioconda. CRAN: plain names ("dplyr" → r-dplyr). Bioconductor: lowercase bioconda IDs (DESeq2 → "bioconductor-deseq2"), unchanged, never r-prefixed.',
   'There is no per-call environment: bind/switch first. Default runtimes are additive-only (bare name or exact name==version); uninstall, ranges, URLs, extras, and downgrades require a named environment. External runtimes may refuse writes; surface that result.',
   'operation:"uninstall" is named-only. Results include a target receipt. unchanged means only target distribution metadata is unchanged; verify imports with notebook_execute. Use notebook_restart when needsRestart.',
   'Never use apt, brew, sudo, curl | bash, subprocess installs, %pip, !pip, or install.packages(), and never substitute another library. Report required OS dependencies to the user instead of installing them.'
@@ -268,8 +268,8 @@ const REPL_EXECUTE_DOC = [
   'Only this kernel supports temporary tool-less inference (`await host.llm(prompt)` or bounded prompt batches), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`), and Specialist management (`host.agents`). Discover other namespaces with `host.help()`.',
   'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
   HOST_SDK_DISCOVERY_GUIDANCE,
-  'Use foreground when reasoning needs the result now; use background:true only for longer independent work. Background-safe calls include host.mcp, host.compute, host.llm, host.delegate, and read-only Host SDK operations. host.viewImage, host.agents.switch, and live user input are unsafe in background execution because their results require the live foreground response. Save the returned runId; do not poll frequently. A Turn end or MCP disconnect does not cancel an accepted background Run; cancel it explicitly with background_run. If a Host SDK operation reports BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
-  'Declarations and globals persist until restart/process loss; top-level return/await and later redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
+  'Use foreground for results needed now; background:true only for longer independent work. Background-safe: host.mcp, host.compute, host.llm, host.delegate, read-only Host SDK operations. host.viewImage, host.agents.switch and live input require live foreground responses; unsafe in background. Save runId; avoid frequent polling. Accepted background Runs survive Turn end/MCP disconnect; cancel with background_run. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
+  'Declarations/globals persist until restart/process loss. Top-level return/await and later redeclaration work; expressions return results. No replay. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -289,7 +289,7 @@ const buildShellExecuteDoc = (
       : undefined
   const exitCodeContract =
     binding.kind === 'powershell'
-      ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1; inspect exitCode instead of assuming success.'
+      ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 or risk garbled output. Native failures retain exit codes; unhandled cmdlet failure returns exitCode 1. Inspect exitCode.'
       : 'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.'
 
   return [
@@ -298,10 +298,10 @@ const buildShellExecuteDoc = (
     `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, or launch-context change resets its state; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
-    'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
+    'Use foreground for results needed now; background:true for longer independent commands. Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.',
     'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
-    'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
-    'Use only for one managed command. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
+    'Do NOT copy a generated notebook output into the workspace. Publish files with write_artifact_file using the same relative filename you saved with; it resolves in the notebook session data dir and copies safely across platforms.',
+    'One managed command only. Python/R: notebook_execute; JavaScript: repl_execute; installs: manage_packages. Never run analysis scripts, inline code, or installers here.'
   ].join('\n')
 }
 
