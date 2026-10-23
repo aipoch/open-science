@@ -295,7 +295,7 @@ const findPackageTextMatch = (
   }
   // Match prefixes independently so a harmless outer field cannot hide an inner assignment.
   for (const match of text.matchAll(
-    /(?:\\+[rn]|\b)([a-z][a-z0-9_-]*)((?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_-]+\\*["']|[a-z0-9_]+)[ \t]*\])*\s*["']?\s*[:=]\s*)/gi
+    /(?:\\+[rn]|\b)([a-z][a-z0-9_-]*)(?:[ \t]*\[[ \t]*(?:\\*["'][a-z0-9_-]+\\*["']|[a-z0-9_]+)[ \t]*\])*(\s*["']?\s*[:=]\s*)/gi
   )) {
     if (!isSensitiveDiagnosticKey(match[1])) continue
     if (nonCredentialField(match.index)) continue

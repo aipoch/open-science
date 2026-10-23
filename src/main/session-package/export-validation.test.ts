@@ -610,6 +610,7 @@ it('preserves context and model-step token counts through native export and impo
 
 it.each([
   serializedRedaction,
+  'password["value"] = {}\npassword["value"] = os.environ["PASSWORD"]',
   'for (token, value) in tokens:\n    print(value)',
   'if token:\n    print(value)\nwhile tokens:\n    tokens.pop()',
   'tokens = []\npassword = os.environ["PASSWORD"]',
