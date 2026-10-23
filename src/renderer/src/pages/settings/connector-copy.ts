@@ -5,6 +5,28 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (
+    [
+      'nhanes',
+      'charls',
+      'chns',
+      'seer',
+      'mimic',
+      'eicu',
+      'faers',
+      'gbd',
+      'europepmc',
+      'hgnc',
+      'chea3',
+      'biodbnet',
+      'cellosaurus-extra',
+      'ctd'
+    ].includes(connector.id)
+  ) {
+    return t(
+      'Medical and molecular data tools. Data operations require a prepared Python runtime; some sources require personal authorization.'
+    )
+  }
   if (connector.id === 'tcia')
     return t('Public cancer imaging collections and series metadata from TCIA.')
   if (connector.id === 'kegg')

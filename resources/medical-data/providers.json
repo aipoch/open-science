@@ -1,0 +1,257 @@
+{
+  "europepmc": {
+    "label": "Europe PMC",
+    "access": "public",
+    "docs": "https://europepmc.org/RestfulWebService",
+    "portal": "https://europepmc.org/",
+    "hosts": [
+      "www.ebi.ac.uk",
+      "europepmc.org"
+    ],
+    "download": true,
+    "notes": "Independent Boolean literature search, core metadata, actual abstracts and cursor pagination. A full-text URL is not retrieved full text."
+  },
+  "nhanes": {
+    "label": "NHANES",
+    "access": "public",
+    "docs": "https://wwwn.cdc.gov/nchs/nhanes/tutorials/datasets.aspx",
+    "portal": "https://wwwn.cdc.gov/nchs/nhanes/continuousnhanes/",
+    "hosts": [
+      "wwwn.cdc.gov",
+      "www.cdc.gov"
+    ],
+    "download": true,
+    "notes": "Public XPT downloads and local import. Preserve cycle, variable definitions, survey weights, strata and PSU."
+  },
+  "charls": {
+    "label": "CHARLS",
+    "access": "authorized",
+    "docs": "https://charls.pku.edu.cn/Faq/cjwt.htm",
+    "portal": "https://charls.pku.edu.cn/",
+    "hosts": [
+      "charls.pku.edu.cn",
+      "charlsdata.com",
+      "www.charlsdata.com"
+    ],
+    "download": true,
+    "cookie_env": "CHARLS_COOKIE",
+    "notes": "Personal registration and data approval required. Download approved files or import locally. No automatic registration, application, CAPTCHA solving or login."
+  },
+  "chns": {
+    "label": "CHNS",
+    "access": "authorized",
+    "docs": "https://chns.cpc.unc.edu/data/datasets/",
+    "portal": "https://dataverse.unc.edu/dataverse/chns",
+    "hosts": [
+      "chns.cpc.unc.edu",
+      "www.cpc.unc.edu",
+      "dataverse.unc.edu"
+    ],
+    "download": true,
+    "cookie_env": "CHNS_COOKIE",
+    "notes": "Household and individual longitudinal files are on UNC Dataverse. Community-level data requires separate approval. Public files need no token. Stop on access challenges and use browser-downloaded files."
+  },
+  "seer": {
+    "label": "SEER",
+    "access": "authorized",
+    "docs": "https://seer.cancer.gov/data/access.html",
+    "portal": "https://seer.cancer.gov/seerstat/",
+    "hosts": [
+      "seer.cancer.gov"
+    ],
+    "download": false,
+    "notes": "Apply for personal SEER research access and check current eligibility. Import authorized SEER*Stat CSV/TSV exports; automatic research-database download is not implemented."
+  },
+  "mimic": {
+    "label": "MIMIC",
+    "access": "credentialed",
+    "docs": "https://physionet.org/content/mimiciv/",
+    "portal": "https://physionet.org/content/mimiciv/",
+    "hosts": [
+      "physionet.org",
+      "www.physionet.org"
+    ],
+    "download": true,
+    "file_projects": [
+      "mimiciv",
+      "mimic-iv-demo",
+      "mimiciii",
+      "mimiciii-demo",
+      "mimic-iv-ed",
+      "mimic-iv-note"
+    ],
+    "notes": "PhysioNet credentialing, training and project agreement are required for full data; public demos need no credentials. Download and import CSV/CSV.GZ, then query locally. Patient rows remain local; no BigQuery integration."
+  },
+  "eicu": {
+    "label": "eICU",
+    "access": "credentialed",
+    "docs": "https://physionet.org/content/eicu-crd/2.0/",
+    "portal": "https://physionet.org/content/eicu-crd/2.0/",
+    "hosts": [
+      "physionet.org",
+      "www.physionet.org"
+    ],
+    "download": true,
+    "file_projects": [
+      "eicu-crd",
+      "eicu-crd-demo"
+    ],
+    "notes": "PhysioNet personal access required for full data; public demo needs no credentials. CSV/CSV.GZ import and local SQL. Patient rows remain local; no BigQuery integration."
+  },
+  "faers": {
+    "label": "FAERS",
+    "access": "public",
+    "docs": "https://open.fda.gov/apis/drug/event/",
+    "portal": "https://open.fda.gov/apis/drug/event/",
+    "hosts": [
+      "api.fda.gov",
+      "download.open.fda.gov",
+      "www.fda.gov"
+    ],
+    "download": true,
+    "notes": "openFDA queries, counts and bulk partition discovery; save pages and files locally. A free key is recommended for regular online use. Reports do not establish incidence or causation; deduplication is not automatic."
+  },
+  "gbd": {
+    "label": "GBD",
+    "access": "authorized",
+    "docs": "https://ghdx.healthdata.org/gbd-results-tool",
+    "portal": "https://vizhub.healthdata.org/gbd-results/",
+    "hosts": [
+      "ghdx.healthdata.org",
+      "vizhub.healthdata.org",
+      "www.healthdata.org"
+    ],
+    "download": true,
+    "cookie_env": "GBD_COOKIE",
+    "notes": "Import official CSV exports or download already approved file URLs. Use the official results tool to create exports; no undocumented API or automatic export-task creation."
+  },
+  "hgnc": {
+    "label": "HGNC",
+    "access": "public",
+    "docs": "https://www.genenames.org/help/rest/",
+    "portal": "https://www.genenames.org/",
+    "hosts": [
+      "rest.genenames.org",
+      "www.genenames.org",
+      "storage.googleapis.com"
+    ],
+    "download": true,
+    "notes": "HGNC exact fields, aliases, historical symbols and identifier lookup, service metadata and official file listings. No VGNC/HCOP or download resume."
+  },
+  "chea3": {
+    "label": "ChEA3",
+    "access": "public",
+    "docs": "https://maayanlab.cloud/chea3/api/index.html",
+    "portal": "https://maayanlab.cloud/chea3/",
+    "hosts": [
+      "maayanlab.cloud"
+    ],
+    "download": true,
+    "notes": "Official transcription-factor enrichment ranks and downloadable GMT libraries. Rankings are not causal evidence; recognized input genes remain unknown when absent upstream."
+  },
+  "biodbnet": {
+    "label": "bioDBnet",
+    "access": "public",
+    "docs": "https://biodbnet-abcc.ncifcrf.gov/webServices/RestWebService.php",
+    "portal": "https://biodbnet-abcc.ncifcrf.gov/",
+    "hosts": [
+      "biodbnet-abcc.ncifcrf.gov"
+    ],
+    "download": true,
+    "notes": "Official REST identifier conversion, recognition, annotation, orthology and pathway queries. No dbWalk, SOAP or dbOrg."
+  },
+  "cellosaurus-extra": {
+    "label": "Cellosaurus Data",
+    "access": "public",
+    "docs": "https://api.cellosaurus.org/",
+    "portal": "https://www.cellosaurus.org/",
+    "hosts": [
+      "api.cellosaurus.org",
+      "www.cellosaurus.org",
+      "sparql.cellosaurus.org",
+      "purl.expasy.org",
+      "ftp.expasy.org"
+    ],
+    "download": true,
+    "notes": "Complements basic cell-line lookup with bounded read-only SPARQL, RDF, CLASTR STR similarity and official files. A similarity score does not authenticate a sample."
+  },
+  "ctd": {
+    "label": "CTD",
+    "access": "public",
+    "docs": "https://ctdbase.org/downloads/",
+    "portal": "https://ctdbase.org/",
+    "hosts": [
+      "ctdbase.org",
+      "www.ctdbase.org"
+    ],
+    "download": true,
+    "notes": "Official public report downloads, commented-header import and local chemical/gene/disease/pathway/GO/phenotype/exposure relationship SQL. Stop on human verification and retain citation/license headers; no web All query.",
+    "known_files": [
+      {
+        "filename": "CTD_chemicals.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_chemicals.tsv.gz",
+        "bytes": "10451244"
+      },
+      {
+        "filename": "CTD_genes.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_genes.tsv.gz",
+        "bytes": "122773476"
+      },
+      {
+        "filename": "CTD_diseases.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_diseases.tsv.gz",
+        "bytes": "1785227"
+      },
+      {
+        "filename": "CTD_pathways.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_pathways.tsv.gz",
+        "bytes": "42574"
+      },
+      {
+        "filename": "CTD_chem_gene_ixns.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_chem_gene_ixns.tsv.gz",
+        "bytes": "43260596"
+      },
+      {
+        "filename": "CTD_chemicals_diseases.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_chemicals_diseases.tsv.gz",
+        "bytes": "162343480"
+      },
+      {
+        "filename": "CTD_genes_diseases.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_genes_diseases.tsv.gz",
+        "bytes": "3222560354"
+      },
+      {
+        "filename": "CTD_chem_pathways_enriched.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_chem_pathways_enriched.tsv.gz",
+        "bytes": "41473220"
+      },
+      {
+        "filename": "CTD_diseases_pathways.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_diseases_pathways.tsv.gz",
+        "bytes": "6364993"
+      },
+      {
+        "filename": "CTD_chem_go_enriched.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_chem_go_enriched.tsv.gz",
+        "bytes": "144732562"
+      },
+      {
+        "filename": "CTD_exposure_events.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_exposure_events.tsv.gz",
+        "bytes": "4775772"
+      },
+      {
+        "filename": "CTD_exposure_studies.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_exposure_studies.tsv.gz",
+        "bytes": "578583"
+      },
+      {
+        "filename": "CTD_pheno_term_ixns.tsv.gz",
+        "url": "https://ctdbase.org/reports/CTD_pheno_term_ixns.tsv.gz",
+        "bytes": "24166404"
+      }
+    ]
+  }
+}

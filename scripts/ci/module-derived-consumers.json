@@ -31,7 +31,10 @@
       "packages/connector-builtins/src/tcia.test.ts"
     ],
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
-    "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
+    "connector_url_admission": [
+      "src/main/connectors/medical-data-engine.integration.test.ts",
+      "src/main/credential-identity/recovery.test.ts"
+    ],
     "delegation_execution_contracts": [
       "src/main/notebook/authorized-directories.integration.test.ts"
     ],

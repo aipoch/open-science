@@ -194,6 +194,7 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "Medical and molecular data tools. Data operations require a prepared Python runtime; some sources require personal authorization.": "Инструменты для медицинских и молекулярных данных. Для работы с данными требуется настроенная среда Python; некоторые источники требуют персонального разрешения.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Получить классификацию липидов и сведения о соединениях из LIPID MAPS.",
     "Query upstream or downstream human protein regulation with OmniPath.": "Поиск регуляторных связей белков человека выше или ниже по сигнальному пути с помощью OmniPath.",
     "List authorized directories": "Список разрешённых каталогов",

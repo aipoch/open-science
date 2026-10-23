@@ -6,6 +6,41 @@ import {
 } from './skill-document-renderer'
 
 describe('data-only Skill documents', () => {
+  it('renders access guidance before tools without inventing a setup requirement', () => {
+    const doc = renderSkillDoc(
+      {
+        id: 'public',
+        useWhen: 'Search public data',
+        accessGuidance: 'Public search needs no key.'
+      },
+      [{ id: 'search', description: 'Search', input: {} }]
+    )
+    expect(doc.indexOf('## Access requirements')).toBeLessThan(doc.indexOf('## Tools'))
+    expect(doc).toContain('Public search needs no key.')
+    expect(doc).toContain('Keep optional keys and public/demo access optional')
+    expect(doc).toContain('Configured credentials do not prove dataset approval')
+    expect(doc).toContain('Never request secrets in chat or tool arguments')
+    expect(doc).toContain('not proof of a particular approval requirement')
+    expect(doc.match(/## Access requirements/g)).toHaveLength(1)
+  })
+
+  it('does not infer a provider-specific requirement when metadata is absent', () => {
+    const doc = renderSkillDoc({ id: 'public', useWhen: 'Search public data' }, [])
+    expect(doc).not.toContain('Settings > Credentials')
+    expect(doc).not.toContain('https://')
+  })
+
+  it('preserves custom permission instructions and keeps host OAuth recovery authoritative', () => {
+    const doc = renderCustomSkillDoc({ name: 'dataset', displayName: 'Dataset', oauth: {} }, [
+      { name: 'download', description: 'Apply at https://example.org/access before download.' }
+    ])
+    expect(doc).toContain('https://example.org/access')
+    expect(doc).toContain('documented by its tools')
+    expect(doc).toContain('do not invent an API-key requirement or application URL')
+    expect(doc).toContain('host-managed OAuth')
+    expect(doc).not.toContain('use a login or authentication tool listed in this Skill')
+  })
+
   it('renders an independently configured provider without a registry or host', () => {
     const doc = renderSkillDoc({ id: 'custom', useWhen: 'Use for custom data' }, [
       {

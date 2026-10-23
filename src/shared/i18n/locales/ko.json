@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
+    "Medical and molecular data tools. Data operations require a prepared Python runtime; some sources require personal authorization.": "의료 및 분자 데이터 도구입니다. 데이터 작업에는 준비된 Python 런타임이 필요하며, 일부 데이터 소스에는 개인 사용 승인이 필요합니다.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "LIPID MAPS에서 지질 분류와 화합물 세부 정보를 가져옵니다.",
     "Query upstream or downstream human protein regulation with OmniPath.": "OmniPath로 인간 단백질의 상위 또는 하위 조절 관계를 조회합니다.",
     "List authorized directories": "허용된 디렉터리 목록 조회",

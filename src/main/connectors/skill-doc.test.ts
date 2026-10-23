@@ -61,6 +61,37 @@ describe('renderConnectorInstructions', () => {
 })
 
 describe('renderSkillDoc', () => {
+  it('scopes OpenAlex key guidance to OpenAlex and includes the official setup link', () => {
+    const doc = renderSkillDoc('literature')
+    expect(doc).toContain('cursor paging beyond the first page requires a free, activated API key')
+    expect(doc).toContain('https://help.openalex.org/api/authentication/')
+    expect(doc).toContain('does not apply to arXiv, Crossref or DataCite')
+    expect(doc).toContain('Settings > Credentials > Literature access')
+  })
+
+  it.each(['pubmed', 'variants', 'omics-archives', 'genomes'])(
+    'keeps NCBI API keys optional in %s',
+    (connector) => {
+      const doc = renderSkillDoc(connector)
+      expect(doc).toContain('NCBI E-utilities public queries can run without an API key')
+      expect(doc).toContain('do not require it for other public sources')
+    }
+  )
+
+  it('does not advertise an unsupported openFDA credential binding', () => {
+    const doc = renderSkillDoc('drug-regulatory')
+    expect(doc).toContain('do not expose an API-key binding')
+    expect(doc).toContain('https://open.fda.gov/apis/authentication/')
+    expect(doc).not.toContain('OPENFDA_API_KEY')
+  })
+
+  it('separates GDC controlled-file approval from public metadata discovery', () => {
+    const doc = renderSkillDoc('gdc')
+    expect(doc).toContain('do not establish access to controlled files')
+    expect(doc).toContain('https://gdc.cancer.gov/access-data/obtaining-access-controlled-data')
+    expect(doc).toContain('do not apply for access or download controlled files')
+  })
+
   it('renders a compact self-contained catalog without repeating the shared conventions', () => {
     const md = renderSkillDoc('chemistry')
     expect(md).toContain('name: mcp-chemistry')

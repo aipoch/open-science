@@ -6,6 +6,7 @@ export const RELOCATABLE_DATA_DIRS = [
   'content',
   'delegation',
   'literature',
+  'medical-data',
   'notebooks',
   'models',
   'pdf-structure',
