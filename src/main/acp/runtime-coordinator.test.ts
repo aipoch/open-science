@@ -295,6 +295,15 @@ const createFakeRuntime = (options: {
     createSession,
     resumeSession,
     resetSessionContext,
+    captureSessionResumeCleanup: vi.fn(({ sessionId }: { sessionId: string }) => async () => {
+      sessionProjects.delete(sessionId)
+      snapshot = {
+        ...snapshot,
+        sessionId: snapshot.sessionId === sessionId ? undefined : snapshot.sessionId,
+        sessionIds: snapshot.sessionIds.filter((id) => id !== sessionId)
+      }
+      options.callbacks.onStateChanged?.(snapshot)
+    }),
     captureHandoffSessionResume: () => async () => undefined,
     switchSpecialist,
     compactSession,
@@ -7638,6 +7647,108 @@ describe.each([
       } else {
         expect(created.resumeSession).toHaveBeenCalledTimes(2)
         expect(observer).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
+  it.each(['delete', 'cancel', 'cleanup retry'] as const)(
+    'cleans an incoming targeted runtime after scoped resume is superseded by %s',
+    async (operation) => {
+      const attached = createDeferred<void>()
+      const finishResume = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId,
+          sessionIds: target?.model === 'incoming' ? ['sibling'] : ['session-1'],
+          callbacks,
+          afterResumeAttached: async () => {
+            if (target?.model !== 'incoming') return
+            attached.resolve()
+            await finishResume.promise
+          }
+        })
+        if (frameworkId === 'codex') {
+          Object.assign(fake.runtime, {
+            releaseSessionForTransfer: vi.fn(async () => {
+              fake.setStateSilently({ sessionIds: [], sessionId: undefined })
+              return 'provider-session-1'
+            })
+          })
+        }
+        created.push(fake)
+        return fake.runtime
+      })
+      const target = {
+        frameworkId,
+        providerId: 'provider',
+        model: 'original',
+        reasoningEffort: 'high' as const
+      }
+      const session = await coordinator.createSession({ cwd: '/workspace', agentTarget: target })
+      const owner = created.at(-1)!
+      const observer = vi.fn(async () => undefined)
+      coordinator.setSessionResumeObserver(observer)
+      const accepted = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'parent message' },
+        async (resume) => {
+          await resume({
+            sessionId: session.sessionId,
+            cwd: '/workspace',
+            agentTarget: { ...target, model: 'incoming' }
+          })
+        }
+      )
+      const rejected = expect(accepted).rejects.toThrow()
+      await attached.promise
+      const incoming = created.at(-1)!
+      expect(incoming).not.toBe(owner)
+      if (frameworkId !== 'opencode') {
+        await coordinator.createSession({
+          cwd: '/workspace',
+          agentTarget: { ...target, model: 'incoming' }
+        })
+        expect(incoming.runtime.getSnapshot().sessionIds).toContain('sibling')
+      }
+      const originalCapture = vi
+        .mocked(incoming.runtime.captureSessionResumeCleanup)
+        .getMockImplementation()!
+      const cleanupFailure = new Error('provider close failed')
+      const cleanupAttempt = vi.fn<() => Promise<void>>()
+      vi.spyOn(incoming.runtime, 'captureSessionResumeCleanup').mockImplementation((response) => {
+        const clean = originalCapture(response)
+        cleanupAttempt.mockImplementation(clean)
+        if (operation === 'cleanup retry') cleanupAttempt.mockRejectedValueOnce(cleanupFailure)
+        return cleanupAttempt
+      })
+      expect(incoming.runtime.getSnapshot().sessionIds).toContain(session.sessionId)
+      if (operation === 'delete') await coordinator.deleteSession({ sessionId: session.sessionId })
+      else await coordinator.cancelPrompt({ sessionId: session.sessionId })
+      finishResume.resolve()
+      await rejected
+      expect(observer).not.toHaveBeenCalled()
+      expect(incoming.sendAppContinuation).not.toHaveBeenCalled()
+      if (operation === 'cleanup retry') {
+        await vi.waitFor(() => expect(cleanupAttempt).toHaveBeenCalledOnce())
+        expect(incoming.runtime.getSnapshot().sessionIds).toContain(session.sessionId)
+        incoming.emitState({})
+        await coordinator.resumeSession({
+          sessionId: session.sessionId,
+          cwd: '/workspace',
+          agentTarget: target
+        })
+        expect(cleanupAttempt).toHaveBeenCalledTimes(2)
+      }
+      await vi.waitFor(() =>
+        expect(incoming.runtime.getSnapshot().sessionIds).not.toContain(session.sessionId)
+      )
+      if (frameworkId !== 'opencode') {
+        expect(incoming.runtime.getSnapshot().sessionIds).toContain('sibling')
+        expect(coordinator.getSnapshot().sessionIds).toContain('sibling')
+      }
+      incoming.emitState({})
+      if (operation === 'delete') {
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
       }
     }
   )

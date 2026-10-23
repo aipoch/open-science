@@ -217,7 +217,7 @@ class AcpRuntimeCoordinator {
   >()
   private readonly pendingSessionAdoptions = new Map<
     string,
-    { runtime: AcpRuntime; projectId?: string }
+    { runtime: AcpRuntime; projectId?: string; cleanup?: () => Promise<void> }
   >()
   private readonly pendingResumeReconciliations = new Map<string, PendingResumeReconciliation>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
@@ -713,6 +713,7 @@ class AcpRuntimeCoordinator {
     if (retainedProviderId) {
       request = { ...request, providerSessionId: retainedProviderId }
     }
+    await this.pendingSessionAdoptions.get(request.sessionId)?.cleanup?.()
     const owner = this.findRuntimeForSession(request.sessionId)
     // Consume a timed-out close on its owning runtime even when retrying the same model.
     // Publish the receipt here before resume can fail or state updates can remove the old owner.
@@ -796,12 +797,14 @@ class AcpRuntimeCoordinator {
     // Keep the prior owner authoritative until adoption finishes. The renderer does not create the
     // incoming optimistic run until this promise resolves, so terminal events emitted while the old
     // generation drains can still settle its own Runtime Segment without touching the next one.
-    const pendingAdoption = transfersOwnership
-      ? {
-          runtime,
-          projectId: request.projectId ?? owner?.liveSessionProjectId(request.sessionId)
-        }
-      : undefined
+    const pendingAdoption:
+      { runtime: AcpRuntime; projectId?: string; cleanup?: () => Promise<void> } | undefined =
+      transfersOwnership
+        ? {
+            runtime,
+            projectId: request.projectId ?? owner?.liveSessionProjectId(request.sessionId)
+          }
+        : undefined
     // A duplicate resume for the same app Session replaces the map entry. Keep the record identity
     // so an older failure cannot clear or retire the runtime needed by the newer adoption.
     if (pendingAdoption) {
@@ -866,7 +869,24 @@ class AcpRuntimeCoordinator {
           !this.runtimes.has(runtime) ||
           (this.retiredRuntimes.has(runtime) && !pinnedRuntime)))
     ) {
-      if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
+      if (
+        pendingAdoption &&
+        admissionCurrent &&
+        !admissionCurrent() &&
+        this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption
+      ) {
+        const release = runtime.captureSessionResumeCleanup(response)
+        pendingAdoption.cleanup = async () => {
+          await release()
+          if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
+            this.pendingSessionAdoptions.delete(request.sessionId)
+          }
+          if (!runtime.getSnapshot().sessionIds.includes(response.sessionId)) {
+            await this.retireUnusedTargetedRuntime(runtime)
+          }
+        }
+        await pendingAdoption.cleanup()
+      } else if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
       throw new Error('ACP session adoption was superseded before ownership could commit')
@@ -2369,8 +2389,10 @@ class AcpRuntimeCoordinator {
     const owned = this.sessionRuntimes.get(sessionId)
     if (owned) return owned
 
-    const discovered = Array.from(this.runtimes).find((runtime) =>
-      runtime.getSnapshot().sessionIds.includes(sessionId)
+    const discovered = Array.from(this.runtimes).find(
+      (runtime) =>
+        runtime !== this.pendingSessionAdoptions.get(sessionId)?.runtime &&
+        runtime.getSnapshot().sessionIds.includes(sessionId)
     )
     if (discovered) {
       this.sessionRuntimes.set(sessionId, discovered)

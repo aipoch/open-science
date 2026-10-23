@@ -53,6 +53,57 @@ type AcpSessionDeletionWorkflowDependencies = Readonly<{
 class AcpSessionDeletionWorkflow {
   constructor(private readonly deps: AcpSessionDeletionWorkflowDependencies) {}
 
+  captureResumeCleanup(appSessionId: string, providerSessionId?: string): () => Promise<void> {
+    const attachment = this.deps.registry.lookup(appSessionId)?.attachment
+    let operation: Promise<void> | undefined
+    return () => {
+      if (operation) return operation
+      operation = this.deps
+        .withOperation(async () => {
+          if (
+            !attachment ||
+            attachment.providerSessionId !== providerSessionId ||
+            this.deps.registry.lookup(appSessionId)?.attachment !== attachment
+          )
+            return
+          const connection = this.deps.currentConnection()
+          if (connection && this.deps.supportsSessionClose()) {
+            await this.requestProviderDeletion(
+              connection,
+              acp.methods.agent.session.close,
+              providerSessionId
+            )
+          } else {
+            await connection?.agent.notify(acp.methods.agent.session.cancel, {
+              sessionId: providerSessionId
+            })
+          }
+          // Never delete provider history or durable setup authority for an unaccepted resume.
+          if (this.deps.registry.lookup(appSessionId)?.attachment !== attachment) return
+          this.deps.permission.cancelForSession(appSessionId)
+          this.deps.elicitation.cancelForSession(appSessionId)
+          this.deps.clearUserChoiceProvenanceForSession(appSessionId)
+          this.deps.appContinuations.delete(appSessionId)
+          this.deps.permission.clearSession(appSessionId)
+          this.deps.interactions.supersedeCurrent(appSessionId)
+          this.deps.capabilities.revokeSession(appSessionId)
+          this.deps.registry.detach(attachment, 'connection')
+          attachment.session.dispose()
+          this.deps.promptContent.resetSession(appSessionId)
+          this.deps.releasePromptResourcesForSession(appSessionId)
+          this.deps.handoff.clearSession(appSessionId)
+          this.deps.contextUsage.deleteSession(appSessionId)
+          this.deps.projector.clearSession(appSessionId)
+          this.deps.emitState()
+        })
+        .catch((error) => {
+          operation = undefined
+          throw error
+        })
+      return operation
+    }
+  }
+
   async delete(appSessionId: string): Promise<AcpStateSnapshot> {
     // Begin synchronously before a reconnect/model barrier can delay the operation lease. This keeps
     // same-ID startup blocked for the entire queued deletion, not only after provider work begins.
