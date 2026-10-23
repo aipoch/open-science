@@ -436,9 +436,22 @@ class ArtifactProvenanceReadModel {
         const projectedInputs = await Promise.all(
           persistedExecution.inputFiles.map((input) => this.projectExecutionInput(input))
         )
-        execution = options?.includePrivateHelperSource
-          ? { ...persistedExecution, inputFiles: projectedInputs }
-          : projectPublicArtifactExecutionSnapshot(persistedExecution, projectedInputs)
+        if (options?.includePrivateHelperSource) {
+          execution = { ...persistedExecution, inputFiles: projectedInputs }
+        } else {
+          const workflowInputs =
+            persistedExecution.workflowCapture?.state === 'available'
+              ? persistedExecution.workflowCapture.capture.inputFiles
+              : []
+          const projectedWorkflowInputs = await Promise.all(
+            workflowInputs.map((input) => this.projectExecutionInput(input))
+          )
+          execution = projectPublicArtifactExecutionSnapshot(
+            persistedExecution,
+            projectedInputs,
+            projectedWorkflowInputs
+          )
+        }
       }
     }
 

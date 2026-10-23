@@ -6782,9 +6782,20 @@ describe('workflow-only input authority', () => {
       state: 'available',
       capture: { inputFiles: [source.input] }
     })
-    await expect(source.repository.getVersionExecution(request)).resolves.toMatchObject({
-      execution: { inputFiles: [] }
+    const { storageKey, ...publicInput } = source.input
+    void storageKey
+    const projected = await source.repository.getVersionExecution(request)
+    expect(projected).toMatchObject({
+      execution: {
+        inputFiles: [],
+        workflow: {
+          state: 'available',
+          inputFiles: [{ ...publicInput, availability: { state: 'available' } }]
+        }
+      }
     })
+    if (projected.execution?.workflow?.state !== 'available') throw new Error('Expected workflow')
+    expect(projected.execution.workflow.inputFiles?.[0]).not.toHaveProperty('storageKey')
   })
 
   it.each([

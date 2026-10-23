@@ -1,4 +1,6 @@
 import { PYTHON_LIBRARY_EFFECTS } from './python-library-effects'
+import { PYTHON_DEFAULT_CALL_NAMES } from './dependency-analysis-python'
+import { PYTHON_FILE_CALL_EFFECTS } from './notebook-call-effects'
 import type {
   NotebookRunDependencyFacts,
   NotebookSourceFileAccessContext
@@ -28,6 +30,28 @@ const FILE_CONTEXT_SAFE_UNKNOWN_REASONS = new Set([
   'function-scope'
 ])
 const MAX_PYTHON_IDENTITIES = 512
+const isRSearchPathCallName = (name: string): boolean => /^(?:base::)?(?:attach|detach)$/.test(name)
+const negativeRSearchPathSummary = (
+  summary: NonNullable<NotebookSourceFileAccessContext['rFunctions']>[number]['summary']
+): NonNullable<NotebookSourceFileAccessContext['rFunctions']>[number]['summary'] | undefined => {
+  const usedNames = [
+    ...new Set(
+      summary.methods.flatMap((method) =>
+        method.effect === 'unknown' && method.unknownScope === 'namespace'
+          ? (method.usedNames ?? []).filter(isRSearchPathCallName)
+          : []
+      )
+    )
+  ].sort()
+  return usedNames.length
+    ? {
+        name: summary.name,
+        kind: 'r-function',
+        fields: [],
+        methods: [{ name: '__call__', effect: 'unknown', unknownScope: 'namespace', usedNames }]
+      }
+    : undefined
+}
 
 // The owner checks history/epoch/cache validity. This projection owns only binding lifetimes;
 // an unavailable entry discards prior knowledge, and later completed runs can establish it again.
@@ -46,6 +70,10 @@ const projectNotebookFileContext = (
     NotebookSourceFileAccessContext['localFileWrappers'][number]
   >()
   const resolvedKernelNames = new Set<string>()
+  const uncertainKernelNames = new Set<string>()
+  // Function-name evidence alone survives uncertainty; no body/type authority.
+  const rFunctionShadowNames = new Set<string>()
+  let rSearchPathUncertain = false
   const replContainerNames = new Set<string>()
   let replNamespaceUncertain = false
   const rAtomicValueNames = new Set<string>()
@@ -130,11 +158,83 @@ const projectNotebookFileContext = (
       pythonMayHaveWritableMappings = true
     for (const module of entry?.fileContext.pythonHelperModules ?? [])
       pythonHelperModules.set(`${module.source}\0${module.exports.join('\0')}`, module)
+    if (language === 'r' && entry) {
+      if (
+        entry.facts.state === 'unknown' &&
+        entry.facts.reasons.includes('dynamic-namespace') &&
+        entry.facts.usedNames?.some(isRSearchPathCallName)
+      )
+        rSearchPathUncertain = true
+      const functionTypes = new Set(
+        entry.facts.typeSummaries
+          ?.filter(({ kind }) => kind === 'r-function')
+          .map(({ name }) => name)
+      )
+      const functionNames = new Set(
+        entry.facts.typeBindings
+          ?.filter(({ typeName }) => functionTypes.has(typeName))
+          .map(({ target }) => target)
+      )
+      for (const { target, typeName } of entry.facts.typeBindings ?? []) {
+        const summary = entry.facts.typeSummaries?.find(
+          ({ name, kind }) => name === typeName && kind === 'r-function'
+        )
+        const negative = summary && negativeRSearchPathSummary(summary)
+        if (negative) rFunctions.set(target, negative)
+      }
+      const candidates = new Set([...rFunctionShadowNames, ...functionNames])
+      const targetsBySource = new Map<string, string[]>()
+      for (const { target, source, access } of entry.facts.aliases ?? []) {
+        if (access) continue
+        targetsBySource.set(source, [...(targetsBySource.get(source) ?? []), target])
+      }
+      // Resolve chains without depending on the serializer's alias ordering.
+      for (const source of candidates)
+        for (const target of targetsBySource.get(source) ?? []) {
+          candidates.add(target)
+          functionNames.add(target)
+          const summary = rFunctions.get(source)
+          const negative = summary && negativeRSearchPathSummary(summary)
+          if (negative) rFunctions.set(target, negative)
+        }
+      const incomplete =
+        entry.facts.state === 'unknown' && entry.facts.reasons.includes('execution-incomplete')
+      if (!incomplete)
+        for (const name of entry.facts.definedNames ?? []) {
+          if (!entry.facts.conditionallyDefinedNames?.includes(name))
+            rFunctionShadowNames.delete(name)
+        }
+      for (const name of functionNames) rFunctionShadowNames.add(name)
+    }
     if (
       !entry ||
       (entry.facts.state === 'unknown' &&
         entry.facts.reasons.some((reason) => !FILE_CONTEXT_SAFE_UNKNOWN_REASONS.has(reason)))
     ) {
+      if (language !== 'repl') {
+        // Neither an opaque call nor failure resets the namespace. Names may
+        // still shadow defaults even though their value/callable proof is lost.
+        // New Python defaults and explicit R functions can be shadow barriers.
+        // Ordinary unknown results must not become positive availability proof.
+        const incomplete =
+          entry?.facts.state === 'unknown' && entry.facts.reasons.includes('execution-incomplete')
+        for (const name of [
+          ...resolvedKernelNames,
+          ...(entry?.facts.definedNames ?? []),
+          ...(entry?.facts.conditionallyDefinedNames ?? []),
+          ...(entry?.facts.mutatedNames ?? []),
+          ...(entry?.facts.possiblyMutatedNames ?? [])
+        ]) {
+          // Python also uses resolved names as helper/loop availability evidence.
+          // Preserve only possible default-call shadows, never ordinary locals.
+          if (
+            language === 'r'
+              ? incomplete || resolvedKernelNames.has(name) || rFunctionShadowNames.has(name)
+              : PYTHON_DEFAULT_CALL_NAMES.has(name) || PYTHON_FILE_CALL_EFFECTS.has(name)
+          )
+            uncertainKernelNames.add(name)
+        }
+      }
       const poisonedBindings = [
         ...pythonBindings.values(),
         ...(entry?.fileContext.pythonBindings ?? [])
@@ -155,7 +255,15 @@ const projectNotebookFileContext = (
       rMatrixNames.clear()
       rDataFrameNames.clear()
       if (language === 'r') rDispatchUncertain = true
-      rFunctions.clear()
+      // A partially executed definition may still install a search-path helper.
+      // Retain only its negative call dependencies, never body/return/type proof.
+      for (const [name, summary] of rFunctions) {
+        const negative = language === 'r' && negativeRSearchPathSummary(summary)
+        if (negative) {
+          rFunctions.set(name, negative)
+          uncertainKernelNames.add(name)
+        } else rFunctions.delete(name)
+      }
       pythonBindings.clear()
       // These names convey uncertainty only; they must not regain trusted library
       // effects after a re-import of the same Python module object.
@@ -371,6 +479,7 @@ const projectNotebookFileContext = (
     for (const name of definedNames) {
       resolvedKernelNames.delete(name)
       if (conditionalNames.has(name)) continue
+      uncertainKernelNames.delete(name)
       const group = aliases.get(name)
       group?.delete(name)
       aliases.delete(name)
@@ -519,10 +628,12 @@ const projectNotebookFileContext = (
         pythonBindings.set(name, withoutFilePath(binding))
   if (
     !available &&
+    !uncertainKernelNames.size &&
     !pythonTaintedNamespaces.size &&
     !replNamespaceUncertain &&
     !pythonMayHaveWritableMappings &&
-    !rDispatchUncertain
+    !rDispatchUncertain &&
+    !rSearchPathUncertain
   )
     return undefined
   const specializedNames = new Set([
@@ -530,7 +641,7 @@ const projectNotebookFileContext = (
     ...staticCollections.keys(),
     ...localFileWrappers.keys()
   ])
-  const remainingKernelNames = [...resolvedKernelNames]
+  const remainingKernelNames = [...new Set([...resolvedKernelNames, ...uncertainKernelNames])]
     .filter((name) => !specializedNames.has(name))
     .sort()
   const staticCollectionAliases: NonNullable<
@@ -563,6 +674,7 @@ const projectNotebookFileContext = (
     ...(rDataFrameNames.size ? { rDataFrameNames: [...rDataFrameNames].sort() } : {}),
     ...(rDispatchUncertain ? { rDispatchUncertain: true as const } : {}),
     ...(remainingKernelNames.length ? { resolvedKernelNames: remainingKernelNames } : {}),
+    ...(rSearchPathUncertain ? { rSearchPathUncertain: true as const } : {}),
     ...(pythonTaintedNamespaces.size
       ? { pythonTaintedNamespaces: [...pythonTaintedNamespaces].sort() }
       : {}),

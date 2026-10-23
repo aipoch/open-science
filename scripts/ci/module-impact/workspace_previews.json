@@ -219,7 +219,8 @@
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationActionHint.tsx",
-    "test/fixtures/pdf-translation/baseline-comma-definition.jsonl"
+    "test/fixtures/pdf-translation/baseline-comma-definition.jsonl",
+    "src/renderer/src/pages/workspace/previews/renderers/SinglePagePdfPreview.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",

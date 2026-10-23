@@ -6,7 +6,7 @@ import { NOTEBOOK_ANALYZER_VERSION, NOTEBOOK_ANALYZER_REVISION } from '@aipoch/n
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 
 // Bump for lineage construction/closure changes, independently of its JSON schema.
-const LINEAGE_BUILDER_REVISION = 'artifact-lineage-5'
+const LINEAGE_BUILDER_REVISION = 'artifact-lineage-2'
 const checksum = (value: unknown): string => sha256(canonicalJson(value as CanonicalJson))
 
 export const sealArtifactAnalysisRevision = (

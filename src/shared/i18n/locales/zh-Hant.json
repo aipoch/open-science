@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
+    "The Specialist Skills or Connectors could not be loaded. Try sending again.": "無法讀取此專家的技能或連接器。請嘗試重新傳送。",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "從 LIPID MAPS 取得脂質分類與化合物詳細資訊。",
     "Query upstream or downstream human protein regulation with OmniPath.": "使用 OmniPath 查詢人類蛋白質的上游或下游調控關係。",
     "List authorized directories": "列出已授權目錄",

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type {
   ArtifactVersionExecutionProvenance,
+  ProvenanceExecutionInputFile,
   ProvenanceNotebookRun
 } from '../../../../shared/artifact-provenance'
 import type { ProjectFileItem } from '../../../../shared/project-files'
@@ -60,6 +61,46 @@ const execution = (capturedRun = captured()): ArtifactVersionExecutionProvenance
   }) as ArtifactVersionExecutionProvenance
 
 describe('frozen step reproduction target', () => {
+  it.each(['omitted', 'truncated'] as const)(
+    'resolves the full workflow run when the legacy preview is %s',
+    async (preview) => {
+      const original = { ...run, script: `${run.script}\n#${'x'.repeat(16_000)}` }
+      const frozen = { ...captured(), script: original.script }
+      const value = execution()
+      value.execution!.runs =
+        preview === 'omitted' ? [] : [{ ...frozen, script: 'clipped', scriptTruncated: true }]
+      if (value.execution!.workflow?.state !== 'available') throw new Error('Expected workflow')
+      value.execution!.workflow.runs = [frozen]
+      const target = await findStepReproductionTarget({
+        run: original,
+        scope,
+        files: [file],
+        readExecution: async () => value
+      })
+      expect(target?.run.script).toBe(original.script)
+    }
+  )
+
+  it('uses only the selected workflow run inputs even when absent from the legacy closure', async () => {
+    const value = execution()
+    const input = {
+      sourceKind: 'upload-version' as const,
+      inputFileVersionId: 'frozen-input',
+      availability: { state: 'unavailable' as const, reason: 'input-content-missing' as const }
+    }
+    const unrelated = { ...input, inputFileVersionId: 'unrelated' }
+    if (value.execution!.workflow?.state !== 'available') throw new Error('Expected workflow')
+    value.execution!.workflow.runs = [{ ...captured(), inputFileVersionKeys: [input] }]
+    value.execution!.workflow.inputFiles = [input, unrelated] as ProvenanceExecutionInputFile[]
+    const target = await findStepReproductionTarget({
+      run,
+      scope,
+      files: [file],
+      readExecution: async () => value
+    })
+    expect(target?.inputFiles).toEqual([input])
+  })
+
   it('pins the enumerated version and its exact captured run without selecting upstream steps', async () => {
     const readExecution = vi.fn().mockResolvedValue(execution())
     const target = await findStepReproductionTarget({ run, scope, files: [file], readExecution })

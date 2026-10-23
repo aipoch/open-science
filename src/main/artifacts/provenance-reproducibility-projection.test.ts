@@ -152,6 +152,8 @@ it('projects workflow choices without exposing frozen paths or helper sources', 
   })
   if (projected.workflow?.state === 'available')
     expect(projected.workflow.boundaries).toHaveLength(1)
+  expect(projected.workflow).toMatchObject({ runs: [run], inputFiles: [] })
+  expect(projected.runs).toEqual([])
   expect(projected).not.toHaveProperty('workflowCapture')
   expect(JSON.stringify(projected)).not.toContain('private/side-blob')
   graph.outputGroups = [

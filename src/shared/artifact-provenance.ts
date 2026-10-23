@@ -786,6 +786,9 @@ export type ArtifactWorkflowProjection =
   | {
       state: 'available'
       captureId: string
+      // Full frozen evidence is independent of the bounded Artifact preview.
+      runs?: ProvenanceNotebookRun[]
+      inputFiles?: ProvenanceExecutionInputFile[]
       stages: Array<{
         runId: string
         runIndex: number

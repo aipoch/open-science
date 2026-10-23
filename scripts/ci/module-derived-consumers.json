@@ -5,22 +5,34 @@
       "src/main/settings/managed-codex.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "acp_session_policy": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "artifact_content_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "artifact_provenance": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "artifact_publication_request": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "artifact_storage": ["src/main/session-package/materialize.test.ts"],
+    "artifact_storage": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
-    "compute_domain_contracts": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "compute_domain_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ],
+    "compute_session_access": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "compute_skill_contract": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "connector_core": [
       "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
       "packages/connector-builtins/src/chemistry-unichem.test.ts",
@@ -29,15 +41,24 @@
       "packages/connector-builtins/src/scientific-expansion.test.ts",
       "packages/connector-builtins/src/structures-omnipath.test.ts",
       "packages/connector-builtins/src/structures-pdbe.test.ts",
-      "packages/connector-builtins/src/tcia.test.ts"
+      "packages/connector-builtins/src/tcia.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts"
     ],
-    "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
-    "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
+    "connector_mcp_client": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/credential-identity/recovery.test.ts"
+    ],
+    "connector_url_admission": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/credential-identity/recovery.test.ts"
+    ],
     "delegation_execution_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts"
     ],
     "desktop_composition": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
     "durable_files": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -54,6 +75,7 @@
     ],
     "environment_contracts": [
       "packages/reproducibility/src/workflow-slice.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -64,7 +86,10 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "framework_installation": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "framework_process_launch": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "host_bounded_io": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/image-preview-resize.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -73,29 +98,40 @@
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
+    "host_credential_identity": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "host_file_publisher": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "host_http_transport": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
+    "host_managed_preview": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "host_process_runtime": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
-    "host_rpc_transport": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "host_rpc_transport": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ],
     "host_runtime_lifecycle": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
     ],
     "host_runtime_ports": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
     "host_value_guards": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -104,6 +140,7 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "i18n_main_adapter": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
@@ -118,6 +155,7 @@
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
     "i18n_shared_runtime": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -157,15 +195,34 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "main_agent_framework": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_agents": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_archive": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "main_background_result_delivery": [
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
-    "main_database": ["src/main/session-package/materialize.test.ts"],
-    "main_host_sdk": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "main_connectors": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_database": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "main_host_sdk": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts"
+    ],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
-    "main_storage": ["src/main/session-package/materialize.test.ts"],
+    "main_notifications": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_permission_grants": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_session_plan": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_session_replay": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_specialist": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "main_storage": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "managed_version_files": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -234,7 +291,9 @@
       "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts"
     ],
+    "native_credential_identity": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "native_file_publisher": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
@@ -282,6 +341,7 @@
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
     "native_process_tree": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
@@ -289,6 +349,7 @@
     "notebook_analysis": [
       "packages/notebook-analysis/src/r-minimal-environment.test.ts",
       "packages/reproducibility/src/workflow-slice.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -299,12 +360,17 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "notebook_application": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
+    "notebook_application": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
+    ],
     "notebook_code_risk": ["src/main/notebook/execution-owner.stage-checkpoint.test.ts"],
     "notebook_environment_provisioning": [
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
+    "notebook_evidence": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "notebook_execution_model": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -313,6 +379,7 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "notebook_input_materialization": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -320,11 +387,13 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "notebook_network_sandbox": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
     "notebook_repository": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -332,18 +401,21 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "notebook_runtime_binding": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
     "notebook_syntax": [
       "packages/notebook-analysis/src/r-minimal-environment.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "package_journal_catalog": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
@@ -359,6 +431,7 @@
     "package_literature_citations": [
       "packages/literature-discovery/test/related.test.ts",
       "packages/literature-discovery/test/supplements.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/literature/supplement-attachments.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
@@ -377,6 +450,7 @@
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
     "package_literature_library": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -398,6 +472,7 @@
       "src/main/settings/codex-bridge-tools.test.ts"
     ],
     "package_literature_screening": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
@@ -421,21 +496,29 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
+    "pdf_annotation_repository": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "pdf_annotations": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "pdf_document_source": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
-    "pdf_documents": ["src/main/session-package/materialize.test.ts"],
+    "pdf_documents": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "pdf_preview_runtime": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -461,6 +544,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_text": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/composition/session-packages.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -468,18 +552,26 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "project_database": ["src/main/session-package/materialize.test.ts"],
+    "project_database": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "project_file_mentions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "project_files_repository": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "project_lifecycle": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "provider_credentials": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
     ],
+    "provider_transport": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "providers_package": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -752,6 +844,7 @@
     ],
     "reproducibility_contracts": [
       "packages/reproducibility/src/workflow-slice.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -764,6 +857,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "reproducibility_engine": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -776,7 +870,11 @@
     "reviewer_repository": ["src/main/session-package/materialize.test.ts"],
     "reviewer_tool_contracts": ["src/main/session-package/materialize.test.ts"],
     "session_diagnostics": ["src/main/session-package/desktop.test.ts"],
-    "session_persistence": ["src/main/session-details/owner.test.ts"],
+    "session_persistence": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-details/owner.test.ts"
+    ],
+    "session_plan_delivery": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "session_renderer": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -791,6 +889,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "settings_backend_resolution": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "settings_extension_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -802,6 +901,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "settings_operations": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "settings_presentation_primitives": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
@@ -811,12 +911,20 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "settings_provider_limits": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "settings_proxy_runtime": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "settings_record_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/text-generation.test.ts"
     ],
-    "settings_resource_policy": ["src/main/credential-identity/recovery.test.ts"],
+    "settings_repository": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "settings_resource_policy": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/credential-identity/recovery.test.ts"
+    ],
+    "settings_token_policy": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "shared_agent_runtime_policy": [
       "src/main/acp/agent-connection-adapter.test.ts",
       "src/main/acp/application-commands.test.ts",
@@ -865,6 +973,7 @@
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -1252,6 +1361,7 @@
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -1981,6 +2091,7 @@
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/completion-gate.execute-control.integration.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -2461,6 +2572,7 @@
       "src/main/acp/runtime.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/vision-evidence-repository.test.ts",
       "src/main/app-startup.test.ts",
@@ -3079,6 +3191,7 @@
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agents/agents-dispatch.test.ts",
@@ -3219,6 +3332,7 @@
       "src/main/acp/ipc.test.ts",
       "src/main/acp/runtime-composition.test.ts",
       "src/main/acp/runtime-coordinator.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/artifact-save.integration.test.ts",
@@ -3389,6 +3503,7 @@
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
@@ -3593,6 +3708,7 @@
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -3789,6 +3905,7 @@
       "src/main/acp/opencode-immediate-handoff.integration.test.ts",
       "src/main/acp/runtime-plan-composition.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
       "src/main/agents/agents-repl.privileged.integration.test.ts",
@@ -4175,6 +4292,7 @@
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -4516,6 +4634,7 @@
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/code-reconstruction.test.ts",
@@ -4665,6 +4784,7 @@
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -5228,6 +5348,7 @@
       "src/shared/session-persistence/turn-outcome.test.ts"
     ],
     "shared_promise_identity": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -5236,6 +5357,7 @@
     "shared_provider_policy": [
       "src/main/acp/runtime.test.ts",
       "src/main/acp/session-agent-target.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/task-agent-port.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
@@ -5683,6 +5805,7 @@
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/completion-gate.execute-control.integration.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -6277,6 +6400,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/artifact-save.integration.test.ts",
@@ -6377,6 +6501,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/code-reconstruction.test.ts",
@@ -6479,6 +6604,7 @@
       "src/main/acp/runtime.test.ts",
       "src/main/acp/session-agent-target.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/task-agent-port.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -6898,6 +7024,7 @@
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
       "src/main/acp/side-chat-relay-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -7421,6 +7548,7 @@
     "shared_session_replay_contracts": [
       "src/main/acp/ipc.test.ts",
       "src/main/acp/runtime-composition.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
@@ -7525,6 +7653,7 @@
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -7829,6 +7958,7 @@
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -8347,6 +8477,7 @@
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -9003,14 +9134,24 @@
       "src/shared/session-persistence/turn-outcome-codec.test.ts",
       "src/shared/session-persistence/turn-outcome.test.ts"
     ],
-    "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "side_chat_message_bridge": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "skill_activation_policy": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "skill_marketplace": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "skill_package": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "skill_runtime_transport": ["src/main/acp/specialist-capability-resolution.test.ts"],
+    "specialist_package": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
     "storage_location": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "storage_state": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -9019,6 +9160,7 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "upload_file_transport": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/provenance-workflow-capture.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
@@ -9027,9 +9169,11 @@
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
     "upload_repository": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
+    "user_skills_repository": ["src/main/acp/specialist-capability-resolution.test.ts"],
     "web_renderer_bridge": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -9269,6 +9413,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "wsl_runtime_admission": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/cross-turn-input-repro.integration.test.ts",

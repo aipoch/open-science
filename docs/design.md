@@ -262,6 +262,8 @@ roles remain explicit in the tables above.
 
 ### PDF reading and annotations
 
+- All single-page PDFs, including Literature attachments, use an image-style preview with centered fit, pan and zoom controls. Hide reading tabs, annotations, translation, search and page navigation; do not offer a full-reader switch. Existing saved annotations and translations remain stored. Multi-page PDFs retain the complete reader.
+
 - PDF floating toolbars use 28px fine-pointer buttons, at least 24px-wide split disclosures, compact gaps and 44px coarse-pointer targets. Keep selected states, focus indicators and tooltips. Notes & Annotations uses 32px controls, 12px utility text and 4px vertical toolbar padding, matching Replay density.
 - Completed PDF analysis shows the figures/tables directly, including cached results on reopen, with a screen-reader completion announcement. Keep analysis options (parallel pages and explicit re-analysis) in the result header's overflow popover, or beside the empty-result message. Loading, active progress, cancellation, partial results and failures retain their existing visible feedback and recovery actions.
 

@@ -7,7 +7,8 @@ import { projectCapturedArtifactReproducibility } from '@aipoch/reproducibility'
 
 export const projectPublicArtifactExecutionSnapshot = (
   persisted: PersistedArtifactExecutionSnapshot,
-  inputFiles: ProvenanceExecutionInputFile[]
+  inputFiles: ProvenanceExecutionInputFile[],
+  workflowInputFiles: ProvenanceExecutionInputFile[] = []
 ): ArtifactExecutionSnapshot => {
   const capture =
     persisted.workflowCapture?.state === 'available' ? persisted.workflowCapture.capture : undefined
@@ -57,6 +58,8 @@ export const projectPublicArtifactExecutionSnapshot = (
               : {
                   state: 'available' as const,
                   captureId: persisted.workflowCapture.capture.captureId,
+                  runs: persisted.workflowCapture.capture.runs,
+                  inputFiles: workflowInputFiles,
                   stages: persisted.workflowCapture.capture.runs.map((run) => ({
                     runId: run.runId,
                     runIndex: run.runIndex,

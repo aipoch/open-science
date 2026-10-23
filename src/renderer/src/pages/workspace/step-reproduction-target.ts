@@ -67,7 +67,9 @@ export const findStepReproductionTarget = async ({
       versionId: file.sourceVersionId
     })
     if (execution?.workflow?.state !== 'available') continue
-    const captured = execution.runs.find((candidate) => matchesRun(run, candidate))
+    const captured = (execution.workflow.runs ?? execution.runs).find((candidate) =>
+      matchesRun(run, candidate)
+    )
     if (
       !captured ||
       !execution.workflow.stages.some(
@@ -86,7 +88,7 @@ export const findStepReproductionTarget = async ({
         boundaryEntityIds: []
       },
       run: captured,
-      inputFiles: (execution.inputFiles ?? []).filter((file) =>
+      inputFiles: (execution.workflow.inputFiles ?? execution.inputFiles ?? []).filter((file) =>
         (captured.inputFileVersionKeys ?? []).some(
           (key) =>
             key.sourceKind === file.sourceKind && key.inputFileVersionId === file.inputFileVersionId

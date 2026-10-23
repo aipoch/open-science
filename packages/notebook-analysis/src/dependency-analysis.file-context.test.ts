@@ -11104,7 +11104,16 @@ def read_inputs():
         false
       )
       expect(context?.staticStrings).toEqual([{ name: 'new_path', value: 'new.txt' }])
-      expect(context?.resolvedKernelNames ?? []).not.toContain('old_path')
+      expect(context?.staticStrings).not.toContainEqual({ name: 'old_path', value: 'old.txt' })
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            language,
+            language === 'python' ? 'open(old_path).read()' : 'readLines(old_path)',
+            context
+          )
+        ).readState
+      ).toBe('partial')
     }
   )
 
@@ -11993,6 +12002,8761 @@ describe('R direct Gaussian family path context', () => {
       ).not.toContain('outputs/old.csv')
     }
   )
+})
+
+describe('failed-run shadow barriers', () => {
+  it.each([
+    'import pandas as pd\nframe=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("export.csv",index=False)',
+    'from pandas import DataFrame as Frame\nframe=Frame({"x":[1.,2.]})\nframe.to_csv(path_or_buf="export.csv",index=False,float_format="%.17g")',
+    'import pandas as pd\nframe=pd.DataFrame({"x":[1.,2.]})\nframe.to_json("export.json",orient="records")',
+    'from pandas import DataFrame as Frame\nframe=Frame({"x":[1.,2.]})\nframe.to_json(path_or_buf="export.json",orient="records")',
+    'import pandas as pd\nseries=pd.Series([1.,2.])\nseries.to_csv("export.csv",index=False)'
+  ])('withdraws pandas export opener authority after failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins', 'builtins.open=replacement\nraise RuntimeError()'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each(['to_csv', 'to_json'])(
+    'withdraws prior content proof through pandas export %s',
+    async (method) => {
+      const prefix =
+        'import numpy as np,pandas as pd,builtins\nnp.save("cache.npy",np.array([1.,2.]))\nbuiltins.open=replacement\nframe=pd.DataFrame({"x":[1.,2.]})\n'
+      expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toHaveLength(
+        1
+      )
+      expect(
+        (await analyzePythonNotebookSource(prefix + `frame.${method}("export.txt")`)).facts
+          .serializedValueWrites ?? []
+      ).toEqual([])
+    }
+  )
+
+  it.each(['to_csv', 'to_json'])(
+    'withdraws pandas export %s paths across cache and isolates epochs',
+    async (method) => {
+      const source = `import pandas as pd\nframe=pd.DataFrame({"x":[1.,2.]})\nframe.${method}("export.txt")`
+      for (const precompute of [false, true]) {
+        const scripts = [
+          'import builtins',
+          'builtins.open=replacement\nraise RuntimeError()',
+          'path="old.txt"',
+          source
+        ]
+        const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+        const context = await fileContext('python', scripts, overrides, precompute)
+        expect(
+          (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context))
+            .reads
+        ).not.toContain('old.txt')
+        const fresh = await fileContext(
+          'python',
+          scripts,
+          overrides,
+          precompute,
+          undefined,
+          'epoch-2'
+        )
+        expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+          writeState: 'complete',
+          externalState: 'complete'
+        })
+      }
+    }
+  )
+
+  it.each([
+    'frame=pd.DataFrame({"x":[1.,2.]})\ntext=frame.to_csv(index=False,float_format="%.17g")',
+    'frame=pd.DataFrame({"x":[1.,2.]})\ntext=frame.to_json(None,orient="records")',
+    'frame=pd.Series([1.,2.])\ntext=frame.to_csv(path_or_buf=None,index=False)'
+  ])(
+    'retains existing pandas text-return uncertainty without tainting facts: %s',
+    async (source) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['builtins']
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'import pandas as pd\n' + source, context)
+      ).toMatchObject({
+        readState: 'complete',
+        writeState: 'partial',
+        externalState: 'partial',
+        writes: []
+      })
+      expect(
+        (await analyzePythonNotebookSource('import pandas as pd\n' + source, context)).facts.state
+      ).toBe('available')
+    }
+  )
+
+  it('keeps unresolved pandas export arguments conservative', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['builtins']
+    }
+    for (const call of [
+      'frame.to_csv(path,index=False)',
+      'frame.to_json(None,**options)',
+      'frame.to_csv(*args)',
+      'frame.to_csv(None,path_or_buf="export.csv")'
+    ])
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import pandas as pd\nframe=pd.DataFrame({"x":[1.,2.]})\n' + call,
+          context
+        )
+      ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+  })
+
+  it('preserves healthy pandas exports and unrelated io precision', async () => {
+    for (const pythonTaintedNamespaces of [[], ['io'], ['gzip']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import pandas as pd\nframe=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("export.csv",index=False)',
+          context
+        )
+      ).toMatchObject({ writeState: 'complete', externalState: 'complete', writes: ['export.csv'] })
+    }
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['builtins']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import io\nwith io.open("plain.txt","w") as f:\n    f.write("plain")',
+        context
+      )
+    ).toMatchObject({ writeState: 'complete', externalState: 'complete', writes: ['plain.txt'] })
+  })
+
+  it('retains pandas compression uncertainty for HTTP content encoding overrides', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    for (const input of ['"https://example.org/pairs.csv"', 'path'])
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          `import pandas as pd\ntable=pd.read_csv(${input},compression=None,converters=None)`,
+          context
+        )
+      ).toMatchObject({ writeState: 'partial' })
+  })
+
+  it.each([
+    ['gzip', 'GzipFile', 'import pandas as pd\ntable=pd.read_csv("pairs.CSV.GZ",converters=None)'],
+    [
+      'gzip',
+      'GzipFile',
+      'from pandas import read_csv as read\ntable=read("pairs.csv",compression="gzip",converters=None)'
+    ],
+    [
+      'gzip',
+      'GzipFile',
+      'from pandas import read_csv as read\ntable=read(filepath_or_buffer="pairs.csv",compression={"method":"gzip","mtime":0},converters=None)'
+    ],
+    ['zipfile', 'ZipFile', 'import pandas as pd\ntable=pd.read_csv("pairs.zip",converters=None)'],
+    [
+      'zipfile',
+      'ZipFile',
+      'from pandas import read_csv as read\ntable=read("pairs.csv",compression={"method":"zip"},converters=None)'
+    ],
+    [
+      'bz2',
+      'BZ2File',
+      'from pandas import read_csv as read\ntable=read("pairs.csv.bz2",converters=None)'
+    ],
+    [
+      'lzma',
+      'LZMAFile',
+      'from pandas import read_csv as read\ntable=read("pairs.csv.xz",converters=None)'
+    ],
+    [
+      'tarfile',
+      'TarFile',
+      'from pandas import read_csv as read\ntable=read("pairs.tar.gz",converters=None)'
+    ],
+    [
+      'gzip',
+      'GzipFile',
+      'from pandas import read_csv as read\ndef reopen(path):\n    return read(path,compression="gzip",converters=None)\ntable=reopen("pairs.csv.gz")'
+    ]
+  ])(
+    'withdraws pandas compression authority after %s.%s failure: %s',
+    async (module, member, source) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'python',
+          [`import ${module}`, `${module}.${member}=replacement\nraise RuntimeError()`],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+        expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+      }
+    }
+  )
+
+  it.each([
+    ['gzip', 'GzipFile', 'gzip'],
+    ['zipfile', 'ZipFile', 'zip']
+  ])('withdraws pandas compression %s content proof', async (module, member, method) => {
+    const prefix = `import numpy as np,pandas as pd,${module}\nnp.save("cache.npy",np.array([1.,2.]))\n${module}.${member}=replacement\n`
+    expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toHaveLength(1)
+    expect(
+      (
+        await analyzePythonNotebookSource(
+          prefix + `pd.read_csv("pairs.csv",compression="${method}",converters=None)`
+        )
+      ).facts.serializedValueWrites ?? []
+    ).toEqual([])
+  })
+
+  it.each([
+    ['gzip', 'GzipFile', 'gzip'],
+    ['zipfile', 'ZipFile', 'zip']
+  ])(
+    'withdraws pandas compression %s paths and isolates epochs',
+    async (module, member, method) => {
+      const source = `from pandas import read_csv as read\ntable=read("pairs.csv",compression="${method}",converters=None)`
+      for (const precompute of [false, true]) {
+        const scripts = [
+          `import ${module}`,
+          `${module}.${member}=replacement\nraise RuntimeError()`,
+          'path="old.txt"',
+          source
+        ]
+        const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+        const context = await fileContext('python', scripts, overrides, precompute)
+        expect(
+          (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context))
+            .reads
+        ).not.toContain('old.txt')
+        const fresh = await fileContext(
+          'python',
+          scripts,
+          overrides,
+          precompute,
+          undefined,
+          'epoch-2'
+        )
+        expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+          writeState: 'complete',
+          externalState: 'complete'
+        })
+      }
+    }
+  )
+
+  it('preserves pandas compression None and unrelated inferred codecs', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip', 'zipfile', 'bz2', 'lzma', 'tarfile']
+    }
+    for (const options of [',compression=None', ',compression={"method":None}', ''])
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          `import pandas as pd\ntable=pd.read_csv("pairs.csv"${options},converters=None)`,
+          context
+        )
+      ).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['pairs.csv']
+      })
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import pandas as pd\ntable=pd.read_csv("pairs.GZ",compression=None,converters=None)',
+        context
+      )
+    ).toMatchObject({ writeState: 'complete', externalState: 'complete', reads: ['pairs.GZ'] })
+    const gzipOnly = { ...context, pythonTaintedNamespaces: ['gzip'] }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import pandas as pd\ntable=pd.read_csv("pairs.zip",converters=None)',
+        gzipOnly
+      )
+    ).toMatchObject({ writeState: 'complete', externalState: 'complete', reads: ['pairs.zip'] })
+  })
+
+  it('keeps unresolved pandas compression arguments conservative', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    for (const source of [
+      'pd.read_csv(path,converters=None)',
+      'pd.read_csv("pairs.csv",compression=method,converters=None)',
+      'pd.read_csv("pairs.csv",compression={"method":method},converters=None)',
+      'pd.read_csv("pairs.csv",compression=None,**options)',
+      'pd.read_csv("pairs.csv",compression="tar",converters=None)',
+      'pd.read_csv("pairs.csv",compression={**options},converters=None)'
+    ])
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import pandas as pd\ntable=' + source,
+          context
+        )
+      ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+  })
+
+  it.each([
+    [
+      'bz2',
+      'BZ2File',
+      'from numpy import loadtxt as read\nvalues=read("pairs.bz2",delimiter=",",dtype=float,ndmin=2)'
+    ],
+    [
+      'bz2',
+      'BZ2File',
+      'import numpy as np\nvalues=np.genfromtxt(fname="pairs.csv",delimiter=",",dtype=float,ndmin=2)'
+    ],
+    [
+      'lzma',
+      'LZMAFile',
+      'from numpy import genfromtxt as read\nvalues=read("pairs",delimiter=",",dtype=float,ndmin=2)'
+    ],
+    [
+      'lzma',
+      'LZMAFile',
+      'import numpy as np\nvalues=np.loadtxt(fname="pairs.xz",delimiter=",",dtype=float,ndmin=2)'
+    ],
+    [
+      'bz2',
+      'BZ2File',
+      'from numpy import genfromtxt as read\ndef reopen(path):\n    return read(path,delimiter=",",dtype=float,ndmin=2)\nvalues=reopen("pairs.bz2")'
+    ],
+    [
+      'lzma',
+      'LZMAFile',
+      'from numpy import loadtxt as read\ndef reopen(path):\n    return read(path,delimiter=",",dtype=float,ndmin=2)\nvalues=reopen("pairs.xz")'
+    ]
+  ])(
+    'withdraws cached codec reader authority after %s.%s failure: %s',
+    async (module, member, source) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'python',
+          [`import ${module}`, `${module}.${member}=replacement\nraise RuntimeError()`],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+        expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+      }
+    }
+  )
+
+  it.each([
+    ['bz2', 'BZ2File'],
+    ['lzma', 'LZMAFile']
+  ])('withdraws prior content proof through cached codec %s.%s', async (module, member) => {
+    const prefix = `import numpy as np,${module}\nnp.save("cache.npy",np.array([1.,2.]))\n${module}.${member}=replacement\n`
+    expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toHaveLength(1)
+    for (const reader of ['loadtxt', 'genfromtxt'])
+      expect(
+        (
+          await analyzePythonNotebookSource(
+            prefix + `np.${reader}("pairs",delimiter=",",dtype=float,ndmin=2)`
+          )
+        ).facts.serializedValueWrites ?? []
+      ).toEqual([])
+  })
+
+  it.each([
+    ['bz2', 'BZ2File'],
+    ['lzma', 'LZMAFile']
+  ])('withdraws cached codec %s.%s paths and isolates epochs', async (module, member) => {
+    const source =
+      'from numpy import genfromtxt as read\nvalues=read("pairs",delimiter=",",dtype=float,ndmin=2)'
+    for (const precompute of [false, true]) {
+      const scripts = [
+        `import ${module}`,
+        `${module}.${member}=replacement\nraise RuntimeError()`,
+        'path="old.txt"',
+        source
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+    }
+  })
+
+  it.each(['bz2', 'lzma'])(
+    'preserves closed literal lines under cached codec %s uncertainty',
+    async (module) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: [module]
+      }
+      for (const reader of ['loadtxt', 'genfromtxt'])
+        for (const lines of ['["1,2","3,4"]', '("1,2","3,4")'])
+          expect(
+            await analyzeNotebookSourceFileAccess(
+              'python',
+              `from numpy import ${reader} as read\nvalues=read(${lines},delimiter=",",dtype=float,ndmin=2)`,
+              context
+            )
+          ).toMatchObject({
+            readState: 'complete',
+            writeState: 'complete',
+            externalState: 'complete',
+            reads: [],
+            writes: []
+          })
+    }
+  )
+
+  it.each(['bz2', 'lzma'])(
+    'keeps nonliteral line inputs conservative under cached codec %s uncertainty',
+    async (module) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: [module]
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'from numpy import loadtxt as read\nvalues=read(lines,delimiter=",",dtype=float,ndmin=2)',
+          context
+        )
+      ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+    }
+  )
+
+  it('preserves unrelated plain IO and healthy cached codec readers', async () => {
+    for (const pythonTaintedNamespaces of [[], ['zipfile']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      for (const [reader, path] of [
+        ['loadtxt', 'pairs.bz2'],
+        ['genfromtxt', 'pairs.xz']
+      ])
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'python',
+            `from numpy import ${reader} as read\nvalues=read("${path}",delimiter=",",dtype=float,ndmin=2,converters=None)`,
+            context
+          )
+        ).toMatchObject({ writeState: 'complete', externalState: 'complete', reads: [path] })
+    }
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['bz2', 'lzma']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import io\nwith io.open("pairs.csv") as f:\n    text=f.read()',
+        context
+      )
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: ['pairs.csv']
+    })
+  })
+
+  it.each([
+    'import numpy as np\narchive=np.load("samples.npz",allow_pickle=False)',
+    'from numpy import load as read\narchive=read(file="renamed.npy",allow_pickle=False)',
+    'import numpy as np\nnp.savez("samples.npz",x=[1,2])',
+    'from numpy import savez_compressed as save\nsave("samples.npz",x=[1,2])',
+    'from scipy.sparse import load_npz as read\nmatrix=read("sparse.npz")',
+    'from scipy.sparse import save_npz as save\nsave("sparse.npz",matrix)',
+    'from numpy import savez as save\ndef export(path):\n    return save(path,x=[1,2])\nexport("samples.npz")'
+  ])('withdraws NumPy archive authority after ZipFile failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        [
+          'import zipfile',
+          'zipfile.ZipFile=replacement\nraise RuntimeError()',
+          'path="samples.npz"'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each([
+    'np.load("samples.npz",allow_pickle=False)',
+    'np.savez_compressed("samples.npz",x=[1,2])'
+  ])('withdraws prior array content proof through uncertain archive: %s', async (call) => {
+    const prefix =
+      'import numpy as np,zipfile\nnp.save("cache.npy",np.array([1.,2.]))\nzipfile.ZipFile=replacement\n'
+    expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toHaveLength(1)
+    expect(
+      (await analyzePythonNotebookSource(prefix + call)).facts.serializedValueWrites ?? []
+    ).toEqual([])
+  })
+
+  it('withdraws archive callback paths across cache reload and isolates epochs', async () => {
+    const source = 'from numpy import savez_compressed as save\nsave("samples.npz",x=[1,2])'
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import zipfile',
+        'zipfile.ZipFile=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        source
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+    }
+  })
+
+  it('preserves healthy archives and unrelated plain NumPy writers under ZipFile uncertainty', async () => {
+    for (const pythonTaintedNamespaces of [[], ['gzip']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'from numpy import savez_compressed as save\nsave("samples.npz",x=[1,2])',
+          context
+        )
+      ).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete',
+        writes: ['samples.npz']
+      })
+    }
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['zipfile']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import numpy as np\nnp.save("plain.npy",[1,2],allow_pickle=False)',
+        context
+      )
+    ).toMatchObject({ writeState: 'complete', externalState: 'complete', writes: ['plain.npy'] })
+  })
+
+  it.each(['loadtxt', 'genfromtxt'])(
+    'preserves literal text lines under gzip uncertainty: %s',
+    async (name) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['gzip']
+      }
+      for (const lines of ['["1,2","3,4"]', '("1,2","3,4")']) {
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'python',
+            `from numpy import ${name} as read\nvalues=read(${lines},delimiter=",",dtype=float,ndmin=2)`,
+            context
+          )
+        ).toMatchObject({
+          readState: 'complete',
+          writeState: 'complete',
+          externalState: 'complete',
+          reads: [],
+          writes: []
+        })
+      }
+    }
+  )
+
+  it.each([
+    'import numpy as np\nvalues=np.loadtxt("groups.gz",delimiter=",",dtype=float,ndmin=2)',
+    'from numpy import loadtxt as read\nvalues=read(fname="groups.csv",delimiter=",",dtype=float,ndmin=2)',
+    'from numpy import genfromtxt as read\nvalues=read("groups",delimiter=",",dtype=float,ndmin=2)',
+    'from numpy import genfromtxt as read\nvalues=read(fname="groups.gz",delimiter=",",dtype=float,ndmin=2)',
+    'from numpy import loadtxt as read\ndef reopen(path):\n    return read(path,delimiter=",",dtype=float,ndmin=2)\nvalues=reopen("groups.gz")'
+  ])('withdraws cached NumPy text-reader authority after gzip failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import gzip', 'gzip.GzipFile=replacement\nraise RuntimeError()', 'path="groups.gz"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each(['loadtxt', 'genfromtxt'])(
+    'withdraws prior array proof through cached gzip %s',
+    async (name) => {
+      const prefix =
+        'import numpy as np,gzip\nnp.save("cache.npy",np.array([1.,2.]))\ngzip.GzipFile=replacement\n'
+      expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toEqual([
+        { path: 'cache.npy', format: 'npy', valueType: 'numpy.ndarray' }
+      ])
+      expect(
+        (
+          await analyzePythonNotebookSource(
+            prefix + `np.${name}("groups",delimiter=",",dtype=float,ndmin=2)`
+          )
+        ).facts.serializedValueWrites ?? []
+      ).toEqual([])
+    }
+  )
+
+  it('withdraws cached gzip text-reader downstream paths and isolates fresh epochs', async () => {
+    const source =
+      'from numpy import genfromtxt as read\nvalues=read("groups",delimiter=",",dtype=float,ndmin=2)'
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import gzip',
+        'gzip.GzipFile=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        source
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+    }
+  })
+
+  it('preserves healthy NumPy text readers and unrelated io namespace precision', async () => {
+    for (const pythonTaintedNamespaces of [[], ['io']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      for (const name of ['loadtxt', 'genfromtxt']) {
+        const source = `from numpy import ${name} as read\nvalues=read("groups.gz",delimiter=",",dtype=float,ndmin=2,converters=None)`
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          writeState: 'complete',
+          externalState: 'complete',
+          reads: ['groups.gz']
+        })
+      }
+    }
+  })
+
+  it('preserves unrelated native Matrix Market reads under cached gzip uncertainty', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    const source = 'from scipy.io import mminfo as inspect\ninfo=inspect("transition.mtx")'
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: ['transition.mtx']
+    })
+    expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('available')
+  })
+
+  it.each([
+    'from scipy import io as sio\nmatrix=sio.mmread("transition.mtx.gz")',
+    'from scipy.io import mmread as read\nmatrix=read("transition.mtx.gz")',
+    'from scipy import io as sio\ninfo=sio.mminfo(source="transition.mtx.gz")',
+    'from scipy.io import mminfo as inspect\ninfo=inspect("transition.mtx.gz")',
+    'from scipy.io import mmread as read\ndef reopen(path):\n    return read(path).tocsr()\nmatrix=reopen("transition.mtx.gz")'
+  ])('withdraws compressed Matrix Market authority after gzip failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        [
+          'import gzip',
+          'gzip.GzipFile=replacement\nraise RuntimeError()',
+          'path="transition.mtx.gz"'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each(['mmread', 'mminfo'])(
+    'withdraws prior array proof through compressed Matrix Market %s',
+    async (name) => {
+      const prefix =
+        'import numpy as np,gzip\nfrom scipy import io as sio\nnp.save("cache.npy",np.array([1.,2.]))\ngzip.GzipFile=replacement\n'
+      expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toEqual([
+        { path: 'cache.npy', format: 'npy', valueType: 'numpy.ndarray' }
+      ])
+      expect(
+        (await analyzePythonNotebookSource(prefix + `sio.${name}("transition.mtx.gz")`)).facts
+          .serializedValueWrites ?? []
+      ).toEqual([])
+    }
+  )
+
+  it('withdraws compressed Matrix Market downstream paths and isolates epochs', async () => {
+    const source = 'from scipy.io import mmread as read\nmatrix=read("transition.mtx.gz")'
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import gzip',
+        'gzip.GzipFile=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        source
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['transition.mtx.gz']
+      })
+    }
+  })
+
+  it('preserves literal native Matrix Market paths under gzip uncertainty', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    for (const name of ['mmread', 'mminfo']) {
+      const source = `from scipy.io import ${name} as read\nvalue=read("transition.mtx")`
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['transition.mtx']
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('available')
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          `from scipy.io import ${name} as read\nvalue=read(path)`,
+          context
+        )
+      ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+    }
+  })
+
+  it.each([
+    'from scipy.io import mminfo as inspect\ninfo=inspect("transition.mtx")',
+    'from scipy import io as sio\ninfo=sio.mminfo(source="transition.mtx")',
+    'from scipy.io import mminfo\ndef inspect(path):\n    return mminfo(path)\ninfo=inspect("transition.mtx")'
+  ])('records Matrix Market metadata inputs: %s', async (source) => {
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).toEqual([
+      'transition.mtx'
+    ])
+  })
+
+  it('rejects ambiguous metadata reader signatures and shadowed identities', async () => {
+    for (const source of [
+      'from scipy.io import mminfo\nmminfo("transition.mtx",source="other.mtx")',
+      'from scipy.io import mminfo\nmminfo("transition.mtx",**options)'
+    ])
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        readState: 'partial'
+      })
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'def mminfo(path):\n    return 1\nmminfo("transition.mtx")'
+        )
+      ).reads
+    ).not.toContain('transition.mtx')
+  })
+
+  it.each([
+    'import numpy as np\nvalues=np.memmap("matrix.bin",dtype="float64",mode="r",shape=(64,2))',
+    'from numpy import memmap as mapping\nvalues=mapping("matrix.bin",dtype="float64",mode="c",shape=(64,2))',
+    'import numpy as np\nvalues=np.memmap("matrix.bin",dtype="float64",mode="r+",shape=(64,2))',
+    'import numpy as np\nvalues=np.memmap("matrix.bin",dtype="float64",mode="w+",shape=(64,2))',
+    'from numpy.lib.format import open_memmap as mapping\nvalues=mapping("matrix.npy",mode="r")',
+    'from numpy.lib.format import open_memmap as mapping\nvalues=mapping("matrix.npy",mode="c")',
+    'from numpy import memmap as mapping\ndef reopen(path):\n    return mapping(path,dtype="float64",mode="r",shape=(64,2))\nvalues=reopen("matrix.bin")'
+  ])('withdraws mapped-file authority after builtin opener failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins', 'builtins.open=replacement\nraise RuntimeError()', 'path="matrix.bin"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each([
+    'np.memmap("matrix.bin",dtype="float64",mode="c",shape=(64,2))',
+    'np.lib.format.open_memmap("matrix.npy",mode="r")'
+  ])('withdraws prior array proof through mapped-file opener callbacks: %s', async (call) => {
+    const prefix =
+      'import numpy as np,builtins\n' +
+      'np.save("cache.npy",np.array([1.,2.]))\nbuiltins.open=replacement\n'
+    expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toEqual([
+      { path: 'cache.npy', format: 'npy', valueType: 'numpy.ndarray' }
+    ])
+    expect(
+      (await analyzePythonNotebookSource(prefix + call)).facts.serializedValueWrites ?? []
+    ).toEqual([])
+  })
+
+  it('withdraws downstream mapped-file paths and isolates fresh epochs', async () => {
+    const source =
+      'from numpy.lib.format import open_memmap as mapping\nvalues=mapping("matrix.npy",mode="c")'
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import builtins',
+        'builtins.open=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        source
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+      expect((await analyzePythonNotebookSource(source, fresh)).facts.state).toBe('available')
+    }
+  })
+
+  it('preserves private mappings under healthy or unrelated io openers', async () => {
+    for (const pythonTaintedNamespaces of [[], ['io']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      for (const source of [
+        'from numpy import memmap as mapping\nvalues=mapping("matrix.bin",dtype="float64",mode="c",shape=(64,2))\nvalues[0,0]=1\nvalues.flush()',
+        'from numpy.lib.format import open_memmap as mapping\nvalues=mapping("matrix.npy",mode="r")'
+      ]) {
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          writeState: 'complete',
+          externalState: 'complete',
+          writes: []
+        })
+      }
+    }
+  })
+
+  it.each([
+    'from scipy.io import wavfile\nrate,data=wavfile.read("signal.wav")',
+    'from scipy.io.wavfile import read as read_signal\nrate,data=read_signal("signal.wav")',
+    'from scipy.io import wavfile\nwavfile.write("signal.wav",8000,data)',
+    'from scipy.io.wavfile import write as store_signal\nstore_signal("signal.wav",8000,data)',
+    'from scipy.io.wavfile import write as store_signal\ndef export(path):\n    store_signal(path,8000,data)\nexport("signal.wav")'
+  ])('withdraws WAV authority after builtin opener failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins', 'builtins.open=replacement\nraise RuntimeError()', 'path="signal.wav"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each(['wavfile.read("signal.wav")', 'wavfile.write("signal.wav",8000,data)'])(
+    'withdraws prior array content proof through WAV opener delegates: %s',
+    async (call) => {
+      const prefix =
+        'import numpy as np,builtins\nfrom scipy.io import wavfile\n' +
+        'np.save("cache.npy",np.array([1.,2.]))\nbuiltins.open=replacement\n'
+      expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toEqual([
+        { path: 'cache.npy', format: 'npy', valueType: 'numpy.ndarray' }
+      ])
+      expect(
+        (await analyzePythonNotebookSource(prefix + call)).facts.serializedValueWrites ?? []
+      ).toEqual([])
+    }
+  )
+
+  it('withdraws downstream WAV paths and isolates fresh epochs', async () => {
+    const source =
+      'from scipy.io.wavfile import read as read_signal\nrate,data=read_signal("signal.wav")'
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import builtins',
+        'builtins.open=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        source
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+      expect((await analyzePythonNotebookSource(source, fresh)).facts.state).toBe('available')
+    }
+  })
+
+  it('preserves WAV contracts under unrelated io namespace uncertainty', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['io']
+    }
+    for (const source of [
+      'from scipy.io.wavfile import read\nrate,data=read("signal.wav")',
+      'from scipy.io.wavfile import write\nwrite("signal.wav",8000,data)'
+    ]) {
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('available')
+    }
+  })
+
+  it.each([
+    'from scipy import sparse\nmatrix=sparse.load_npz("poisson.npz")',
+    'from scipy.sparse import load_npz as read\nmatrix=read("poisson.npz")',
+    'from scipy import sparse\nsparse.save_npz("poisson.npz",matrix)',
+    'from scipy.sparse import save_npz as store\nstore("poisson.npz",matrix,compressed=False)',
+    'from scipy.sparse import save_npz as store\ndef export(path):\n    store(path,matrix)\nexport("poisson.npz")'
+  ])('withdraws sparse NPZ authority after failed NumPy replacement: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import numpy as np', 'np.load=replacement\nraise RuntimeError()', 'path="poisson.npz"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.pythonTaintedNamespaces).toContain('numpy')
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each(['sparse.load_npz("poisson.npz")', 'sparse.save_npz("poisson.npz",matrix)'])(
+    'withdraws stored array proof through replaced NumPy delegates: %s',
+    async (call) => {
+      const prefix =
+        'import numpy as np\nfrom scipy import sparse\n' +
+        'np.save("cache.npy",np.array([1.,2.]))\nnp.load=replacement\n'
+      expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toEqual([
+        { path: 'cache.npy', format: 'npy', valueType: 'numpy.ndarray' }
+      ])
+      expect(
+        (await analyzePythonNotebookSource(prefix + call)).facts.serializedValueWrites ?? []
+      ).toEqual([])
+    }
+  )
+
+  it('withdraws downstream paths through NumPy delegates and isolates fresh epochs', async () => {
+    const source = 'from scipy.sparse import load_npz as read\nmatrix=read("poisson.npz")'
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import numpy as np',
+        'np.load=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        source
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+      expect((await analyzePythonNotebookSource(source, fresh)).facts.state).toBe('available')
+    }
+  })
+
+  it('preserves unrelated SciPy contracts under NumPy namespace uncertainty', async () => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['numpy']
+    }
+    const source = 'from scipy.io import whosmat\nmetadata=whosmat("model.mat")'
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('available')
+  })
+
+  it.each([
+    ['io', 'from scipy import sparse\nsparse.save_npz("chain.npz",matrix)'],
+    ['io', 'from scipy.sparse import save_npz as store\nstore("chain.npz",matrix)'],
+    [
+      'io',
+      'from scipy import sparse\ndef export(path):\n    sparse.save_npz(path,matrix)\nexport("chain.npz")'
+    ],
+    ['builtins', 'from scipy import sparse\nmatrix=sparse.load_npz("chain.npz")'],
+    ['builtins', 'from scipy.sparse import load_npz as read\nmatrix=read("chain.npz")']
+  ])(
+    'withdraws sparse graph NPZ authority after %s opener failure: %s',
+    async (namespace, source) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'python',
+          [
+            `import ${namespace}`,
+            `${namespace}.open=replacement\nraise RuntimeError()`,
+            'path="chain.npz"'
+          ],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+        expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+      }
+    }
+  )
+
+  it.each([
+    ['io', 'sparse.save_npz("chain.npz",matrix)'],
+    ['builtins', 'sparse.load_npz("chain.npz")']
+  ])('withdraws old content proof through sparse graph %s delegates', async (namespace, call) => {
+    const prefix =
+      `import numpy as np,${namespace}\nfrom scipy import sparse\n` +
+      'np.save("cache.npy",np.array([1.,2.]))\n' +
+      `${namespace}.open=replacement\n`
+    expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toEqual([
+      { path: 'cache.npy', format: 'npy', valueType: 'numpy.ndarray' }
+    ])
+    expect(
+      (await analyzePythonNotebookSource(prefix + call)).facts.serializedValueWrites ?? []
+    ).toEqual([])
+  })
+
+  it('preserves sparse graph contracts under unrelated opener uncertainty', async () => {
+    for (const [source, namespace] of [
+      ['from scipy.sparse import save_npz as store\nstore("chain.npz",matrix)', 'builtins'],
+      ['from scipy.sparse import load_npz as read\nmatrix=read("chain.npz")', 'io']
+    ]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: [namespace!]
+      }
+      expect(await analyzeNotebookSourceFileAccess('python', source!, context)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+      expect((await analyzePythonNotebookSource(source!, context)).facts.state).toBe('available')
+    }
+  })
+
+  it('withdraws downstream paths after tainted sparse graph loading', async () => {
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import builtins',
+        'builtins.open=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        'from scipy.sparse import load_npz as read\nmatrix=read("chain.npz")'
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'epoch-2'
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'from scipy.sparse import load_npz as read\nmatrix=read("chain.npz")',
+          fresh
+        )
+      ).toMatchObject({ writeState: 'complete', externalState: 'complete' })
+    }
+  })
+
+  it.each([
+    'from scipy import io as sio\nmodel=sio.loadmat("pca.mat")',
+    'from scipy.io import loadmat as read_model\nmodel=read_model("pca.mat")',
+    'from scipy import io as sio\nsio.savemat("pca.mat",{"v":[1.,2.]},format="4")',
+    'from scipy.io import savemat as write_model\nwrite_model("pca.mat",{"v":[1.,2.]},format="4")',
+    'from scipy.io import whosmat as inspect_model\nmetadata=inspect_model("pca.mat")',
+    'from scipy import io as sio\ndef export(path):\n    sio.savemat(path,{"v":[1.,2.]},format="4")\nexport("pca.mat")'
+  ])('withdraws PCA MAT call authority after builtin opener failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins', 'builtins.open=replacement\nraise RuntimeError()', 'path="pca.mat"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each(['loadmat("pca.mat")', 'whosmat("pca.mat")', 'savemat("pca.mat",{"v":[1.,2.]})'])(
+    'withdraws downstream content proof through a tainted PCA MAT %s',
+    async (call) => {
+      const prefix =
+        'import numpy as np,builtins\nfrom scipy import io as sio\n' +
+        'np.save("cache.npy",np.array([1.,2.]))\nbuiltins.open=replacement\n'
+      expect((await analyzePythonNotebookSource(prefix)).facts.serializedValueWrites).toEqual([
+        { path: 'cache.npy', format: 'npy', valueType: 'numpy.ndarray' }
+      ])
+      const source = prefix + `sio.${call}\n`
+      const facts = (await analyzePythonNotebookSource(source)).facts
+      expect(facts.serializedValueWrites ?? []).toEqual([])
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('preserves intact PCA MAT calls with unrelated io taint and fresh epochs', async () => {
+    for (const pythonTaintedNamespaces of [[], ['io']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      for (const source of [
+        'from scipy.io import loadmat as read_model\nmodel=read_model("pca.mat")',
+        'from scipy.io import whosmat as inspect_model\nmetadata=inspect_model("pca.mat")',
+        'from scipy.io import savemat as write_model\nwrite_model("pca.mat",{"v":[1.,2.]},format="4")'
+      ])
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          readState: 'complete',
+          writeState: 'complete',
+          externalState: 'complete'
+        })
+    }
+    const fresh = await fileContext(
+      'python',
+      ['import builtins', 'builtins.open=replacement\nraise RuntimeError()'],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      true,
+      undefined,
+      'epoch-2'
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'from scipy.io import savemat as write_model\nwrite_model("pca.mat",{"v":[1.,2.]},format="4")',
+        fresh
+      )
+    ).toMatchObject({ writeState: 'complete', externalState: 'complete' })
+  })
+
+  it('withdraws downstream paths after a tainted PCA MAT metadata read', async () => {
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import builtins',
+        'builtins.open=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        'from scipy.io import whosmat as inspect_model\nmetadata=inspect_model("pca.mat")'
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const recovered = await fileContext(
+        'python',
+        [...scripts, 'path="fresh.txt"'],
+        overrides,
+        precompute
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', recovered)
+      ).toMatchObject({ reads: ['fresh.txt'], readState: 'complete' })
+    }
+  })
+
+  it.each([
+    ['import io,builtins', 'builtins.open', 'io.open'],
+    ['import io as stream,builtins as native', 'native.open', 'stream.open']
+  ])(
+    'retains opener mutation after a literal builtin-file recovery: %s',
+    async (imports, open, patch) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'python',
+          [
+            `${imports}\nwith ${open}("missing.csv") as handle:\n    pass`,
+            `${imports}\nwith ${open}("input.csv",encoding="utf-8") as handle:\n    pass`,
+            `${patch}=replacement\nraise RuntimeError()`,
+            'path="bootstrap.npz"'
+          ],
+          [
+            { status: 'failed', kernelDispatched: true },
+            {},
+            { status: 'failed', kernelDispatched: true }
+          ],
+          precompute
+        )
+        expect(context?.pythonTaintedNamespaces).toContain('io')
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'python',
+            'import numpy as np\nnp.savez("bootstrap.npz",means=[1.,2.])',
+            context
+          )
+        ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+      }
+    }
+  )
+
+  it.each([
+    'import builtins\nwith builtins.open("input.csv",encoding="utf-8") as handle:\n    pass',
+    'import builtins as native\nwith native.open(file="output.txt",mode="w",opener=None) as handle:\n    pass'
+  ])(
+    'keeps closed literal builtin file calls external instead of namespace mutation: %s',
+    async (source) => {
+      const { facts } = await analyzePythonNotebookSource(source)
+      expect(facts).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['external-state'])
+      })
+      expect(facts.state === 'unknown' ? facts.reasons : []).not.toContain('dynamic-namespace')
+    }
+  )
+
+  it.each([
+    'import builtins\nbuiltins.open(path)',
+    'import builtins\nbuiltins.open("input.csv",**options)',
+    'import builtins\nbuiltins.open=replacement\nbuiltins.open("input.csv")',
+    'import builtins\nbuiltins=replacement\nbuiltins.open("input.csv")'
+  ])('retains namespace uncertainty for unproved builtin file calls: %s', async (source) => {
+    expect((await analyzePythonNotebookSource(source)).facts.state).toBe('unknown')
+  })
+
+  it.each([
+    'import numpy as np\nnp.savez("bootstrap.npz",means=np.array([1.,2.]))',
+    'import numpy as np\nnp.savez_compressed("bootstrap.npz",means=np.array([1.,2.]))',
+    'from numpy import savez as pack\npack("bootstrap.npz",means=[1.,2.])',
+    'from numpy import savez_compressed as pack\npack("bootstrap.npz",means=[1.,2.])',
+    'import numpy as np\ndef export(path):\n    np.savez(path,means=[1.,2.])\nexport("bootstrap.npz")'
+  ])('withdraws bootstrap archive authority after io opener failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import io', 'io.open=replacement\nraise RuntimeError()', 'path="fresh.txt"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it.each(['savez', 'savez_compressed'])(
+    'withdraws serialized content proof through a tainted bootstrap %s call',
+    async (member) => {
+      const context = await fileContext(
+        'python',
+        ['import io', 'io.open=replacement\nraise RuntimeError()'],
+        [{}, { status: 'failed', kernelDispatched: true }]
+      )
+      const source =
+        'import numpy as np\nnp.save("cache.npy",np.array([1.,2.]))\n' +
+        `np.${member}("bootstrap.npz",means=[1.,2.])\nafter=np.load("cache.npy",allow_pickle=False)`
+      const { facts } = await analyzePythonNotebookSource(source, context)
+      expect(facts.serializedValueWrites ?? []).toEqual([])
+      expect(facts.typeBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        reads: ['cache.npy'],
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('preserves intact bootstrap archive writers under unrelated builtin taint', async () => {
+    for (const pythonTaintedNamespaces of [[], ['builtins']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      for (const member of ['savez', 'savez_compressed']) {
+        const source = `import numpy as np\nnp.${member}("bootstrap.npz",means=[1.,2.])`
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          writes: ['bootstrap.npz'],
+          writeState: 'complete',
+          externalState: 'complete'
+        })
+        expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('available')
+      }
+    }
+  })
+
+  it('withdraws downstream paths through a tainted bootstrap archive export', async () => {
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import io',
+        'io.open=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        'import numpy as np\nnp.savez("bootstrap.npz",means=[1.,2.])'
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const recovered = await fileContext(
+        'python',
+        [...scripts, 'path="fresh.txt"'],
+        overrides,
+        precompute
+      )
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'open(path)', recovered)).reads
+      ).toEqual(['fresh.txt'])
+    }
+  })
+
+  it('clears bootstrap opener uncertainty only for a fresh kernel epoch', async () => {
+    const context = await fileContext(
+      'python',
+      ['import io', 'io.open=replacement\nraise RuntimeError()'],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      true,
+      undefined,
+      'epoch-2'
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'from numpy import savez_compressed as pack\npack("bootstrap.npz",means=[1.,2.])',
+        context
+      )
+    ).toMatchObject({
+      writes: ['bootstrap.npz'],
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+
+  it.each([
+    'import numpy as np\nnp.savetxt("spectrum.txt",np.array([1.,2.]))',
+    'from numpy import savetxt as emit\nemit("spectrum.txt",[1.,2.])',
+    'import numpy as np\ndef export(path):\n    np.savetxt(path,[1.,2.])\nexport("spectrum.txt")'
+  ])('withdraws NumPy spectral text writer authority after opener failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins', 'builtins.open=replacement\nraise RuntimeError()', 'path="fresh.txt"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining([
+          source.includes('def export') ? 'external-state' : 'opaque-call'
+        ])
+      })
+    }
+  })
+
+  it('revokes same-cell spectral text writer authority after opener mutation', async () => {
+    const source =
+      'import numpy as np,builtins\nbuiltins.open=replacement\nnp.savetxt("spectrum.txt",[1.,2.])'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('withdraws downstream path authority after a tainted spectral export', async () => {
+    for (const precompute of [false, true]) {
+      const scripts = [
+        'import builtins',
+        'builtins.open=replacement\nraise RuntimeError()',
+        'path="old.txt"',
+        'import numpy as np\nnp.savetxt("spectrum.txt",[1.,2.])'
+      ]
+      const context = await fileContext(
+        'python',
+        scripts,
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', context)).reads
+      ).not.toContain('old.txt')
+      const recovered = await fileContext(
+        'python',
+        [...scripts, 'path="fresh.txt"'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'import io\nio.open(path)', recovered)
+      ).toMatchObject({ reads: ['fresh.txt'], readState: 'complete' })
+    }
+  })
+
+  it('preserves intact spectral writers and independent io handles', async () => {
+    for (const pythonTaintedNamespaces of [[], ['io']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      const source = 'from numpy import savetxt as emit\nemit("spectrum.txt",[1.,2.])'
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        writeState: 'complete',
+        writes: ['spectrum.txt'],
+        externalState: 'complete'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('available')
+    }
+    const context = await fileContext(
+      'python',
+      ['import builtins', 'builtins.open=replacement\nraise RuntimeError()'],
+      [{}, { status: 'failed', kernelDispatched: true }]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import io\nwith io.open("summary.txt","w") as handle:\n    handle.write("validated")',
+        context
+      )
+    ).toMatchObject({ writeState: 'complete', writes: ['summary.txt'] })
+    const fresh = await fileContext(
+      'python',
+      ['import builtins', 'builtins.open=replacement\nraise RuntimeError()'],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      true,
+      undefined,
+      'epoch-2'
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import numpy as np\nnp.savetxt("spectrum.txt",[1.,2.])',
+        fresh
+      )
+    ).toMatchObject({ writeState: 'complete', externalState: 'complete' })
+  })
+
+  it.each([
+    'import numpy as np\ncoef=np.load("coef.npy",allow_pickle=False)',
+    'from numpy import load as reader\ncoef=reader("coef.npy",allow_pickle=False)',
+    'import numpy as np\nnp.save("coef.npy",np.array([1.,2.]),allow_pickle=False)',
+    'from numpy import save as writer\nimport numpy as np\nwriter("coef.npy",np.array([1.,2.]),allow_pickle=False)'
+  ])('withdraws NumPy model-file authority after a failed opener patch: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        [
+          'import builtins',
+          'builtins.open=replacement\nraise RuntimeError("failed")',
+          'path="coef.npy"'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const { facts } = await analyzePythonNotebookSource(source, context)
+      expect(facts).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['opaque-call'])
+      })
+      expect(facts.serializedValueWrites ?? []).toEqual([])
+      expect(facts.serializedValueReads ?? []).not.toContain('coef.npy')
+      expect(facts.typeBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ target: 'coef', typeName: 'numpy.ndarray' })
+      )
+    }
+  })
+
+  it.each(['load', 'save'])(
+    'revokes same-cell NumPy %s authority after builtin opener mutation',
+    async (member) => {
+      const source =
+        'import builtins,numpy as np\nbuiltins.open=replacement\n' +
+        (member === 'load'
+          ? 'coef=np.load("coef.npy",allow_pickle=False)'
+          : 'np.save("coef.npy",np.array([1.,2.]),allow_pickle=False)')
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        writeState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual(
+        []
+      )
+    }
+  )
+
+  it('preserves intact NumPy model-file contracts under unrelated io taint', async () => {
+    for (const pythonTaintedNamespaces of [[], ['io']]) {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import numpy as np\ncoef=np.load("coef.npy",allow_pickle=False)',
+          context
+        )
+      ).toMatchObject({ readState: 'complete', writeState: 'complete', reads: ['coef.npy'] })
+      const source = 'import numpy as np\nnp.save("coef.npy",np.array([1.,2.]),allow_pickle=False)'
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        writeState: 'complete',
+        writes: ['coef.npy']
+      })
+      expect(
+        (await analyzePythonNotebookSource(source, context)).facts.serializedValueWrites
+      ).toEqual([{ path: 'coef.npy', format: 'npy', valueType: 'numpy.ndarray' }])
+    }
+  })
+
+  it.each(['allow_pickle=True', 'allow_pickle=setting', '**options'])(
+    'keeps unproved NumPy pickle options conservative: %s',
+    async (options) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import numpy as np\ncoef=np.load("coef.npy",' + options + ')'
+        )
+      ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+    }
+  )
+
+  it.each([
+    'base::lapply(base::list(masked),enable_mask)',
+    'lapply(list(masked),function(x) base::attach(x))',
+    'lapply(X=list(masked),FUN=enable_mask)',
+    'sapply(list(masked),enable_mask)',
+    'lapply(list(masked),base::attach)',
+    'lapply(list(masked),function(x) base::detach("mask"))'
+  ])('retains immediate R callback search-path effects after failure: %s', async (call) => {
+    for (const failed of [false, true])
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'r',
+          [
+            'enable_mask<-function(x) base::attach(x)',
+            call + (failed ? ';stop("failed")' : ''),
+            'path<-"recovered.txt"'
+          ],
+          [{}, { status: failed ? 'failed' : 'completed', kernelDispatched: true }],
+          precompute
+        )
+        expect(context?.rSearchPathUncertain).toBe(true)
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'resolved<-file.path("outputs","claimed.txt")',
+            context
+          )
+        ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+        const prior = await fileContext('r', ['enable_mask<-function(x) base::attach(x)'])
+        const facts = (await analyzeRNotebookSource(call, prior)).facts
+        expect(facts).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['opaque-call', 'dynamic-namespace'])
+        })
+        expect(facts.safeCallNames ?? []).not.toContain(
+          call.startsWith('base::')
+            ? 'base::lapply'
+            : call.startsWith('sapply')
+              ? 'sapply'
+              : 'lapply'
+        )
+      }
+  })
+
+  it.each([
+    'ggplot2::geom_point(data=enable_mask)',
+    'ggplot2::scale_x_continuous(labels=enable_mask)',
+    'saved<-function(x) base::attach(x)',
+    'lapply(list(masked),function(x) quote(base::attach(x)))',
+    'lapply<-function(...) NULL;lapply(list(masked),enable_mask)'
+  ])('does not invent immediate R callback invocation: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'r',
+        ['enable_mask<-function(x) base::attach(x)', source, 'path<-"out.txt"'],
+        [],
+        precompute
+      )
+      expect(context?.rSearchPathUncertain).toBeUndefined()
+      expect(
+        await analyzeNotebookSourceFileAccess('r', 'writeLines("value",path)', context)
+      ).toMatchObject({ writeState: 'complete', writes: ['out.txt'] })
+    }
+  })
+
+  it.each([
+    'enable_mask<-function(x) base::attach(x)',
+    'enable_mask<-function(x) {attach(x);invisible(NULL)}',
+    'enable_mask<-function(x) {attach(x);attach<-identity}',
+    'enable_mask<-function(x) base::detach("mask")',
+    'original<-function(x) base::attach(x);enable_mask<-original',
+    'enable_mask<-base::attach',
+    'enable_mask<-attach',
+    'enable_mask<-base::detach',
+    'original<-base::attach;enable_mask<-original'
+  ])('retains invoked R search-path helper effects after failure: %s', async (definition) => {
+    for (const failed of [false, true])
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'r',
+          [
+            'masked<-list(file.path=function(...) "actual.txt");' + definition,
+            'enable_mask(masked)' + (failed ? ';stop("failed")' : ''),
+            'path<-"recovered.txt"'
+          ],
+          [{}, { status: failed ? 'failed' : 'completed', kernelDispatched: true }],
+          precompute
+        )
+        expect(context?.rSearchPathUncertain).toBe(true)
+        const source = 'target<-file.path("outputs","claimed.txt")'
+        expect((await analyzeRNotebookSource(source, context)).facts).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['opaque-call'])
+        })
+        expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'base::writeLines("value","qualified.txt")',
+            context
+          )
+        ).toMatchObject({ writeState: 'complete', writes: ['qualified.txt'] })
+      }
+  })
+
+  it.each([
+    'saved<-base::attach',
+    'saved<-base::detach',
+    'saved<-attach',
+    'saved<-function() base::attach(masked)',
+    'saved<-function() quote(base::attach(masked));saved()',
+    'saved<-function() function() base::attach(masked);saved()'
+  ])('keeps unexecuted R search-path references inert: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext('r', [source, 'path<-"recovered.txt"'], [], precompute)
+      expect(context?.rSearchPathUncertain).toBeUndefined()
+      expect(
+        await analyzeNotebookSourceFileAccess('r', 'writeLines("value",path)', context)
+      ).toMatchObject({ writeState: 'complete', writes: ['recovered.txt'] })
+    }
+  })
+
+  it.each([
+    'enable_mask<-function(x) base::attach(x)',
+    'original<-function(x) base::attach(x);enable_mask<-original',
+    'enable_mask<-base::attach'
+  ])(
+    'retains only negative R search-path helper evidence across an opaque definition: %s',
+    async (definition) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'r',
+          [
+            definition + ';invisible(stats::t.test(1:5))',
+            'enable_mask(masked);stop("failed")',
+            'path<-"recovered.txt"'
+          ],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(context?.rSearchPathUncertain).toBe(true)
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'resolved<-file.path("outputs","claimed.txt")',
+            context
+          )
+        ).toMatchObject({ writeState: 'partial' })
+        const dormant = await fileContext(
+          'r',
+          [definition + ';invisible(stats::t.test(1:5))'],
+          [],
+          precompute
+        )
+        expect(dormant?.rSearchPathUncertain).toBeUndefined()
+        for (const { summary } of dormant?.rFunctions ?? []) {
+          expect(summary.methods).toEqual([
+            {
+              name: '__call__',
+              effect: 'unknown',
+              unknownScope: 'namespace',
+              usedNames: ['base::attach']
+            }
+          ])
+        }
+      }
+    }
+  )
+
+  it.each(['attach(masked)', 'base::attach(masked)', 'detach("mask")', 'base::detach("mask")'])(
+    'retains R search-path uncertainty across failure and recovery: %s',
+    async (call) => {
+      for (const failed of [false, true]) {
+        for (const precompute of [false, true]) {
+          const context = await fileContext(
+            'r',
+            [
+              'masked<-list(file.path=function(...) "actual.txt")',
+              call + (failed ? ';stop("failed")' : ''),
+              'path<-"recovered.txt"'
+            ],
+            [{}, { status: failed ? 'failed' : 'completed', kernelDispatched: true }],
+            precompute,
+            precompute
+              ? (cache) => {
+                  expect(cache).not.toContain('rSearchPathUncertain')
+                  return cache
+                }
+              : undefined
+          )
+          expect(context).toMatchObject({ rSearchPathUncertain: true })
+          const source = 'writeLines("value",file.path("outputs","claimed.txt"))'
+          const io = await analyzeNotebookSourceFileAccess('r', source, context)
+          expect(io).toMatchObject({
+            readState: 'partial',
+            writeState: 'partial',
+            externalState: 'partial'
+          })
+          expect(io.writes).not.toContain('outputs/claimed.txt')
+          expect(
+            (
+              await analyzeRNotebookSource(
+                'resolved_path<-file.path("outputs","claimed.txt")',
+                context
+              )
+            ).facts
+          ).toMatchObject({
+            state: 'unknown',
+            reasons: expect.arrayContaining(['opaque-call'])
+          })
+          expect(
+            await analyzeNotebookSourceFileAccess(
+              'r',
+              'base::writeLines("value","qualified.txt")',
+              context
+            )
+          ).toMatchObject({
+            writeState: 'complete',
+            writes: ['qualified.txt']
+          })
+        }
+      }
+    }
+  )
+
+  it('keeps R search-path uncertainty without any surviving binding', async () => {
+    const context = await fileContext(
+      'r',
+      ['base::attach(list())', 'stop("failed")'],
+      [{}, { status: 'failed', kernelDispatched: true }]
+    )
+    expect(context).toMatchObject({ rSearchPathUncertain: true })
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'writeLines("value","out.txt")', context)
+    ).toMatchObject({ writeState: 'partial' })
+  })
+
+  it.each([
+    {
+      source: 'base::attach(masked)',
+      overrides: [{ status: 'failed' as const, kernelDispatched: false }],
+      epoch: 'epoch-1'
+    },
+    { source: 'base::attach(masked)', overrides: [{ kernelDispatched: true }], epoch: 'epoch-2' },
+    { source: 'f<-function() base::attach(masked)', overrides: [], epoch: 'epoch-1' },
+    { source: 'x<-attach', overrides: [], epoch: 'epoch-1' }
+  ])(
+    'does not invent R search-path changes for $source ($epoch)',
+    async ({ source, overrides, epoch }) => {
+      const context = await fileContext('r', [source], overrides, true, undefined, epoch)
+      expect(context?.rSearchPathUncertain).toBeUndefined()
+      expect(
+        await analyzeNotebookSourceFileAccess('r', 'base::writeLines("value","out.txt")', context)
+      ).toMatchObject({ writeState: 'complete', writes: ['out.txt'] })
+    }
+  )
+
+  it.each([
+    'import pandas as pd\nframe=pd.read_csv("in.csv")',
+    'from pandas import read_csv as read\nframe=read("in.csv")',
+    'import pandas as pd\nframe=pd.read_table("in.csv",sep=",")',
+    'from pandas import read_table as read\nframe=read("in.csv",sep=",")'
+  ])('does not trust pandas readers after a failed builtin opener patch: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins', 'builtins.open=replacement\nraise RuntimeError("failed")'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const { facts } = await analyzePythonNotebookSource(source, context)
+      expect(facts).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['opaque-call'])
+      })
+      expect(facts.typeBindings ?? []).not.toContainEqual(
+        expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' })
+      )
+    }
+  })
+
+  it('does not retain pandas effects after a same-cell builtin opener mutation', async () => {
+    const source =
+      'import builtins,pandas as pd\nbuiltins.open=replacement\nframe=pd.read_csv("in.csv")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writeState: 'partial'
+    })
+    expect((await analyzePythonNotebookSource(source)).facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
+  })
+
+  it('preserves intact local CSV reader contracts', async () => {
+    for (const taints of [[], ['io']])
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import pandas as pd\nframe=pd.read_csv("in.csv")',
+          {
+            staticStrings: [],
+            staticCollections: [],
+            localFileWrappers: [],
+            pythonTaintedNamespaces: taints
+          }
+        )
+      ).toMatchObject({ reads: ['in.csv'], writeState: 'complete' })
+  })
+
+  it.each([
+    [
+      'builtins',
+      'builtins.open=replacement',
+      'import lzma\nwith lzma.open("in.csv.xz","rt") as handle:\n    content=handle.read()'
+    ],
+    [
+      'builtins',
+      'builtins.open=replacement',
+      'from lzma import open as reader\nwith reader("in.csv.xz","rt") as handle:\n    content=handle.read()'
+    ],
+    [
+      'io',
+      'io.open=replacement',
+      'import zipfile\nwith zipfile.ZipFile("in.zip","r") as archive:\n    content=archive.read("faithful.csv")'
+    ],
+    [
+      'io',
+      'io.open=replacement',
+      'from zipfile import ZipFile as Archive\nwith Archive("in.zip","r") as archive:\n    content=archive.read("faithful.csv")'
+    ]
+  ])(
+    'keeps archive effects opaque after failed %s mutation: %s (%s)',
+    async (module, patch, source) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'python',
+          ['import ' + module, patch + '\nraise RuntimeError("failed")'],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+        expect((await analyzePythonNotebookSource(source, context)).facts).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['opaque-call'])
+        })
+      }
+    }
+  )
+
+  it('revokes saved value proof across a ZIP factory using a patched io opener', async () => {
+    const { facts } = await analyzePythonNotebookSource(
+      'import numpy as np,zipfile\nnp.save("cache.npy",np.array([1,2]))\narchive=zipfile.ZipFile("in.zip","r")\nafter=np.load("cache.npy")',
+      {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['io']
+      }
+    )
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+  })
+
+  it('keeps intact archive filename contracts and unrelated opener identities separate', async () => {
+    for (const taints of [[], ['io']])
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import lzma\nwith lzma.open("in.csv.xz","rt") as handle:\n    content=handle.read()',
+          {
+            staticStrings: [],
+            staticCollections: [],
+            localFileWrappers: [],
+            pythonTaintedNamespaces: taints
+          }
+        )
+      ).toMatchObject({ reads: ['in.csv.xz'], writeState: 'complete' })
+    for (const taints of [[], ['builtins']])
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'import zipfile\narchive=zipfile.ZipFile("in.zip","r")',
+          {
+            staticStrings: [],
+            staticCollections: [],
+            localFileWrappers: [],
+            pythonTaintedNamespaces: taints
+          }
+        )
+      ).toMatchObject({ reads: ['in.zip'], writeState: 'complete' })
+  })
+
+  it.each([
+    'import shutil\nshutil.copyfile("in.csv","out.csv")',
+    'from shutil import copyfile as copy\ncopy("in.csv","out.csv")',
+    'import shutil\nshutil.copy("in.csv","out.csv")',
+    'from shutil import copy2 as copy\ncopy("in.csv","out.csv")'
+  ])('keeps copy effects opaque after a failed builtin opener patch: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins,shutil', 'builtins.open=replacement\nraise RuntimeError("failed")'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      const { facts } = await analyzePythonNotebookSource(source, context)
+      expect(facts).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['opaque-call'])
+      })
+    }
+  })
+
+  it('revokes copied value proof through a patched builtin copy opener', async () => {
+    const { facts } = await analyzePythonNotebookSource(
+      'import numpy as np,shutil\nnp.save("cache.npy",np.array([1,2]))\nshutil.copyfile("cache.npy","copy.npy")\nafter=np.load("copy.npy")',
+      {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['builtins']
+      }
+    )
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+  })
+
+  it('keeps intact copyfile and freshly imported io.open contracts independent', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['builtins']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import io\nwith io.open("out.txt","w") as handle:\n    handle.write("value")',
+        context
+      )
+    ).toMatchObject({ writes: ['out.txt'], writeState: 'complete' })
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import shutil\nshutil.copyfile("in.csv","out.csv")'
+      )
+    ).toMatchObject({ reads: ['in.csv'], writes: ['out.csv'], writeState: 'complete' })
+  })
+
+  it.each([
+    'import gzip\nwith gzip.open("in.csv.gz","rt") as handle:\n    content=handle.read()',
+    'import gzip\nwith gzip.open("out.csv.gz","wt") as handle:\n    handle.write("value")',
+    'from gzip import open as compressed_open\nwith compressed_open("in.csv.gz","rt") as handle:\n    content=handle.read()',
+    'import gzip\nhandle=gzip.open("in.csv.gz","rt")\ncontent=handle.read()'
+  ])('does not trust gzip IO after a failed builtin opener patch: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import builtins,gzip', 'builtins.open=replacement\nraise RuntimeError("failed")'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.pythonTaintedNamespaces).toContain('builtins')
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    }
+  })
+
+  it('revokes serialized proof across gzip delegated to a replaced builtin opener', async () => {
+    const { facts } = await analyzePythonNotebookSource(
+      'import numpy as np,gzip\nnp.save("cache.npy",np.array([1,2]))\nhandle=gzip.open("in.csv.gz","rt")\nafter=np.load("cache.npy")',
+      {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['builtins']
+      }
+    )
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+  })
+
+  it('keeps io.open and intact gzip effects usable after unrelated namespace taint', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['builtins']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import io\nwith io.open("out.txt","w") as handle:\n    handle.write("value")',
+        context
+      )
+    ).toMatchObject({ writes: ['out.txt'], writeState: 'complete' })
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import gzip\nwith gzip.open("out.csv.gz","wt") as handle:\n    handle.write("value")'
+      )
+    ).toMatchObject({ writes: ['out.csv.gz'], writeState: 'complete' })
+  })
+
+  it.each([
+    'import os\nwith open(os.path.join("inputs","claimed.csv")) as handle:\n    content=handle.read()',
+    'from os.path import join as make_path\npath=make_path("outputs","claimed.csv")\nwith open(path,"w") as handle:\n    handle.write("value")',
+    'import os\npaths=[os.path.join("outputs","claimed.csv")]\nfor path in paths:\n    with open(path,"w") as handle:\n        handle.write("value")',
+    'import os\npaths=[os.path.join("outputs",name) for name in ["claimed.csv"]]\nfor path in paths:\n    with open(path,"w") as handle:\n        handle.write("value")',
+    'import os\nfor key,path in [("key",os.path.join("outputs","claimed.csv"))]:\n    with open(path,"w") as handle:\n        handle.write("value")'
+  ])('does not invent a path from a constructor patched before failure: %s', async (source) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        'python',
+        ['import os', 'os.path.join=replacement\nraise RuntimeError("failed")'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.pythonTaintedNamespaces).toContain('os')
+      const io = await analyzeNotebookSourceFileAccess('python', source, context)
+      expect(io).toMatchObject({
+        reads: [],
+        writes: [],
+        readState: 'partial',
+        writeState: 'partial'
+      })
+    }
+  })
+
+  it('does not invent paths after a same-cell path namespace mutation', async () => {
+    const io = await analyzeNotebookSourceFileAccess(
+      'python',
+      'import os\nos.path.join=replacement\nwith open(os.path.join("outputs","claimed.csv"),"w") as handle:\n    handle.write("value")'
+    )
+    expect(io).toMatchObject({ writes: [], writeState: 'partial' })
+  })
+
+  it('keeps literal output paths and intact path constructors after unrelated failure taint', async () => {
+    const context = await fileContext(
+      'python',
+      ['import os', 'os.path.join=replacement\nraise RuntimeError("failed")'],
+      [{}, { status: 'failed', kernelDispatched: true }]
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'path="outputs/fresh.csv"\nwith open(path,"w") as handle:\n    handle.write("value")',
+        context
+      )
+    ).toMatchObject({ writes: ['outputs/fresh.csv'], writeState: 'complete' })
+    const source =
+      'import os\nwith open(os.path.join("outputs","fresh.csv"),"w") as handle:\n    handle.write("value")'
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io.writes.map((path) => path.replaceAll('\\', '/'))).toEqual(['outputs/fresh.csv'])
+    expect(io.writeState).toBe('complete')
+  })
+
+  const pathDelegateCalls = [
+    'from pathlib import Path\ncontent=Path("in.txt").read_text()',
+    'from pathlib import Path\ncontent=Path("in.txt").read_bytes()',
+    'from pathlib import Path\nPath("out.txt").write_text("text")',
+    'from pathlib import Path\nPath("out.bin").write_bytes(b"bytes")',
+    'from pathlib import Path\nwith (Path("inputs")/"in.txt").open("r") as handle:\n    content=handle.read()',
+    'from pathlib import Path\nsource=Path("in.txt")\nwith source.open("r") as handle:\n    content=handle.read()',
+    'from pathlib import Path\ndef read(path):\n    return Path(path).read_text()\ncontent=read("in.txt")',
+    'from pathlib import Path\nimport hashlib\ndef digest(path):\n    return hashlib.sha256(Path(path).read_bytes()).hexdigest()\npaths=["in.txt"]\ndigests={path:digest(path) for path in paths}'
+  ]
+  it.each(pathDelegateCalls)(
+    'does not trust pathlib IO after a failed io.open patch: %s',
+    async (source) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'python',
+          [
+            'import io',
+            'io.open=replacement\nraise RuntimeError("failed")',
+            'from pathlib import Path'
+          ],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(context?.pythonTaintedNamespaces).toContain('io')
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+        if (!source.includes('def '))
+          expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+      }
+    }
+  )
+
+  it('revokes serialized value proof across a patched Path file delegate', async () => {
+    const { facts } = await analyzePythonNotebookSource(
+      'import numpy as np\nfrom pathlib import Path\nnp.save("cache.npy",np.array([1,2]))\nPath("in.txt").read_bytes()\nafter=np.load("cache.npy")',
+      {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['io']
+      }
+    )
+    expect(facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings ?? []).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+  })
+
+  it('keeps Path construction and builtin open usable under unrelated io taint', async () => {
+    const context = await fileContext(
+      'python',
+      ['import io', 'io.open=replacement\nraise RuntimeError("failed")'],
+      [{}, { status: 'failed', kernelDispatched: true }]
+    )
+    const construction = await analyzePythonNotebookSource(
+      'from pathlib import Path\npath=Path("outputs")/"fresh.txt"',
+      context
+    )
+    expect(construction.facts.state).toBe('available')
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'path="out.txt"\nwith open(path,"w") as handle:\n    handle.write("fresh")',
+        context
+      )
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      writes: ['out.txt']
+    })
+  })
+
+  it.each(['as.data.frame.double<-hook', 'z<-hook;as.data.frame.double<-z'])(
+    'retains a failed R function alias as a shadow without reviving its body: %s',
+    async (alias) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'r',
+          [
+            'hook<-function(x,...) {writeLines("hook","hook.txt");base::as.data.frame.vector(x,...)}',
+            'stop("failed")',
+            alias + ';invisible(stats::t.test(1:5))',
+            'path<-"out.csv"'
+          ],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(context?.resolvedKernelNames).toContain('as.data.frame.double')
+        expect(context?.rFunctions ?? []).toEqual([])
+        expect(
+          await analyzeNotebookSourceFileAccess(
+            'r',
+            'out<-data.frame(x=c(1,2));write.csv(out,path)',
+            context
+          )
+        ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+      }
+    }
+  )
+
+  it('does not revive ordinary values after a definite R function rebind', async () => {
+    const context = await fileContext(
+      'r',
+      [
+        'hook<-function(x) x',
+        'stop("failed")',
+        'hook<-1',
+        'value<-hook;invisible(stats::t.test(1:5))'
+      ],
+      [{}, { status: 'failed', kernelDispatched: true }]
+    )
+    expect(context?.resolvedKernelNames ?? []).not.toContain('value')
+    expect(context?.rAtomicValueNames ?? []).not.toContain('value')
+  })
+
+  it.each(['rm(path)', 'base::remove(path)', 'rm(list="path")', 'base::rm(list=c("path"))'])(
+    'does not publish a removed R path after failure: %s',
+    async (remove) => {
+      for (const precompute of [false, true]) {
+        const context = await fileContext(
+          'r',
+          ['path<-"old.csv"', 'stop("failed")', 'path<-"new.csv";' + remove],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'new.csv' })
+        const io = await analyzeNotebookSourceFileAccess('r', 'read.csv(path)', context)
+        expect(io.readState).toBe('partial')
+        expect(io.reads).not.toContain('new.csv')
+        expect((await analyzeRNotebookSource('path<-"new.csv";' + remove)).facts).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['dynamic-namespace'])
+        })
+      }
+      const repaired = await fileContext(
+        'r',
+        ['path<-"old.csv"', 'stop("failed")', 'path<-"new.csv";' + remove, 'path<-"recovered.txt"'],
+        [{}, { status: 'failed', kernelDispatched: true }]
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess('r', 'writeLines("fresh",path)', repaired)
+      ).toMatchObject({ writeState: 'complete', writes: ['recovered.txt'] })
+    }
+  )
+
+  it.each(['rm(path)', 'base::remove(list="path")'])(
+    'invalidates same-cell R path lookups after %s',
+    async (remove) => {
+      const io = await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"in.csv";' + remove + ';read.csv(path)'
+      )
+      expect(io).toMatchObject({ readState: 'partial', reads: [] })
+      const prefix = await analyzeNotebookSourceFileAccess(
+        'r',
+        'path<-"in.csv";read.csv(path);' + remove + ';read.csv(path)'
+      )
+      expect(prefix).toMatchObject({ readState: 'partial', reads: ['in.csv'] })
+    }
+  )
+
+  it.each([
+    {
+      language: 'r' as const,
+      name: 'as.data.frame.double',
+      failure: 'stop("failed")',
+      setup:
+        'as.data.frame.double<-function(x,...) {writeLines("hook","hook.txt");base::as.data.frame.vector(x,...)};invisible(stats::t.test(1:5))',
+      path: 'path<-"out.csv"',
+      consumer: 'out<-data.frame(x=c(1,2));write.csv(out,path)'
+    },
+    {
+      language: 'python' as const,
+      name: 'open',
+      failure: 'raise RuntimeError("failed")',
+      setup:
+        'import io,statistics\ndef open(file,*args,**kwargs):\n    io.open("hook.txt","w").write("hook")\n    return io.open(file,*args,**kwargs)\nprobe=getattr(statistics,"pstdev")([1.,2.,3.])',
+      path: 'path="in.csv"',
+      consumer: 'open(path).read()'
+    }
+  ])('retains a new $language default shadow from a completed opaque repair', async (c) => {
+    for (const precompute of [false, true]) {
+      const context = await fileContext(
+        c.language,
+        [c.failure, c.setup, c.path],
+        [{ status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.resolvedKernelNames).toContain(c.name)
+      expect(context?.rFunctions ?? []).toEqual([])
+      expect(context?.localFileWrappers).toEqual([])
+      expect(await analyzeNotebookSourceFileAccess(c.language, c.consumer, context)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  })
+
+  it.each(['invisible(stats::t.test(1:5))', 'eval(parse(text="1+1"))'])(
+    'retains a live R method through a successful opaque boundary: %s',
+    async (opaque) => {
+      for (const precompute of [false, true]) {
+        for (const afterFailure of [false, true]) {
+          const setup =
+            'as.data.frame.double <- function(x,...) {writeLines("hook","hook.txt");base::as.data.frame.vector(x,...)}'
+          const middle = afterFailure ? ['stop("failed")', opaque] : [opaque, 'stop("failed")']
+          const context = await fileContext(
+            'r',
+            [setup, ...middle, 'path <- "out.csv"'],
+            [
+              {},
+              ...middle.map((_, index) =>
+                index === (afterFailure ? 0 : 1)
+                  ? { status: 'failed' as const, kernelDispatched: true }
+                  : {}
+              )
+            ],
+            precompute
+          )
+          expect(context?.resolvedKernelNames).toContain('as.data.frame.double')
+          expect(context?.rFunctions ?? []).toEqual([])
+          const { facts } = await analyzeRNotebookSource('out<-data.frame(x=c(1,2))', context)
+          expect(facts).toMatchObject({
+            state: 'unknown',
+            reasons: expect.arrayContaining(['opaque-call'])
+          })
+          expect(facts.copyOnModifyNames ?? []).not.toContain('out')
+          expect(
+            await analyzeNotebookSourceFileAccess(
+              'r',
+              'out<-data.frame(x=c(1,2));write.csv(out,path)',
+              context
+            )
+          ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+          expect(
+            await analyzeNotebookSourceFileAccess('r', 'writeLines("fresh",path)', context)
+          ).toMatchObject({ writeState: 'complete', writes: ['out.csv'] })
+        }
+      }
+    }
+  )
+
+  it.each([
+    'open("in.txt",opener=callback)',
+    'open("in.txt","r",-1,None,None,None,True,callback)',
+    'open("in.txt",**options)',
+    'import builtins\nbuiltins.open("in.txt",opener=callback)',
+    'from builtins import open as native_open\nnative_open("in.txt",opener=callback)'
+  ])('does not certify hidden opener callback writes: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'open("in.txt",opener=callback)',
+    'open("in.txt",**options)',
+    'from builtins import open as native_open\nnative_open("in.txt",opener=callback)'
+  ])('does not preserve old path values through an opaque opener: %s', async (source) => {
+    const context = await fileContext('python', ['path="old.txt"', source])
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+  })
+
+  it.each([
+    'open("in.txt",opener=None)',
+    'open("in.txt","r",-1,None,None,None,True,None)',
+    'from builtins import open as native_open\nnative_open("in.txt",opener=None)'
+  ])('retains the builtin file contract without an opener callback: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: ['in.txt'],
+      writes: []
+    })
+  })
+
+  const cases = [
+    {
+      language: 'r',
+      name: 'as.data.frame.double',
+      setup:
+        'as.data.frame.double <- function(x,...) {writeLines("hook","hook.txt");base::as.data.frame.vector(x,...)}',
+      failure: 'stop("failed")',
+      repair: 'path <- "out.csv"',
+      consumer: 'out <- data.frame(x=c(1,2));write.csv(out,path)'
+    },
+    {
+      language: 'python',
+      name: 'open',
+      setup:
+        'import io\ndef open(file,*args,**kwargs):\n    io.open("hook.txt","w").write("hook")\n    return io.open(file,*args,**kwargs)',
+      failure: 'raise RuntimeError("failed")',
+      repair: 'path = "in.csv"',
+      consumer: 'with open(path) as handle:\n    text = handle.read()'
+    }
+  ] as const
+
+  it.each(cases)(
+    'retains $language shadows across cold and restored failures',
+    async (scenario) => {
+      for (const precompute of [false, true]) {
+        for (const status of ['failed', 'timeout', 'interrupted', 'cancelled'] as const) {
+          const context = await fileContext(
+            scenario.language,
+            [scenario.setup, scenario.failure, scenario.repair],
+            [{}, { status, kernelDispatched: true }],
+            precompute
+          )
+          expect(context?.resolvedKernelNames).toContain(scenario.name)
+          expect(context?.localFileWrappers).toEqual([])
+          expect(context?.rFunctions ?? []).toEqual([])
+          expect(
+            await analyzeNotebookSourceFileAccess(scenario.language, scenario.consumer, context)
+          ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+        }
+      }
+    }
+  )
+
+  it.each(cases)('retains $language names possibly assigned before a failure', async (scenario) => {
+    const context = await fileContext(
+      scenario.language,
+      [scenario.setup + '\n' + scenario.failure],
+      [{ status: 'failed', kernelDispatched: true }],
+      false
+    )
+    expect(context?.resolvedKernelNames).toContain(scenario.name)
+    expect(context?.staticStrings).toEqual([])
+    expect(context?.rAtomicValueNames ?? []).toEqual([])
+  })
+
+  it.each(cases)('does not carry $language shadow barriers into a new epoch', async (scenario) => {
+    const context = await fileContext(
+      scenario.language,
+      [scenario.setup, scenario.failure, scenario.repair],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      true,
+      undefined,
+      'epoch-2'
+    )
+    expect(context?.resolvedKernelNames ?? []).not.toContain(scenario.name)
+  })
+
+  it.each(cases)(
+    'recovers a new $language literal without reviving failed path values',
+    async (scenario) => {
+      const assignments =
+        scenario.language === 'r'
+          ? 'path <- "old.txt";other <- "uncertain.txt"'
+          : 'path = "old.txt"\nother = "uncertain.txt"'
+      const context = await fileContext(
+        scenario.language,
+        [assignments, scenario.failure, scenario.repair],
+        [{}, { status: 'failed', kernelDispatched: true }]
+      )
+      expect(context?.staticStrings).toEqual([
+        { name: 'path', value: scenario.language === 'r' ? 'out.csv' : 'in.csv' }
+      ])
+      expect(
+        (
+          await analyzeNotebookSourceFileAccess(
+            scenario.language,
+            scenario.language === 'r' ? 'writeLines("new",path)' : 'open(path,"w").close()',
+            context
+          )
+        ).writeState
+      ).toBe('complete')
+    }
+  )
+
+  it('does not certify unknown open writes merely because its argument is a read path', async () => {
+    const context = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      resolvedKernelNames: ['open']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'open("in.csv").read()', context)
+    ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'from builtins import open\nopen("in.csv").read()',
+        context
+      )
+    ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+  })
+
+  it.each([
+    ['import io\nwith io.open("out.txt","w") as handle:\n    handle.write("data")', 'write'],
+    ['from io import open as native_open\nnative_open("out.txt","w").close()', 'write'],
+    ['import io\nio.open("in.txt").read()', 'read']
+  ] as const)('recovers intact io.open modes: %s', async (source, mode) => {
+    const result = await analyzeNotebookSourceFileAccess('python', source, {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      resolvedKernelNames: ['open']
+    })
+    expect(result).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect(mode === 'write' ? result.writes : result.reads).toContain(
+      mode === 'write' ? 'out.txt' : 'in.txt'
+    )
+  })
+
+  it('keeps patched io.open uncertain across a failed run and re-import', async () => {
+    for (const source of [
+      'import io\nio.open=replacement\nio.open("in.txt")',
+      'import io\nio.open("in.txt")'
+    ]) {
+      const result = await analyzeNotebookSourceFileAccess('python', source, {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['io']
+      })
+      expect(result).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+    const context = await fileContext(
+      'python',
+      ['import io', 'io.open=replacement\nraise RuntimeError()', 'import io'],
+      [{}, { status: 'failed', kernelDispatched: true }]
+    )
+    expect(context?.pythonTaintedNamespaces).toContain('io')
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'io.open("in.txt")', context)
+    ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+  })
+
+  it.each([
+    'io.open("in.txt",**options)',
+    'io.open(*arguments)',
+    'io.open("in.txt",opener=callback)',
+    'io.open("in.txt","r",-1,None,None,None,True,callback)'
+  ])('keeps unresolved io.open options uncertain: %s', async (call) => {
+    expect(await analyzeNotebookSourceFileAccess('python', 'import io\n' + call)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+})
+
+describe('pandas export formatter callback boundaries', () => {
+  const prefix =
+    'import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\n'
+  it.each([
+    'frame.to_csv("export.csv",float_format=formatter)',
+    'frame.to_json("export.json",default_handler=formatter)',
+    'frame.to_csv("export.csv",**options)',
+    'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("export.csv",float_format=formatter)',
+    'frame=pd.Series([1.,2.])\nframe.to_csv("export.csv",float_format=formatter)',
+    'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("export.csv",float_format=lambda value: str(value))',
+    'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_json("export.json",default_handler=formatter)',
+    'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv(float_format=formatter)',
+    'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("export.csv",**options)'
+  ])('withdraws content and file authority through formatter: %s', async (exporter) => {
+    const source = prefix + exporter + '\nafter=np.load("cache.npy")\nopen(path)'
+    const { facts } = await analyzePythonNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).not.toContain('old.txt')
+  })
+  it.each(['pd.DataFrame({"x":[1.,2.]})', 'pd.Series([1.,2.])'])(
+    'withdraws formatter paths through warm and cold replay: %s',
+    async (receiver) => {
+      for (const precompute of [false, true]) {
+        const scripts = [
+          prefix,
+          `frame=${receiver}\ndef formatter(x):\n    global path\n    path="new.txt"\n    return str(x)\nraise RuntimeError()`,
+          'frame.to_csv("export.csv",float_format=formatter)'
+        ]
+        const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+        const context = await fileContext('python', scripts, overrides, precompute)
+        expect(
+          (await analyzeNotebookSourceFileAccess('python', 'open(path)', context)).reads
+        ).not.toContain('old.txt')
+        expect(context?.verifiedSerializedValues ?? []).toEqual([])
+      }
+    }
+  )
+  it.each(['', 'float_format=None', 'float_format="%.17g"'])(
+    'preserves literal CSV formatting proof: %s',
+    async (option) => {
+      const source =
+        prefix +
+        `frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("export.csv"${option ? ',' + option : ''})\nafter=np.load("cache.npy")\nopen(path)`
+      expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toHaveLength(
+        1
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['old.txt']
+      })
+    }
+  )
+})
+
+describe('pandas export closed formatter controls', () => {
+  it.each([
+    'pd.Series([1.,2.]).to_csv("export.csv",float_format="%.17g")',
+    'pd.Series([1.,2.]).to_csv("export.csv",float_format=None)',
+    'pd.DataFrame({"x":[1.,2.]}).to_json("export.json",default_handler=None)'
+  ])('retains file and serialization proof for %s', async (call) => {
+    const source =
+      'import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\n' +
+      call +
+      '\nafter=np.load("cache.npy")'
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+})
+
+describe('pandas compressed export delegate boundaries', () => {
+  it.each([
+    ['gzip', 'gz'],
+    ['bz2', 'bz2'],
+    ['lzma', 'xz'],
+    ['zipfile', 'zip'],
+    ['tarfile', 'tar']
+  ])('withdraws inferred %s export authority', async (namespace, suffix) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: [namespace]
+    }
+    const source = `import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\nframe=pd.DataFrame({"x":[1.,2.]})\npath="old.txt"\nframe.to_csv("export.csv.${suffix}",index=False)\nafter=np.load("cache.npy")\nopen(path)`
+    const facts = (await analyzePythonNotebookSource(source, context)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source, context)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("out.bin",compression={"method":"gzip","mtime":0})',
+    'frame=pd.Series([1.,2.])\nframe.to_csv("out.bin",compression="gzip")',
+    'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_json("out.json.gz")',
+    'frame.to_csv("out.csv.gz")',
+    'frame.to_json("out.json.gz")',
+    'frame.to_csv("out.bin",compression=codec)',
+    'frame.to_csv("out.bin",**options)'
+  ])('keeps known and unresolved compressed receivers conservative: %s', async (exporter) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    const source = 'import pandas as pd\n' + exporter
+    expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([false, true])(
+    'keeps failed codec export paths uncertain through replay (%s)',
+    async (precompute) => {
+      const scripts = [
+        'import gzip,pandas as pd\npath="old.txt"',
+        'gzip.GzipFile=replacement\nraise RuntimeError()',
+        'frame=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("out.csv.gz")'
+      ]
+      const context = await fileContext(
+        'python',
+        scripts,
+        [{}, { status: 'failed' as const, kernelDispatched: true }],
+        precompute
+      )
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'open(path)', context)).reads
+      ).not.toContain('old.txt')
+    }
+  )
+  it.each([
+    'frame.to_csv("out.csv")',
+    'frame.to_csv("out.csv.gz",compression=None)',
+    'frame.to_csv("out.csv.gz",compression={"method":None})',
+    'frame.to_csv("out.csv.bz2")',
+    'frame.to_csv("out.csv.xz")',
+    'frame.to_json("out.json.gz",compression=None)'
+  ])('preserves closed unrelated export precision: %s', async (call) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    const source =
+      'import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\nframe=pd.DataFrame({"x":[1.,2.]})\n' +
+      call
+    expect(
+      (await analyzePythonNotebookSource(source, context)).facts.serializedValueWrites
+    ).toHaveLength(1)
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+})
+
+describe('pandas compression text-return controls', () => {
+  it.each([
+    'frame.to_csv(compression="gzip")',
+    'frame.to_csv(None,compression="gzip")',
+    'frame.to_json(path_or_buf=None,compression="gzip")'
+  ])('does not infer an opener when returning text: %s', async (call) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    const source =
+      'import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\nframe=pd.DataFrame({"x":[1.,2.]})\n' +
+      call
+    const facts = (await analyzePythonNotebookSource(source, context)).facts
+    expect(facts.state).toBe('available')
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      writeState: 'partial',
+      externalState: 'partial',
+      writes: ['cache.npy']
+    })
+  })
+})
+
+describe('compression constructor writes after lost import proof', () => {
+  it.each([
+    ['gzip', 'GzipFile', 'gz'],
+    ['bz2', 'BZ2File', 'bz2'],
+    ['lzma', 'LZMAFile', 'xz'],
+    ['zipfile', 'ZipFile', 'zip'],
+    ['tarfile', 'TarFile', 'tar']
+  ])(
+    'retains negative %s namespace proof across a prior failure',
+    async (namespace, member, suffix) => {
+      for (const precompute of [false, true]) {
+        const scripts = [
+          `import ${namespace} as codec`,
+          'raise RuntimeError()',
+          `codec.${member}=replacement\nraise RuntimeError()`
+        ]
+        const context = await fileContext(
+          'python',
+          scripts,
+          [
+            {},
+            { status: 'failed' as const, kernelDispatched: true },
+            { status: 'failed' as const, kernelDispatched: true }
+          ],
+          precompute
+        )
+        expect(context?.pythonTaintedNamespaces).toContain(namespace)
+        const source = `import pandas as pd\nframe=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("out.csv.${suffix}")`
+        expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+        expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+          writeState: 'partial',
+          externalState: 'partial'
+        })
+      }
+    }
+  )
+  it.each(['native=unknown.GzipFile', 'def later():\n    unknown.GzipFile=replacement'])(
+    'does not treat a read or deferred write as a constructor replacement: %s',
+    async (source) => {
+      const context = await fileContext('python', [source])
+      expect(context?.pythonTaintedNamespaces ?? []).not.toContain('gzip')
+    }
+  )
+})
+
+describe('reflective compression constructor writes', () => {
+  it.each([
+    ['gzip', 'GzipFile', 'gz'],
+    ['bz2', 'BZ2File', 'bz2'],
+    ['lzma', 'LZMAFile', 'xz'],
+    ['zipfile', 'ZipFile', 'zip'],
+    ['tarfile', 'TarFile', 'tar']
+  ])(
+    'retains possible %s mutations after import proof is lost',
+    async (namespace, member, suffix) => {
+      for (const operation of ['setattr', 'delattr'])
+        for (const precompute of [false, true]) {
+          const mutation = `${operation}(codec,"${member}"${operation === 'setattr' ? ',replacement' : ''})`
+          const scripts = [
+            `import ${namespace} as codec`,
+            'raise RuntimeError()',
+            mutation + '\nraise RuntimeError()'
+          ]
+          const overrides = [
+            {},
+            { status: 'failed' as const, kernelDispatched: true },
+            { status: 'failed' as const, kernelDispatched: true }
+          ]
+          const context = await fileContext('python', scripts, overrides, precompute)
+          expect(context?.pythonTaintedNamespaces).toContain(namespace)
+          const source = `import pandas as pd\nframe=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("out.csv.${suffix}")`
+          expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+          expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+            writeState: 'partial',
+            externalState: 'partial'
+          })
+        }
+    }
+  )
+  it.each([
+    'setattr(codec,"GzipFile",replacement)',
+    'delattr(codec,"GzipFile")',
+    'builtins.setattr(codec,"GzipFile",replacement)'
+  ])('withdraws same-source content and paths after %s', async (mutation) => {
+    const source =
+      'import builtins,numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\n' +
+      mutation +
+      '\nframe=pd.DataFrame({"x":[1.,2.]})\nframe.to_csv("out.csv.gz")\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    'getattr(codec,"GzipFile")',
+    'hasattr(codec,"GzipFile")',
+    'setattr(codec,"unrelated",replacement)',
+    'def later():\n    setattr(codec,"GzipFile",replacement)'
+  ])('does not infer a constructor replacement for %s', async (source) => {
+    const context = await fileContext('python', [source])
+    expect(context?.pythonTaintedNamespaces ?? []).not.toContain('gzip')
+  })
+})
+
+describe('pandas JSON reader delegation and input contract', () => {
+  it.each([
+    ['gzip', 'gz'],
+    ['bz2', 'bz2'],
+    ['lzma', 'xz'],
+    ['zipfile', 'zip'],
+    ['tarfile', 'tar'],
+    ['builtins', 'json']
+  ])('withdraws JSON codec/opener proof for %s', async (namespace, suffix) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: [namespace]
+    }
+    const source = `import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\nframe=pd.read_json("input.${suffix}",orient="records")\nafter=np.load("cache.npy")\nopen(path)`
+    const facts = (await analyzePythonNotebookSource(source, context)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' })
+    )
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source, context)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    'import pandas as pd\nframe=pd.read_json(path_or_buf="input.json",orient="records")',
+    'from pandas import read_json as load_json\nframe=load_json(path_or_buf="input.json",orient="records")'
+  ])('records the canonical JSON keyword input: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: ['input.json']
+    })
+  })
+  it.each([
+    'pd.read_json(path_or_buf="input.gz",compression={"method":"gzip"})',
+    'pd.read_json("input.json",compression="gzip")',
+    'pd.read_json("input.json",**options)',
+    'pd.read_json(path_or_buf=path,compression=None)',
+    'pd.read_json(path_or_buf="https://example.test/data",compression=None)'
+  ])('does not certify unresolved or overridden JSON compression: %s', async (call) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'import pandas as pd\n' + call, context)
+    ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+  })
+  it.each([
+    'pd.read_json(path_or_buf="input.json")',
+    'pd.read_json(path_or_buf="input.json.gz",compression=None)',
+    'pd.read_json(path_or_buf="input.json.gz",compression={"method":None})',
+    'pd.read_json(path_or_buf="input.json.bz2")'
+  ])('preserves closed unrelated JSON reader inputs: %s', async (call) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    const io = await analyzeNotebookSourceFileAccess(
+      'python',
+      'import pandas as pd\n' + call,
+      context
+    )
+    expect(io).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect(io.reads).toHaveLength(1)
+  })
+  it.each([false, true])(
+    'keeps failed JSON codec mutations through replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        [
+          'import gzip as codec',
+          'raise RuntimeError()',
+          'setattr(codec,"GzipFile",replacement)\nraise RuntimeError()'
+        ],
+        [
+          {},
+          { status: 'failed' as const, kernelDispatched: true },
+          { status: 'failed' as const, kernelDispatched: true }
+        ],
+        precompute
+      )
+      const source = 'import pandas as pd\nframe=pd.read_json(path_or_buf="input.json.gz")'
+      expect(
+        (await analyzePythonNotebookSource(source, context)).facts.typeBindings
+      ).not.toContainEqual(
+        expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' })
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+})
+
+describe('fixed-width parser callback and delegate boundaries', () => {
+  const setup =
+    'import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\n'
+  it.each([
+    'pd.read_fwf("input.fwf",converters={"waiting":convert})',
+    'pd.read_fwf(filepath_or_buffer="input.fwf",converters=converters)',
+    'pd.read_fwf("input.fwf",usecols=select)',
+    'pd.read_fwf("input.fwf",skiprows=skip)',
+    'pd.read_fwf("input.fwf",on_bad_lines=repair)',
+    'pd.read_fwf("input.fwf",**options)',
+    'pd.read_fwf("input.fwf",None,convert)',
+    'read("input.fwf",converters={"waiting":convert})'
+  ])('withdraws old content and paths after parser callbacks: %s', async (call) => {
+    const source =
+      setup +
+      'from pandas import read_fwf as read\nframe=' +
+      call +
+      '\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: expect.arrayContaining(['input.fwf'])
+    })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    '',
+    ',converters=None',
+    ',converters={}',
+    ',usecols=[0,1],skiprows=0,on_bad_lines="error"'
+  ])('preserves closed fixed-width reads: %s', async (options) => {
+    const source =
+      setup +
+      'frame=pd.read_fwf(filepath_or_buffer="input.fwf",widths=[12,12]' +
+      options +
+      ')\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites).toHaveLength(1)
+    expect(facts.typeBindings).toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: expect.arrayContaining(['input.fwf', 'old.txt'])
+    })
+  })
+  it.each([
+    ['gzip', 'gz'],
+    ['bz2', 'bz2'],
+    ['lzma', 'xz'],
+    ['zipfile', 'zip'],
+    ['tarfile', 'tar'],
+    ['builtins', 'txt']
+  ])('withdraws fixed-width delegated proof for %s', async (namespace, suffix) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: [namespace]
+    }
+    const source =
+      setup +
+      `frame=pd.read_fwf("input.${suffix}",widths=[12,12])\nafter=np.load("cache.npy")\nopen(path)`
+    const facts = (await analyzePythonNotebookSource(source, context)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    for (const target of ['frame', 'after'])
+      expect(facts.typeBindings).not.toContainEqual(
+        expect.objectContaining({
+          target,
+          typeName: target === 'frame' ? 'pandas.DataFrame' : 'numpy.ndarray'
+        })
+      )
+    const io = await analyzeNotebookSourceFileAccess('python', source, context)
+    expect(io).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each(['pd.read_fwf("input.gz",compression=None)', 'pd.read_fwf("input.bz2")'])(
+    'preserves unrelated compression: %s',
+    async (call) => {
+      const context: NotebookSourceFileAccessContext = {
+        staticStrings: [],
+        staticCollections: [],
+        localFileWrappers: [],
+        pythonTaintedNamespaces: ['gzip']
+      }
+      expect(
+        await analyzeNotebookSourceFileAccess('python', 'import pandas as pd\n' + call, context)
+      ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+    }
+  )
+  it.each([false, true])(
+    'revokes file proof through cross-cell replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        [setup + 'frame=pd.read_fwf("input.fwf",converters={"waiting":convert})'],
+        [],
+        precompute
+      )
+      expect(context?.verifiedSerializedValues ?? []).toEqual([])
+      expect(
+        (await analyzePythonNotebookSource('after=np.load("cache.npy")', context)).facts
+          .typeBindings
+      ).not.toContainEqual(expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' }))
+    }
+  )
+  it('does not retain a CSV path that the shared parser callback can rebind', async () => {
+    const source =
+      'import pandas as pd\npath="old.txt"\nframe=pd.read_csv("input.csv",converters={"x":convert})\nopen(path)'
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io.reads).toContain('input.csv')
+    expect(io.reads).not.toContain('old.txt')
+    expect(io).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+  })
+})
+
+describe('table parser callback proof boundaries', () => {
+  const setup =
+    'import numpy as np,pandas as pd\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\n'
+  it.each([
+    'pd.read_table("input.tsv",skiprows=choose)',
+    'pd.read_table(filepath_or_buffer="input.tsv",converters={"waiting":convert})',
+    'pd.read_table("input.tsv",converters=converters)',
+    'pd.read_table("input.tsv",usecols=choose)',
+    'pd.read_table("input.tsv",on_bad_lines=repair)',
+    'pd.read_table("input.tsv",**options)',
+    'pd.read_table("input.tsv",None,choose)',
+    'load("input.tsv",skiprows=choose)'
+  ])('withdraws content/path proof at table parser callbacks: %s', async (call) => {
+    const source =
+      setup +
+      'from pandas import read_table as load\nframe=' +
+      call +
+      '\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: expect.arrayContaining(['input.tsv'])
+    })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    '',
+    ',skiprows=0,usecols=["eruptions","waiting"]',
+    ',converters=None',
+    ',converters={},on_bad_lines="skip"'
+  ])('keeps closed table parser options precise: %s', async (options) => {
+    const source =
+      setup +
+      'frame=pd.read_table(filepath_or_buffer="input.tsv"' +
+      options +
+      ')\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites).toHaveLength(1)
+    expect(facts.typeBindings).toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: expect.arrayContaining(['input.tsv', 'old.txt'])
+    })
+  })
+  it.each([false, true])(
+    'does not revive table-callback cache content on replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        [setup + 'frame=pd.read_table("input.tsv",skiprows=choose)'],
+        [],
+        precompute
+      )
+      expect(context?.verifiedSerializedValues ?? []).toEqual([])
+      expect(
+        (await analyzePythonNotebookSource('after=np.load("cache.npy")', context)).facts
+          .typeBindings
+      ).not.toContainEqual(expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' }))
+    }
+  )
+})
+
+describe('XML stylesheet input and effect boundaries', () => {
+  const setup =
+    'import pandas as pd,numpy as np\nfrom pandas import read_xml as load\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\nsheet="transform.xsl"\n'
+  it.each([
+    ['pd.read_xml("input.xml",stylesheet="transform.xsl")', true],
+    ['pd.read_xml(path_or_buffer="input.xml",stylesheet="transform.xsl")', true],
+    ['load("input.xml",stylesheet=sheet)', true],
+    ['pd.read_xml("input.xml",**options)', false],
+    ['pd.read_xml("input.xml",None,sheet)', false],
+    ['pd.read_xml("input.xml",stylesheet=unknown_sheet)', false]
+  ])('withdraws content/path proof at XSLT execution: %s', async (call, knownSheet) => {
+    const source = setup + 'frame=' + call + '\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: expect.arrayContaining(['input.xml'])
+    })
+    expect(io.reads).not.toContain('old.txt')
+    if (knownSheet) expect(io.reads).toContain('transform.xsl')
+  })
+  it.each(['', ',stylesheet=None', ',parser="etree",stylesheet=None'])(
+    'preserves plain XML reads: %s',
+    async (options) => {
+      const source =
+        setup +
+        'frame=pd.read_xml("input.xml"' +
+        options +
+        ')\nafter=np.load("cache.npy")\nopen(path)'
+      const facts = (await analyzePythonNotebookSource(source)).facts
+      expect(facts.serializedValueWrites).toHaveLength(1)
+      expect(facts.typeBindings).toContainEqual(
+        expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: expect.arrayContaining(['input.xml', 'old.txt'])
+      })
+    }
+  )
+  it.each(['StringIO("<xsl:stylesheet/>")', 'BytesIO(b"<xsl:stylesheet/>")'])(
+    'does not invent a filename from an in-memory stylesheet: %s',
+    async (buffer) => {
+      const source =
+        'import pandas as pd\nfrom io import StringIO,BytesIO\nframe=pd.read_xml("input.xml",stylesheet=' +
+        buffer +
+        ')'
+      const io = await analyzeNotebookSourceFileAccess('python', source)
+      expect(io).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+      expect(io.reads).toContain('input.xml')
+      expect(io.reads).not.toContain('<xsl:stylesheet/>')
+    }
+  )
+  it.each([false, true])(
+    'does not revive array proof after stylesheet execution (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        [setup + 'frame=pd.read_xml("input.xml",stylesheet="transform.xsl")'],
+        [],
+        precompute
+      )
+      expect(context?.verifiedSerializedValues ?? []).toEqual([])
+      expect(
+        (await analyzePythonNotebookSource('after=np.load("cache.npy")', context)).facts
+          .typeBindings
+      ).not.toContainEqual(expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' }))
+    }
+  )
+})
+
+describe('R default table conversion method boundaries', () => {
+  const setup = 'base::saveRDS(c(1,2),"cache.rds")\npath<-"old.txt"\n'
+  const method =
+    'type.convert.character <- function(x,...) { path<<-"new.txt";base::saveRDS(c(9,8),"cache.rds");stop("conversion failed") }\n'
+  it.each([
+    'utils::read.csv("input.csv")',
+    'read.csv("input.csv")',
+    'utils::read.csv2("input.csv")',
+    'utils::read.delim("input.csv")',
+    'utils::read.delim2("input.csv")',
+    'utils::read.table("input.csv",header=TRUE)',
+    'utils::read.csv("input.csv",colClasses=NA)',
+    'utils::read.csv("input.csv",colClasses=c("numeric",NA))'
+  ])('withdraws file/path proof through default S3 dispatch: %s', async (call) => {
+    const source =
+      setup +
+      method +
+      'paired<-' +
+      call +
+      '\nafter<-base::readRDS("cache.rds")\nbase::readLines(path)'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    const io = await analyzeNotebookSourceFileAccess('r', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).toContain('cache.rds')
+    expect(io.reads).toContain('input.csv')
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    ',colClasses="numeric"',
+    ',colClasses=c("numeric","numeric")',
+    ',colClasses=c(a="integer",b="double")'
+  ])('keeps explicit primitive conversion proof despite an unused method: %s', async (options) => {
+    const source =
+      setup + method + 'paired<-utils::read.csv("input.csv"' + options + ')\nbase::readLines(path)'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    const io = await analyzeNotebookSourceFileAccess('r', source)
+    expect(io).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+    expect(io.reads).toContain('old.txt')
+  })
+  it.each([false, true])(
+    'retains failed default conversion bindings across replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        [method + 'stop("after definition")', setup],
+        [{ status: 'failed' as const, kernelDispatched: true }, {}],
+        precompute
+      )
+      const source =
+        'paired<-utils::read.csv("input.csv")\nbase::readRDS("cache.rds")\nbase::readLines(path)'
+      expect(
+        (await analyzeRNotebookSource(source, context)).facts.serializedValueWrites ?? []
+      ).toEqual([])
+      const io = await analyzeNotebookSourceFileAccess('r', source, context)
+      expect(io).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+      expect(io.reads).toContain('cache.rds')
+      expect(io.reads).not.toContain('old.txt')
+      const control = await analyzeNotebookSourceFileAccess(
+        'r',
+        'paired<-utils::read.csv("input.csv",colClasses="numeric")',
+        context
+      )
+      expect(control).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['input.csv']
+      })
+    }
+  )
+})
+
+describe('R table column coercion proof boundaries', () => {
+  const setup = 'base::saveRDS(c(1,2),"cache.rds")\npath<-"old.txt"\n'
+  it.each([
+    'utils::read.csv("input.csv",colClasses="AuditWaiting")',
+    'utils::read.csv("input.csv",colClasses=c("numeric","AuditWaiting"))',
+    'utils::read.csv(file="input.csv",colC="AuditWaiting")',
+    'utils::read.csv2("input.csv",colClasses=classes)',
+    'utils::read.delim("input.csv",colClasses="AuditWaiting")',
+    'utils::read.delim2("input.csv",colClasses="AuditWaiting")',
+    'utils::read.table("input.csv",colClasses="AuditWaiting")',
+    'read.csv("input.csv",colClasses="AuditWaiting")',
+    'utils::read.table("input.csv",TRUE,",","",".","allow.loss",NULL,NULL,FALSE,TRUE,"NA","AuditWaiting")',
+    'utils::read.csv("input.csv",colClasses="numeric",colClasses="AuditWaiting")',
+    'utils::read.csv("input.csv",...)'
+  ])('withdraws serialized/path proof at class coercion: %s', async (call) => {
+    const source =
+      setup + 'frame<-' + call + '\nafter<-base::readRDS("cache.rds")\nbase::readLines(path)'
+    const facts = (await analyzeRNotebookSource(source)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    const io = await analyzeNotebookSourceFileAccess('r', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).toContain('cache.rds')
+    expect(io.reads).not.toContain('old.txt')
+    if (!call.endsWith('...)')) expect(io.reads).toContain('input.csv')
+  })
+  it.each([
+    '',
+    ',colClasses="numeric"',
+    ',colClasses=c("numeric","integer")',
+    ',colClasses=NA',
+    ',colClasses=c(waiting="numeric",eruptions=NA)',
+    ',colClasses="real"'
+  ])('preserves closed primitive column options: %s', async (options) => {
+    const source =
+      setup +
+      'frame<-utils::read.csv("input.csv"' +
+      options +
+      ')\nafter<-base::readRDS("cache.rds")\nbase::readLines(path)'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: expect.arrayContaining(['input.csv', 'old.txt'])
+    })
+  })
+  it.each([false, true])(
+    'does not revive coerced RDS proof across cells (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        [setup + 'frame<-utils::read.csv("input.csv",colClasses="AuditWaiting")'],
+        [],
+        precompute
+      )
+      expect(context?.verifiedSerializedValues ?? []).toEqual([])
+      const io = await analyzeNotebookSourceFileAccess(
+        'r',
+        'base::readRDS("cache.rds")\nbase::readLines(path)',
+        context
+      )
+      expect(io.reads).toContain('cache.rds')
+      expect(io.reads).not.toContain('old.txt')
+    }
+  )
+})
+
+describe('XML reader delegated codec boundaries', () => {
+  const context = (namespace: string): NotebookSourceFileAccessContext => ({
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonTaintedNamespaces: [namespace]
+  })
+  it.each([
+    ['gzip', 'gz'],
+    ['bz2', 'bz2'],
+    ['lzma', 'xz'],
+    ['zipfile', 'zip'],
+    ['tarfile', 'tar']
+  ])('withdraws content and paths through replaced %s', async (namespace, suffix) => {
+    const source =
+      'import pandas as pd,numpy as np\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\nframe=pd.read_xml(path_or_buffer="input.xml.' +
+      suffix +
+      '",parser="etree",stylesheet=None)\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source, context(namespace))).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    for (const target of ['frame', 'after'])
+      expect(facts.typeBindings).not.toContainEqual(
+        expect.objectContaining({
+          target,
+          typeName: target === 'frame' ? 'pandas.DataFrame' : 'numpy.ndarray'
+        })
+      )
+    const io = await analyzeNotebookSourceFileAccess('python', source, context(namespace))
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect(io.reads).toContain('input.xml.' + suffix)
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    'pd.read_xml("input.xml",compression="gzip")',
+    'pd.read_xml(path_or_buffer="input.xml",compression={"method":"gzip"})',
+    'pd.read_xml(path_or_buffer=path,compression=None)',
+    'pd.read_xml("input.xml",**options)',
+    'pd.read_xml("input.xml",compression="gzip",compression=None)'
+  ])('keeps explicit/ambiguous codec calls conservative: %s', async (call) => {
+    const source = 'import pandas as pd\nframe=' + call
+    expect(
+      (await analyzePythonNotebookSource(source, context('gzip'))).facts.typeBindings
+    ).not.toContainEqual(expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' }))
+    expect(await analyzeNotebookSourceFileAccess('python', source, context('gzip'))).toMatchObject({
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'pd.read_xml("input.xml")',
+    'pd.read_xml(path_or_buffer="input.xml.gz",compression=None)',
+    'pd.read_xml("input.xml.gz",compression={"method":None})',
+    'pd.read_xml(path_or_buffer="input.xml.bz2")'
+  ])('preserves closed codec precision: %s', async (call) => {
+    const source = 'import pandas as pd\nframe=' + call
+    expect(
+      (await analyzePythonNotebookSource(source, context('gzip'))).facts.typeBindings
+    ).toContainEqual(expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' }))
+    expect(await analyzeNotebookSourceFileAccess('python', source, context('gzip'))).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+  it('does not certify an XML reader with a replaced builtin opener', async () => {
+    const source =
+      'import pandas as pd\nframe=pd.read_xml(path_or_buffer="input.xml",parser="etree")'
+    expect(
+      (await analyzePythonNotebookSource(source, context('builtins'))).facts.typeBindings
+    ).not.toContainEqual(expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' }))
+    expect(
+      await analyzeNotebookSourceFileAccess('python', source, context('builtins'))
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['input.xml']
+    })
+  })
+  it.each([false, true])(
+    'retains failed XML codec mutation through replay (%s)',
+    async (precompute) => {
+      const ctx = await fileContext(
+        'python',
+        [
+          'import gzip as codec',
+          'raise RuntimeError()',
+          'setattr(codec,"GzipFile",replacement)\nraise RuntimeError()'
+        ],
+        [
+          {},
+          { status: 'failed' as const, kernelDispatched: true },
+          { status: 'failed' as const, kernelDispatched: true }
+        ],
+        precompute
+      )
+      const source =
+        'import pandas as pd\nframe=pd.read_xml(path_or_buffer="input.xml.gz",stylesheet=None)'
+      expect(
+        (await analyzePythonNotebookSource(source, ctx)).facts.typeBindings
+      ).not.toContainEqual(
+        expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' })
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, ctx)).toMatchObject({
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: ['input.xml.gz']
+      })
+    }
+  )
+})
+
+describe('XML converter proof boundaries', () => {
+  const setup =
+    'import numpy as np,pandas as pd\nfrom pandas import read_xml as load\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\n'
+  it.each([
+    'pd.read_xml("input.xml",converters={"waiting":convert})',
+    'pd.read_xml(path_or_buffer="input.xml",stylesheet=None,converters={"waiting":convert})',
+    'pd.read_xml("input.xml",parser="etree",converters={"waiting":convert})',
+    'pd.read_xml("input.xml",converters=converters)',
+    'load("input.xml",converters={"waiting":convert})',
+    'pd.read_xml("input.xml",converters={"waiting":convert},converters={})',
+    'pd.read_xml("input.xml",**options)',
+    'pd.read_xml("input.xml",None,convert)'
+  ])('withdraws content/path proof at XML conversion: %s', async (call) => {
+    const source = setup + 'frame=' + call + '\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: expect.arrayContaining(['input.xml'])
+    })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    '',
+    ',converters=None',
+    ',converters={}',
+    ',stylesheet=None,converters=None',
+    ',parser="etree",stylesheet=None,converters={}'
+  ])('keeps closed XML conversion precise: %s', async (options) => {
+    const source =
+      setup +
+      'frame=pd.read_xml("input.xml"' +
+      options +
+      ')\nafter=np.load("cache.npy")\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites).toHaveLength(1)
+    expect(facts.typeBindings).toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: expect.arrayContaining(['input.xml', 'old.txt'])
+    })
+  })
+  it.each([false, true])(
+    'does not revive XML-converter cache content on replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        [setup + 'frame=pd.read_xml("input.xml",stylesheet=None,converters={"waiting":convert})'],
+        [],
+        precompute
+      )
+      expect(context?.verifiedSerializedValues ?? []).toEqual([])
+      expect(
+        (await analyzePythonNotebookSource('after=np.load("cache.npy")', context)).facts
+          .typeBindings
+      ).not.toContainEqual(expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' }))
+    }
+  )
+  it.each(['None', '{}'])(
+    'does not close XSLT through empty converters: %s',
+    async (converters) => {
+      const source =
+        setup +
+        'frame=pd.read_xml("input.xml",stylesheet="transform.xsl",converters=' +
+        converters +
+        ')'
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: expect.arrayContaining(['input.xml', 'transform.xsl'])
+      })
+    }
+  )
+})
+
+describe('R optimization callback file authority', () => {
+  it.each([
+    'stats::optim(70,objective,method="BFGS")',
+    'stats::optim(par=70,fn=objective,method="BFGS")',
+    'optim(70,objective,method="BFGS")',
+    'stats::optim(fn=objective,par=70)',
+    'stats::optim(70,function(x) { path <<- "new.txt"; x*x })',
+    'stats::optim(70,"objective")',
+    'stats::optim(70,objective,method="Nelder-Mead")',
+    'stats::optim(70,function(x) sum(x*x),gr=gradient,method="BFGS")'
+  ])('withdraws old caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('does not suppress a cache read using a pre-objective producer', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- stats::optim(70,objective)\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive a producer from a lazy optimization argument', async () => {
+    const source =
+      'result <- stats::optim(70,objective,extra=base::saveRDS(c(1,2),"cache.rds"))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('preserves cache proof when the optimization closure is not called', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\npath <- "old.txt"\nlater <- function() stats::optim(70,objective)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves caller paths for a local pure replacement', async () => {
+    const source =
+      'optim <- function(...) 1\npath <- "old.txt"\nresult <- optim(70,objective)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it('preserves a literal path assigned after optimization', async () => {
+    const source =
+      'result <- stats::optim(70,objective)\npath <- "after.txt"\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('after.txt')
+  })
+  it('withdraws caller collection paths after optimization', async () => {
+    const source =
+      'paths <- c("old.txt","other.txt")\nresult <- stats::optim(70,objective)\nbase::readLines(paths[1])'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it.each([false, true])('keeps failed objective history uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'result <- stats::optim(70,objective)'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+})
+
+describe('R scalar optimization callback file authority', () => {
+  it.each([
+    'stats::optimize(objective,c(.1,5))',
+    'stats::optimize(f=objective,interval=c(.1,5))',
+    'optimize(objective,c(.1,5))',
+    'stats::optimize(upper=5,f=objective,lower=.1)',
+    'stats::optimize(function(x) { path <<- "new.txt"; x*x },c(-1,1))',
+    'stats::optimize(objective,c(.1,5),maximum=TRUE)'
+  ])('withdraws old caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('does not suppress a cache read using a pre-callback producer', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- stats::optimize(objective,c(.1,5))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive a producer from a lazy scalar optimization argument', async () => {
+    const source =
+      'result <- stats::optimize(objective,c(.1,5),extra=base::saveRDS(c(1,2),"cache.rds"))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('preserves cache proof when the scalar optimization closure is not called', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\npath <- "old.txt"\nlater <- function() stats::optimize(objective,c(.1,5))\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves caller paths for a local pure replacement', async () => {
+    const source =
+      'optimize <- function(...) 1\npath <- "old.txt"\nresult <- optimize(objective,c(.1,5))\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it('preserves a literal path assigned after scalar optimization', async () => {
+    const source =
+      'result <- stats::optimize(objective,c(.1,5))\npath <- "after.txt"\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('after.txt')
+  })
+  it('withdraws caller collection paths after scalar optimization', async () => {
+    const source =
+      'paths <- c("old.txt","other.txt")\nresult <- stats::optimize(objective,c(.1,5))\nbase::readLines(paths[1])'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it.each([false, true])('keeps failed objective history uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'result <- stats::optimize(objective,c(.1,5))'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+})
+
+describe('R root-finding callback file authority', () => {
+  it.each([
+    'stats::uniroot(score,c(20,120))',
+    'stats::uniroot(f=score,interval=c(20,120))',
+    'uniroot(score,c(20,120))',
+    'stats::uniroot(upper=120,f=score,lower=20)',
+    'stats::uniroot(function(x) { path <<- "new.txt"; x },c(-1,1))',
+    'stats::uniroot(score,c(20,120),f.lower=-1,f.upper=1)'
+  ])('withdraws old caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('does not suppress a cache read using a pre-callback producer', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- stats::uniroot(score,c(20,120))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive a producer from a lazy root-finding argument', async () => {
+    const source =
+      'result <- stats::uniroot(score,c(20,120),extra=base::saveRDS(c(1,2),"cache.rds"))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('preserves cache proof when the root-finding closure is not called', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\npath <- "old.txt"\nlater <- function() stats::uniroot(score,c(20,120))\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves caller paths for a local pure replacement', async () => {
+    const source =
+      'uniroot <- function(...) 1\npath <- "old.txt"\nresult <- uniroot(score,c(20,120))\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it('preserves a literal path assigned after root-finding', async () => {
+    const source =
+      'result <- stats::uniroot(score,c(20,120))\npath <- "after.txt"\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('after.txt')
+  })
+  it('withdraws caller collection paths after root-finding', async () => {
+    const source =
+      'paths <- c("old.txt","other.txt")\nresult <- stats::uniroot(score,c(20,120))\nbase::readLines(paths[1])'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed root callback history uncertain (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'result <- stats::uniroot(score,c(20,120))'],
+        [{}, { status: 'failed' as const, kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+})
+
+describe('R ave grouped callback authority', () => {
+  it.each([
+    'stats::ave(values,group,FUN=center_group)',
+    'stats::ave(values)',
+    'ave(x=values,group,FUN=center_group)',
+    'stats::ave(values,group,FUN="center_group")',
+    'stats::ave(values,group,FUN=function(z) {path <<- "new.txt";z})'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nstats::ave(values,group,FUN=center_group)',
+    'stats::ave(x={base::saveRDS(c(1,2),"cache.rds");values},group,FUN=center_group)'
+  ])('withdraws producer proof around grouped evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(z) {offset;z}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- stats::ave(values,group,FUN=visit)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- stats::ave(values,group,FUN=function(z) {local_only <- offset;z})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('z')
+  })
+  it.each([false, true])(
+    'keeps failed grouped evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'stats::ave(values,group,FUN=center_group)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() stats::ave(values,group,FUN=center_group)',
+      'factory <- stats::ave',
+      'ave <- function(...) 1\nave(values,group,FUN=center_group)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'stats::ave(values,group,FUN=center_group)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+
+  it.each(['stats::ave(values,group,visit)', 'stats::ave(values,group,FU=visit)'])(
+    'does not invoke a grouping argument as FUN: %s',
+    async (call) => {
+      const { facts } = await analyzeRNotebookSource(
+        'offset <- 3\nvisit <- function(z) {offset;z}\nresult <- ' + call
+      )
+      expect(facts.usedNames).toContain('visit')
+      expect(facts.usedNames).not.toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    }
+  )
+})
+
+describe('R eapply environment callback authority', () => {
+  it.each([
+    'base::eapply(configs,winsor_fit)',
+    'base::eapply(bindings,base::sum,all.names=FALSE,USE.NAMES=FALSE)',
+    'base::eapply(bindings,base::sum)',
+    'eapply(env=configs,FUN=winsor_fit)',
+    'base::eapply(configs,"winsor_fit")',
+    'base::eapply(configs,function(alpha) {path <<- "new.txt";alpha})'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::eapply(configs,winsor_fit)',
+    'base::eapply(env={base::saveRDS(c(1,2),"cache.rds");configs},FUN=winsor_fit)'
+  ])('withdraws producer proof around environment traversal: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting environment result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(alpha) {offset;alpha}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- base::eapply(configs,visit)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::eapply(configs,function(alpha) {local_only <- offset;alpha})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('alpha')
+  })
+  it.each([false, true])(
+    'keeps failed environment traversal history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::eapply(configs,winsor_fit)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() base::eapply(configs,winsor_fit)',
+      'factory <- base::eapply',
+      'eapply <- function(...) 1\neapply(configs,winsor_fit)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::eapply(configs,winsor_fit)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R Position short circuit callback authority', () => {
+  it.each([
+    'base::Position(crossed,records)',
+    'base::Position(base::is.list,records)',
+    'Position(f=crossed,x=records)',
+    'base::Position("crossed",records)',
+    'base::Position(function(record) {path <<- "new.txt";TRUE},records)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::Position(crossed,records)',
+    'base::Position(f=crossed,x={base::saveRDS(c(1,2),"cache.rds");records})'
+  ])('withdraws producer proof around short circuit scan: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(record) {record$cumulative>=offset}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- base::Position(visit,records)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::Position(function(record) {local_only <- offset;TRUE},records)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('record')
+  })
+  it.each([false, true])(
+    'keeps failed short circuit scan history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::Position(crossed,records)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() base::Position(crossed,records)',
+      'factory <- base::Position',
+      'Position <- function(...) 1\nPosition(crossed,records)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::Position(crossed,records)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R Find short circuit callback authority', () => {
+  it.each([
+    'base::Find(crossed,records)',
+    'base::Find(base::is.list,records)',
+    'Find(f=crossed,x=records)',
+    'base::Find("crossed",records)',
+    'base::Find(function(record) {path <<- "new.txt";TRUE},records)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::Find(crossed,records)',
+    'base::Find(f=crossed,x={base::saveRDS(c(1,2),"cache.rds");records})'
+  ])('withdraws producer proof around short circuit scan: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(record) {record$cumulative>=offset}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- base::Find(visit,records)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::Find(function(record) {local_only <- offset;TRUE},records)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('record')
+  })
+  it.each([false, true])(
+    'keeps failed short circuit scan history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::Find(crossed,records)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() base::Find(crossed,records)',
+      'factory <- base::Find',
+      'Find <- function(...) 1\nFind(crossed,records)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::Find(crossed,records)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R mclapply worker callback authority', () => {
+  it.each([
+    'parallel::mclapply(lambdas,fit_ridge,mc.cores=1)',
+    'parallel::mclapply(inputs,base::sum,mc.cores=1)',
+    'mclapply(X=lambdas,FUN=fit_ridge,mc.cores=1)',
+    'parallel::mclapply(lambdas,"fit_ridge",mc.cores=1)',
+    'parallel::mclapply(lambdas,function(lambda) {path <<- "new.txt";lambda},mc.cores=1)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nparallel::mclapply(lambdas,fit_ridge,mc.cores=1)',
+    'parallel::mclapply(X={base::saveRDS(c(1,2),"cache.rds");lambdas},FUN=fit_ridge,mc.cores=1)'
+  ])('withdraws producer proof around worker evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting worker result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(lambda) {offset;lambda}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- parallel::mclapply(lambdas,visit,mc.cores=1)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- parallel::mclapply(lambdas,function(lambda) {local_only <- offset;lambda},mc.cores=1)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('lambda')
+  })
+  it.each([false, true])(
+    'keeps failed worker evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'parallel::mclapply(lambdas,fit_ridge,mc.cores=1)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() parallel::mclapply(lambdas,fit_ridge,mc.cores=1)',
+      'factory <- parallel::mclapply',
+      'mclapply <- function(...) 1\nmclapply(lambdas,fit_ridge,mc.cores=1)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'parallel::mclapply(lambdas,fit_ridge,mc.cores=1)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R mcmapply paired worker authority', () => {
+  it.each([
+    'parallel::mcmapply(fit_worker,taus,shifts,mc.cores=1)',
+    'parallel::mcmapply(base::sum,inputs,offsets,mc.cores=1)',
+    'mcmapply(FUN=fit_worker,tau=taus,shift=shifts,mc.cores=1)',
+    'parallel::mcmapply("fit_worker",taus,shifts,mc.cores=1)',
+    'parallel::mcmapply(function(a,b) {path <<- "new.txt";a+b},taus,shifts,mc.cores=1)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nparallel::mcmapply(fit_worker,taus,shifts,mc.cores=1)',
+    'parallel::mcmapply(FUN=fit_worker,tau={base::saveRDS(c(1,2),"cache.rds");taus},shift=shifts,mc.cores=1)'
+  ])('withdraws producer proof around paired worker evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting paired result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(a,b) {a+b+offset}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') +
+          'result <- parallel::mcmapply(visit,taus,shifts,mc.cores=1)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- parallel::mcmapply(function(a,b) {local_only <- offset;a+b},taus,shifts,mc.cores=1)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('a')
+  })
+  it.each([false, true])(
+    'keeps failed paired worker evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'parallel::mcmapply(fit_worker,taus,shifts,mc.cores=1)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() parallel::mcmapply(fit_worker,taus,shifts,mc.cores=1)',
+      'factory <- parallel::mcmapply',
+      'mcmapply <- function(...) 1\nmcmapply(fit_worker,taus,shifts,mc.cores=1)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'parallel::mcmapply(fit_worker,taus,shifts,mc.cores=1)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R mcMap paired worker authority', () => {
+  it.each([
+    'parallel::mcMap(fit_worker,taus,shifts,mc.cores=1)',
+    'parallel::mcMap(base::sum,inputs,offsets,mc.cores=1)',
+    'mcMap(f=fit_worker,tau=taus,shift=shifts,mc.cores=1)',
+    'parallel::mcMap("fit_worker",taus,shifts,mc.cores=1)',
+    'parallel::mcMap(function(a,b) {path <<- "new.txt";a+b},taus,shifts,mc.cores=1)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nparallel::mcMap(fit_worker,taus,shifts,mc.cores=1)',
+    'parallel::mcMap(f=fit_worker,tau={base::saveRDS(c(1,2),"cache.rds");taus},shift=shifts,mc.cores=1)'
+  ])('withdraws producer proof around paired worker evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting paired result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(a,b) {a+b+offset}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- parallel::mcMap(visit,taus,shifts,mc.cores=1)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- parallel::mcMap(function(a,b) {local_only <- offset;a+b},taus,shifts,mc.cores=1)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('a')
+  })
+  it.each([false, true])(
+    'keeps failed paired worker evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'parallel::mcMap(fit_worker,taus,shifts,mc.cores=1)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() parallel::mcMap(fit_worker,taus,shifts,mc.cores=1)',
+      'factory <- parallel::mcMap',
+      'mcMap <- function(...) 1\nmcMap(fit_worker,taus,shifts,mc.cores=1)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'parallel::mcMap(fit_worker,taus,shifts,mc.cores=1)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R kronecker tensor callback authority', () => {
+  it.each([
+    'base::kronecker(A,B,scaled_product)',
+    'base::kronecker(A,B)',
+    'kronecker(X=A,Y=B,FUN=scaled_product)',
+    'base::kronecker(A,B,"scaled_product")',
+    'base::kronecker(A,B,function(x,y) {path <<- "new.txt";x*y})'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::kronecker(A,B,scaled_product)',
+    'base::kronecker(X={base::saveRDS(c(1,2),"cache.rds");A},Y=B,FUN=scaled_product)'
+  ])('withdraws producer proof around tensor construction: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting tensor ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(x,y) {offset;x*y}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- base::kronecker(A,B,visit)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::kronecker(A,B,function(x,y) {local_only <- offset;x*y})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('x')
+  })
+  it.each([false, true])(
+    'keeps failed tensor construction history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::kronecker(A,B,scaled_product)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() base::kronecker(A,B,scaled_product)',
+      'factory <- base::kronecker',
+      'kronecker <- function(...) 1\nkronecker(A,B,scaled_product)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::kronecker(A,B,scaled_product)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R dendrapply node callback authority', () => {
+  it.each([
+    'stats::dendrapply(tree,annotate_node)',
+    'dendrapply(X=tree,FUN=annotate_node)',
+    'stats::dendrapply(tree,"annotate_node")',
+    'stats::dendrapply(tree,function(node) {path <<- "new.txt";node})'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nstats::dendrapply(tree,annotate_node)',
+    'stats::dendrapply(X={base::saveRDS(c(1,2),"cache.rds");tree},FUN=annotate_node)'
+  ])('withdraws producer proof around node traversal: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting node ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(node) {offset;node}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- stats::dendrapply(tree,visit)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- stats::dendrapply(tree,function(node) {local_only <- offset;node})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('node')
+  })
+  it.each([false, true])(
+    'keeps failed node traversal history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'stats::dendrapply(tree,annotate_node)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() stats::dendrapply(tree,annotate_node)',
+      'factory <- stats::dendrapply',
+      'dendrapply <- function(...) 1\ndendrapply(tree,annotate_node)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'stats::dendrapply(tree,annotate_node)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R combn callback and subset file authority', () => {
+  it.each([
+    'utils::combn(xs,2,FUN=pair_slope)',
+    'combn(x=xs,m=2,FUN=pair_slope,simplify=FALSE)',
+    'utils::combn(FUN=pair_slope,m=2,x=xs)',
+    'utils::combn(xs,2,FUN=function(ij) {path <<- "new.txt";ij+offset})',
+    'utils::combn(xs,0,FUN=pair_slope)',
+    'utils::combn(xs,2,FUN=NULL)',
+    'utils::combn(xs,2)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nutils::combn(xs,2,FUN=pair_slope)',
+    'utils::combn(x={base::saveRDS(c(1,2),"cache.rds");xs},m=2,FUN=pair_slope)'
+  ])('withdraws producer proof around argument traversal: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains lexical captures without certifying callback result ownership', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'offset <- 3\npair_slope <- function(ij) ij-offset\nresult <- utils::combn(xs,2,FUN=pair_slope)'
+    )
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps inline callback locals out of caller definitions', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- utils::combn(xs,2,FUN=function(ij) {local_only <- ij-offset;local_only})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('ij')
+  })
+  it.each([false, true])(
+    'keeps failed combination history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'utils::combn(xs,2,FUN=pair_slope)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('does not recover captures from a failed helper definition', async () => {
+    const context = await fileContext(
+      'r',
+      ['pair_slope <- function(ij) ij-offset\nstop("after definition")'],
+      [{ status: 'failed', kernelDispatched: true }]
+    )
+    const { facts } = await analyzeRNotebookSource('utils::combn(xs,2,FUN=pair_slope)', context)
+    expect(facts.usedNames).toContain('pair_slope')
+    expect(facts.usedNames).not.toContain('offset')
+    expect(facts.state).toBe('unknown')
+  })
+  it('retains captures from a completed prior helper definition', async () => {
+    const context = await fileContext('r', ['offset <- 3\npair_slope <- function(ij) ij-offset'])
+    const { facts } = await analyzeRNotebookSource(
+      'result <- utils::combn(xs,2,FUN=pair_slope)',
+      context
+    )
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.state).toBe('unknown')
+  })
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() utils::combn(xs,2,FUN=pair_slope)',
+      'factory <- utils::combn',
+      'combn <- function(...) 1\ncombn(xs,2,FUN=pair_slope)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'utils::combn(xs,2,FUN=pair_slope)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R rapply recursive callback file authority', () => {
+  it.each([
+    'base::rapply(tree,shrink_leaf,how="replace")',
+    'rapply(object=tree,f=shrink_leaf,classes="numeric",how="list")',
+    'base::rapply(f=shrink_leaf,object=tree,how="unlist")',
+    'base::rapply(tree,shrink_leaf)',
+    'base::rapply(tree,function(x) {path <<- "new.txt";x+offset},how="replace")'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::rapply(tree,shrink_leaf)',
+    'base::rapply(tree,shrink_leaf,deflt={base::saveRDS(c(1,2),"cache.rds");0})'
+  ])('withdraws producer proof around argument traversal: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains lexical reads without granting recursive result ownership', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'offset <- 3\nshrink_leaf <- function(x) x-offset\nresult <- base::rapply(tree,shrink_leaf,how="replace")'
+    )
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps inline callback locals out of caller definitions', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::rapply(tree,function(x) {local_only <- x-offset;local_only})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('x')
+  })
+  it.each([false, true])('keeps failed recursion history conservative (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'base::rapply(tree,shrink_leaf,how="replace")'],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('does not recover captures from a failed helper definition', async () => {
+    const context = await fileContext(
+      'r',
+      ['shrink_leaf <- function(x) x-offset\nstop("after definition")'],
+      [{ status: 'failed', kernelDispatched: true }]
+    )
+    const { facts } = await analyzeRNotebookSource('base::rapply(tree,shrink_leaf)', context)
+    expect(facts.usedNames).toContain('shrink_leaf')
+    expect(facts.usedNames).not.toContain('offset')
+    expect(facts.state).toBe('unknown')
+  })
+  it('retains captures from a completed prior helper definition', async () => {
+    const context = await fileContext('r', ['offset <- 3\nshrink_leaf <- function(x) x-offset'])
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::rapply(tree,shrink_leaf)',
+      context
+    )
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.state).toBe('unknown')
+  })
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() base::rapply(tree,shrink_leaf)',
+      'factory <- base::rapply',
+      'rapply <- function(...) 1\nrapply(tree,shrink_leaf)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::rapply(tree,shrink_leaf)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+  it('does not infer callback purity from a class filter on an unknown tree', async () => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      'path <- "old.txt"\nresult <- base::rapply(tree,shrink_leaf,classes="numeric",how="replace")\nbase::readLines(path)'
+    )
+    expect(facts.state).toBe('unknown')
+    expect(fileAccess?.reads).toEqual([])
+    expect(fileAccess?.unresolvedWrites).toBe(true)
+  })
+})
+
+describe('R by callback file authority', () => {
+  it.each([
+    'base::by(xs,groups,compare_group)',
+    'by(data=xs,INDICES=groups,FUN=compare_group)',
+    'base::by(FUN=compare_group,INDICES=groups,data=xs,simplify=FALSE)',
+    'base::by(xs,groups,"compare_group")',
+    'base::by(xs,groups,function(x) {path <<- "new.txt";x+offset})'
+  ])('withdraws stale caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::by(xs,groups,compare_group)',
+    'base::by(xs,groups,compare_group,extra={base::saveRDS(c(1,2),"cache.rds");1})'
+  ])('withdraws producer proof, including lazy arguments: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains lexical captures without certifying callback result ownership', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'offset <- 3\ncompare_group <- function(x) x+offset\nresult <- base::by(xs,groups,compare_group)'
+    )
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps inline callback locals out of caller definitions and ownership', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::by(xs,groups,function(x) {local_only <- x+offset;local_only})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('x')
+  })
+  it.each([false, true])(
+    'keeps failed invocation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::by(xs,groups,compare_group)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('does not trust a primitive callback with unknown S3 input dispatch', async () => {
+    const { facts, fileAccess } = await analyzeRNotebookSource(
+      'path <- "old.txt"\nresult <- base::by(xs,groups,FUN=base::sum)\nbase::readLines(path)'
+    )
+    expect(facts.state).toBe('unknown')
+    expect(fileAccess?.reads).toEqual([])
+    expect(fileAccess?.unresolvedWrites).toBe(true)
+  })
+  it('does not recover callback captures from a failed definition', async () => {
+    const context = await fileContext(
+      'r',
+      ['compare_group <- function(x) x+offset\nstop("after definition")'],
+      [{ status: 'failed', kernelDispatched: true }]
+    )
+    const { facts } = await analyzeRNotebookSource('base::by(xs,groups,compare_group)', context)
+    expect(facts.usedNames).toContain('compare_group')
+    expect(facts.usedNames).not.toContain('offset')
+    expect(facts.state).toBe('unknown')
+  })
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() base::by(xs,groups,compare_group)',
+      'factory <- base::by',
+      'by <- function(...) 1\nby(xs,groups,compare_group)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::by(xs,groups,compare_group)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R replicate expression file authority', () => {
+  it.each([
+    'base::replicate(4,draw_mean())',
+    'replicate(n=4,expr=draw_mean())',
+    'base::replicate(expr=draw_mean(),n=4,simplify=FALSE)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nvalue <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::replicate(4,draw_mean())',
+    'base::replicate(4,{base::saveRDS(c(1,2),"cache.rds");draw_mean()})'
+  ])('withdraws producer proof even after an expression write: %s', async (prefix) => {
+    const source = prefix + '\nbase::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('keeps expression locals out of caller definitions, ownership and prior reads', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'offset <- 5\nresult <- base::replicate(3,{local_only <- offset+1;local_only})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.state).toBe('unknown')
+  })
+  it('does not export a locally shadowed caller path', async () => {
+    const source =
+      'path <- "old.txt"\nvalue <- base::replicate(3,{path <- "new.txt";path})\nbase::readLines(path)'
+    const { fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual([])
+    expect(fileAccess?.context?.staticStrings ?? []).not.toContainEqual({
+      name: 'path',
+      value: 'new.txt'
+    })
+  })
+  it('preserves proven helper captures without granting a result contract', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'offset <- 5\nstatistic <- function() offset+1\nresult <- base::replicate(3,statistic())'
+    )
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).toContain('statistic')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps unsupported expression bindings opaque rather than exporting them', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::replicate(3,{local_only <- custom();local_only})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.state).toBe('unknown')
+  })
+  it('evaluates the count argument in the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- base::replicate(n={n_outer <- 3;n_outer},expr={local_only <- offset;local_only})'
+    )
+    expect(facts.definedNames).toContain('n_outer')
+    expect(facts.definedNames).not.toContain('local_only')
+  })
+  it('preserves local replacements, dormant calls and post-call literal paths', async () => {
+    for (const prefix of [
+      'replicate <- function(...) 1\nreplicate(3,draw_mean())',
+      'later <- function() base::replicate(3,draw_mean())',
+      'factory <- base::replicate'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::replicate(3,draw_mean())\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+  it.each([false, true])(
+    'keeps failed invocation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::replicate(3,draw_mean())'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'base::replicate(2,attach(list(),name="audit"))',
+    'change_path <- function() attach(list(),name="audit")\nbase::replicate(2,change_path())'
+  ])('retains search-path negative evidence: %s', async (source) => {
+    const context = await fileContext('r', [source])
+    expect(context?.rSearchPathUncertain).toBe(true)
+  })
+  it('does not read nested deferred bodies or export zero-count locals', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'a <- base::replicate(2,function() hidden)\nb <- base::replicate(0,{local_only <- offset;local_only})'
+    )
+    expect(facts.usedNames).not.toContain('hidden')
+    expect(facts.definedNames).not.toContain('local_only')
+  })
+})
+
+describe('R sweep callback file authority', () => {
+  it.each([
+    'base::sweep(xs,2,centers,deviation)',
+    'sweep(x=xs,MARGIN=2,STATS=centers,FUN=deviation)',
+    'base::sweep(FUN=deviation,STATS=centers,x=xs,MARGIN=2)',
+    'base::sweep(xs,2,centers,"deviation")',
+    'base::sweep(xs,2,centers,function(a,b) { path <<- "new.txt"; (a-b)^2 })'
+  ])('withdraws stale caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nvalue <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::sweep(xs,2,centers,FUN=deviation)',
+    'base::sweep(xs,2,centers,FUN=deviation,extra={base::saveRDS(c(1,2),"cache.rds");1})'
+  ])('withdraws producer proof, including lazy arguments: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains the captured exponent without certifying callback return ownership', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'power <- 2\ndeviation <- function(a,b) (a-b)^power\nQ <- base::sweep(xs,2,centers,FUN=deviation)'
+    )
+    expect(facts.usedNames).toContain('power')
+    expect(facts.state).toBe('unknown')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('Q')
+  })
+  it('does not invent a capture summary from a failed definition', async () => {
+    const context = await fileContext(
+      'r',
+      ['deviation <- function(a,b) (a-b)^power\nstop("after definition")'],
+      [{ status: 'failed', kernelDispatched: true }]
+    )
+    const { facts } = await analyzeRNotebookSource(
+      'Q <- base::sweep(xs,2,centers,FUN=deviation)',
+      context
+    )
+    expect(facts.usedNames).toContain('deviation')
+    expect(facts.usedNames).not.toContain('power')
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps dormant bodies from revoking current file proof', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nlater <- function() base::sweep(xs,2,centers,FUN=deviation)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('does not invoke a sweep function value', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nfactory <- base::sweep\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves a pure local replacement and post-call literal paths', async () => {
+    const source =
+      'sweep <- function(...) 1\npath <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nsweep(xs,2,centers,FUN=deviation)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::sweep(xs,2,centers,FUN=deviation)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+  it.each([false, true])(
+    'keeps failed invocation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::sweep(xs,2,centers,FUN=deviation)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('keeps default and primitive callbacks conservative with unknown input dispatch', async () => {
+    for (const call of ['base::sweep(xs,2,centers,FUN="-")', 'base::sweep(xs,2,centers)']) {
+      const { facts, fileAccess } = await analyzeRNotebookSource(
+        'path <- "old.txt"\nvalue <- ' + call + '\nbase::readLines(path)'
+      )
+      expect(facts.state).toBe('unknown')
+      expect(fileAccess?.reads).toEqual([])
+      expect(fileAccess?.unresolvedWrites).toBe(true)
+    }
+  })
+})
+
+describe('R outer callback file authority', () => {
+  it.each([
+    'base::outer(xs,ys,rbf)',
+    'outer(X=xs,Y=ys,FUN=rbf)',
+    'base::outer(FUN=rbf,Y=ys,X=xs)',
+    'base::outer(xs,ys,"rbf")',
+    'base::outer(xs,ys,function(a,b) { path <<- "new.txt"; a+b })'
+  ])('withdraws stale caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nvalue <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nbase::outer(xs,ys,FUN=rbf)',
+    'base::outer(xs,ys,FUN=rbf,extra={base::saveRDS(c(1,2),"cache.rds");1})'
+  ])('withdraws serialized producer proof, including lazy arguments: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains bounded lexical captures without certifying callback values or ownership', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'h <- 0.5\nrbf <- function(a,b) exp(-0.5*((a-b)/h)^2)\nK <- base::outer(xs,ys,FUN=rbf)'
+    )
+    expect(facts.usedNames).toContain('h')
+    expect(facts.state).toBe('unknown')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('K')
+  })
+  it('retains contextual lexical captures after a failed definition', async () => {
+    const context = await fileContext(
+      'r',
+      ['rbf <- function(a,b) exp(-0.5*((a-b)/h)^2)\nstop("after definition")'],
+      [{ status: 'failed', kernelDispatched: true }]
+    )
+    const { facts } = await analyzeRNotebookSource('K <- base::outer(xs,ys,FUN=rbf)', context)
+    expect(facts.usedNames).toContain('rbf')
+    // A failed definition is not a completed callback summary; do not invent h.
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps deferred bodies from revoking current file proof', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nlater <- function() base::outer(xs,ys,FUN=rbf)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves a pure local replacement and post-call literal paths', async () => {
+    const source =
+      'outer <- function(...) 1\npath <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nouter(xs,ys,FUN=rbf)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::outer(xs,ys,FUN=rbf)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+  it.each([false, true])(
+    'keeps failed invocation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::outer(xs,ys,FUN=rbf)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('does not certify unknown input dispatch with a built-in callback or the product default', async () => {
+    for (const call of ['base::outer(xs,ys,FUN="+")', 'base::outer(xs,ys)']) {
+      const { facts, fileAccess } = await analyzeRNotebookSource(
+        'path <- "old.txt"\nvalue <- ' + call + '\nbase::readLines(path)'
+      )
+      expect(facts.state).toBe('unknown')
+      expect(fileAccess?.reads).toEqual([])
+      expect(fileAccess?.unresolvedWrites).toBe(true)
+    }
+  })
+})
+
+describe('R apply callback file authority', () => {
+  it.each([
+    'base::apply(counts,1,diversity)',
+    'apply(X=counts,MARGIN=1,FUN=diversity)',
+    'base::apply(FUN=diversity,X=counts,MARGIN=2,simplify=FALSE)',
+    'base::apply(counts,1,function(v) { path <<- "new.txt"; sum(v) })',
+    'base::apply(counts,1,"diversity")'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('revokes prior and nested serialized producer proof', async () => {
+    for (const source of [
+      'base::saveRDS(c(1,2),"cache.rds")\nbase::apply(counts,1,diversity)\nbase::readRDS("cache.rds")',
+      'base::apply(counts,1,diversity,extra={base::saveRDS(c(1,2),"cache.rds");1})\nbase::readRDS("cache.rds")'
+    ]) {
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    }
+  })
+  it('retains lexical callback reads', async () => {
+    expect(
+      (
+        await analyzeRNotebookSource(
+          'offset <- 2\nformatter <- function(v) sum(v)+offset\nbase::apply(counts,1,formatter)'
+        )
+      ).facts.usedNames
+    ).toContain('offset')
+  })
+  it('keeps dormant callback bodies from revoking proof', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nlater <- function() base::apply(counts,1,diversity)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves local replacements and post-call literal paths', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'apply <- function(...) 1\npath <- "old.txt"\napply(counts,1,diversity)\nbase::readLines(path)'
+        )
+      ).reads
+    ).toContain('old.txt')
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::apply(counts,1,diversity)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toContain('after.txt')
+  })
+  it.each([false, true])(
+    'keeps failed history conservative (precompute=%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'base::apply(counts,1,diversity)'],
+        [{}, { status: 'failed' as const, kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each(['function(v) sum(v)', 'function(v) length(v)'])(
+    'preserves an already proven callback on a closed matrix: %s',
+    async (callback) => {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nbase::apply(matrix(1:6,nrow=2),1,' +
+        callback +
+        ')\nbase::readLines(path)'
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        reads: ['old.txt']
+      })
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+  )
+  it('preserves a contextual proven callback on a closed matrix', async () => {
+    const context = await fileContext('r', ['formatter <- function(v) sum(v)'])
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nbase::apply(matrix(1:6,nrow=2),1,formatter)\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+  })
+  it('does not widen the existing mean or result ownership contract', async () => {
+    const source =
+      'path <- "old.txt"\nresult <- base::apply(matrix(1:6,nrow=2),1,function(v) mean(v))\nbase::readLines(path)'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(facts.state).toBe('unknown')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    expect(fileAccess?.reads).toEqual([])
+  })
+  it.each(['base::readRDS("counts.rds")', 'structure(matrix(1:6,nrow=2),class="custom")'])(
+    'keeps input coercion uncertain despite a read-only callback: %s',
+    async (input) => {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nbase::apply(' +
+        input +
+        ',1,sum)\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+      const { facts, fileAccess } = await analyzeRNotebookSource(source)
+      expect(fileAccess?.reads).not.toContain('old.txt')
+      expect(fileAccess?.reads).toContain('cache.rds')
+      expect(fileAccess?.unresolvedWrites).toBe(true)
+      expect(facts.serializedValueWrites ?? []).toEqual([])
+    }
+  )
+  it('does not borrow an identical earlier call proof after rebinding', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nformatter <- function(v) sum(v)\nbase::apply(matrix(1:6,nrow=2),1,formatter)\nformatter <- function(v) { path <<- "new.txt"; v }\nbase::apply(matrix(1:6,nrow=2),1,formatter)\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('withdraws proof inside a data mask', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\ndplyr::mutate(frame,z=base::apply(counts,1,diversity))\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe.each(['mapply', 'Map'])('R %s callback file authority', (mapper) => {
+  const call = (callback = 'statistic', extra = ''): string =>
+    `base::${mapper}(${mapper === 'mapply' ? 'FUN' : 'f'}=${callback},xs,ys${extra})`
+  it.each(['positional', 'named', 'inline', 'string'])(
+    'withdraws caller paths for an unproved %s callback',
+    async (kind) => {
+      const callback =
+        kind === 'inline'
+          ? 'function(a,b) { path <<- "new.txt"; a }'
+          : kind === 'string'
+            ? '"statistic"'
+            : 'statistic'
+      const expression = kind === 'positional' ? `base::${mapper}(statistic,xs,ys)` : call(callback)
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path <- "old.txt"\nresult <- ' + expression + '\nbase::readLines(path)'
+        )
+      ).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: []
+      })
+    }
+  )
+  it('revokes producer and definite-writer authority', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- ' + call() + '\nbase::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive proof from a lazy extra argument', async () => {
+    const source =
+      'result <- ' +
+      call('statistic', ',extra={base::saveRDS(c(1,2),"cache.rds");1}') +
+      '\nbase::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains lexical callback reads', async () => {
+    expect(
+      (
+        await analyzeRNotebookSource(
+          'offset <- 2\nstatistic <- function(a,b) sum(a,b)+offset\nresult <- ' + call()
+        )
+      ).facts.usedNames
+    ).toContain('offset')
+  })
+  it('preserves authority when a callback is deferred', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nlater <- function() ' +
+      call() +
+      '\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves later literals and local pure replacements', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'result <- ' + call() + '\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toContain('after.txt')
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          mapper +
+            ' <- function(...) 1\npath <- "old.txt"\nresult <- ' +
+            call().replace('base::', '') +
+            '\nbase::readLines(path)'
+        )
+      ).reads
+    ).toContain('old.txt')
+  })
+  it.each([false, true])(
+    'keeps failed history conservative (precompute=%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'result <- ' + call()],
+        [{}, { status: 'failed' as const, kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves a proven contextual read-only callback', async () => {
+    const context = await fileContext('r', [
+      'offset <- 2\nformatter <- function(a,b) sum(a,b)+offset'
+    ])
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- ' +
+      call('formatter').replace('xs', '1:3').replace('ys', '4:6') +
+      '\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+    expect(
+      (await analyzeRNotebookSource(source, context)).facts.serializedValueWrites
+    ).toHaveLength(1)
+  })
+  it('preserves a closed arithmetic callback', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- ' +
+      call('function(a,b) round(a+b)').replace('xs', '1:3').replace('ys', '4:6') +
+      '\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('does not borrow an identical earlier call proof after rebinding', async () => {
+    const expression = call('formatter').replace('xs', '1:3').replace('ys', '4:6')
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nformatter <- function(a,b) round(a+b)\nresult <- ' +
+      expression +
+      '\nformatter <- function(a,b) { path <<- "new.txt"; a }\nresult <- ' +
+      expression +
+      '\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('withdraws proof inside a data mask', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- dplyr::mutate(frame,z=' +
+      call() +
+      ')\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R Reduce callback file authority', () => {
+  it.each([
+    'base::Reduce(step,values,init=initial,accumulate=TRUE)',
+    'Reduce(f=step,x=values,init=initial)',
+    'base::Reduce(x=values,f=step,init=initial,right=TRUE)',
+    'base::Reduce(function(a,b) { path <<- "new.txt"; a },values,init=initial)',
+    'base::Reduce("step",values,init=initial)'
+  ])('withdraws prior caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('revokes prior producer proof and restores a cache read candidate', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- base::Reduce(step,values,init=initial)\nbase::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive proof from a lazy initial value', async () => {
+    const source =
+      'result <- base::Reduce(step,values,init=base::saveRDS(c(1,2),"cache.rds"))\nbase::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains lexical reducer dependencies', async () => {
+    const source =
+      'offset <- 2\nstep <- function(a,b) sum(a,b)+offset\nresult <- base::Reduce(step,values,init=0)'
+    expect((await analyzeRNotebookSource(source)).facts.usedNames).toContain('offset')
+  })
+  it('keeps deferred reductions from revoking proof', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nlater <- function() base::Reduce(step,values,init=initial)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves later literals and local pure replacements', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'result <- base::Reduce(step,values)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toContain('after.txt')
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'Reduce <- function(...) 1\npath <- "old.txt"\nresult <- Reduce(step,values)\nbase::readLines(path)'
+        )
+      ).reads
+    ).toContain('old.txt')
+  })
+  it.each([false, true])('keeps failed history uncertain (precompute=%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'result <- base::Reduce(step,values,init=initial)'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('keeps identical later calls conservative after callback rebinding', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nstep <- function(a,b) round(a+b)\nresult <- base::Reduce(step,1:3,init=0)\nstep <- function(a,b) { path <<- "new.txt"; a }\nresult <- base::Reduce(step,1:3,init=0)\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('withdraws proof inside a data mask', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- dplyr::mutate(frame,z=base::Reduce(step,x,init=initial))\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('preserves a contextual proven read-only reducer', async () => {
+    const context = await fileContext('r', ['offset <- 2\nstep <- function(a,b) sum(a,b)+offset'])
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- base::Reduce(step,1:3,init=0)\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+    expect(
+      (await analyzeRNotebookSource(source, context)).facts.serializedValueWrites
+    ).toHaveLength(1)
+  })
+  it('preserves a directly proven arithmetic reducer', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- base::Reduce(function(a,b) round(a+b),1:3,init=0)\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves the existing bounded set-reduction contract', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nsets <- list(c("a","b"),c("b","c"))\nresult <- base::Reduce(union,sets)\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+})
+
+describe.each(['sapply', 'vapply'])('R %s callback file authority', (mapper) => {
+  const call = (callback = 'statistic', extra = ''): string =>
+    `base::${mapper}(indices,FUN=${callback}${mapper === 'vapply' ? ',FUN.VALUE=numeric(1)' : ''}${extra})`
+  it.each(['plain', 'named', 'inline', 'string'])(
+    'withdraws caller paths for an unproved %s callback',
+    async (kind) => {
+      const callback =
+        kind === 'inline'
+          ? 'function(x) { path <<- "new.txt"; x }'
+          : kind === 'string'
+            ? '"statistic"'
+            : 'statistic'
+      const expression =
+        kind === 'named' ? call(callback).replace('(indices,', '(X=indices,') : call(callback)
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path <- "old.txt"\nresult <- ' + expression + '\nbase::readLines(path)'
+        )
+      ).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: []
+      })
+    }
+  )
+  it('revokes prior serialized producer and definite-writer proof', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- ' + call() + '\nbase::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive proof from a nested lazy argument', async () => {
+    const source =
+      'result <- ' +
+      call('statistic', ',extra=base::saveRDS(c(1,2),"cache.rds")') +
+      '\nbase::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains lexical callback reads', async () => {
+    const source = 'offset <- 2\nstatistic <- function(x) sum(x)+offset\nresult <- ' + call()
+    expect((await analyzeRNotebookSource(source)).facts.usedNames).toContain('offset')
+  })
+  it('keeps dormant callbacks from revoking proof', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\npath <- "old.txt"\nlater <- function() ' +
+      call() +
+      '\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves later literal paths and local pure replacements', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'result <- ' + call() + '\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toContain('after.txt')
+    const source =
+      mapper +
+      ' <- function(...) 1\npath <- "old.txt"\nresult <- ' +
+      call().replace('base::', '') +
+      '\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it.each([false, true])(
+    'keeps failed map history conservative (precompute=%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'result <- ' + call()],
+        [{}, { status: 'failed' as const, kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves a contextual verified read-only callback', async () => {
+    const context = await fileContext('r', [
+      'factor <- 2\nformatter <- function(x) round(x*factor)'
+    ])
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nvalues <- ' +
+      call('formatter').replace('indices', '1:3') +
+      '\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+    expect(
+      (await analyzeRNotebookSource(source, context)).facts.serializedValueWrites
+    ).toHaveLength(1)
+  })
+  it('does not reuse earlier call proof after callback rebinding', async () => {
+    const expression = call('formatter').replace('indices', '1:3')
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nformatter <- function(x) round(x)\nresult <- ' +
+      expression +
+      '\nformatter <- function(x) { path <<- "new.txt"; x }\nresult <- ' +
+      expression +
+      '\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('withdraws proof inside a data mask', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- dplyr::mutate(frame,z=' +
+      call() +
+      ')\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+})
+
+describe('R lapply callback file authority', () => {
+  it.each([
+    'base::lapply(indices,FUN=statistic)',
+    'base::lapply(X=indices,FUN=statistic)',
+    'lapply(indices,statistic)',
+    'base::lapply(FUN=statistic,X=indices)',
+    'base::lapply(indices,function(x) { path <<- "new.txt"; sum(x) })',
+    'base::lapply(indices,FUN="statistic")'
+  ])('withdraws old caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('preserves callback lexical reads while revoking file proof', async () => {
+    const source =
+      'offset <- 2\nstatistic <- function(x) sum(x)+offset\nresult <- base::lapply(indices,FUN=statistic)'
+    expect((await analyzeRNotebookSource(source)).facts.usedNames).toContain('offset')
+  })
+  it('does not suppress a cache read using a pre-callback producer', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- base::lapply(indices,FUN=statistic)\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive a producer from a lazy iteration argument', async () => {
+    const source =
+      'result <- base::lapply(indices,FUN=statistic,extra=base::saveRDS(c(1,2),"cache.rds"))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('preserves cache proof when the iteration closure is not called', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\npath <- "old.txt"\nlater <- function() base::lapply(indices,FUN=statistic)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves caller paths for a local pure replacement', async () => {
+    const source =
+      'lapply <- function(...) 1\npath <- "old.txt"\nresult <- lapply(indices,statistic)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it('preserves a literal path assigned after iteration', async () => {
+    const source =
+      'result <- base::lapply(indices,FUN=statistic)\npath <- "after.txt"\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('after.txt')
+  })
+  it('withdraws caller collection paths after iteration', async () => {
+    const source =
+      'paths <- c("old.txt","other.txt")\nresult <- base::lapply(indices,FUN=statistic)\nbase::readLines(paths[1])'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it.each([false, true])('keeps failed callback history uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'result <- base::lapply(indices,FUN=statistic)'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('does not reuse proof from an identical earlier call after rebinding', async () => {
+    const source = [
+      'path <- "old.txt"',
+      'base::saveRDS(c(1,2),"cache.rds")',
+      'formatter <- function(x) round(x)',
+      'values <- base::lapply(1:3,formatter)',
+      'formatter <- function(x) { path <<- "new.txt"; x }',
+      'values <- base::lapply(1:3,formatter)',
+      'base::readLines(path)',
+      'base::readRDS("cache.rds")'
+    ].join('\n')
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(fileAccess?.unresolvedReads).toBe(true)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not reuse a contextual callback summary after local replacement', async () => {
+    const context = await fileContext('r', ['formatter <- function(x) round(x)'])
+    const source =
+      'path <- "old.txt"\nformatter <- opaque\nvalues <- base::lapply(1:3,formatter)\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      reads: []
+    })
+  })
+  it('withdraws file authority for an unproved callback inside a data mask', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- dplyr::mutate(frame,z=base::lapply(x,statistic))\nbase::readLines(path)\nbase::readRDS("cache.rds")'
+    const { facts, fileAccess } = await analyzeRNotebookSource(source)
+    expect(fileAccess?.reads).toEqual(['cache.rds'])
+    expect(fileAccess?.unresolvedWrites).toBe(true)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('retains a bounded file-reader map', async () => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nvalues <- base::lapply(c("a.txt","b.txt"),base::readLines)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([
+      'a.txt',
+      'b.txt',
+      'old.txt'
+    ])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('retains a verified read-only callback on ordinary numeric inputs', async () => {
+    const context = await fileContext('r', [
+      'factor <- 2\nformatter <- function(x) round(x*factor)'
+    ])
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nvalues <- lapply(1:3,formatter)\nbase::readLines(path)'
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      reads: ['old.txt']
+    })
+    expect(
+      (await analyzeRNotebookSource(source, context)).facts.serializedValueWrites
+    ).toHaveLength(1)
+  })
+})
+
+describe('R aggregate callback file authority', () => {
+  it.each([
+    'stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group)',
+    'stats::aggregate(x=c(1,2),by=list(g=c(1,1)),FUN=reduce_group)',
+    'aggregate(c(1,2),list(g=c(1,1)),reduce_group)',
+    'stats::aggregate(waiting~group,data=frame,FUN=reduce_group)',
+    'stats::aggregate(c(1,2),list(g=c(1,1)),FUN=function(x) { path <<- "new.txt"; sum(x) })',
+    'stats::aggregate(c(1,2),list(g=c(1,1)),FUN="reduce_group")'
+  ])('withdraws old caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('preserves callback lexical reads while revoking file proof', async () => {
+    const source =
+      'offset <- 2\nreduce_group <- function(x) sum(x)+offset\nresult <- stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group)'
+    expect((await analyzeRNotebookSource(source)).facts.usedNames).toContain('offset')
+  })
+  it('does not suppress a cache read using a pre-reducer producer', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group)\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive a producer from a lazy aggregation argument', async () => {
+    const source =
+      'result <- stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group,extra=base::saveRDS(c(1,2),"cache.rds"))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('preserves cache proof when the aggregation closure is not called', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\npath <- "old.txt"\nlater <- function() stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves caller paths for a local pure replacement', async () => {
+    const source =
+      'aggregate <- function(...) 1\npath <- "old.txt"\nresult <- aggregate(c(1,2),list(g=c(1,1)),reduce_group)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it('preserves a literal path assigned after aggregation', async () => {
+    const source =
+      'result <- stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group)\npath <- "after.txt"\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('after.txt')
+  })
+  it('withdraws caller collection paths after aggregation', async () => {
+    const source =
+      'paths <- c("old.txt","other.txt")\nresult <- stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group)\nbase::readLines(paths[1])'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it.each([false, true])('keeps failed reducer history uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'result <- stats::aggregate(c(1,2),list(g=c(1,1)),FUN=reduce_group)'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+})
+
+describe('R integration callback file authority', () => {
+  it.each([
+    'stats::integrate(kernel,-Inf,Inf)',
+    'stats::integrate(f=kernel,lower=-Inf,upper=Inf)',
+    'integrate(kernel,-Inf,Inf)',
+    'stats::integrate(upper=Inf,f=kernel,lower=-Inf)',
+    'stats::integrate(function(x) { path <<- "new.txt"; x*x },0,1)',
+    'stats::integrate("kernel",0,1)'
+  ])('withdraws old caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('does not suppress a cache read using a pre-integrand producer', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- stats::integrate(kernel,0,1)\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive a producer from a lazy integration argument', async () => {
+    const source =
+      'result <- stats::integrate(kernel,0,1,extra=base::saveRDS(c(1,2),"cache.rds"))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('preserves cache proof when the integration closure is not called', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\npath <- "old.txt"\nlater <- function() stats::integrate(kernel,0,1)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('preserves caller paths for a local pure replacement', async () => {
+    const source =
+      'integrate <- function(...) 1\npath <- "old.txt"\nresult <- integrate(kernel,0,1)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it('preserves a literal path assigned after integration', async () => {
+    const source =
+      'result <- stats::integrate(kernel,0,1)\npath <- "after.txt"\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('after.txt')
+  })
+  it('withdraws caller collection paths after integration', async () => {
+    const source =
+      'paths <- c("old.txt","other.txt")\nresult <- stats::integrate(kernel,0,1)\nbase::readLines(paths[1])'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it.each([false, true])('keeps failed integrand history uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'result <- stats::integrate(kernel,0,1)'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+})
+
+describe('R tapply callback file authority', () => {
+  it.each([
+    'base::tapply(c(1,2),c(1,2),FUN=reduce_group)',
+    'tapply(c(1,2),c(1,2),reduce_group)',
+    'base::tapply(INDEX=c(1,2),FUN=reduce_group,X=c(1,2))',
+    'base::tapply(c(1,2),c(1,2),FU=reduce_group)',
+    'base::tapply(c(1,2),c(1,2),FUN="reduce_group")',
+    'base::tapply(c(1,2),c(1,2),FUN=function(x) { path <<- "new.txt"; base::mean(x) })'
+  ])('withdraws old caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it.each(['', ',FUN=NULL'])(
+    'preserves paths when tapply only returns group indices: %s',
+    async (options) => {
+      const source =
+        'path <- "old.txt"\nresult <- base::tapply(c(1,2),c(1,2)' +
+        options +
+        ')\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+    }
+  )
+  it('does not treat a local replacement as base tapply', async () => {
+    const source =
+      'tapply <- function(...) 1\npath <- "old.txt"\nresult <- tapply(c(1,2),c(1,2),FUN=reduce_group)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('old.txt')
+  })
+  it('withdraws static collections as well as scalar paths', async () => {
+    const source =
+      'paths <- c("old.txt","other.txt")\nresult <- base::tapply(c(1,2),c(1,2),FUN=reduce_group)\nbase::readLines(paths[1])'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it('does not suppress a cache read using a pre-callback writer', async () => {
+    const source =
+      'base::saveRDS(c(1,2),"cache.rds")\nresult <- base::tapply(c(1,2),c(1,2),FUN=reduce_group)\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not revive a producer written by a nested callback argument', async () => {
+    const source =
+      'result <- base::tapply(c(1,2),c(1,2),FUN=reduce_group,extra=base::saveRDS(c(1,2),"cache.rds"))\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+  })
+  it.each([false, true])('keeps failed callback history uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path <- "old.txt"', 'result <- base::tapply(c(1,2),c(1,2),FUN=reduce_group)'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+})
+
+describe('Pearson resampling callback boundaries', () => {
+  it.each([
+    'stats.pearsonr(x,y,method=method)',
+    'stats.pearsonr(x,y,method=stats.MonteCarloMethod(rvs=(draw_x,draw_y)))',
+    'stats.pearsonr(x,y,method=stats.PermutationMethod())',
+    'stats.pearsonr(x,y,**options)',
+    'stats.pearsonr(*args)',
+    'stats.pearsonr(x,y,None)',
+    'stats.pearsonr(x,y,method=None,**options)'
+  ])('does not close callback I/O or caller paths: %s', async (call) => {
+    const source = 'from scipy import stats\npath="old.txt"\nresult=' + call + '\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it.each(['', ',method=None'])(
+    'preserves the default analytic Pearson path: %s',
+    async (options) => {
+      const source =
+        'from scipy import stats\npath="old.txt"\nresult=stats.pearsonr(x,y' +
+        options +
+        ')\nopen(path)'
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['old.txt']
+      })
+    }
+  )
+  it('withdraws serialized content proof after resampling', async () => {
+    const source =
+      'import numpy as np\nfrom scipy import stats\nnp.save("cache.npy",np.array([1.,2.]))\n' +
+      'result=stats.pearsonr(x,y,method=method)\nafter=np.load("cache.npy")'
+    const facts = (await analyzePythonNotebookSource(source)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+  })
+  it.each([
+    'from scipy.stats import pearsonr as correlate\nresult=correlate(x,y,method=method)',
+    'from scipy import stats\ndef correlate():\n    return stats.pearsonr(x,y,method=method)\nresult=correlate()'
+  ])('keeps the boundary across aliases and helpers: %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'path="old.txt"\n' + call + '\nopen(path)')
+    ).toMatchObject({ writeState: 'partial', externalState: 'partial', reads: [] })
+  })
+  it('does not assume an unproved resampling call is pure', async () => {
+    const source = 'path="old.txt"\nresult=pearsonr(x,y,method=method)\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it('does not infer SciPy identity for a local pure replacement', async () => {
+    const source =
+      'def pearsonr(*args,**kwargs):\n    return 1\npath="old.txt"\nresult=pearsonr(x,y,method=method)\nopen(path)'
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).toContain('old.txt')
+  })
+  it.each([false, true])('keeps failed resampling uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'python',
+      ['path="old.txt"', 'from scipy import stats\nresult=stats.pearsonr(x,y,method=method)'],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect((await analyzeNotebookSourceFileAccess('python', 'open(path)', context)).reads).toEqual(
+      []
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+  })
+})
+
+describe('NumPy text converter caller path boundaries', () => {
+  it.each([
+    'np.loadtxt(input_path,converters={0:convert})',
+    'np.loadtxt(fname=input_path,converters=convert)',
+    'np.genfromtxt(input_path,converters={0:convert})',
+    'np.genfromtxt(fname=input_path,converters={0:convert})',
+    'np.loadtxt(input_path,float,"#",None,{0:convert})',
+    'np.genfromtxt(input_path,float,"#",None,0,0,{0:convert})'
+  ])('keeps the evaluated input but withdraws downstream paths: %s', async (call) => {
+    const source =
+      'import numpy as np\ninput_path="input.txt"\npath="old.txt"\nresult=' + call + '\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['input.txt']
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.state).toBe('unknown')
+  })
+  it.each(['loadtxt', 'genfromtxt'])(
+    'does not restore caller paths after %s helper replay',
+    async (reader) => {
+      const source =
+        'import numpy as np\npath="old.txt"\ndef read(path):\n    return np.' +
+        reader +
+        '(path,converters={0:convert})\nresult=read("input.txt")\nopen(path)'
+      const io = await analyzeNotebookSourceFileAccess('python', source)
+      expect(io.reads).toContain('input.txt')
+      expect(io.reads).not.toContain('old.txt')
+      expect(io).toMatchObject({ readState: 'partial', writeState: 'partial' })
+    }
+  )
+  it('withdraws path collections and mappings after conversion', async () => {
+    const source =
+      'import numpy as np\npaths=["old.txt"]\noptions={"path":"before.txt"}\n' +
+      'result=np.loadtxt("input.txt",converters={0:convert})\nopen(paths[0])\nopen(options["path"])'
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).toEqual(['input.txt'])
+  })
+  it.each(['loadtxt', 'genfromtxt'])(
+    'preserves paths with an empty %s converter map',
+    async (reader) => {
+      const source =
+        'import numpy as np\npath="old.txt"\nresult=np.' +
+        reader +
+        '("input.txt",converters={})\nopen(path)'
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        reads: ['input.txt', 'old.txt']
+      })
+    }
+  )
+  it('preserves a path assigned after the converter', async () => {
+    const source =
+      'import numpy as np\nresult=np.loadtxt("input.txt",converters={0:convert})\n' +
+      'path="after.txt"\nopen(path)'
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).toEqual([
+      'after.txt',
+      'input.txt'
+    ])
+  })
+  it.each([false, true])('keeps failed converter history uncertain (%s)', async (precompute) => {
+    const context = await fileContext(
+      'python',
+      [
+        'path="old.txt"',
+        'import numpy as np\nresult=np.loadtxt("input.txt",converters={0:convert})'
+      ],
+      [{}, { status: 'failed' as const, kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect((await analyzeNotebookSourceFileAccess('python', 'open(path)', context)).reads).toEqual(
+      []
+    )
+  })
+})
+
+describe('Scientific callback caller path boundaries', () => {
+  it.each(['quad(model,0.,1.)', 'integrate.quad(model,0.,1.)'])(
+    'withdraws paths when callback identity is unavailable: %s',
+    async (call) => {
+      const source = 'path="old.txt"\nresult=' + call + '\nopen(path)'
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: []
+      })
+      expect((await analyzePythonNotebookSource(source)).facts.state).toBe('unknown')
+    }
+  )
+  it.each([false, true])(
+    'does not revive paths after callback import proof is lost (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        ['from scipy.integrate import quad', 'raise RuntimeError()'],
+        [{}, { status: 'failed' as const, kernelDispatched: true }],
+        precompute
+      )
+      const source = 'path="old.txt"\nresult=quad(model,0.,1.)\nopen(path)'
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', source, context)).reads
+      ).not.toContain('old.txt')
+    }
+  )
+  it('does not treat a local constant function as SciPy', async () => {
+    const source =
+      'def quad(*args):\n    return 1\npath="old.txt"\nresult=quad(model,0.,1.)\nopen(path)'
+    expect((await analyzeNotebookSourceFileAccess('python', source)).reads).toContain('old.txt')
+  })
+  it.each([
+    'from scipy.integrate import quad\nresult=quad(model,0.,1.)',
+    'from scipy.integrate import quad as integrate\nresult=integrate(func=model,a=0.,b=1.)',
+    'from scipy import integrate\nresult=integrate.solve_ivp(model,[0.,1.],[1.])',
+    'from scipy import optimize\nresult=optimize.root_scalar(model,bracket=[0.,1.])',
+    'from scipy import optimize\nresult=optimize.curve_fit(model,[0.,1.],[1.,2.])',
+    'from scipy import optimize\nresult=optimize.least_squares(model,[1.])',
+    'from scipy import ndimage\nresult=ndimage.generic_filter([1.,2.,3.],model,size=3)',
+    'from scipy import stats\nresult=stats.binned_statistic([1.,2.],[3.,4.],statistic=model)',
+    'from scipy import signal\nresult=signal.welch([1.,2.,3.,4.],nperseg=4,detrend=model)'
+  ])('does not certify a pre-callback caller path: %s', async (call) => {
+    const source = 'path="old.txt"\n' + call + '\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+  })
+  it.each([
+    'from scipy.integrate import quad\ndef calculate():\n    return quad(model,0.,1.)\nresult=calculate()',
+    'from scipy import integrate\ndef calculate():\n    return integrate.quad(model,0.,1.)\nresult=calculate()'
+  ])('keeps callback revocation through local helper replay: %s', async (call) => {
+    expect(
+      (await analyzeNotebookSourceFileAccess('python', 'path="old.txt"\n' + call + '\nopen(path)'))
+        .reads
+    ).not.toContain('old.txt')
+  })
+  it.each([
+    'from scipy import signal\nresult=signal.welch([1.,2.,3.,4.],nperseg=4,detrend=False)',
+    'from scipy import stats\nresult=stats.binned_statistic([1.,2.],[3.,4.],statistic="mean")',
+    'from scipy.integrate import quad\ndef later():\n    return quad(model,0.,1.)'
+  ])('keeps paths when the audited callback does not run: %s', async (call) => {
+    expect(
+      (await analyzeNotebookSourceFileAccess('python', 'path="old.txt"\n' + call + '\nopen(path)'))
+        .reads
+    ).toContain('old.txt')
+  })
+  it.each([false, true])(
+    'preserves uncertainty after a failed callback (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        ['path="old.txt"', 'from scipy.integrate import quad\nresult=quad(model,0.,1.)'],
+        [{}, { status: 'failed' as const, kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('python', 'open(path)', context)).reads
+      ).not.toContain('old.txt')
+    }
+  )
+})
+
+describe('Spearman NumPy scientific delegate boundaries', () => {
+  const tainted: NotebookSourceFileAccessContext = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonTaintedNamespaces: ['numpy']
+  }
+  it.each([
+    'from scipy import stats\nresult=stats.spearmanr([1.,2.,3.],[3.,1.,2.])',
+    'from scipy.stats import spearmanr as correlate\nresult=correlate([1.,2.,3.],[3.,1.,2.])',
+    'from scipy import stats\nresult=stats.spearmanr(a=[1.,2.,3.],b=[3.,1.,2.])',
+    'from scipy import stats\nresult=stats.spearmanr(x,y,nan_policy="omit")',
+    'from scipy.stats import spearmanr\ndef correlate(x,y):\n    return spearmanr(x,y)\nresult=correlate([1.,2.,3.],[3.,1.,2.])',
+    'from scipy import stats\ndef correlate(x,y):\n    return stats.spearmanr(x,y)\nresult=correlate([1.,2.,3.],[3.,1.,2.])'
+  ])('withdraws caller paths across scientific NumPy dispatch: %s', async (call) => {
+    const source = 'path="old.txt"\n' + call + '\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source, tainted)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: []
+    })
+    expect((await analyzePythonNotebookSource(source, tainted)).facts.state).toBe('unknown')
+  })
+  it.each(['np.corrcoef=replacement', 'setattr(np,"corrcoef",replacement)'])(
+    'does not revive same-cell paths after %s',
+    async (mutation) => {
+      const source =
+        'import numpy as np\nfrom scipy import stats\n' +
+        mutation +
+        '\npath="old.txt"\nresult=stats.spearmanr([1.,2.,3.],[3.,1.,2.])\nopen(path)'
+      const io = await analyzeNotebookSourceFileAccess('python', source)
+      expect(io.reads).not.toContain('old.txt')
+      expect(io).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+    }
+  )
+  it.each([false, true])(
+    'retains failed NumPy dispatch uncertainty on replay (%s)',
+    async (precompute) => {
+      const scripts = [
+        'import numpy as np',
+        'np.corrcoef=replacement\nraise RuntimeError()',
+        'path="old.txt"'
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      const source = 'from scipy import stats\nresult=stats.spearmanr([1.,2.,3.],[3.,1.,2.])'
+      expect(
+        await analyzeNotebookSourceFileAccess('python', source + '\nopen(path)', context)
+      ).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: []
+      })
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'fresh-epoch'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: [],
+        writes: []
+      })
+    }
+  )
+  it.each([{ namespaces: [] }, { namespaces: ['pandas'] }, { namespaces: ['gzip'] }])(
+    'keeps unrelated namespace precision $namespaces',
+    async ({ namespaces }) => {
+      const source =
+        'from scipy import stats\npath="old.txt"\nresult=stats.spearmanr([1.,2.,3.],[3.,1.,2.])\nopen(path)'
+      expect(
+        await analyzeNotebookSourceFileAccess('python', source, {
+          ...tainted,
+          pythonTaintedNamespaces: namespaces
+        })
+      ).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['old.txt'],
+        writes: []
+      })
+    }
+  )
+})
+
+describe('Matrix Market builtin opener boundaries', () => {
+  const tainted: NotebookSourceFileAccessContext = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonTaintedNamespaces: ['builtins']
+  }
+  it.each([
+    'from scipy.io import mminfo\nresult=mminfo("input.mtx")',
+    'from scipy.io import mminfo as inspect\nresult=inspect(source="input.mtx")',
+    'from scipy import io as sio\nresult=sio.mminfo("input.mtx")',
+    'from scipy.io import mmread\nresult=mmread("input.mtx")',
+    'from scipy.io import mmread as read\ndef reopen(path):\n    return read(path)\nresult=reopen("input.mtx")'
+  ])('withdraws path authority across a patched builtin: %s', async (call) => {
+    expect(await analyzeNotebookSourceFileAccess('python', call, tainted)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect((await analyzePythonNotebookSource(call, tainted)).facts.state).toBe('unknown')
+    const source = 'path="old.txt"\n' + call + '\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source, tainted)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect((await analyzeNotebookSourceFileAccess('python', source, tainted)).reads).not.toContain(
+      'old.txt'
+    )
+    expect((await analyzePythonNotebookSource(source, tainted)).facts.state).toBe('unknown')
+  })
+  it.each([false, true])(
+    'retains failed builtin replacement across replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        ['import builtins\nbuiltins.open=replacement\nraise RuntimeError()'],
+        [{ status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.pythonTaintedNamespaces).toContain('builtins')
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'from scipy.io import mminfo\ninfo=mminfo("input.mtx")',
+          context
+        )
+      ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+    }
+  )
+  it.each(['mmread', 'mminfo'])('preserves unpatched reads for %s', async (name) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        `from scipy.io import ${name}\nresult=${name}("input.mtx")`
+      )
+    ).toMatchObject({
+      reads: ['input.mtx'],
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+})
+
+describe('Matrix Market bzip2 delegate boundaries', () => {
+  const tainted: NotebookSourceFileAccessContext = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonTaintedNamespaces: ['bz2']
+  }
+  it.each([
+    'from scipy.io import mmread\nresult=mmread("input.mtx.bz2")',
+    'from scipy.io import mmread\nresult=mmread(source="input.mtx.bz2")',
+    'from scipy.io import mminfo as inspect\nresult=inspect("input.mtx.bz2")',
+    'from scipy import io as sio\nresult=sio.mminfo(source="input.mtx.bz2")',
+    'from scipy.io import mmread as read\ndef reopen(path):\n    return read(path)\nresult=reopen("input.mtx.bz2")'
+  ])('keeps input but withdraws same-cell paths across bzip2: %s', async (call) => {
+    const source = 'path="old.txt"\n' + call + '\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source, tainted)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['input.mtx.bz2']
+    })
+  })
+  it.each(['mmread', 'mminfo'])('also withdraws same-cell paths for gzip %s', async (name) => {
+    const source =
+      'from scipy.io import ' +
+      name +
+      '\npath="old.txt"\nresult=' +
+      name +
+      '(source="input.mtx.gz")\nopen(path)'
+    expect(
+      await analyzeNotebookSourceFileAccess('python', source, {
+        ...tainted,
+        pythonTaintedNamespaces: ['gzip']
+      })
+    ).toMatchObject({
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['input.mtx.gz']
+    })
+  })
+  it.each(['mmread', 'mminfo'])('withdraws serialized content across bzip2 %s', async (name) => {
+    const source =
+      'import numpy as np\nfrom scipy.io import ' +
+      name +
+      '\nnp.save("cache.npy",np.array([1.,2.]))\nresult=' +
+      name +
+      '("input.mtx.bz2")\nafter=np.load("cache.npy")'
+    const facts = (await analyzePythonNotebookSource(source, tainted)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+  })
+  it.each(['read(path)', 'read(**options)'])(
+    'keeps unknown input conservative: %s',
+    async (call) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'from scipy.io import mmread as read\n' + call,
+          tainted
+        )
+      ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+    }
+  )
+  it.each([
+    { namespace: 'bz2', file: 'input.mtx' },
+    { namespace: 'bz2', file: 'input.mtx.gz' },
+    { namespace: 'gzip', file: 'input.mtx.bz2' },
+    { namespace: 'lzma', file: 'input.mtx.bz2' }
+  ])(
+    'preserves unrelated literal codec precision $namespace $file',
+    async ({ namespace, file }) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          `from scipy.io import mmread\nresult=mmread("${file}")`,
+          { ...tainted, pythonTaintedNamespaces: [namespace] }
+        )
+      ).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: [file]
+      })
+    }
+  )
+  it.each([false, true])(
+    'retains failed bzip2 replacement across replay (%s)',
+    async (precompute) => {
+      const scripts = [
+        'import bz2 as codec',
+        'setattr(codec,"BZ2File",replacement)\nraise RuntimeError()',
+        'path="old.txt"'
+      ]
+      const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+      const context = await fileContext('python', scripts, overrides, precompute)
+      const source = 'from scipy.io import mminfo\ninfo=mminfo(source="input.mtx.bz2")'
+      expect(
+        await analyzeNotebookSourceFileAccess('python', source + '\nopen(path)', context)
+      ).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
+        reads: ['input.mtx.bz2']
+      })
+      expect((await analyzePythonNotebookSource(source, context)).facts.state).toBe('unknown')
+      const fresh = await fileContext(
+        'python',
+        scripts,
+        overrides,
+        precompute,
+        undefined,
+        'fresh-epoch'
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, fresh)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['input.mtx.bz2']
+      })
+    }
+  )
+})
+
+describe('WAV NumPy reader delegate boundaries', () => {
+  const tainted: NotebookSourceFileAccessContext = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    pythonTaintedNamespaces: ['numpy']
+  }
+  it.each([
+    'wavfile.read("input.wav")',
+    'wavfile.read(filename="input.wav")',
+    'wavfile.read("input.wav",mmap=True)',
+    'wavfile.read(filename="input.wav",mmap=False)',
+    'read_signal("input.wav")',
+    'wavfile.read("input.wav",**options)'
+  ])('withdraws tuple and path proof through a replaced NumPy reader: %s', async (call) => {
+    const source =
+      'from scipy.io import wavfile\nfrom scipy.io.wavfile import read as read_signal\npath="old.txt"\nrate,data=' +
+      call +
+      '\nopen(path)'
+    const facts = (await analyzePythonNotebookSource(source, tainted)).facts
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'data', typeName: 'numpy.ndarray' })
+    )
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'rate', typeName: 'python.scalar' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source, tainted)
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['input.wav']
+    })
+  })
+  it.each(['wavfile.read(path)', 'wavfile.read(**options)'])(
+    'does not certify unresolved WAV input: %s',
+    async (call) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'python',
+          'from scipy.io import wavfile\n' + call,
+          tainted
+        )
+      ).toMatchObject({ readState: 'partial', writeState: 'partial', externalState: 'partial' })
+    }
+  )
+  it('invalidates same-cell paths after a NumPy replacement', async () => {
+    const source =
+      'import numpy as np\nfrom scipy.io import wavfile\nnp.fromfile=replacement\npath="old.txt"\nrate,data=wavfile.read(filename="input.wav")\nopen(path)'
+    const io = await analyzeNotebookSourceFileAccess('python', source)
+    expect(io.reads).toContain('input.wav')
+    expect(io.reads).not.toContain('old.txt')
+    expect((await analyzePythonNotebookSource(source)).facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'data', typeName: 'numpy.ndarray' })
+    )
+  })
+  it.each([false, true])('keeps failed NumPy mutation on replay (%s)', async (precompute) => {
+    const scripts = [
+      'import numpy as np',
+      'setattr(np,"fromfile",replacement)\nraise RuntimeError()',
+      'path="old.txt"'
+    ]
+    const overrides = [{}, { status: 'failed' as const, kernelDispatched: true }]
+    const context = await fileContext('python', scripts, overrides, precompute)
+    const source =
+      'from scipy.io import wavfile\nrate,data=wavfile.read(filename="input.wav")\nopen(path)'
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['input.wav']
+    })
+    expect(
+      (await analyzePythonNotebookSource(source, context)).facts.typeBindings
+    ).not.toContainEqual(expect.objectContaining({ target: 'data', typeName: 'numpy.ndarray' }))
+    const fresh = await fileContext(
+      'python',
+      scripts,
+      overrides,
+      precompute,
+      undefined,
+      'fresh-epoch'
+    )
+    expect(
+      await analyzeNotebookSourceFileAccess('python', source.split('\nopen(path)')[0]!, fresh)
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: ['input.wav']
+    })
+  })
+  it.each([{ namespaces: [] }, { namespaces: ['pandas'] }, { namespaces: ['io'] }])(
+    'keeps healthy WAV contracts with unrelated taint $namespaces',
+    async ({ namespaces }) => {
+      const context = { ...tainted, pythonTaintedNamespaces: namespaces }
+      const source =
+        'from scipy.io import wavfile\npath="old.txt"\nrate,data=wavfile.read(filename="input.wav")\nopen(path)'
+      expect(
+        (await analyzePythonNotebookSource(source, context)).facts.typeBindings
+      ).toContainEqual(expect.objectContaining({ target: 'data', typeName: 'numpy.ndarray' }))
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reads: ['input.wav', 'old.txt']
+      })
+    }
+  )
+})
+
+describe('Stata reader delegated I/O boundaries', () => {
+  it.each([
+    ['gzip', 'gz'],
+    ['bz2', 'bz2'],
+    ['lzma', 'xz'],
+    ['zipfile', 'zip'],
+    ['tarfile', 'tar'],
+    ['builtins', 'dta']
+  ])('does not certify a replaced Stata opener: %s', async (namespace, suffix) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: [namespace]
+    }
+    const source = `import pandas as pd\nframe=pd.read_stata(filepath_or_buffer="input.dta.${suffix}")`
+    expect(
+      (await analyzePythonNotebookSource(source, context)).facts.typeBindings
+    ).not.toContainEqual(expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' }))
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    ['gzip', 'gz'],
+    ['bz2', 'bz2'],
+    ['lzma', 'xz'],
+    ['tarfile', 'tar']
+  ])('withdraws pre-read content and paths for %s', async (namespace, suffix) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: [namespace]
+    }
+    const source = `import pandas as pd,numpy as np\nnp.save("cache.npy",np.array([1.,2.]))\npath="old.txt"\nframe=pd.read_stata("input.${suffix}")\nafter=np.load("cache.npy")\nopen(path)`
+    const facts = (await analyzePythonNotebookSource(source, context)).facts
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.typeBindings).not.toContainEqual(
+      expect.objectContaining({ target: 'after', typeName: 'numpy.ndarray' })
+    )
+    const io = await analyzeNotebookSourceFileAccess('python', source, context)
+    expect(io).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+    expect(io.reads).not.toContain('old.txt')
+  })
+  it.each([
+    'pd.read_stata("input.dta",compression="gzip")',
+    'pd.read_stata(filepath_or_buffer=path,compression=None)',
+    'pd.read_stata("input.dta",**options)'
+  ])('does not close unresolved or explicit codec inputs: %s', async (call) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    expect(
+      await analyzeNotebookSourceFileAccess('python', 'import pandas as pd\n' + call, context)
+    ).toMatchObject({ writeState: 'partial', externalState: 'partial' })
+  })
+  it.each([
+    'pd.read_stata("input.dta")',
+    'pd.read_stata("input.gz",compression=None)',
+    'pd.read_stata("input.gz",compression={"method":None})',
+    'pd.read_stata("input.bz2")'
+  ])('preserves unrelated codec precision: %s', async (call) => {
+    const context: NotebookSourceFileAccessContext = {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      pythonTaintedNamespaces: ['gzip']
+    }
+    const source = 'import pandas as pd\nframe=' + call
+    expect((await analyzePythonNotebookSource(source, context)).facts.typeBindings).toContainEqual(
+      expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' })
+    )
+    expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete'
+    })
+  })
+  it.each([false, true])(
+    'retains failed Stata codec mutation through replay (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'python',
+        [
+          'import gzip as codec',
+          'raise RuntimeError()',
+          'setattr(codec,"GzipFile",replacement)\nraise RuntimeError()'
+        ],
+        [
+          {},
+          { status: 'failed' as const, kernelDispatched: true },
+          { status: 'failed' as const, kernelDispatched: true }
+        ],
+        precompute
+      )
+      const source = 'import pandas as pd\nframe=pd.read_stata("input.dta.gz")'
+      expect(
+        (await analyzePythonNotebookSource(source, context)).facts.typeBindings
+      ).not.toContainEqual(
+        expect.objectContaining({ target: 'frame', typeName: 'pandas.DataFrame' })
+      )
+      expect(await analyzeNotebookSourceFileAccess('python', source, context)).toMatchObject({
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+    }
+  )
+})
+
+describe('R pvec vector worker authority', () => {
+  it.each([
+    'parallel::pvec(thetas,fit_worker,mc.cores=1)',
+    'parallel::pvec(inputs,base::sum,mc.cores=1)',
+    'pvec(v=thetas,FUN=fit_worker,mc.cores=1)',
+    'parallel::pvec(thetas,"fit_worker",mc.cores=1)',
+    'parallel::pvec(thetas,function(a) {path <<- "new.txt";a},mc.cores=1)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nparallel::pvec(thetas,fit_worker,mc.cores=1)',
+    'parallel::pvec(v={base::saveRDS(c(1,2),"cache.rds");thetas},FUN=fit_worker,mc.cores=1)'
+  ])('withdraws producer proof around vector worker evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting vector result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(a) {a+offset}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- parallel::pvec(thetas,visit,mc.cores=1)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- parallel::pvec(thetas,function(a) {local_only <- offset;a},mc.cores=1)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('a')
+  })
+  it.each([false, true])(
+    'keeps failed vector worker evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'parallel::pvec(thetas,fit_worker,mc.cores=1)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() parallel::pvec(thetas,fit_worker,mc.cores=1)',
+      'factory <- parallel::pvec',
+      'pvec <- function(...) 1\npvec(thetas,fit_worker,mc.cores=1)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'parallel::pvec(thetas,fit_worker,mc.cores=1)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R nlminb derivative worker authority', () => {
+  it.each([
+    'stats::nlminb(start,fit_worker)',
+    'stats::nlminb(start,base::sum)',
+    'stats::nlminb(start,base::sum,gradient=grad_worker)',
+    'stats::nlminb(start,base::sum,hessian=hess_worker)',
+    'nlminb(start=start,objective=fit_worker)',
+    'stats::nlminb(start,"fit_worker")',
+    'stats::nlminb(start,function(a) {path <<- "new.txt";a})'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nstats::nlminb(start,fit_worker)',
+    'stats::nlminb(start={base::saveRDS(c(1,2),"cache.rds");start},objective=fit_worker)'
+  ])('withdraws producer proof around derivative worker evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each(
+    [false, true].flatMap((priorCell) =>
+      [
+        'stats::nlminb(start,visit)',
+        'stats::nlminb(start,base::sum,gradient=visit)',
+        'stats::nlminb(start,base::sum,hessian=visit)',
+        'stats::nlminb(start,base::sum,visit)',
+        'stats::nlminb(start,base::sum,NULL,visit)'
+      ].map((call) => [priorCell, call] as const)
+    )
+  )(
+    'retains captures without granting derivative result ownership (%s, %s)',
+    async (priorCell, call) => {
+      const setup = 'offset <- 3\nvisit <- function(a) {a+offset}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- ' + call,
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- stats::nlminb(start,function(a) {local_only <- offset;a})'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('a')
+  })
+  it.each([false, true])(
+    'keeps failed derivative worker evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'stats::nlminb(start,fit_worker)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() stats::nlminb(start,fit_worker)',
+      'factory <- stats::nlminb',
+      'nlminb <- function(...) 1\nnlminb(start,fit_worker)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'stats::nlminb(start,fit_worker)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R nlm attributed objective authority', () => {
+  it.each([
+    'stats::nlm(fit_worker,start)',
+    'stats::nlm(base::sum,start)',
+    'nlm(p=start,f=fit_worker)',
+    'stats::nlm("fit_worker",start)',
+    'stats::nlm(function(a) {path <<- "new.txt";a},start)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nstats::nlm(fit_worker,start)',
+    'stats::nlm(p={base::saveRDS(c(1,2),"cache.rds");start},f=fit_worker)'
+  ])('withdraws producer proof around attributed objective evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'retains captures without granting objective result ownership (%s)',
+    async (priorCell) => {
+      const setup = 'offset <- 3\nvisit <- function(a) {a+offset}'
+      const context = priorCell ? await fileContext('r', [setup]) : undefined
+      const { facts } = await analyzeRNotebookSource(
+        (priorCell ? '' : setup + '\n') + 'result <- stats::nlm(visit,start)',
+        context
+      )
+      expect(facts.usedNames).toContain('offset')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+      expect(facts.state).toBe('unknown')
+    }
+  )
+  it('keeps callback locals out of the caller scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'result <- stats::nlm(function(a) {local_only <- offset;a},start)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.priorUsedNames).not.toContain('local_only')
+    expect(facts.usedNames).toContain('offset')
+    expect(facts.usedNames).not.toContain('a')
+  })
+  it.each([false, true])(
+    'keeps failed attributed objective evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'stats::nlm(fit_worker,start)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() stats::nlm(fit_worker,start)',
+      'factory <- stats::nlm',
+      'nlm <- function(...) 1\nnlm(fit_worker,start)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'stats::nlm(fit_worker,start)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R numericDeriv evaluation authority', () => {
+  it.each([
+    'stats::numericDeriv(quote(model(rate)),"rate",rho=parameters)',
+    'stats::numericDeriv(quote(rate),"rate",rho=parameters)',
+    'numericDeriv(expr=quote(model(rate)),theta="rate",rho=parameters)',
+    'stats::numericDeriv(quote(model(rate)),theta="rate",rho=parameters,central=TRUE)',
+    'stats::numericDeriv(quote({path <<- "new.txt";rate}),"rate",rho=parameters)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nstats::numericDeriv(quote(model(rate)),"rate",rho=parameters)',
+    'stats::numericDeriv(quote(rate),"rate",rho={base::saveRDS(c(1,2),"cache.rds");parameters})'
+  ])('withdraws producer proof around quoted expression evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it('does not promote bindings inside a quoted expression into caller facts', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'answer <- stats::numericDeriv(quote({local_only <- rate;local_only}),"rate",rho=parameters)'
+    )
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('answer')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([false, true])(
+    'keeps failed quoted expression evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'stats::numericDeriv(quote(model(rate)),"rate",rho=parameters)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() stats::numericDeriv(quote(model(rate)),"rate",rho=parameters)',
+      'factory <- stats::numericDeriv',
+      'numericDeriv <- function(...) 1\nnumericDeriv(quote(rate),"rate",rho=parameters)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'stats::numericDeriv(quote(model(rate)),"rate",rho=parameters)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R nls formula evaluation authority', () => {
+  it.each([
+    'stats::nls(y~model(x,a),data=frame,start=list(a=1))',
+    'stats::nls(y~a*x,data=frame,start=list(a=1))',
+    'nls(formula=y~model(x,a),data=frame,start=list(a=1))',
+    'stats::nls(formula=y~model(x,a),data=frame,start=list(a=1),weights=weights)',
+    'stats::nls(y~{path <<- "new.txt";a*x},data=frame,start=list(a=1))'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nstats::nls(y~model(x,a),data=frame,start=list(a=1))',
+    'stats::nls(y~a*x,data={base::saveRDS(c(1,2),"cache.rds");frame},start=list(a=1))'
+  ])('withdraws producer proof around formula evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([
+    'stats::nls(y~{local_only <- a*x;local_only},data=frame,start=list(a=1))',
+    'stats::nls(formula=(y~{local_only <- a*x;local_only}),data=frame,start=list(a=1))',
+    'stats::nls(data=frame,start=list(a=1),form=(y~{local_only <- a*x;local_only}))',
+    'stats::nls(formula=(y~{local_only <- a*x;local_only}),data=frame,start=list(a=1),extra=1)'
+  ])('does not promote formula bindings into caller facts: %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource('answer <- ' + call)
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('answer')
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps matched data arguments in caller evaluation scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'answer <- stats::nls(y~a*x,data={caller_data <- frame;caller_data},start=list(a=1))'
+    )
+    expect(facts.definedNames).toContain('caller_data')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([false, true])(
+    'keeps failed formula evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'stats::nls(y~model(x,a),data=frame,start=list(a=1))'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() stats::nls(y~model(x,a),data=frame,start=list(a=1))',
+      'factory <- stats::nls',
+      'nls <- function(...) 1\nnls(y~a*x,data=frame,start=list(a=1))'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'stats::nls(y~model(x,a),data=frame,start=list(a=1))\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R loess formula evaluation authority', () => {
+  it('retains ordinary caller definitions in matched control arguments', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'answer <- stats::loess(data=frame,form=y~x,span={caller_span <- 0.75;caller_span})'
+    )
+    expect(facts.definedNames).toContain('caller_span')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('answer')
+  })
+  it.each([
+    'stats::loess(y~model(x),data=frame)',
+    'stats::loess(y~x,data=frame)',
+    'loess(formula=y~model(x),data=frame)',
+    'stats::loess(formula=y~model(x),data=frame,weights=weights)',
+    'stats::loess(y~{path <<- "new.txt";x},data=frame)'
+  ])('withdraws caller paths across %s', async (call) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'path <- "old.txt"\nresult <- ' + call + '\nbase::readLines(path)'
+      )
+    ).toMatchObject({
+      reads: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds")\nstats::loess(y~model(x),data=frame)',
+    'stats::loess(y~x,data={base::saveRDS(c(1,2),"cache.rds");frame})'
+  ])('withdraws producer proof around formula evaluation: %s', async (prefix) => {
+    const source = prefix + '\nafter <- base::readRDS("cache.rds")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toContain('cache.rds')
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([
+    'stats::loess(y~{local_only <- x;local_only},data=frame)',
+    'stats::loess(y~I(local_only <- x),data=frame)',
+    'stats::loess(formula=(y~{local_only <- x;local_only}),data=frame)',
+    'stats::loess(data=frame,form=(y~{local_only <- x;local_only}))',
+    'stats::loess(formula=(y~{local_only <- x;local_only}),data=frame,extra=1)'
+  ])('does not promote formula bindings into caller facts: %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource('answer <- ' + call)
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('answer')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'stats::loess(y~x,data=frame,weights={local_only <- w;local_only})',
+    'stats::loess(y~x,data=frame,subset={local_only <- x>0;local_only})',
+    'stats::loess(sub={local_only <- x>0;local_only},data=frame,form=y~x)',
+    'stats::loess(y~x,data=frame,unknown_option={local_only <- x;local_only})'
+  ])('does not promote model-frame bindings into caller facts: %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource('answer <- ' + call)
+    expect(facts.definedNames).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('local_only')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('answer')
+    expect(facts.state).toBe('unknown')
+  })
+  it('keeps matched data arguments in caller evaluation scope', async () => {
+    const { facts } = await analyzeRNotebookSource(
+      'answer <- stats::loess(y~x,data={caller_data <- frame;caller_data})'
+    )
+    expect(facts.definedNames).toContain('caller_data')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([false, true])(
+    'keeps failed formula evaluation history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path <- "old.txt"', 'stats::loess(y~model(x),data=frame)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it('preserves dormant calls, function values and a pure local replacement', async () => {
+    for (const prefix of [
+      'later <- function() stats::loess(y~model(x),data=frame)',
+      'factory <- stats::loess',
+      'loess <- function(...) 1\nloess(y~x,data=frame)'
+    ]) {
+      const source =
+        'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\n' +
+        prefix +
+        '\nbase::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'stats::loess(y~model(x),data=frame)\npath <- "after.txt"\nbase::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R Filter subsetting and predicate coercion authority', () => {
+  it.each(['dplyr::mutate', 'dplyr::summarise'])(
+    'does not borrow caller atomic facts in a data mask: %s',
+    async (mask) => {
+      const source =
+        'values<-c(1,2,3);path<-"old.txt";' +
+        mask +
+        '(frame, selected=base::Filter(function(v)v>1,values));base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+    }
+  )
+
+  it.each([
+    'base::Filter(function(v)v>0,indices)',
+    'Filter(f=function(v)v>0,x=structure(c(1,2),class="quality_index"))',
+    'base::Filter(x=indices,f=function(v)TRUE)',
+    'base::Filter(function(v){path <<- "new.txt";v>0},c(1,2))',
+    'base::Filter(function(v)structure(TRUE,class="flag"),c(1,2))',
+    'base::Filter(function(v)external,c(1,2))',
+    'base::Filter(function(v)TRUE,list(c(1,2)))'
+  ])('withdraws path and serialized proof across %s', async (call) => {
+    const source =
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- ' +
+      call +
+      '\nbase::readLines(path)\nafter <- base::readRDS("cache.rds")'
+    const io = await analyzeNotebookSourceFileAccess('r', source)
+    expect(io.reads).toEqual(['cache.rds'])
+    expect(io).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.state).toBe('unknown')
+    expect(facts.safeCallNames ?? []).not.toContain('base::Filter')
+  })
+  it.each([
+    'base::Filter(function(v)v>1,c(1,2,3))',
+    'Filter(x=values,f=function(value)value>1)',
+    'base::Filter(function(v)TRUE,c(1,2))',
+    'base::Filter(function(v)v>=threshold,values)'
+  ])('retains primitive input and result precision: %s', async (call) => {
+    const source =
+      'values<-c(1,2,3)\nthreshold<-1\npath<-"old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult<-' +
+      call +
+      '\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites).toHaveLength(1)
+    expect(
+      (await analyzeRNotebookSource('values<-c(1,2,3);threshold<-1;result<-' + call)).facts.state
+    ).toBe('available')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");base::Filter(function(v)TRUE,indices)',
+    'base::Filter(function(v)TRUE,{base::saveRDS(c(1,2),"cache.rds");indices})'
+  ])('withdraws producer proof before and after lazy inputs: %s', async (prefix) => {
+    expect((await analyzeRNotebookSource(prefix)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])('keeps failed class subsetting conservative (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'base::Filter(function(v)TRUE,indices)'],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it('keeps per-invocation proof distinct within one cell', async () => {
+    const source =
+      'path<-"old.txt"\nbase::Filter(function(v)v>1,c(1,2,3))\nbase::Filter(function(v)TRUE,indices)\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it('does not substitute a formal name into a captured function callee', async () => {
+    const source =
+      'path<-"old.txt"\nbase::Filter(function(value)value(value),c(1,2))\nbase::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+  })
+  it.each([
+    'later<-function()base::Filter(function(v)TRUE,indices)',
+    'factory<-base::Filter',
+    'Filter<-function(...)1;Filter(function(v)TRUE,indices)'
+  ])('preserves dormant references and pure local replacement: %s', async (prefix) => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'path<-"old.txt";' + prefix + ';base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['old.txt'])
+  })
+  it('allows a new explicit path after the opaque call', async () => {
+    expect(
+      (
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::Filter(function(v)TRUE,indices);path<-"after.txt";base::readLines(path)'
+        )
+      ).reads
+    ).toEqual(['after.txt'])
+  })
+})
+
+describe('R interpolation ties callback authority', () => {
+  it.each([
+    'stats::approx(x,y,xout=grid,ties=tie_mean)',
+    'approx(x,y,xout=grid,ties=function(z)mean(z))',
+    'stats::approx(x,y,xout=grid)',
+    'stats::approx(x,y,xout=grid,ties="ordered")',
+    'stats::approx(x,y,grid,"linear",50,NULL,NULL,2,0,tie_mean)',
+    'stats::approxfun(x,y,ties=tie_mean)',
+    'stats::spline(x,y,xout=grid,ties=tie_mean)',
+    'stats::splinefun(x,y,ties=tie_mean)'
+  ])('withdraws caller path and serialized authority across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");result<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.state).toBe('unknown')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::approx(x,y,ties=tie_mean)',
+    'stats::approx({base::saveRDS(c(1,2),"cache.rds");x},y,ties=tie_mean)'
+  ])('withdraws producer proof around lazy argument forcing: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])('keeps failed ties history conservative (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'stats::approx(x,y,ties=tie_mean)'],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it.each(['approx', 'approxfun', 'spline', 'splinefun'])(
+    'preserves dormant and local replacement forms: %s',
+    async (name) => {
+      for (const body of [
+        'later<-function()stats::' + name + '(x,y,ties=tie_mean)',
+        'factory<-stats::' + name,
+        name + '<-function(...)1;' + name + '(x,y,ties=tie_mean)'
+      ])
+        expect(
+          (
+            await analyzeNotebookSourceFileAccess(
+              'r',
+              'path<-"old.txt";' + body + ';base::readLines(path)'
+            )
+          ).reads
+        ).toEqual(['old.txt'])
+    }
+  )
+  it('allows an explicit later path without granting returned closure purity', async () => {
+    const source = 'f<-stats::approxfun(x,y,ties=tie_mean);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.copyOnModifyNames ?? []).not.toContain('f')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::approxfun')
+  })
+})
+
+describe('R density coordinate coercion authority', () => {
+  it.each([
+    'stats::density(sensor,bw=0.5)',
+    'density(sensor,bw=0.5)',
+    'stats::density.default(sensor,bw=0.5)',
+    'density.default(sensor,bw=0.5)',
+    'stats::density(structure(c(4.7,8.1),class="audit_sensor"),bw=0.5)',
+    'stats::density(sensor,bw=0.5,give.Rkern=TRUE)',
+    'stats::density.default(sensor,bw="nrd0",na.rm=TRUE)'
+  ])('withdraws path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::density(sensor,bw=0.5)',
+    'stats::density({base::saveRDS(c(1,2),"cache.rds");sensor},bw=0.5)',
+    'stats::density.default(sensor,bw={base::saveRDS(c(1,2),"cache.rds");0.5})'
+  ])('withdraws producer proof before and after lazy inputs: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])('keeps failed coercion history conservative (%s)', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['path<-"old.txt"', 'stats::density(sensor,bw=0.5)'],
+      [{}, { status: 'failed', kernelDispatched: true }],
+      precompute
+    )
+    expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+    ).toEqual([])
+  })
+  it.each(['density', 'density.default'])(
+    'preserves dormant references and local replacement: %s',
+    async (name) => {
+      for (const body of [
+        'later<-function()stats::' + name + '(sensor,bw=0.5)',
+        'factory<-stats::' + name,
+        name + '<-function(...)1;' + name + '(sensor,bw=0.5)'
+      ]) {
+        const source =
+          'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+        expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+        expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+      }
+    }
+  )
+  it('retains an explicit later path without certifying density results', async () => {
+    const source = 'fit<-stats::density(sensor,bw=0.5);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::density'
+    )
+  })
+})
+
+describe('R multivariate distance matrix coercion authority', () => {
+  it.each([
+    'stats::mahalanobis(sensor,center,covariance)',
+    'mahalanobis(sensor,center,covariance)',
+    'stats::mahalanobis(x=sensor,center=center,cov=covariance,inverted=TRUE)',
+    'stats::mahalanobis(sensor,FALSE,covariance)',
+    'stats::dist(sensor,method="euclidean")',
+    'dist(sensor,method="manhattan")',
+    'stats::dist(structure(matrix(1:6,ncol=2),class=c("audit_points","matrix","array")),method="minkowski",p=2)'
+  ])('withdraws caller path and serialized authority across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::mahalanobis(sensor,center,covariance)',
+    'stats::mahalanobis({base::saveRDS(c(1,2),"cache.rds");sensor},center,covariance)',
+    'stats::dist({base::saveRDS(c(1,2),"cache.rds");sensor})'
+  ])('withdraws producer proof before and after arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed matrix conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::mahalanobis(sensor,center,covariance)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each(['mahalanobis', 'dist'])(
+    'preserves dormant and local replacement forms: %s',
+    async (name) => {
+      for (const body of [
+        'later<-function()stats::' + name + '(sensor)',
+        'factory<-stats::' + name,
+        name + '<-function(...)1;' + name + '(sensor)'
+      ]) {
+        const source =
+          'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+        expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+        expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+      }
+    }
+  )
+  it('permits an explicit later path without granting distance ownership', async () => {
+    const source =
+      'fit<-stats::mahalanobis(sensor,center,covariance);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::mahalanobis'
+    )
+  })
+})
+
+describe('R glm.fit family evaluation authority', () => {
+  it.each([
+    'stats::glm.fit(design,counts,family=family)',
+    'glm.fit(x=design,y=counts,family=family)',
+    'stats::glm.fit(design,counts)',
+    'stats::glm.fit(design,counts,family=stats::poisson(link="log"))',
+    'stats::glm.fit(design,counts,family=family,etastart=initial)',
+    'stats::glm.fit(design,counts,family=family,weights=weights,offset=offset)'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::glm.fit(design,counts,family=family)',
+    'stats::glm.fit({base::saveRDS(c(1,2),"cache.rds");design},counts,family=family)',
+    'stats::glm.fit(design,counts,family={base::saveRDS(c(1,2),"cache.rds");family})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed family callback history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::glm.fit(design,counts,family=family)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::glm.fit(design,counts,family=family)',
+    'factory<-stats::glm.fit',
+    'glm.fit<-function(...)1;glm.fit(design,counts,family=family)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting model purity', async () => {
+    const source =
+      'fit<-stats::glm.fit(design,counts,family=family);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::glm.fit'
+    )
+  })
+})
+
+describe('R optimHess callback evaluation authority', () => {
+  it.each([
+    'stats::optimHess(point,fn=objective)',
+    'optimHess(par=point,fn=objective)',
+    'stats::optimHess(point,objective)',
+    'stats::optimHess(point,fn=objective,gr=gradient)',
+    'stats::optimHess(point,fn=objective,control=list(ndeps=c(1e-4,1e-4)))',
+    'stats::optimHess(point,fn=objective,gr=NULL)'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::optimHess(point,fn=objective)',
+    'stats::optimHess({base::saveRDS(c(1,2),"cache.rds");point},fn=objective)',
+    'stats::optimHess(point,fn={base::saveRDS(c(1,2),"cache.rds");objective})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed curvature callback history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::optimHess(point,fn=objective)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::optimHess(point,fn=objective)',
+    'factory<-stats::optimHess',
+    'optimHess<-function(...)1;optimHess(point,fn=objective)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting curvature purity', async () => {
+    const source =
+      'fit<-stats::optimHess(point,fn=objective);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::optimHess'
+    )
+  })
+})
+
+describe('R PCA matrix conversion evaluation authority', () => {
+  it.each([
+    'stats::prcomp(sensor,center=TRUE,scale.=TRUE)',
+    'prcomp(x=sensor)',
+    'stats::prcomp.default(sensor)',
+    'stats::prcomp.default(sensor,center=FALSE,scale.=FALSE)',
+    'stats::prcomp(sensor,rank.=1)',
+    'stats::prcomp(sensor,tol=0.1,retx=FALSE)'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::prcomp(sensor,center=TRUE,scale.=TRUE)',
+    'stats::prcomp({base::saveRDS(c(1,2),"cache.rds");sensor})',
+    'stats::prcomp.default(sensor,center={base::saveRDS(c(1,2),"cache.rds");TRUE})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed PCA conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::prcomp(sensor,center=TRUE,scale.=TRUE)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::prcomp(sensor,center=TRUE,scale.=TRUE)',
+    'factory<-stats::prcomp',
+    'prcomp<-function(...)1;prcomp(sensor)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting PCA purity', async () => {
+    const source =
+      'fit<-stats::prcomp(sensor,center=TRUE,scale.=TRUE);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::prcomp'
+    )
+  })
+})
+
+describe('R autocovariance conversion evaluation authority', () => {
+  it.each([
+    'stats::acf(signal,lag.max=6,plot=FALSE)',
+    'acf(x=signal,plot=FALSE)',
+    'stats::acf(signal,type="covariance",plot=FALSE)',
+    'stats::acf(signal,type="correlation",plot=FALSE,na.action=base::identity)',
+    'stats::acf(signal,demean=FALSE,plot=FALSE)',
+    'stats::acf(signal,plot=FALSE,na.action=selector)'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::acf(signal,lag.max=6,plot=FALSE)',
+    'stats::acf({base::saveRDS(c(1,2),"cache.rds");signal},plot=FALSE)',
+    'stats::acf(signal,plot=FALSE,na.action={base::saveRDS(c(1,2),"cache.rds");selector})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed series conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::acf(signal,lag.max=6,plot=FALSE)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::acf(signal,lag.max=6,plot=FALSE)',
+    'factory<-stats::acf',
+    'acf<-function(...)1;acf(signal)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting autocovariance purity', async () => {
+    const source =
+      'fit<-stats::acf(signal,lag.max=6,plot=FALSE);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::acf'
+    )
+  })
+})
+
+describe('R Lloyd clustering matrix conversion authority', () => {
+  it.each([
+    'stats::kmeans(sensor,centers=initial,algorithm="Lloyd")',
+    'kmeans(x=sensor,centers=initial)',
+    'stats::kmeans(sensor,centers=2)',
+    'stats::kmeans(sensor,centers=initial,algorithm="Forgy")',
+    'stats::kmeans(sensor,centers=initial,iter.max=100)',
+    'stats::kmeans(sensor,centers=initial,algorithm="MacQueen")'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::kmeans(sensor,centers=initial,algorithm="Lloyd")',
+    'stats::kmeans({base::saveRDS(c(1,2),"cache.rds");sensor},centers=initial)',
+    'stats::kmeans(sensor,centers={base::saveRDS(c(1,2),"cache.rds");initial})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed clustering conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::kmeans(sensor,centers=initial,algorithm="Lloyd")'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::kmeans(sensor,centers=initial,algorithm="Lloyd")',
+    'factory<-stats::kmeans',
+    'kmeans<-function(...)1;kmeans(sensor)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting clustering purity', async () => {
+    const source =
+      'fit<-stats::kmeans(sensor,centers=initial,algorithm="Lloyd");path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::kmeans'
+    )
+  })
+})
+
+describe('R classical MDS matrix conversion authority', () => {
+  it.each([
+    'stats::cmdscale(dissimilarity,k=2,eig=TRUE)',
+    'cmdscale(d=dissimilarity,k=2)',
+    'stats::cmdscale(dissimilarity,k=1)',
+    'stats::cmdscale(dissimilarity,k=2,add=FALSE)',
+    'stats::cmdscale(dissimilarity,k=2,x.ret=TRUE)',
+    'stats::cmdscale(dissimilarity,k=2,list.=TRUE)'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::cmdscale(dissimilarity,k=2,eig=TRUE)',
+    'stats::cmdscale({base::saveRDS(c(1,2),"cache.rds");dissimilarity},k=2)',
+    'stats::cmdscale(dissimilarity,k={base::saveRDS(c(1,2),"cache.rds");2})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed MDS conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::cmdscale(dissimilarity,k=2,eig=TRUE)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::cmdscale(dissimilarity,k=2,eig=TRUE)',
+    'factory<-stats::cmdscale',
+    'cmdscale<-function(...)1;cmdscale(dissimilarity)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting MDS purity', async () => {
+    const source =
+      'fit<-stats::cmdscale(dissimilarity,k=2,eig=TRUE);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::cmdscale'
+    )
+  })
+})
+
+describe('R weighted covariance conversion authority', () => {
+  it.each([
+    'stats::cov.wt(observations,wt=weights,cor=TRUE,method="unbiased")',
+    'cov.wt(x=observations,wt=weights)',
+    'stats::cov.wt(observations,wt=weights,method="ML")',
+    'stats::cov.wt(observations,wt=weights,center=FALSE)',
+    'stats::cov.wt(observations,wt=weights,center=c(0,1))',
+    'stats::cov.wt(observations,cor=FALSE)'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::cov.wt(observations,wt=weights,cor=TRUE,method="unbiased")',
+    'stats::cov.wt({base::saveRDS(c(1,2),"cache.rds");observations},wt=weights)',
+    'stats::cov.wt(observations,wt={base::saveRDS(c(1,2),"cache.rds");weights})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed weighted covariance conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::cov.wt(observations,wt=weights,cor=TRUE,method="unbiased")'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::cov.wt(observations,wt=weights,cor=TRUE,method="unbiased")',
+    'factory<-stats::cov.wt',
+    'cov.wt<-function(...)1;cov.wt(observations)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting weighted covariance purity', async () => {
+    const source =
+      'fit<-stats::cov.wt(observations,wt=weights,cor=TRUE,method="unbiased");path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::cov.wt'
+    )
+  })
+})
+
+describe('R periodogram conversion and preprocessing authority', () => {
+  it.each([
+    'stats::spec.pgram(signal,taper=0,fast=FALSE,detrend=FALSE,demean=TRUE,plot=FALSE)',
+    'spec.pgram(x=signal,plot=FALSE)',
+    'stats::spectrum(signal,method="pgram",plot=FALSE)',
+    'stats::spec.pgram(signal,na.action=selector,plot=FALSE)',
+    'stats::spec.pgram(signal,spans=c(3,3),plot=FALSE)',
+    'stats::spec.pgram(signal,demean=FALSE,plot=FALSE)'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::spec.pgram(signal,taper=0,fast=FALSE,detrend=FALSE,demean=TRUE,plot=FALSE)',
+    'stats::spec.pgram({base::saveRDS(c(1,2),"cache.rds");signal},plot=FALSE)',
+    'stats::spec.pgram(signal,na.action={base::saveRDS(c(1,2),"cache.rds");selector},plot=FALSE)'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed periodogram conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        [
+          'path<-"old.txt"',
+          'stats::spec.pgram(signal,taper=0,fast=FALSE,detrend=FALSE,demean=TRUE,plot=FALSE)'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::spec.pgram(signal,taper=0,fast=FALSE,detrend=FALSE,demean=TRUE,plot=FALSE)',
+    'factory<-stats::spec.pgram',
+    'spec.pgram<-function(...)1;spec.pgram(signal)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting periodogram purity', async () => {
+    const source =
+      'fit<-stats::spec.pgram(signal,taper=0,fast=FALSE,detrend=FALSE,demean=TRUE,plot=FALSE);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::spec.pgram'
+    )
+  })
+})
+
+describe('R weighted calibration design conversion authority', () => {
+  it.each([
+    'stats::lsfit(design,response,wt=weights)',
+    'lsfit(x=design,y=response)',
+    'stats::lsfit(design,response,wt=NULL)',
+    'stats::lsfit(design,response,wt=weights,intercept=FALSE)',
+    'stats::lsfit(design,response,tolerance=1e-9)',
+    'stats::lsfit(design,response,yname="calibration")'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::lsfit(design,response,wt=weights)',
+    'stats::lsfit({base::saveRDS(c(1,2),"cache.rds");design},response)',
+    'stats::lsfit(design,response,wt={base::saveRDS(c(1,2),"cache.rds");weights})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed weighted calibration conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::lsfit(design,response,wt=weights)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::lsfit(design,response,wt=weights)',
+    'factory<-stats::lsfit',
+    'lsfit<-function(...)1;lsfit(design,response)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting weighted calibration purity', async () => {
+    const source =
+      'fit<-stats::lsfit(design,response,wt=weights);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::lsfit'
+    )
+  })
+})
+
+describe('R canonical correlation matrix conversion authority', () => {
+  it.each([
+    'stats::cancor(predictors,responses)',
+    'cancor(x=predictors,y=responses)',
+    'stats::cancor(predictors,responses,xcenter=FALSE)',
+    'stats::cancor(predictors,responses,ycenter=FALSE)',
+    'stats::cancor(predictors,responses,xcenter=c(0,1))',
+    'stats::cancor(predictors,responses,ycenter=c(1,0))'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::cancor(predictors,responses)',
+    'stats::cancor({base::saveRDS(c(1,2),"cache.rds");predictors},responses)',
+    'stats::cancor(predictors,{base::saveRDS(c(1,2),"cache.rds");responses})'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed canonical correlation conversion history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        ['path<-"old.txt"', 'stats::cancor(predictors,responses)'],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::cancor(predictors,responses)',
+    'factory<-stats::cancor',
+    'cancor<-function(...)1;cancor(predictors,responses)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting canonical correlation purity', async () => {
+    const source =
+      'fit<-stats::cancor(predictors,responses);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::cancor'
+    )
+  })
+})
+
+describe('R kernel smoothing subset authority', () => {
+  it.each([
+    'stats::ksmooth(axis,response,kernel="box",bandwidth=0.8,x.points=grid)',
+    'ksmooth(x=axis,y=response,x.points=grid)',
+    'stats::ksmooth(axis,response,kernel="normal",x.points=grid)',
+    'stats::ksmooth(axis,response,bandwidth=1,x.points=grid)',
+    'stats::ksmooth(axis,response,n.points=10)',
+    'stats::ksmooth(axis,response,range.x=c(0,6))'
+  ])('withdraws caller path and serialized contents across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");fit<-' +
+      call +
+      ';base::readLines(path);after<-base::readRDS("cache.rds")'
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+    expect(facts.state).toBe('unknown')
+  })
+  it.each([
+    'base::saveRDS(c(1,2),"cache.rds");stats::ksmooth(axis,response,kernel="box",bandwidth=0.8,x.points=grid)',
+    'stats::ksmooth({base::saveRDS(c(1,2),"cache.rds");axis},response,x.points=grid)',
+    'stats::ksmooth(axis,{base::saveRDS(c(1,2),"cache.rds");response},x.points=grid)'
+  ])('withdraws producer proof before and after lazy arguments: %s', async (source) => {
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+  it.each([false, true])(
+    'keeps failed kernel subset history conservative (%s)',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        [
+          'path<-"old.txt"',
+          'stats::ksmooth(axis,response,kernel="box",bandwidth=0.8,x.points=grid)'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(context?.staticStrings ?? []).not.toContainEqual({ name: 'path', value: 'old.txt' })
+      expect(
+        (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+      ).toEqual([])
+    }
+  )
+  it.each([
+    'later<-function()stats::ksmooth(axis,response,kernel="box",bandwidth=0.8,x.points=grid)',
+    'factory<-stats::ksmooth',
+    'ksmooth<-function(...)1;ksmooth(axis,response)'
+  ])('preserves dormant references and a pure local replacement: %s', async (body) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");' + body + ';base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+  it('allows explicit later paths without granting kernel smoothing purity', async () => {
+    const source =
+      'fit<-stats::ksmooth(axis,response,kernel="box",bandwidth=0.8,x.points=grid);path<-"after.txt";base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['after.txt'])
+    expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
+      'stats::ksmooth'
+    )
+  })
 })
 
 describe('plain R matrix source provenance', () => {

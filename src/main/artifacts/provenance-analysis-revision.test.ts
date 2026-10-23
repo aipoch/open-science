@@ -63,7 +63,7 @@ const snapshot = (): PersistedArtifactExecutionSnapshot => ({
 
 it('binds immutable analysis identity to both rules and the sealed graph', () => {
   const revision = sealArtifactAnalysisRevision(graph, true)
-  expect(revision.lineageBuilder).toEqual({ version: 1, revision: 'artifact-lineage-5' })
+  expect(revision.lineageBuilder).toEqual({ version: 1, revision: 'artifact-lineage-2' })
   expect(artifactAnalysisRevisionSupportsWorkflowReplay(revision, graph)).toBe(true)
   expect(sealArtifactAnalysisRevision(graph, true)).toEqual(revision)
   expect(artifactAnalysisRevisionMatchesGraph(revision, graph)).toBe(true)

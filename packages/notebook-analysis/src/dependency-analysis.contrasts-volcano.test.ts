@@ -80,9 +80,11 @@ it('keeps finite-filtered contrast plots uncertified while retaining known file 
       expect(
         await analyzeNotebookSourceFileAccess('r', cells[index].script, context)
       ).toMatchObject({
-        readState: index === 3 ? 'complete' : 'partial',
-        writeState: index === 4 || index === 5 ? 'partial' : 'complete',
-        externalState: index === 4 || index === 5 ? 'partial' : 'complete',
+        // apply's input comes from a CSV-derived matrix. Table ownership alone
+        // does not close coercion or the callback's scientific dispatch.
+        readState: 'partial',
+        writeState: index <= 5 ? 'partial' : 'complete',
+        externalState: index <= 5 ? 'partial' : 'complete',
         reads: index === 3 ? ['inputs/expression-matrix-444444444444.csv'] : [],
         writes: index === 6 ? ['diagonal_volcano.pdf', 'diagonal_volcano.png'] : []
       })
