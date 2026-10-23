@@ -114,7 +114,7 @@ export interface RFunctionalCall {
   optional?: boolean
 }
 
-// Lexical captures only: these solver calls are never functional purity,
+// Lexical captures only: these higher-order calls are never functional purity,
 // callback return-value, argument-forcing or ownership contracts.
 export const R_OPAQUE_CALLBACK_CAPTURE_CALLS = new Map<
   string,
@@ -124,6 +124,55 @@ export const R_OPAQUE_CALLBACK_CAPTURE_CALLS = new Map<
     method?: string
   }
 >([
+  // expr has a synthetic invocation scope; it is not a callback-valued formal.
+  ['replicate', { package: 'base', callbacks: [] }],
+  ['by', { package: 'base', callbacks: [{ keyword: 'FUN', position: 2 }] }],
+  ['eapply', { package: 'base', callbacks: [{ keyword: 'FUN', position: 1 }] }],
+  ['mclapply', { package: 'parallel', callbacks: [{ keyword: 'FUN', position: 1 }] }],
+  ['pvec', { package: 'parallel', callbacks: [{ keyword: 'FUN', position: 1 }] }],
+  ['mcmapply', { package: 'parallel', callbacks: [{ keyword: 'FUN', position: 0 }] }],
+  ['mcMap', { package: 'parallel', callbacks: [{ keyword: 'f', position: 0 }] }],
+  ['nlm', { package: 'stats', callbacks: [{ keyword: 'f', position: 0 }] }],
+  ['acf', { package: 'stats', callbacks: [{ keyword: 'na.action', position: -1 }] }],
+  ['spec.pgram', { package: 'stats', callbacks: [{ keyword: 'na.action', position: -1 }] }],
+  ['spectrum', { package: 'stats', callbacks: [{ keyword: 'na.action', position: -1 }] }],
+  // Exact named callbacks only; positional/partial R matching remains opaque.
+  [
+    'optimHess',
+    {
+      package: 'stats',
+      callbacks: [
+        { keyword: 'fn', position: -1 },
+        { keyword: 'gr', position: -1 }
+      ]
+    }
+  ],
+  // Interpolators also accept string/list ties options. Capture only exact
+  // named callable ties; shifted/partial/positional forms stay opaque.
+  ...['approx', 'approxfun', 'spline', 'splinefun'].map(
+    (name) => [name, { package: 'stats', callbacks: [{ keyword: 'ties', position: -1 }] }] as const
+  ),
+  [
+    'nlminb',
+    {
+      package: 'stats',
+      callbacks: [
+        { keyword: 'objective', position: 1 },
+        { keyword: 'gradient', position: 2 },
+        { keyword: 'hessian', position: 3 }
+      ]
+    }
+  ],
+  ['Position', { package: 'base', callbacks: [{ keyword: 'f', position: 0 }] }],
+  ['Find', { package: 'base', callbacks: [{ keyword: 'f', position: 0 }] }],
+  ['rapply', { package: 'base', callbacks: [{ keyword: 'f', position: 1 }] }],
+  ['combn', { package: 'utils', callbacks: [{ keyword: 'FUN', position: 2 }] }],
+  ['dendrapply', { package: 'stats', callbacks: [{ keyword: 'FUN', position: 1 }] }],
+  ['kronecker', { package: 'base', callbacks: [{ keyword: 'FUN', position: 2 }] }],
+  // FUN follows ...; a negative position permits exact named matching only.
+  ['ave', { package: 'stats', callbacks: [{ keyword: 'FUN', position: -1 }] }],
+  ['outer', { package: 'base', callbacks: [{ keyword: 'FUN', position: 2 }] }],
+  ['sweep', { package: 'base', callbacks: [{ keyword: 'FUN', position: 3 }] }],
   ['uniroot', { package: 'stats', callbacks: [{ keyword: 'f', position: 0 }] }],
   ['integrate', { package: 'stats', callbacks: [{ keyword: 'f', position: 0 }] }],
   ['optimize', { package: 'stats', callbacks: [{ keyword: 'f', position: 0 }] }],

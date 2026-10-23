@@ -9,6 +9,7 @@ const PYTHON_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = ne
       [name, { kind: 'read', position: 0, keywords: ['fname'], inputForm: 'lines' }] as const
   ),
   ['scipy.io.loadmat', { kind: 'read', position: 0, keywords: ['file_name'] }],
+  ['scipy.io.mminfo', { kind: 'read', position: 0, keywords: ['source'] }],
   ['scipy.sparse.load_npz', { kind: 'read', position: 0, keywords: ['file'] }],
   [
     'scipy.sparse.save_npz',
@@ -40,6 +41,7 @@ const PYTHON_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = ne
   ),
   ['pandas.to_pickle', { kind: 'write', position: 1, keywords: ['filepath_or_buffer'] }],
   ['pandas.read_pickle', { kind: 'read', position: 0, keywords: ['filepath_or_buffer'] }],
+  ['pandas.read_json', { kind: 'read', position: 0, keywords: ['path_or_buf'] }],
   ['pandas.ExcelFile', { kind: 'read', position: 0, keywords: ['path_or_buffer'] }],
   ['scanpy.read_10x_h5', { kind: 'read', position: 0, keywords: ['filename'] }],
   ...[

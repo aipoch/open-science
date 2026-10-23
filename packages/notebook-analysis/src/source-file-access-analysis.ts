@@ -157,6 +157,7 @@ const analyzeNotebookSourceFileAccess = async (
           ? {
               ...(context.workingDirectory ? { workingDirectory: context.workingDirectory } : {}),
               managedEnvironment: context.managedEnvironment,
+              ...(context.rSearchPathUncertain ? { rSearchPathUncertain: true as const } : {}),
               staticStrings: context.staticStrings.filter(
                 ({ name }) => !shadowedNames.has(name) || preservedStaticNames.has(name)
               ),
