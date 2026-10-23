@@ -279,6 +279,34 @@ describe('desktop-only dependency contents', () => {
     expect(desktop('examples/directory.d.ts', true)).toBe(true)
   })
 
+  it.each([
+    ['@huggingface/transformers', '4.2.0', 'src'],
+    ['onnxruntime-web', '1.26.0-dev.20260416-b7804b056c', 'lib']
+  ])('omits audited source trees from desktop %s only', (name, version, source) => {
+    const manifest = JSON.parse(readFileSync(`node_modules/${name}/package.json`, 'utf8'))
+    expect(manifest.version).toBe(version)
+    const desktop = createDesktopDependencyFilter(manifest)
+    for (const separator of ['/', '\\']) {
+      const file = [source, 'nested', 'implementation.js'].join(separator)
+      expect(desktop(file, false)).toBe(false)
+      expect(backendDependencyIncludes(manifest, file)).toBe(true)
+      expect(createDesktopDependencyFilter({ ...manifest, version: '99.0.0' })(file, false)).toBe(
+        true
+      )
+      expect(desktop([source, 'nested', 'LICENSE.txt'].join(separator), false)).toBe(true)
+      expect(desktop(source, true)).toBe(true)
+      const exported = { ...manifest, exports: { './source/*': `./${source}/*` } }
+      expect(createDesktopDependencyFilter(exported)(file, false)).toBe(true)
+    }
+    for (const file of [
+      manifest.main.replace(/^\.\//, ''),
+      'dist/ort-wasm-simd-threaded.wasm',
+      'dist/ort-wasm-simd-threaded.mjs',
+      'LICENSE'
+    ])
+      expect(desktop(file, false)).toBe(true)
+  })
+
   it('copies a real dependency tree with nested notices and loadable runtime assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-dependency-'))
     const source = join(root, 'source')

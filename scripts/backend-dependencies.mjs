@@ -116,6 +116,12 @@ export function createDesktopDependencyFilter(manifest) {
     'example',
     'examples'
   ])
+  // These audited releases execute compiled dist bundles, including their WASM loader.
+  // Avoid hundreds of unused source files on disk; retain unknown versions until audited.
+  if (manifest.name === '@huggingface/transformers' && manifest.version === '4.2.0')
+    developmentRoots.add('src')
+  if (manifest.name === 'onnxruntime-web' && manifest.version === '1.26.0-dev.20260416-b7804b056c')
+    developmentRoots.add('lib')
   return (relativePath, isDirectory) => {
     // Traverse excluded roots so nested redistribution notices are not lost. Keep first-party
     // artifacts, SDK declarations and diagnostic maps under their existing files allowlists.
