@@ -422,8 +422,8 @@ const prepareShellLaunchOptions = async (
               ? { optionalReadOnlyRoots: environmentPathRoots(baseEnv, runtimePlatform) }
               : {}),
             readWriteRoots: [
-              options.notebookSessionRoot ?? options.cwd,
-              options.cwd,
+              // A retained Shell cwd must not promote a read-only or ungranted directory.
+              ...(options.notebookSessionRoot ? [options.notebookSessionRoot] : []),
               options.handoffDir,
               notebookWorkloadCacheRoot(options.runtimeRoot),
               shellEnv.NPM_CONFIG_PREFIX!

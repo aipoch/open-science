@@ -995,6 +995,10 @@ jobs:
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
           src/main/session-plan/plan-context-file.shell.integration.test.ts
           src/main/notebook/shell-cell-session.integration.test.ts
+      - name: Test Linux Folder authority across kernel restart
+        run: >-
+          npx vitest run --project process src/main/notebook/kernel-executor.test.ts
+          -t 'keeps folder authority'
 
   windows_notebook_runtime:
     needs: preflight
@@ -1343,7 +1347,7 @@ jobs:
             src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts
           node scripts/ci/run-notebook-isolation.mjs
           npx vitest run src/main/notebook/kernel-executor.test.ts \
-            -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'
+            -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL|keeps folder authority'
       - name: Test short macOS platform checks
         id: unit_macos_smoke
         if: ${{ matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}

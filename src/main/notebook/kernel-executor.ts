@@ -1210,8 +1210,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
               ? { optionalReadOnlyRoots: environmentPathRoots(spawnEnv, this.platform) }
               : {}),
             readWriteRoots: presentPaths([
+              // cwd is interpreter-controlled state, never a source of filesystem authority.
               request.notebookSessionRoot,
-              request.cwd,
               figuresDir,
               ...(kind === 'repl' && this.platform === 'win32' && spawnEnv.NPM_CONFIG_PREFIX
                 ? [spawnEnv.NPM_CONFIG_PREFIX]

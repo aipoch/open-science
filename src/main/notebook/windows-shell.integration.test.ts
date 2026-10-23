@@ -166,6 +166,90 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
     }
   }, 180_000)
 
+  it.each(['ro', 'rw'] as const)(
+    'keeps Folder %s authority after native Shell cd and relaunch',
+    async (access) => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-folder-authority-'))
+      const workspace = join(root, 'workspace')
+      const granted = join(root, 'granted')
+      const handoffDir = join(workspace, 'handoff')
+      const runtimeRoot = join(root, 'runtime')
+      const file = join(granted, 'data.txt')
+      const outside = join(root, 'ungranted.txt')
+      for (const path of [workspace, granted, handoffDir, runtimeRoot])
+        await mkdir(path, { recursive: true })
+      await writeFile(file, 'original')
+      await writeFile(outside, 'private')
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        temporaryRoot: join(workspace, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getGrantedLocalRoots: async () => [
+          { id: 'folder', name: 'granted', path: await fsPromises.realpath(granted), access }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      let adapter = new NotebookShellProcessAdapter('win32', owner)
+      const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`
+      const execute = (command: string, cwd = workspace): ReturnType<typeof adapter.execute> =>
+        adapter.execute({
+          command,
+          cwd,
+          notebookSessionRoot: workspace,
+          handoffDir,
+          runtimeRoot,
+          sessionId: 'folder-session',
+          projectId: 'folder-project',
+          runtimeBinding: { kind: 'powershell', version: '7.6' },
+          timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
+        })
+      try {
+        const initial = await execute(
+          `Set-Location -LiteralPath ${quote(granted)}; Get-Content -LiteralPath data.txt -Raw`
+        )
+        expect(initial.exitCode).toBe(0)
+        expect(initial.stdout.trim()).toBe('original')
+        for (const restarted of [false, true]) {
+          if (restarted) {
+            expect(await adapter.shutdown()).toEqual({ reaped: true })
+            adapter = new NotebookShellProcessAdapter('win32', owner)
+          }
+          const cwd = restarted ? granted : workspace
+          expect((await execute('Get-Content -LiteralPath data.txt -Raw', cwd)).exitCode).toBe(0)
+          expect(
+            (
+              await execute(
+                'Set-Content -LiteralPath data.txt -Value changed -ErrorAction Stop',
+                cwd
+              )
+            ).exitCode === 0
+          ).toBe(access === 'rw')
+          expect(
+            (await execute(`Get-Content -LiteralPath ${quote(outside)} -ErrorAction Stop`, cwd))
+              .exitCode
+          ).not.toBe(0)
+          expect(
+            (
+              await execute(
+                `Set-Content -LiteralPath ${quote(join(workspace, 'workspace.txt'))} -Value allowed -ErrorAction Stop`,
+                cwd
+              )
+            ).exitCode
+          ).toBe(0)
+        }
+        expect((await readFile(file, 'utf8')).trim()).toBe(access === 'rw' ? 'changed' : 'original')
+      } finally {
+        const stopped = await adapter.shutdown()
+        await owner.dispose()
+        expect(stopped).toEqual({ reaped: true })
+        if (stopped.reaped)
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
+    },
+    120_000
+  )
+
   it.for([false, true])(
     'shares npm tools across live Sessions and retains them after Session deletion (protected: %s)',
     { timeout: 180_000 },
