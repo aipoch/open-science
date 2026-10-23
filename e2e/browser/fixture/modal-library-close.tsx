@@ -25,16 +25,17 @@ import { createRoot } from 'react-dom/client'
 
 initI18n('en')
 const previewCase = new URLSearchParams(location.search).get('preview')
-// A real, deterministic PDF exercises PDF.js rendering and wheel handling without disk IPC.
+// Two pages exercise the full reader; single-page PDFs intentionally use image-style previews.
 const content = `BT /F1 22 Tf 50 740 Td (Literature attachment preview) Tj
 /F1 12 Tf 0 -40 Td (A stable dialog preserves the reference beneath it.) Tj
 0 -30 Td (Scroll to read the rest of this document.) Tj ET`
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
-  '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+  '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
   `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'
 ]
 let pdf = '%PDF-1.4\n'
 const offsets = objects.map((object, index) => {
@@ -43,7 +44,7 @@ const offsets = objects.map((object, index) => {
   return offset
 })
 const xref = pdf.length
-pdf += `xref\n0 6\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`
+pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`
 const pdfBytes = new TextEncoder().encode(pdf)
 const commands: LiteratureCatalogCommand[] = []
 Object.assign(window, { modalLibrary: { commands } })
