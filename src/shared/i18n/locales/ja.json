@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "Retrieve lipid classification and compound details from LIPID MAPS.": "LIPID MAPS から脂質の分類と化合物の詳細を取得します。",
     "Query upstream or downstream human protein regulation with OmniPath.": "OmniPathでヒトタンパク質の上流または下流の制御関係を照会します。",
     "List authorized directories": "許可されたディレクトリを一覧表示",
     "checked directory access": "ディレクトリへのアクセス権を確認した",
