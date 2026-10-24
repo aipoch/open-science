@@ -36,9 +36,8 @@ async function loadOrGenerateDerivedConsumers(
   // Index absent; try generating from the working tree. If git or the parser is unavailable
   // (test environments, preflight archives), fall back to an empty index rather than crashing.
   try {
-    const { consumerDependencyGraph, generateDerivedConsumers, workingTreeSource } = await import(
-      './module-graph/index.mjs'
-    )
+    const { consumerDependencyGraph, generateDerivedConsumers, workingTreeSource } =
+      await import('./module-graph/index.mjs')
     const source = workingTreeSource(cwd)
     const runtimeEdges = Object.entries(
       JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
@@ -49,6 +48,9 @@ async function loadOrGenerateDerivedConsumers(
   }
 }
 
+// Synchronous planners cannot generate the index (module load must stay free of the TypeScript
+// parser for trusted preflight). Every production caller passes an effective manifest; the
+// default only carries a committed index, if any.
 const defaultManifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
 // Older trusted extraction bundles have no registry: retain all tests rather than guess.
@@ -491,7 +493,9 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
     const moduleId = arguments_[1]
     if (!moduleId || moduleId.startsWith('--')) throw new Error('Module id is required')
     const manifest = loadModuleImpactManifest()
-    const derived = await loadOrGenerateDerivedConsumers(manifest, options.cwd ?? process.cwd())
+    const derived =
+      options.derivedConsumers ??
+      (await loadOrGenerateDerivedConsumers(manifest, options.cwd ?? process.cwd()))
     const plan = createModuleTestPlan(moduleId, withDerivedConsumers(manifest, derived))
     return executeModuleTestPlan(plan, { ...options, testArguments })
   }

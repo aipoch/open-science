@@ -150,6 +150,7 @@ describe('module test impact commands', () => {
           throw new Error('CodeGraph unavailable in CI')
         },
         spawn,
+        derivedConsumers: { schemaVersion: 1, modules: {} },
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       }
       const args = ['affected', '--base', 'base', '--head', 'head']
@@ -168,6 +169,7 @@ describe('module test impact commands', () => {
     expect(
       executeModuleTestPlan(createModuleTestPlan('artifact_storage'), {
         spawn,
+        derivedConsumers: { schemaVersion: 1, modules: {} },
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       })
     ).toBe(1)
@@ -208,6 +210,7 @@ describe('module test impact commands', () => {
               throw new Error('CodeGraph unavailable in CI')
             },
             spawn,
+            derivedConsumers: { schemaVersion: 1, modules: {} },
             environment: { npm_execpath: '/npm/bin/npm-cli.js' }
           }
         )
@@ -940,6 +943,7 @@ describe('module test impact commands', () => {
             throw new Error('CodeGraph unavailable in CI')
           },
           spawn,
+          derivedConsumers: { schemaVersion: 1, modules: {} },
           environment: { npm_execpath: '/npm/bin/npm-cli.js' }
         }
       )
