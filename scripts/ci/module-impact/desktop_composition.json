@@ -30,6 +30,7 @@
     "src/main/composition/session-projection.ts",
     "src/main/composition/session-surfaces.ts",
     "src/main/composition/settings-bootstrap.ts",
+    "src/main/composition/settings-bootstrap.test.ts",
     "src/main/composition/settings-effects.ts",
     "src/main/composition/side-chat.ts",
     "src/main/composition/specialists.ts",
@@ -273,6 +274,7 @@
   "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": [
+      "src/main/composition/settings-bootstrap.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/session-packages.test.ts",
