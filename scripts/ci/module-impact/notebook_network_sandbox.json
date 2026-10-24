@@ -1,7 +1,5 @@
 {
   "ownerPaths": [
-    "scripts/build-notebook-host.mjs",
-    "scripts/windows-dev-notebook-host.integration.test.ts",
     "packages/notebook-network-sandbox/src/config.ts",
     "packages/notebook-network-sandbox/src/index.ts",
     "packages/notebook-network-sandbox/src/types.ts",
@@ -93,7 +91,6 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "scripts/windows-dev-notebook-host.integration.test.ts",
       "packages/notebook-network-sandbox/src/config.test.ts",
       "packages/notebook-network-sandbox/src/address-policy.test.ts",
       "packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts",
@@ -120,7 +117,10 @@
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "packages/notebook-network-sandbox/src/installed-package.test.ts"
     ],
-    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "scripts/windows-dev-notebook-host.integration.test.ts"
+    ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
