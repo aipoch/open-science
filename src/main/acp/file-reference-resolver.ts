@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { constants, createReadStream, createWriteStream, rmSync, type Stats } from 'node:fs'
 import { mkdtemp, open, realpath, rm, stat, type FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -134,6 +135,7 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
       directories.add(directory)
 
       const snapshotPath = join(directory, basename(sourcePath))
+      const snapshotHash = createHash('sha256')
       await pipeline(
         createReadStream(sourcePath, { fd: sourceHandle.fd, autoClose: false }),
         new Transform({
@@ -157,6 +159,7 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
               )
               return
             }
+            snapshotHash.update(chunk)
             copiedBytes += chunk.length
             this.bytesByScope.set(scopeKey, sessionBytes + chunk.length)
             callback(null, chunk)
@@ -164,6 +167,18 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
         }),
         createWriteStream(snapshotPath, { flags: 'wx' })
       )
+      // Windows can retain timestamps for same-size writes while a file handle is open.
+      const sourceHash = createHash('sha256')
+      for await (const chunk of createReadStream(sourcePath, {
+        fd: sourceHandle.fd,
+        autoClose: false,
+        start: 0,
+        end: Math.max(0, sourceInfo.size - 1)
+      }))
+        sourceHash.update(chunk)
+      if (snapshotHash.digest('hex') !== sourceHash.digest('hex')) {
+        throw new Error('Linked-folder file changed while preparing its snapshot.')
+      }
       assertUnchanged(await sourceHandle.stat())
       await validateSource()
       if (

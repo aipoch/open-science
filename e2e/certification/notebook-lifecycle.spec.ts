@@ -17,6 +17,23 @@ const captureLifecycleEvidence = async (
 const controlledWindowsFixtureAvailable =
   process.platform === 'win32' && Boolean(process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS)
 
+// Controlled mutations still run through the production protected Windows launcher.
+test.beforeEach(async ({ app }) => {
+  if (!controlledWindowsFixtureAvailable) return
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  expect(await page.evaluate(() => window.api.settings.installNotebookNetwork())).toMatchObject({
+    kind: 'ready'
+  })
+})
+
+test.afterEach(async ({ app }) => {
+  if (!controlledWindowsFixtureAvailable) return
+  expect(await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())).toMatchObject({
+    kind: 'setupRequired'
+  })
+})
+
 const sendReviewedPrompt = async (
   page: Parameters<typeof sendPrompt>[0],
   prompt: string,

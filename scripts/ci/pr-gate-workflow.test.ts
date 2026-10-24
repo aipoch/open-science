@@ -883,7 +883,9 @@ describe('PR Gate workflow', () => {
       try {
         const output = join(dir, 'output')
         const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
-        const run = spawnSync('bash', ['-eu', '-c', classify!.run!], {
+        // Pass the script through stdin so Windows argument quoting cannot alter its heredoc.
+        const run = spawnSync('bash', ['-eu'], {
+          input: classify!.run!,
           env: {
             ...process.env,
             EVENT_NAME: event,
