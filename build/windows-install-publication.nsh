@@ -6,9 +6,17 @@ Var publicationDirectory
 Var publicationState
 Var publicationResult
 Var publicationOutput
+Var publicationPowerShell
 
 !macro runInstallPublication ACTION
-  nsExec::ExecToStack /TIMEOUT=120000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-publication.ps1" -Action ${ACTION} -InstallPath "$INSTDIR" -StatePath "$publicationState"'
+  StrCpy $publicationPowerShell "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  # NSIS is 32-bit: Sysnative avoids WOW64 redirection on native AMD64 Windows.
+  # Keep the existing host on other architectures or when the alias is unavailable.
+  ${If} ${IsNativeAMD64}
+    IfFileExists "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" 0 +2
+      StrCpy $publicationPowerShell "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+  nsExec::ExecToStack /TIMEOUT=120000 '"$publicationPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-publication.ps1" -Action ${ACTION} -InstallPath "$INSTDIR" -StatePath "$publicationState"'
   Pop $publicationResult
   Pop $publicationOutput
 !macroend

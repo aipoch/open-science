@@ -370,6 +370,16 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         }
         const source = join(f.root, 'fixture.nsi')
         const exe = join(f.root, 'fixture.exe')
+        const resources = join(f.root, 'build')
+        const hostLog = join(f.root, 'publication-host.txt')
+        mkdirSync(resources)
+        writeFileSync(
+          join(resources, 'windows-install-publication.ps1'),
+          readFileSync(script, 'utf8').replace(
+            '$handles =',
+            `[IO.File]::AppendAllText('${hostLog.replaceAll("'", "''")}', [Environment]::Is64BitProcess.ToString() + [Environment]::NewLine)\n$handles =`
+          )
+        )
         writeFileSync(
           source,
           '\ufeff' +
@@ -382,7 +392,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               `!define PROJECT_DIR "${f.root}"`,
               `!define APP_64 "${archive}"`,
               ...(mode === 'universal-x64' ? [`!define APP_ARM64 "${archive}"`] : []),
-              `!define BUILD_RESOURCES_DIR "${resolve('build')}"`,
+              `!define BUILD_RESOURCES_DIR "${resources}"`,
               '!macro quitFailedUpdate',
               'FileOpen $0 "$EXEDIR\\failure.txt" w',
               'FileWrite $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
@@ -396,6 +406,14 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               'LangString appCannotBeClosed 1033 "Cannot replace files"',
               'Section',
               'InitPluginsDir',
+              // Process architecture can be AMD64 under emulation on ARM64 Windows.
+              'FileOpen $0 "$EXEDIR\\native-amd64.txt" w',
+              '${If} ${IsNativeAMD64}',
+              'FileWrite $0 "true"',
+              '${Else}',
+              'FileWrite $0 "false"',
+              '${EndIf}',
+              'FileClose $0',
               'FileOpen $0 "$EXEDIR\\plugin-directory.txt" w',
               'FileWrite $0 "$PLUGINSDIR"',
               'FileClose $0',
@@ -462,6 +480,13 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
             : run.stdout + run.stderr
         ).toBe(success ? 0 : 2)
         expect(existsSync(join(f.root, 'success.txt'))).toBe(success)
+        if (mode === 'valid' && readFileSync(join(f.root, 'native-amd64.txt'), 'utf8') === 'true') {
+          expect(readFileSync(hostLog, 'utf8').trim().split(/\r?\n/)).toEqual([
+            'True',
+            'True',
+            'True'
+          ])
+        }
         expect(
           readdirSync(f.install).filter((name) => name.startsWith('.open-science-install-'))
         ).toEqual([])
