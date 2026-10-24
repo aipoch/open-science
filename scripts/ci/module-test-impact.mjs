@@ -33,19 +33,15 @@ async function loadOrGenerateDerivedConsumers(
 ) {
   const loaded = loadDerivedConsumers()
   if (Object.keys(loaded.modules).length > 0) return loaded
-  // Index absent; try generating from the working tree. If git or the parser is unavailable
-  // (test environments, preflight archives), fall back to an empty index rather than crashing.
-  try {
-    const { consumerDependencyGraph, generateDerivedConsumers, workingTreeSource } =
-      await import('./module-graph/index.mjs')
-    const source = workingTreeSource(cwd)
-    const runtimeEdges = Object.entries(
-      JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
-    )
-    return generateDerivedConsumers(manifest, consumerDependencyGraph(source, runtimeEdges).reverse)
-  } catch {
-    return { schemaVersion: 1, modules: {} }
-  }
+  // Index absent: generate from the requested checkout. Failures propagate; an empty index
+  // would silently narrow selection to explicit tests only.
+  const { consumerDependencyGraph, generateDerivedConsumers, workingTreeSource } =
+    await import('./module-graph/index.mjs')
+  const source = workingTreeSource(cwd)
+  const runtimeEdges = Object.entries(
+    JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
+  )
+  return generateDerivedConsumers(manifest, consumerDependencyGraph(source, runtimeEdges).reverse)
 }
 
 // Synchronous planners cannot generate the index (module load must stay free of the TypeScript

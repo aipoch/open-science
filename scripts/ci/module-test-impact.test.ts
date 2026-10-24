@@ -982,6 +982,7 @@ describe('module test impact commands', () => {
         ['affected', '--base', base, '--head', head, '--coverage-changed', coverageBase],
         {
           cwd: '/repo',
+          derivedConsumers: { schemaVersion: 1, modules: {} },
           execute,
           spawn,
           environment,
