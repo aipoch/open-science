@@ -7,19 +7,24 @@ import { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import { hasDevEntry, inspectDevProcess, signalDevProcess } from './dev-process-identity.mjs'
 
-const registration = z
-  .object({
-    kind: z.enum(['spawn', 'backend']),
-    secret: z.string(),
-    sessionId: z.string().uuid(),
-    buildId: z.string().uuid(),
-    workspaceRoot: z.string(),
-    configRoot: z.string(),
-    generation: z.string().uuid().optional(),
-    pid: z.number().int().positive(),
-    desktopPid: z.number().int().positive().optional()
-  })
-  .strict()
+const sessionRegistration = z.object({
+  secret: z.string(),
+  sessionId: z.string().uuid(),
+  workspaceRoot: z.string(),
+  pid: z.number().int().positive()
+})
+const registration = z.discriminatedUnion('kind', [
+  sessionRegistration.extend({ kind: z.literal('desktop') }).strict(),
+  sessionRegistration
+    .extend({
+      kind: z.enum(['spawn', 'backend']),
+      buildId: z.string().uuid(),
+      configRoot: z.string(),
+      generation: z.string().uuid().optional(),
+      desktopPid: z.number().int().positive().optional()
+    })
+    .strict()
+])
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // A dev-only supervisor. No owner state is persisted and no existing runtime is adopted.
@@ -34,6 +39,7 @@ export async function createDevSession({
   const sessionId = randomUUID()
   const secret = randomBytes(32).toString('hex')
   const members = new Map()
+  const desktops = new Map()
   const sockets = new Set()
   const pending = new Set()
   let stopping
@@ -80,54 +86,68 @@ export async function createDevSession({
           )
             throw new Error('Invalid development backend registration.')
           const identity = await inspect(item.pid)
-          if (!identity || !hasDevEntry(identity, join(workspaceRoot, 'out/backend/index.cjs')))
+          if (
+            !identity ||
+            !hasDevEntry(
+              identity,
+              item.kind === 'desktop' ? workspaceRoot : join(workspaceRoot, 'out/backend/index.cjs')
+            )
+          )
             throw new Error('Cannot prove development backend identity.')
           const key = `${item.pid}:${identity.birth}`
-          const previous = members.get(key)
-          if (
-            previous &&
-            (previous.birth !== identity.birth ||
-              previous.configRoot !== item.configRoot ||
-              previous.buildId !== item.buildId)
-          )
-            throw new Error('Development backend identity changed during registration.')
-          if (item.kind === 'backend' && !item.generation)
-            throw new Error('Missing development runtime generation.')
-          const desktopPid = item.desktopPid ?? identity.ppid
-          const parent = await inspect(desktopPid)
-          const desktop =
-            parent && hasDevEntry(parent, workspaceRoot)
-              ? { pid: desktopPid, birth: parent.birth }
-              : undefined
-          // Backend registration can beat the desktop's post-spawn registration. Never replace
-          // its lifetime connection with the short-lived spawn notification.
-          if (!previous || item.kind === 'backend') {
-            const member = {
-              ...item,
-              secret: undefined,
-              birth: identity.birth,
-              desktop: item.kind === 'backend' ? (previous?.desktop ?? desktop) : desktop,
-              socket,
-              desktopSocket: item.kind === 'spawn' ? socket : previous?.desktopSocket
-            }
-            // The next generation still has not initialized its runtime. Capture the previous
-            // generation's receipt before that shared path can be overwritten by its successor.
-            for (const old of members.values()) {
-              if (
-                old.configRoot === item.configRoot &&
-                old.completedClean === undefined &&
-                (await inspect(old.pid))?.birth !== old.birth
-              )
-                old.completedClean = await readCleanExit(old)
-            }
-            members.set(key, member)
+          if (item.kind === 'desktop') {
+            desktops.set(key, { pid: item.pid, birth: identity.birth, socket })
           } else {
-            previous.desktop = desktop
-            previous.desktopSocket = socket
+            const previous = members.get(key)
+            if (
+              previous &&
+              (previous.birth !== identity.birth ||
+                previous.configRoot !== item.configRoot ||
+                previous.buildId !== item.buildId)
+            )
+              throw new Error('Development backend identity changed during registration.')
+            if (item.kind === 'backend' && !item.generation)
+              throw new Error('Missing development runtime generation.')
+            const desktopPid = item.desktopPid ?? identity.ppid
+            const parent = await inspect(desktopPid)
+            const desktop =
+              parent && hasDevEntry(parent, workspaceRoot)
+                ? { pid: desktopPid, birth: parent.birth }
+                : undefined
+            // Backend registration can beat the desktop's post-spawn registration. Never replace
+            // its lifetime connection with the short-lived spawn notification.
+            if (!previous || item.kind === 'backend') {
+              const member = {
+                ...item,
+                secret: undefined,
+                birth: identity.birth,
+                desktop: item.kind === 'backend' ? (previous?.desktop ?? desktop) : desktop,
+                socket,
+                desktopSocket: item.kind === 'spawn' ? socket : previous?.desktopSocket
+              }
+              // The next generation still has not initialized its runtime. Capture the previous
+              // generation's receipt before that shared path can be overwritten by its successor.
+              for (const old of members.values()) {
+                if (
+                  old.configRoot === item.configRoot &&
+                  old.completedClean === undefined &&
+                  (await inspect(old.pid))?.birth !== old.birth
+                )
+                  old.completedClean = await readCleanExit(old)
+              }
+              members.set(key, member)
+            } else {
+              previous.desktop = desktop
+              previous.desktopSocket = socket
+            }
           }
-          const build = JSON.parse(await readFile(join(root, 'out/backend/dev-build.json'), 'utf8'))
-          if (build.buildId !== item.buildId || build.workspaceRoot !== workspaceRoot)
-            throw new Error('Development backend build is no longer current.')
+          if (item.kind !== 'desktop') {
+            const build = JSON.parse(
+              await readFile(join(root, 'out/backend/dev-build.json'), 'utf8')
+            )
+            if (build.buildId !== item.buildId || build.workspaceRoot !== workspaceRoot)
+              throw new Error('Development backend build is no longer current.')
+          }
           socket.setTimeout(0)
           // A registration racing teardown is retained for verification but never admitted.
           if (stopping || closed) socket.end('stop\n')
@@ -149,6 +169,14 @@ export async function createDevSession({
     server.listen(0, '127.0.0.1', resolve)
   })
   const alive = async (member) => (await inspect(member.pid))?.birth === member.birth
+  const currentDesktops = () => [
+    ...new Map(
+      [
+        ...[...members.values()].flatMap((member) => (member.desktop ? [member.desktop] : [])),
+        ...desktops.values()
+      ].map((desktop) => [desktop.pid, desktop])
+    ).values()
+  ]
   const waitForMembers = async (deadline) => {
     while (Date.now() < deadline) {
       await Promise.all([...pending])
@@ -163,6 +191,10 @@ export async function createDevSession({
       // still added above and receives stop, so startup cannot escape the final sweep.
       server.close()
       await Promise.all([...pending])
+      for (const desktop of desktops.values()) {
+        if (!desktop.socket.destroyed) desktop.socket.write('stop\n')
+        else await signalDevProcess(desktop.pid, desktop.birth, 'SIGTERM', inspect)
+      }
       for (const member of members.values()) {
         if (member.desktopSocket && !member.desktopSocket.destroyed)
           member.desktopSocket.write('stop\n')
@@ -172,15 +204,21 @@ export async function createDevSession({
       // Do not dispose the backend underneath Electron's renderer flush. If Electron exits
       // early after failed preparation, use the remaining shared budget for backend disposal.
       while (Date.now() < deadline) {
-        const desktops = [...members.values()].flatMap((member) =>
-          member.desktop ? [member.desktop] : []
-        )
-        if (!(await Promise.all(desktops.map(alive))).some(Boolean)) break
+        if (!(await Promise.all(currentDesktops().map(alive))).some(Boolean)) break
         await delay(50)
       }
       for (const member of members.values()) member.socket.write('stop\n')
       await waitForMembers(deadline)
       let clean = true
+      for (const desktop of currentDesktops()) {
+        if (await alive(desktop)) {
+          clean = false
+          log(
+            `[dev] Desktop ${desktop.pid} exceeded shutdown deadline; terminating the verified process.`
+          )
+          await signalDevProcess(desktop.pid, desktop.birth, 'SIGKILL', inspect)
+        }
+      }
       for (const member of members.values()) {
         if (await alive(member)) {
           clean = false
@@ -192,6 +230,13 @@ export async function createDevSession({
       }
       const settleDeadline = Date.now() + settleMs
       await waitForMembers(settleDeadline)
+      while (
+        Date.now() < settleDeadline &&
+        (await Promise.all(currentDesktops().map(alive))).some(Boolean)
+      )
+        await delay(50)
+      if ((await Promise.all(currentDesktops().map(alive))).some(Boolean))
+        throw new Error('Development desktop is still running.')
       for (const member of members.values()) {
         if (await alive(member))
           throw new Error(`Development backend ${member.pid} is still running.`)

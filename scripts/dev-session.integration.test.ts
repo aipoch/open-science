@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { build } from 'esbuild'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { createDevSession } from './dev-session.mjs'
 import { inspectDevProcess, signalDevProcess } from './dev-process-identity.mjs'
 import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
@@ -95,6 +95,54 @@ async function start(entry: string, environment: string, mode = 'clean'): Promis
   })
   return child
 }
+
+async function desktopFixture(root: string): Promise<void> {
+  await build({
+    stdin: {
+      contents: `
+        import { joinDevSession, readDevSession } from './src/main/dev-runtime-session';
+        const hold = setInterval(() => {}, 1000);
+        let connection;
+        joinDevSession({
+          session: readDevSession(true),
+          desktopOnly: true,
+          stop: async () => {
+            if (process.env.FIXTURE_MODE === 'hung') return new Promise(() => {});
+            clearInterval(hold); connection?.close();
+          }
+        }).then(value => { connection = value; console.log('READY'); })
+          .catch(() => process.exit(1));
+      `,
+      resolveDir: process.cwd(),
+      loader: 'ts'
+    },
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    outfile: join(root, 'index.js')
+  })
+}
+
+it.each(['clean', 'hung'])(
+  'stops a %s startup desktop during rebuild without owning the conflicting backend',
+  async (mode) => {
+    const { root, entry } = await fixture()
+    await desktopFixture(root)
+    const foreign = await createDevSession({ root, graceMs: 1000, log: () => {} })
+    const current = await createDevSession({ root, graceMs: 300, settleMs: 2000, log: () => {} })
+    try {
+      const backend = await start(entry, foreign.environment)
+      await rm(join(root, 'out/backend/dev-build.json'))
+      const desktop = await start(root, current.environment, mode)
+      expect(await current.stop()).toEqual({ clean: mode === 'clean', stopped: 0 })
+      expect(await inspectDevProcess(desktop.pid)).toBeUndefined()
+      expect(await inspectDevProcess(backend.pid)).toBeDefined()
+    } finally {
+      await current.stop()
+      await foreign.stop()
+    }
+  }
+)
 
 it.each(['clean', 'failed', 'hung', 'blocked'])(
   'stops a real detached backend after %s cleanup',
@@ -238,8 +286,7 @@ it('merges concurrent spawn and backend registrations without losing the lifetim
   }
 })
 
-it('stops on loss of the runner even when no Electron process remains', async () => {
-  const { root, entry } = await fixture()
+async function startRunner(root: string): Promise<{ runner: ChildProcess; environment: string }> {
   const serverModule = new URL('./dev-session.mjs', import.meta.url).href
   const runner = spawn(
     process.execPath,
@@ -249,6 +296,9 @@ it('stops on loss of the runner even when no Electron process remains', async ()
       `
     import { createDevSession } from ${JSON.stringify(serverModule)};
     const session = await createDevSession({ root: ${JSON.stringify(root)} });
+    process.on('SIGTERM', async () => {
+      const result = await session.stop(); process.exit(result.clean ? 0 : 1);
+    });
     process.stdout.write(session.environment + '\\n');
   `
     ],
@@ -263,6 +313,32 @@ it('stops on loss of the runner even when no Electron process remains', async ()
     })
     runner.once('exit', () => reject(new Error('Runner fixture exited early.')))
   })
+  return { runner, environment }
+}
+
+it('stops only its startup desktop when the runner PID alone receives SIGTERM', async () => {
+  const { root, entry } = await fixture()
+  await desktopFixture(root)
+  const foreign = await createDevSession({ root, graceMs: 1000, log: () => {} })
+  try {
+    const backend = await start(entry, foreign.environment)
+    const { runner, environment } = await startRunner(root)
+    const desktop = await start(root, environment)
+    const exited = once(runner, 'exit')
+    runner.kill('SIGTERM')
+    expect(await exited).toEqual(process.platform === 'win32' ? [null, 'SIGTERM'] : [0, null])
+    await vi.waitFor(async () => expect(await inspectDevProcess(desktop.pid)).toBeUndefined(), {
+      timeout: 5000
+    })
+    expect(await inspectDevProcess(backend.pid)).toBeDefined()
+  } finally {
+    await foreign.stop()
+  }
+})
+
+it('stops on loss of the runner even when no Electron process remains', async () => {
+  const { root, entry } = await fixture()
+  const { runner, environment } = await startRunner(root)
   const child = await start(entry, environment)
   const exited = once(child, 'exit')
   runner.kill('SIGKILL')

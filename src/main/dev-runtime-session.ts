@@ -60,19 +60,33 @@ export function assertDevRuntimeIdentity(actual: unknown, expected: DevRuntimeId
     )
 }
 
-/** A runner connection is a lifetime lease, separate from Desktop attachment and startup IPC. */
-export async function joinDevSession(options: {
+type DevSessionRegistration = {
   session: DevSession
+  stop(): Promise<void>
+}
+type DevBackendRegistration = DevSessionRegistration & {
   build: { buildId: string; workspaceRoot: string }
   configRoot: string
   generation?: string
   backendPid?: number
-  stop(): Promise<void>
-}): Promise<{ identity: DevRuntimeIdentity; close(): void }> {
-  const { session, build } = options
-  if (session.workspaceRoot !== build.workspaceRoot)
+  desktopOnly?: false
+}
+type DevDesktopRegistration = DevSessionRegistration & { desktopOnly: true }
+
+// Desktop lifetime must not depend on backend readiness: a rebuild can remove its marker.
+export function joinDevSession(options: DevDesktopRegistration): Promise<{ close(): void }>
+export function joinDevSession(
+  options: DevBackendRegistration
+): Promise<{ identity: DevRuntimeIdentity; close(): void }>
+/** A runner connection is a lifetime lease, separate from Desktop attachment and startup IPC. */
+export async function joinDevSession(
+  options: DevBackendRegistration | DevDesktopRegistration
+): Promise<{ identity?: DevRuntimeIdentity; close(): void }> {
+  const { session } = options
+  const backend = options.desktopOnly ? undefined : options
+  if (backend && session.workspaceRoot !== backend.build.workspaceRoot)
     throw new Error('The development backend build belongs to a different worktree.')
-  const identity = { ...build, sessionId: session.sessionId }
+  const identity = backend ? { ...backend.build, sessionId: session.sessionId } : undefined
   const socket = createConnection({ host: '127.0.0.1', port: session.port })
   let intentionalClose = false
   let shutdown: Promise<void> | undefined
@@ -80,7 +94,7 @@ export async function joinDevSession(options: {
     if (intentionalClose || shutdown) return
     // Also bound cleanup if the runner itself disappeared. The runner independently observes
     // process death and can escalate a stuck event loop while it is still alive.
-    if (!options.backendPid) {
+    if (!backend?.backendPid) {
       const deadline = setTimeout(() => process.exit(1), 30_000)
       deadline.unref()
     }
@@ -106,12 +120,14 @@ export async function joinDevSession(options: {
       socket.write(
         JSON.stringify({
           ...identity,
+          sessionId: session.sessionId,
+          workspaceRoot: session.workspaceRoot,
           secret: session.secret,
-          kind: options.backendPid ? 'spawn' : 'backend',
-          pid: options.backendPid ?? process.pid,
-          desktopPid: options.backendPid ? process.pid : undefined,
-          configRoot: options.configRoot,
-          generation: options.generation
+          kind: options.desktopOnly ? 'desktop' : backend?.backendPid ? 'spawn' : 'backend',
+          pid: backend?.backendPid ?? process.pid,
+          desktopPid: backend?.backendPid ? process.pid : undefined,
+          configRoot: backend?.configRoot,
+          generation: backend?.generation
         }) + '\n'
       )
     })
