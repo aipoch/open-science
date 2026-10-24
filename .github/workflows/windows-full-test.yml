@@ -83,6 +83,10 @@ jobs:
           package-manager-cache: false
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Build Windows sandbox native host
+        # The checked-in host can predate current lifecycle and ACL contracts. Both portable
+        # process tests and controlled mutations must consume this revision's native source.
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
       - name: Download Windows Notebook runtime
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -154,7 +158,7 @@ jobs:
           TEST_NAME_PATTERN: ${{ inputs.test_name_pattern || '.*' }}
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'regressions' }}
         # Reuse the full job's runner, install and effective project budgets without running the
-        # unrelated shards or native sandbox. These are the suites from the recent failed batches.
+        # unrelated shards or native lifecycle smoke. These are suites from recent failed batches.
         run: >-
           npm test --
           src/main/acp/file-reference-resolver.test.ts
