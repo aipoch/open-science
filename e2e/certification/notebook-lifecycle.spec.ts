@@ -185,8 +185,7 @@ test('cancels a timed-out environment mutation before allowing a retry', async (
     !controlledWindowsFixtureAvailable,
     'Requires the controlled Windows micromamba process fixture.'
   )
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  const page = app.page
   await createProject(page, 'Notebook mutation cancellation')
   await sendPrompt(
     page,
@@ -205,8 +204,7 @@ test('keeps a healthy environment mutation alive beyond the client idle timeout'
     !controlledWindowsFixtureAvailable,
     'Requires the controlled Windows micromamba process fixture.'
   )
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  const page = app.page
   await createProject(page, 'Long Notebook mutation')
   await sendPrompt(
     page,
@@ -245,8 +243,7 @@ test('cancels a timed-out package mutation before allowing a retry', async ({ ap
     !controlledWindowsFixtureAvailable,
     'Requires the controlled Windows micromamba process fixture.'
   )
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  const page = app.page
   await createProject(page, 'Notebook package cancellation')
   await sendPrompt(
     page,
