@@ -313,6 +313,29 @@ Electron tests also require an unlocked test Secret Service.
 
 ## Who stops the server
 
+### Desktop development
+
+`npm run dev` owns the desktop backend it launches. Stopping that command also stops its
+backend, including when desktop shutdown preparation fails. The dev runner allows bounded
+graceful shutdown, then terminates only its registered process after checking its kernel birth
+identity. Incomplete cleanup produces a non-success result and preserves recovery evidence;
+forced termination can interrupt unfinished writes. A renderer reload or Vite server restart
+does not end the dev session. Backend/main source changes still require restarting the command.
+
+Each invocation has a private session identity, and each successful backend build embeds a new
+build identity. Development attachment requires both identities and the same worktree. A fresh
+command cannot silently reuse a same-version backend from an older invocation or another
+worktree. An occupied data directory must be released by its existing owner before retrying;
+the dev runner never adopts or stops a standalone CLI server. Failed builds do not publish a
+usable development readiness marker. `--rendererOnly` is unsupported by `npm run dev` because
+it skips rebuilding the desktop main process.
+
+These rules apply only to the managed desktop development command. Packaged builds ignore
+inherited dev-runner metadata and retain the release lifecycle below. `dev:web` / `dev:headless`
+and standalone CLI lifetimes are unchanged.
+
+### Packaged desktop and standalone server
+
 | Action                                        | Result                                                                                                                                                                  |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Quit the desktop that started Node            | Confirm running work, drain renderer state, prepare the same generation, stop it gracefully and verify PID exit, directory ownership and the matching clean-exit record |

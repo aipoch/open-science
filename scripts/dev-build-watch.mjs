@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { readFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { relative, resolve, sep } from 'node:path'
 import { buildDevPackages, packageBuildProjects } from './build-dev-packages.mjs'
 import { createBackendBuilder } from './build-backend.mjs'
@@ -41,6 +42,7 @@ export function devBuildWatch(root = process.cwd()) {
           while (dirty && !closed) {
             dirty = false
             try {
+              await rm(resolve(root, 'out/backend/dev-build.json'), { force: true })
               const forceBuild = force
               force = false
               await buildDevPackages({

@@ -5,12 +5,15 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   discoverDesktopBackend,
+  startOrAttachDesktopBackend,
   desktopBackendPaths,
   DesktopRuntimeStoppingError
 } from './desktop-runtime-launcher'
+import * as devSession from './dev-runtime-session'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 const directories: string[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true })
@@ -62,6 +65,89 @@ async function fixture() {
   return { root, owner, fetcher }
 }
 describe('desktop backend discovery', () => {
+  it('refuses a same-version backend from an earlier dev invocation', async () => {
+    const { root } = await fixture()
+    await expect(
+      discoverDesktopBackend(root, 'test', undefined, {
+        sessionId: randomUUID(),
+        buildId: randomUUID(),
+        workspaceRoot: root
+      })
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('development session'),
+      issue: { reason: 'startup-recovery-required', canStop: true }
+    })
+  })
+  it.each(['sessionId', 'buildId', 'workspaceRoot'] as const)(
+    'rejects a mismatched dev %s while preserving ordinary release discovery',
+    async (field) => {
+      const { root, owner, fetcher } = await fixture()
+      const identity = { sessionId: randomUUID(), buildId: randomUUID(), workspaceRoot: root }
+      fetcher.mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...proof(root, owner),
+              devIdentity: {
+                ...identity,
+                [field]: field === 'workspaceRoot' ? join(root, 'other') : randomUUID()
+              }
+            })
+          )
+      )
+      await expect(discoverDesktopBackend(root, 'test', undefined, identity)).rejects.toThrow(
+        'development session'
+      )
+      await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(owner.desktop)
+    }
+  )
+  it('admits only the matching live dev session and build', async () => {
+    const { root, owner, fetcher } = await fixture()
+    const identity = { sessionId: randomUUID(), buildId: randomUUID(), workspaceRoot: root }
+    fetcher.mockImplementation(
+      async () => new Response(JSON.stringify({ ...proof(root, owner), devIdentity: identity }))
+    )
+    await expect(discoverDesktopBackend(root, 'test', undefined, identity)).resolves.toEqual(
+      owner.desktop
+    )
+  })
+  it('registers the replacement Desktop when attaching to the same dev backend', async () => {
+    const { root, owner, fetcher } = await fixture()
+    const identity = { sessionId: randomUUID(), buildId: randomUUID(), workspaceRoot: root }
+    const session = {
+      sessionId: identity.sessionId,
+      workspaceRoot: root,
+      port: 40001,
+      secret: 'a'.repeat(64)
+    }
+    vi.spyOn(devSession, 'readDevSession').mockReturnValue(session)
+    vi.spyOn(devSession, 'expectedDevIdentity').mockResolvedValue(identity)
+    const register = vi
+      .spyOn(devSession, 'joinDevSession')
+      .mockResolvedValue({ identity, close: vi.fn() })
+    fetcher.mockImplementation(
+      async () => new Response(JSON.stringify({ ...proof(root, owner), devIdentity: identity }))
+    )
+    await expect(
+      startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: root,
+        version: 'test',
+        command: process.execPath,
+        entry: join(root, 'out/backend/index.cjs'),
+        packaged: false
+      })
+    ).resolves.toEqual({ endpoint: owner.desktop })
+    expect(register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session,
+        build: identity,
+        backendPid: owner.pid,
+        configRoot: root,
+        stop: expect.any(Function)
+      })
+    )
+  })
   it('authenticates the recorded generation before returning its private attachment', async () => {
     const { root, owner, fetcher } = await fixture()
     await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(owner.desktop)

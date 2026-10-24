@@ -203,7 +203,15 @@
     "src/main/desktop-update-integration.test.ts",
     "src/main/desktop-update-integration.ts",
     "src/main/runtime-network-node.test.ts",
-    "src/main/composition/document-reading.architecture.test.ts"
+    "src/main/composition/document-reading.architecture.test.ts",
+    "scripts/dev.mjs",
+    "scripts/dev-session.mjs",
+    "scripts/dev-process-identity.mjs",
+    "src/main/dev-build-identity.ts",
+    "src/main/dev-runtime-session.ts",
+    "scripts/dev-session.integration.test.ts",
+    "scripts/dev-build-identity.integration.test.ts",
+    "src/main/dev-runtime-session.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -267,7 +275,9 @@
     "src/main/desktop-recovery-readiness.ts",
     "src/main/desktop-runtime-info.ts",
     "src/main/desktop-startup-recovery.ts",
-    "src/main/desktop-update-integration.ts"
+    "src/main/desktop-update-integration.ts",
+    "src/main/dev-runtime-session.ts",
+    "src/main/dev-build-identity.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -379,7 +389,10 @@
       "src/main/desktop-update-integration.test.ts",
       "src/main/runtime-network-node.test.ts",
       "src/main/legacy-service-termination.test.ts",
-      "src/main/composition/document-reading.architecture.test.ts"
+      "src/main/composition/document-reading.architecture.test.ts",
+      "scripts/dev-session.integration.test.ts",
+      "scripts/dev-build-identity.integration.test.ts",
+      "src/main/dev-runtime-session.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

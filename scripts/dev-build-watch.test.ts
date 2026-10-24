@@ -3,10 +3,12 @@ import { resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
 
 const builds = vi.hoisted(() => ({
+  invalidate: vi.fn().mockResolvedValue(undefined),
   packages: vi.fn(),
   backend: vi.fn(),
   dispose: vi.fn()
 }))
+vi.mock('node:fs/promises', () => ({ rm: builds.invalidate }))
 vi.mock('./build-dev-packages.mjs', () => ({
   packageBuildProjects: () => [],
   buildDevPackages: builds.packages
@@ -49,6 +51,12 @@ it('does not lose a save received during a failed build, and waits for an in-fli
     watcher.emit('all', 'change', resolve('src/main/example.ts'))
     await vi.advanceTimersByTimeAsync(100)
     expect(builds.packages).toHaveBeenCalledTimes(1)
+    expect(builds.invalidate).toHaveBeenCalledWith(resolve('out/backend/dev-build.json'), {
+      force: true
+    })
+    expect(builds.invalidate.mock.invocationCallOrder[0]).toBeLessThan(
+      builds.packages.mock.invocationCallOrder[0]
+    )
     watcher.emit('all', 'change', resolve('src/main/example.ts'))
     await vi.advanceTimersByTimeAsync(100)
     fail(new Error('first save did not compile'))
