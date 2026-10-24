@@ -15,6 +15,7 @@
   },
   "windows_runtime": {
     "tests": [
+      "scripts/windows-dev-notebook-host.integration.test.ts",
       "scripts/ci/run-windows-browser-diagnostics.test.ts",
       "scripts/windows-updater-certification.test.ts",
       "build/packaging.test.ts",
