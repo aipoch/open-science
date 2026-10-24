@@ -1128,6 +1128,7 @@ jobs:
         continue-on-error: true
         run: >-
           npx vitest run
+          scripts/windows-dev-notebook-host.integration.test.ts
           scripts/ci/run-windows-browser-diagnostics.test.ts
           scripts/windows-updater-certification.test.ts
           build/packaging.test.ts
