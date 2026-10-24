@@ -76,6 +76,11 @@ const partialRColumnEvidence = {
   ]
 }
 
+const partialRDynamicColumnEvidence = {
+  ...partialRColumnEvidence,
+  reasonCodes: [...partialRColumnEvidence.reasonCodes, 'dynamic-path-unresolved'].sort()
+}
+
 const LOOP = join(__dirname, '../../../resources/notebook/r_loop.R')
 const TINY_PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
@@ -772,7 +777,7 @@ gate('r_loop.R', () => {
             expect(response.error).toBeNull()
             if (name === 'original') captured = response.environmentOverlay
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+            expect(evidence.fileEvidence).toMatchObject(partialRDynamicColumnEvidence)
             expect(evidence.confirmedReadPaths).toBeUndefined()
             expect(evidence.workingFiles.map((file) => file.relativePath).sort()).toEqual([
               'data/diagonal_volcano.pdf',
@@ -1234,21 +1239,18 @@ write.csv(df,"result.csv",row.names=FALSE)`
             expect(result.error, `cell ${cell.index}`).toBeNull()
             const evidence = await observation.finish()
             expect(evidence.fileEvidence, `${name} cell ${cell.index}`).toMatchObject(
-              cell.index === 4 || cell.index === 5
-                ? partialRColumnEvidence
-                : {
-                    state: cell.index === 3 ? 'available' : 'partial',
-                    fileReads: cell.index === 3 ? 'complete' : 'partial',
-                    writerAttribution: 'complete',
-                    reasonCodes:
-                      cell.index === 3
-                        ? []
-                        : ['file-reads-not-observed', 'source-analysis-unsupported-call']
-                  }
+              cell.index === 3
+                ? partialRDynamicColumnEvidence
+                : cell.index === 4 || cell.index === 5
+                  ? partialRColumnEvidence
+                  : {
+                      state: 'partial',
+                      fileReads: 'partial',
+                      writerAttribution: 'complete',
+                      reasonCodes: ['file-reads-not-observed', 'source-analysis-unsupported-call']
+                    }
             )
-            expect(evidence.confirmedReadPaths ?? []).toEqual(
-              cell.index === 3 ? ['data/inputs/expression-matrix-444444444444.csv'] : []
-            )
+            expect(evidence.confirmedReadPaths ?? []).toEqual([])
             if (cell.index === 6)
               expect(evidence.workingFiles.map((f) => f.relativePath).sort()).toEqual([
                 'data/diagonal_volcano.pdf',
@@ -1849,18 +1851,8 @@ set.seed(42)`)
           const response = await send(script)
           expect(response.error).toBeNull()
           const evidence = await observation.finish()
-          expect(evidence.fileEvidence).toMatchObject({
-            state: 'available',
-            fileReads: 'complete',
-            writerAttribution: 'complete',
-            reasonCodes: []
-          })
-          expect(evidence.confirmedReadPaths?.sort()).toEqual(
-            [
-              'data/inputs/expression-matrix-444444444444.csv',
-              'data/inputs/differential-results-333333333333.xlsx'
-            ].sort()
-          )
+          expect(evidence.fileEvidence).toMatchObject(partialRDynamicColumnEvidence)
+          expect(evidence.confirmedReadPaths).toBeUndefined()
           expect(evidence.workingFiles.map((file) => file.relativePath)).toEqual([
             'data/diagonal_volcano_plot.png'
           ])

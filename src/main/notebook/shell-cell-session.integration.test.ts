@@ -24,6 +24,7 @@ import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network
 describe('persistent platform shell cells', () => {
   let root: string
   let adapter: NotebookShellProcessAdapter
+  let protectionAttempted = false
   let sandbox: NotebookNetworkSandboxOwner | undefined
   const windows = process.platform === 'win32'
   const command = (posix: string, powershell: string): string => (windows ? powershell : posix)
@@ -32,6 +33,10 @@ describe('persistent platform shell cells', () => {
     sessionId,
     command: code,
     cwd: join(root, 'workspace'),
+    // Protected application Sessions select the prepared PowerShell/Node runtime.
+    ...(windows && sandbox
+      ? { runtimeBinding: { kind: 'powershell' as const, version: '7.6' as const } }
+      : {}),
     runtimeRoot: join(root, 'runtime'),
     handoffDir: join(root, 'workspace')
   })
@@ -43,6 +48,10 @@ describe('persistent platform shell cells', () => {
   })
   afterEach(async () => {
     expect(await adapter.shutdown()).toEqual({ reaped: true })
+    if (protectionAttempted) {
+      expect(await sandbox!.removeWindows()).toEqual({ cancelled: false })
+      protectionAttempted = false
+    }
     await sandbox?.dispose()
     sandbox = undefined
     vi.unstubAllEnvs()
@@ -183,7 +192,7 @@ describe('persistent platform shell cells', () => {
 
   it.for([false, true])(
     'shares global npm tools without globalizing local installs (sandbox=%s)',
-    { timeout: 60_000 },
+    { timeout: windows ? 180_000 : 60_000 },
     async (sandboxed, context) => {
       // Portable CI does not provision bubblewrap/AppArmor. The Linux isolation job runs this
       // same case with its native prerequisites; retain ordinary Shell coverage in portable CI.
@@ -200,13 +209,20 @@ describe('persistent platform shell cells', () => {
           requestDecision: async () => 'deny',
           logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
         })
+        if (windows) {
+          protectionAttempted = true
+          expect(await sandbox.installWindows()).toEqual({ cancelled: false })
+        }
         adapter = new NotebookShellProcessAdapter(process.platform, sandbox)
       }
       const npmCli = process.env.npm_execpath
       expect(npmCli, 'Run this test through the repository npm test command').toBeTruthy()
       const quote = (value: string): string =>
         windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", `'"'"'`)}'`
-      const npm = `${windows ? '& ' : ''}${quote(process.execPath)} ${quote(npmCli!)}`
+      const npm =
+        windows && sandboxed
+          ? 'npm.cmd'
+          : `${windows ? '& ' : ''}${quote(process.execPath)} ${quote(npmCli!)}`
       const workspace = join(root, 'workspace')
       const secondWorkspace = join(root, 'second-workspace')
       await mkdir(secondWorkspace)

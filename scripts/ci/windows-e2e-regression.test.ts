@@ -130,10 +130,10 @@ it('budgets complete serial journeys and teardown within the shard job', () => {
     return Number(run.match(/--global-timeout=(\d+)/)![1])
   })
   expect(budgets).toEqual([420000, 900000, 900000])
-  // Leave time for restore, Chromium installation, uploads and teardown beyond suite budgets.
+  // Include the one permitted browser resource-exhaustion retry, then reserve setup/teardown.
   expect(
-    execution['timeout-minutes']! * 60000 - budgets.reduce((a, b) => a + b, 0)
-  ).toBeGreaterThanOrEqual(180000)
+    execution['timeout-minutes']! * 60000 - budgets.reduce((a, b) => a + b, 0) - budgets[0]
+  ).toBeGreaterThanOrEqual(600000)
 })
 
 it('fails a scheduled shard when setup or any required suite does not succeed', () => {

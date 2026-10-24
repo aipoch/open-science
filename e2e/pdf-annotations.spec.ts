@@ -3,7 +3,6 @@ import { expect } from '@playwright/test'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib'
-import { createTestPdf } from '../test/fixtures/literature-pdf'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
@@ -20,6 +19,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   const file = join(directory, 'native-notes.pdf')
   const pdf = await PDFDocument.create()
   const sheet = pdf.addPage([300, 1400])
+  pdf.addPage([300, 1400])
   sheet.drawText('Selection placement', { x: 20, y: 1340, size: 14 })
   sheet.drawText('External evidence', { x: 20, y: 300, size: 14 })
   sheet.node.set(
@@ -424,10 +424,13 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Shared PDF project')
+  const pdf = await PDFDocument.create()
+  pdf.addPage([300, 400])
+  pdf.addPage([300, 400])
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'shared-paper.pdf',
     mimeType: 'application/pdf',
-    buffer: createTestPdf()
+    buffer: Buffer.from(await pdf.save())
   })
   await submitPromptViaUi(page, 'Read the attached paper.')
   await expect(
@@ -579,6 +582,7 @@ test('shares independently imported native notes without duplication or resurrec
   test.setTimeout(180_000)
   const pdf = await PDFDocument.create()
   const sheet = pdf.addPage([300, 400])
+  pdf.addPage([300, 400])
   sheet.drawText('Shared native evidence', { x: 20, y: 300, size: 12 })
   sheet.node.set(
     PDFName.of('Annots'),

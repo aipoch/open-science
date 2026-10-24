@@ -175,9 +175,10 @@ export const probeWindowsRuntimeComponent = async (
     // probe output here before the detail is lost. Keep both ends: the head carries the failure
     // class (spawn error, timeout kill, unclean exit) and the tail carries the probe evidence.
     const detail = failure instanceof Error ? failure.message : String(failure)
+    // Leave room for the prefix/marker below the logger's 8192-character redaction limit.
     const bounded =
-      detail.length > 8192
-        ? `${detail.slice(0, 4096)}\n…<truncated ${detail.length - 8192} chars>…\n${detail.slice(-4096)}`
+      detail.length > 4096
+        ? `${detail.slice(0, 2048)}\n…<truncated ${detail.length - 4096} chars>…\n${detail.slice(-2048)}`
         : detail
     onDiagnostic?.(`windows runtime probe (${selection.release.component}) failed: ${bounded}`)
     throw new WindowsRuntimeIncompatibleError(

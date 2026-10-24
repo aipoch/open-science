@@ -456,11 +456,8 @@ const launchEnvironment = (
       'outside-granted-roots.txt'
     )
   }
-  if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
-    // The production runner caches resolved tools under LocalAppData. Keep the controlled process
-    // fixture isolated from any micromamba selected by an ordinary Open-Science session.
-    environment.LOCALAPPDATA = join(storageRoot, 'local-app-data')
-  }
+  // CONFIG_ROOT isolates the tool cache. Preserve LOCALAPPDATA: Windows derives the native
+  // AppContainer Temp drive from it, independently of the TEMP/TMP environment variables.
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (fakeRemoteItRoot) {
     environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(

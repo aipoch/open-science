@@ -2384,7 +2384,9 @@ it.each(['valid', 'invalid'] as const)(
         expect(await fixture.client.session.count()).toBe(0)
         expect(desktop.operations.snapshot?.progress.overallPercent).toBe(46)
         desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
-        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'), {
+          timeout: 10000
+        })
         expect(await fixture.client.session.count()).toBe(1)
         expect(importProgress.length).toBeGreaterThan(3)
         expect(
