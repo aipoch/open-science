@@ -1,6 +1,5 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
-
 import type { Prisma } from '@prisma/client'
 
 import type {
@@ -11,11 +10,15 @@ import type {
   ArtifactVersionEvidence,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentManifest } from '../../shared/notebook'
+
 import type { NotebookRunEnvironmentCapture } from '@aipoch/environment/contracts'
-import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
-import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
+import type {
+  NotebookEnvironmentManifest,
+  NotebookRunInputFile,
+  NotebookRunRecord
+} from '../../shared/notebook'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import {
@@ -33,6 +36,7 @@ import {
   sha256,
   type CanonicalJson
 } from './provenance-canonical'
+import { captureArtifactWorkflow } from './provenance-execution-evidence'
 import {
   buildBoundedExecutionSnapshot,
   environmentEvidence,
@@ -155,7 +159,8 @@ type PreparedArtifactVersionPersistence = {
   inputs?: Prisma.ArtifactVersionUncheckedCreateInput['inputs']
 }
 type ArtifactProvenanceProducerCaptureOptions = {
-  inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'>
+  inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'> &
+    Partial<Pick<ImmutableInputAuthority, 'validateIdentity'>>
   notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
   storageRoot: string
   createId: () => string
@@ -470,7 +475,7 @@ class ArtifactProvenanceProducerCapture {
         throughRunId: producerRunId
       })
       .catch(() => undefined)
-    const provenanceGraph = sealArtifactProvenanceGraph({
+    const graphInput: Parameters<typeof sealArtifactProvenanceGraph>[0] = {
       target: {
         ...target,
         producerRunId,
@@ -483,7 +488,61 @@ class ArtifactProvenanceProducerCapture {
         unavailableNotebookDependencyProjection(graphRuns.map(({ run }) => run)),
       omittedLeadingActivityCount:
         eligibleRuns.length - graphRuns.length + computeResult.omittedActivityCount
-    })
+    }
+    const provenanceGraph = sealArtifactProvenanceGraph(graphInput)
+    const workflowComputeActivities = [...computeGraphActivities]
+    let workflowOmittedComputeCount = 0
+    let workflowHistoryUnavailable = false
+    for (const eligible of graphRuns) {
+      if (eligible.run.runId === producerRunId) continue
+      let prior:
+        | Awaited<
+            ReturnType<
+              NonNullable<
+                ArtifactProvenanceProducerCaptureOptions['computeJobReader']
+              >['findByProducer']
+            >
+          >
+        | undefined
+      try {
+        prior = await this.options.computeJobReader?.findByProducer(
+          request.projectId,
+          request.notebookSessionId,
+          eligible.run.runId
+        )
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.name === 'AbortError' || (error as NodeJS.ErrnoException).code === 'ABORT_ERR')
+        )
+          throw error
+        // This history only extends the already sealed target graph. Never
+        // publish a partial workflow as complete after a failed lookup.
+        workflowHistoryUnavailable = true
+        break
+      }
+      workflowOmittedComputeCount += prior?.omittedActivityCount ?? 0
+      for (const [ordinal, compute] of (prior?.activities ?? []).entries()) {
+        workflowComputeActivities.push({
+          activityId: compute.evidence.activity_id,
+          parentActivityId: eligible.run.runId,
+          ordinal,
+          fileEvidence: compute.fileEvidence,
+          evidenceJson: await loadEvidenceJson(compute.fileEvidence)
+        })
+      }
+    }
+    const workflowCapture: ReturnType<typeof captureArtifactWorkflow> = workflowHistoryUnavailable
+      ? { state: 'unavailable', reason: 'incomplete-evidence' }
+      : captureArtifactWorkflow(
+          {
+            ...graphInput,
+            computeActivities: workflowComputeActivities,
+            omittedLeadingActivityCount:
+              (graphInput.omittedLeadingActivityCount ?? 0) + workflowOmittedComputeCount
+          },
+          eligibleRuns
+        )
     const executionSnapshot = buildBoundedExecutionSnapshot(
       {
         schemaVersion: 2,
@@ -495,6 +554,7 @@ class ArtifactProvenanceProducerCapture {
         producerRunIndex,
         createdAt: createdAt.toISOString(),
         provenanceGraph,
+        workflowCapture,
         analysisRevision: sealArtifactAnalysisRevision(
           provenanceGraph,
           notebookDependencies !== undefined
@@ -504,6 +564,21 @@ class ArtifactProvenanceProducerCapture {
     )
     const inputFiles = executionSnapshot.inputFiles
     await this.validateInputReferences(request.projectId, inputFiles)
+    // Additional history authenticates native identity without making unrelated bytes a
+    // publication prerequisite. Selected replay inputs retain their preflight/copy checks.
+    if (executionSnapshot.workflowCapture?.state === 'available') {
+      const validated = new Set(
+        inputFiles.map((input) => canonicalJson(input as unknown as CanonicalJson))
+      )
+      await this.validateInputReferences(
+        request.projectId,
+        executionSnapshot.workflowCapture.capture.inputFiles.filter(
+          (input) => !validated.has(canonicalJson(input as unknown as CanonicalJson))
+        ),
+        'Notebook',
+        true
+      )
+    }
     const executionJson = canonicalJson(executionSnapshot as unknown as CanonicalJson)
     const environment = resolveRunEnvironmentCapture(producerRun)
     const computeExecutions = computeResult.activities.map((compute) => compute.evidence)
@@ -806,10 +881,17 @@ class ArtifactProvenanceProducerCapture {
   private async validateInputReferences(
     projectId: string,
     inputs: NotebookRunInputFile[],
-    producerLabel = 'Notebook'
+    producerLabel = 'Notebook',
+    identityOnly = false
   ): Promise<void> {
+    const validated = new Set<string>()
     for (const input of inputs) {
-      const validation = await this.options.inputAuthority.validateVersion(projectId, input)
+      const metadata = canonicalJson(input as unknown as CanonicalJson)
+      if (validated.has(metadata)) continue
+      const authority = this.options.inputAuthority
+      const validation = await (identityOnly && authority.validateIdentity
+        ? authority.validateIdentity(projectId, input)
+        : authority.validateVersion(projectId, input))
       if (validation.state === 'project-mismatch') {
         throw new Error(
           `${producerLabel} input belongs to another Project: ${input.inputFileVersionId}`
@@ -821,6 +903,7 @@ class ArtifactProvenanceProducerCapture {
           `${producerLabel} ${label} input identity is corrupt: ${input.inputFileVersionId}`
         )
       }
+      validated.add(metadata)
     }
   }
 }

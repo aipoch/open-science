@@ -1545,9 +1545,14 @@ export const ArtifactReproducibilityPanel = ({
       : !visibleFailedAttempt
         ? latestReceipt
         : undefined
+  const summaryWorkflow = starting
+    ? undefined
+    : (summaryReceipt?.workflow ?? checkState?.request.workflow)
   const summaryClaimScope =
     summaryReceipt?.frontier.claimScope ??
-    (checkState?.status === 'matched' || checkState?.status === 'different'
+    (checkState?.status === 'matched' ||
+    checkState?.status === 'different' ||
+    checkState?.status === 'executed'
       ? projection.startFrontiers?.find(
           (frontier) => frontier.frontierId === checkState.request.frontierId
         )?.claimScope
@@ -1557,16 +1562,22 @@ export const ArtifactReproducibilityPanel = ({
     (!checkState && !starting ? visibleFailedAttempt?.completedAt : undefined)
   const checkTitle =
     summaryStatus === 'matched'
-      ? t('Result reproduced')
-      : summaryStatus === 'different'
-        ? t('Result differs')
-        : summaryStatus === 'cancelled'
-          ? t('Check cancelled')
-          : summaryStatus === 'failed'
-            ? t('Check stopped')
-            : summaryStatus === 'running'
-              ? t('Reproducibility check')
-              : t('Not verified yet')
+      ? summaryWorkflow
+        ? t('Compared outputs reproduced')
+        : t('Result reproduced')
+      : summaryStatus === 'executed'
+        ? t('Executed (outputs not fully verified)')
+        : summaryStatus === 'different'
+          ? summaryWorkflow
+            ? t('Compared outputs differ')
+            : t('Result differs')
+          : summaryStatus === 'cancelled'
+            ? t('Check cancelled')
+            : summaryStatus === 'failed'
+              ? t('Check stopped')
+              : summaryStatus === 'running'
+                ? t('Reproducibility check')
+                : t('Not verified yet')
   const visibleCheckComparisons =
     summaryStatus === 'different'
       ? (checkState?.comparisons ?? summaryReceipt?.comparisons ?? []).filter(
@@ -1639,7 +1650,9 @@ export const ArtifactReproducibilityPanel = ({
     t('Compare files')
   ]
   const visibleCheckPhase =
-    checkState?.status === 'matched' || checkState?.status === 'different'
+    checkState?.status === 'matched' ||
+    checkState?.status === 'different' ||
+    checkState?.status === 'executed'
       ? CHECK_PHASES.length
       : Math.max(0, checkPhaseIndex + 1)
   const checkRailProgress =
@@ -2070,6 +2083,8 @@ export const ArtifactReproducibilityPanel = ({
                       </>
                     ) : summaryStatus === 'matched' ? (
                       t('All selected outputs match the captured result.')
+                    ) : summaryStatus === 'executed' ? (
+                      t('Output comparison incomplete')
                     ) : summaryStatus === 'different' ? (
                       t('At least one selected output does not match the captured result.')
                     ) : summaryStatus === 'cancelled' ? (
@@ -2082,12 +2097,18 @@ export const ArtifactReproducibilityPanel = ({
                       t('Runs in an isolated workspace. Original files and results stay unchanged.')
                     )}
                   </p>
-                  {summaryClaimScope || summaryCompletedAt ? (
+                  {summaryWorkflow || summaryClaimScope || summaryCompletedAt ? (
                     <p
                       data-reproducibility-check-conclusion
                       className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-text-000/75"
                     >
-                      {summaryClaimScope ? (
+                      {summaryWorkflow ? (
+                        <span className="font-medium break-all">
+                          {t('Selected captured runs: {{runs}}', {
+                            runs: summaryWorkflow.targetRunIds.join(', ')
+                          })}
+                        </span>
+                      ) : summaryClaimScope ? (
                         <span className="font-medium">
                           {summaryClaimScope === 'end-to-end'
                             ? t('End-to-end claim')
@@ -2185,7 +2206,8 @@ export const ArtifactReproducibilityPanel = ({
                     variant={
                       restoringSummary ||
                       summaryStatus === 'matched' ||
-                      summaryStatus === 'different'
+                      summaryStatus === 'different' ||
+                      summaryStatus === 'executed'
                         ? 'outline'
                         : 'default'
                     }
@@ -2466,6 +2488,7 @@ export const ArtifactReproducibilityPanel = ({
                     const completed =
                       checkState?.status === 'matched' ||
                       checkState?.status === 'different' ||
+                      checkState?.status === 'executed' ||
                       index < checkPhaseIndex
                     const current =
                       index === checkPhaseIndex &&
@@ -2725,24 +2748,31 @@ export const ArtifactReproducibilityPanel = ({
                             comparison.contentComparison?.outcome === 'equal' ||
                             comparison.contentComparison?.outcome === 'within-tolerance'
                         )
-                      const comparisonTitle = allBytesMatch
-                        ? t('Byte-for-byte match')
-                        : allContentMatches
-                          ? receipt.comparisons.some(
-                              (comparison) =>
-                                comparison.contentComparison?.outcome === 'within-tolerance'
-                            )
-                            ? t('Content is within the selected tolerance')
-                            : t('Decoded content is identical')
-                          : receipt.comparisons.length === 0 ||
-                              receipt.comparisons.some(
-                                (comparison) =>
-                                  comparison.status === 'different' &&
-                                  comparison.reason !== 'size-mismatch' &&
-                                  comparison.reason !== 'checksum-mismatch'
-                              )
-                            ? t('Output comparison incomplete')
-                            : t('Result differs')
+                      const comparisonTitle =
+                        receipt.outcome === 'executed'
+                          ? t('Executed (outputs not fully verified)')
+                          : receipt.workflow
+                            ? receipt.outcome === 'matched'
+                              ? t('Compared outputs reproduced')
+                              : t('Compared outputs differ')
+                            : allBytesMatch
+                              ? t('Byte-for-byte match')
+                              : allContentMatches
+                                ? receipt.comparisons.some(
+                                    (comparison) =>
+                                      comparison.contentComparison?.outcome === 'within-tolerance'
+                                  )
+                                  ? t('Content is within the selected tolerance')
+                                  : t('Decoded content is identical')
+                                : receipt.comparisons.length === 0 ||
+                                    receipt.comparisons.some(
+                                      (comparison) =>
+                                        comparison.status === 'different' &&
+                                        comparison.reason !== 'size-mismatch' &&
+                                        comparison.reason !== 'checksum-mismatch'
+                                    )
+                                  ? t('Output comparison incomplete')
+                                  : t('Result differs')
                       return (
                         <li key={receipt.receiptChecksum}>
                           <details
@@ -2773,9 +2803,13 @@ export const ArtifactReproducibilityPanel = ({
                                     {comparisonTitle}
                                   </span>
                                   <span className="mt-0.5 flex flex-wrap gap-x-1 text-xs text-text-300">
-                                    {receipt.frontier.claimScope === 'end-to-end'
-                                      ? t('End-to-end claim')
-                                      : t('Downstream-only claim')}
+                                    {receipt.workflow
+                                      ? t('Selected captured runs: {{runs}}', {
+                                          runs: receipt.workflow.targetRunIds.join(', ')
+                                        })
+                                      : receipt.frontier.claimScope === 'end-to-end'
+                                        ? t('End-to-end claim')
+                                        : t('Downstream-only claim')}
                                     {' · '}
                                     {t('{{count}} runs', {
                                       count: receipt.completedStepIds.length,

@@ -131,7 +131,11 @@ export class SessionReproducibilityBatches {
           appSessionId: request.appSessionId,
           createdAt: new Date().toISOString(),
           status: 'preparing',
-          targets: request.targets.map((t) => ({ ...t, status: 'pending' })),
+          targets: request.targets.map((t) => ({
+            ...structuredClone(t),
+            frontierId: t.frontierId ?? 'original-inputs',
+            status: 'pending'
+          })),
           ...(request.comparisonPolicy ? { comparisonPolicy: request.comparisonPolicy } : {})
         },
         requests: request.targets.map((t) => ({
@@ -139,7 +143,8 @@ export class SessionReproducibilityBatches {
           appSessionId: request.appSessionId,
           artifactId: t.artifactId,
           versionId: t.versionId,
-          frontierId: 'original-inputs',
+          frontierId: t.frontierId ?? 'original-inputs',
+          ...(t.workflow ? { workflow: structuredClone(t.workflow) } : {}),
           comparisonPolicy: request.comparisonPolicy
         }))
       }

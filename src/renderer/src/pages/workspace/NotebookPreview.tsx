@@ -5,7 +5,7 @@ import {
   useDesktopRuntimeRecoveryStore
 } from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { RefreshCw, TriangleAlert, Variable, X } from 'lucide-react'
+import { Play, RefreshCw, TriangleAlert, Variable, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -18,6 +18,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import {
@@ -66,6 +67,7 @@ import { NotebookCodeBlock } from './notebook-code'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { NotebookRunEvidence } from './NotebookRunEvidence'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
+import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import {
   createNotebookFrameFilterOptions,
   normalizeNotebookRootFrameRuns,
@@ -227,13 +229,17 @@ const NotebookRunCell = ({
   index,
   staleness,
   causedByRunIndex,
-  allowFolderAccess
+  allowFolderAccess,
+  onReproduce,
+  reproductionDisabled
 }: {
   run: NotebookRunRecord
   index: number
   staleness?: NotebookRunStaleness
   causedByRunIndex?: number
   allowFolderAccess?: boolean
+  onReproduce?: () => void
+  reproductionDisabled?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -272,7 +278,42 @@ const NotebookRunCell = ({
             <DependencyStatusBadge staleness={staleness} />
           ) : null}
         </div>
-        {originLabel ? (
+        {onReproduce ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Reproduce with dependencies')}
+                aria-disabled={Boolean(reproductionDisabled)}
+                aria-description={
+                  reproductionDisabled
+                    ? t(
+                        'Reproduction is unavailable while this session is read-only, busy or recovering.'
+                      )
+                    : undefined
+                }
+                className="text-text-300 hover:text-text-100 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                onFocus={(event) => {
+                  if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                }}
+                onClick={() => {
+                  if (!reproductionDisabled) onReproduce()
+                }}
+              >
+                <Play className="size-3.5" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {reproductionDisabled
+                ? t(
+                    'Reproduction is unavailable while this session is read-only, busy or recovering.'
+                  )
+                : t('Reproduce with dependencies')}
+            </TooltipContent>
+          </Tooltip>
+        ) : originLabel ? (
           <span className="font-mono text-text-300" data-testid="notebook-cell-origin">
             {originLabel}
           </span>
@@ -524,6 +565,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const kernelScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const environmentScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
+  const [reproduction, setReproduction] = useState<{ run: NotebookRunRecord; scope: string }>()
+  const reproductionScope = `${resolveProjectId(item.notebook)}:${item.notebook.sessionId}`
+  const reproductionRun = reproduction?.scope === reproductionScope ? reproduction.run : undefined
   const [terminalCode, setTerminalCode] = useState('')
   const [terminalInputFocused, setTerminalInputFocused] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -549,6 +593,17 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     state.sessions.find((candidate) => candidate.id === item.notebook.sessionId)
   )
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
+  const reproductionDisabled =
+    !session ||
+    session.contentLoaded === false ||
+    Boolean(session.packageOrigin) ||
+    (session.status !== undefined && !['idle', 'error'].includes(session.status)) ||
+    recoveryPhase !== 'connected' ||
+    isLoading ||
+    submittingTarget !== undefined ||
+    isAbortingWrite ||
+    isRestarting ||
+    Boolean(notebookState?.runs.some((run) => run.status === 'running' || run.status === 'queued'))
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewActiveItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const notebookItemInWorkbench = usePreviewWorkbenchStore((state) =>
@@ -1194,6 +1249,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             <div key={run.runId} data-run-id={run.runId}>
               <NotebookRunCell
                 run={run}
+                onReproduce={
+                  run.status === 'completed' && run.kernelKind === 'r'
+                    ? () => setReproduction({ run, scope: reproductionScope })
+                    : undefined
+                }
+                reproductionDisabled={reproductionDisabled}
                 allowFolderAccess={Boolean(
                   session && session.contentLoaded !== false && !session.packageOrigin
                 )}
@@ -1784,6 +1845,13 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           </footer>
         ) : null}
       </section>
+      <SessionReproducibilityDialog
+        session={reproductionRun ? session : undefined}
+        run={reproductionRun}
+        disabled={reproductionDisabled}
+        renderStepInputFiles={(inputFiles) => <NotebookInputDataStrip inputFiles={inputFiles} />}
+        onClose={() => setReproduction(undefined)}
+      />
     </TooltipProvider>
   )
 }

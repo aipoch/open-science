@@ -1,3 +1,4 @@
+import { sealWorkflowCapture } from '@aipoch/reproducibility'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
@@ -23,10 +24,11 @@ import { packageLiteratureSchema } from './literature-contract'
 import { validatePackagePdfNotes } from './pdf-notes'
 import type { NativeRow, NativeTable, PackageRecords } from './records-contract'
 import { COLUMNS } from './records-contract'
+export type { NativeRow, NativeTable, PackageRecords } from './records-contract'
 import { packageReproducibilitySchema } from './reproducibility-contract'
-export { type NativeRow, type NativeTable, type PackageRecords } from './records-contract'
 
-import type { NotebookRunDocument } from '../../shared/notebook'
+import type { NotebookRunDocument, NotebookRunInputFile } from '../../shared/notebook'
+import { parseArtifactExecutionSnapshot } from '../artifacts/provenance-execution-snapshot-decoder'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { createPackageMaterializer } from './materialize'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
@@ -90,6 +92,7 @@ export const captureNativeRecords = async (
   const visitedUploads = new Set<string>()
   const visitedReviews = new Set<string>()
   const visitedFindings = new Set<string>()
+  const workflowInputs: Array<{ input: NotebookRunInputFile; producerArtifactId: string }> = []
   const resolvedSources = new Set(additionalVersionIds)
   const unvisited = (ids: Set<string>, visited: Set<string>): string[] => {
     const next = [...ids].filter((id) => !visited.has(id))
@@ -108,7 +111,12 @@ export const captureNativeRecords = async (
     const versions = nextArtifacts.length
       ? await client.artifactVersion.findMany({
           where: { id: { in: nextArtifacts } },
-          select: { basedOnVersionId: true }
+          select: {
+            basedOnVersionId: true,
+            artifactId: true,
+            executionSnapshotJson: true,
+            executionSnapshotChecksum: true
+          }
         })
       : []
     const uploads = nextUploads.length
@@ -173,7 +181,25 @@ export const captureNativeRecords = async (
         throw new Error('Review references missing source evidence.')
       for (const id of sourceIds) resolvedSources.add(id)
     }
-    for (const row of versions) if (row.basedOnVersionId) artifactIds.add(row.basedOnVersionId)
+    for (const row of versions) {
+      if (row.basedOnVersionId) artifactIds.add(row.basedOnVersionId)
+      // Only retained workflow evidence adds dependencies. Keep legacy snapshots and explicit
+      // unavailable captures on their existing closure path.
+      if (
+        !row.executionSnapshotJson ||
+        JSON.parse(row.executionSnapshotJson).workflowCapture?.state !== 'available'
+      )
+        continue
+      if (sha256(row.executionSnapshotJson) !== row.executionSnapshotChecksum)
+        throw new Error('Artifact workflow execution snapshot checksum mismatch.')
+      const execution = parseArtifactExecutionSnapshot(row.executionSnapshotJson)
+      if (execution.workflowCapture?.state !== 'available') continue
+      for (const input of execution.workflowCapture.capture.inputFiles) {
+        workflowInputs.push({ input, producerArtifactId: row.artifactId })
+        if (input.sourceKind === 'artifact-version') artifactIds.add(input.inputFileVersionId)
+        else uploadIds.add(input.inputFileVersionId)
+      }
+    }
     for (const row of uploads) if (row.basedOnVersionId) uploadIds.add(row.basedOnVersionId)
     for (const row of inputs) {
       if (row.sourceArtifactVersionId) artifactIds.add(row.sourceArtifactVersionId)
@@ -212,6 +238,36 @@ export const captureNativeRecords = async (
     where: { id: { in: uploadVersions.map((row) => row.uploadFileId) } },
     orderBy: { id: 'asc' }
   })
+  // Resolve through the actual native owner as well as the captured Project declaration. A
+  // resealed claim must not pull another Project's Version into the package under a local label.
+  const artifactVersionsById = new Map(versions.map((row) => [row.id, row]))
+  const uploadVersionsById = new Map(uploadVersions.map((row) => [row.id, row]))
+  const lineagesById = new Map(lineages.map((row) => [row.id, row]))
+  const uploadsById = new Map(uploads.map((row) => [row.id, row]))
+  for (const { input, producerArtifactId } of workflowInputs) {
+    if (input.sourceProjectId !== lineagesById.get(producerArtifactId)?.projectId)
+      throw new Error('Artifact workflow input belongs to another Project.')
+    const version =
+      input.sourceKind === 'artifact-version'
+        ? artifactVersionsById.get(input.inputFileVersionId)
+        : uploadVersionsById.get(input.inputFileVersionId)
+    const owner =
+      input.sourceKind === 'artifact-version'
+        ? lineagesById.get(artifactVersionsById.get(input.inputFileVersionId)?.artifactId ?? '')
+        : uploadsById.get(uploadVersionsById.get(input.inputFileVersionId)?.uploadFileId ?? '')
+    if (
+      !version ||
+      !owner ||
+      owner.projectId !== input.sourceProjectId ||
+      owner.sessionId !== input.sourceSessionId ||
+      owner.id !== input.sourceFileId ||
+      version.versionNumber !== input.sourceVersionNumber ||
+      version.checksum !== input.checksum ||
+      Number(version.sizeBytes) !== input.sizeBytes ||
+      version.contentStorageKey !== input.storageKey
+    )
+      throw new Error('Artifact workflow input identity does not match its native Version.')
+  }
   const inputs = await client.artifactVersionInput.findMany({
     where: { artifactVersionId: { in: [...artifactIds] } },
     orderBy: { id: 'asc' }
@@ -319,15 +375,15 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
 }
 
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
-  ...new Set(
-    Object.values(records.tables).flatMap((rows) =>
+  ...new Set([
+    ...Object.values(records.tables).flatMap((rows) =>
       rows.flatMap((row) =>
         Object.entries(row).flatMap(([key, value]) =>
           /(?:StorageKey|storageKey)$/.test(key) && typeof value === 'string' ? [value] : []
         )
       )
     )
-  )
+  ])
 ]
 
 export const notebookStorageKeys = async (
@@ -358,7 +414,7 @@ export const notebookStorageKeys = async (
     }
   }
   await visit(`notebooks/${request.projectId}/${request.sessionId}`)
-  return keys.sort()
+  return [...new Set(keys)].sort()
 }
 
 export const notebookDocumentIdentity = (
@@ -505,6 +561,10 @@ export const mapPackageReferences = (
   checksums: Record<string, string> = {}
 ): unknown => {
   if (key === 'sourceScope' || key === 'sourceSessionCheck') return value
+  if (key === 'activityReasonCodes' && value && typeof value === 'object' && !Array.isArray(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([runId, reasons]) => [identities[runId] ?? runId, reasons])
+    )
   if (['content', 'text', 'script', 'code', 'outputs', 'structuredOutputEvidence'].includes(key))
     return value
   if (typeof value === 'string') {
@@ -778,6 +838,11 @@ export const prepareNativeImport = async (
         // The source snapshot was validated before remapping. Its derived local graph now has
         // different identities, so seal the recipe again before computing the outer checksum.
         const snapshot = value as unknown as PersistedArtifactExecutionSnapshot
+        if (snapshot.workflowCapture?.state === 'available') {
+          const { captureId, ...draft } = snapshot.workflowCapture.capture
+          void captureId
+          snapshot.workflowCapture = { state: 'available', capture: sealWorkflowCapture(draft) }
+        }
         if (snapshot.analysisRevision && snapshot.provenanceGraph) {
           // Preserve the source analyzer revisions; remapping does not rerun analysis.
           const fields = {

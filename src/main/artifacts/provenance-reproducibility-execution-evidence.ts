@@ -38,7 +38,13 @@ export const readArtifactReproducibilityOriginalOutput = async (
   const execution = await readArtifactReproducibilityExecutionEvidence(owner, request)
   const source = await getArtifactReproducibilitySource(owner, request)
   const localEntityId = source?.entityIds[entityId] ?? entityId
-  const entity = execution.provenanceGraph?.entities.find((item) => item.entityId === localEntityId)
+  const entities = [
+    ...(execution.provenanceGraph?.entities ?? []),
+    ...(execution.workflowCapture?.state === 'available'
+      ? execution.workflowCapture.capture.graph.entities
+      : [])
+  ]
+  const entity = entities.find((item) => item.entityId === localEntityId)
   if (entity?.kind !== 'file-generation') throw new Error('Original output is unavailable.')
   const bytes = await readReproducibilityOutputFile(
     resolveStorageKey(storageRoot, entity.contentStorageKey)

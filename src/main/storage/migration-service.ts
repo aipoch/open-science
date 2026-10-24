@@ -4,15 +4,6 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, type Diren
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
-import type {
-  DataRootKind,
-  DataRootSelection,
-  DataRootRecoveryStatus,
-  DataRootValidationResult,
-  MigrationOutcome,
-  MigrationProgress,
-  MigrationResult
-} from '../../shared/storage'
 import {
   dataRootForPicked,
   isPathInsideOrEqual,
@@ -54,6 +45,15 @@ import {
   dataRootIdentity,
   dataRootDirectoryIdentity
 } from './data-root-selection'
+import type {
+  DataRootKind,
+  DataRootSelection,
+  DataRootRecoveryStatus,
+  DataRootValidationResult,
+  MigrationOutcome,
+  MigrationProgress,
+  MigrationResult
+} from '../../shared/storage'
 import { DATA_ROOT_SELECTION_CHANGED } from '../../shared/storage'
 import type { DataRootCleanupJournal } from './data-root-cleanup'
 import {

@@ -509,6 +509,13 @@ class ManagedFileVersionService {
     return this.openVersionLease(await this.resolveRecord(request))
   }
 
+  async resolveVersionIdentity(
+    request: ManagedFileIdentity,
+    versionId: string
+  ): Promise<ResolvedManagedFileVersion> {
+    return this.resolveRecord({ ...request, versionId })
+  }
+
   async openVersion(
     request: ManagedFileIdentity,
     versionId: string

@@ -1,5 +1,9 @@
 import { readFile } from 'node:fs/promises'
-import { createReproductionRecipes, type ReproductionEvidence } from '@aipoch/reproducibility'
+import {
+  createReproductionRecipes,
+  createWorkflowSlices,
+  type ReproductionEvidence
+} from '@aipoch/reproducibility'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { notebookPromptInputPath } from '../notebook/prompt-input-materialization'
 import { resolveStorageKey, storageKey } from './provenance-storage'
@@ -18,6 +22,11 @@ export const reproductionEvidence = (storageRoot: string): ReproductionEvidence 
 })
 const fileIO = { copyFile: copyFileWithinBudget, digestFile: digestFileWithinBudget }
 export const reproductionRecipes = createReproductionRecipes({
+  inputPath: notebookPromptInputPath,
+  fileIO
+})
+
+export const reproductionWorkflowSlices = createWorkflowSlices({
   inputPath: notebookPromptInputPath,
   fileIO
 })

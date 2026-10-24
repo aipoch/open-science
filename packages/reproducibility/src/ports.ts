@@ -26,6 +26,7 @@ export type NotebookReproductionStep = Extract<
   { kind: 'notebook-run' }
 >
 export type NotebookReproductionRuntime = {
+  environmentLocks?: NotebookReproductionRestoredEnvironment[]
   execute(input: {
     step: NotebookReproductionStep
     source: string
@@ -42,6 +43,12 @@ export type NotebookReproductionRuntime = {
     truncated?: boolean
   }>
   shutdown(): Promise<{ reaped: boolean }>
+}
+export type NotebookReproductionRestoredEnvironment = {
+  requirementId: string
+  kernelKind: 'python' | 'r'
+  environmentName?: string
+  lockChecksum: string
 }
 export type NotebookReproductionEnvironmentProgress = {
   requirementId: string

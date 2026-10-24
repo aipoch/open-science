@@ -20758,3 +20758,97 @@ describe('R kernel smoothing subset authority', () => {
     )
   })
 })
+
+describe('plain R matrix source provenance', () => {
+  const read = 'raw <- utils::read.csv("raw.csv",row.names=1,check.names=FALSE);NULL'
+  const clean = 'clean <- as.matrix(raw[rowSums(raw)>=10,,drop=FALSE]);NULL'
+  const metadata = (count: number): Array<Partial<NotebookRunRecord>> =>
+    Array.from({ length: count }, (_, index) => ({
+      environmentManifest: {
+        executionContext: {
+          before: {},
+          rPackages: {
+            before: ['stats', 'utils', 'base'],
+            after: ['stats', 'utils', 'base'],
+            reads: [],
+            complete: true,
+            cleanSession: index === 0
+          }
+        }
+      }
+    }))
+  it('projects the original CSV and matrix cleaning source through cache reload', async () => {
+    const context = await fileContext('r', [read, clean], metadata(2))
+    expect(context?.rDataFrameNames).toContain('raw')
+    expect(context?.rMatrixNames).toContain('clean')
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'grDevices::png("heatmap.png");stats::heatmap(log2(clean+1),scale="row",Colv=NA);grDevices::dev.off();NULL',
+        context
+      )
+    ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+  })
+  it.each([
+    'class(clean) <- "foo"',
+    'attributes(clean) <- list(class="matrix")',
+    'storage.mode(clean) <- "double"',
+    'dimnames(clean) <- NULL',
+    'alias <- clean;class(alias) <- "foo"',
+    'clean <- structure(clean,class="matrix")',
+    'clean <- unknown_transform(clean)',
+    'dim.matrix <- function(x) c(2,2)',
+    'as.matrix.data.frame <- function(x) structure(matrix(1),class="foo")'
+  ])(
+    'revokes prior provenance after mutation, unknown source or method changes: %s',
+    async (change) => {
+      const context = await fileContext('r', [read, clean, change], metadata(3))
+      expect(context?.rMatrixNames ?? []).not.toContain('clean')
+      expect(
+        await analyzeNotebookSourceFileAccess('r', 'stats::heatmap(clean)', context)
+      ).toMatchObject({ readState: 'partial' })
+    }
+  )
+  it.each([
+    'raw <- structure(list(x=1),class="data.frame"); clean <- as.matrix(raw)',
+    'raw <- utils::read.csv("raw.csv",colClasses="foo"); clean <- as.matrix(raw)',
+    'clean <- structure(matrix(c(1,2,3,4),nrow=2),class="__r_plain_matrix__")',
+    'setClass("__r_plain_matrix__");clean <- new("__r_plain_matrix__")',
+    'setClass("matrix");clean <- new("matrix")',
+    'setRefClass("__r_plain_matrix__");clean <- new("__r_plain_matrix__")',
+    'raw <- utils::read.csv("raw.csv");clean <- as.matrix(raw[1,,drop=TRUE])',
+    'raw <- utils::read.csv("raw.csv");clean <- as.matrix(raw[indices,,drop=FALSE])'
+  ])(
+    'does not manufacture matrix proof from class markers or unknown dispatch: %s',
+    async (source) => {
+      const context = await fileContext('r', [source], metadata(1))
+      expect(context?.rMatrixNames ?? []).not.toContain('clean')
+      expect(
+        await analyzeNotebookSourceFileAccess('r', 'stats::heatmap(clean)', context)
+      ).toMatchObject({ readState: 'partial' })
+    }
+  )
+  it('does not recover dispatch proof after a missing history entry', async () => {
+    const entries: Array<FileContextEntry | undefined> = []
+    for (const script of [read, clean]) {
+      const analysis = await analyzeRNotebookSource(
+        script,
+        projectNotebookFileContext('r', entries)
+      )
+      entries.push({ facts: analysis.facts, fileContext: analysis.fileAccess!.context })
+    }
+    entries.push(undefined)
+    const analysis = await analyzeRNotebookSource('fresh <- matrix(c(1,2,3,4),nrow=2)')
+    entries.push({ facts: analysis.facts, fileContext: analysis.fileAccess!.context })
+    const context = projectNotebookFileContext('r', entries)
+    expect(context?.rDispatchUncertain).toBe(true)
+    expect(context?.rMatrixNames ?? []).toEqual([])
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'stats::heatmap(matrix(c(1,2,3,4),nrow=2))',
+        context
+      )
+    ).toMatchObject({ readState: 'partial' })
+  })
+})

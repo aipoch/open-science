@@ -107,7 +107,8 @@ type ArtifactProvenanceRepositoryOptions = {
   storageRoot: string
   getClient: () => Promise<PrismaClient>
   readLiteratureItems?: ReadArtifactLiteratureItems
-  inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'>
+  inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'> &
+    Partial<Pick<ImmutableInputAuthority, 'validateIdentity'>>
   compatibilityRepository?: ArtifactRepository
   notebookRepository?: Pick<NotebookRunRepository, 'readSessionDocuments'>
   dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
@@ -303,6 +304,7 @@ class ArtifactProvenanceRepository {
     })
     this.readModel = new ArtifactProvenanceReadModel({
       storageRoot: options.storageRoot,
+      inputAuthority,
       getClient: options.getClient,
       loadSession: options.loadSession,
       createId: this.createId,
@@ -1687,5 +1689,8 @@ export {
   ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceRepository
 }
-export type { ArtifactFinalizationProofReason, ArtifactProvenanceRepositoryOptions }
-export type { ArtifactProjectReconciliationSnapshot }
+export type {
+  ArtifactFinalizationProofReason,
+  ArtifactProjectReconciliationSnapshot,
+  ArtifactProvenanceRepositoryOptions
+}

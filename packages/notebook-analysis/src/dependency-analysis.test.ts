@@ -13,10 +13,15 @@ import {
   unavailableNotebookDependencyProjection
 } from './analysis-test-support'
 import { NotebookDependencyProjector } from './dependency-projection'
+import { NOTEBOOK_ANALYZER_REVISION, NOTEBOOK_ANALYZER_VERSION } from './analysis-version'
 import { analyzePythonSources } from './dependency-analysis-python'
+import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import type {
   NotebookDependencyAnalysisSidecar,
-  NotebookDependencyTypeSummary
+  NotebookDependencyTypeSummary,
+  NotebookRunDependencyFacts,
+  NotebookSourceFileAccessAnalysis,
+  NotebookSourceFileAccessContext
 } from './dependency-analysis-types'
 
 const temporaryRoots: string[] = []
@@ -340,6 +345,1093 @@ describe('Python lexical summary boundaries', () => {
 })
 
 describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
+  it('keeps real Python live facts without execution eligibility through warm and closed cache reloads', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-python-scope-cache-'))
+    temporaryRoots.push(storageRoot)
+    const scripts = ['x = 1', 'y = x + 1', 'import pandas as pd\ndata = pd.read_csv("input.csv")']
+    const runs = scripts.map((script, index) =>
+      run(`run-${index + 1}`, `cell-${index + 1}`, script, index + 1)
+    )
+    const rawRuns = JSON.stringify(runs)
+    const repository = { readSessionRuns: async () => runs }
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      interpreter: unusedPython
+    }
+    const actualAnalyze: AnalyzeNotebookScripts = async (_interpreter, language, sources) => {
+      expect(language).toBe('python')
+      return analyzePythonSources(sources)
+    }
+    const analyze = vi.fn(actualAnalyze)
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository, analyze })
+    const first = await analyzer.project(request)
+    expect(first.dependenciesByRunId?.['run-2']).toEqual(['run-1'])
+    expect(first.stalenessByRunId['run-1']?.state).toBe('clear')
+    expect(first.stalenessByRunId['run-2']?.state).toBe('clear')
+    for (const entry of runs)
+      expect(first.executionDependenciesByRunId).not.toHaveProperty(entry.runId)
+    const calls = analyze.mock.calls.length
+    expect(calls).toBeGreaterThan(0)
+    expect(await analyzer.project(request)).toEqual(first)
+    expect(analyze).toHaveBeenCalledTimes(calls)
+    const reloaded = new NotebookDependencyAnalyzer({ storageRoot, repository, analyze })
+    expect(await reloaded.project(request)).toEqual(first)
+    expect(analyze).toHaveBeenCalledTimes(calls)
+    await reloaded.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+    const fromClosed = new NotebookDependencyAnalyzer({ storageRoot, repository, analyze })
+    expect(await fromClosed.project(request)).toEqual(first)
+    expect(analyze).toHaveBeenCalledTimes(calls)
+    const path = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const sidecar = JSON.parse(await readFile(path, 'utf8')) as NotebookDependencyAnalysisSidecar
+    expect(sidecar.runs['run-2']?.facts).toMatchObject({ usedNames: ['x'], priorUsedNames: ['x'] })
+    expect(sidecar.runs['run-3']?.facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state'])
+    })
+    for (const record of Object.values(sidecar.runs)) {
+      expect(record.facts).not.toHaveProperty('executionReadNames')
+      expect(record.facts).not.toHaveProperty('executionExternalState')
+    }
+    expect(Object.values(sidecar.projectionSnapshots)).toHaveLength(1)
+    for (const snapshot of Object.values(sidecar.projectionSnapshots))
+      for (const entry of runs)
+        expect(snapshot.projection.executionDependenciesByRunId).not.toHaveProperty(entry.runId)
+    expect(JSON.stringify(runs)).toBe(rawRuns)
+  })
+
+  it('recomputes real Python facts instead of reusing withdrawn proofs from an old-revision closed snapshot', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-withdrawn-python-proof-'))
+    temporaryRoots.push(storageRoot)
+    const legacyRevision = 'r-stage-source-contracts-20261020'
+    const scripts = ['x = 1', 'y = x + 1', 'import pandas as pd\ndata = pd.read_csv("input.csv")']
+    const runs = scripts.map((script, index) =>
+      run(`run-${index + 1}`, `cell-${index + 1}`, script, index + 1)
+    )
+    const rawRuns = JSON.stringify(runs)
+    const repository = { readSessionRuns: async () => runs }
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      interpreter: unusedPython
+    }
+    const actual = await analyzePythonSources(scripts)
+    // Construct the precise facts previously emitted by the withdrawn Python rule.
+    // Injected proof is a generic contract fixture, not fresh Python eligibility.
+    const oldFacts = actual.map((facts, index) => ({
+      ...facts,
+      executionReadNames: index === 1 ? ['x'] : [],
+      ...(index === 2 ? { executionExternalState: 'files-only' as const } : {})
+    }))
+    const old = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository,
+      analyze: async () => oldFacts
+    })
+    expect((await old.project(request)).executionDependenciesByRunId?.['run-2']).toEqual(['run-1'])
+    await old.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+    const path = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const sidecar = JSON.parse(await readFile(path, 'utf8')) as NotebookDependencyAnalysisSidecar
+    const digest = (value: unknown): string =>
+      createHash('sha256').update(JSON.stringify(value)).digest('hex')
+    sidecar.analyzerRevision = legacyRevision
+    for (const entry of runs) {
+      // Encode the existing v1 Python checksum shape with its real old semantic
+      // revision, rather than a malformed/stub checksum that trivially invalidates.
+      sidecar.runs[entry.runId]!.checksum = digest([
+        1,
+        legacyRevision,
+        null,
+        entry.kernelKind,
+        entry.environment,
+        entry.kernelEpochId,
+        entry.runtimeId,
+        entry.replPersistentBindings,
+        entry.executionCount,
+        entry.environmentManifest?.executionContext?.rPackages,
+        entry.cwdBefore,
+        entry.cwdAfter,
+        entry.script,
+        entry.fileEvidence?.checksum,
+        entry.helperEvidenceStatus,
+        undefined
+      ])
+    }
+    const projectionChecksums = runs.map((entry) =>
+      digest([
+        legacyRevision,
+        entry.runId,
+        entry.kernelKind,
+        entry.environment,
+        entry.kernelEpochId,
+        entry.status,
+        entry.kernelDispatched,
+        entry.environmentManifest?.executionContext?.rPackages,
+        sidecar.runs[entry.runId]!.facts,
+        sidecar.runs[entry.runId]!.fileAccess,
+        entry.workingFiles.map(
+          ({ relativePath, generationId, checksum, change, createdByRunId }) => [
+            relativePath,
+            generationId,
+            checksum,
+            change,
+            createdByRunId
+          ]
+        )
+      ])
+    )
+    expect(Object.values(sidecar.projectionSnapshots)).toHaveLength(1)
+    for (const snapshot of Object.values(sidecar.projectionSnapshots)) {
+      snapshot.checksum = digest(projectionChecksums)
+      expect(snapshot.projection.executionDependenciesByRunId?.['run-2']).toEqual(['run-1'])
+    }
+    expect(sidecar.runs['run-3']!.facts.executionExternalState).toBe('files-only')
+    await writeFile(path, JSON.stringify(sidecar))
+    const actualAnalyze: AnalyzeNotebookScripts = async (_interpreter, language, sources) => {
+      expect(language).toBe('python')
+      return analyzePythonSources(sources)
+    }
+    const analyze = vi.fn(actualAnalyze)
+    const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+    try {
+      const restored = new NotebookDependencyAnalyzer({ storageRoot, repository, analyze })
+      const projection = await restored.project(request)
+      expect(analyze).toHaveBeenCalledOnce()
+      expect(append).toHaveBeenCalledTimes(runs.length)
+      expect(projection.dependenciesByRunId?.['run-2']).toEqual(['run-1'])
+      for (const entry of runs)
+        expect(projection.executionDependenciesByRunId).not.toHaveProperty(entry.runId)
+      expect(await restored.project(request)).toEqual(projection)
+      expect(analyze).toHaveBeenCalledOnce()
+      const refreshed = JSON.parse(
+        await readFile(path, 'utf8')
+      ) as NotebookDependencyAnalysisSidecar
+      expect(refreshed.analyzerRevision).toBe(NOTEBOOK_ANALYZER_REVISION)
+      for (const record of Object.values(refreshed.runs)) {
+        expect(record.facts).not.toHaveProperty('executionReadNames')
+        expect(record.facts).not.toHaveProperty('executionExternalState')
+      }
+      for (const snapshot of Object.values(refreshed.projectionSnapshots)) {
+        expect(snapshot.checksum).not.toBe(digest(projectionChecksums))
+        for (const entry of runs)
+          expect(snapshot.projection.executionDependenciesByRunId).not.toHaveProperty(entry.runId)
+      }
+      expect(JSON.stringify(runs)).toBe(rawRuns)
+    } finally {
+      append.mockRestore()
+    }
+  })
+
+  it.each([
+    ['r', 'x'],
+    ['r', 'z']
+  ] as const)(
+    'preserves proved %s execution inputs after assigning %s',
+    async (language, replacement) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-execution-dependencies-'))
+      temporaryRoots.push(storageRoot)
+      const assign = '<-'
+      const scripts = [
+        `x ${assign} 1`,
+        `y ${assign} x + 1`,
+        `${replacement} ${assign} 7`,
+        'print(42)'
+      ]
+      const runs = scripts.map((script, index) => ({
+        ...run(`run-${index + 1}`, `cell-${index + 1}`, script, index + 1),
+        kernelKind: language,
+        environment: `default-${language}`
+      }))
+      const repository = { readSessionRuns: vi.fn(async () => runs) }
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const first = await analyzer.project(request)
+
+      expect(first.stalenessByRunId['run-2']?.state).toBe(replacement === 'x' ? 'stale' : 'clear')
+      if (replacement === 'x') expect(first.dependenciesByRunId).not.toHaveProperty('run-2')
+      else expect(first.dependenciesByRunId?.['run-2']).toEqual(['run-1'])
+      expect(first.executionDependenciesByRunId).toEqual({
+        'run-1': [],
+        'run-2': ['run-1'],
+        'run-3': [],
+        'run-4': []
+      })
+
+      // The old y still contains 2 even though its original x is no longer current.
+      runs.push({
+        ...run('run-5', 'consume-old-y', `z ${assign} y`, 5),
+        kernelKind: language,
+        environment: `default-${language}`
+      })
+      const appended = await analyzer.project(request)
+      // Live staleness follows y's producer; immutable execution inputs still preserve old y.
+      expect(appended.stalenessByRunId['run-5']?.state).toBe(
+        replacement === 'x' ? 'stale' : 'clear'
+      )
+      expect(appended.executionDependenciesByRunId?.['run-5']).toEqual(['run-2'])
+      expect(first.executionDependenciesByRunId).not.toHaveProperty('run-5')
+      await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+
+      const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+      try {
+        const restored = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+          request
+        )
+        expect(restored.executionDependenciesByRunId).toEqual(appended.executionDependenciesByRunId)
+        expect(append).not.toHaveBeenCalled()
+      } finally {
+        append.mockRestore()
+      }
+    }
+  )
+
+  it('keeps earlier execution proof when a later cell makes the namespace unknown', () => {
+    const projection = projectNotebookDependencies([
+      {
+        run: run('run-1', 'define-x', 'x = 1', 1),
+        facts: {
+          state: 'available',
+          definedNames: ['x'],
+          usedNames: [],
+          executionReadNames: [],
+          mutatedNames: []
+        }
+      },
+      {
+        run: run('run-2', 'define-y', 'y = x + 1', 2),
+        facts: {
+          state: 'available',
+          definedNames: ['y'],
+          usedNames: ['x'],
+          executionReadNames: ['x'],
+          mutatedNames: []
+        }
+      },
+      {
+        run: run('run-3', 'dynamic', 'exec(source)', 3),
+        facts: { state: 'unknown', reasons: ['dynamic-namespace'] }
+      },
+      {
+        run: run('run-4', 'consume-y', 'z = y', 4),
+        facts: {
+          state: 'available',
+          definedNames: ['z'],
+          usedNames: ['y'],
+          executionReadNames: ['y'],
+          mutatedNames: []
+        }
+      }
+    ])
+    expect(projection.stalenessByRunId['run-2']?.state).toBe('unknown')
+    expect(projection.executionDependenciesByRunId).toEqual({
+      'run-1': [],
+      'run-2': ['run-1']
+    })
+  })
+
+  it.each(['older-checksum', 'missing-proof'])(
+    'rebuilds historical proof from a finalized snapshot with %s',
+    async (cacheState) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-old-execution-snapshot-'))
+      temporaryRoots.push(storageRoot)
+      const runs = [
+        run('run-1', 'define-x', 'x <- 1', 1),
+        run('run-2', 'define-y', 'y <- x + 1', 2)
+      ].map((entry) => ({ ...entry, kernelKind: 'r' as const }))
+      const repository = { readSessionRuns: async () => runs }
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      const first = await analyzer.project(request)
+      await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+      const sidecarPath = join(
+        storageRoot,
+        'notebooks',
+        'default-project',
+        'session-1',
+        'cache',
+        'dependency-analysis.json'
+      )
+      const sidecar = JSON.parse(
+        await readFile(sidecarPath, 'utf8')
+      ) as NotebookDependencyAnalysisSidecar
+      expect(sidecar.analyzerRevision).toBe(NOTEBOOK_ANALYZER_REVISION)
+      if (cacheState === 'older-checksum')
+        sidecar.analyzerRevision = 'scientific-lineage-hardening-20261016'
+      for (const snapshot of Object.values(sidecar.projectionSnapshots)) {
+        if (cacheState === 'older-checksum')
+          snapshot.checksum = createHash('sha256').update('older projection revision').digest('hex')
+        delete snapshot.projection.executionDependenciesByRunId
+      }
+      await writeFile(sidecarPath, JSON.stringify(sidecar))
+      const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+      try {
+        const restored = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+          request
+        )
+        expect(restored.executionDependenciesByRunId).toEqual(first.executionDependenciesByRunId)
+        expect(append).toHaveBeenCalledTimes(2)
+        const repaired = JSON.parse(
+          await readFile(sidecarPath, 'utf8')
+        ) as NotebookDependencyAnalysisSidecar
+        expect(
+          Object.values(repaired.projectionSnapshots)[0]?.projection.executionDependenciesByRunId
+        ).toEqual(first.executionDependenciesByRunId)
+      } finally {
+        append.mockRestore()
+      }
+    }
+  )
+
+  it('isolates synthetic execution arrays from incremental and finalized cache state', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-execution-projection-clone-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [run('run-1', 'define-x', 'x = 1', 1), run('run-2', 'define-y', 'y = x + 1', 2)]
+    const repository = { readSessionRuns: async () => runs }
+    const analyze: AnalyzeNotebookScripts = async () => [
+      {
+        state: 'available',
+        definedNames: ['x'],
+        usedNames: [],
+        executionReadNames: [],
+        mutatedNames: []
+      },
+      {
+        state: 'available',
+        definedNames: ['y'],
+        usedNames: ['x'],
+        executionReadNames: ['x'],
+        mutatedNames: []
+      }
+    ]
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository, analyze })
+    const request = { projectId: 'default-project', sessionId: 'session-1' }
+    const first = await analyzer.project(request)
+    const expected = { 'run-1': [], 'run-2': ['run-1'] }
+    first.executionDependenciesByRunId!['run-2']!.push('unproved-run')
+    expect((await analyzer.project(request)).executionDependenciesByRunId).toEqual(expected)
+    await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+    const finalized = await analyzer.project(request)
+    finalized.executionDependenciesByRunId!['run-2']!.push('unproved-finalized-run')
+    expect((await analyzer.project(request)).executionDependenciesByRunId).toEqual(expected)
+    const restored = new NotebookDependencyAnalyzer({ storageRoot, repository, analyze })
+    const fromDisk = await restored.project(request)
+    fromDisk.executionDependenciesByRunId!['run-2']!.push('unproved-restored-run')
+    expect((await restored.project(request)).executionDependenciesByRunId).toEqual(expected)
+  })
+
+  it.each(['python', 'r'] as const)(
+    'keeps unknown, failed and cross-epoch %s histories unproved',
+    async (language) => {
+      const assign = language === 'r' ? '<-' : '='
+      for (const barrier of ['unknown', 'failed', 'epoch', 'missing-epoch'] as const) {
+        for (const expression of ['x', 'x + 1']) {
+          const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-execution-barrier-'))
+          temporaryRoots.push(storageRoot)
+          const runs: NotebookRunRecord[] = [
+            { ...run('run-1', 'define-x', `x ${assign} 1`, 1), kernelKind: language },
+            {
+              ...run('run-2', 'read-x', `y ${assign} ${expression}`, 2),
+              kernelKind: language
+            }
+          ]
+          if (barrier === 'unknown')
+            runs[0]!.script = language === 'r' ? 'eval(parse(text = "x <- 1"))' : 'exec("x = 1")'
+          if (barrier === 'failed') runs[0]!.status = 'failed'
+          if (barrier === 'epoch') runs[1]!.kernelEpochId = 'epoch-2'
+          if (barrier === 'missing-epoch') delete runs[1]!.kernelEpochId
+          const projection = await new NotebookDependencyAnalyzer({
+            storageRoot,
+            repository: { readSessionRuns: async () => runs }
+          }).project({ projectId: 'default-project', sessionId: 'session-1' })
+          expect(projection.executionDependenciesByRunId, barrier).not.toHaveProperty('run-2')
+          if (barrier === 'unknown' || barrier === 'failed')
+            expect(projection.executionDependenciesByRunId, barrier).not.toHaveProperty('run-1')
+        }
+      }
+    }
+  )
+
+  it('does not attribute a same-cell R literal alias to an earlier binding', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-local-r-alias-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [
+      { ...run('run-1', 'old-x', 'x <- 99', 1), kernelKind: 'r' as const },
+      { ...run('run-2', 'local-alias', 'x <- 1; y <- x', 2), kernelKind: 'r' as const }
+    ]
+    const projection = await new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: async () => runs }
+    }).project({ projectId: 'default-project', sessionId: 'session-1' })
+    expect(projection.executionDependenciesByRunId?.['run-2']).toEqual([])
+  })
+
+  it('does not turn a previously unproved upstream into proof when live state becomes stale', () => {
+    const projection = projectNotebookDependencies([
+      {
+        run: run('run-1', 'define-x', 'x = 1', 1),
+        facts: {
+          state: 'available',
+          definedNames: ['x'],
+          usedNames: [],
+          executionReadNames: [],
+          mutatedNames: []
+        }
+      },
+      {
+        run: run('run-2', 'uncertain-y', 'y = opaque(x)', 2),
+        facts: {
+          state: 'unknown',
+          reasons: ['control-flow'],
+          definedNames: ['y'],
+          usedNames: ['x'],
+          mutatedNames: []
+        }
+      },
+      {
+        run: run('run-3', 'replace-x', 'x = 7', 3),
+        facts: {
+          state: 'available',
+          definedNames: ['x'],
+          usedNames: [],
+          executionReadNames: [],
+          mutatedNames: []
+        }
+      },
+      {
+        run: run('run-4', 'consume-y', 'z = y', 4),
+        facts: {
+          state: 'available',
+          definedNames: ['z'],
+          usedNames: ['y'],
+          executionReadNames: ['y'],
+          mutatedNames: []
+        }
+      }
+    ])
+    expect(projection.stalenessByRunId['run-4']?.state).toBe('stale')
+    expect(projection.executionDependenciesByRunId).toEqual({ 'run-1': [], 'run-3': [] })
+  })
+
+  it.each([
+    ['r', ['x <- 1', 'y <- x; y <- y + 1', 'print(y)'], [0, 1, 2]],
+    ['r', ['x <- 1', 'y <- x; y <- 2', 'print(y)'], [0, 1, 2]]
+  ] as const)(
+    'retains original %s execution reads, bindings and mutable state for %j',
+    async (language, scripts, necessaryRuns) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-execution-causality-'))
+      temporaryRoots.push(storageRoot)
+      const runs = scripts.map((script, index) => ({
+        ...run(`run-${index}`, `cell-${index}`, script, index + 1),
+        kernelKind: language
+      }))
+      const repository = { readSessionRuns: async () => runs }
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      const projection = await analyzer.project(request)
+      const closure = new Set<string>()
+      const visit = (runId: string): void => {
+        if (closure.has(runId)) return
+        const inputs = projection.executionDependenciesByRunId?.[runId]
+        expect(inputs, `execution proof for ${runId}`).toBeDefined()
+        closure.add(runId)
+        for (const input of inputs ?? []) visit(input)
+      }
+      visit(`run-${scripts.length - 1}`)
+      expect([...closure].sort()).toEqual(necessaryRuns.map((index) => `run-${index}`))
+      const sidecarPath = join(
+        storageRoot,
+        'notebooks',
+        'default-project',
+        'session-1',
+        'cache',
+        'dependency-analysis.json'
+      )
+      const sidecar = JSON.parse(
+        await readFile(sidecarPath, 'utf8')
+      ) as NotebookDependencyAnalysisSidecar
+      expect(sidecar.runs['run-1']?.facts.executionReadNames).toContain('x')
+      await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+      const restored = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+        request
+      )
+      expect(restored.executionDependenciesByRunId).toEqual(projection.executionDependenciesByRunId)
+    }
+  )
+
+  it('keeps live facts usable without promoting legacy facts to execution proof', () => {
+    const projection = projectNotebookDependencies([
+      {
+        run: run('run-1', 'legacy', 'x = 1', 1),
+        facts: { state: 'available', definedNames: ['x'], usedNames: [], mutatedNames: [] }
+      }
+    ])
+    expect(projection.stalenessByRunId['run-1']?.state).toBe('clear')
+    expect(projection.executionDependenciesByRunId).toEqual({})
+  })
+
+  it('does not repeatedly traverse proof-only mutation prefixes for ordinary Python facts', async () => {
+    for (const count of [200, 400]) {
+      const sources = Array.from(
+        { length: count },
+        (_, index) => `items_${index} = []\nitems_${index}.append(1)`
+      )
+      const facts = await analyzePythonSources(sources)
+      expect(facts).toHaveLength(count)
+      expect(facts.every((entry) => entry.executionReadNames === undefined)).toBe(true)
+      const entries = sources.map((source, index) => ({
+        run: run(`python-mutation-${index}`, `cell-${index}`, source, index + 1),
+        facts: facts[index]!
+      }))
+      const originalIterator = Set.prototype[Symbol.iterator]
+      let visitedRunIds = 0
+      const iterator = vi.spyOn(Set.prototype, Symbol.iterator).mockImplementation(function* (
+        this: Set<unknown>
+      ) {
+        for (const value of { [Symbol.iterator]: () => originalIterator.call(this) }) {
+          if (typeof value === 'string' && value.startsWith('python-mutation-')) visitedRunIds++
+          yield value
+        }
+      })
+      let projection: ReturnType<typeof projectNotebookDependencies>
+      try {
+        projection = projectNotebookDependencies(entries)
+      } finally {
+        iterator.mockRestore()
+      }
+      expect(visitedRunIds).toBeLessThanOrEqual(count * 8)
+      expect(projection.executionDependenciesByRunId).toEqual({})
+      expect(Object.values(projection.stalenessByRunId)).toEqual(
+        Array.from({ length: count }, () => ({ state: 'clear' }))
+      )
+      expect(Object.values(projection.dependenciesByRunId)).toEqual(
+        Array.from({ length: count }, () => [])
+      )
+    }
+  })
+
+  it('retains legacy R mutation barriers before later execution-read evidence', () => {
+    const projection = projectNotebookDependencies([
+      {
+        run: { ...run('legacy-mutation', 'legacy', 'x[1] <- 2', 1), kernelKind: 'r' },
+        facts: {
+          state: 'available',
+          definedNames: [],
+          usedNames: [],
+          mutatedNames: ['x']
+        }
+      },
+      {
+        run: { ...run('proved-literal', 'later', 'z <- 1', 2), kernelKind: 'r' },
+        facts: {
+          state: 'available',
+          definedNames: ['z'],
+          usedNames: [],
+          mutatedNames: [],
+          executionReadNames: []
+        }
+      }
+    ])
+    expect(projection.executionDependenciesByRunId).toEqual({})
+    expect(projection.stalenessByRunId['proved-literal']?.state).toBe('clear')
+  })
+
+  it.each(['opaque-mutation', 'external-state'])(
+    'does not prove a run whose live reasons omit %s',
+    (reason) => {
+      const projection = projectNotebookDependencies([
+        {
+          run: run('run-1', 'unsupported', 'unsupported()', 1),
+          facts: { state: 'unknown', reasons: [reason], executionReadNames: [] }
+        }
+      ])
+      expect(projection.executionDependenciesByRunId).not.toHaveProperty('run-1')
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'blocks later %s execution proof after an unproved mutation',
+    (kernelKind) => {
+      const projection = projectNotebookDependencies([
+        {
+          run: { ...run('run-1', 'create', '', 1), kernelKind },
+          facts: {
+            state: 'available',
+            definedNames: ['x'],
+            usedNames: [],
+            mutatedNames: [],
+            executionReadNames: []
+          }
+        },
+        {
+          run: { ...run('run-2', 'mutation', '', 2), kernelKind },
+          facts: {
+            state: 'unknown',
+            reasons: ['opaque-mutation'],
+            mutatedNames: ['x'],
+            executionReadNames: ['x']
+          }
+        },
+        {
+          run: { ...run('run-3', 'unrelated', '', 3), kernelKind },
+          facts: {
+            state: 'available',
+            definedNames: ['z'],
+            usedNames: [],
+            mutatedNames: [],
+            executionReadNames: []
+          }
+        }
+      ])
+      expect(projection.executionDependenciesByRunId).toEqual({ 'run-1': [] })
+    }
+  )
+
+  it('blocks later proof after an opaque mutation without a resolved receiver', () => {
+    const projection = projectNotebookDependencies([
+      {
+        run: run('run-1', 'mutation', '', 1),
+        facts: { state: 'unknown', reasons: ['opaque-mutation'], executionReadNames: [] }
+      },
+      {
+        run: run('run-2', 'literal', 'x = 1', 2),
+        facts: {
+          state: 'available',
+          definedNames: ['x'],
+          usedNames: [],
+          mutatedNames: [],
+          executionReadNames: []
+        }
+      }
+    ])
+    expect(projection.executionDependenciesByRunId).toEqual({})
+  })
+
+  it.each(['missing', 'malformed'])(
+    'withdraws finalized proof when execution read metadata is %s',
+    async (state) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-execution-facts-cache-'))
+      temporaryRoots.push(storageRoot)
+      const runs = [{ ...run('run-1', 'define', 'x <- 1', 1), kernelKind: 'r' as const }]
+      const repository = { readSessionRuns: async () => runs }
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      await analyzer.project(request)
+      await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+      const sidecarPath = join(
+        storageRoot,
+        'notebooks',
+        'default-project',
+        'session-1',
+        'cache',
+        'dependency-analysis.json'
+      )
+      const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+        runs: Record<string, { facts: Record<string, unknown> }>
+      }
+      if (state === 'missing') delete sidecar.runs['run-1']!.facts.executionReadNames
+      else sidecar.runs['run-1']!.facts.executionReadNames = [42]
+      await writeFile(sidecarPath, JSON.stringify(sidecar))
+      const append = vi.spyOn(NotebookDependencyProjector.prototype, 'append')
+      try {
+        const restored = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+          request
+        )
+        expect(append).toHaveBeenCalled()
+        if (state === 'missing') expect(restored.executionDependenciesByRunId).toEqual({})
+        else expect(restored.executionDependenciesByRunId).toEqual({ 'run-1': [] })
+      } finally {
+        append.mockRestore()
+      }
+    }
+  )
+
+  it.each(['r'] as const)(
+    'keeps ordinary %s CSV reads and writes proved across sidecar round trips',
+    async (kernelKind) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-execution-csv-'))
+      temporaryRoots.push(storageRoot)
+      const scripts = [
+        'data <- read.csv("input.csv")',
+        'write.csv(data, "output.csv", row.names = FALSE)'
+      ]
+      const runs = scripts.map((script, i) => ({
+        ...run(`run-${i}`, `cell-${i}`, script, i + 1),
+        kernelKind
+      }))
+      const repository = { readSessionRuns: async () => runs }
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      const projection = await analyzer.project(request)
+      expect(projection.executionDependenciesByRunId).toEqual({ 'run-0': [], 'run-1': ['run-0'] })
+      await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+      const restored = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+        request
+      )
+      expect(restored.executionDependenciesByRunId).toEqual(projection.executionDependenciesByRunId)
+    }
+  )
+
+  it.each(['r'] as const)(
+    'requires a bounded source proof before omitting earlier %s mutations',
+    async (kernelKind) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-locality-'))
+      temporaryRoots.push(storageRoot)
+      const scripts = [
+        'x <- c(1, 2); x[1] <- 3',
+        'data <- utils::read.csv("input.csv", stringsAsFactors = FALSE); grDevices::png("plot.png"); graphics::plot.default(data$a, data$b); grDevices::dev.off()'
+      ]
+      const runs = scripts.map((script, index) => ({
+        ...run(`run-${index}`, `cell-${index}`, script, index + 1),
+        kernelKind,
+        environmentManifest: { executionContext: { before: {}, rPackages: fileCodeBindings } }
+      }))
+      const repository = { readSessionRuns: async () => runs }
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      const projection = await analyzer.project(request)
+      expect(projection.executionDependenciesByRunId).toEqual({
+        'run-0': [],
+        'run-1': []
+      })
+      await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+      const restored = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+        request
+      )
+      expect(restored.executionDependenciesByRunId).toEqual(projection.executionDependenciesByRunId)
+    }
+  )
+
+  const completeFileConsumer: NotebookSourceFileAccessAnalysis = {
+    readState: 'complete',
+    writeState: 'complete',
+    externalState: 'complete',
+    reads: ['input.csv'],
+    writes: ['output.csv'],
+    reasonCodes: []
+  }
+  const fileCodeBindings = {
+    before: ['DESeq2'],
+    after: ['DESeq2'],
+    complete: true,
+    cleanSession: false,
+    reads: ['<-', '::', '$'].map((name) => ({ name, package: 'base' }))
+  }
+  const isolatedPlotSource =
+    'data <- utils::read.csv("input.csv", stringsAsFactors = FALSE); grDevices::png("plot.png"); graphics::plot.default(data$a, data$b); grDevices::dev.off()'
+
+  it.each(['same-cell', 'separate-cell'])(
+    'vetoes execution after a %s custom data-frame method without changing live facts',
+    async (layout) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-method-'))
+      temporaryRoots.push(storageRoot)
+      const method = '`$.data.frame` <- function(x, name) 99'
+      const mutation = 'x <- c(1, 2); x[1] <- 3'
+      const scripts =
+        layout === 'same-cell'
+          ? [`${mutation}; ${method}`, isolatedPlotSource]
+          : [method, mutation, isolatedPlotSource]
+      const runs = scripts.map((script, index) => ({
+        ...run(`run-${index}`, `cell-${index}`, script, index + 1),
+        kernelKind: 'r' as const,
+        environmentManifest: { executionContext: { before: {}, rPackages: fileCodeBindings } }
+      }))
+      const projection = await new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: async () => runs }
+      }).project({ projectId: 'default-project', sessionId: 'session-1' })
+      expect(projection.executionDependenciesByRunId).not.toHaveProperty(
+        `run-${scripts.length - 1}`
+      )
+      expect(projection.stalenessByRunId[`run-${scripts.length - 1}`]?.state).toBe('clear')
+    }
+  )
+
+  it('refreshes finalized file proof after method insertion, removal, epoch and binding changes', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-method-cache-'))
+    temporaryRoots.push(storageRoot)
+    const memory = {
+      ...run('memory', 'memory', 'x <- c(1, 2); x[1] <- 3', 1),
+      kernelKind: 'r' as const
+    }
+    const plot = {
+      ...run('plot', 'plot', isolatedPlotSource, 3),
+      kernelKind: 'r' as const,
+      environmentManifest: { executionContext: { before: {}, rPackages: fileCodeBindings } }
+    }
+    const method = {
+      ...run('method', 'method', '`$.data.frame` <- function(x, name) 99', 2),
+      kernelKind: 'r' as const
+    }
+    let runs: NotebookRunRecord[] = [memory, plot]
+    const repository = { readSessionRuns: async () => runs }
+    const request = { projectId: 'default-project', sessionId: 'session-1' }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    expect((await analyzer.project(request)).executionDependenciesByRunId?.plot).toEqual([])
+    await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+    runs = [memory, method, plot]
+    expect((await analyzer.project(request)).executionDependenciesByRunId).not.toHaveProperty(
+      'plot'
+    )
+    runs = [memory, plot]
+    expect((await analyzer.project(request)).executionDependenciesByRunId?.plot).toEqual([])
+    runs = [memory, { ...method, kernelEpochId: 'another-epoch' }, plot]
+    const restored = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    expect((await restored.project(request)).executionDependenciesByRunId?.plot).toEqual([])
+    runs = [
+      memory,
+      {
+        ...plot,
+        environmentManifest: {
+          executionContext: { before: {}, rPackages: { ...fileCodeBindings, complete: false } }
+        }
+      }
+    ]
+    expect((await restored.project(request)).executionDependenciesByRunId).not.toHaveProperty(
+      'plot'
+    )
+  })
+
+  it('rejects malformed cached file isolation states and derives fresh evidence', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-proof-cache-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [
+      {
+        ...run('plot', 'plot', isolatedPlotSource, 1),
+        kernelKind: 'r' as const,
+        environmentManifest: { executionContext: { before: {}, rPackages: fileCodeBindings } }
+      }
+    ]
+    const repository = { readSessionRuns: async () => runs }
+    const request = { projectId: 'default-project', sessionId: 'session-1' }
+    await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(request)
+    const path = join(
+      storageRoot,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'cache',
+      'dependency-analysis.json'
+    )
+    const cached = JSON.parse(await readFile(path, 'utf8'))
+    expect(cached.runs.plot.facts.executionFileState).toBe('isolated')
+    cached.runs.plot.facts.executionFileState = 'all-state-safe'
+    await writeFile(path, JSON.stringify(cached))
+    expect(
+      (await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(request))
+        .executionDependenciesByRunId?.plot
+    ).toEqual([])
+    const refreshed = JSON.parse(await readFile(path, 'utf8'))
+    expect(refreshed.runs.plot.facts.executionFileState).toBe('isolated')
+  })
+
+  const fileConsumerFacts: NotebookRunDependencyFacts = {
+    state: 'unknown',
+    reasons: ['external-state'],
+    executionExternalState: 'files-only',
+    executionFileState: 'isolated',
+    executionReadNames: ['read.csv'],
+    safeCallNames: ['read.csv'],
+    usedNames: [],
+    definedNames: [],
+    mutatedNames: []
+  }
+
+  it.each([
+    ['no source evidence', undefined, fileConsumerFacts],
+    ['partial reads', { ...completeFileConsumer, readState: 'partial' }, fileConsumerFacts],
+    ['partial writes', { ...completeFileConsumer, writeState: 'partial' }, fileConsumerFacts],
+    [
+      'partial external state',
+      { ...completeFileConsumer, externalState: 'partial' },
+      fileConsumerFacts
+    ],
+    [
+      'unresolved source call',
+      { ...completeFileConsumer, reasonCodes: ['source-analysis-unsupported-call'] },
+      fileConsumerFacts
+    ],
+    ['write only', { ...completeFileConsumer, reads: [] }, fileConsumerFacts],
+    [
+      'missing source isolation proof',
+      completeFileConsumer,
+      { ...fileConsumerFacts, executionFileState: undefined }
+    ],
+    [
+      'known method conflict',
+      completeFileConsumer,
+      { ...fileConsumerFacts, executionFileState: 'method-conflict' }
+    ],
+    [
+      'missing external origin',
+      completeFileConsumer,
+      { ...fileConsumerFacts, executionExternalState: undefined }
+    ],
+    [
+      'runtime state mixed with files',
+      completeFileConsumer,
+      { ...fileConsumerFacts, executionExternalState: 'unavailable' }
+    ],
+    [
+      'missing execution roots',
+      completeFileConsumer,
+      { ...fileConsumerFacts, executionReadNames: undefined }
+    ],
+    [
+      'unknown execution root',
+      completeFileConsumer,
+      { ...fileConsumerFacts, executionReadNames: ['unknown'] }
+    ],
+    [
+      'external binding even when named as a safe call',
+      completeFileConsumer,
+      { ...fileConsumerFacts, executionReadNames: ['x'], safeCallNames: ['x'] }
+    ]
+  ] satisfies Array<
+    [string, NotebookSourceFileAccessAnalysis | undefined, NotebookRunDependencyFacts]
+  >)('retains memory obligations or blocks a file consumer with %s', (_case, fileAccess, facts) => {
+    const projection = projectNotebookDependencies([
+      {
+        run: run('run-0', 'memory', 'x = []; x.append(1)', 1),
+        facts: {
+          state: 'available',
+          definedNames: ['x'],
+          usedNames: [],
+          mutatedNames: ['x'],
+          executionReadNames: []
+        }
+      },
+      { run: run('run-1', 'files', '', 2), facts, fileAccess }
+    ])
+    expect(projection.executionDependenciesByRunId?.['run-1']).not.toEqual([])
+  })
+
+  it.each(['python', 'r'] as const)(
+    'does not hide an unproved %s mutation behind a self-contained file read',
+    (kernelKind) => {
+      const projection = projectNotebookDependencies([
+        {
+          run: { ...run('run-0', 'opaque', '', 1), kernelKind },
+          facts: {
+            state: 'unknown',
+            reasons: ['opaque-mutation'],
+            executionReadNames: []
+          }
+        },
+        {
+          run: { ...run('run-1', 'files', '', 2), kernelKind },
+          facts: fileConsumerFacts,
+          fileAccess: completeFileConsumer
+        }
+      ])
+      expect(projection.executionDependenciesByRunId).toEqual({})
+    }
+  )
+
+  it.each([
+    ['r', 'capabilities()'],
+    ['r', 'grDevices::pdfFonts()'],
+    ['r', 'Sys.time()'],
+    ['r', 'system("true")'],
+    ['r', 'getOption("digits")']
+  ] as const)(
+    'rejects mixed %s CSV reads and runtime state from %s in either order',
+    async (kernelKind, query) => {
+      for (const order of ['before', 'after']) {
+        const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-mixed-external-'))
+        temporaryRoots.push(storageRoot)
+        const read = 'data <- read.csv("input.csv")'
+        const script = order === 'before' ? `${query}\n${read}` : `${read}\n${query}`
+        const projection = await new NotebookDependencyAnalyzer({
+          storageRoot,
+          repository: {
+            readSessionRuns: async () => [{ ...run('run-1', 'mixed', script, 1), kernelKind }]
+          }
+        }).project({ projectId: 'default-project', sessionId: 'session-1' })
+        expect(projection.executionDependenciesByRunId, order).not.toHaveProperty('run-1')
+      }
+    }
+  )
+
+  it('keeps namespaced DESeq2 formula terms out of execution roots', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-deseq-execution-'))
+    temporaryRoots.push(storageRoot)
+    const scripts = [
+      'counts <- matrix(c(1, 2, 3, 4), nrow = 2)',
+      'coldata <- data.frame(condition = c("a", "b"))',
+      'dds <- DESeq2::DESeqDataSetFromMatrix(countData = counts, colData = coldata, design = ~ condition)',
+      'dds <- DESeq2::DESeq(dds)',
+      'res <- DESeq2::results(dds)',
+      'write.csv(as.data.frame(res), "de.csv")',
+      'png("plot.png"); plot(counts); dev.off()'
+    ]
+    const projection = await new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: {
+        readSessionRuns: async () =>
+          scripts.map((script, i) => ({
+            ...run(`run-${i}`, `cell-${i}`, script, i + 1),
+            kernelKind: 'r' as const
+          }))
+      }
+    }).project({ projectId: 'default-project', sessionId: 'session-1' })
+    for (let i = 0; i < scripts.length; i++)
+      expect(projection.executionDependenciesByRunId).toHaveProperty(`run-${i}`)
+    expect(projection.executionDependenciesByRunId?.['run-2']).toEqual(['run-0', 'run-1'])
+  })
+
+  it.each(['missing', 'malformed'])(
+    'does not reuse finalized file proof with %s external-state origin',
+    async (state) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-external-origin-cache-'))
+      temporaryRoots.push(storageRoot)
+      const runs = [
+        { ...run('run-1', 'csv', 'data <- read.csv("input.csv")', 1), kernelKind: 'r' as const }
+      ]
+      const repository = { readSessionRuns: async () => runs }
+      const request = { projectId: 'default-project', sessionId: 'session-1' }
+      const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+      expect((await analyzer.project(request)).executionDependenciesByRunId).toEqual({
+        'run-1': []
+      })
+      await analyzer.finalizeEpochs({ ...request, kernelEpochIds: ['epoch-1'] })
+      const sidecarPath = join(
+        storageRoot,
+        'notebooks',
+        'default-project',
+        'session-1',
+        'cache',
+        'dependency-analysis.json'
+      )
+      const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8')) as {
+        runs: Record<string, { facts: Record<string, unknown> }>
+      }
+      expect(sidecar.runs['run-1']!.facts.executionExternalState).toBe('files-only')
+      if (state === 'missing') delete sidecar.runs['run-1']!.facts.executionExternalState
+      else sidecar.runs['run-1']!.facts.executionExternalState = 'all-external-safe'
+      await writeFile(sidecarPath, JSON.stringify(sidecar))
+      const restored = await new NotebookDependencyAnalyzer({ storageRoot, repository }).project(
+        request
+      )
+      expect(restored.executionDependenciesByRunId).toEqual(
+        state === 'missing' ? {} : { 'run-1': [] }
+      )
+    }
+  )
+
   it('produces the same projection when runs are appended incrementally', () => {
     const analyzedRuns = [
       {
@@ -2721,39 +3813,42 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     expect(analyze).toHaveBeenCalledOnce()
   })
 
-  it.each(['aliases', 'possiblyMutatedNames', 'safeCallNames', 'safeCallArgumentNames'])(
-    'rejects oversized live %s facts instead of silently discarding them',
-    async (field) => {
-      const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-oversized-facts-'))
-      temporaryRoots.push(storageRoot)
-      const analyzedRun = run('run-1', 'prepare', 'result = 1', 1)
-      const analyzer = new NotebookDependencyAnalyzer({
-        storageRoot,
-        repository: { readSessionRuns: async () => [analyzedRun] },
-        analyze: async () => [
-          {
-            state: 'available',
-            definedNames: ['result'],
-            usedNames: [],
-            mutatedNames: [],
-            [field]: Array.from({ length: 513 }, (_, index) =>
-              field === 'aliases'
-                ? { target: `target-${index}`, source: 'source', kind: 'reference' }
-                : `name-${index}`
-            )
-          }
-        ]
-      })
-      const projection = await analyzer.project({
-        projectId: 'default-project',
-        sessionId: 'session-1'
-      })
-      expect(projection.stalenessByRunId['run-1']).toEqual({
-        state: 'unknown',
-        reasons: ['invalid-parser-result']
-      })
-    }
-  )
+  it.each([
+    'aliases',
+    'possiblyMutatedNames',
+    'safeCallNames',
+    'safeCallArgumentNames',
+    'executionReadNames'
+  ])('rejects oversized live %s facts instead of silently discarding them', async (field) => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-oversized-facts-'))
+    temporaryRoots.push(storageRoot)
+    const analyzedRun = run('run-1', 'prepare', 'result = 1', 1)
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: async () => [analyzedRun] },
+      analyze: async () => [
+        {
+          state: 'available',
+          definedNames: ['result'],
+          usedNames: [],
+          mutatedNames: [],
+          [field]: Array.from({ length: 513 }, (_, index) =>
+            field === 'aliases'
+              ? { target: `target-${index}`, source: 'source', kind: 'reference' }
+              : `name-${index}`
+          )
+        }
+      ]
+    })
+    const projection = await analyzer.project({
+      projectId: 'default-project',
+      sessionId: 'session-1'
+    })
+    expect(projection.stalenessByRunId['run-1']).toEqual({
+      state: 'unknown',
+      reasons: ['invalid-parser-result']
+    })
+  })
 
   it('rebuilds a matching current sidecar when available aliases are malformed', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-corrupt-aliases-'))
@@ -9872,5 +10967,719 @@ describe('Python callback dictionary cache contract', () => {
     expect(rebuilt.analyzerVersion).toBe(cached.analyzerVersion)
     expect(rebuilt.runs['run-1'].facts.pythonCallbackContainerSummaries).toEqual(dictionary)
     expect(JSON.stringify(fixture.history)).toBe(rawBefore)
+  })
+})
+
+describe('preexecution R attachment context', () => {
+  const packages = ['DESeq2', 'stats', 'utils', 'methods', 'base']
+  const binding = (
+    before: string[],
+    after: string[],
+    cleanSession = false
+  ): {
+    before: string[]
+    after: string[]
+    complete: boolean
+    cleanSession: boolean
+    reads: []
+  } => ({
+    before,
+    after,
+    complete: true,
+    cleanSession,
+    reads: []
+  })
+  const rRun = (
+    id: string,
+    source: string,
+    index: number,
+    rPackages?: unknown
+  ): NotebookRunRecord => ({
+    ...run(id, id, source, index),
+    kernelKind: 'r',
+    environment: 'r',
+    ...(rPackages ? { environmentManifest: { executionContext: { before: {}, rPackages } } } : {})
+  })
+  const fixture = async (
+    change?: (runs: NotebookRunRecord[]) => void
+  ): Promise<{
+    analyzer: NotebookDependencyAnalyzer
+    runs: NotebookRunRecord[]
+    context: NotebookSourceFileAccessContext | undefined
+    access: NotebookSourceFileAccessAnalysis
+    storageRoot: string
+  }> => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-attached-context-'))
+    temporaryRoots.push(storageRoot)
+    const runs = [
+      rRun(
+        'read',
+        'library(DESeq2); raw <- utils::read.csv("counts.csv"); samples <- utils::read.csv("samples.csv");NULL',
+        1,
+        binding(['stats', 'utils', 'methods', 'base'], packages, true)
+      ),
+      rRun('clean', 'clean <- as.matrix(raw);NULL', 2, binding(packages, packages)),
+      {
+        ...rRun(
+          'model',
+          'dds <- DESeqDataSetFromMatrix(countData=clean,colData=samples,design=~condition);NULL',
+          3
+        ),
+        status: 'running' as const
+      }
+    ]
+    change?.(runs)
+    const analyzer = new NotebookDependencyAnalyzer({
+      storageRoot,
+      repository: { readSessionRuns: async () => runs }
+    })
+    const context = await analyzer.sourceFileAccessContext({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      currentRunId: 'model',
+      language: 'r',
+      environment: 'r',
+      kernelEpochId: 'epoch-1'
+    })
+    const access = await analyzeNotebookSourceFileAccess('r', runs.at(-1)!.script, context)
+    return { analyzer, runs, context, access, storageRoot }
+  }
+  it('derives before-execution proof solely from completed prior run manifests', async () => {
+    const { context, access, storageRoot, runs } = await fixture()
+    expect(runs.at(-1)?.environmentManifest).toBeUndefined()
+    expect(context?.rAttachedPackages).toEqual(packages)
+    expect(access).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reasonCodes: []
+    })
+    expect(
+      await readFile(
+        join(
+          storageRoot,
+          'notebooks',
+          'default-project',
+          'session-1',
+          'cache',
+          'dependency-analysis.json'
+        ),
+        'utf8'
+      )
+    ).not.toContain('rAttachedPackages')
+  })
+  it.each([
+    'clean-session',
+    'missing-manifest',
+    'incomplete',
+    'masking',
+    'gap',
+    'omitted-run',
+    'epoch',
+    'custom-method',
+    'unresolved-history',
+    'prior-shadow',
+    'current-shadow',
+    'current-only'
+  ])('retains conservative coverage when proof is missing: %s', async (kind) => {
+    const { context, access } = await fixture((runs) => {
+      if (kind === 'clean-session')
+        runs[0]!.environmentManifest = {
+          executionContext: { before: {}, rPackages: binding(['stats'], packages) }
+        }
+      if (kind === 'missing-manifest') delete runs[1]!.environmentManifest
+      if (kind === 'incomplete')
+        runs[1]!.environmentManifest = {
+          executionContext: {
+            before: {},
+            rPackages: { ...binding(packages, packages), complete: false }
+          }
+        }
+      if (kind === 'masking')
+        runs[1]!.environmentManifest = {
+          executionContext: {
+            before: {},
+            rPackages: binding(packages, ['unknownPackage', ...packages])
+          }
+        }
+      if (kind === 'gap')
+        runs.splice(1, 0, {
+          ...rRun('gap', 'opaque_namespace_change()', 1.5, binding(packages, packages)),
+          executionCount: undefined
+        })
+      if (kind === 'omitted-run') runs.splice(1, 1)
+      if (kind === 'prior-shadow')
+        runs[1]!.script =
+          'DESeqDataSetFromMatrix <- function(...) NULL; clean <- as.matrix(raw);NULL'
+      if (kind === 'current-shadow')
+        runs[2]!.script = 'DESeqDataSetFromMatrix <- function(...) NULL; ' + runs[2]!.script
+      if (kind === 'epoch') runs[0]!.kernelEpochId = 'other-epoch'
+      if (kind === 'custom-method')
+        runs[1]!.script = 'setMethod("show", "DESeqDataSet", function(object) NULL)'
+      if (kind === 'unresolved-history')
+        runs[1]!.script = 'unknown_effect(raw); clean <- as.matrix(raw);NULL'
+      if (kind === 'current-only') {
+        delete runs[0]!.environmentManifest
+        runs[2]!.environmentManifest = {
+          executionContext: { before: {}, rPackages: binding(packages, packages, true) }
+        }
+      }
+    })
+    if (!['masking', 'current-shadow'].includes(kind))
+      expect(context?.rAttachedPackages).toBeUndefined()
+    expect(access.readState).toBe('partial')
+  })
+  it('retains package proof across recorded intervening Python execution counts', async () => {
+    const { context, access } = await fixture((runs) => {
+      runs[1]!.executionCount = 3
+      runs[2]!.executionCount = 4
+      runs.splice(1, 0, run('python', 'python', 'x = 1', 2))
+    })
+    expect(context?.rAttachedPackages).toEqual(packages)
+    expect(access.readState).toBe('complete')
+  })
+  it('uses each completed upstream envelope for the original model-fit-results chain', async () => {
+    const { analyzer, runs } = await fixture()
+    const scripts = [
+      runs[2]!.script,
+      'dds <- DESeq(dds,fitType="mean",quiet=TRUE);NULL',
+      'resultTable <- as.data.frame(results(dds,contrast=c("condition","treated","control")));utils::write.csv(resultTable,"result.csv",row.names=TRUE);NULL'
+    ]
+    for (const [index, script] of scripts.entries()) {
+      const current = runs.at(-1)!
+      current.script = script
+      expect(current.environmentManifest).toBeUndefined()
+      const context = await analyzer.sourceFileAccessContext({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: current.runId,
+        language: 'r',
+        environment: 'r',
+        kernelEpochId: 'epoch-1'
+      })
+      expect(await analyzeNotebookSourceFileAccess('r', script, context)).toMatchObject({
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete',
+        reasonCodes: []
+      })
+      current.status = 'completed'
+      current.environmentManifest = {
+        executionContext: { before: {}, rPackages: binding(packages, packages) }
+      }
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      if (index < scripts.length - 1)
+        runs.push({ ...rRun(`next-${index}`, scripts[index + 1]!, index + 4), status: 'running' })
+    }
+    // A late loss of upstream binding evidence must invalidate cached downstream
+    // DESeq call identities rather than retain previously certified facts.
+    runs[1]!.environmentManifest = {
+      executionContext: {
+        before: {},
+        rPackages: { ...binding(packages, packages), complete: false }
+      }
+    }
+    await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+    const current = { ...rRun('last', 'res <- results(dds);NULL', 6), status: 'running' as const }
+    runs.push(current)
+    const context = await analyzer.sourceFileAccessContext({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      currentRunId: current.runId,
+      language: 'r',
+      environment: 'r',
+      kernelEpochId: 'epoch-1'
+    })
+    expect(context?.rAttachedPackages).toBeUndefined()
+    expect((await analyzeNotebookSourceFileAccess('r', current.script, context)).readState).toBe(
+      'partial'
+    )
+  })
+  it.each(['delete', 'reorder'])(
+    'matches cold coverage after %s of an intervening Python history entry',
+    async (change) => {
+      const { analyzer, runs, storageRoot } = await fixture((records) => {
+        records[1]!.executionCount = 3
+        records[2]!.executionCount = 4
+        records[2]!.status = 'completed'
+        records[2]!.environmentManifest = {
+          executionContext: { before: {}, rPackages: binding(packages, packages) }
+        }
+        records.splice(1, 0, run('python', 'python', 'x = 1', 2))
+      })
+      const path = join(
+        storageRoot,
+        'notebooks',
+        'default-project',
+        'session-1',
+        'cache',
+        'dependency-analysis.json'
+      )
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      expect(JSON.parse(await readFile(path, 'utf8')).runs.model.fileAccess.readState).toBe(
+        'complete'
+      )
+      if (change === 'delete') runs.splice(1, 1)
+      else [runs[1], runs[2]] = [runs[2]!, runs[1]!]
+      await analyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      const warm = JSON.parse(await readFile(path, 'utf8')).runs.model.fileAccess
+      await rm(path)
+      const coldAnalyzer = new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: async () => runs }
+      })
+      await coldAnalyzer.project({ projectId: 'default-project', sessionId: 'session-1' })
+      const cold = JSON.parse(await readFile(path, 'utf8')).runs.model.fileAccess
+      expect(warm).toEqual(cold)
+      expect(warm.readState).toBe('partial')
+    }
+  )
+  it.each(['clean-session', 'incomplete', 'missing-manifest'])(
+    'blocks matrix dispatch after lost first-history proof in cold and warm caches: %s',
+    async (kind) => {
+      const { analyzer, runs, storageRoot } = await fixture((records) => {
+        records.forEach((record, index) => {
+          record.executionCount = index + 7
+        })
+        records[2]!.script =
+          'grDevices::png("heatmap.png");stats::heatmap(log2(clean+1),scale="row",Colv=NA);grDevices::dev.off();NULL'
+      })
+      const request = {
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        currentRunId: 'model',
+        language: 'r' as const,
+        environment: 'r',
+        kernelEpochId: 'epoch-1'
+      }
+      const before = await analyzer.sourceFileAccessContext(request)
+      expect((await analyzeNotebookSourceFileAccess('r', runs[2]!.script, before)).readState).toBe(
+        'complete'
+      )
+      if (kind === 'missing-manifest') delete runs[0]!.environmentManifest
+      else
+        runs[0]!.environmentManifest = {
+          executionContext: {
+            before: {},
+            rPackages: {
+              ...binding(['stats', 'utils', 'methods', 'base'], packages, kind !== 'clean-session'),
+              complete: kind !== 'incomplete'
+            }
+          }
+        }
+      const warm = await analyzer.sourceFileAccessContext(request)
+      expect(warm?.rDispatchUncertain).toBe(true)
+      expect(warm?.rMatrixNames ?? []).toEqual([])
+      const warmAccess = await analyzeNotebookSourceFileAccess('r', runs[2]!.script, warm)
+      expect(warmAccess.readState).toBe('partial')
+      await rm(
+        join(
+          storageRoot,
+          'notebooks',
+          'default-project',
+          'session-1',
+          'cache',
+          'dependency-analysis.json'
+        )
+      )
+      const cold = await new NotebookDependencyAnalyzer({
+        storageRoot,
+        repository: { readSessionRuns: async () => runs }
+      }).sourceFileAccessContext(request)
+      expect(cold?.rDispatchUncertain).toBe(true)
+      expect(await analyzeNotebookSourceFileAccess('r', runs[2]!.script, cold)).toEqual(warmAccess)
+    }
+  )
+  it('invalidates cached package context when prior binding metadata changes', async () => {
+    const { analyzer, runs } = await fixture()
+    runs[1]!.environmentManifest = {
+      executionContext: {
+        before: {},
+        rPackages: { ...binding(packages, packages), complete: false }
+      }
+    }
+    const context = await analyzer.sourceFileAccessContext({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      currentRunId: 'model',
+      language: 'r',
+      environment: 'r',
+      kernelEpochId: 'epoch-1'
+    })
+    expect(context?.rAttachedPackages).toBeUndefined()
+  })
+})
+
+describe('operation-local R history checksum compatibility', () => {
+  // Independent oracle for the persisted pre-optimization byte format. In
+  // particular, predecessor hashes use null history and IDs use findIndex.
+  const legacyChecksum = (
+    entry: NotebookRunRecord,
+    history?: readonly NotebookRunRecord[]
+  ): string =>
+    createHash('sha256')
+      .update(
+        JSON.stringify([
+          NOTEBOOK_ANALYZER_VERSION,
+          NOTEBOOK_ANALYZER_REVISION,
+          history && entry.kernelKind === 'r'
+            ? history
+                .slice(
+                  0,
+                  Math.max(
+                    0,
+                    history.findIndex((previous) => previous.runId === entry.runId)
+                  )
+                )
+                .map((previous) => [
+                  previous.runId,
+                  previous.kernelKind,
+                  previous.executionCount,
+                  previous.kernelKind === 'r' &&
+                  previous.kernelEpochId === entry.kernelEpochId &&
+                  (previous.environment ?? '') === (entry.environment ?? '')
+                    ? legacyChecksum(previous)
+                    : null
+                ])
+            : null,
+          entry.kernelKind,
+          entry.environment,
+          entry.kernelEpochId,
+          entry.runtimeId,
+          entry.replPersistentBindings,
+          entry.executionCount,
+          entry.environmentManifest?.executionContext?.rPackages,
+          entry.cwdBefore,
+          entry.cwdAfter,
+          entry.script,
+          entry.fileEvidence?.checksum,
+          entry.helperEvidenceStatus,
+          entry.helperModules?.map(
+            ({ helperId, sourceDigest, exports, interfaceRevision, registeredGeneration }) => [
+              helperId,
+              sourceDigest,
+              [...exports].sort(),
+              interfaceRevision,
+              registeredGeneration
+            ]
+          )
+        ])
+      )
+      .digest('hex')
+  const rRecord = (id: string, index: number): NotebookRunRecord => ({
+    ...run(id, id, `value${index} <- ${index};NULL`, index),
+    kernelKind: 'r',
+    environment: 'r'
+  })
+  const setup = async (
+    history: NotebookRunRecord[]
+  ): Promise<{
+    storageRoot: string
+    repository: { readSessionRuns: () => Promise<NotebookRunRecord[]> }
+    analyzer: NotebookDependencyAnalyzer
+    request: { projectId: string; sessionId: string }
+    cachePath: string
+    readSidecar: () => Promise<NotebookDependencyAnalysisSidecar>
+  }> => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-history-checksum-'))
+    temporaryRoots.push(storageRoot)
+    const repository = { readSessionRuns: async () => history }
+    const analyzer = new NotebookDependencyAnalyzer({ storageRoot, repository })
+    const request = { projectId: 'p', sessionId: 's' }
+    const cachePath = join(storageRoot, 'notebooks', 'p', 's', 'cache', 'dependency-analysis.json')
+    const readSidecar = async (): Promise<NotebookDependencyAnalysisSidecar> =>
+      JSON.parse(await readFile(cachePath, 'utf8'))
+    return { storageRoot, repository, analyzer, request, cachePath, readSidecar }
+  }
+
+  it('preserves legacy hashes for optional metadata, mixed kernels/scopes, and duplicate IDs', async () => {
+    const history = [
+      rRecord('duplicate', 1),
+      run('python', 'python', 'x = 1', 2),
+      { ...rRecord('no-environment', 3), environment: undefined },
+      { ...rRecord('empty-environment', 4), environment: '' },
+      { ...rRecord('other-epoch', 5), kernelEpochId: 'epoch-2' },
+      { ...rRecord('no-epoch', 6), kernelEpochId: undefined, executionCount: undefined },
+      { ...rRecord('duplicate', 7), runtimeId: 'external-r' },
+      { ...rRecord('repl', 8), kernelKind: 'repl' as const, replPersistentBindings: true as const },
+      {
+        ...rRecord('metadata', 9),
+        script: 'label <- "é\\n测🧬\\"";NULL',
+        cwdBefore: '/analysis',
+        cwdAfter: '/analysis',
+        environmentManifest: { executionContext: { before: {}, rPackages: { complete: false } } },
+        helperEvidenceStatus: { state: 'complete' as const },
+        helperModules: [
+          {
+            helperId: 'helper',
+            sourceDigest: 'digest',
+            exports: ['z', 'a'],
+            interfaceRevision: '1',
+            registeredGeneration: 'g',
+            source: 'a <- 1; z <- 2'
+          }
+        ],
+        fileEvidence: {
+          state: 'available' as const,
+          checksum: 'evidence',
+          fileReads: 'complete' as const,
+          writerAttribution: 'complete' as const
+        }
+      },
+      rRecord('last', 10)
+    ]
+    const fixture = await setup(history)
+    await fixture.analyzer.project(fixture.request)
+    const sidecar = await fixture.readSidecar()
+    // Same-kind duplicates are analyzed in history order, so the last record is
+    // persisted, with its own fields but the first matching ID's prefix.
+    for (const entry of history) {
+      if (history.findLast((candidate) => candidate.runId === entry.runId) !== entry) continue
+      expect(sidecar.runs[entry.runId]?.checksum, entry.runId).toBe(legacyChecksum(entry, history))
+    }
+    expect(sidecar.runs['no-environment']?.checksum).not.toBe(legacyChecksum(history[2]!))
+    await fixture.analyzer.project(fixture.request)
+    const reloaded = new NotebookDependencyAnalyzer({
+      storageRoot: fixture.storageRoot,
+      repository: fixture.repository
+    })
+    await reloaded.project(fixture.request)
+    const restored = await fixture.readSidecar()
+    for (const entry of history) {
+      if (history.findLast((candidate) => candidate.runId === entry.runId) === entry)
+        expect(restored.runs[entry.runId]?.checksum, entry.runId).toBe(
+          legacyChecksum(entry, history)
+        )
+    }
+  })
+
+  it.each(['append', 'through-boundary'] as const)(
+    'uses the exact completedRun analysis history for %s',
+    async (boundary) => {
+      const history = [rRecord('first', 1), rRecord('boundary', 2), rRecord('tail', 3)]
+      const fixture = await setup(history)
+      const exact = rRecord('not-in-repository', 4)
+      await fixture.analyzer.project({
+        ...fixture.request,
+        completedRun: exact,
+        interpreter: unusedR,
+        ...(boundary === 'through-boundary' ? { throughRunId: 'boundary' } : {})
+      })
+      const analysisHistory = [
+        ...(boundary === 'through-boundary' ? history.slice(0, 2) : history),
+        exact
+      ]
+      expect((await fixture.readSidecar()).runs[exact.runId]?.checksum).toBe(
+        legacyChecksum(exact, analysisHistory)
+      )
+    }
+  )
+
+  it('keeps an earlier non-R duplicate ID as the all-null boundary for a later scope', async () => {
+    const history = [
+      rRecord('earlier-r', 1),
+      { ...run('duplicate', 'bash', 'echo first', 2), kernelKind: 'bash' as const },
+      rRecord('middle-r', 3),
+      { ...rRecord('duplicate', 4), kernelEpochId: 'later-epoch' },
+      { ...rRecord('later-r', 5), kernelEpochId: 'later-epoch' }
+    ]
+    const fixture = await setup(history)
+    await fixture.analyzer.project(fixture.request)
+    const sidecar = await fixture.readSidecar()
+    expect(sidecar.runs.duplicate?.checksum).toBe(legacyChecksum(history[3]!, history))
+    expect(sidecar.runs['later-r']?.checksum).toBe(legacyChecksum(history[4]!, history))
+  })
+
+  it.each(['singletons', 'groups', 'interleaved'] as const)(
+    'bounds warm public-operation metadata work for %s scopes',
+    async (pattern) => {
+      const history = [rRecord('seed', 1)]
+      const fixture = await setup(history)
+      await fixture.analyzer.project(fixture.request)
+      const seed = await fixture.readSidecar()
+      const count = 192
+      history.splice(
+        0,
+        1,
+        ...Array.from({ length: count }, (_, index) => ({
+          ...rRecord(`r-${index}`, index + 1),
+          kernelEpochId: `epoch-${
+            pattern === 'singletons'
+              ? index
+              : pattern === 'groups'
+                ? Math.floor(index / 3)
+                : index % 8
+          }`
+        }))
+      )
+      // Warm with independent legacy bytes and real parser-produced evidence.
+      // A parser call below is a cache reuse failure, not part of this work probe.
+      const checksums = history.map((entry) => legacyChecksum(entry, history))
+      await writeFile(
+        fixture.cachePath,
+        JSON.stringify({
+          ...seed,
+          runs: Object.fromEntries(
+            history.map((entry, index) => [
+              entry.runId,
+              { ...seed.runs.seed, checksum: checksums[index] }
+            ])
+          ),
+          projectionSnapshots: {}
+        })
+      )
+      const analyze = vi.fn(async () => {
+        throw new Error('warm metadata work probe must not parse')
+      })
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot: fixture.storageRoot,
+        repository: fixture.repository,
+        analyze
+      })
+      let metadataReads = 0
+      for (const entry of history) {
+        const executionCount = entry.executionCount
+        Object.defineProperty(entry, 'executionCount', {
+          get: () => {
+            metadataReads++
+            return executionCount
+          }
+        })
+      }
+      // Python requests visit R history in reverse inside serializedFileContext;
+      // R requests initialize their selected scope before that reverse traversal.
+      for (const language of ['python', 'r'] as const) {
+        metadataReads = 0
+        await analyzer.sourceFileAccessContext({
+          ...fixture.request,
+          currentRunId: 'next',
+          language,
+          environment: language === 'r' ? 'r' : 'default-python',
+          kernelEpochId: history.at(-1)!.kernelEpochId
+        })
+        expect(metadataReads, `${pattern} ${language} context`).toBeGreaterThan(0)
+        expect(metadataReads, `${pattern} ${language} context`).toBeLessThanOrEqual(
+          count * (pattern === 'interleaved' ? 32 : 16)
+        )
+      }
+      metadataReads = 0
+      await analyzer.project(fixture.request)
+      expect(metadataReads, `${pattern} project`).toBeGreaterThan(0)
+      expect(metadataReads, `${pattern} project`).toBeLessThanOrEqual(
+        count * (pattern === 'interleaved' ? 32 : 16)
+      )
+      expect(analyze).not.toHaveBeenCalled()
+      const sidecar = await fixture.readSidecar()
+      for (const [index, entry] of history.entries())
+        expect(sidecar.runs[entry.runId]?.checksum).toBe(checksums[index])
+    }
+  )
+
+  it.each(['source', 'delete', 'reorder', 'count', 'metadata'] as const)(
+    'matches cold project and file context after in-place history %s',
+    async (mutation) => {
+      const history = [rRecord('first', 1), run('python', 'python', 'x = 1', 2), rRecord('last', 3)]
+      const fixture = await setup(history)
+      const contextRequest = {
+        ...fixture.request,
+        currentRunId: 'not-yet-recorded',
+        language: 'r' as const,
+        environment: 'r',
+        kernelEpochId: 'epoch-1'
+      }
+      history[0]!.helperEvidenceStatus = { state: 'complete' }
+      await fixture.analyzer.sourceFileAccessContext(contextRequest)
+      await fixture.analyzer.project(fixture.request)
+      if (mutation === 'source') history[0]!.script = 'value1 <- 99;NULL'
+      else if (mutation === 'delete') history.splice(1, 1)
+      else if (mutation === 'reorder') [history[0], history[1]] = [history[1]!, history[0]!]
+      else if (mutation === 'count') history[1]!.executionCount = 20
+      else history[0]!.helperEvidenceStatus = { state: 'incomplete', reasons: ['changed'] }
+      const warmContext = await fixture.analyzer.sourceFileAccessContext(contextRequest)
+      const warmProjection = await fixture.analyzer.project(fixture.request)
+      const warmSidecar = await fixture.readSidecar()
+      const cold = new NotebookDependencyAnalyzer({
+        storageRoot: join(fixture.storageRoot, 'cold'),
+        repository: fixture.repository
+      })
+      expect(await cold.sourceFileAccessContext(contextRequest)).toEqual(warmContext)
+      expect(await cold.project(fixture.request)).toEqual(warmProjection)
+      const coldSidecar = JSON.parse(
+        await readFile(
+          join(
+            fixture.storageRoot,
+            'cold',
+            'notebooks',
+            'p',
+            's',
+            'cache',
+            'dependency-analysis.json'
+          ),
+          'utf8'
+        )
+      )
+      for (const entry of history) {
+        expect(warmSidecar.runs[entry.runId]?.checksum).toBe(legacyChecksum(entry, history))
+        expect(coldSidecar.runs[entry.runId]).toEqual(warmSidecar.runs[entry.runId])
+      }
+    }
+  )
+
+  it('bounds warm public-operation source work and ignores an unrequested history tail', async () => {
+    const history = Array.from({ length: 48 }, (_, index) => rRecord(`r-${index}`, index + 1))
+    const fixture = await setup(history)
+    let sourceReads = 0
+    for (const entry of history) {
+      const source = entry.script
+      Object.defineProperty(entry, 'script', {
+        configurable: true,
+        get: () => {
+          sourceReads++
+          return source
+        }
+      })
+    }
+    await fixture.analyzer.sourceFileAccessContext({
+      ...fixture.request,
+      currentRunId: 'next',
+      language: 'r',
+      environment: 'r',
+      kernelEpochId: 'epoch-1'
+    })
+    expect(sourceReads).toBeLessThanOrEqual(history.length * 2)
+    sourceReads = 0
+    await fixture.analyzer.project(fixture.request)
+    expect(sourceReads).toBeGreaterThan(0)
+    expect(sourceReads).toBeLessThanOrEqual(history.length * 2)
+    sourceReads = 0
+    await fixture.analyzer.sourceFileAccessContext({
+      ...fixture.request,
+      currentRunId: 'next',
+      language: 'r',
+      environment: 'r',
+      kernelEpochId: 'epoch-1'
+    })
+    expect(sourceReads).toBeGreaterThan(0)
+    expect(sourceReads).toBeLessThanOrEqual(history.length * 2)
+    // A later duplicate must not make an early-boundary query inspect its source.
+    history.at(-1)!.runId = history[0]!.runId
+    for (const entry of history.slice(2))
+      Object.defineProperty(entry, 'script', {
+        get: () => {
+          throw new Error('unrequested tail source')
+        }
+      })
+    await expect(
+      fixture.analyzer.project({ ...fixture.request, throughRunId: history[1]!.runId })
+    ).resolves.toBeDefined()
+    await expect(
+      fixture.analyzer.sourceFileAccessContext({
+        ...fixture.request,
+        currentRunId: history[1]!.runId,
+        language: 'r',
+        environment: 'r',
+        kernelEpochId: 'epoch-1'
+      })
+    ).resolves.toBeDefined()
   })
 })

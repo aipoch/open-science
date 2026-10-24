@@ -8,17 +8,19 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 
 import type {
-  ArtifactReproducibilityCheckLog,
-  ArtifactReproducibilityReceiptComparison
-} from './evidence'
-import type {
+  ArtifactProvenanceGraph,
   ArtifactProvenanceGraphEntity,
-  ArtifactReproducibilityRecipe,
+  ArtifactReproducibilityCheckLog,
+  ArtifactReproducibilityEnvironmentRequirement,
+  ArtifactReproducibilityReceiptComparison,
+  ArtifactReproducibilityRecipeFile,
   ArtifactReproducibilityRecipeStep,
+  NotebookHelperModuleEvidence,
+  ProvenanceNotebookRun,
   ReproductionSnapshot,
-  ProvenanceNotebookRun
+  WorkflowCapture,
+  WorkflowPlan
 } from './evidence'
-import type { NotebookHelperModuleEvidence } from './evidence'
 import type {
   ReproductionEvidence,
   ReproductionFileIO,
@@ -26,6 +28,7 @@ import type {
   NotebookReproductionEnvironmentProgress,
   NotebookReproductionEnvironmentOutput,
   NotebookReproductionRuntime,
+  NotebookReproductionRestoredEnvironment,
   NotebookReproductionStep
 } from './ports'
 import { limitUtf8 } from './text'
@@ -35,6 +38,7 @@ import { notebookHelperEvidenceKey } from './helper-identity'
 import { createReproductionRecipes } from './recipe'
 import { sha256 } from './canonical'
 import { MAX_REPRODUCIBILITY_OUTPUT_BYTES, readReproducibilityOutputFile } from './output-files'
+import { createWorkflowSlices } from './workflow-slice'
 
 export class ReproducibilityCleanupError extends AggregateError {
   constructor(errors: unknown[], attemptRoot: string) {
@@ -77,12 +81,13 @@ type ArtifactReproducibilityExecutionEvent =
   | { type: 'step-output'; entries: ArtifactReproducibilityCheckLog[] }
   | { type: 'step-completed'; stepId: string; index: number; total: number }
   | { type: 'output-compared'; comparison: ArtifactReproducibilityOutputComparison }
-  | { type: 'attempt-completed'; matched: boolean }
+  | { type: 'attempt-completed'; matched: boolean; verification?: WorkflowPlan['verification'] }
 
 type ArtifactReproducibilityExecutionResult = {
   matched: boolean
   completedStepIds: string[]
   comparisons: ArtifactReproducibilityOutputComparison[]
+  environmentLocks?: NotebookReproductionRestoredEnvironment[]
 }
 
 type ExecuteArtifactReproducibilityInput = {
@@ -100,13 +105,43 @@ type ExecuteArtifactReproducibilityDependencies = {
   createRuntime: CreateReproductionRuntime
 }
 
-export const createReproductionExecutor = (options: {
+type ExecuteWorkflowSliceInput = Omit<
+  ExecuteArtifactReproducibilityInput,
+  'execution' | 'frontierId'
+> & {
+  capture: WorkflowCapture
+  plan: WorkflowPlan
+}
+type WorkflowExecutionResult = Omit<ArtifactReproducibilityExecutionResult, 'matched'> & {
+  captureId: string
+  planId: string
+  executionOnlyTargetRunIds: string[]
+} & (
+    | { verification: 'file-comparison'; matched: boolean }
+    | { verification: 'execution-only'; matched?: never }
+  )
+type PreparedExecutionPlan = {
+  graph: ArtifactProvenanceGraph
+  crossingFiles: ArtifactReproducibilityRecipeFile[]
+  steps: ArtifactReproducibilityRecipeStep[]
+  environmentRequirements: ArtifactReproducibilityEnvironmentRequirement[]
+  verification?: WorkflowPlan['verification']
+}
+
+const createExecutionOwner = (options: {
   recipes: ReturnType<typeof createReproductionRecipes>
   fileIO: ReproductionFileIO
-}): ((
-  input: ExecuteArtifactReproducibilityInput,
-  dependencies: ExecuteArtifactReproducibilityDependencies
-) => Promise<ArtifactReproducibilityExecutionResult>) => {
+  inputPath?: (filename: string, checksum: string) => string
+}): {
+  executeArtifactReproducibility: (
+    input: ExecuteArtifactReproducibilityInput,
+    dependencies: ExecuteArtifactReproducibilityDependencies
+  ) => Promise<ArtifactReproducibilityExecutionResult>
+  executeWorkflowSlice: (
+    input: ExecuteWorkflowSliceInput,
+    dependencies: ExecuteArtifactReproducibilityDependencies
+  ) => Promise<WorkflowExecutionResult>
+} => {
   const {
     artifactReproducibilityRecipeMatchesSnapshot,
     prepareArtifactReproducibilityExecutionPlan
@@ -278,18 +313,15 @@ export const createReproductionExecutor = (options: {
   }
 
   const materializeInputs = async (
-    recipe: ArtifactReproducibilityRecipe,
+    files: ArtifactReproducibilityRecipeFile[],
     graphEntities: ArtifactProvenanceGraphEntity[],
-    frontierId: string,
     evidence: ReproductionEvidence,
     sessionRoot: string,
     dataRoot: string,
     signal?: AbortSignal
   ): Promise<number> => {
-    const frontier = recipe.frontiers.find((candidate) => candidate.frontierId === frontierId)
-    if (!frontier) throw new Error(`Artifact reproduction frontier is unavailable: ${frontierId}`)
     const destinations = new Set<string>()
-    for (const file of frontier.crossingFiles) {
+    for (const file of files) {
       if (signal?.aborted) throw signal.reason ?? new Error('Reproduction cancelled.')
       const entity = graphEntities.find((candidate) => candidate.entityId === file.entityId)
       if (!entity || entity.kind === 'artifact-version') {
@@ -317,7 +349,7 @@ export const createReproductionExecutor = (options: {
         throw new Error(`Materialized reproducibility input changed: ${file.entityId}`)
       }
     }
-    return frontier.crossingFiles.length
+    return files.length
   }
 
   const notebookStep = (step: ArtifactReproducibilityRecipeStep): NotebookReproductionStep => {
@@ -376,6 +408,64 @@ export const createReproductionExecutor = (options: {
       input.evidence,
       input.signal
     )
+    return executePreparedPlan(
+      input,
+      {
+        graph,
+        crossingFiles: plan.frontier.crossingFiles,
+        steps: plan.steps,
+        environmentRequirements: plan.environmentRequirements
+      },
+      dependencies
+    )
+  }
+
+  const executeWorkflowSlice = async (
+    input: ExecuteWorkflowSliceInput,
+    dependencies: ExecuteArtifactReproducibilityDependencies
+  ): Promise<WorkflowExecutionResult> => {
+    if (!options.inputPath) throw new Error('Workflow input path resolver is unavailable.')
+    // Clone before asynchronous validation so callers cannot change an admitted plan or source.
+    const capture = structuredClone(input.capture)
+    const plan = structuredClone(input.plan)
+    await createWorkflowSlices({
+      inputPath: options.inputPath,
+      fileIO: options.fileIO
+    }).prepareWorkflowSlice(capture, plan, input.evidence, input.signal)
+    const preparedInput = {
+      ...input,
+      execution: {
+        runs: capture.runs,
+        inputFiles: capture.inputFiles,
+        helperModules: capture.helperModules,
+        helperEvidenceStatus: capture.helperEvidenceStatus
+      }
+    }
+    const prepared: PreparedExecutionPlan = {
+      graph: capture.graph,
+      crossingFiles: plan.crossingFiles,
+      steps: plan.steps,
+      environmentRequirements: plan.environmentRequirements,
+      verification: plan.verification
+    }
+    const result = await executePreparedPlan(preparedInput, prepared, dependencies)
+    const { matched, ...details } = result
+    const identity = {
+      captureId: capture.captureId,
+      planId: plan.planId,
+      executionOnlyTargetRunIds: [...plan.executionOnlyTargetRunIds]
+    }
+    return plan.verification === 'execution-only'
+      ? { ...details, ...identity, verification: 'execution-only' }
+      : { ...details, ...identity, verification: plan.verification, matched }
+  }
+
+  const executePreparedPlan = async (
+    input: Omit<ExecuteArtifactReproducibilityInput, 'frontierId'>,
+    plan: PreparedExecutionPlan,
+    dependencies: ExecuteArtifactReproducibilityDependencies
+  ): Promise<ArtifactReproducibilityExecutionResult> => {
+    const graph = plan.graph
     const createAttemptRoot =
       dependencies.createAttemptRoot ??
       (() => mkdtemp(join(tmpdir(), 'open-science-reproduction-')))
@@ -417,9 +507,8 @@ export const createReproductionExecutor = (options: {
         )
       })
       const materialized = await materializeInputs(
-        recipe,
+        plan.crossingFiles,
         graph.entities,
-        input.frontierId,
         input.evidence,
         workspaceRoot,
         dataRoot,
@@ -562,8 +651,19 @@ export const createReproductionExecutor = (options: {
       }
       const matched =
         comparisons.length > 0 && comparisons.every(({ status }) => status === 'matched')
-      input.onEvent?.({ type: 'attempt-completed', matched })
-      result = { matched, completedStepIds, comparisons }
+      input.onEvent?.({
+        type: 'attempt-completed',
+        matched,
+        ...(plan.verification ? { verification: plan.verification } : {})
+      })
+      result = {
+        matched,
+        completedStepIds,
+        comparisons,
+        ...(runtime.environmentLocks
+          ? { environmentLocks: runtime.environmentLocks.map((lock) => ({ ...lock })) }
+          : {})
+      }
     } catch (error) {
       executionError = error
     }
@@ -585,17 +685,39 @@ export const createReproductionExecutor = (options: {
       const errors = executionError === undefined ? [cleanupError] : [executionError, cleanupError]
       throw new ReproducibilityCleanupError(errors, attemptRoot)
     }
+    input.signal?.throwIfAborted()
     if (executionError !== undefined) throw executionError
     if (!result) throw new Error('Reproducibility execution did not produce a result.')
     return result
   }
 
-  return executeArtifactReproducibility
+  return { executeArtifactReproducibility, executeWorkflowSlice }
 }
+
+export const createReproductionExecutor = (options: {
+  recipes: ReturnType<typeof createReproductionRecipes>
+  fileIO: ReproductionFileIO
+}): ((
+  input: ExecuteArtifactReproducibilityInput,
+  dependencies: ExecuteArtifactReproducibilityDependencies
+) => Promise<ArtifactReproducibilityExecutionResult>) =>
+  createExecutionOwner(options).executeArtifactReproducibility
+
+export const createWorkflowSliceExecutor = (options: {
+  inputPath: (filename: string, checksum: string) => string
+  fileIO: ReproductionFileIO
+}): ((
+  input: ExecuteWorkflowSliceInput,
+  dependencies: ExecuteArtifactReproducibilityDependencies
+) => Promise<WorkflowExecutionResult>) =>
+  createExecutionOwner({ ...options, recipes: createReproductionRecipes(options) })
+    .executeWorkflowSlice
 export type {
   ArtifactReproducibilityExecutionEvent,
   ArtifactReproducibilityExecutionResult,
   ArtifactReproducibilityOutputComparison,
   ExecuteArtifactReproducibilityDependencies,
-  ExecuteArtifactReproducibilityInput
+  ExecuteArtifactReproducibilityInput,
+  ExecuteWorkflowSliceInput,
+  WorkflowExecutionResult
 }

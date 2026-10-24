@@ -1,13 +1,14 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, rename } from 'node:fs/promises'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { registerOwnedPosixProcessGroup } from '../process-tree'
+import * as processTree from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import type { ChildProcess } from 'node:child_process'
 
@@ -50,38 +51,175 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 })
 
 describe('Shell process ownership receipt lifecycle', () => {
-  it('preserves the receipt and reports a redacted identity-query timeout', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'shell-query-timeout-'))
-    roots.push(root)
-    const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
-      runId: 'timeout',
-      projectId: 'project',
-      sessionId: 'session',
-      platform: 'win32',
-      hosted: true
-    }).host!
-    await rename(
-      host.pendingPath,
-      join(root, 'shell-process-ownership', `timeout.active.12345.${host.receiptId}.json`)
-    )
-    vi.mocked(spawnSync).mockReturnValueOnce({
-      pid: 0,
-      output: [null, '', 'private-command-line'],
-      stdout: '',
-      stderr: 'private-command-line',
-      status: null,
-      signal: 'SIGTERM',
-      error: Object.assign(new Error('query timed out'), { code: 'ETIMEDOUT' })
+  describe('hosted identity-query recovery', () => {
+    beforeEach(() => {
+      vi.mocked(spawnSync)
+        .mockReset()
+        .mockImplementation(() => {
+          throw new Error('Unexpected identity query')
+        })
+      vi.spyOn(processTree, 'terminateProcessTree').mockResolvedValue({ reaped: true })
     })
-    const restarted = new ShellProcessOwnershipRegistry(root, { processExists: () => true })
-    await expect(restarted.recover()).rejects.toMatchObject({
-      code: 'SHELL_PROCESS_RECOVERY_BLOCKED',
-      cause: {
-        message:
-          'Windows host identity query failed: status=null, code=ETIMEDOUT, receiptMatched=false'
+
+    afterEach(() => {
+      vi.mocked(spawnSync).mockReset()
+      vi.mocked(processTree.terminateProcessTree).mockRestore()
+    })
+
+    const hostedReceipt = async (
+      processExists = (): boolean => true
+    ): Promise<{
+      receiptPath: string
+      receiptId: string
+      registry: ShellProcessOwnershipRegistry
+    }> => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-query-recovery-'))
+      roots.push(root)
+      const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
+        runId: 'query',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: 'win32',
+        hosted: true
+      }).host!
+      const receiptPath = join(
+        root,
+        'shell-process-ownership',
+        `query.active.12345.${host.receiptId}.json`
+      )
+      await rename(host.pendingPath, receiptPath)
+      return {
+        receiptPath,
+        receiptId: host.receiptId,
+        registry: new ShellProcessOwnershipRegistry(root, { processExists })
       }
+    }
+
+    const queryResult = (stdout = '', errorCode?: string): SpawnSyncReturns<string> => ({
+      pid: 0,
+      output: [null, stdout, 'private-command-line'],
+      stdout,
+      stderr: 'private-command-line',
+      status: errorCode ? null : 0,
+      signal: errorCode === 'ETIMEDOUT' ? 'SIGTERM' : null,
+      ...(errorCode
+        ? { error: Object.assign(new Error('private-query-error'), { code: errorCode }) }
+        : {})
     })
-    expect(restarted.hasReceipts()).toBe(true)
+
+    it('preserves the receipt and reports a redacted identity-query timeout', async () => {
+      const { registry, receiptPath } = await hostedReceipt()
+      const originalReceipt = await readFile(receiptPath)
+      vi.mocked(spawnSync)
+        .mockReturnValueOnce(queryResult('', 'ETIMEDOUT'))
+        .mockReturnValueOnce(queryResult('', 'ETIMEDOUT'))
+
+      await expect(registry.recover()).rejects.toMatchObject({
+        code: 'SHELL_PROCESS_RECOVERY_BLOCKED',
+        cause: {
+          message:
+            'Windows host identity query failed: status=null, code=ETIMEDOUT, receiptMatched=false'
+        }
+      })
+
+      expect(spawnSync).toHaveBeenCalledTimes(2)
+      expect(processTree.terminateProcessTree).not.toHaveBeenCalled()
+      expect(await readFile(receiptPath)).toEqual(originalReceipt)
+    })
+
+    it.each([true, false])(
+      'retries a timed-out query and only releases the receipt after verified teardown: reaped=%s',
+      async (reaped) => {
+        const { registry, receiptPath, receiptId } = await hostedReceipt()
+        const originalReceipt = await readFile(receiptPath)
+        vi.mocked(spawnSync)
+          .mockReturnValueOnce(queryResult('', 'ETIMEDOUT'))
+          .mockReturnValueOnce(queryResult(receiptId))
+        vi.mocked(processTree.terminateProcessTree).mockImplementationOnce(async (child) => {
+          expect(spawnSync).toHaveBeenCalledTimes(2)
+          expect(child.pid).toBe(12345)
+          expect(await readFile(receiptPath)).toEqual(originalReceipt)
+          return { reaped }
+        })
+
+        if (reaped) {
+          await registry.recover()
+          expect(registry.hasReceipts()).toBe(false)
+        } else {
+          await expect(registry.recover()).rejects.toMatchObject({
+            code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
+          })
+          expect(await readFile(receiptPath)).toEqual(originalReceipt)
+        }
+        expect(processTree.terminateProcessTree).toHaveBeenCalledTimes(1)
+        const calls = vi.mocked(spawnSync).mock.calls
+        expect(calls[1]).toEqual(calls[0])
+        expect(calls[0][2]).toMatchObject({ timeout: 5000, windowsHide: true })
+      }
+    )
+
+    it.each([false, true])(
+      'never retries or terminates an identity mismatch: afterTimeout=%s',
+      async (afterTimeout) => {
+        const { registry, receiptPath } = await hostedReceipt()
+        const originalReceipt = await readFile(receiptPath)
+        if (afterTimeout) vi.mocked(spawnSync).mockReturnValueOnce(queryResult('', 'ETIMEDOUT'))
+        vi.mocked(spawnSync).mockReturnValueOnce(queryResult('unrelated-process'))
+
+        await expect(registry.recover()).rejects.toMatchObject({
+          code: 'SHELL_PROCESS_RECOVERY_BLOCKED',
+          cause: {
+            message: 'Windows host identity query failed: status=0, code=none, receiptMatched=false'
+          }
+        })
+
+        expect(spawnSync).toHaveBeenCalledTimes(afterTimeout ? 2 : 1)
+        expect(processTree.terminateProcessTree).not.toHaveBeenCalled()
+        expect(await readFile(receiptPath)).toEqual(originalReceipt)
+      }
+    )
+
+    it.each(['ENOENT', 'EACCES', undefined])(
+      'does not retry other query failures: code=%s',
+      async (code) => {
+        const { registry, receiptPath } = await hostedReceipt()
+        const originalReceipt = await readFile(receiptPath)
+        vi.mocked(spawnSync).mockReturnValueOnce(
+          code ? queryResult('', code) : { ...queryResult(), status: 1 }
+        )
+
+        await expect(registry.recover()).rejects.toMatchObject({
+          code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
+        })
+
+        expect(spawnSync).toHaveBeenCalledTimes(1)
+        expect(processTree.terminateProcessTree).not.toHaveBeenCalled()
+        expect(await readFile(receiptPath)).toEqual(originalReceipt)
+      }
+    )
+
+    it('does not query again or terminate a target that exited during the timeout', async () => {
+      const exists = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
+      const { registry } = await hostedReceipt(exists)
+      vi.mocked(spawnSync).mockReturnValueOnce(queryResult('', 'ETIMEDOUT'))
+
+      await registry.recover()
+
+      expect(spawnSync).toHaveBeenCalledTimes(1)
+      expect(processTree.terminateProcessTree).not.toHaveBeenCalled()
+      expect(registry.hasReceipts()).toBe(false)
+    })
+
+    it('does not repeat a successful identity query', async () => {
+      const { registry, receiptId } = await hostedReceipt()
+      vi.mocked(spawnSync).mockReturnValueOnce(queryResult(receiptId))
+
+      await registry.recover()
+
+      expect(spawnSync).toHaveBeenCalledTimes(1)
+      expect(processTree.terminateProcessTree).toHaveBeenCalledTimes(1)
+      expect(registry.hasReceipts()).toBe(false)
+    })
   })
 
   it('preserves every original after interrupted historical backup and requires renewed consent', async () => {

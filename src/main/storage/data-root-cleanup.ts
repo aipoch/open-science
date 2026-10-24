@@ -4,16 +4,16 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
 import { capturePortableMetadata, deleteSources, restorePortableMetadata } from './data-migration'
 import {
-  DurableJsonRecoveryBarrierError,
-  readDurableJsonFile,
-  writeDurableJsonFile
-} from '@aipoch/durable-files'
-import {
   MIGRATION_MARKER_FILENAME,
   readMigrationMarker,
   removeMigrationMarker,
   scanInventory
 } from './migration-marker'
+import {
+  DurableJsonRecoveryBarrierError,
+  readDurableJsonFile,
+  writeDurableJsonFile
+} from '@aipoch/durable-files'
 import { defaultFileDurability } from '@aipoch/durable-files'
 import type { NpmMigration } from './wsl-npm-migration'
 

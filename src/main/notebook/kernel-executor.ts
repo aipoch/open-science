@@ -1,5 +1,3 @@
-import { createLogger } from '@aipoch/diagnostics/node'
-import { resolveExternalRLibrary } from '@aipoch/environment'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
@@ -25,8 +23,10 @@ import {
   windowsNotebookRuntimeEnvironment,
   type WindowsNotebookRuntime
 } from './windows-notebook-runtime'
-
+import { createLogger } from '@aipoch/diagnostics/node'
 import { boundedRuntimeDiagnostic } from '@aipoch/diagnostics/node'
+
+import { resolveExternalRLibrary } from '@aipoch/environment'
 import {
   DEFAULT_R_ENV,
   buildManagedRuntimeProcessEnvironment,

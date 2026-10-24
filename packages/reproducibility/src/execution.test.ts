@@ -445,6 +445,123 @@ describe('Artifact reproducibility execution', () => {
     await expect(access(attemptRoot)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('materializes a frozen checkpoint and executes only its downstream steps', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-checkpoint-'))
+    const attemptRoot = await mkdtemp(join(tmpdir(), 'reproduction-checkpoint-attempt-'))
+    try {
+      const { execution, output } = await fixture(storageRoot)
+      const graph = execution.provenanceGraph!
+      const upstream = execution.runs[0]!
+      upstream.script = "raise RuntimeError('upstream must not run')"
+      const downstream = {
+        ...upstream,
+        runId: 'run-2',
+        runIndex: 1,
+        script: "open('result.txt', 'w').write(open('intermediate/clean.txt').read())"
+      }
+      execution.runs.push(downstream)
+      execution.producerRunId = downstream.runId
+      execution.producerRunIndex = downstream.runIndex
+      const publication = graph.activities.find(
+        (activity) => activity.kind === 'artifact-publication'
+      )!
+      publication.sequence = 2
+      publication.parentActivityId = downstream.runId
+      graph.activities.splice(1, 0, {
+        activityId: downstream.runId,
+        kind: 'notebook-run',
+        sequence: 1,
+        runIndex: 1,
+        inclusion: 'target-closure',
+        evidenceState: 'available'
+      })
+      const middle = {
+        entityId: 'file-generation:middle',
+        kind: 'file-generation' as const,
+        generationId: 'middle',
+        relativePath: 'data/intermediate/clean.txt',
+        pathPortability: 'relative' as const,
+        checksum: sha256(output),
+        sizeBytes: output.byteLength,
+        contentStorageKey: `execution-file-evidence/blobs/sha256-${sha256(output)}`
+      }
+      graph.entities.push(middle)
+      const generated = graph.edges.find(
+        (edge) => edge.kind === 'generated' && edge.entityId === 'file-generation:result'
+      )!
+      generated.activityId = downstream.runId
+      graph.edges.push(
+        {
+          kind: 'generated',
+          activityId: upstream.runId,
+          entityId: middle.entityId,
+          authority: 'authoritative',
+          evidenceSource: 'runtime-observation'
+        },
+        {
+          kind: 'used',
+          activityId: downstream.runId,
+          entityId: middle.entityId,
+          authority: 'authoritative',
+          evidenceSource: 'runtime-observation'
+        }
+      )
+      const middlePath = join(storageRoot, ...middle.contentStorageKey.split('/'))
+      await mkdir(dirname(middlePath), { recursive: true })
+      await writeFile(middlePath, output)
+      execution.reproducibilityRecipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
+        provenanceGraph: graph,
+        inputFiles: execution.inputFiles,
+        runs: execution.runs
+      })
+      // A checkpoint must remain usable even when an upstream original input is unavailable.
+      await rm(join(storageRoot, ...execution.inputFiles[0]!.storageKey.split('/')))
+      const plan = await reproductionRecipes.prepareArtifactReproducibilityExecutionPlan(
+        execution.reproducibilityRecipe,
+        'checkpoint:run-1',
+        reproductionEvidence(storageRoot)
+      )
+      expect(plan.frontier).toMatchObject({
+        frontierId: 'checkpoint:run-1',
+        claimScope: 'downstream-only',
+        crossingFiles: [{ entityId: middle.entityId }]
+      })
+      expect(plan.steps.map((step) => step.stepId)).toEqual(['step:run-2'])
+      const execute = vi.fn<NotebookReproductionRuntime['execute']>(
+        async ({ step, source, sessionRoot }) => {
+          if (step.runId === upstream.runId) throw new Error('Upstream execution is forbidden')
+          expect(source).toBe(downstream.script)
+          const frozen = await readFile(join(sessionRoot, middle.relativePath))
+          expect(frozen).toEqual(output)
+          await writeFile(join(sessionRoot, 'data/result.txt'), frozen)
+          return { status: 'completed', stdout: '', stderr: '', traceback: '' }
+        }
+      )
+      const result = await executeArtifactReproducibility(
+        {
+          execution,
+          frontierId: 'checkpoint:run-1',
+          evidence: reproductionEvidence(storageRoot)
+        },
+        {
+          createAttemptRoot: async () => attemptRoot,
+          createRuntime: async () => ({ execute, shutdown: async () => ({ reaped: true }) })
+        }
+      )
+      expect(execute).toHaveBeenCalledOnce()
+      expect(execute.mock.calls[0]![0].step.runId).toBe('run-2')
+      expect(result).toMatchObject({
+        matched: true,
+        completedStepIds: ['step:run-2'],
+        comparisons: [{ entityId: 'file-generation:result', status: 'matched' }]
+      })
+      await expect(access(attemptRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+      await rm(attemptRoot, { recursive: true, force: true })
+    }
+  })
+
   it.each(['saved', 'quota', 'unavailable'] as const)(
     'reports a changed file and handles output retention: %s',
     async (retention) => {

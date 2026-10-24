@@ -1,21 +1,7 @@
 import type {
   ArtifactReproducibilityProjection,
-  ArtifactReproducibilityRecipe
-} from '@aipoch/reproducibility/contracts'
-export type {
-  ArtifactReproducibilityBarrierReason,
-  ArtifactReproducibilityActivity,
-  ArtifactReproducibilityEntity,
-  ArtifactReproducibilityOutputGroup,
-  ArtifactReproducibilityEdge,
-  ArtifactReproducibilityStartFrontier,
-  ArtifactReproducibilityProjection,
-  ArtifactReproducibilityRecipeBarrier,
-  ArtifactReproducibilityEnvironmentRequirement,
-  ArtifactReproducibilityRecipeStep,
-  ArtifactReproducibilityRecipeFile,
-  ArtifactReproducibilityFrontierPlan,
-  ArtifactReproducibilityRecipe
+  ArtifactReproducibilityRecipe,
+  WorkflowCapture
 } from '@aipoch/reproducibility/contracts'
 import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource } from './artifacts'
 import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
@@ -47,6 +33,21 @@ import type {
   ScientificOutputRisk,
   ScientificOutputStorageShape
 } from './execution-file-evidence'
+export type {
+  ArtifactReproducibilityBarrierReason,
+  ArtifactReproducibilityActivity,
+  ArtifactReproducibilityEntity,
+  ArtifactReproducibilityOutputGroup,
+  ArtifactReproducibilityEdge,
+  ArtifactReproducibilityStartFrontier,
+  ArtifactReproducibilityProjection,
+  ArtifactReproducibilityRecipeBarrier,
+  ArtifactReproducibilityEnvironmentRequirement,
+  ArtifactReproducibilityRecipeStep,
+  ArtifactReproducibilityRecipeFile,
+  ArtifactReproducibilityFrontierPlan,
+  ArtifactReproducibilityRecipe
+} from '@aipoch/reproducibility/contracts'
 
 export type CreateArtifactVersionRequest = {
   projectId: string
@@ -559,7 +560,7 @@ export type ArtifactProvenanceGraphActivity = {
   parentActivityId?: string
   runIndex?: number
   kernelEpochId?: string
-  inclusion: 'target-closure' | 'kernel-epoch-conservative'
+  inclusion: 'target-closure' | 'kernel-epoch-conservative' | 'workflow-capture'
   evidenceState: 'available' | 'partial' | 'unavailable'
   evidenceId?: string
   evidenceChecksum?: string
@@ -668,6 +669,9 @@ export type PersistedArtifactExecutionSnapshot = {
   inputFiles: NotebookRunInputFile[]
   runs: ProvenanceNotebookRun[]
   provenanceGraph?: ArtifactProvenanceGraph
+  workflowCapture?:
+    | { state: 'available'; capture: WorkflowCapture }
+    | { state: 'unavailable'; reason: 'payload-limit' | 'incomplete-evidence' }
   // Absent on historical snapshots; never fill it with today's rules on read.
   analysisRevision?: ArtifactAnalysisRevision
   reproducibilityRecipe?: ArtifactReproducibilityRecipe
@@ -685,11 +689,12 @@ export type PersistedArtifactExecutionSnapshot = {
 // current immutable-byte availability before this value crosses IPC.
 export type ArtifactExecutionSnapshot = Omit<
   PersistedArtifactExecutionSnapshot,
-  'inputFiles' | 'helperModules' | 'provenanceGraph' | 'reproducibilityRecipe'
+  'inputFiles' | 'helperModules' | 'provenanceGraph' | 'reproducibilityRecipe' | 'workflowCapture'
 > & {
   inputFiles: ProvenanceExecutionInputFile[]
   helperModules?: ArtifactNotebookHelperEvidence[]
   reproducibility?: ArtifactReproducibilityProjection
+  workflow?: ArtifactWorkflowProjection
 }
 
 export type ArtifactVersionProvenance = {
@@ -774,3 +779,25 @@ export type ArtifactMessageSnapshotFile =
       activities: PersistedToolActivity[]
       activityGroups: PersistedActivityGroup[]
     })
+
+export type ArtifactWorkflowProjection =
+  | { state: 'unavailable'; reason: 'payload-limit' | 'incomplete-evidence' }
+  | {
+      state: 'available'
+      captureId: string
+      // Full frozen evidence is independent of the bounded Artifact preview.
+      runs?: ProvenanceNotebookRun[]
+      inputFiles?: ProvenanceExecutionInputFile[]
+      stages: Array<{
+        runId: string
+        runIndex: number
+        kernelKind: NotebookKernelKind
+        outputCount: number
+      }>
+      boundaries: Array<{
+        entityId: string
+        relativePath: string
+        checksum: string
+        sizeBytes: number
+      }>
+    }

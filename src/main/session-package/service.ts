@@ -1,4 +1,3 @@
-import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
 import {
   createLogger,
@@ -63,6 +62,7 @@ import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { paceFileIo } from '../file-io-pacing'
+import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
 import { SessionProjectionRepository } from '../session-persistence/projection'

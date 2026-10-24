@@ -24,6 +24,7 @@ import { artifactAnalysisRevisionMatchesGraph } from './provenance-analysis-revi
 import {
   artifactProvenanceGraphValue,
   sealArtifactProvenanceGraph,
+  sealArtifactWorkflowProvenanceGraph,
   type ArtifactProvenanceComputeActivityInput,
   type ArtifactProvenanceNotebookActivityInput,
   type SealArtifactProvenanceGraphInput
@@ -186,47 +187,258 @@ const recipeRun = (
 })
 
 describe('artifact provenance graph', () => {
-  it('retains advisory cross-language file dependencies from notebook projection', () => {
-    const graph = sealArtifactProvenanceGraph({
+  describe('runtime coverage of static file dependencies', () => {
+    const dataRoot = join(tmpdir(), 'static-file-dependency-session', 'data')
+    const capturedInput = (
+      producerOptions: Parameters<typeof notebookActivity>[3] = {},
+      readerOptions: Parameters<typeof notebookActivity>[3] = {}
+    ): SealArtifactProvenanceGraphInput => ({
       target: target(),
       notebookActivities: [
-        notebookActivity('run-1', 1, []),
-        notebookActivity('run-2', 2, [
+        notebookActivity(
+          'run-1',
+          0,
+          [
+            {
+              relation: 'created',
+              relativePath: 'data/clean.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-clean', 'data/clean.csv', checksum('c'))
+            }
+          ],
           {
-            relation: 'created',
-            relativePath: 'result.csv',
-            pathPortability: 'relative',
-            authority: 'advisory',
-            generation: generation('g-target', 'result.csv', checksum('b'))
+            cwdBefore: dataRoot,
+            workingFiles: [
+              {
+                path: join(dataRoot, 'clean.csv'),
+                relativePath: 'data/clean.csv',
+                kind: 'other',
+                createdByRunId: 'run-1',
+                generationId: 'g-clean',
+                checksum: checksum('c'),
+                change: 'created'
+              }
+            ],
+            ...producerOptions
           }
-        ])
+        ),
+        notebookActivity(
+          'run-2',
+          2,
+          [
+            {
+              relation: 'present-before',
+              relativePath: 'data/clean.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-reader-clean', 'data/clean.csv', checksum('c'))
+            },
+            {
+              relation: 'created',
+              relativePath: 'result.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-target', 'result.csv', checksum('b'))
+            }
+          ],
+          { kernelKind: 'r', cwdBefore: dataRoot, ...readerOptions }
+        )
       ],
       computeActivities: [],
       notebookDependencies: {
-        stalenessByRunId: {
-          'run-1': { state: 'clear' },
-          'run-2': { state: 'clear' }
-        },
+        stalenessByRunId: { 'run-1': { state: 'clear' }, 'run-2': { state: 'clear' } },
         invalidatedByRunId: {},
         dependenciesByRunId: { 'run-1': [], 'run-2': [] },
         fileDependenciesByRunId: {
           'run-2': [
             {
               producerRunId: 'run-1',
-              path: 'outputs/intermediate.csv',
-              checksum: checksum('a'),
+              path: 'clean.csv',
+              generationId: 'g-clean',
+              checksum: checksum('c'),
               confidence: 'verified'
             }
           ]
         }
       }
     })
-    expect(graph.edges).toContainEqual({
-      kind: 'depends-on',
-      activityId: 'run-2',
-      dependencyActivityId: 'run-1',
-      authority: 'advisory',
-      evidenceSource: 'dependency-analysis'
+
+    it.each(['relative to cwd', 'absolute', 'legacy exact relative path'])(
+      'uses the frozen file boundary when the static path is %s',
+      (pathKind) => {
+        const input = capturedInput()
+        const dependency = input.notebookDependencies!.fileDependenciesByRunId!['run-2']![0]!
+        if (pathKind === 'absolute') dependency.path = join(dataRoot, 'clean.csv')
+        if (pathKind === 'legacy exact relative path') {
+          input.notebookActivities[1]!.run.cwdBefore = undefined
+          dependency.path = 'data/clean.csv'
+        }
+        const graph = sealArtifactProvenanceGraph(input)
+        expect(graph.edges).toContainEqual(
+          expect.objectContaining({
+            kind: 'used',
+            activityId: 'run-2',
+            entityId: 'file-generation:g-clean',
+            observedGenerationId: 'g-reader-clean',
+            authority: 'authoritative'
+          })
+        )
+        expect(graph.edges.some((edge) => edge.kind === 'depends-on')).toBe(false)
+        expect(
+          projectArtifactReproducibility(graph, []).startFrontiers.find(
+            (frontier) => frontier.frontierId === 'checkpoint:run-1'
+          )
+        ).toMatchObject({ eligibility: 'available', reasonCodes: [] })
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
+          provenanceGraph: graph,
+          inputFiles: [],
+          runs: [recipeRun('run-1', 0), recipeRun('run-2', 2, { kernelKind: 'r' })]
+        })
+        expect(
+          reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(
+            recipe,
+            'checkpoint:run-1'
+          )
+        ).toMatchObject({
+          frontier: { claimScope: 'downstream-only' },
+          steps: [{ stepId: 'step:run-2' }]
+        })
+      }
+    )
+
+    it.each([
+      'missing generation',
+      'different generation',
+      'missing checksum',
+      'different checksum',
+      'advisory confidence',
+      'different path',
+      'unknown cwd',
+      'different cwd',
+      'missing working-file identity',
+      'another uncovered file from the same producer',
+      'another path for the same generation'
+    ])('keeps the file dependency barrier for %s', (condition) => {
+      const input = capturedInput()
+      const dependency = input.notebookDependencies!.fileDependenciesByRunId!['run-2']![0]!
+      if (condition === 'missing generation') delete dependency.generationId
+      if (condition === 'different generation') dependency.generationId = 'g-reader-clean'
+      if (condition === 'missing checksum') delete dependency.checksum
+      if (condition === 'different checksum') dependency.checksum = checksum('d')
+      if (condition === 'advisory confidence') dependency.confidence = 'advisory'
+      if (condition === 'different path') dependency.path = 'other.csv'
+      if (condition === 'unknown cwd') input.notebookActivities[1]!.run.cwdBefore = undefined
+      if (condition === 'different cwd')
+        input.notebookActivities[1]!.run.cwdBefore = join(tmpdir(), 'other-file-dependency-session')
+      if (condition === 'missing working-file identity')
+        input.notebookActivities[0]!.run.workingFiles = []
+      if (condition === 'another uncovered file from the same producer')
+        input.notebookDependencies!.fileDependenciesByRunId!['run-2']!.push({
+          ...dependency,
+          path: 'unobserved.csv',
+          generationId: 'g-unobserved'
+        })
+      if (condition === 'another path for the same generation')
+        input.notebookDependencies!.fileDependenciesByRunId!['run-2']!.push({
+          ...dependency,
+          path: 'unobserved.csv'
+        })
+      const graph = sealArtifactProvenanceGraph(input)
+      expect(graph.edges).toContainEqual({
+        kind: 'depends-on',
+        activityId: 'run-2',
+        dependencyActivityId: 'run-1',
+        authority: 'advisory',
+        evidenceSource: 'dependency-analysis'
+      })
+      expect(
+        projectArtifactReproducibility(graph, []).startFrontiers.find(
+          (frontier) => frontier.frontierId === 'checkpoint:run-1'
+        )
+      ).toMatchObject({ eligibility: 'blocked' })
+    })
+
+    it.each(['partial reads', 'partial writer', 'partial producer evidence'])(
+      'keeps the file dependency barrier with %s',
+      (condition) => {
+        const graph = sealArtifactProvenanceGraph(
+          capturedInput(
+            {
+              ...(condition === 'partial writer' ? { writerAttribution: 'partial' } : {}),
+              ...(condition === 'partial producer evidence' ? { state: 'partial' } : {})
+            },
+            condition === 'partial reads' ? { fileReads: 'partial' } : {}
+          )
+        )
+        expect(graph.edges).toContainEqual(
+          expect.objectContaining({
+            kind: 'depends-on',
+            activityId: 'run-2',
+            dependencyActivityId: 'run-1',
+            authority: 'advisory'
+          })
+        )
+        expect(
+          projectArtifactReproducibility(graph, []).startFrontiers.find(
+            (frontier) => frontier.frontierId === 'checkpoint:run-1'
+          )
+        ).toMatchObject({ eligibility: 'blocked' })
+      }
+    )
+
+    it('retains a kernel dependency on the same producer even when its file is covered', () => {
+      const input = capturedInput({}, { kernelKind: 'python' })
+      input.notebookDependencies!.dependenciesByRunId!['run-2'] = ['run-1']
+      const graph = sealArtifactProvenanceGraph(input)
+      expect(graph.edges).toContainEqual({
+        kind: 'depends-on',
+        activityId: 'run-2',
+        dependencyActivityId: 'run-1',
+        authority: 'authoritative',
+        evidenceSource: 'dependency-analysis'
+      })
+      expect(
+        projectArtifactReproducibility(graph, []).startFrontiers.find(
+          (frontier) => frontier.frontierId === 'checkpoint:run-1'
+        )
+      ).toMatchObject({ eligibility: 'blocked', reasonCodes: ['advisory-boundary'] })
+    })
+
+    it('does not attribute a newer generation with identical bytes to the earlier producer', () => {
+      const input = capturedInput()
+      input.notebookActivities.splice(
+        1,
+        0,
+        notebookActivity('run-newer', 1, [
+          {
+            relation: 'created',
+            relativePath: 'data/clean.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-newer', 'data/clean.csv', checksum('c'))
+          }
+        ])
+      )
+      input.notebookDependencies!.stalenessByRunId['run-newer'] = { state: 'clear' }
+      input.notebookDependencies!.dependenciesByRunId!['run-newer'] = []
+      const graph = sealArtifactProvenanceGraph(input)
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'used',
+          activityId: 'run-2',
+          entityId: 'file-generation:g-newer',
+          authority: 'authoritative'
+        })
+      )
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          kind: 'depends-on',
+          activityId: 'run-2',
+          dependencyActivityId: 'run-1',
+          authority: 'advisory'
+        })
+      )
     })
   })
 
@@ -1902,6 +2114,64 @@ describe('artifact provenance graph', () => {
       eligibility: 'blocked',
       reasonCodes: expect.arrayContaining(['writer-attribution-unavailable', 'advisory-boundary'])
     })
+  })
+
+  it('uses execution-time proof only for Workflow and keeps missing historical proof conservative', () => {
+    const first = notebookActivity('run-1', 1, [])
+    const producer = notebookActivity('run-2', 2, [
+      {
+        relation: 'created',
+        relativePath: 'result.csv',
+        pathPortability: 'relative',
+        authority: 'advisory',
+        generation: generation('g-target', 'result.csv', checksum('b'))
+      }
+    ])
+    const input: SealArtifactProvenanceGraphInput = {
+      target: target(),
+      notebookActivities: [first, producer],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: {
+          'run-1': { state: 'clear' },
+          'run-2': { state: 'unknown', reasons: ['opaque-call'] }
+        },
+        invalidatedByRunId: {},
+        dependenciesByRunId: { 'run-1': [] },
+        executionDependenciesByRunId: { 'run-1': [], 'run-2': ['run-1'] }
+      }
+    }
+    const historical = sealArtifactWorkflowProvenanceGraph(input)
+    expect(historical.graph.reasonCodes).not.toContain('kernel-dependencies-unavailable')
+    expect(historical.graph.edges).toContainEqual({
+      kind: 'depends-on',
+      activityId: 'run-2',
+      dependencyActivityId: 'run-1',
+      authority: 'authoritative',
+      evidenceSource: 'dependency-analysis'
+    })
+    expect(sealArtifactProvenanceGraph(input).reasonCodes).toContain(
+      'kernel-dependencies-unavailable'
+    )
+    input.notebookDependencies!.executionDependenciesByRunId = { 'run-1': [] }
+    expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+      'kernel-dependencies-unavailable'
+    )
+    delete input.notebookDependencies!.executionDependenciesByRunId
+    expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+      'kernel-dependencies-unavailable'
+    )
+    input.notebookDependencies!.stalenessByRunId['run-2'] = { state: 'clear' }
+    input.notebookDependencies!.dependenciesByRunId!['run-2'] = []
+    for (const historical of [undefined, {}]) {
+      input.notebookDependencies!.executionDependenciesByRunId = historical
+      expect(sealArtifactWorkflowProvenanceGraph(input).activityReasonCodes['run-2']).toContain(
+        'kernel-dependencies-unavailable'
+      )
+      expect(sealArtifactProvenanceGraph(input).reasonCodes).not.toContain(
+        'kernel-dependencies-unavailable'
+      )
+    }
   })
 
   it('marks unknown kernel dependencies without adding unrelated same-epoch runs', () => {

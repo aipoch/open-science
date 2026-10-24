@@ -1,5 +1,8 @@
 export type {
   ReproductionSnapshot,
+  WorkflowCapture,
+  WorkflowPlan,
+  WorkflowSelection,
   NotebookRunInputFile,
   NotebookInputAssociation,
   NotebookInputAccessEvidence,

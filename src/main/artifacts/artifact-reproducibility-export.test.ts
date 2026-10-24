@@ -283,6 +283,26 @@ describe('Artifact reproducibility verification export', () => {
     })
     expect(preview.differenceImage).toMatch(/^data:image\/png;base64,/u)
   })
+  it('exports workflow execution-only coverage without a reproduced or different conclusion', () => {
+    const value = receipt()
+    value.outcome = 'executed'
+    value.frontier = { frontierId: 'workflow-selection', claimScope: 'downstream-only' }
+    value.workflow = {
+      captureId: '1'.repeat(64),
+      planId: value.recipe.recipeId,
+      targetRunIds: ['memory', 'plot'],
+      boundaryEntityIds: ['de-file'],
+      verification: 'execution-only',
+      executionOnlyTargetRunIds: ['memory']
+    }
+    const report = buildVerificationReport(value)
+    expect(report).toContain('**Executed (outputs not fully verified)**')
+    expect(report).toContain('Execution-only stages: memory')
+    expect(report).toContain('Frozen boundaries: de-file')
+    expect(report).not.toContain('**Result differs**')
+    expect(report).not.toContain('**Result reproduced**')
+  })
+
   it('includes content comparison coverage and a display version without modifying the receipt', () => {
     const value = receipt()
     value.comparisons[0]!.contentComparisonUnavailableReason = 'budget-exceeded'

@@ -7,7 +7,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -15,14 +15,18 @@ import { promisify } from 'node:util'
 import { expect, it, vi } from 'vitest'
 
 import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
-import { parseCondaPackageNames } from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
-import { micromambaSpawnEnv, normalizeExplicitLock } from '@aipoch/environment'
 import {
   createNotebookReproductionRuntime,
   type NotebookReproductionStep
 } from './reproduction-runtime'
-import { pythonBin, rScriptBin } from '@aipoch/environment'
+import {
+  micromambaSpawnEnv,
+  normalizeExplicitLock,
+  parseCondaPackageNames,
+  pythonBin,
+  rScriptBin
+} from '@aipoch/environment'
 
 const execute = promisify(execFile)
 const mm = process.env.OPEN_SCIENCE_TEST_MICROMAMBA
@@ -32,6 +36,7 @@ const hash = (content: string): string => createHash('sha256').update(content).d
 // This suite certifies restoration and the real kernel protocol. OS policy enforcement has
 // its own certification suite; these known fixture scripts run only under a temporary root.
 const passThroughSandbox: NotebookProcessSandbox = {
+  createTemporaryScope: () => ({ ...passThroughSandbox, dispose: async () => undefined }),
   wrap: async ({ executable, args, env }) => ({
     executable,
     args,
@@ -285,6 +290,13 @@ ggsave("plots.png", p, width=6, height=4, dpi=100, device="png", type="cairo")
           )
           try {
             const prefix = join(attemptRoot, 'environments', lockChecksum)
+            if (language === 'r' && process.platform === 'darwin') {
+              // Cache warmth must not make executable/library identity shared with
+              // another prefix. Shared Mach-O inodes can resolve that prefix's R_HOME.
+              for (const file of ['bin/Rscript', 'lib/R/bin/exec/R', 'lib/R/lib/libR.dylib']) {
+                expect((await stat(await realpath(join(prefix, file)))).nlink).toBe(1)
+              }
+            }
             const { stdout: restored } = await execute(
               mm!,
               ['--no-rc', 'list', '-p', prefix, '--explicit', '--md5'],
@@ -314,7 +326,9 @@ ggsave("plots.png", p, width=6, height=4, dpi=100, device="png", type="cairo")
             const failedSource =
               language === 'python'
                 ? 'raise RuntimeError("expected fixture failure")'
-                : 'stop("expected fixture failure")'
+                : (process.platform === 'darwin'
+                    ? `stopifnot(identical(normalizePath(R.home()), normalizePath(${JSON.stringify(join(prefix, 'lib/R'))})))\n`
+                    : '') + 'stop("expected fixture failure")'
             const failed = await runtime.execute({
               step: { ...step, sourceChecksum: hash(failedSource) },
               source: failedSource,

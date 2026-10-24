@@ -4,13 +4,20 @@ export type {
   ArtifactReproducibilityExecutionPlan,
   SealArtifactReproducibilityRecipeInput
 } from './recipe'
-export { createReproductionExecutor, ReproducibilityCleanupError } from './execution'
+export {
+  createReproductionExecutor,
+  createWorkflowSliceExecutor,
+  ReproducibilityCleanupError
+} from './execution'
+export { sealWorkflowCapture, validWorkflowCapture, createWorkflowSlices } from './workflow-slice'
 export type {
   ArtifactReproducibilityExecutionEvent,
   ArtifactReproducibilityExecutionResult,
   ArtifactReproducibilityOutputComparison,
   ExecuteArtifactReproducibilityDependencies,
-  ExecuteArtifactReproducibilityInput
+  ExecuteArtifactReproducibilityInput,
+  ExecuteWorkflowSliceInput,
+  WorkflowExecutionResult
 } from './execution'
 export {
   projectArtifactReproducibility,
@@ -32,7 +39,9 @@ export type {
   ReproductionRecipeOptions,
   CreateReproductionRuntime,
   NotebookReproductionRuntime,
+  NotebookReproductionRestoredEnvironment,
   NotebookReproductionStep,
   NotebookReproductionEnvironmentProgress,
   NotebookReproductionEnvironmentOutput
 } from './ports'
+export type { WorkflowCapture, WorkflowPlan, WorkflowSelection } from './evidence'

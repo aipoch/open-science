@@ -3,6 +3,13 @@ import { outputComparisonPolicySchema } from '@aipoch/reproducibility/comparison
 import type { ArtifactReproducibilityCheckState } from './artifact-reproducibility'
 
 const id = z.string().min(1).max(256)
+export const workflowSelectionSchema = z
+  .object({
+    captureId: z.string().regex(/^[a-f0-9]{64}$/u),
+    targetRunIds: z.array(id).min(1).max(256),
+    boundaryEntityIds: z.array(id).max(1024).optional()
+  })
+  .strict()
 const scope = { projectId: id, appSessionId: id }
 export const sessionReproducibilityCommandSchema = z.discriminatedUnion('action', [
   z.object({ ...scope, action: z.literal('get') }).strict(),
@@ -16,7 +23,9 @@ export const sessionReproducibilityCommandSchema = z.discriminatedUnion('action'
             .object({
               artifactId: id,
               versionId: id,
-              name: z.string().min(1).max(512)
+              name: z.string().min(1).max(512),
+              frontierId: id.optional(),
+              workflow: workflowSelectionSchema.optional()
             })
             .strict()
         )
@@ -40,6 +49,8 @@ export type SessionReproducibilityBatch = {
     artifactId: string
     versionId: string
     name: string
+    frontierId?: string
+    workflow?: import('@aipoch/reproducibility/contracts').WorkflowSelection
     status: 'pending' | 'blocked' | 'queued' | ArtifactReproducibilityCheckState['status']
     recipeId?: string
     steps?: number
@@ -70,6 +81,8 @@ export const sessionReproducibilityBatchSchema = z
             artifactId: id,
             versionId: id,
             name: z.string().min(1).max(512),
+            frontierId: id.optional(),
+            workflow: workflowSelectionSchema.optional(),
             status: z.enum([
               'pending',
               'blocked',
@@ -77,6 +90,7 @@ export const sessionReproducibilityBatchSchema = z
               'running',
               'matched',
               'different',
+              'executed',
               'failed',
               'cancelled'
             ]),

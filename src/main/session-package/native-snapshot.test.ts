@@ -3,7 +3,19 @@ import { PrismaClient } from '@prisma/client'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
-import { captureNativeRecords, projectIncludedHeads, type PackageRecords } from './native-snapshot'
+import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
+import { sha256 } from '../artifacts/provenance-canonical'
+import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
+import {
+  buildBoundedExecutionSnapshot,
+  captureArtifactWorkflow
+} from '../artifacts/provenance-execution-evidence'
+import {
+  captureNativeRecords,
+  mapPackageReferences,
+  projectIncludedHeads,
+  type PackageRecords
+} from './native-snapshot'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 let measuredClient: PrismaClient | undefined
@@ -62,6 +74,229 @@ const createChain = async (
   }
   return { client, storageRoot: fixture.storageRoot, evidenceJson }
 }
+
+const addWorkflow = async (
+  client: PrismaClient,
+  versionId: string,
+  input: NotebookRunInputFile
+): Promise<string> => {
+  const version = await client.artifactVersion.findUniqueOrThrow({ where: { id: versionId } })
+  const runs = ['setup', 'producer'].map((id, runIndex) => ({
+    runIndex,
+    run: {
+      runId: `${versionId}-${id}`,
+      cellId: id,
+      source: 'agent',
+      agentFrameId: 'frame',
+      messageBranchId: 'branch',
+      runtimeSegmentId: 'runtime',
+      promptMessageId: 'prompt',
+      kernelKind: 'r',
+      kernelEpochId: 'epoch',
+      kernelDispatched: true,
+      script: runIndex ? 'print(1)' : 'x <- 1',
+      status: 'completed',
+      startedAt: runIndex,
+      endedAt: runIndex + 1,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: [],
+      inputFiles: runIndex ? [] : [input]
+    } satisfies NotebookRunRecord
+  }))
+  const producerRunId = runs[1].run.runId
+  const graphInput = {
+    target: {
+      versionId,
+      producerRunId,
+      filename: version.filename,
+      checksum: version.checksum,
+      sizeBytes: Number(version.sizeBytes)
+    },
+    notebookActivities: runs,
+    computeActivities: []
+  }
+  const workflowCapture = captureArtifactWorkflow(graphInput, runs)
+  expect(workflowCapture.state).toBe('available')
+  const execution = buildBoundedExecutionSnapshot(
+    {
+      schemaVersion: 2,
+      rootFrameId: 'frame',
+      agentFrameId: 'frame',
+      messageBranchId: 'branch',
+      terminalPromptMessageId: 'prompt',
+      producerRunId,
+      producerRunIndex: 1,
+      createdAt: '2026-10-20T00:00:00.000Z',
+      provenanceGraph: sealArtifactProvenanceGraph(graphInput),
+      workflowCapture
+    },
+    runs
+  )
+  expect(execution.inputFiles).toEqual([])
+  const json = JSON.stringify(execution)
+  await client.artifactVersion.update({
+    where: { id: versionId },
+    data: {
+      executionSnapshotJson: json,
+      executionSnapshotChecksum: sha256(json),
+      executionSnapshotStorageKey: `artifacts/project/upstream/${versionId}-execution.json`,
+      executionSnapshotSchemaVersion: 2
+    }
+  })
+  return json
+}
+
+const addWorkflowUpload = async (
+  client: PrismaClient,
+  projectId = 'project'
+): Promise<NotebookRunInputFile> => {
+  await client.fileOriginSession.create({ data: { projectId, sessionId: 'input-session' } })
+  await client.uploadFile.create({
+    data: {
+      id: 'workflow-upload',
+      projectId,
+      sessionId: 'input-session',
+      filename: 'input.csv',
+      originalFilename: 'input.csv',
+      versions: {
+        create: [1, 2].map((number) => ({
+          id: `workflow-upload-${number}`,
+          versionNumber: number,
+          state: 'ready',
+          filename: 'input.csv',
+          originalFilename: 'input.csv',
+          contentStorageKey: `uploads/${projectId}/input-session/${number}`,
+          sizeBytes: 1n,
+          checksum: 'c'.repeat(64)
+        }))
+      }
+    }
+  })
+  return {
+    sourceKind: 'upload-version',
+    inputFileVersionId: 'workflow-upload-1',
+    sourceFileId: 'workflow-upload',
+    sourceVersionNumber: 1,
+    sourceProjectId: projectId,
+    sourceSessionId: 'input-session',
+    filename: 'input.csv',
+    checksum: 'c'.repeat(64),
+    sizeBytes: 1,
+    storageKey: `uploads/${projectId}/input-session/1`,
+    association: 'turn-attached'
+  }
+}
+
+it('collects exact recursive workflow inputs without legacy rows or unrelated foreign heads', async () => {
+  const { client } = await createChain(2)
+  const input = await addWorkflowUpload(client)
+  const upstreamJson = await addWorkflow(client, 'version-1', input)
+  const targetJson = await addWorkflow(client, 'version-0', {
+    sourceKind: 'artifact-version',
+    inputFileVersionId: 'version-1',
+    sourceFileId: 'lineage',
+    sourceVersionNumber: 2,
+    sourceProjectId: 'project',
+    sourceSessionId: 'upstream',
+    filename: 'result.csv',
+    checksum: 'a'.repeat(64),
+    sizeBytes: 1,
+    storageKey: 'artifacts/project/upstream/1',
+    association: 'turn-attached'
+  })
+  expect(await client.artifactVersionInput.count()).toBe(0)
+  const records = await captureNativeRecords(
+    client,
+    { projectId: 'project', sessionId: 'current' },
+    ['version-0']
+  )
+  expect(records.tables.ArtifactVersion.map((row) => row.id)).toEqual(['version-0', 'version-1'])
+  expect(records.tables.UploadVersion.map((row) => row.id)).toEqual(['workflow-upload-1'])
+  expect(records.tables.UploadFile.map((row) => row.id)).toEqual(['workflow-upload'])
+  expect(records.tables.ArtifactVersionInput).toEqual([])
+  expect(records.tables.ArtifactVersion.map((row) => row.executionSnapshotJson)).toEqual([
+    targetJson,
+    upstreamJson
+  ])
+})
+
+it('does not expand unavailable workflow history', async () => {
+  const { client } = await createChain(1)
+  const json = await addWorkflow(client, 'version-0', await addWorkflowUpload(client))
+  const unavailable = JSON.stringify({
+    ...JSON.parse(json),
+    workflowCapture: { state: 'unavailable', reason: 'incomplete-evidence' }
+  })
+  await client.artifactVersion.update({
+    where: { id: 'version-0' },
+    data: { executionSnapshotJson: unavailable, executionSnapshotChecksum: sha256(unavailable) }
+  })
+  const records = await captureNativeRecords(
+    client,
+    { projectId: 'project', sessionId: 'current' },
+    ['version-0']
+  )
+  expect(records.tables.UploadVersion).toEqual([])
+  expect(records.tables.ArtifactVersion.map((row) => row.id)).toEqual(['version-0'])
+})
+
+it.each(['upload-version', 'artifact-version'] as const)(
+  'rejects a missing exact workflow %s without resolving the other source kind',
+  async (sourceKind) => {
+    const { client } = await createChain(1)
+    const input = await addWorkflowUpload(client)
+    await addWorkflow(client, 'version-0', {
+      ...input,
+      sourceKind,
+      // An existing native Version in the other table must not satisfy this reference.
+      inputFileVersionId: sourceKind === 'upload-version' ? 'version-1' : input.inputFileVersionId
+    })
+    await expect(
+      captureNativeRecords(client, { projectId: 'project', sessionId: 'current' }, ['version-0'])
+    ).rejects.toThrow('Session package references a missing immutable Version.')
+  }
+)
+
+it.each(['snapshot checksum', 'workflow seal', 'captured Project', 'native Project'] as const)(
+  'rejects workflow dependencies with a mismatched %s',
+  async (corruption) => {
+    const { client } = await createChain(1)
+    const input = await addWorkflowUpload(
+      client,
+      corruption === 'native Project' ? 'foreign' : 'project'
+    )
+    if (corruption === 'captured Project') input.sourceProjectId = 'foreign'
+    if (corruption === 'native Project') input.sourceProjectId = 'project'
+    const json = await addWorkflow(client, 'version-0', input)
+    if (corruption === 'snapshot checksum')
+      await client.artifactVersion.update({
+        where: { id: 'version-0' },
+        data: { executionSnapshotChecksum: '0'.repeat(64) }
+      })
+    if (corruption === 'workflow seal') {
+      const execution = JSON.parse(json)
+      execution.workflowCapture.capture.captureId = '0'.repeat(64)
+      const invalid = JSON.stringify(execution)
+      await client.artifactVersion.update({
+        where: { id: 'version-0' },
+        data: { executionSnapshotJson: invalid, executionSnapshotChecksum: sha256(invalid) }
+      })
+    }
+    await expect(
+      captureNativeRecords(client, { projectId: 'project', sessionId: 'current' }, ['version-0'])
+    ).rejects.toThrow(
+      corruption === 'snapshot checksum'
+        ? /workflow execution snapshot checksum mismatch/
+        : corruption === 'workflow seal'
+          ? /execution snapshot schema is invalid/
+          : corruption === 'captured Project'
+            ? /workflow input belongs to another Project/
+            : /workflow input identity does not match its native Version/
+    )
+  }
+)
 
 it.each([16, 64])(
   'reads each dependency once while collecting a %i-version upstream chain',
@@ -348,4 +583,13 @@ it('rejects PDF snapshots with foreign owners, duplicate notes or missing tag de
   note.tagIds = []
   records.pdfNotes![0].annotations.push(note)
   expect(() => validatePackagePdfNotes(records)).toThrow('duplicate')
+})
+
+it('remaps workflow barrier ownership together with captured Run identities', () => {
+  expect(
+    mapPackageReferences(
+      { activityReasonCodes: { 'run-source': ['kernel-dependencies-unavailable'] } },
+      { 'run-source': 'run-local' }
+    )
+  ).toEqual({ activityReasonCodes: { 'run-local': ['kernel-dependencies-unavailable'] } })
 })

@@ -368,6 +368,10 @@ class NotebookDependencyProjector {
   private readonly rOptionWritesByNamespace = new Map<string, Map<string, string>>()
   private readonly rGraphicsStateByNamespace = new Map<string, string>()
   private readonly latestDefinitionsByNamespace = new Map<string, Map<string, string>>()
+  // Binding creation and object mutation are distinct replay obligations. Live
+  // latestDefinitions intentionally merges them and cannot prove either alone.
+  private readonly executionBindingsByNamespace = new Map<string, Map<string, string>>()
+  private readonly executionMutationsByNamespace = new Map<string, Set<string>>()
   private readonly referenceTokensByNamespace = new Map<string, Map<string, string>>()
   private readonly possibleAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
   private readonly rCopyAliasesByNamespace = new Map<string, Map<string, Set<string>>>()
@@ -395,10 +399,11 @@ class NotebookDependencyProjector {
   private readonly downstream = new Map<string, Set<string>>()
   private readonly namedConsumers = new Map<string, Set<string>>()
   private readonly directDependenciesByRunId = new Map<string, Set<string>>()
+  private readonly executionDependenciesByRunId = new Map<string, string[]>()
   private readonly runsById = new Map<string, NotebookRunRecord>()
   private readonly incompleteRunIds = new Set<string>()
 
-  append({ run, facts: analyzedFacts }: AnalyzedNotebookRun): void {
+  append({ run, facts: analyzedFacts, fileAccess }: AnalyzedNotebookRun): void {
     const {
       stalenessByRunId,
       invalidatedByRunId,
@@ -445,6 +450,12 @@ class NotebookDependencyProjector {
     const latestDefinitions =
       latestDefinitionsByNamespace.get(namespace) ?? new Map<string, string>()
     latestDefinitionsByNamespace.set(namespace, latestDefinitions)
+    const executionBindings =
+      this.executionBindingsByNamespace.get(namespace) ?? new Map<string, string>()
+    this.executionBindingsByNamespace.set(namespace, executionBindings)
+    const executionMutations =
+      this.executionMutationsByNamespace.get(namespace) ?? new Set<string>()
+    this.executionMutationsByNamespace.set(namespace, executionMutations)
     const referenceTokens = referenceTokensByNamespace.get(namespace) ?? new Map<string, string>()
     referenceTokensByNamespace.set(namespace, referenceTokens)
     const possibleAliases =
@@ -1759,6 +1770,68 @@ class NotebookDependencyProjector {
     const uncertainBindingReasons = [
       ...new Set(usedNames.flatMap((name) => uncertainBindings.get(name) ?? []))
     ]
+    let provenExecutionUpstreamRunIds: Set<string> | undefined
+    // Legacy/Python facts without execution reads cannot produce historical proof.
+    // Skip proof-only prefix work, but retain their effects for later eligible runs.
+    if (run.kernelKind === 'repl' || facts.executionReadNames !== undefined) {
+      // These roots describe reads at execution time, not the final alias/value
+      // state. Older facts cannot supply that evidence; their live projection is
+      // still usable, but they must not create historical execution proof.
+      const executionReads = facts.executionReadNames ?? []
+      // This discharges only the file-read origin of external-state. Runtime
+      // queries or mixed external effects remain unavailable even alongside I/O.
+      // The host still owns generation authority and immutable-input admission.
+      const fileExternalStateCovered =
+        facts.executionExternalState === 'files-only' &&
+        fileAccess?.readState === 'complete' &&
+        fileAccess.writeState === 'complete' &&
+        fileAccess.externalState === 'complete' &&
+        fileAccess.reasonCodes.length === 0 &&
+        fileAccess.reads.length + fileAccess.writes.length > 0
+      // A self-contained file consumer has no earlier in-memory state to restore.
+      // Keep the historical proof guard independent: omitting edges must never
+      // allow an earlier opaque mutation to disappear from admission checks.
+      const executionMutationHistoryProven = [...executionMutations].every(
+        (runId) =>
+          this.executionDependenciesByRunId.has(runId) &&
+          stalenessByRunId[runId]?.state !== 'unknown'
+      )
+      const fileInputsIsolateMemory =
+        facts.executionFileState === 'isolated' &&
+        fileExternalStateCovered &&
+        (fileAccess?.reads.length ?? 0) > 0 &&
+        upstreamRunIds.size === 0 &&
+        facts.executionReadNames !== undefined &&
+        executionReads.every((name) => !executionBindings.has(name))
+      const executionUpstreamRunIds = new Set([
+        ...upstreamRunIds,
+        ...(fileInputsIsolateMemory ? [] : executionMutations)
+      ])
+      for (const name of executionReads) {
+        const provider = executionBindings.get(name)
+        if (provider) executionUpstreamRunIds.add(provider)
+      }
+      const executionDependenciesProven =
+        !incompleteRun &&
+        facts.executionFileState !== 'method-conflict' &&
+        executionMutationHistoryProven &&
+        namespaceUnknownReasons === undefined &&
+        analysisReasons.every(
+          (reason) => reason === 'external-state' && fileExternalStateCovered
+        ) &&
+        uncertainBindingReasons.length === 0 &&
+        executionReads.every(
+          (name) =>
+            !uncertainBindings.has(name) &&
+            (executionBindings.has(name) || currentSafeCallNames.includes(name))
+        ) &&
+        [...executionUpstreamRunIds].every(
+          (runId) =>
+            this.executionDependenciesByRunId.has(runId) &&
+            stalenessByRunId[runId]?.state !== 'unknown'
+        )
+      if (executionDependenciesProven) provenExecutionUpstreamRunIds = executionUpstreamRunIds
+    }
     stalenessByRunId[run.runId] = namespaceUnknownReasons
       ? { state: 'unknown', reasons: namespaceUnknownReasons }
       : currentRunReasons.length > 0
@@ -2423,6 +2496,28 @@ class NotebookDependencyProjector {
         uncertainBindings.set(name, ['incomplete-run'])
       }
     }
+    // Preserve every recognized mutation in execution order without claiming a
+    // complete reachable-object alias model. This coarse prefix can include
+    // unrelated mutations; an unproved mutation blocks later execution proof.
+    // Ordinary scalar/copy assignments do not add an effect to this prefix.
+    if (
+      definiteMutations.size > 0 ||
+      possibleMutations.size > 0 ||
+      possibleAliasMutations.size > 0 ||
+      (facts.memberWrites?.length ?? 0) > 0 ||
+      analysisReasons.includes('opaque-mutation')
+    )
+      executionMutations.add(run.runId)
+    for (const name of definedNames) executionBindings.set(name, run.runId)
+    // Capture once after this run's own effects have been checked. Later appends
+    // may change live staleness but must not rewrite this historical proof.
+    if (
+      provenExecutionUpstreamRunIds &&
+      stalenessByRunId[run.runId]?.state !== 'unknown' &&
+      !unknownReasonsByNamespace.has(namespace)
+    ) {
+      this.executionDependenciesByRunId.set(run.runId, [...provenExecutionUpstreamRunIds].sort())
+    }
   }
 
   projection(): NotebookDependencyProjection {
@@ -2451,7 +2546,13 @@ class NotebookDependencyProjector {
           }))
         ])
       ),
-      dependenciesByRunId
+      dependenciesByRunId,
+      executionDependenciesByRunId: Object.fromEntries(
+        [...this.executionDependenciesByRunId].map(([runId, dependencies]) => [
+          runId,
+          [...dependencies]
+        ])
+      )
     }
   }
 }
@@ -2768,7 +2869,8 @@ const unavailableNotebookDependencyProjection = (
     )
   ),
   invalidatedByRunId: {},
-  dependenciesByRunId: {}
+  dependenciesByRunId: {},
+  executionDependenciesByRunId: {}
 })
 
 export {

@@ -428,17 +428,32 @@ describe('host reproducibility kernel integration', () => {
           runs: execution.runs
         })
         const events: ArtifactReproducibilityExecutionEvent[] = []
+        const sandboxLifecycle: string[] = []
+        const dispose = vi.fn(async () => {
+          sandboxLifecycle.push('scope-disposed')
+        })
+        // These fixture scripts exercise real kernels; OS sandbox enforcement has its own suite.
         const passThroughSandbox: NotebookProcessSandbox = {
+          createTemporaryScope: vi.fn((temporaryRoot) => {
+            expect(temporaryRoot).toBe(join(attemptRoot, 'command-temp'))
+            sandboxLifecycle.push('scope-created')
+            return { wrap: passThroughSandbox.wrap, dispose }
+          }),
           wrap: async (invocation) => ({
             executable: invocation.executable,
             args: invocation.args,
             env: invocation.env,
             annotateStderr: (stderr) => stderr,
-            cleanup: async (_reason, outcome) => ({
-              processesTerminated: outcome.processesTerminated,
-              networkClosed: true,
-              temporaryResourcesRemoved: true
-            })
+            cleanup: async (_reason, outcome) => {
+              expect(outcome.processesTerminated).toBe(true)
+              sandboxLifecycle.push('process-reaped')
+              return {
+                processesTerminated: outcome.processesTerminated,
+                processState: outcome.processState,
+                networkClosed: true,
+                temporaryResourcesRemoved: true
+              }
+            }
           })
         }
 
@@ -500,6 +515,9 @@ describe('host reproducibility kernel integration', () => {
             })
           ])
         })
+        expect(passThroughSandbox.createTemporaryScope).toHaveBeenCalledTimes(1)
+        expect(dispose).toHaveBeenCalledTimes(1)
+        expect(sandboxLifecycle).toEqual(['scope-created', 'process-reaped', 'scope-disposed'])
         await expect(access(attemptRoot)).rejects.toThrow()
         await rm(storageRoot, { recursive: true, force: true })
       },

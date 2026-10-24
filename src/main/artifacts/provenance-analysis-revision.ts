@@ -6,7 +6,7 @@ import { NOTEBOOK_ANALYZER_VERSION, NOTEBOOK_ANALYZER_REVISION } from '@aipoch/n
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 
 // Bump for lineage construction/closure changes, independently of its JSON schema.
-const LINEAGE_BUILDER_REVISION = 'artifact-lineage-1'
+const LINEAGE_BUILDER_REVISION = 'artifact-lineage-2'
 const checksum = (value: unknown): string => sha256(canonicalJson(value as CanonicalJson))
 
 export const sealArtifactAnalysisRevision = (
@@ -66,3 +66,13 @@ export const artifactAnalysisRevisionMatchesGraph = (
   const { revisionId, ...fields } = record
   return revisionId === checksum(fields)
 }
+
+// Reading historical evidence does not authorize executing its dependency closure.
+export const artifactAnalysisRevisionSupportsWorkflowReplay = (
+  value: unknown,
+  graph: unknown
+): boolean =>
+  artifactAnalysisRevisionMatchesGraph(value, graph) &&
+  value.dependencyAnalyzer?.version === NOTEBOOK_ANALYZER_VERSION &&
+  value.dependencyAnalyzer.revision === NOTEBOOK_ANALYZER_REVISION &&
+  value.lineageBuilder.revision === LINEAGE_BUILDER_REVISION

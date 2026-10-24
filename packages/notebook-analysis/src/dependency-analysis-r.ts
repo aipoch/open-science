@@ -120,7 +120,7 @@ const R_CIRCULAR_PLOT_CALLS = new Set([
 type RExpr =
   | { kind: 'symbol'; name: string }
   | { kind: 'character'; value: string }
-  | { kind: 'atomic'; logical?: boolean; number?: number }
+  | { kind: 'atomic'; logical?: boolean; number?: number; na?: true }
   | { kind: 'null' }
   | { kind: 'formals'; names: string[]; values: Array<RExpr | null> }
   | {
@@ -754,8 +754,9 @@ const convertR = (node: Node | null | undefined): RExpr | null => {
     case 'complex':
     case 'inf':
     case 'nan':
-    case 'na':
       return { kind: 'atomic' }
+    case 'na':
+      return { kind: 'atomic', na: true }
     case 'true':
       return { kind: 'atomic', logical: true }
     case 'false':
@@ -940,6 +941,10 @@ const analyzeRSource = (
   contextualCopyOnModifyNames: readonly string[] = [],
   verifiedSerializedValues: readonly NotebookSerializedValue[] = [],
   contextualAtomicTableNames: readonly string[] = [],
+  contextualAttachedPackages: readonly string[] = [],
+  contextualMatrixNames: readonly string[] = [],
+  contextualDataFrameNames: readonly string[] = [],
+  contextualDispatchUncertain = false,
   contextualSearchPathUncertain = false,
   readOnlyMapCalls?: Map<number, boolean>
 ): NotebookRunDependencyFacts => {
@@ -2663,6 +2668,9 @@ const analyzeRSource = (
   }
 
   const rPackageLoads = new Set<string>()
+  // Only a first search-path owner can rule out an unknown attached package
+  // masking these bounded DESeq2 exports. Global/function barriers still apply.
+  let contextualDESeq2Attached = contextualAttachedPackages[0] === 'DESeq2'
   const rPackageReads = new Set<string>()
   const packageCandidates = new Map<string, string[]>()
   const recordPackageRead = (name: string): void => {
@@ -2704,6 +2712,11 @@ const analyzeRSource = (
   const namespaceProbePackages = new Map<string, readonly string[]>()
   let used: string[] = []
   let priorUsed: string[] = []
+  const executionReads = new Set<string>()
+  const recordPriorRead = (...names: string[]): void => {
+    priorUsed.push(...names)
+    for (const name of names) executionReads.add(name)
+  }
   const possiblyUsed: string[] = []
   const mutated: string[] = []
   const possiblyMutated: string[] = []
@@ -2716,9 +2729,20 @@ const analyzeRSource = (
   const safeCallArgumentNames: string[] = []
   const typeSummaries: NotebookDependencyTypeSummary[] = []
   let typeBindings: NotebookDependencyTypeBinding[] = []
+  let plainRDispatchKnown = !contextualDispatchUncertain && contextualFunctions.length === 0
+  const plainRValues = new Map<string, 'matrix' | 'data-frame'>([
+    ...contextualMatrixNames.map((name): [string, 'matrix'] => [name, 'matrix']),
+    ...contextualDataFrameNames.map((name): [string, 'data-frame'] => [name, 'data-frame'])
+  ])
   const receiverCalls: NotebookDependencyReceiverCall[] = []
   const memberWrites: NotebookDependencyMemberWrite[] = []
   const unknown: string[] = []
+  let executionExternalState: 'files-only' | 'unavailable' | undefined
+  const recordExternalState = (filesOnly = false): void => {
+    unknown.push('external-state')
+    if (!filesOnly) executionExternalState = 'unavailable'
+    else executionExternalState ??= 'files-only'
+  }
   const serializedValueWrites = new Map<string, NotebookSerializedValue>()
   const serializedValuePaths = new Map(verifiedSerializedValues.map((value) => [value.path, value]))
   const invalidateSerializedValues = (path?: string): void => {
@@ -2860,7 +2884,7 @@ const analyzeRSource = (
     if (summary.effect !== 'read') unknown.push('opaque-call', 'dynamic-namespace')
     for (const name of summary.usedNames ?? []) {
       used.push(name)
-      if (!defined.includes(name)) priorUsed.push(name)
+      if (!defined.includes(name)) recordPriorRead(name)
     }
     safeCallNames.push(...(summary.safeCallNames ?? []))
     for (const name of summary.safeCallNames ?? []) recordPackageRead(name)
@@ -2922,7 +2946,7 @@ const analyzeRSource = (
     if (isCall(expr)) acceptedCallbacks.add(expr)
     if (isSymbol(expr)) {
       used.push(expr.name)
-      if (!defined.includes(expr.name)) priorUsed.push(expr.name)
+      if (!defined.includes(expr.name)) recordPriorRead(expr.name)
     }
     return true
   }
@@ -3036,7 +3060,7 @@ const analyzeRSource = (
     if (isCall(expr)) acceptedCallbacks.add(expr)
     if (isSymbol(expr)) {
       used.push(expr.name)
-      if (!defined.includes(expr.name)) priorUsed.push(expr.name)
+      if (!defined.includes(expr.name)) recordPriorRead(expr.name)
     }
     return true
   }
@@ -3314,6 +3338,7 @@ const analyzeRSource = (
     (pkg === 'ggVennDiagram' && ['Venn', 'process_region_data', 'process_data'].includes(name)) ||
     (pkg === 'venn' && name === 'venn') ||
     (pkg === 'pheatmap' && name === 'pheatmap') ||
+    (pkg === 'stats' && name === 'heatmap') ||
     (pkg === 'methods' && name === 'slotNames') ||
     R_UNCAPTURED_EXTERNAL_CALLS.get(name) === pkg ||
     R_PLOT_LAYER_PACKAGES.get(name) === pkg ||
@@ -3738,7 +3763,7 @@ const analyzeRSource = (
   const recordPrimitiveStatisticMethods = (expr: RExpr): void => {
     const methods = primitiveStatisticMethods(expr)
     used.push(...methods)
-    priorUsed.push(...methods)
+    recordPriorRead(...methods)
     safeCallNames.push(...methods)
   }
   const primitiveNAActionDependencies = (
@@ -5298,6 +5323,7 @@ const analyzeRSource = (
       return [expr.name]
     }
     if (!isCall(expr)) return null
+    if (plainRKind(expr) === 'matrix') return []
     if (readOnlyRuntimeQuery(expr)) return []
     if (primitiveDifference(expr)) return []
     if (primitiveInterquartileRange(expr)) return []
@@ -5599,12 +5625,131 @@ const analyzeRSource = (
     if (sources.some((item) => item === null)) return null
     return unique(sources.flatMap((item) => item ?? []))
   }
+  // Plain matrix provenance is narrower than copy-on-modify ownership:
+  // structure(..., class=...) owns its data but can still dispatch user methods.
+  const plainLiteral = (value: RExpr): boolean =>
+    ['atomic', 'character', 'null'].includes(value.kind)
+  const plainNumericExpression = (value: RExpr): boolean => {
+    if (value.kind === 'atomic') return true
+    if (!isCall(value)) return false
+    const op = calledName(value)
+    return Boolean(
+      op &&
+      ['c', '+', '-', '*', '/', '^', ':', '('].includes(op) &&
+      contractAvailable(op, qualifiedCall(value)?.package, 'base') &&
+      value.args.every(plainNumericExpression)
+    )
+  }
+  const plainIndexExpression = (value: RExpr): boolean => {
+    if (plainLiteral(value) || (isSymbol(value) && !value.name)) return true
+    if (!isCall(value)) return false
+    const op = calledName(value)
+    if (!op || !contractAvailable(op, qualifiedCall(value)?.package, 'base')) return false
+    if (['rowSums', 'colSums', 'rowMeans', 'colMeans'].includes(op))
+      return value.args.length === 1 && Boolean(plainRKind(value.args[0]))
+    return (
+      ['c', ':', '(', '+', '-', '*', '/', '>', '>=', '<', '<=', '==', '!=', '&', '|', '!'].includes(
+        op
+      ) && value.args.every(plainIndexExpression)
+    )
+  }
+  const plainRKind = (value: RExpr | undefined): 'matrix' | 'data-frame' | undefined => {
+    if (!plainRDispatchKnown) return undefined
+    if (isSymbol(value)) return plainRValues.get(value.name)
+    if (!value || !isCall(value)) return undefined
+    const op = calledName(value)
+    const owner = qualifiedCall(value)?.package
+    if (!op || value.staticBuiltinShadowed) return undefined
+    if (op === 'read.csv' && contractAvailable(op, owner, 'utils')) {
+      const fileIndex = callbackArgumentIndex(value, ['file'], [])
+      const allowed = new Set([
+        'file',
+        'row.names',
+        'check.names',
+        'stringsAsFactors',
+        'header',
+        'sep',
+        'quote',
+        'dec',
+        'fill',
+        'comment.char',
+        'na.strings',
+        'nrows',
+        'skip',
+        'strip.white',
+        'blank.lines.skip',
+        'fileEncoding',
+        'encoding'
+      ])
+      if (
+        fileIndex >= 0 &&
+        rStaticString(value.args[fileIndex], staticStrings, staticCollections) !== undefined &&
+        value.args.every(
+          (arg, index) =>
+            index === fileIndex ||
+            (Boolean(value.names[index] && allowed.has(value.names[index]!)) && plainLiteral(arg))
+        ) &&
+        value.names.every((name) => !name || allowed.has(name))
+      )
+        return 'data-frame'
+      return undefined
+    }
+    if (!contractAvailable(op, owner, 'base')) return undefined
+    if (
+      op === 'matrix' &&
+      value.args.length > 0 &&
+      value.args.every((arg, index) =>
+        index === 0 ? plainNumericExpression(arg) : plainLiteral(arg)
+      ) &&
+      value.names.every((name, index) =>
+        !name ? index === 0 : ['data', 'nrow', 'ncol', 'byrow'].includes(name)
+      )
+    )
+      return 'matrix'
+    if (
+      op === 'as.matrix' &&
+      value.args.length === 1 &&
+      (!value.names[0] || value.names[0] === 'x') &&
+      plainRKind(value.args[0])
+    )
+      return 'matrix'
+    // Keep both dimensions explicitly; omitted/drop=TRUE indexing can return a
+    // vector. Dynamic indices and replacement methods are deliberately excluded.
+    if (
+      op === '[' &&
+      value.args.length === 4 &&
+      value.names[3] === 'drop' &&
+      value.args[3]?.kind === 'atomic' &&
+      value.args[3].logical === false &&
+      !value.names[0] &&
+      !value.names[1] &&
+      !value.names[2] &&
+      plainIndexExpression(value.args[1]!) &&
+      plainIndexExpression(value.args[2]!)
+    )
+      return plainRKind(value.args[0])
+    if (
+      ['log2', 'log10', 'sqrt', 'abs', 'exp', '('].includes(op) &&
+      value.args.length === 1 &&
+      !value.names[0] &&
+      plainRKind(value.args[0]) === 'matrix'
+    )
+      return 'matrix'
+    if (
+      ['+', '-', '*', '/', '^'].includes(op) &&
+      value.args.length > 0 &&
+      value.args.some((arg) => plainRKind(arg) === 'matrix') &&
+      value.args.every((arg) => plainRKind(arg) === 'matrix' || plainNumericExpression(arg))
+    )
+      return 'matrix'
+    return undefined
+  }
   const walkAssignmentTarget = (target: RExpr): void => {
     const replacement = baseReplacementName(target)
     if (replacement && isCall(target)) {
       const dependency = `${qualifiedCall(target) ? 'base::' : ''}${replacement}<-`
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       safeCallNames.push(dependency)
       for (const arg of target.args) walk(arg, false)
       return
@@ -5971,6 +6116,17 @@ const analyzeRSource = (
     )
       return undefined
     const providers = [...rPackageLoads].filter((pkg) => knownQualifiedCall(pkg, name))
+    if (
+      contextualDESeq2Attached &&
+      [
+        ...deSeq2ConstructorCalls,
+        ...deSeq2DataSetTransforms,
+        ...deSeq2TransformCalls,
+        ...deSeq2ValueCalls
+      ].includes(name) &&
+      !providers.includes('DESeq2')
+    )
+      providers.push('DESeq2')
     return providers.length === 1 ? { package: providers[0]!, name } : undefined
   }
   const multiAssayAccessorType = (
@@ -6449,7 +6605,7 @@ const analyzeRSource = (
       }
       if (pronoun === '.env') {
         used.push(name)
-        if (!defined.includes(name)) priorUsed.push(name)
+        if (!defined.includes(name)) recordPriorRead(name)
       }
       return
     }
@@ -6457,7 +6613,7 @@ const analyzeRSource = (
     if (targetOptions) {
       const dependency = isSymbol(expr.callee) ? expr.callee.name : R_TARGET_FUNCTION.name
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       unknown.push('opaque-call')
       targetOptions.forEach((argument) => walk(argument))
       return
@@ -6465,7 +6621,7 @@ const analyzeRSource = (
     const quoted = quotedDataCall(expr)
     if (quoted) {
       used.push(quoted.dependency)
-      if (!defined.includes(quoted.dependency)) priorUsed.push(quoted.dependency)
+      if (!defined.includes(quoted.dependency)) recordPriorRead(quoted.dependency)
       safeCallNames.push(quoted.dependency)
       return
     }
@@ -6489,7 +6645,7 @@ const analyzeRSource = (
           calleeOp === '$' && isSymbol(key) ? key.name : isCharacter(key) ? key.value : null
         if (pronoun === '.env' && name) {
           used.push(name)
-          if (!defined.includes(name)) priorUsed.push(name)
+          if (!defined.includes(name)) recordPriorRead(name)
         }
         unknown.push(name ? 'opaque-call' : 'dynamic-data-mask-lookup')
       }
@@ -6498,7 +6654,7 @@ const analyzeRSource = (
     const callback = resolvedOp ? functionalCallbacks.get(resolvedOp) : undefined
     if (callback && resolvedOp && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       if (!contractAvailable(resolvedOp, qualified?.package, callback.package))
         unknown.push('opaque-call')
       else if (resolvedOp !== 'Filter') safeCallNames.push(dependencyName)
@@ -6561,7 +6717,7 @@ const analyzeRSource = (
     }
     if (resolvedOp && R_TIDY_SELECT_CALLS.has(resolvedOp) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       if (!contractAvailable(resolvedOp, qualified?.package, 'tidyselect'))
         unknown.push('opaque-call')
       else safeCallNames.push(dependencyName)
@@ -6571,7 +6727,7 @@ const analyzeRSource = (
     }
     if (resolvedOp === 'case_when' && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       const argumentsToEvaluate = rCaseWhenArguments(expr)
       if (argumentsToEvaluate && contractAvailable(resolvedOp, qualified?.package, 'dplyr'))
         safeCallNames.push(dependencyName)
@@ -6582,7 +6738,7 @@ const analyzeRSource = (
     }
     if (resolvedOp && R_DPLYR_VALUE_CALLS.has(resolvedOp) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       if (dplyrValueCall(expr)) safeCallNames.push(dependencyName)
       else unknown.push('opaque-call')
       for (const argument of expr.args) walkDataMask(argument, trackEnvironment, phase)
@@ -6591,7 +6747,7 @@ const analyzeRSource = (
     const composed = resolvedOp && !qualified ? functions.get(resolvedOp)?.methods[0] : undefined
     if (composed && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       mergeCallbackReads(composed)
       if (
         phase === 'deferred' &&
@@ -6629,7 +6785,7 @@ const analyzeRSource = (
     ]
     if (resolvedOp && !syntax.includes(resolvedOp) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       if (safeCalls.has(resolvedOp)) safeCallNames.push(dependencyName)
       else unknown.push('opaque-call')
     }
@@ -6706,7 +6862,7 @@ const analyzeRSource = (
       return
     }
     used.push(receiver)
-    if (!defined.includes(receiver)) priorUsed.push(receiver)
+    if (!defined.includes(receiver)) recordPriorRead(receiver)
     addDataTableSummary()
     for (let index = 1; index < expr.args.length; index += 1) {
       const arg = expr.args[index]
@@ -6722,7 +6878,7 @@ const analyzeRSource = (
       return
     }
     used.push(receiver)
-    if (!defined.includes(receiver)) priorUsed.push(receiver)
+    if (!defined.includes(receiver)) recordPriorRead(receiver)
     mutated.push(receiver)
     addDataTableSummary()
     typeBindings.push({ target: receiver, typeName: 'data.table', argumentNames: [] })
@@ -6760,6 +6916,7 @@ const analyzeRSource = (
       callbackDefinitions.delete(name)
     }
     typeBindings = typeBindings.filter((binding) => binding.target !== name)
+    plainRValues.delete(name)
     copyOnModify = copyOnModify.filter((item) => item !== name)
     copyOnModifyBindings = copyOnModifyBindings.filter((binding) => binding.target !== name)
     copyOnModifyInvalidated = copyOnModifyInvalidated.filter((item) => item !== name)
@@ -6869,7 +7026,7 @@ const analyzeRSource = (
     const inspection = packageInspections.get(expr)
     if (inspection) {
       used.push(...inspection.calls, ...inspection.reads)
-      priorUsed.push(
+      recordPriorRead(
         ...inspection.calls,
         ...inspection.reads.filter((name) => !defined.includes(name))
       )
@@ -6892,7 +7049,7 @@ const analyzeRSource = (
       if (assignmentTarget) defined.push(expr.name)
       else {
         used.push(expr.name)
-        if (!defined.includes(expr.name)) priorUsed.push(expr.name)
+        if (!defined.includes(expr.name)) recordPriorRead(expr.name)
         if (expr.name === 'uniroot' && contractAvailable(expr.name, undefined, 'stats'))
           unknown.push('opaque-call')
         if (
@@ -6926,7 +7083,7 @@ const analyzeRSource = (
     }
     if (expr.pipedWithMagrittr) {
       used.push('%>%')
-      if (!defined.includes('%>%')) priorUsed.push('%>%')
+      if (!defined.includes('%>%')) recordPriorRead('%>%')
       if (contractAvailable('%>%', undefined, 'magrittr')) safeCallNames.push('%>%')
       else unknown.push('opaque-call')
       recordPackageRead('%>%')
@@ -6935,7 +7092,7 @@ const analyzeRSource = (
     if (targetOptions) {
       const dependency = isSymbol(expr.callee) ? expr.callee.name : R_TARGET_FUNCTION.name
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       unknown.push('opaque-call')
       targetOptions.forEach((argument) => walk(argument))
       return
@@ -6943,7 +7100,7 @@ const analyzeRSource = (
     const quoted = quotedDataCall(expr)
     if (quoted) {
       used.push(quoted.dependency)
-      if (!defined.includes(quoted.dependency)) priorUsed.push(quoted.dependency)
+      if (!defined.includes(quoted.dependency)) recordPriorRead(quoted.dependency)
       safeCallNames.push(quoted.dependency)
       return
     }
@@ -6987,7 +7144,7 @@ const analyzeRSource = (
         !csvSubsetMethods.every((name) => contractAvailable(name, undefined, 'base')))
     ) {
       used.push(...csvSubsetMethods)
-      priorUsed.push(...csvSubsetMethods.filter((name) => !defined.includes(name)))
+      recordPriorRead(...csvSubsetMethods.filter((name) => !defined.includes(name)))
       unknown.push('opaque-call')
       for (const argument of expr.args) walk(argument)
       return
@@ -6996,14 +7153,15 @@ const analyzeRSource = (
       atomicCSVColumnDependencies(expr) ?? csvSubsetResult(expr)?.dependencies
     if (columnDependencies) {
       used.push(...columnDependencies)
-      priorUsed.push(...columnDependencies.filter((name) => !defined.includes(name)))
+      recordPriorRead(...columnDependencies.filter((name) => !defined.includes(name)))
       safeCallNames.push(...columnDependencies)
       walk(expr.args[0])
       if (callOperator(expr) !== '$') for (const argument of expr.args.slice(1)) walk(argument)
       return
     }
     let op = callOperator(expr)
-    const qualified = qualifiedCall(expr)
+    const resolved = resolvedQualifiedCall(expr)
+    const qualified = qualifiedCall(expr) ?? (resolved?.package === 'DESeq2' ? resolved : undefined)
     if (!op && qualified && knownQualifiedCall(qualified.package, qualified.name))
       op = qualified.name
     const dependencyName = qualified ? `${qualified.package}::${qualified.name}` : op
@@ -7021,14 +7179,14 @@ const analyzeRSource = (
     ) {
       const method = 'type.convert.character'
       used.push(method)
-      if (!defined.includes(method)) priorUsed.push(method)
+      if (!defined.includes(method)) recordPriorRead(method)
       if (contractAvailable(method, undefined, 'utils')) safeCallNames.push(method)
       else unknown.push('opaque-call')
     }
     if (calledName(expr) === 'order') {
       const dependency = qualified ? qualified.package + '::order' : 'order'
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveOrder(expr)) safeCallNames.push(dependency)
       else unknown.push('opaque-call')
       for (const argument of expr.args) walk(argument)
@@ -7043,13 +7201,13 @@ const analyzeRSource = (
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveEquality(expr) || primitiveTruthPredicate(expr)) {
         const methods = robustStatistic.startsWith('all.equal')
           ? primitiveEqualityMethods(expr)
           : []
         used.push(...methods)
-        priorUsed.push(...methods.filter((name) => !defined.includes(name)))
+        recordPriorRead(...methods.filter((name) => !defined.includes(name)))
         safeCallNames.push(dependency, ...methods)
       } else unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument))
@@ -7058,11 +7216,11 @@ const analyzeRSource = (
     if (robustStatistic === 'scale' || robustStatistic === 'scale.default') {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveVectorScale(expr)) {
         const methods = primitiveScaleMethods(expr)
         used.push(...methods)
-        priorUsed.push(...methods.filter((name) => !defined.includes(name)))
+        recordPriorRead(...methods.filter((name) => !defined.includes(name)))
         safeCallNames.push(dependency, ...methods)
       } else unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument))
@@ -7071,13 +7229,13 @@ const analyzeRSource = (
     if (robustStatistic === 'mean.default' || robustStatistic === 'mean') {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveMean(expr)) {
         safeCallNames.push(dependency)
         if (robustStatistic === 'mean') {
           const methods = primitiveMeanMethods()
           used.push(...methods)
-          priorUsed.push(...methods.filter((method) => !defined.includes(method)))
+          recordPriorRead(...methods.filter((method) => !defined.includes(method)))
           safeCallNames.push(...methods)
         }
       } else unknown.push('opaque-call')
@@ -7087,7 +7245,7 @@ const analyzeRSource = (
     if (robustStatistic === 'is.double' && intactBaseCall(expr, 'is.double')) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveDoublePredicate(expr)) {
         safeCallNames.push(dependency)
         for (const argument of expr.args)
@@ -7110,7 +7268,7 @@ const analyzeRSource = (
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveDoubleCoercion(expr)) safeCallNames.push(dependency)
       else unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument))
@@ -7119,7 +7277,7 @@ const analyzeRSource = (
     if (robustStatistic === 'prod') {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveSummary(expr)) safeCallNames.push(dependency)
       else unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument))
@@ -7128,7 +7286,7 @@ const analyzeRSource = (
     if (robustStatistic && cumulativeStatistics.has(robustStatistic)) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveCumulativeStatistic(expr)) safeCallNames.push(dependency)
       else unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument))
@@ -7145,7 +7303,7 @@ const analyzeRSource = (
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (
         robustStatistic === 'p.adjust'
           ? primitivePValueAdjustment(expr)
@@ -7165,7 +7323,7 @@ const analyzeRSource = (
     if (robustStatistic === 'median' || robustStatistic === 'rank') {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (robustStatistic === 'median' ? primitiveMedian(expr) : primitiveRanks(expr)) {
         safeCallNames.push(dependency)
         if (robustStatistic === 'median') recordPrimitiveStatisticMethods(expr)
@@ -7181,7 +7339,7 @@ const analyzeRSource = (
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       // Internal variance/coercion calls resolve in stats, not the caller's
       // global environment. Atomic inputs rule out class dispatch here.
       if (primitiveSecondMoment(expr)) safeCallNames.push(dependency)
@@ -7192,7 +7350,7 @@ const analyzeRSource = (
     if (robustStatistic === 'weighted.mean' || robustStatistic === 'fivenum') {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (
         robustStatistic === 'weighted.mean'
           ? primitiveWeightedMean(expr)
@@ -7207,7 +7365,7 @@ const analyzeRSource = (
     if (robustStatistic === 'mad' || robustStatistic === 'quantile') {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (robustStatistic === 'mad' ? primitiveMedianDeviation(expr) : primitiveQuantiles(expr)) {
         safeCallNames.push(dependency)
         recordPrimitiveStatisticMethods(expr)
@@ -7218,7 +7376,7 @@ const analyzeRSource = (
     if (calledName(expr) === 'IQR') {
       const dependency = qualified ? `${qualified.package}::IQR` : 'IQR'
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveInterquartileRange(expr)) {
         safeCallNames.push(dependency)
         recordPrimitiveStatisticMethods(expr)
@@ -7229,7 +7387,7 @@ const analyzeRSource = (
     if (calledName(expr) === 'diff') {
       const dependency = qualified ? `${qualified.package}::diff` : 'diff'
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (primitiveDifference(expr)) {
         const containsRange = (value: RExpr): boolean =>
           isCall(value) && (calledName(value) === 'range' || value.args.some(containsRange))
@@ -7239,7 +7397,7 @@ const analyzeRSource = (
         ]
         safeCallNames.push(dependency, ...methods)
         used.push(...methods)
-        priorUsed.push(...methods)
+        recordPriorRead(...methods)
       } else unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument))
       return
@@ -7279,7 +7437,7 @@ const analyzeRSource = (
       if (revokesFileProof) invalidateSerializedValues()
       const solverName = qualified ? `${captureContract.package}::${name}` : name
       used.push(solverName)
-      if (!defined.includes(solverName)) priorUsed.push(solverName)
+      if (!defined.includes(solverName)) recordPriorRead(solverName)
       unknown.push('opaque-call', 'dynamic-namespace')
       if (name === 'replicate') {
         const matched = rMatchedIoArguments(expr, ['n', 'expr', 'simplify'])
@@ -7352,7 +7510,7 @@ const analyzeRSource = (
       expr.resolvedFunction !== R_GLUE_FUNCTION.name
     ) {
       used.push(op!)
-      if (!defined.includes(op!)) priorUsed.push(op!)
+      if (!defined.includes(op!)) recordPriorRead(op!)
       mergeCallbackReads(opaqueFunction)
       for (const arg of expr.args) walk(arg, false)
       return
@@ -7377,7 +7535,7 @@ const analyzeRSource = (
       // Rebinding a built-in to an unknown callable invalidates the same
       // contract for both ordinary calls and syntactically expanded pipes.
       used.push(op)
-      if (!defined.includes(op)) priorUsed.push(op)
+      if (!defined.includes(op)) recordPriorRead(op)
       unknown.push('opaque-call')
       expr.args.forEach((arg) => walk(arg))
       return
@@ -7443,8 +7601,9 @@ const analyzeRSource = (
     ) {
       invalidateSerializedValues()
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
-      unknown.push('external-state', 'opaque-call')
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
+      recordExternalState()
+      unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument, false))
       invalidateSerializedValues()
       return
@@ -7461,7 +7620,7 @@ const analyzeRSource = (
     }
     if (qualified?.package === 'tools' && qualified.name === 'md5sum' && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       const argument = expr.args[0]
       const single = rStaticString(argument, staticStrings, staticCollections)
       const paths =
@@ -7539,7 +7698,7 @@ const analyzeRSource = (
       // transform. Walk their arguments for object/file dependencies, while
       // keeping a shadowed or malformed call conservative.
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       const namedArguments = (allowed: readonly string[]): boolean =>
         expr.names.every((name) => !name || allowed.includes(name))
       const safe = (() => {
@@ -7604,7 +7763,7 @@ const analyzeRSource = (
       ].includes(op ?? '')
     ) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       if (deSeq2CallIsSafe(expr)) safeCallNames.push(dependencyName)
       else unknown.push('opaque-call')
       // Formula terms describe columns in colData rather than notebook
@@ -7626,7 +7785,7 @@ const analyzeRSource = (
       // writer arguments visible while leaving unknown geometry callbacks to
       // the conservative file analyzer.
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       const destinationIndex = expr.names.indexOf('dsn')
       const destination =
         op === 'st_write' ? expr.args[destinationIndex >= 0 ? destinationIndex : 1] : undefined
@@ -7641,9 +7800,9 @@ const analyzeRSource = (
       // call and its file argument, but preserve the external-state marker so
       // downstream consumers do not treat the delayed handle as fully in-memory.
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
-      unknown.push('external-state')
+      recordExternalState()
       for (const arg of expr.args) walk(arg, false)
       return
     }
@@ -7656,15 +7815,15 @@ const analyzeRSource = (
       // object may retain external/reference state just like readRDS(). Keep
       // that uncertainty visible without downgrading the static file path.
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
-      if (op === 'LoadH5Seurat') unknown.push('external-state')
+      if (op === 'LoadH5Seurat') recordExternalState()
       for (const arg of expr.args) walk(arg, false)
       return
     }
     if (qualified?.package === 'dplyr' && op === 'collect' && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       // dplyr::collect() is safe only for the one-argument materialization
       // form. Additional options can dispatch callbacks or alter filesystem
       // behavior, so leave those calls conservative.
@@ -7677,17 +7836,17 @@ const analyzeRSource = (
     }
     if (readOnlyRuntimeQuery(expr)) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       // Results describe the current runtime; querying does not mutate its namespace.
-      unknown.push('external-state')
+      recordExternalState()
       for (const arg of expr.args) walk(arg, false)
       return
     }
     if (op && runtimeQueryPackages.has(op)) unknown.push('opaque-call')
     if (op && ['get.venn.partitions', 'Venn', 'process_region_data', 'process_data'].includes(op)) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       if (ordinaryVennDataCall(expr)) safeCallNames.push(dependencyName!)
       else unknown.push('opaque-call')
       expr.args.forEach((arg) => walk(arg))
@@ -7695,7 +7854,7 @@ const analyzeRSource = (
     }
     if (op === 'slotNames') {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       if (
         contractAvailable(op, qualified?.package, 'methods') &&
         expr.args.length === 1 &&
@@ -7724,7 +7883,7 @@ const analyzeRSource = (
             ? 'ggVennDiagram'
             : undefined
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       if (
         contractAvailable(op, qualified?.package, 'base') &&
         expr.args.length === 1 &&
@@ -7737,7 +7896,7 @@ const analyzeRSource = (
           ? `${targetPackage}::${targetName}`
           : targetName
         used.push(targetDependency)
-        if (!defined.includes(targetDependency)) priorUsed.push(targetDependency)
+        if (!defined.includes(targetDependency)) recordPriorRead(targetDependency)
         safeCallNames.push(dependencyName!, targetDependency)
         recordPackageRead(targetName)
       } else {
@@ -7765,7 +7924,7 @@ const analyzeRSource = (
       const ggplot = expr.args[callbackArgumentIndex(expr, ['ggplot'], parameters.slice(0, 12))]
       const par = expr.args[callbackArgumentIndex(expr, ['par'], parameters.slice(0, 11))]
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       if (
         contractAvailable(op, qualified?.package, 'venn') &&
         callbackArgumentIndex(expr, ['x'], []) >= 0 &&
@@ -7778,13 +7937,49 @@ const analyzeRSource = (
         safeCallNames.push(dependencyName!)
         if (controlDepth === 0) freshPlot = true
       } else unknown.push('opaque-call')
-      unknown.push('external-state')
+      recordExternalState()
       expr.args.forEach((arg) => walk(arg))
+      return
+    }
+    if (op === 'heatmap' && qualified?.package === 'stats') {
+      used.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
+      const xIndex = callbackArgumentIndex(expr, ['x'], [])
+      const scalarOptions = new Set([
+        'scale',
+        'symm',
+        'revC',
+        'na.rm',
+        'cexRow',
+        'cexCol',
+        'main',
+        'xlab',
+        'ylab',
+        'keep.dendro',
+        'verbose'
+      ])
+      const safe =
+        xIndex >= 0 &&
+        plainRKind(expr.args[xIndex]) === 'matrix' &&
+        copyOnModifySources(expr.args[xIndex])?.length === 0 &&
+        expr.args.every((argument, index) => {
+          if (index === xIndex) return !expr.names[index] || expr.names[index] === 'x'
+          const label = expr.names[index]
+          if (label === 'Rowv' || label === 'Colv')
+            return argument.kind === 'null' || (argument.kind === 'atomic' && argument.na === true)
+          return Boolean(label && scalarOptions.has(label) && plainLiteral(argument))
+        })
+      if (safe) {
+        safeCallNames.push(dependencyName!)
+        if (controlDepth === 0) freshPlot = true
+      } else unknown.push('opaque-call')
+      recordExternalState()
+      expr.args.forEach((argument) => walk(argument))
       return
     }
     if (op === 'pheatmap') {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       const argument = (name: string): RExpr | undefined =>
         expr.args[
           callbackArgumentIndex(
@@ -7817,16 +8012,16 @@ const analyzeRSource = (
         safeCallNames.push(dependencyName!)
       else unknown.push('opaque-call')
       invalidateSerializedValues(serializedPath(argument('filename')))
-      unknown.push('external-state')
+      recordExternalState()
       expr.args.forEach((arg) => walk(arg))
       return
     }
     if (op === 'venn.diagram') {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       if (ordinaryVennFilePlot(expr)) safeCallNames.push(dependencyName!)
       else unknown.push('opaque-call')
-      unknown.push('external-state')
+      recordExternalState()
       expr.args.forEach((arg) => walk(arg))
       return
     }
@@ -7839,7 +8034,7 @@ const analyzeRSource = (
       )
         unknown.push('opaque-call')
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       rPackageReads.add('scales')
       for (const arg of expr.args) walk(arg, false)
@@ -7864,13 +8059,13 @@ const analyzeRSource = (
         })
       if (safeFormatting) {
         used.push(dependencyName!)
-        if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+        if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
         safeCallNames.push(dependencyName!)
         return
       }
       unknown.push('opaque-call')
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       for (const arg of expr.args) walk(arg, false)
       return
     }
@@ -7895,7 +8090,7 @@ const analyzeRSource = (
       if (['theme_set', 'theme_update', 'theme_replace'].includes(op)) rThemeState.writes = true
       if (op.startsWith('theme_')) {
         used.push(dependencyName!)
-        if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+        if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
         safeCallNames.push(dependencyName!)
         rPackageReads.add('ggplot2')
         for (const arg of expr.args) walk(arg, false)
@@ -7913,7 +8108,7 @@ const analyzeRSource = (
       if (dependencies) {
         const calls = [dependencyName!, ...dependencies]
         used.push(...calls)
-        priorUsed.push(...calls.filter((name) => !defined.includes(name)))
+        recordPriorRead(...calls.filter((name) => !defined.includes(name)))
         safeCallNames.push(...calls)
         for (const argument of expr.args) walk(argument)
         return
@@ -7941,7 +8136,7 @@ const analyzeRSource = (
       copyOnModifySources(expr.args[0])?.length === 0
     ) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       for (const arg of expr.args) walk(arg, false)
       return
@@ -7952,7 +8147,7 @@ const analyzeRSource = (
       copyOnModifySources(expr.args[callbackArgumentIndex(expr, ['x'], [])])?.length === 0
     ) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       expr.args.forEach((arg) => walk(arg))
       return
@@ -7972,8 +8167,9 @@ const analyzeRSource = (
       // existing opaque-call boundary, including for custom/external backends.
       invalidateSerializedValues()
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
-      unknown.push('external-state', 'opaque-call')
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
+      recordExternalState()
+      unknown.push('opaque-call')
       for (const argument of expr.args) walk(argument, false)
       invalidateSerializedValues()
       return
@@ -7986,9 +8182,9 @@ const analyzeRSource = (
         removedPaths.forEach((path) => invalidateSerializedValues(serializedSourcePath(path)))
       else invalidateSerializedValues()
       used.push(fileMutation)
-      if (!defined.includes(fileMutation)) priorUsed.push(fileMutation)
+      if (!defined.includes(fileMutation)) recordPriorRead(fileMutation)
       safeCallNames.push(fileMutation)
-      unknown.push('external-state')
+      recordExternalState()
       for (const argument of expr.args) walk(argument, false)
       return
     }
@@ -8018,9 +8214,9 @@ const analyzeRSource = (
       )
     ) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
-      unknown.push('external-state')
+      recordExternalState()
       for (const argument of expr.args) walk(argument, false)
       return
     }
@@ -8028,7 +8224,8 @@ const analyzeRSource = (
     if (externalCall && op === 'dir.create') {
       // Unknown path/options can invoke conversion methods or force promises.
       // Only the primitive-argument branch above preserves unrelated bindings.
-      unknown.push('external-state', 'opaque-call')
+      recordExternalState()
+      unknown.push('opaque-call')
       for (const argument of expr.args) walk(argument, false)
       return
     }
@@ -8040,6 +8237,9 @@ const analyzeRSource = (
     }
     const s4MethodSummary = summarizeS4Method(expr)
     if (s4MethodSummary) {
+      plainRDispatchKnown = false
+      plainRValues.clear()
+      typeBindings = typeBindings.filter((binding) => !binding.rPlainKind)
       typeSummaries.push(s4MethodSummary)
       return
     }
@@ -8054,13 +8254,13 @@ const analyzeRSource = (
     }
     if (op && (biocValue.has(op) || biocUnknown.has(op)) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       const receiver = expr.args[0] ? rootName(expr.args[0]) : null
       if (!receiver) unknown.push('opaque-call')
       else {
         used.push(receiver)
-        if (!defined.includes(receiver)) priorUsed.push(receiver)
+        if (!defined.includes(receiver)) recordPriorRead(receiver)
         const argumentRoots = unique(
           expr.args.map(rootName).filter((name): name is string => Boolean(name))
         )
@@ -8071,7 +8271,7 @@ const analyzeRSource = (
     }
     if (rIsGlueCall(expr) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(R_GLUE_FUNCTION.name)
       const template = rStaticGlueTemplate(expr)
       if (!template) unknown.push('opaque-call')
@@ -8080,7 +8280,7 @@ const analyzeRSource = (
           template.filter((part) => part.kind === 'binding').map((part) => part.value)
         )) {
           used.push(name)
-          if (!defined.includes(name)) priorUsed.push(name)
+          if (!defined.includes(name)) recordPriorRead(name)
         }
       }
       return
@@ -8091,7 +8291,7 @@ const analyzeRSource = (
       const exporter = calledName(expr)!
       const dependency = qualified ? `grDevices::${exporter}` : exporter
       used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (!defined.includes(dependency)) recordPriorRead(dependency)
       if (
         device &&
         deviceName &&
@@ -8101,12 +8301,16 @@ const analyzeRSource = (
         safeCallNames.push(dependency)
         // Copying the current display list is only self-contained after this run
         // created a plot. Exporting an earlier cell's device needs missing state.
-        if (!freshPlot) unknown.push('opaque-call', 'external-state')
+        if (!freshPlot) {
+          unknown.push('opaque-call')
+          recordExternalState()
+        }
         const previousPlot = freshPlot
         walk(device)
         freshPlot = previousPlot
       } else {
-        unknown.push('opaque-call', 'external-state')
+        unknown.push('opaque-call')
+        recordExternalState()
         expr.args.forEach((argument) => walk(argument))
       }
       return
@@ -8133,9 +8337,9 @@ const analyzeRSource = (
         next = { reset: false, initialized: true }
       }
       if (op !== 'circos.clear' && !circularLayout.reset) unknown.push('graphics-state-unavailable')
-      if (!next) unknown.push('external-state')
+      if (!next) recordExternalState()
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       expr.args.forEach((argument, index) => {
         if (op === 'circos.trackPlotRegion' && expr.names[index] === 'panel.fun') {
@@ -8176,7 +8380,7 @@ const analyzeRSource = (
         !reservedUnsupported &&
         (exprsIndex < 0 || inlineExprs)
       used.push(assertionName)
-      if (!defined.includes(assertionName)) priorUsed.push(assertionName)
+      if (!defined.includes(assertionName)) recordPriorRead(assertionName)
       if (directAssertions) safeCallNames.push(assertionName)
       else unknown.push('opaque-call')
       // Later assertions are forced only after earlier ones succeed. Preserve
@@ -8203,7 +8407,7 @@ const analyzeRSource = (
     }
     if (op === 'tryCatch' && contractAvailable(op, qualified?.package, 'base')) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       // Protected expressions can stop at any point. Bindings and device layout
       // established there are not guaranteed to survive an error handler.
@@ -8226,7 +8430,7 @@ const analyzeRSource = (
     }
     if (op === 'try' && contractAvailable(op, qualified?.package, 'base')) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       if (
         expr.args.length > 2 ||
         expr.names.some((name) => name && !['expr', 'silent'].includes(name))
@@ -8244,7 +8448,7 @@ const analyzeRSource = (
       const receiver = rootName(expr.callee)
       if (receiver) {
         used.push(receiver)
-        if (!defined.includes(receiver)) priorUsed.push(receiver)
+        if (!defined.includes(receiver)) recordPriorRead(receiver)
         const member = memberName(expr.callee)
         if (member) {
           const argumentRoots = unique(
@@ -8286,6 +8490,9 @@ const analyzeRSource = (
         ? callbackDefinitions.get(value.name)
         : undefined
       const definedBefore = unique(defined)
+      // Simple aliases intentionally skip live read tracking for copy semantics,
+      // but evaluating their RHS still needs its binding in the original code.
+      if (isSymbol(value) && !definedBefore.includes(value.name)) executionReads.add(value.name)
       const usedBefore = used.length
       let r6Summary: NotebookDependencyTypeSummary | null = null
       let constructed: string | null = null
@@ -8306,6 +8513,7 @@ const analyzeRSource = (
           const scalarValue = staticScalarExpression(value)
           const nonemptyIterable = staticNonemptyIterable(value)
           const copySources = copyOnModifySources(value)
+          const plainKind = plainRKind(value)
           const staticString = rStaticString(value, staticStrings, staticCollections)
           const staticCollection = rStaticStringCollection(value, staticStrings, staticCollections)
           const inputHandleAlias = isSymbol(value) && localInputHandleNames.has(value.name)
@@ -8356,6 +8564,17 @@ const analyzeRSource = (
               knownNamedCollectionExpression(value))
           ) {
             staticNamedIterableNames.add(name)
+          }
+          if (plainKind && controlDepth === 0) {
+            if (plainKind === 'matrix') addMatrixSummary()
+            else addDataFrameSummary()
+            plainRValues.set(name, plainKind)
+            typeBindings.push({
+              target: name,
+              typeName: plainKind === 'matrix' ? 'matrix' : 'data.frame',
+              argumentNames: [],
+              rPlainKind: plainKind
+            })
           }
           if (copySources) {
             if (!copySources.length) copyOnModify.push(name)
@@ -8429,6 +8648,9 @@ const analyzeRSource = (
             typeSummaries.push(summary)
             typeBindings.push({ target: name, typeName: summary.name, argumentNames: [] })
             functionDefinition = true
+            plainRDispatchKnown = false
+            plainRValues.clear()
+            typeBindings = typeBindings.filter((binding) => !binding.rPlainKind)
           }
           constructed = value ? constructorType(value, sourceType) : null
           const selectedMultiAssay = value ? multiAssaySelection(value) : null
@@ -8494,7 +8716,7 @@ const analyzeRSource = (
             // that read when the projector discharges reference-style aliasing.
             if (atomicValue && copySources?.length === 0) {
               used.push(source)
-              if (!definedBefore.includes(source)) priorUsed.push(source)
+              if (!definedBefore.includes(source)) recordPriorRead(source)
             }
             const canonical = aliases.get(source)
             const resolved = canonical ? canonical.source : source
@@ -8510,6 +8732,8 @@ const analyzeRSource = (
             }
           }
         } else {
+          plainRValues.clear()
+          typeBindings = typeBindings.filter((binding) => !binding.rPlainKind)
           // Editing ordinary layer aesthetics cannot replace the plot's theme.
           // Other nested writes can; invalidate aliases as well as the root.
           const parent = isCall(target) && target.operator === '$' ? target.args[0] : undefined
@@ -8637,7 +8861,7 @@ const analyzeRSource = (
           valueContractAvailable
         ) {
           used.push(valueDependency)
-          if (!defined.includes(valueDependency)) priorUsed.push(valueDependency)
+          if (!defined.includes(valueDependency)) recordPriorRead(valueDependency)
           const sfReadArgument =
             valueQualified?.package === 'sf' && valueName === 'st_read' && isCall(value)
               ? value.args[value.names.indexOf('dsn') >= 0 ? value.names.indexOf('dsn') : 0]
@@ -8658,15 +8882,15 @@ const analyzeRSource = (
             valueQualified?.package === 'scater' &&
             biocStochasticTransforms.has(valueQualified.name)
           )
-            unknown.push('external-state')
+            recordExternalState()
           if (
             valueQualified?.package === 'Seurat' &&
             seuratStochasticTransforms.has(valueQualified.name)
           )
-            unknown.push('external-state')
+            recordExternalState()
           if (valueQualified?.package === 'xcms' && xcmsStatefulTransforms.has(valueQualified.name))
-            unknown.push('external-state')
-          if (valueName === 'fread') unknown.push('external-state')
+            recordExternalState()
+          if (valueName === 'fread') recordExternalState(true)
         }
         if (dataTableQuery(value)) walkDataTableQuery(value)
         else {
@@ -8707,7 +8931,7 @@ const analyzeRSource = (
       if (used.length > usedBefore) {
         const assignmentReads = used.slice(usedBefore)
         const newPriorReads = assignmentReads.filter((item) => !definedBefore.includes(item))
-        priorUsed.push(...newPriorReads.filter((item) => !priorUsed.includes(item)))
+        recordPriorRead(...newPriorReads.filter((item) => !priorUsed.includes(item)))
       }
       // Read-only functions may return an argument or a captured reference.
       // Preserve possible sharing; the projector can discharge ordinary R value copies.
@@ -8746,7 +8970,7 @@ const analyzeRSource = (
             : namespaceProbePackages.get(packageExpr.name)
           : undefined
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       // Namespace loading is distinct from attaching exports. Only recognize known packages
       // with the default library search; custom lib.loc/versionCheck still need evidence.
       if (
@@ -8765,7 +8989,7 @@ const analyzeRSource = (
       if (proof) {
         const dependencies = [dependencyName!, ...proof]
         used.push(...dependencies)
-        priorUsed.push(...dependencies.filter((name) => !defined.includes(name)))
+        recordPriorRead(...dependencies.filter((name) => !defined.includes(name)))
         safeCallNames.push(...dependencies)
         // These expressions are safe in either the primitive-column mask or the
         // proven caller environment; retain strong producer dependencies.
@@ -8779,7 +9003,7 @@ const analyzeRSource = (
       )
         unknown.push('opaque-call')
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       const dataIndex = callbackArgumentIndex(expr, ['x'], [])
       if (copyOnModifySources(expr.args[dataIndex])?.length !== 0) unknown.push('opaque-call')
@@ -8796,7 +9020,7 @@ const analyzeRSource = (
     if (op === 'pull' && contractAvailable(op, qualified?.package, 'dplyr')) {
       const inputIndex = callbackArgumentIndex(expr, ['.data'], [])
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       if (copyOnModifySources(expr.args[inputIndex])?.length !== 0) unknown.push('opaque-call')
       expr.args.forEach((arg, index) =>
@@ -8806,7 +9030,7 @@ const analyzeRSource = (
     }
     if (op === 'with' && contractAvailable(op, qualified?.package, 'base')) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       safeCallNames.push(dependencyName!)
       const dataIndex = callbackArgumentIndex(expr, ['data'], [])
       const expressionIndex = callbackArgumentIndex(expr, ['expr'], ['data'])
@@ -8822,7 +9046,7 @@ const analyzeRSource = (
     }
     if (op === 'annotate' && contractAvailable(op, qualified?.package, 'ggplot2')) {
       used.push(dependencyName!)
-      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) recordPriorRead(dependencyName!)
       const geomIndex = callbackArgumentIndex(expr, ['geom'], [])
       const geom = expr.args[geomIndex]
       if (isCharacter(geom) && R_GGPLOT_GEOMS.has(`geom_${geom.value}`))
@@ -8839,7 +9063,7 @@ const analyzeRSource = (
         : R_PLOT_VALUE_CALLS.get(op)
     if (valueConstructorPackages && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       if (valueConstructorPackages.some((pkg) => contractAvailable(op, qualified?.package, pkg))) {
         safeCallNames.push(dependencyName)
         safeCallArgumentNames.push(
@@ -8890,6 +9114,7 @@ const analyzeRSource = (
       return
     }
     if (op === 'library' || op === 'require') {
+      contextualDESeq2Attached = false
       const pkg = staticPackageName(expr)
       if (pkg && knownAttachedPackages.has(pkg)) {
         if (controlDepth === 0 && contractAvailable(op, qualified?.package, 'base'))
@@ -8909,7 +9134,7 @@ const analyzeRSource = (
           })
         }
         used.push(op)
-        if (!defined.includes(op)) priorUsed.push(op)
+        if (!defined.includes(op)) recordPriorRead(op)
         safeCallNames.push(op)
         return
       }
@@ -8919,14 +9144,14 @@ const analyzeRSource = (
       unknown.push('dynamic-namespace')
     if (dataTableMutators.has(op) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       if (expr.args[0]) {
         const receiver = rootName(expr.args[0])
         if (!receiver) unknown.push('dynamic-assignment')
         else {
           used.push(receiver)
-          if (!defined.includes(receiver)) priorUsed.push(receiver)
+          if (!defined.includes(receiver)) recordPriorRead(receiver)
           mutated.push(receiver)
           if (op === 'setDT') {
             addDataTableSummary()
@@ -8948,13 +9173,13 @@ const analyzeRSource = (
     }
     if (qualified?.package === 'openxlsx' && openxlsxMutators.has(op) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       const receiver = rootName(namedArgument(expr, 'wb') ?? expr.args[0])
       if (!receiver) unknown.push('dynamic-assignment')
       else {
         used.push(receiver)
-        if (!defined.includes(receiver)) priorUsed.push(receiver)
+        if (!defined.includes(receiver)) recordPriorRead(receiver)
         mutated.push(receiver)
         receiverCalls.push({
           receiver,
@@ -8973,9 +9198,9 @@ const analyzeRSource = (
     }
     if (externalReadCalls.has(op) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
-      unknown.push('external-state')
+      recordExternalState(true)
       if (yamlReads.has(op) && yamlReadIsDynamic(expr))
         unknown.push('opaque-call', 'dynamic-namespace')
       const handleRoot = externalReadHandleRoot(expr)
@@ -9064,7 +9289,7 @@ const analyzeRSource = (
       staticFileMapInvocations += fileMap.calls.length
       const dependencyName = fileMap.dependency
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       for (const argument of fileMap.arguments) walk(argument, false)
       for (const invocation of fileMap.calls) walk(invocation, false)
@@ -9077,7 +9302,7 @@ const analyzeRSource = (
         readOnlyMapCalls?.set(expr.sourceOffset, readOnlyMapCalls.get(expr.sourceOffset) !== false)
       used.push(dependencyName, setReduction.dependency)
       for (const name of [dependencyName, setReduction.dependency])
-        if (!defined.includes(name)) priorUsed.push(name)
+        if (!defined.includes(name)) recordPriorRead(name)
       safeCallNames.push(dependencyName, setReduction.dependency)
       expr.args.forEach((arg, index) => {
         if (index !== setReduction.index) walk(arg)
@@ -9135,7 +9360,7 @@ const analyzeRSource = (
       if (revokesFileProof) invalidateSerializedValues()
       if (op === 'Filter' && !readOnlyMapCallback) unknown.push('external-state', 'opaque-call')
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       if (
         contractAvailable(op, qualified?.package, callback.package) &&
         consumeCallback(
@@ -9175,7 +9400,7 @@ const analyzeRSource = (
     if (op && functions.has(op) && !qualified) {
       const summary = functions.get(op)!
       used.push(op)
-      if (!defined.includes(op)) priorUsed.push(op)
+      if (!defined.includes(op)) recordPriorRead(op)
       mergeCallbackReads(summary.methods[0]!)
       for (const arg of expr.args) walk(arg, false)
       return
@@ -9198,7 +9423,7 @@ const analyzeRSource = (
     ) {
       unknown.push('opaque-call')
       used.push(op)
-      if (!defined.includes(op)) priorUsed.push(op)
+      if (!defined.includes(op)) recordPriorRead(op)
       for (const arg of expr.args) walk(arg, false)
       return
     }
@@ -9246,14 +9471,14 @@ const analyzeRSource = (
       copyOnModifySources(expr)?.length === 0
     ) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       for (const arg of expr.args) walk(arg)
       return
     }
     if (modelMask.has(op) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       const parameters = rModelArguments(expr, op)
       if (
         !parameters ||
@@ -9277,7 +9502,7 @@ const analyzeRSource = (
             : undefined
         if (familyConstructor) {
           used.push(familyConstructor)
-          if (!defined.includes(familyConstructor)) priorUsed.push(familyConstructor)
+          if (!defined.includes(familyConstructor)) recordPriorRead(familyConstructor)
           safeCallNames.push(familyConstructor)
           continue
         }
@@ -9303,14 +9528,14 @@ const analyzeRSource = (
     }
     if (tabularTransformName(expr) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       walkTabularArguments(expr)
       return
     }
     if (op === 'case_when' && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       const argumentsToEvaluate = rCaseWhenArguments(expr)
       if (argumentsToEvaluate && contractAvailable(op, qualified?.package, 'dplyr'))
         safeCallNames.push(dependencyName)
@@ -9320,7 +9545,7 @@ const analyzeRSource = (
     }
     if (dplyrValueCall(expr) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       safeCallArgumentNames.push(
         ...expr.args.map(rootName).filter((name): name is string => Boolean(name))
@@ -9331,14 +9556,14 @@ const analyzeRSource = (
     if (R_DPLYR_VALUE_CALLS.has(op)) unknown.push('opaque-call')
     if (dataMaskCalls.has(op) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       for (const arg of expr.args) walkDataMask(arg, true, 'deferred')
       return
     }
     if (op === 'tribble' && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       for (const value of expr.args.filter((item) => !tribbleColumnDeclaration(item)))
         walk(value, false)
@@ -9357,7 +9582,7 @@ const analyzeRSource = (
       if (dependencies) {
         const calls = [dependencyName, ...dependencies]
         used.push(...calls)
-        priorUsed.push(...calls.filter((name) => !defined.includes(name)))
+        recordPriorRead(...calls.filter((name) => !defined.includes(name)))
         safeCallNames.push(...calls)
         for (const argument of expr.args) walk(argument)
         return
@@ -9394,8 +9619,8 @@ const analyzeRSource = (
       // Inspect a fresh standard fit without treating model objects (which can
       // retain environments) as ordinary copy-on-modify data.
       used.push(dependencyName, 'summary.lm')
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
-      priorUsed.push('summary.lm')
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
+      recordPriorRead('summary.lm')
       safeCallNames.push(dependencyName, 'summary.lm')
       walk(inspectorInput)
       return
@@ -9433,7 +9658,7 @@ const analyzeRSource = (
       // Generic inspectors are safe only for established ordinary values, not
       // arbitrary S3/S4 objects whose methods may read or mutate external state.
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       safeCallNames.push(dependencyName)
       for (const arg of expr.args) walk(arg, false)
       return
@@ -9443,7 +9668,7 @@ const analyzeRSource = (
       // uncertain even outside stopifnot, where a generic receiver record would
       // otherwise fail to preserve their possible file effects at extraction time.
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
       unknown.push('opaque-call')
       for (const argument of expr.args) walk(argument, false)
       return
@@ -9635,7 +9860,7 @@ const analyzeRSource = (
         for (const name of new Set([...yes, ...no])) {
           if (yes.includes(name) && no.includes(name)) continue
           used.push(name)
-          if (!defined.includes(name)) priorUsed.push(name)
+          if (!defined.includes(name)) recordPriorRead(name)
         }
         for (const arg of expr.args) walk(arg, false)
         for (const name of [...yes, ...no]) {
@@ -9739,7 +9964,7 @@ const analyzeRSource = (
     ]
     if (!syntaxOps.includes(op) && dependencyName) {
       used.push(dependencyName)
-      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      if (!defined.includes(dependencyName)) recordPriorRead(dependencyName)
     }
     const roots = unique(expr.args.map(rootName).filter((name): name is string => Boolean(name)))
     if (
@@ -9784,7 +10009,7 @@ const analyzeRSource = (
     }
     for (const name of [...diagnostic.calls, ...diagnostic.names]) {
       used.push(name)
-      if (!defined.includes(name)) priorUsed.push(name)
+      if (!defined.includes(name)) recordPriorRead(name)
     }
     safeCallNames.push(...diagnostic.calls)
   }
@@ -9824,6 +10049,8 @@ const analyzeRSource = (
     conditionallyDefinedNames: [...conditionallyDefined].sort(),
     usedNames: unique(used).sort(),
     priorUsedNames: unique(priorUsed).sort(),
+    executionReadNames: [...executionReads].sort(),
+    ...(executionExternalState ? { executionExternalState } : {}),
     possiblyUsedNames: unique(possiblyUsed).sort(),
     mutatedNames: unique(mutated).sort(),
     possiblyMutatedNames: unique(possiblyMutated).sort(),
@@ -15265,6 +15492,10 @@ const analyzeRSources = async (
         context?.rCopyOnModifyNames,
         context?.verifiedSerializedValues,
         context?.rAtomicTableNames,
+        context?.rAttachedPackages,
+        context?.rMatrixNames,
+        context?.rDataFrameNames,
+        context?.rDispatchUncertain,
         context?.rSearchPathUncertain
       )
     )
@@ -15299,6 +15530,10 @@ const analyzeRNotebookSource = async (
       context?.rCopyOnModifyNames,
       context?.verifiedSerializedValues,
       context?.rAtomicTableNames,
+      context?.rAttachedPackages,
+      context?.rMatrixNames,
+      context?.rDataFrameNames,
+      context?.rDispatchUncertain,
       context?.rSearchPathUncertain,
       readOnlyMapCalls
     )

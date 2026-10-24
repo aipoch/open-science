@@ -8,7 +8,8 @@ import { ManagedFileVersionError } from './managed-file-versions/error'
 import type {
   ArtifactProducerInputScope,
   ManagedFileReadLease,
-  ManagedFileVersionReadPort
+  ManagedFileVersionReadPort,
+  ResolvedManagedFileVersion
 } from './managed-file-versions/read-port'
 import { getNotebookInputRoot } from './notebook/input-staging'
 
@@ -34,7 +35,12 @@ type StageLatestImmutableInputRequest = {
 type ImmutableInputAuthorityOptions = {
   storageRoot: string
   managedFileVersions: Pick<ManagedFileVersionReadPort, 'openVersion'> &
-    Partial<Pick<ManagedFileVersionReadPort, 'openLatest' | 'openProducerVersion'>>
+    Partial<
+      Pick<
+        ManagedFileVersionReadPort,
+        'openLatest' | 'openProducerVersion' | 'resolveVersionIdentity'
+      >
+    >
 }
 
 type ImmutableInputVersionValidation =
@@ -87,7 +93,7 @@ const sourceFor = (sourceKind: NotebookRunInputFile['sourceKind']): 'artifact' |
 
 const toNotebookInput = (
   sourceKind: NotebookRunInputFile['sourceKind'],
-  lease: ManagedFileReadLease
+  lease: ResolvedManagedFileVersion
 ): NotebookRunInputFile => ({
   inputFileVersionId: lease.version.id,
   sourceKind,
@@ -147,6 +153,35 @@ class ImmutableInputAuthority {
     } finally {
       await lease.close()
     }
+  }
+
+  async validateIdentity(
+    projectId: string,
+    input: NotebookRunInputFile
+  ): Promise<ImmutableInputVersionValidation> {
+    if (input.sourceProjectId !== projectId) return { state: 'project-mismatch' }
+    const resolveIdentity = this.options.managedFileVersions.resolveVersionIdentity
+    // Older injected read ports still require verified bytes; never infer availability from input.
+    if (!resolveIdentity) return this.validateVersion(projectId, input)
+    let resolved: ResolvedManagedFileVersion
+    try {
+      resolved = await resolveIdentity.call(
+        this.options.managedFileVersions,
+        {
+          source: sourceFor(input.sourceKind),
+          projectId,
+          fileId: input.sourceFileId
+        },
+        input.inputFileVersionId
+      )
+    } catch (error) {
+      if (isUnavailableVersionError(error)) return { state: 'unavailable' }
+      throw error
+    }
+    const current = toNotebookInput(input.sourceKind, resolved)
+    return matchesVersionIdentity(current, input)
+      ? { state: 'available', input: current }
+      : { state: 'identity-mismatch' }
   }
 
   async openContent(

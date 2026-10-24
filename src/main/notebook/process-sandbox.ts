@@ -1,5 +1,4 @@
-import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
-import type { ShellRuntimeBinding } from '../../shared/notebook'
+import type { RequestNotebookNetworkAccessResult, ShellRuntimeBinding } from '../../shared/notebook'
 import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
 
 export const NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE =
@@ -139,6 +138,10 @@ export type NotebookRuntimeAccessAdmission = Readonly<{
 }>
 
 export interface NotebookProcessSandbox {
+  /** Attempt-owned temp resources; callers must dispose only after their processes are reaped. */
+  createTemporaryScope?(temporaryRoot: string): NotebookProcessSandbox & {
+    dispose(): Promise<void>
+  }
   resolveWindowsRuntime?(request: {
     runtime: 'repl' | 'bash'
     binding?: ShellRuntimeBinding

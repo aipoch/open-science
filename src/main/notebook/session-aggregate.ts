@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import type { NotebookKernelEpochOwnership } from './execution-model-contract'
-export type { NotebookKernelEpochOwnership } from './execution-model-contract'
-
 import type {
   NotebookRunEnvironmentCapture,
   NotebookRunEnvironmentLockCapture
 } from '@aipoch/environment/contracts'
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
+import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
+
 import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type {
@@ -29,6 +29,8 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
+import type { NotebookKernelEpochOwnership } from './execution-model-contract'
+export type { NotebookKernelEpochOwnership } from './execution-model-contract'
 import type { TransientViewImage } from './execution-model-contract'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 
@@ -101,7 +103,7 @@ export type NotebookSessionExecutionRequest = {
   // binds this domain epoch to the OS process owner so startup recovery never adopts a stale writer.
   kernelEpochId?: string
   code: string
-  pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState']
+  pythonRandomState?: NotebookExecutionContext['before']['pythonRandomState']
   helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
   notebookSessionRoot: string
@@ -135,7 +137,7 @@ export type NotebookSessionExecutionRequest = {
 }
 
 export type NotebookSessionExecutionResult = {
-  recovery?: import('../../shared/execution-recovery').NotebookExecutionRecovery
+  recovery?: NotebookExecutionRecovery
   status: Extract<NotebookRunStatus, 'completed' | 'failed' | 'timeout' | 'cancelled'>
   stdout: string
   stderr: string

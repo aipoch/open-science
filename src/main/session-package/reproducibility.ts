@@ -64,7 +64,12 @@ export const capturePackageReproducibility = async (
         : undefined
     const checksums = new Set<string>([
       ...files.lockChecksums,
-      ...(snapshot?.runs ?? []).flatMap((run: { environmentLock?: { lockChecksum?: string } }) =>
+      ...[
+        ...(snapshot?.runs ?? []),
+        ...(snapshot?.workflowCapture?.state === 'available'
+          ? snapshot.workflowCapture.capture.runs
+          : [])
+      ].flatMap((run: { environmentLock?: { lockChecksum?: string } }) =>
         run.environmentLock?.lockChecksum ? [run.environmentLock.lockChecksum] : []
       ),
       ...(snapshot?.reproducibilityRecipe?.environmentRequirements ?? []).map(
@@ -108,7 +113,12 @@ export const capturePackageReproducibility = async (
       entityIds:
         source?.entityIds ??
         Object.fromEntries(
-          (snapshot?.provenanceGraph?.entities ?? [])
+          [
+            ...(snapshot?.provenanceGraph?.entities ?? []),
+            ...(snapshot?.workflowCapture?.state === 'available'
+              ? snapshot.workflowCapture.capture.graph.entities
+              : [])
+          ]
             .filter((entity: { kind: string }) => entity.kind === 'file-generation')
             .map((entity: { entityId: string }) => [entity.entityId, entity.entityId])
         ),

@@ -15,16 +15,28 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { sealWorkflowCapture, type WorkflowPlan } from '@aipoch/reproducibility'
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
-import type { NotebookEnvironmentManifest } from '../../shared/notebook'
+import type {
+  NotebookEnvironmentManifest,
+  NotebookRunInputFile,
+  NotebookRunRecord
+} from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
+import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
-import { reproductionRecipes } from './reproducibility-host'
+import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import { readArtifactReproducibilityExecutionEvidence } from './provenance-reproducibility-execution-evidence'
+import {
+  reproductionEvidence,
+  reproductionRecipes,
+  reproductionWorkflowSlices
+} from './reproducibility-host'
 
 import {
   appendArtifactReproducibilityReceipt,
@@ -38,6 +50,7 @@ import {
 } from './provenance-repository'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 import { ArtifactProvenanceVersionWriter } from './provenance-version-writer'
+import { sealArtifactProvenanceGraph } from './artifact-provenance-graph'
 import { ArtifactRepository } from './repository'
 import { ContentRepository } from '../storage/content-repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
@@ -3253,37 +3266,49 @@ describe('artifact provenance repository', () => {
       }
     })
 
-    const invalidExecutionJson = JSON.stringify({
-      ...(JSON.parse(row.executionSnapshotJson ?? '{}') as Record<string, unknown>),
-      producerRunIndex: 2
-    })
-    const invalidExecutionChecksum = createHash('sha256').update(invalidExecutionJson).digest('hex')
-    const invalidEvidenceJson = JSON.stringify({
-      ...(JSON.parse(row.evidenceJson) as Record<string, unknown>),
-      execution_snapshot_checksum: invalidExecutionChecksum
-    })
-    await client.artifactVersion.update({
-      where: { id: version.versionId },
-      data: {
-        executionSnapshotJson: invalidExecutionJson,
-        executionSnapshotChecksum: invalidExecutionChecksum,
-        evidenceJson: invalidEvidenceJson,
-        evidenceChecksum: createHash('sha256').update(invalidEvidenceJson).digest('hex')
-      }
-    })
-    await writeFile(
-      join(storageRoot, ...String(row.executionSnapshotStorageKey).split('/')),
-      invalidExecutionJson
-    )
-    await writeFile(join(storageRoot, ...row.evidenceStorageKey.split('/')), invalidEvidenceJson)
-    await expect(
-      repository.getVersionExecution({
-        projectId: 'project-1',
-        appSessionId: 'session-1',
-        artifactId: version.artifactId,
-        versionId: version.versionId
+    // New captures reject the contradictory workflow anchor during decoding; historical
+    // snapshots still reach the enclosing Artifact metadata check. Keep both contracts covered.
+    expect(JSON.parse(row.executionSnapshotJson ?? '{}').workflowCapture?.state).toBe('available')
+    for (const includeWorkflow of [true, false]) {
+      const invalidExecutionJson = JSON.stringify({
+        ...(JSON.parse(row.executionSnapshotJson ?? '{}') as Record<string, unknown>),
+        producerRunIndex: 2,
+        ...(!includeWorkflow ? { workflowCapture: undefined } : {})
       })
-    ).rejects.toThrow(/execution snapshot metadata mismatch/i)
+      const invalidExecutionChecksum = createHash('sha256')
+        .update(invalidExecutionJson)
+        .digest('hex')
+      const invalidEvidenceJson = JSON.stringify({
+        ...(JSON.parse(row.evidenceJson) as Record<string, unknown>),
+        execution_snapshot_checksum: invalidExecutionChecksum
+      })
+      await client.artifactVersion.update({
+        where: { id: version.versionId },
+        data: {
+          executionSnapshotJson: invalidExecutionJson,
+          executionSnapshotChecksum: invalidExecutionChecksum,
+          evidenceJson: invalidEvidenceJson,
+          evidenceChecksum: createHash('sha256').update(invalidEvidenceJson).digest('hex')
+        }
+      })
+      await writeFile(
+        join(storageRoot, ...String(row.executionSnapshotStorageKey).split('/')),
+        invalidExecutionJson
+      )
+      await writeFile(join(storageRoot, ...row.evidenceStorageKey.split('/')), invalidEvidenceJson)
+      await expect(
+        repository.getVersionExecution({
+          projectId: 'project-1',
+          appSessionId: 'session-1',
+          artifactId: version.artifactId,
+          versionId: version.versionId
+        })
+      ).rejects.toThrow(
+        includeWorkflow
+          ? /execution snapshot schema is invalid/i
+          : /execution snapshot metadata mismatch/i
+      )
+    }
 
     const originalExecution = JSON.parse(row.executionSnapshotJson ?? '{}') as Record<
       string,
@@ -6197,4 +6222,648 @@ describe('artifact provenance repository', () => {
     await repository.deleteProjectProvenance('project-1')
     await expect(client.uploadFile.count({ where: { projectId: 'project-1' } })).resolves.toBe(0)
   })
+})
+
+describe('workflow-only input authority', () => {
+  const fixture = async (
+    includeIndependent = false,
+    useRealAnalysis = false
+  ): Promise<{
+    root: string
+    client: ReturnType<typeof createProjectDbClient>
+    input: NotebookRunInputFile
+    runs: NotebookRunRecord[]
+    repository: ArtifactProvenanceRepository
+    publish: () => Promise<ArtifactVersionFile>
+  }> => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-workflow-input-authority-'))
+    const root = storageRoot
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'source-session' }
+    })
+    const content = 'count\n1\n'
+    const input: NotebookRunInputFile = {
+      sourceKind: 'upload-version',
+      inputFileVersionId: 'workflow-input-version',
+      sourceFileId: 'workflow-input',
+      sourceVersionNumber: 1,
+      sourceCreatedAt: '2026-10-20T00:00:00.000Z',
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'source-session',
+      filename: 'counts.csv',
+      sizeBytes: Buffer.byteLength(content),
+      checksum: sha256(content),
+      storageKey: 'uploads/project-1/source-session/workflow-input/content',
+      association: 'turn-attached'
+    }
+    const path = join(root, input.storageKey)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, content)
+    await client.uploadFile.create({
+      data: {
+        id: input.sourceFileId,
+        projectId: input.sourceProjectId,
+        sessionId: input.sourceSessionId,
+        filename: input.filename,
+        originalFilename: input.filename,
+        versions: {
+          create: {
+            id: input.inputFileVersionId,
+            versionNumber: 1,
+            state: 'ready',
+            filename: input.filename,
+            originalFilename: input.filename,
+            contentStorageKey: input.storageKey,
+            sizeBytes: BigInt(input.sizeBytes),
+            checksum: input.checksum,
+            createdAt: new Date(input.sourceCreatedAt!)
+          }
+        }
+      }
+    })
+    await client.uploadFile.update({
+      where: { id: input.sourceFileId },
+      data: { currentVersionId: input.inputFileVersionId }
+    })
+    const graph = {
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1'
+    }
+    const notebookRepository = new NotebookRunRepository(root)
+    const document = await notebookRepository.loadOrCreate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', graph.agentFrameId),
+      workspaceCwd: '/workspace'
+    })
+    const lock = JSON.stringify({
+      schemaVersion: 1,
+      format: 'environment-lock-bundle',
+      kernelKind: 'r',
+      environmentName: 'analysis',
+      components: [
+        {
+          ecosystem: 'conda',
+          format: 'conda-explicit-md5',
+          resolution: 'locked',
+          packages: ['r-base'],
+          explicitLock:
+            '@EXPLICIT\nhttps://conda.example/r-base-4.5-0.conda#00000000000000000000000000000000\n'
+        }
+      ]
+    })
+    const lockChecksum = sha256(lock)
+    const lockPath = join(root, 'runtime/provenance/environment-locks', lockChecksum + '.json')
+    await mkdir(dirname(lockPath), { recursive: true })
+    await writeFile(lockPath, lock)
+    const runs: NotebookRunRecord[] = []
+    const runIds = includeIndependent ? ['setup', 'independent', 'producer'] : ['setup', 'producer']
+    for (const [index, runId] of runIds.entries()) {
+      const evidence = {
+        schemaVersion: 1 as const,
+        evidenceId: `evidence-${runId}`,
+        activityId: runId,
+        activityKind: 'notebook-run' as const,
+        state: 'available' as const,
+        observedRoots: ['data'],
+        initialViewState: 'complete' as const,
+        managedRootsFinalState: 'complete' as const,
+        fileReads: 'complete' as const,
+        externalPaths: 'complete' as const,
+        writerAttribution: 'complete' as const,
+        reasonCodes: [],
+        scientificOutputs: [],
+        relations: []
+      }
+      const json = JSON.stringify(evidence)
+      const key = `execution-file-evidence/${runId}/evidence.json`
+      await mkdir(dirname(join(root, key)), { recursive: true })
+      await writeFile(join(root, key), json)
+      runs.push({
+        ...graph,
+        runId,
+        cellId: runId,
+        source: 'agent',
+        kernelKind: 'r',
+        kernelEpochId: 'epoch',
+        environment: 'analysis',
+        environmentLock: { state: 'available', format: 'environment-lock-bundle', lockChecksum },
+        kernelDispatched: true,
+        script: index ? 'print(1)' : 'x <- 1',
+        status: 'completed',
+        startedAt: index,
+        endedAt: index + 1,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: [],
+        inputFiles: index ? [] : [input],
+        fileEvidence: {
+          ...evidence,
+          checksum: sha256(json),
+          storageKey: key,
+          relationCount: 0,
+          generationCount: 0,
+          scientificOutputCount: 0,
+          scientificOutputAnalysis: 'complete'
+        }
+      })
+    }
+    const compatibilityRepository = new ArtifactRepository(root)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot: root,
+      getClient: async () => client,
+      compatibilityRepository,
+      notebookRepository: { readSessionDocuments: async () => [{ ...document, runs }] },
+      dependencyAnalyzer: useRealAnalysis
+        ? createNotebookDependencyAnalyzer({
+            storageRoot: root,
+            repository: { readSessionRuns: async () => runs }
+          })
+        : {
+            project: async () => ({
+              stalenessByRunId: Object.fromEntries(
+                runs.map((run) => [run.runId, { state: 'clear' as const }])
+              ),
+              dependenciesByRunId: Object.fromEntries(runs.map((run) => [run.runId, []])),
+              executionDependenciesByRunId: Object.fromEntries(runs.map((run) => [run.runId, []])),
+              invalidatedByRunId: {}
+            })
+          }
+    })
+    const publish = async (): Promise<ArtifactVersionFile> => {
+      await compatibilityRepository.writePendingFile({
+        projectId: 'project-1',
+        sessionId: 'artifact-session-1',
+        runId: 'artifact-run-1',
+        filename: 'plot.png',
+        source: createPngInlineSource('workflow input authority')
+      })
+      return repository.createVersion({
+        ...graph,
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'a'.repeat(64),
+        sourceKind: 'inline',
+        notebookSessionId: 'session-1',
+        producerRunId: 'producer',
+        filename: 'plot.png',
+        contentType: 'image/png'
+      })
+    }
+    return { root, client, input, runs, repository, publish }
+  }
+
+  it.each(['setup', 'independent'])(
+    'keeps Artifact publication and its original graph when additive workflow lookup fails at %s',
+    async (failedRunId) => {
+      const source = await fixture(true)
+      await source.client.computeJob.create({
+        data: {
+          id: 'prior-compute',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          producerRunId: 'setup',
+          providerId: 'ssh:cluster',
+          shape: 'scheduler_cluster',
+          status: 'success',
+          intent: 'prior workflow activity',
+          command: 'Rscript analysis.R',
+          commandHash: 'prior-command'
+        }
+      })
+      const findMany = source.client.computeJob.findMany.bind(source.client.computeJob)
+      const queriedRunIds: string[] = []
+      const lookup = vi.spyOn(source.client.computeJob, 'findMany').mockImplementation((args) => {
+        const runId = args?.where?.producerRunId as string
+        queriedRunIds.push(runId)
+        if (runId === failedRunId) throw new Error('Historical Compute lookup failed')
+        return findMany(args)
+      })
+      try {
+        const version = await source.publish()
+        const request = {
+          projectId: 'project-1',
+          appSessionId: 'session-1',
+          artifactId: version.artifactId,
+          versionId: version.versionId
+        }
+        const execution = await readArtifactReproducibilityExecutionEvidence(
+          source.repository,
+          request
+        )
+        expect(execution.workflowCapture).toEqual({
+          state: 'unavailable',
+          reason: 'incomplete-evidence'
+        })
+        expect(execution.provenanceGraph).toEqual(
+          sealArtifactProvenanceGraph({
+            target: {
+              versionId: version.versionId,
+              filename: version.name,
+              checksum: version.checksum,
+              sizeBytes: version.size,
+              producerRunId: 'producer'
+            },
+            notebookActivities: await Promise.all(
+              source.runs.map(async (run, runIndex) => ({
+                run,
+                runIndex,
+                evidenceJson: await readFile(
+                  join(source.root, run.fileEvidence!.storageKey!),
+                  'utf8'
+                )
+              }))
+            ),
+            computeActivities: [],
+            notebookDependencies: {
+              stalenessByRunId: Object.fromEntries(
+                source.runs.map((run) => [run.runId, { state: 'clear' as const }])
+              ),
+              dependenciesByRunId: Object.fromEntries(source.runs.map((run) => [run.runId, []])),
+              executionDependenciesByRunId: Object.fromEntries(
+                source.runs.map((run) => [run.runId, []])
+              ),
+              invalidatedByRunId: {}
+            }
+          })
+        )
+        const legacy = await source.repository.getVersionExecution(request)
+        expect(legacy.execution?.workflow).toEqual({
+          state: 'unavailable',
+          reason: 'incomplete-evidence'
+        })
+        expect(legacy.execution?.runs.map((run) => run.runId)).toEqual(
+          source.runs.map((run) => run.runId)
+        )
+        expect(queriedRunIds).toEqual(
+          failedRunId === 'setup' ? ['producer', 'setup'] : ['producer', 'setup', 'independent']
+        )
+        await expect(source.client.artifactVersion.count()).resolves.toBe(1)
+      } finally {
+        lookup.mockRestore()
+      }
+    }
+  )
+
+  it.each(['AbortError', 'ABORT_ERR'])(
+    'preserves %s cancellation from additive workflow lookup',
+    async (kind) => {
+      const source = await fixture()
+      const cancellation = Object.assign(
+        new Error('Cancelled historical lookup'),
+        kind === 'AbortError' ? { name: kind } : { code: kind }
+      )
+      const findMany = source.client.computeJob.findMany.bind(source.client.computeJob)
+      const lookup = vi.spyOn(source.client.computeJob, 'findMany').mockImplementation((args) => {
+        if (args?.where?.producerRunId === 'setup') throw cancellation
+        return findMany(args)
+      })
+      try {
+        await expect(source.publish()).rejects.toBe(cancellation)
+        await expect(source.client.artifactVersion.count()).resolves.toBe(0)
+      } finally {
+        lookup.mockRestore()
+      }
+    }
+  )
+
+  it('still rejects required producer Compute lookup failure before additive workflow capture', async () => {
+    const source = await fixture()
+    const failure = new Error('Required producer Compute lookup failed')
+    const lookup = vi.spyOn(source.client.computeJob, 'findMany').mockRejectedValue(failure)
+    try {
+      await expect(source.publish()).rejects.toBe(failure)
+      await expect(source.client.artifactVersion.count()).resolves.toBe(0)
+    } finally {
+      lookup.mockRestore()
+    }
+  })
+
+  it.each([
+    ['x <- 1', 'y <- x + 1', 'x <- 7'],
+    ['x <- 1', 'y <- x + 1', 'z <- 7'],
+    ['y <- 2', 'z <- y', 'y <- 7'],
+    ['x <- 1', 'y <- x; y <- y + 1', 'x <- 7'],
+    ['x <- 1', 'y <- x; y <- 2', 'z <- 7']
+  ])(
+    'captures the original historical dependency for %s; %s despite later source %s',
+    async (setupSource, selectedSource, laterSource) => {
+      const source = await fixture(true, true)
+      source.runs[0].script = setupSource
+      source.runs[1].script = selectedSource
+      source.runs[2].script = laterSource
+      const version = await source.publish()
+      const execution = await readArtifactReproducibilityExecutionEvidence(source.repository, {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+      if (execution.workflowCapture?.state !== 'available') throw new Error('Expected workflow')
+      const capture = execution.workflowCapture.capture
+      const selected = reproductionWorkflowSlices.planWorkflowSlice(capture, {
+        captureId: capture.captureId,
+        targetRunIds: ['independent']
+      })
+      expect(selected.reasonCodes).toEqual([])
+      expect(selected.status).toBe('ready')
+      expect(selected.steps.map((step) => step.runId)).toEqual(['setup', 'independent'])
+      expect(
+        capture.runs
+          .filter((run) => selected.steps.some((step) => step.runId === run.runId))
+          .map((run) => run.script)
+      ).toEqual([setupSource, selectedSource])
+      await expect(
+        reproductionWorkflowSlices.prepareWorkflowSlice(
+          capture,
+          selected,
+          reproductionEvidence(source.root)
+        )
+      ).resolves.toEqual(selected)
+    }
+  )
+
+  it.each(['unknown source', 'failed upstream', 'different epoch'] as const)(
+    'keeps historical replay blocked for %s',
+    async (condition) => {
+      const source = await fixture(true, true)
+      source.runs[0].script = condition === 'unknown source' ? 'x <- opaque_call()' : 'x <- 1'
+      source.runs[1].script = 'y <- x + 1'
+      source.runs[2].script = 'x <- 7'
+      if (condition === 'failed upstream') source.runs[0].status = 'failed'
+      if (condition === 'different epoch') {
+        source.runs[1].kernelEpochId = 'later-epoch'
+        source.runs[2].kernelEpochId = 'later-epoch'
+      }
+      const version = await source.publish()
+      const execution = await readArtifactReproducibilityExecutionEvidence(source.repository, {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      })
+      // Native file analysis may conservatively withhold the whole capture for an
+      // unresolved history. Neither that result nor an available capture may admit replay.
+      if (execution.workflowCapture?.state === 'unavailable') {
+        expect(execution.workflowCapture.reason).toBe('incomplete-evidence')
+        return
+      }
+      if (execution.workflowCapture?.state !== 'available') throw new Error('Expected workflow')
+      const capture = execution.workflowCapture.capture
+      const selected = reproductionWorkflowSlices.planWorkflowSlice(capture, {
+        captureId: capture.captureId,
+        targetRunIds: ['independent']
+      })
+      expect(selected.status).toBe('blocked')
+      expect(selected.reasonCodes).toContain('kernel-dependencies-unavailable')
+    }
+  )
+
+  it.each([
+    ['missing', 'after publication'],
+    ['same-size corruption', 'after publication'],
+    ['missing', 'before publication'],
+    ['same-size corruption', 'before publication']
+  ] as const)(
+    'scopes %s input bytes %s to the selected slice while retaining readable execution metadata',
+    async (condition, phase) => {
+      const source = await fixture(true)
+      source.input.association = 'resolver-accessed'
+      source.input.accessEvidence = 'resolver'
+      const changeBytes = async (): Promise<void> => {
+        const path = join(source.root, source.input.storageKey)
+        if (condition === 'missing') await rm(path)
+        else await writeFile(path, 'count\n2\n')
+      }
+      if (phase === 'before publication') await changeBytes()
+      const version = await source.publish()
+      const request = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      }
+      const before = await source.client.artifactVersion.findUniqueOrThrow({
+        where: { id: version.versionId }
+      })
+      const execution = await readArtifactReproducibilityExecutionEvidence(
+        source.repository,
+        request
+      )
+      if (execution.workflowCapture?.state !== 'available') throw new Error('Expected workflow')
+      const capture = execution.workflowCapture.capture
+      const plan = (target: string): WorkflowPlan =>
+        reproductionWorkflowSlices.planWorkflowSlice(capture, {
+          captureId: capture.captureId,
+          targetRunIds: [target]
+        })
+      const independent = plan('independent')
+      const dependent = plan('setup')
+      expect(independent.status).toBe('ready')
+      expect(independent.steps.map((step) => step.runId)).toEqual(['independent'])
+      expect(independent.crossingFiles).toEqual([])
+      expect(dependent.status).toBe('ready')
+      expect(dependent.crossingFiles).toHaveLength(1)
+      const evidence = reproductionEvidence(source.root)
+      if (phase === 'after publication') {
+        await reproductionWorkflowSlices.prepareWorkflowSlice(capture, dependent, evidence)
+        await changeBytes()
+      }
+      await expect(source.repository.getVersionExecution(request)).resolves.toBeDefined()
+      await expect(source.repository.getVersionProvenance(request)).resolves.toBeDefined()
+      await expect(
+        readArtifactReproducibilityExecutionEvidence(source.repository, request)
+      ).resolves.toEqual(execution)
+      await expect(
+        reproductionWorkflowSlices.prepareWorkflowSlice(capture, independent, evidence)
+      ).resolves.toEqual(independent)
+      await expect(
+        reproductionWorkflowSlices.prepareWorkflowSlice(capture, dependent, evidence)
+      ).rejects.toThrow(
+        condition === 'missing' ? /frozen file is unavailable/ : /frozen file checksum mismatch/
+      )
+      const after = await source.client.artifactVersion.findUniqueOrThrow({
+        where: { id: version.versionId }
+      })
+      expect(after.executionSnapshotChecksum).toBe(before.executionSnapshotChecksum)
+      expect(after.evidenceChecksum).toBe(before.evidenceChecksum)
+    }
+  )
+
+  it.each(['missing', 'same-size corruption'] as const)(
+    'retains strict publication validation for %s legacy target input bytes',
+    async (condition) => {
+      const source = await fixture()
+      source.input.association = 'resolver-accessed'
+      source.input.accessEvidence = 'resolver'
+      source.runs[1].inputFiles = [source.input]
+      const path = join(source.root, source.input.storageKey)
+      if (condition === 'missing') await rm(path)
+      else await writeFile(path, 'count\n2\n')
+      await expect(source.publish()).rejects.toThrow('content is unavailable or corrupt')
+      await expect(source.client.artifactVersion.count()).resolves.toBe(0)
+    }
+  )
+
+  it.each([
+    ['foreign Project', { sourceProjectId: 'other-project' }, /another Project/],
+    ['unavailable Version', { inputFileVersionId: 'absent-version' }, /input identity is corrupt/],
+    [
+      'forged storage identity',
+      { storageKey: 'uploads/foreign/content' },
+      /input identity is corrupt/
+    ]
+  ] as const)('rejects a workflow-only %s during capture', async (_label, changes, error) => {
+    const source = await fixture()
+    source.runs[0].inputFiles = [{ ...source.input, ...changes }]
+    await expect(source.publish()).rejects.toThrow(error)
+    await expect(source.client.artifactVersion.count()).resolves.toBe(0)
+  })
+
+  it('keeps legacy publication available when conflicting workflow input metadata is omitted', async () => {
+    const source = await fixture()
+    source.input.association = 'resolver-accessed'
+    source.input.accessEvidence = 'resolver'
+    source.runs[0].inputFiles = [{ ...source.input, storageKey: 'uploads/foreign/content' }]
+    source.runs[1].inputFiles = [source.input]
+    const version = await source.publish()
+    const execution = await readArtifactReproducibilityExecutionEvidence(source.repository, {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: version.artifactId,
+      versionId: version.versionId
+    })
+    expect(execution.inputFiles).toEqual([source.input])
+    expect(execution.workflowCapture).toEqual({
+      state: 'unavailable',
+      reason: 'incomplete-evidence'
+    })
+  })
+
+  it('does not authenticate omitted workflow inputs after its payload budget is exceeded', async () => {
+    const source = await fixture()
+    source.runs[0].inputFiles = [{ ...source.input, inputFileVersionId: 'absent-version' }]
+    source.runs[0].script = 'x'.repeat(4 * 1024 * 1024)
+    const version = await source.publish()
+    const execution = await readArtifactReproducibilityExecutionEvidence(source.repository, {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: version.artifactId,
+      versionId: version.versionId
+    })
+    expect(execution.inputFiles).toEqual([])
+    expect(execution.workflowCapture).toEqual({ state: 'unavailable', reason: 'payload-limit' })
+  })
+
+  it('keeps verified workflow-only inputs outside legacy rows and returns them to reproduction', async () => {
+    const source = await fixture()
+    const version = await source.publish()
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: version.artifactId,
+      versionId: version.versionId
+    }
+    await expect(source.client.artifactVersionInput.count()).resolves.toBe(0)
+    const execution = await readArtifactReproducibilityExecutionEvidence(source.repository, request)
+    expect(execution.inputFiles).toEqual([])
+    expect(execution.workflowCapture).toMatchObject({
+      state: 'available',
+      capture: { inputFiles: [source.input] }
+    })
+    const { storageKey, ...publicInput } = source.input
+    void storageKey
+    const projected = await source.repository.getVersionExecution(request)
+    expect(projected).toMatchObject({
+      execution: {
+        inputFiles: [],
+        workflow: {
+          state: 'available',
+          inputFiles: [{ ...publicInput, availability: { state: 'available' } }]
+        }
+      }
+    })
+    if (projected.execution?.workflow?.state !== 'available') throw new Error('Expected workflow')
+    expect(projected.execution.workflow.inputFiles?.[0]).not.toHaveProperty('storageKey')
+  })
+
+  it.each([
+    ['foreign Project', { sourceProjectId: 'other-project' }, /another Project/, false],
+    ['unavailable Version', { sourceFileId: 'absent-file' }, /input identity is corrupt/, false],
+    [
+      'forged storage identity',
+      { storageKey: 'uploads/foreign/content' },
+      /input identity is corrupt/,
+      false
+    ],
+    [
+      'conflicting metadata for a legacy Version',
+      { storageKey: 'uploads/foreign/content' },
+      /input identity is corrupt/,
+      true
+    ]
+  ] as const)(
+    'rejects a resealed workflow-only %s at every execution read boundary',
+    async (_label, changes, error, includeLegacyInput) => {
+      const source = await fixture()
+      if (includeLegacyInput) {
+        source.input.association = 'resolver-accessed'
+        source.input.accessEvidence = 'resolver'
+        source.runs[1].inputFiles = [source.input]
+      }
+      const version = await source.publish()
+      const row = requireAgentArtifactVersion(
+        await source.client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+      )
+      const execution = parseArtifactExecutionSnapshot(row.executionSnapshotJson!)
+      if (includeLegacyInput) expect(execution.inputFiles).toEqual([source.input])
+      if (execution.workflowCapture?.state !== 'available') throw new Error('Expected workflow')
+      const { captureId, ...draft } = execution.workflowCapture.capture
+      void captureId
+      execution.workflowCapture = {
+        state: 'available',
+        capture: sealWorkflowCapture({
+          ...draft,
+          inputFiles: [{ ...draft.inputFiles[0], ...changes }]
+        })
+      }
+      const executionJson = canonicalJson(execution as unknown as CanonicalJson)
+      const evidenceJson = canonicalJson({
+        ...JSON.parse(row.evidenceJson),
+        execution_snapshot_checksum: sha256(executionJson)
+      })
+      await source.client.artifactVersion.update({
+        where: { id: version.versionId },
+        data: {
+          executionSnapshotJson: executionJson,
+          executionSnapshotChecksum: sha256(executionJson),
+          evidenceJson,
+          evidenceChecksum: sha256(evidenceJson)
+        }
+      })
+      await writeFile(join(source.root, row.executionSnapshotStorageKey!), executionJson)
+      await writeFile(join(source.root, row.evidenceStorageKey), evidenceJson)
+      const request = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactId: version.artifactId,
+        versionId: version.versionId
+      }
+      await expect(source.repository.getVersionExecution(request)).rejects.toThrow(error)
+      await expect(
+        readArtifactReproducibilityExecutionEvidence(source.repository, request)
+      ).rejects.toThrow(error)
+    }
+  )
 })

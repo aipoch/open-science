@@ -1,8 +1,10 @@
 import { statSync } from 'node:fs'
 import { join, posix, win32 } from 'node:path'
 
-import { buildManagedRuntimeProcessEnvironment } from './process-environment'
-import { sanitizeManagedRuntimeHostState } from './process-environment'
+import {
+  buildManagedRuntimeProcessEnvironment,
+  sanitizeManagedRuntimeHostState
+} from './process-environment'
 import { DEFAULT_MAX_CACHE_RELATIVE_PATH } from './bundle-manifest'
 import {
   selectMicromambaCache,
@@ -76,13 +78,13 @@ export const resolveMicromamba = (deps: MicromambaDeps = {}): string | undefined
   resolveMicromambaLocations(deps)[0]?.path
 
 // micromamba create -p <prefix> --file <lock> --offline -y --root-prefix <root>
-// Offline clone from a bundled/CDN @EXPLICIT lock; hard-links tarballs from the pkgs cache, no network.
+// Offline clone from a bundled/CDN @EXPLICIT lock; optionally copy files from the pkgs cache.
 export const createFromLockArgv = (
   mm: string,
   root: string,
   prefix: string,
   lock: string,
-  options: { offline?: boolean; compilePyc?: boolean } = { offline: true }
+  options: { offline?: boolean; compilePyc?: boolean; alwaysCopy?: boolean } = { offline: true }
 ): string[] => [
   mm,
   '--no-rc',
@@ -93,6 +95,7 @@ export const createFromLockArgv = (
   lock,
   ...(options.offline === false ? [] : ['--offline']),
   ...(options.compilePyc === false ? ['--no-pyc'] : []),
+  ...(options.alwaysCopy === true ? ['--always-copy'] : []),
   '-y',
   '--root-prefix',
   root

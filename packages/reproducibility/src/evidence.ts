@@ -16,6 +16,44 @@ export type ReproductionSnapshot = {
   }
 }
 
+// The graph retains the original publication anchor, but contains the complete captured workflow.
+// Slice endpoints are Run identities; they never manufacture an Artifact Version or publication.
+export type WorkflowCapture = {
+  schemaVersion: 1
+  captureId: string
+  // New captures retain helper completeness on every run. Historical captures without
+  // this field continue to use their conservative capture-wide status.
+  runs: Array<ProvenanceNotebookRun & { helperEvidenceStatus?: ArtifactHelperEvidenceStatus }>
+  inputFiles: NotebookRunInputFile[]
+  graph: ArtifactProvenanceGraph
+  activityReasonCodes?: Record<string, ArtifactProvenanceGraphReason[]>
+  helperModules?: NotebookHelperModuleEvidence[]
+  helperEvidenceStatus?: ArtifactHelperEvidenceStatus
+  truncation?: ReproductionSnapshot['truncation']
+}
+
+export type WorkflowSelection = {
+  captureId: string
+  targetRunIds: string[]
+  boundaryEntityIds?: string[]
+}
+
+export type WorkflowPlan = {
+  schemaVersion: 1
+  planId: string
+  captureId: string
+  selection: WorkflowSelection
+  selectedStepIds: string[]
+  steps: Array<Extract<ArtifactReproducibilityRecipeStep, { kind: 'notebook-run' }>>
+  crossingFiles: ArtifactReproducibilityRecipeFile[]
+  targetOutputEntityIds: string[]
+  executionOnlyTargetRunIds: string[]
+  environmentRequirements: ArtifactReproducibilityEnvironmentRequirement[]
+  verification: 'file-comparison' | 'execution-only'
+  status: 'ready' | 'blocked'
+  reasonCodes: string[]
+}
+
 export type NotebookRunInputFile = {
   inputFileVersionId: string
   sourceKind: 'upload-version' | 'artifact-version'
@@ -112,7 +150,7 @@ export type ArtifactProvenanceGraphActivity = {
   parentActivityId?: string
   runIndex?: number
   kernelEpochId?: string
-  inclusion: 'target-closure' | 'kernel-epoch-conservative'
+  inclusion: 'target-closure' | 'kernel-epoch-conservative' | 'workflow-capture'
   evidenceState: 'available' | 'partial' | 'unavailable'
   evidenceId?: string
   evidenceChecksum?: string

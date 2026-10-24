@@ -564,6 +564,116 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
   }
 
+  it('offers independent reproduction only on completed R cells and gates read-only, busy and recovery states', async () => {
+    await mountWithRuns([
+      makeRun({ runId: 'success-r', kernelKind: 'r' }),
+      makeRun({ runId: 'failed-r', kernelKind: 'r', status: 'failed' })
+    ])
+    const button = screen.getByRole('button', {
+      name: 'Reproduce with dependencies'
+    }) as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+    expect(button.getAttribute('aria-disabled')).toBe('false')
+    expect(button.textContent).toBe('')
+    expect(container.querySelector('[data-run-id="failed-r"]')?.textContent).not.toContain(
+      'Reproduce with dependencies'
+    )
+    const current = useSessionStore.getState().sessions[0]
+    await act(async () =>
+      useSessionStore.setState({ sessions: [{ ...current, contentLoaded: false }] })
+    )
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => button.focus())
+    expect(document.activeElement).toBe(button)
+    await act(async () => button.click())
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await act(async () =>
+      useSessionStore.setState({ sessions: [{ ...current, status: 'running' }] })
+    )
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    await act(async () => useSessionStore.setState({ sessions: [{ ...current, status: 'idle' }] }))
+    expect(button.getAttribute('aria-disabled')).toBe('false')
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'reconnecting' }))
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    expect(button.getAttribute('aria-description')).toContain('read-only, busy or recovering')
+  })
+
+  it('previews the selected step frozen inputs instead of current Run or unrelated capture inputs', async () => {
+    const frozenInput = {
+      inputFileVersionId: 'frozen-input-version',
+      sourceKind: 'upload-version' as const,
+      sourceFileId: 'input-file',
+      sourceProjectId: 'proj',
+      sourceSessionId: 'session-1',
+      filename: 'frozen-input.csv',
+      sizeBytes: 12,
+      checksum: 'frozen-checksum',
+      association: 'resolver-accessed' as const,
+      availability: { state: 'available' as const }
+    }
+    const run = makeRun({
+      runId: 'captured-r',
+      kernelKind: 'r',
+      kernelEpochId: 'r-epoch',
+      inputFiles: [
+        {
+          ...frozenInput,
+          inputFileVersionId: 'current-input-version',
+          filename: 'current-input.csv',
+          storageKey: 'current-input'
+        }
+      ],
+      environmentLock: {
+        state: 'available',
+        format: 'environment-lock-bundle',
+        lockChecksum: 'lock'
+      }
+    })
+    const current = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({ sessions: [{ ...current, projectId: 'proj', status: 'idle' }] })
+    await mountWithRuns([run])
+    Object.assign(window.api, {
+      artifacts: {
+        sessionReproducibility: vi.fn().mockResolvedValue(undefined),
+        getVersionExecution: vi.fn().mockResolvedValue({
+          execution: {
+            runs: [{ ...run, inputFileVersionKeys: [frozenInput] }],
+            inputFiles: [
+              frozenInput,
+              { ...frozenInput, inputFileVersionId: 'unrelated', filename: 'unrelated-input.csv' }
+            ],
+            workflow: {
+              state: 'available',
+              captureId: 'a'.repeat(64),
+              stages: [{ runId: run.runId, kernelKind: 'r' }]
+            }
+          }
+        })
+      },
+      projectFiles: {
+        getOverview: vi.fn().mockResolvedValue({ isIndexComplete: true }),
+        readExportFiles: vi.fn().mockResolvedValue([
+          {
+            id: 'result',
+            source: 'artifact',
+            sourceFileId: 'artifact',
+            sourceVersionId: 'version',
+            name: 'result.csv'
+          }
+        ]),
+        repairIndex: vi.fn()
+      }
+    })
+    expect(screen.getByRole('button', { name: 'current-input.csv' })).toBeTruthy()
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Reproduce with dependencies' }))
+    )
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: 'frozen-input.csv' })).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: 'current-input.csv' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'unrelated-input.csv' })).toBeNull()
+  })
+
   it.each([
     {
       name: 'a root after the child in the frame list',

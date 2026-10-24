@@ -1,20 +1,22 @@
 import type {
   ArtifactReproducibilityCheckComparison,
   ArtifactReproducibilityCheckLog,
-  ArtifactReproducibilityReceiptComparison
+  ArtifactReproducibilityReceiptComparison,
+  WorkflowSelection
 } from '@aipoch/reproducibility/contracts'
+import type { GetArtifactVersionProvenanceRequest } from './artifact-provenance'
+import type { OutputComparisonPolicy } from '@aipoch/reproducibility/comparison'
 export type {
   ArtifactReproducibilityCheckComparison,
   ArtifactReproducibilityCheckLogBase,
   ArtifactReproducibilityCheckLog,
   ArtifactReproducibilityReceiptComparison
 } from '@aipoch/reproducibility/contracts'
-import type { GetArtifactVersionProvenanceRequest } from './artifact-provenance'
-import type { OutputComparisonPolicy } from '@aipoch/reproducibility/comparison'
 
 export type ArtifactReproducibilityCheckRequest = GetArtifactVersionProvenanceRequest & {
   frontierId: string
   comparisonPolicy?: OutputComparisonPolicy
+  workflow?: WorkflowSelection
   expectedRecipeId?: string
 }
 
@@ -144,7 +146,7 @@ export type ArtifactReproducibilityReceipt = {
   receiptId: string
   startedAt: string
   completedAt: string
-  outcome: 'matched' | 'different'
+  outcome: 'matched' | 'different' | 'executed'
   artifactVersion: {
     projectId: string
     appSessionId: string
@@ -166,6 +168,11 @@ export type ArtifactReproducibilityReceipt = {
     environmentName?: string
     lockChecksum: string
   }>
+  workflow?: WorkflowSelection & {
+    planId: string
+    verification: 'file-comparison' | 'execution-only'
+    executionOnlyTargetRunIds: string[]
+  }
   completedStepIds: string[]
   comparisons: ArtifactReproducibilityReceiptComparison[]
   checkLog?: ArtifactReproducibilityCheckLogReference
@@ -177,7 +184,7 @@ export type ArtifactReproducibilityCheckState = {
   startedAt: string
   request: ArtifactReproducibilityCheckRequest
   revision: number
-  status: 'running' | 'matched' | 'different' | 'failed' | 'cancelled'
+  status: 'running' | 'matched' | 'different' | 'executed' | 'failed' | 'cancelled'
   phase?:
     | 'loading-evidence'
     | 'materializing-inputs'

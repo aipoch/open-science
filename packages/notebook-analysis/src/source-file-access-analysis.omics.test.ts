@@ -285,3 +285,115 @@ reader = mgf.MGF(resolve_sample())
     ).toMatchObject({ externalState: 'partial' })
   })
 })
+
+describe('attested R DESeq2 source file coverage', () => {
+  const context = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    resolvedKernelNames: ['clean', 'samples', 'dds'],
+    rAttachedPackages: ['DESeq2', 'stats', 'base']
+  }
+  it.each([
+    ['dds <- DESeqDataSetFromMatrix(countData=clean,colData=samples,design=~condition);NULL', []],
+    ['dds <- DESeq(dds,fitType="mean",quiet=TRUE);NULL', []],
+    [
+      'res <- as.data.frame(results(dds,contrast=c("condition","treated","control")));utils::write.csv(res,"result.csv",row.names=TRUE);NULL',
+      ['result.csv']
+    ]
+  ])('uses existing call and formula contracts for %s', async (source, writes) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      reads: [],
+      writes,
+      reasonCodes: []
+    })
+  })
+  it('does not erase unresolved data or formula dependencies when a package is attached', async () => {
+    for (const source of [
+      'dds <- DESeqDataSetFromMatrix(missing_counts,samples,~condition)',
+      'dds <- DESeqDataSetFromMatrix(clean,samples,design_formula)'
+    ]) {
+      expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
+        readState: 'partial'
+      })
+    }
+  })
+})
+
+describe('bounded stats heatmap matrix source contract', () => {
+  const context = {
+    staticStrings: [],
+    staticCollections: [],
+    localFileWrappers: [],
+    resolvedKernelNames: ['clean'],
+    rCopyOnModifyNames: ['clean'],
+    rMatrixNames: ['clean']
+  }
+  const plot = (expression: string): string =>
+    `grDevices::png("heatmap.png");${expression};grDevices::dev.off();NULL`
+  it('covers the original matrix transform and literal heatmap options', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        plot('stats::heatmap(log2(clean+1),scale="row",Colv=NA)'),
+        context
+      )
+    ).toMatchObject({
+      readState: 'complete',
+      writeState: 'complete',
+      externalState: 'complete',
+      writes: ['heatmap.png'],
+      reasonCodes: []
+    })
+  })
+  it('covers a fresh plain numeric matrix without relying on a class name', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        plot('stats::heatmap(matrix(c(1,2,3,4),nrow=2),Rowv=NA,Colv=NA)')
+      )
+    ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+  })
+  it.each([
+    'stats::heatmap(clean,distfun=function(x) x)',
+    'stats::heatmap(clean,hclustfun=cluster)',
+    'stats::heatmap(clean,reorderfun=reorder)',
+    'stats::heatmap(clean,add.expr=system("touch marker"))',
+    'stats::heatmap(clean,Rowv=ordering)',
+    'stats::heatmap(clean,Colv=ordering)',
+    'stats::heatmap(clean,Col=NA)',
+    'stats::heatmap(clean,scale=get_scale())',
+    'stats::heatmap(clean,col="red")',
+    'stats::heatmap(clean,unknown=TRUE)',
+    'stats::heatmap(transform(clean))',
+    'stats::heatmap(structure(clean,class="matrix"))',
+    'stats::heatmap(as.matrix(structure(clean,class="__r_plain_matrix__")))',
+    'stats::heatmap(as.matrix(unproven))',
+    'log2 <- function(x) x;stats::heatmap(log2(clean+1))',
+    '`+` <- function(x,y) x;stats::heatmap(log2(clean+1))',
+    'as.matrix <- function(x) x;stats::heatmap(as.matrix(clean))',
+    'matrix <- function(...) clean;stats::heatmap(matrix(1,nrow=2))'
+  ])(
+    'rejects callbacks, dynamic controls, class spoofing and rebound transforms: %s',
+    async (source) => {
+      expect(await analyzeNotebookSourceFileAccess('r', plot(source), context)).toMatchObject({
+        readState: 'partial'
+      })
+    }
+  )
+  it('requires matrix provenance beyond ordinary-value ownership or a known root', async () => {
+    const ordinary = { ...context, rMatrixNames: [] }
+    expect(
+      await analyzeNotebookSourceFileAccess('r', plot('stats::heatmap(log2(clean+1))'), ordinary)
+    ).toMatchObject({ readState: 'partial' })
+    expect(
+      await analyzeNotebookSourceFileAccess('r', plot('stats::heatmap(clean)'), {
+        ...context,
+        rDispatchUncertain: true
+      })
+    ).toMatchObject({ readState: 'partial' })
+  })
+})

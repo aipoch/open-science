@@ -35,6 +35,8 @@ import {
 import { managedEnvironmentIsReadOnly } from './managed-path-context'
 import { analyzeReplNotebookSource } from './dependency-analysis-repl'
 import { analyzeRFileAccesses, analyzeRNotebookSource } from './dependency-analysis-r'
+import { canReplayRFileCodeInFreshSession } from './r-minimal-environment'
+import { rPackageBindingsSchema } from './r-package-bindings'
 import { projectNotebookFileContext, type FileContextEntry } from './dependency-file-context'
 import { normalizeNotebookSourceFileAccess } from './source-file-access-analysis'
 import {
@@ -282,6 +284,21 @@ const projectionValue = (value: unknown): NotebookDependencyProjection | undefin
     if (!dependencies) return undefined
     dependenciesByRunId[runId] = dependencies
   }
+  let executionDependenciesByRunId: Record<string, string[]> | undefined
+  if (record.executionDependenciesByRunId !== undefined) {
+    if (
+      !record.executionDependenciesByRunId ||
+      typeof record.executionDependenciesByRunId !== 'object' ||
+      Array.isArray(record.executionDependenciesByRunId)
+    )
+      return undefined
+    executionDependenciesByRunId = {}
+    for (const [runId, candidate] of Object.entries(record.executionDependenciesByRunId)) {
+      const dependencies = projectionStringArray(candidate)
+      if (!dependencies) return undefined
+      executionDependenciesByRunId[runId] = dependencies
+    }
+  }
   const fileDependenciesByRunId: NonNullable<
     NotebookDependencyProjection['fileDependenciesByRunId']
   > = {}
@@ -325,6 +342,7 @@ const projectionValue = (value: unknown): NotebookDependencyProjection | undefin
     stalenessByRunId,
     invalidatedByRunId,
     dependenciesByRunId,
+    ...(executionDependenciesByRunId ? { executionDependenciesByRunId } : {}),
     ...(Object.keys(fileDependenciesByRunId).length ? { fileDependenciesByRunId } : {})
   }
 }
@@ -755,14 +773,20 @@ const typeBindingArray = (
       typeof record.target !== 'string' ||
       typeof record.typeName !== 'string' ||
       (requireArgumentNames && record.argumentNames === undefined) ||
-      !argumentNames
+      !argumentNames ||
+      (record.rPlainKind !== undefined &&
+        record.rPlainKind !== 'matrix' &&
+        record.rPlainKind !== 'data-frame')
     ) {
       return undefined
     }
     bindings.push({
       target: record.target,
       typeName: record.typeName,
-      argumentNames
+      argumentNames,
+      ...(record.rPlainKind === 'matrix' || record.rPlainKind === 'data-frame'
+        ? { rPlainKind: record.rPlainKind }
+        : {})
     })
   }
   return bindings
@@ -1245,6 +1269,32 @@ const callbackContainerSummaryArray = (
 const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   if (!value || typeof value !== 'object') return unknownFacts('invalid-parser-result')
   const record = value as Record<string, unknown>
+  const executionReadNames =
+    record.executionReadNames === undefined ? undefined : stringArray(record.executionReadNames)
+  if (record.executionReadNames !== undefined && !executionReadNames)
+    return unknownFacts('invalid-parser-result')
+  const executionExternalState = record.executionExternalState
+  if (
+    executionExternalState !== undefined &&
+    executionExternalState !== 'files-only' &&
+    executionExternalState !== 'unavailable'
+  )
+    return unknownFacts('invalid-parser-result')
+  const executionFileState = record.executionFileState
+  if (
+    executionFileState !== undefined &&
+    executionFileState !== 'isolated' &&
+    executionFileState !== 'method-conflict'
+  )
+    return unknownFacts('invalid-parser-result')
+  const executionReadFacts: Pick<
+    NotebookRunDependencyFacts,
+    'executionReadNames' | 'executionExternalState' | 'executionFileState'
+  > = {
+    ...(executionReadNames ? { executionReadNames } : {}),
+    ...(executionExternalState ? { executionExternalState } : {}),
+    ...(executionFileState ? { executionFileState } : {})
+  }
   const callbackContainers = callbackContainerSummaryArray(
     record.pythonCallbackContainerSummaries === undefined
       ? []
@@ -1308,6 +1358,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     return {
       state: 'unknown',
       ...callbackContainerFacts,
+      ...executionReadFacts,
       reasons,
       ...(stringArray(record.definedNames)
         ? { definedNames: stringArray(record.definedNames) }
@@ -1406,6 +1457,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     ? {
         state: 'available',
         ...callbackContainerFacts,
+        ...executionReadFacts,
         definedNames,
         ...(conditionallyDefinedNames.length ? { conditionallyDefinedNames } : {}),
         usedNames,
@@ -1545,17 +1597,46 @@ const boundedFileContext = (
   }
 }
 
-const checksumFor = (run: NotebookRunRecord): string =>
-  createHash('sha256')
-    .update(
-      JSON.stringify([
-        ANALYZER_VERSION,
-        ANALYZER_REVISION,
+type RunChecksum = (run: NotebookRunRecord, history?: readonly NotebookRunRecord[]) => string
+
+// This context belongs to one public operation. Repository arrays and records may
+// be edited in place between operations, so none of these identity caches survive it.
+const createRunChecksumContext = (): RunChecksum => {
+  const header = JSON.stringify([ANALYZER_VERSION, ANALYZER_REVISION]).slice(0, -1)
+  const payloads = new Map<NotebookRunRecord, string>()
+  const ownChecksums = new Map<NotebookRunRecord, string>()
+  const histories = new Map<
+    readonly NotebookRunRecord[],
+    {
+      firstIndices: Map<string, number>
+      firstScopeIndices: Map<string, number>
+      scopeStarts: Map<number, string>
+      nullPrefix: {
+        hash: ReturnType<typeof createHash>
+        nextIndex: number
+        starts: Map<string, ReturnType<typeof createHash>>
+      }
+      scopes: Map<
+        string,
+        {
+          hash: ReturnType<typeof createHash>
+          nextIndex: number
+          results: Map<NotebookRunRecord, string>
+        }
+      >
+    }
+  >()
+  const payloadFor = (run: NotebookRunRecord): string => {
+    let payload = payloads.get(run)
+    if (payload === undefined) {
+      payload = JSON.stringify([
         run.kernelKind,
         run.environment,
         run.kernelEpochId,
         run.runtimeId,
         run.replPersistentBindings,
+        run.executionCount,
+        run.environmentManifest?.executionContext?.rPackages,
         run.cwdBefore,
         run.cwdAfter,
         run.script,
@@ -1570,9 +1651,148 @@ const checksumFor = (run: NotebookRunRecord): string =>
             registeredGeneration
           ]
         )
-      ])
-    )
-    .digest('hex')
+      ]).slice(1)
+      payloads.set(run, payload)
+    }
+    return payload
+  }
+  const ownChecksumFor = (run: NotebookRunRecord): string => {
+    let checksum = ownChecksums.get(run)
+    if (checksum === undefined) {
+      checksum = createHash('sha256')
+        .update(`${header},null,${payloadFor(run)}`)
+        .digest('hex')
+      ownChecksums.set(run, checksum)
+    }
+    return checksum
+  }
+  return (run, history) => {
+    if (!history || run.kernelKind !== 'r') return ownChecksumFor(run)
+    let indexed = histories.get(history)
+    if (!indexed) {
+      const firstIndices = new Map<string, number>()
+      const firstScopeIndices = new Map<string, number>()
+      const scopeStarts = new Map<number, string>()
+      for (const [index, previous] of history.entries()) {
+        if (!firstIndices.has(previous.runId)) firstIndices.set(previous.runId, index)
+        if (previous.kernelKind === 'r') {
+          const key = JSON.stringify([previous.environment ?? '', previous.kernelEpochId])
+          if (!firstScopeIndices.has(key)) {
+            firstScopeIndices.set(key, index)
+            scopeStarts.set(index, key)
+          }
+        }
+      }
+      indexed = {
+        firstIndices,
+        firstScopeIndices,
+        scopeStarts,
+        nullPrefix: {
+          hash: createHash('sha256').update(`${header},[`),
+          nextIndex: 0,
+          starts: new Map()
+        },
+        scopes: new Map()
+      }
+      histories.set(history, indexed)
+    }
+    const sameScope = (previous: NotebookRunRecord): boolean =>
+      previous.kernelKind === 'r' &&
+      previous.kernelEpochId === run.kernelEpochId &&
+      (previous.environment ?? '') === (run.environment ?? '')
+    const key = JSON.stringify([run.environment ?? '', run.kernelEpochId])
+    let scope = indexed.scopes.get(key)
+    if (!scope) {
+      const startIndex = indexed.firstScopeIndices.get(key) ?? 0
+      const prefix = indexed.nullPrefix
+      let hash = prefix.starts.get(key)
+      if (hash) prefix.starts.delete(key)
+      else if (startIndex === 0) hash = createHash('sha256').update(`${header},[`)
+      else {
+        // Before a scope's first R record, every predecessor has a null own
+        // checksum. Share that metadata-only stream across scopes, retaining
+        // copies only at not-yet-initialized scope starts (including reverse
+        // request order), never at every history row or for future payloads.
+        while (prefix.nextIndex < startIndex) {
+          const startingScope = indexed.scopeStarts.get(prefix.nextIndex)
+          if (startingScope !== undefined && !indexed.scopes.has(startingScope))
+            prefix.starts.set(startingScope, prefix.hash.copy())
+          const previous = history[prefix.nextIndex]!
+          if (prefix.nextIndex > 0) prefix.hash.update(',')
+          prefix.hash.update(
+            JSON.stringify([previous.runId, previous.kernelKind, previous.executionCount, null])
+          )
+          prefix.nextIndex++
+        }
+        hash = prefix.hash.copy()
+      }
+      scope = { hash, nextIndex: startIndex, results: new Map() }
+      indexed.scopes.set(key, scope)
+    }
+    const cached = scope.results.get(run)
+    if (cached !== undefined) return cached
+    // findIndex historically selected the first matching ID, even for duplicate
+    // records; a missing ID used an empty array, never the null own-hash prefix.
+    const targetIndex = indexed.firstIndices.get(run.runId) ?? 0
+    const finish = (hash: ReturnType<typeof createHash>, target: NotebookRunRecord): string =>
+      hash
+        .copy()
+        .update(`],${payloadFor(target)}`)
+        .digest('hex')
+    const remember = (index: number): void => {
+      const target = history[index]
+      if (
+        target &&
+        indexed.firstIndices.get(target.runId) === index &&
+        sameScope(target) &&
+        !scope!.results.has(target)
+      )
+        scope!.results.set(target, finish(scope!.hash, target))
+    }
+    // Each scope advances only across its requested span. Interleaved scopes
+    // can still require overlapping spans; closed sequential scopes share their
+    // null prefixes. Keep one live hash per scope and memoize digest strings.
+    while (scope.nextIndex < targetIndex) {
+      remember(scope.nextIndex)
+      const previous = history[scope.nextIndex]!
+      if (scope.nextIndex > 0) scope.hash.update(',')
+      scope.hash.update(
+        JSON.stringify([
+          previous.runId,
+          previous.kernelKind,
+          previous.executionCount,
+          sameScope(previous) ? ownChecksumFor(previous) : null
+        ])
+      )
+      scope.nextIndex++
+    }
+    if (scope.nextIndex === targetIndex) {
+      remember(targetIndex)
+      const checksum = scope.results.get(run) ?? finish(scope.hash, run)
+      scope.results.set(run, checksum)
+      return checksum
+    }
+    // Duplicate-ID or non-history records may need a prefix already passed by
+    // this scope. Rebuild that exceptional prefix without retaining Hash copies
+    // or reading future duplicate records before they are actually requested.
+    const hash = createHash('sha256').update(`${header},[`)
+    for (let index = 0; index < targetIndex; index++) {
+      const previous = history[index]!
+      if (index > 0) hash.update(',')
+      hash.update(
+        JSON.stringify([
+          previous.runId,
+          previous.kernelKind,
+          previous.executionCount,
+          sameScope(previous) ? ownChecksumFor(previous) : null
+        ])
+      )
+    }
+    const checksum = finish(hash, run)
+    scope.results.set(run, checksum)
+    return checksum
+  }
+}
 
 const emptySidecar = (): NotebookDependencyAnalysisSidecar => ({
   version: 1,
@@ -1609,7 +1829,8 @@ const sourceFileAccessContextNeedsRefresh = (
   request: Pick<
     NotebookSourceFileAccessContextRequest,
     'currentRunId' | 'language' | 'environment' | 'kernelEpochId'
-  >
+  >,
+  checksumFor: RunChecksum
 ): boolean => {
   for (const run of runs) {
     if (run.runId === request.currentRunId) break
@@ -1625,7 +1846,7 @@ const sourceFileAccessContextNeedsRefresh = (
       continue
     if (run.status !== 'completed' && run.kernelDispatched === false) continue
     if (
-      !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run)) ||
+      !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run, runs)) ||
       sidecar.runs[run.runId]?.facts.serializedValueReads?.length
     )
       return true
@@ -1653,18 +1874,81 @@ const projectSourceFileAccessContext = (
   request: Pick<
     NotebookSourceFileAccessContextRequest,
     'currentRunId' | 'language' | 'environment' | 'kernelEpochId'
-  >
+  >,
+  checksumFor: RunChecksum
 ): NotebookSourceFileAccessContext | undefined => {
   const entries: Array<FileContextEntry | undefined> = []
   let previousRun: NotebookRunRecord | undefined
+  let rPackageHistoryKnown = request.language === 'r' && Boolean(request.kernelEpochId)
+  let rSequenceUncertain = false
+  let rAttachedPackages: string[] | undefined
+  let previousExecutionCount: number | undefined
   for (const run of runs) {
+    // Execution counts are allocated session-wide, so include intervening
+    // Python/REPL runs rather than requiring consecutive R-only counts.
+    if (
+      Number.isSafeInteger(run.executionCount) &&
+      previousExecutionCount !== undefined &&
+      run.executionCount !== previousExecutionCount + 1
+    ) {
+      rPackageHistoryKnown = false
+      if (request.language === 'r') rSequenceUncertain = true
+    }
+    previousExecutionCount = Number.isSafeInteger(run.executionCount)
+      ? run.executionCount
+      : undefined
     if (run.runId === request.currentRunId) break
     if (!isSourceFileAccessContextRun(run, request)) continue
     if (run.status !== 'completed' && run.kernelDispatched === false) continue
     const cached = sidecar.runs[run.runId]
-    const fileContext = cachedAnalysisIsReusable(cached, checksumFor(run))
+    const fileContext = cachedAnalysisIsReusable(cached, checksumFor(run, runs))
       ? cached?.fileContext
       : undefined
+    if (request.language === 'r') {
+      const parsed = rPackageBindingsSchema.safeParse(
+        run.environmentManifest?.executionContext?.rPackages
+      )
+      const bindings = parsed.success ? parsed.data : undefined
+      const facts = cached?.facts
+      const file = cached?.fileAccess
+      // Missing or opaque history cannot be repaired by a later attachment.
+      // In particular, package metadata observes search order, not arbitrary
+      // namespace/method mutations or functions hidden by a lost run.
+      const fileCovered =
+        file?.readState === 'complete' &&
+        file.writeState === 'complete' &&
+        file.externalState === 'complete' &&
+        file.reasonCodes.length === 0
+      const sourceKnown =
+        facts &&
+        fileCovered &&
+        (facts.state === 'available' ||
+          (facts.reasons.every((reason) => reason === 'external-state') &&
+            facts.executionExternalState === 'files-only')) &&
+        !facts.typeSummaries?.some(
+          (summary) => summary.kind === 'r-function' || summary.complete === false
+        ) &&
+        !facts.usedNames?.some((name) =>
+          [
+            'setClass',
+            'setMethod',
+            'setGeneric',
+            'setReplaceMethod',
+            'removeMethod',
+            'removeGeneric'
+          ].some((setter) => name === setter || name === `methods::${setter}`)
+        )
+      if (
+        !fileContext ||
+        run.status !== 'completed' ||
+        !bindings?.complete ||
+        !sourceKnown ||
+        (!previousRun && bindings.cleanSession !== true) ||
+        (previousRun && JSON.stringify(bindings.before) !== JSON.stringify(rAttachedPackages))
+      )
+        rPackageHistoryKnown = false
+      rAttachedPackages = bindings?.after
+    }
     entries.push(
       fileContext && cached
         ? {
@@ -1707,12 +1991,21 @@ const projectSourceFileAccessContext = (
         sqliteCwdBoundaryUnknown(previousRun?.cwdAfter, current.cwdBefore) ||
         (current !== undefined && pythonSourceMayChangeWorkingDirectory(current.script)))
   })
+  const rPackageContext = {
+    ...(rPackageHistoryKnown && rAttachedPackages ? { rAttachedPackages } : {}),
+    ...(rSequenceUncertain || (request.language === 'r' && previousRun && !rPackageHistoryKnown)
+      ? { rDispatchUncertain: true as const, rMatrixNames: [], rDataFrameNames: [] }
+      : {})
+  }
   return current?.cwdBefore
     ? {
         ...(context ?? { staticStrings: [], staticCollections: [], localFileWrappers: [] }),
+        ...rPackageContext,
         workingDirectory: current.cwdBefore
       }
     : context
+      ? { ...context, ...rPackageContext }
+      : undefined
 }
 
 const externalInterpreterKey = (run: NotebookRunRecord): string =>
@@ -1897,7 +2190,8 @@ class NotebookDependencyAnalyzer {
     const projection: NotebookDependencyProjection = {
       stalenessByRunId: {},
       invalidatedByRunId: {},
-      dependenciesByRunId: {}
+      dependenciesByRunId: {},
+      executionDependenciesByRunId: {}
     }
     const closedGroups = new Set<string>()
     let sidecarChanged = false
@@ -1911,6 +2205,7 @@ class NotebookDependencyAnalyzer {
           ? { checksums, projection: persisted.projection }
           : undefined)
       const exactMatch =
+        cached?.projection.executionDependenciesByRunId !== undefined &&
         cached?.checksums.length === checksums.length &&
         cached.checksums.every((checksum, index) => checksum === checksums[index])
       const reusablePrefix =
@@ -1932,7 +2227,10 @@ class NotebookDependencyAnalyzer {
         (runtimeKey !== undefined && latestGroupByRuntime.get(runtimeKey) !== groupKey)
       if (closed) {
         closedGroups.add(groupKey)
-        if (persisted?.checksum !== groupChecksum) {
+        if (
+          persisted?.checksum !== groupChecksum ||
+          persisted.projection.executionDependenciesByRunId === undefined
+        ) {
           sidecar.projectionSnapshots[groupKey] = {
             checksum: groupChecksum,
             projection: groupProjection
@@ -1948,6 +2246,14 @@ class NotebookDependencyAnalyzer {
       Object.assign(projection.stalenessByRunId, groupProjection.stalenessByRunId)
       Object.assign(projection.invalidatedByRunId, groupProjection.invalidatedByRunId)
       Object.assign(projection.dependenciesByRunId!, groupProjection.dependenciesByRunId)
+      Object.assign(
+        projection.executionDependenciesByRunId!,
+        Object.fromEntries(
+          Object.entries(groupProjection.executionDependenciesByRunId ?? {}).map(
+            ([runId, dependencies]) => [runId, [...dependencies]]
+          )
+        )
+      )
     }
     const { fileDependenciesByRunId, unresolvedFileReadRunIds } =
       projectNotebookFileDependencies(analyzedRuns)
@@ -1982,14 +2288,15 @@ class NotebookDependencyAnalyzer {
       this.readSidecar(this.sidecarPath(request.projectId, request.sessionId))
     ])
     const sidecar = initialSidecar
-    if (sourceFileAccessContextNeedsRefresh(runs, sidecar, request)) {
+    const checksumFor = createRunChecksumContext()
+    if (sourceFileAccessContextNeedsRefresh(runs, sidecar, request, checksumFor)) {
       await this.projectExclusive(
         { projectId: request.projectId, sessionId: request.sessionId },
         request.currentRunId,
-        { runs, sidecar }
+        { runs, sidecar, checksumFor }
       )
     }
-    let context = projectSourceFileAccessContext(runs, sidecar, request)
+    let context = projectSourceFileAccessContext(runs, sidecar, request, checksumFor)
     if (request.includeManagedEnvironment && request.language !== 'r') {
       const currentIndex = runs.findIndex((run) => run.runId === request.currentRunId)
       const preceding = (currentIndex < 0 ? runs : runs.slice(0, currentIndex)).filter(
@@ -2020,7 +2327,7 @@ class NotebookDependencyAnalyzer {
           this.options.readFileGenerations ?? (async () => []),
           runs,
           (run) =>
-            cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run))
+            cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run, runs))
               ? sidecar.runs[run.runId]?.facts
               : undefined,
           request.currentRunId,
@@ -2036,12 +2343,14 @@ class NotebookDependencyAnalyzer {
     prepared?: {
       runs: readonly NotebookRunRecord[]
       sidecar: NotebookDependencyAnalysisSidecar
+      checksumFor: RunChecksum
     },
     explicitlyClosedEpochIds: ReadonlySet<string> = new Set()
   ): Promise<NotebookDependencyProjection> {
     const runs =
       prepared?.runs ??
       (await this.options.repository.readSessionRuns(request.projectId, request.sessionId))
+    const checksumFor = prepared?.checksumFor ?? createRunChecksumContext()
     const boundaryRunId = analyzeBeforeRunId ?? request.throughRunId
     const boundaryIndex = boundaryRunId ? runs.findIndex((run) => run.runId === boundaryRunId) : -1
     const runsToAnalyze =
@@ -2049,6 +2358,20 @@ class NotebookDependencyAnalyzer {
     const sidecarPath = this.sidecarPath(request.projectId, request.sessionId)
     const sidecar = prepared?.sidecar ?? (await this.readSidecar(sidecarPath))
     let changed = false
+    // R source contracts consume prior attachment/shadow proof. A changed
+    // predecessor must invalidate its later cached conclusions in this epoch,
+    // even when those later cells have unchanged source and own metadata.
+    const dirtyRContexts = new Set<string>()
+    for (const run of runsToAnalyze) {
+      if (run.kernelKind !== 'r') continue
+      const key = JSON.stringify([run.environment ?? '', run.kernelEpochId])
+      if (!cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run, runs)))
+        dirtyRContexts.add(key)
+      if (dirtyRContexts.has(key) && sidecar.runs[run.runId]) {
+        delete sidecar.runs[run.runId]
+        changed = true
+      }
+    }
     const attemptedRunIds = new Set<string>()
 
     const exactRun = request.completedRun
@@ -2073,7 +2396,13 @@ class NotebookDependencyAnalyzer {
         if (run.runId === exactRun.runId) break
       }
       changed =
-        (await this.analyzeGroup(sidecar, exactGroup, request.interpreter, analysisRuns)) || changed
+        (await this.analyzeGroup(
+          sidecar,
+          exactGroup,
+          checksumFor,
+          request.interpreter,
+          analysisRuns
+        )) || changed
       for (const run of exactGroup) attemptedRunIds.add(run.runId)
     }
 
@@ -2088,7 +2417,7 @@ class NotebookDependencyAnalyzer {
     for (const run of runsToAnalyze) {
       if (run.kernelKind !== 'python' && run.kernelKind !== 'r' && run.kernelKind !== 'repl')
         continue
-      const checksum = checksumFor(run)
+      const checksum = checksumFor(run, runs)
       if (
         attemptedRunIds.has(run.runId) ||
         (cachedAnalysisIsReusable(sidecar.runs[run.runId], checksum) &&
@@ -2130,8 +2459,10 @@ class NotebookDependencyAnalyzer {
       missingByInterpreter.set(key, group)
     }
     for (const { interpreter, runs: groupRuns } of missingByInterpreter.values()) {
-      changed = (await this.analyzeGroup(sidecar, groupRuns, interpreter, runs)) || changed
+      changed =
+        (await this.analyzeGroup(sidecar, groupRuns, checksumFor, interpreter, runs)) || changed
     }
+    changed = (await this.refreshExecutionFileStates(sidecar, runsToAnalyze)) || changed
     const incremental = this.projectIncrementally(
       request.projectId,
       request.sessionId,
@@ -2154,15 +2485,90 @@ class NotebookDependencyAnalyzer {
     return incremental.projection
   }
 
+  private async refreshExecutionFileStates(
+    sidecar: NotebookDependencyAnalysisSidecar,
+    runs: readonly NotebookRunRecord[]
+  ): Promise<boolean> {
+    const histories = new Map<string, { names: Set<string>; known: boolean }>()
+    let changed = false
+    // Recompute this small derived proof in current history order, including
+    // cached runs. A newly inserted method definition must invalidate a sealed
+    // projection rather than reuse an earlier isolated-source conclusion.
+    for (const run of runs) {
+      if (run.kernelKind !== 'r') continue
+      const cached = sidecar.runs[run.runId]
+      const key = projectionGroupKey({
+        run,
+        facts: cached?.facts ?? unknownFacts('analysis-unavailable')
+      })
+      const history = histories.get(key) ?? { names: new Set<string>(), known: true }
+      const facts = cached?.facts
+      const file = cached?.fileAccess
+      const fileCovered =
+        file?.readState === 'complete' &&
+        file.writeState === 'complete' &&
+        file.externalState === 'complete' &&
+        file.reasonCodes.length === 0
+      let executionFileState: NotebookRunDependencyFacts['executionFileState']
+      if (
+        facts?.executionExternalState === 'files-only' &&
+        facts.executionReadNames !== undefined &&
+        fileCovered &&
+        file.reads.length > 0 &&
+        run.status === 'completed' &&
+        run.kernelEpochId
+      ) {
+        const bindings = rPackageBindingsSchema.safeParse(
+          run.environmentManifest?.executionContext?.rPackages
+        )
+        const state = await canReplayRFileCodeInFreshSession(
+          run.script,
+          bindings.success ? bindings.data : undefined,
+          [...history.names]
+        )
+        if (state === 'method-conflict' || (state === 'isolated' && history.known))
+          executionFileState = state
+      }
+      if (cached && facts?.executionFileState !== executionFileState) {
+        cached.facts = { ...cached.facts }
+        delete cached.facts.executionFileState
+        if (executionFileState) cached.facts.executionFileState = executionFileState
+        changed = true
+      }
+      if (
+        !facts ||
+        run.status !== 'completed' ||
+        (facts.state === 'unknown' &&
+          !(
+            facts.reasons.every((reason) => reason === 'external-state') &&
+            facts.executionExternalState === 'files-only' &&
+            fileCovered
+          ))
+      )
+        history.known = false
+      for (const name of [
+        ...(facts?.definedNames ?? []),
+        ...(facts?.conditionallyDefinedNames ?? []),
+        ...(facts?.mutatedNames ?? []),
+        ...(facts?.possiblyMutatedNames ?? []),
+        ...(facts?.memberWrites ?? []).map(({ receiver }) => receiver)
+      ])
+        history.names.add(name)
+      histories.set(key, history)
+    }
+    return changed
+  }
+
   private async analyzeGroup(
     sidecar: NotebookDependencyAnalysisSidecar,
     runs: readonly NotebookRunRecord[],
+    checksumFor: RunChecksum,
     interpreter?: NotebookDependencyInterpreter,
     sessionRuns: readonly NotebookRunRecord[] = runs
   ): Promise<boolean> {
     const pending = runs.filter(
       (run) =>
-        !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run)) ||
+        !cachedAnalysisIsReusable(sidecar.runs[run.runId], checksumFor(run, sessionRuns)) ||
         Boolean(sidecar.runs[run.runId]?.facts.serializedValueReads?.length) ||
         ((run.kernelKind === 'python' || run.kernelKind === 'r') &&
           sidecar.runs[run.runId]?.fileAccess === undefined)
@@ -2180,19 +2586,27 @@ class NotebookDependencyAnalyzer {
         : undefined
     for (const [index, run] of pending.entries()) {
       let priorContext = run.kernelEpochId
-        ? projectSourceFileAccessContext(sessionRuns, sidecar, {
-            currentRunId: run.runId,
-            language,
-            environment: run.environment,
-            kernelEpochId: run.kernelEpochId
-          })
+        ? projectSourceFileAccessContext(
+            sessionRuns,
+            sidecar,
+            {
+              currentRunId: run.runId,
+              language,
+              environment: run.environment,
+              kernelEpochId: run.kernelEpochId
+            },
+            checksumFor
+          )
         : undefined
       if (language === 'r' || language === 'python')
         priorContext = await serializedFileContext(
           this.options.readFileGenerations ?? (async () => []),
           sessionRuns,
           (previous) =>
-            cachedAnalysisIsReusable(sidecar.runs[previous.runId], checksumFor(previous))
+            cachedAnalysisIsReusable(
+              sidecar.runs[previous.runId],
+              checksumFor(previous, sessionRuns)
+            )
               ? sidecar.runs[previous.runId]?.facts
               : undefined,
           run.runId,
@@ -2235,7 +2649,7 @@ class NotebookDependencyAnalyzer {
                 // Retry only bindings whose analyzed source remained available and unmodified.
                 const retained = cached?.fileContext?.pythonHelperModules ?? []
                 return !(
-                  cachedAnalysisIsReusable(cached, checksumFor(previous)) &&
+                  cachedAnalysisIsReusable(cached, checksumFor(previous, sessionRuns)) &&
                   cached?.facts.state === 'available' &&
                   retained.some(
                     (candidate) => helperContextKey(candidate) === helperContextKey(module)
@@ -2353,7 +2767,7 @@ class NotebookDependencyAnalyzer {
         if (persistedHelperModules.length) fileContext.pythonHelperModules = persistedHelperModules
       }
       sidecar.runs[run.runId] = {
-        checksum: checksumFor(run),
+        checksum: checksumFor(run, sessionRuns),
         facts: persistedFacts,
         ...(fileAccess ? { fileAccess } : {}),
         ...(fileContext ? { fileContext: boundedFileContext(fileContext, persistedFacts) } : {})
@@ -2415,6 +2829,23 @@ class NotebookDependencyAnalyzer {
           record.fileAccess === undefined ? undefined : sourceFileAccessValue(record.fileAccess)
         if (record.fileAccess !== undefined && !fileAccess) return emptySidecar()
         const factsRecord = rawFacts as Record<string, unknown>
+        if (
+          factsRecord.executionReadNames !== undefined &&
+          stringArray(factsRecord.executionReadNames) === undefined
+        )
+          return emptySidecar()
+        if (
+          factsRecord.executionExternalState !== undefined &&
+          factsRecord.executionExternalState !== 'files-only' &&
+          factsRecord.executionExternalState !== 'unavailable'
+        )
+          return emptySidecar()
+        if (
+          factsRecord.executionFileState !== undefined &&
+          factsRecord.executionFileState !== 'isolated' &&
+          factsRecord.executionFileState !== 'method-conflict'
+        )
+          return emptySidecar()
         const validFacts =
           factsRecord.state === 'available'
             ? stringArray(factsRecord.definedNames) !== undefined &&

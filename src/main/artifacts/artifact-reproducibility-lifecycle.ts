@@ -1,9 +1,13 @@
+import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import { randomUUID } from 'node:crypto'
+import { artifactAnalysisRevisionSupportsWorkflowReplay } from './provenance-analysis-revision'
 import { SessionReproducibilityBatches } from './session-reproducibility'
 import { SessionReproducibilityStore } from './session-reproducibility-store'
-import { validateReproductionContext, validateReproductionDiskSpace } from '@aipoch/reproducibility'
-import { reproductionRecipes, reproductionEvidence } from './reproducibility-host'
-
+import {
+  reproductionRecipes,
+  reproductionEvidence,
+  reproductionWorkflowSlices
+} from './reproducibility-host'
 import type {
   SessionReproducibilityCommand,
   SessionReproducibilityBatch
@@ -25,11 +29,16 @@ import type {
   GetArtifactReproducibilityCheckRequest,
   ListArtifactReproducibilityReceiptsRequest
 } from '../../shared/artifact-reproducibility'
+
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
 import { isChildUnconfirmedError } from '@aipoch/environment'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
-import { executeArtifactReproducibility } from '../notebook/reproduction-runtime'
+import { createLogger, errorLogFields, startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import {
+  executeArtifactReproducibility,
+  executeWorkflowReproducibility
+} from '../notebook/reproduction-runtime'
+import type { WorkflowExecutionResult, WorkflowPlan } from '@aipoch/reproducibility'
+import { validateReproductionContext, validateReproductionDiskSpace } from '@aipoch/reproducibility'
 import {
   ReproducibilityCleanupError,
   type ArtifactReproducibilityExecutionEvent,
@@ -69,6 +78,7 @@ type ArtifactReproducibilityAttemptOwnerDependencies = {
   withStorageLease?: <Result>(operation: () => Promise<Result>) => Promise<Result>
   retainOutput?: (request: ArtifactReproducibilityCheckRequest, bytes: Buffer) => Promise<boolean>
   pruneOutputs?: (request: ArtifactReproducibilityCheckRequest) => Promise<void>
+  executeWorkflow?: typeof executeWorkflowReproducibility
   execute?: typeof executeArtifactReproducibility
   createId?: () => string
   now?: () => Date
@@ -85,6 +95,46 @@ type Attempt = {
   publish: (state: ArtifactReproducibilityCheckState) => void
 }
 
+type ExecutionResult = ArtifactReproducibilityExecutionResult | WorkflowExecutionResult
+
+const workflowPlan = (
+  execution: PersistedArtifactExecutionSnapshot,
+  request: ArtifactReproducibilityCheckRequest
+): WorkflowPlan => {
+  if (!request.workflow || execution.workflowCapture?.state !== 'available')
+    throw new Error('Workflow capture is unavailable.')
+  if (
+    !artifactAnalysisRevisionSupportsWorkflowReplay(
+      execution.analysisRevision,
+      execution.provenanceGraph
+    )
+  )
+    throw new Error(
+      'Workflow execution dependency proof is unsupported. Capture the workflow again.'
+    )
+  if (request.frontierId !== 'workflow-selection')
+    throw new Error('Invalid workflow starting point.')
+  const capture = execution.workflowCapture.capture
+  const anchor = capture.graph.entities.find(
+    (entity) => entity.entityId === capture.graph.targetEntityId
+  )
+  if (
+    anchor?.kind !== 'artifact-version' ||
+    anchor.versionId !== request.versionId ||
+    anchor.checksum !== execution.reproducibilityRecipe?.targetChecksum ||
+    capture.runs.at(-1)?.runId !== execution.producerRunId ||
+    capture.runs.at(-1)?.runIndex !== execution.producerRunIndex
+  )
+    throw new Error('Workflow source Artifact identity changed.')
+  const plan = reproductionWorkflowSlices.planWorkflowSlice(
+    execution.workflowCapture.capture,
+    request.workflow
+  )
+  if (plan.status !== 'ready')
+    throw new Error('Workflow slice is blocked: ' + plan.reasonCodes.join(', '))
+  return plan
+}
+
 const requestKey = (request: GetArtifactReproducibilityCheckRequest): string =>
   [request.projectId, request.appSessionId, request.artifactId, request.versionId].join('\0')
 
@@ -96,7 +146,7 @@ const snapshot = (state: ArtifactReproducibilityCheckState): ArtifactReproducibi
   ...(state.receipt
     ? {
         receipt: {
-          ...state.receipt,
+          ...structuredClone(state.receipt),
           artifactVersion: { ...state.receipt.artifactVersion },
           frontier: { ...state.receipt.frontier },
           recipe: { ...state.receipt.recipe },
@@ -185,6 +235,25 @@ class ArtifactReproducibilityAttemptOwner {
           environmentCount: number
         }> => {
           const execution = await dependencies.loadExecution(request)
+          if (request.workflow) {
+            const plan = workflowPlan(execution, request)
+            await reproductionWorkflowSlices.prepareWorkflowSlice(
+              execution.workflowCapture!.state === 'available'
+                ? execution.workflowCapture!.capture
+                : (() => {
+                    throw new Error('Workflow capture is unavailable.')
+                  })(),
+              plan,
+              reproductionEvidence(dependencies.storageRoot),
+              signal
+            )
+            return {
+              recipeId: plan.planId,
+              steps: plan.steps.length,
+              inputBytes: plan.crossingFiles.reduce((sum, f) => sum + f.sizeBytes, 0),
+              environmentCount: plan.environmentRequirements.length
+            }
+          }
           const recipe = execution.reproducibilityRecipe
           if (
             !recipe ||
@@ -292,6 +361,8 @@ class ArtifactReproducibilityAttemptOwner {
       if (
         active.ownerId !== ownerId ||
         active.state.request.frontierId !== request.frontierId ||
+        JSON.stringify(active.state.request.workflow) !== JSON.stringify(request.workflow) ||
+        active.state.request.expectedRecipeId !== request.expectedRecipeId ||
         JSON.stringify(active.state.request.comparisonPolicy) !==
           JSON.stringify(request.comparisonPolicy)
       ) {
@@ -310,7 +381,7 @@ class ArtifactReproducibilityAttemptOwner {
       state: {
         attemptId,
         startedAt,
-        request: { ...request },
+        request: structuredClone(request),
         revision: 0,
         status: 'running',
         phase: 'loading-evidence',
@@ -574,11 +645,16 @@ class ArtifactReproducibilityAttemptOwner {
 
   private finish(
     attempt: Attempt,
-    result: ArtifactReproducibilityExecutionResult,
+    result: ExecutionResult,
     receipt: ArtifactReproducibilityReceipt
   ): void {
     this.update(attempt, {
-      status: result.matched ? 'matched' : 'different',
+      status:
+        'verification' in result && result.verification === 'execution-only'
+          ? 'executed'
+          : result.matched
+            ? 'matched'
+            : 'different',
       phase: undefined,
       activeEnvironment: undefined,
       completedSteps: result.completedStepIds.length,
@@ -594,35 +670,78 @@ class ArtifactReproducibilityAttemptOwner {
   private receiptDraft(
     attempt: Attempt,
     execution: PersistedArtifactExecutionSnapshot,
-    result: ArtifactReproducibilityExecutionResult
+    result: ExecutionResult
   ): ArtifactReproducibilityReceiptDraft {
+    const selectedPlan = attempt.state.request.workflow
+      ? workflowPlan(execution, attempt.state.request)
+      : undefined
     const recipe = execution.reproducibilityRecipe
     const frontier = recipe?.frontiers.find(
       (candidate) => candidate.frontierId === attempt.state.request.frontierId
     )
-    if (!recipe || !frontier) {
+    if (!recipe || (!frontier && !selectedPlan)) {
       throw new Error('Artifact reproduction receipt identity is unavailable.')
     }
-    const stepIds = new Set(frontier.stepIds)
+    const stepIds = new Set(selectedPlan?.selectedStepIds ?? frontier!.stepIds)
     const requirementIds = new Set(
-      recipe.steps.flatMap((step) =>
+      (selectedPlan?.steps ?? recipe.steps).flatMap((step) =>
         stepIds.has(step.stepId) && step.kind === 'notebook-run' && step.environmentRequirementId
           ? [step.environmentRequirementId]
           : []
       )
     )
-    const environmentRequirements = recipe.environmentRequirements.filter((requirement) =>
-      requirementIds.has(requirement.requirementId)
-    )
+    const environmentRequirements = (
+      selectedPlan?.environmentRequirements ?? recipe.environmentRequirements
+    ).filter((requirement) => requirementIds.has(requirement.requirementId))
     if (environmentRequirements.length !== requirementIds.size) {
       throw new Error('Artifact reproduction receipt environment identity is unavailable.')
     }
+    const environmentLocks: ArtifactReproducibilityReceipt['environmentLocks'] =
+      result.environmentLocks ??
+      environmentRequirements.map((requirement) => ({
+        requirementId: requirement.requirementId,
+        kernelKind: requirement.kernelKind,
+        ...(requirement.environmentName ? { environmentName: requirement.environmentName } : {}),
+        lockChecksum: requirement.lockChecksum
+      }))
+    if (
+      environmentLocks.length !== environmentRequirements.length ||
+      new Set(environmentLocks.map((lock) => lock.requirementId)).size !==
+        environmentLocks.length ||
+      environmentRequirements.some((requirement) => {
+        const restored = environmentLocks.find(
+          (lock) => lock.requirementId === requirement.requirementId
+        )
+        return (
+          !restored ||
+          restored.kernelKind !== requirement.kernelKind ||
+          restored.environmentName !== requirement.environmentName ||
+          restored.lockChecksum !== requirement.lockChecksum
+        )
+      })
+    )
+      throw new Error('Artifact reproduction receipt restored Environment identity changed.')
     return {
       schemaVersion: 2,
       receiptId: attempt.state.attemptId,
       startedAt: attempt.startedAt,
       completedAt: (this.dependencies.now ?? (() => new Date()))().toISOString(),
-      outcome: result.matched ? 'matched' : 'different',
+      outcome:
+        'verification' in result && result.verification === 'execution-only'
+          ? 'executed'
+          : result.matched
+            ? 'matched'
+            : 'different',
+      ...(selectedPlan
+        ? {
+            workflow: {
+              ...selectedPlan.selection,
+              planId: selectedPlan.planId,
+              verification: selectedPlan.verification,
+              executionOnlyTargetRunIds: selectedPlan.executionOnlyTargetRunIds
+            }
+          }
+        : {}),
       artifactVersion: {
         projectId: attempt.state.request.projectId,
         appSessionId: attempt.state.request.appSessionId,
@@ -631,19 +750,19 @@ class ArtifactReproducibilityAttemptOwner {
         targetChecksum: recipe.targetChecksum
       },
       frontier: {
-        frontierId: frontier.frontierId,
-        claimScope: frontier.claimScope
+        frontierId: selectedPlan ? 'workflow-selection' : frontier!.frontierId,
+        claimScope: selectedPlan ? 'downstream-only' : frontier!.claimScope
       },
       recipe: {
-        recipeId: recipe.recipeId,
-        graphChecksum: recipe.graphChecksum
+        recipeId: selectedPlan?.planId ?? recipe.recipeId,
+        graphChecksum:
+          selectedPlan && execution.workflowCapture?.state === 'available'
+            ? sha256(
+                canonicalJson(execution.workflowCapture.capture.graph as unknown as CanonicalJson)
+              )
+            : recipe.graphChecksum
       },
-      environmentLocks: environmentRequirements.map((requirement) => ({
-        requirementId: requirement.requirementId,
-        kernelKind: requirement.kernelKind,
-        ...(requirement.environmentName ? { environmentName: requirement.environmentName } : {}),
-        lockChecksum: requirement.lockChecksum
-      })),
+      environmentLocks: environmentLocks.map((lock) => ({ ...lock })),
       completedStepIds: [...result.completedStepIds],
       comparisons: result.comparisons.map((comparison) => ({ ...comparison }))
     }
@@ -658,48 +777,85 @@ class ArtifactReproducibilityAttemptOwner {
     diagnostic.phase('loading-evidence')
     try {
       const operation = async (): Promise<{
-        result: ArtifactReproducibilityExecutionResult
+        result: ExecutionResult
         receipt: ArtifactReproducibilityReceipt
       }> => {
         const execution = await this.dependencies.loadExecution(attempt.state.request)
+        const selectedPlan = attempt.state.request.workflow
+          ? workflowPlan(execution, attempt.state.request)
+          : undefined
         if (
           attempt.state.request.expectedRecipeId &&
-          execution.reproducibilityRecipe?.recipeId !== attempt.state.request.expectedRecipeId
+          (selectedPlan?.planId ?? execution.reproducibilityRecipe?.recipeId) !==
+            attempt.state.request.expectedRecipeId
         )
           throw new Error('Execution evidence changed after preflight. Prepare the check again.')
         const frontier = execution.reproducibilityRecipe?.frontiers.find(
           (candidate) => candidate.frontierId === attempt.state.request.frontierId
         )
-        this.update(attempt, { totalSteps: frontier?.stepIds.length ?? 0 })
+        this.update(attempt, {
+          totalSteps: selectedPlan?.steps.length ?? frontier?.stepIds.length ?? 0
+        })
         if (attempt.controller.signal.aborted) {
           throw attempt.controller.signal.reason ?? new Error('Reproduction cancelled.')
         }
-        const result = await (this.dependencies.execute ?? executeArtifactReproducibility)({
-          execution,
-          frontierId: attempt.state.request.frontierId,
+        const common = {
           storageRoot: this.dependencies.storageRoot,
           processSandbox: this.dependencies.processSandbox,
           signal: attempt.controller.signal,
           comparisonPolicy: attempt.state.request.comparisonPolicy,
           retainOutput: this.dependencies.retainOutput
-            ? (bytes) => this.dependencies.retainOutput!(attempt.state.request, bytes)
+            ? (bytes: Buffer) => this.dependencies.retainOutput!(attempt.state.request, bytes)
             : undefined,
-          onEvent: (event) => {
+          onEvent: (event: ArtifactReproducibilityExecutionEvent) => {
             this.onExecutionEvent(attempt, event)
-            if (attempt.state.phase && attempt.state.phase !== loggedPhase) {
-              loggedPhase = attempt.state.phase
-              diagnostic.phase(loggedPhase, {
-                completedSteps: attempt.state.completedSteps,
-                totalSteps: attempt.state.totalSteps,
-                completedEnvironments: attempt.state.completedEnvironments,
-                totalEnvironments: attempt.state.totalEnvironments
-              })
-            }
           }
-        })
+        }
+        const result: ExecutionResult =
+          selectedPlan && execution.workflowCapture?.state === 'available'
+            ? await (this.dependencies.executeWorkflow ?? executeWorkflowReproducibility)({
+                ...common,
+                capture: execution.workflowCapture.capture,
+                plan: selectedPlan
+              })
+            : await (this.dependencies.execute ?? executeArtifactReproducibility)({
+                execution,
+                frontierId: attempt.state.request.frontierId,
+                storageRoot: this.dependencies.storageRoot,
+                processSandbox: this.dependencies.processSandbox,
+                signal: attempt.controller.signal,
+                comparisonPolicy: attempt.state.request.comparisonPolicy,
+                retainOutput: this.dependencies.retainOutput
+                  ? (bytes) => this.dependencies.retainOutput!(attempt.state.request, bytes)
+                  : undefined,
+                onEvent: (event) => {
+                  this.onExecutionEvent(attempt, event)
+                  if (attempt.state.phase && attempt.state.phase !== loggedPhase) {
+                    loggedPhase = attempt.state.phase
+                    diagnostic.phase(loggedPhase, {
+                      completedSteps: attempt.state.completedSteps,
+                      totalSteps: attempt.state.totalSteps,
+                      completedEnvironments: attempt.state.completedEnvironments,
+                      totalEnvironments: attempt.state.totalEnvironments
+                    })
+                  }
+                }
+              })
         if (attempt.controller.signal.aborted) {
           throw attempt.controller.signal.reason ?? new Error('Reproduction cancelled.')
         }
+        if (
+          selectedPlan &&
+          (!('planId' in result) ||
+            result.planId !== selectedPlan.planId ||
+            result.captureId !== selectedPlan.captureId ||
+            result.verification !== selectedPlan.verification ||
+            JSON.stringify(result.executionOnlyTargetRunIds) !==
+              JSON.stringify(selectedPlan.executionOnlyTargetRunIds) ||
+            JSON.stringify(result.completedStepIds) !==
+              JSON.stringify(selectedPlan.selectedStepIds))
+        )
+          throw new Error('Workflow execution identity changed.')
         attempt.recording = true
         diagnostic.phase('recording-result')
         const receipt = await this.dependencies.persistReceipt(

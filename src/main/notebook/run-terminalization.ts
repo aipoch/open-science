@@ -1,9 +1,9 @@
 import { notebookErrorRecovery } from '../../shared/notebook-execution-error'
-import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
   NotebookRunEnvironmentCapture,
   NotebookRunEnvironmentLockCapture
 } from '@aipoch/environment/contracts'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
   NotebookHelperModuleEvidence,
   NotebookHelperEvidenceStatus,

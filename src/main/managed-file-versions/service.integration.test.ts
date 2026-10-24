@@ -27,6 +27,7 @@ import {
 } from './service'
 import { NodeVersionFileOperator, VersionFileOperatorError } from './version-file-operator'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
 
 const checksum = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 type SourceFixture = {
@@ -158,6 +159,146 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     })
     return { source, fileId, versionIds }
   }
+
+  it.each([
+    ['artifact', 'missing'],
+    ['artifact', 'corrupt'],
+    ['upload', 'missing'],
+    ['upload', 'corrupt']
+  ] as const)(
+    'resolves metadata identity for %s with %s bytes while content validation stays strict',
+    async (source, contentState) => {
+      const fixture = await createFixture(source)
+      const operator = new NodeVersionFileOperator({ storageRoot })
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client),
+        versionFileOperator: operator
+      })
+      const authority = new ImmutableInputAuthority({ storageRoot, managedFileVersions: service })
+      const input = await authority.resolveVersion({
+        projectId: 'project-1',
+        sourceKind: source === 'upload' ? 'upload-version' : 'artifact-version',
+        inputFileVersionId: fixture.versionIds[0],
+        expectedSourceFileId: fixture.fileId
+      })
+      if (!input) throw new Error('Expected a verified historical input.')
+      const contentPath = join(storageRoot, ...input.storageKey.split('/'))
+      if (contentState === 'missing') await rm(contentPath)
+      else await writeFile(contentPath, Buffer.alloc(input.sizeBytes, 120))
+
+      const openImmutable = vi.spyOn(operator, 'openImmutable')
+      const openVersion = vi.spyOn(service, 'openVersion')
+      await expect(
+        service.resolveVersionIdentity(
+          { source, projectId: 'project-1', fileId: fixture.fileId },
+          fixture.versionIds[0]
+        )
+      ).resolves.toMatchObject({
+        logicalFile: {
+          source,
+          id: fixture.fileId,
+          projectId: 'project-1',
+          currentVersionId: fixture.versionIds[1]
+        },
+        version: { id: fixture.versionIds[0], fileId: fixture.fileId, checksum: input.checksum }
+      })
+      await expect(authority.validateIdentity('project-1', input)).resolves.toEqual({
+        state: 'available',
+        input
+      })
+      expect(openVersion).not.toHaveBeenCalled()
+      expect(openImmutable).not.toHaveBeenCalled()
+      await expect(authority.validateVersion('project-1', input)).rejects.toMatchObject({
+        code: 'INTEGRITY_FAILED'
+      })
+      expect(openVersion).toHaveBeenCalledOnce()
+      expect(openImmutable).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['artifact', 'upload'] as const)(
+    'retains metadata identity owner and source checks for %s',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const otherSource = source === 'artifact' ? 'upload' : 'artifact'
+      const other = await createFixture(otherSource)
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = { source, projectId: 'project-1', fileId: fixture.fileId }
+      await expect(
+        service.resolveVersionIdentity(
+          { ...identity, projectId: 'another-project' },
+          fixture.versionIds[0]
+        )
+      ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
+      await expect(
+        service.resolveVersionIdentity(
+          { ...identity, fileId: 'another-file' },
+          fixture.versionIds[0]
+        )
+      ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
+      await expect(
+        service.resolveVersionIdentity({ ...identity, source: otherSource }, fixture.versionIds[0])
+      ).rejects.toMatchObject({ code: 'FILE_NOT_FOUND' })
+      await expect(
+        service.resolveVersionIdentity(identity, other.versionIds[0])
+      ).rejects.toMatchObject({ code: 'VERSION_NOT_FOUND' })
+      await expect(
+        service.resolveVersionIdentity(identity, `${source}-unknown-version`)
+      ).rejects.toMatchObject({ code: 'VERSION_NOT_FOUND' })
+
+      const otherVersionId = `${source}-another-version`
+      if (source === 'artifact') {
+        await client.artifactLineage.create({
+          data: {
+            id: 'another-file',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            filename: 'another.md',
+            normalizedFilename: 'another.md'
+          }
+        })
+        const version = await client.artifactVersion.findUniqueOrThrow({
+          where: { id: fixture.versionIds[0] }
+        })
+        await client.artifactVersion.create({
+          data: {
+            ...version,
+            id: otherVersionId,
+            artifactId: 'another-file',
+            contentStorageKey: `${version.contentStorageKey}-other`
+          }
+        })
+      } else {
+        await client.uploadFile.create({
+          data: {
+            id: 'another-file',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            filename: 'another.md',
+            originalFilename: 'another.md'
+          }
+        })
+        const version = await client.uploadVersion.findUniqueOrThrow({
+          where: { id: fixture.versionIds[0] }
+        })
+        await client.uploadVersion.create({
+          data: {
+            ...version,
+            id: otherVersionId,
+            uploadFileId: 'another-file',
+            contentStorageKey: `${version.contentStorageKey}-other`
+          }
+        })
+      }
+      await expect(service.resolveVersionIdentity(identity, otherVersionId)).rejects.toMatchObject({
+        code: 'VERSION_NOT_IN_FILE'
+      })
+    }
+  )
 
   it.each([
     ['artifact', true],
@@ -412,6 +553,9 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       await expect(service.openVersion(identity, fixture.versionIds[0])).rejects.toMatchObject({
         code: 'FILE_DELETED'
       })
+      await expect(
+        service.resolveVersionIdentity(identity, fixture.versionIds[0])
+      ).rejects.toMatchObject({ code: 'FILE_DELETED' })
       await expect(
         service.diffVersion(identity, fixture.versionIds[1], `${source}-deleted-diff`)
       ).rejects.toMatchObject({ code: 'FILE_DELETED' })
@@ -3244,6 +3388,51 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
       })
       return { fileId, versionId, bytes }
     }
+
+    it('retains metadata identity publication and visibility checks', async () => {
+      const fixture = await createPendingAgentPlanFixture()
+      const service = new ManagedFileVersionService({
+        storageRoot,
+        getClient: () => Promise.resolve(client)
+      })
+      const identity = {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        fileId: fixture.fileId
+      }
+      await expect(
+        service.resolveVersionIdentity(identity, fixture.versionId)
+      ).rejects.toMatchObject({
+        code: 'VERSION_NOT_FOUND'
+      })
+      await client.artifactLineage.update({
+        where: { id: fixture.fileId },
+        data: { currentVersionId: fixture.versionId }
+      })
+      await expect(
+        service.resolveVersionIdentity(identity, fixture.versionId)
+      ).rejects.toMatchObject({
+        code: 'VERSION_NOT_FOUND'
+      })
+      await client.artifactVersion.update({
+        where: { id: fixture.versionId },
+        data: { state: 'finalized' }
+      })
+      await expect(
+        service.resolveVersionIdentity(identity, fixture.versionId)
+      ).rejects.toMatchObject({
+        code: 'VERSION_NOT_FOUND'
+      })
+      await client.artifactVersion.update({
+        where: { id: fixture.versionId },
+        data: { managedVisibleAt: new Date() }
+      })
+      await expect(
+        service.resolveVersionIdentity(identity, fixture.versionId)
+      ).resolves.toMatchObject({
+        version: { id: fixture.versionId }
+      })
+    })
 
     it('reads a pending agent-generated version by id exactly as written', async () => {
       const fixture = await createPendingAgentPlanFixture()

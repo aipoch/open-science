@@ -26,14 +26,6 @@ import {
   type KernelProcessKind
 } from './kernel-executor'
 import { framePythonRequest } from './kernel-protocol'
-import {
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  envPrefix,
-  pythonBin,
-  rBin,
-  rScriptBin
-} from '@aipoch/environment'
 import { terminateProcessTree } from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -46,6 +38,14 @@ import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-
 import { verifyReplayCapture } from './scientific-replay.test-support'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { shellNpmPaths } from './shell-npm-environment'
+import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  pythonBin,
+  rBin,
+  rScriptBin
+} from '@aipoch/environment'
 import { prepareNotebookWorkloadCache } from '@aipoch/environment'
 
 vi.mock('node:child_process', async (importOriginal) => {

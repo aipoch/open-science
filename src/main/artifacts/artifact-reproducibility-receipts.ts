@@ -1,4 +1,4 @@
-import type { ReproducibilitySource } from './reproducibility-source'
+import { workflowSelectionSchema } from '../../shared/session-reproducibility'
 import type { Dirent } from 'node:fs'
 import { validOutputComparisonReport } from '@aipoch/reproducibility'
 import { lstat, readFile, readdir } from 'node:fs/promises'
@@ -11,7 +11,6 @@ import {
   readRetainedReproducibilityOutput,
   retainReproducibilityOutput
 } from './artifact-reproducibility-outputs'
-
 import type {
   ArtifactReproducibilityCheckLog,
   ArtifactReproducibilityCheckLogRecord,
@@ -25,6 +24,7 @@ import type {
   GetArtifactReproducibilityCheckLogRequest,
   ListArtifactReproducibilityReceiptsRequest
 } from '../../shared/artifact-reproducibility'
+
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
@@ -32,6 +32,7 @@ import {
   writeDurableJsonFile
 } from '@aipoch/durable-files'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import type { ReproducibilitySource } from './reproducibility-source'
 import {
   readReproducibilityEnvironmentLock,
   readReproducibilitySource
@@ -274,7 +275,7 @@ const decodeReceiptHistoryIndex = (contents: string): ReceiptHistoryIndex => {
       !isSha256(entry.receiptChecksum) ||
       !isString(entry.receiptId) ||
       !isTimestamp(entry.completedAt) ||
-      !['matched', 'different'].includes(String(entry.outcome)) ||
+      !['matched', 'different', 'executed'].includes(String(entry.outcome)) ||
       checksums.has(entry.receiptChecksum)
     ) {
       throw new Error('Invalid reproducibility receipt history index.')
@@ -491,14 +492,14 @@ const decodeArtifactReproducibilityReceipt = (
     'receiptChecksum'
   ]
   if (
-    !Object.keys(value).every((key) => [...receiptKeys, 'checkLog'].includes(key)) ||
+    !Object.keys(value).every((key) => [...receiptKeys, 'checkLog', 'workflow'].includes(key)) ||
     !receiptKeys.every((key) => key in value) ||
     (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     !isString(value.receiptId) ||
     !isTimestamp(value.startedAt) ||
     !isTimestamp(value.completedAt) ||
     value.completedAt < value.startedAt ||
-    !['matched', 'different'].includes(String(value.outcome)) ||
+    !['matched', 'different', 'executed'].includes(String(value.outcome)) ||
     !Array.isArray(value.environmentLocks) ||
     !Array.isArray(value.completedStepIds) ||
     !value.completedStepIds.every(isString) ||
@@ -554,6 +555,40 @@ const decodeArtifactReproducibilityReceipt = (
     }
   }
 
+  if (value.workflow !== undefined) {
+    const workflow = value.workflow
+    if (
+      !isRecord(workflow) ||
+      !hasExactKeys(workflow, [
+        'captureId',
+        'targetRunIds',
+        ...(workflow.boundaryEntityIds !== undefined ? ['boundaryEntityIds'] : []),
+        'planId',
+        'verification',
+        'executionOnlyTargetRunIds'
+      ]) ||
+      !workflowSelectionSchema.safeParse({
+        captureId: workflow.captureId,
+        targetRunIds: workflow.targetRunIds,
+        ...(workflow.boundaryEntityIds !== undefined
+          ? { boundaryEntityIds: workflow.boundaryEntityIds }
+          : {})
+      }).success ||
+      !isSha256(workflow.planId) ||
+      !['file-comparison', 'execution-only'].includes(String(workflow.verification)) ||
+      !Array.isArray(workflow.executionOnlyTargetRunIds) ||
+      !workflow.executionOnlyTargetRunIds.every(
+        (id) => isString(id) && (workflow.targetRunIds as string[]).includes(id)
+      ) ||
+      (workflow.verification === 'execution-only') !==
+        workflow.executionOnlyTargetRunIds.length > 0 ||
+      workflow.planId !== recipe.recipeId ||
+      (workflow.verification === 'execution-only') !== (value.outcome === 'executed')
+    )
+      throw new Error(`Invalid reproducibility workflow receipt: ${basename(filePath)}`)
+  } else if (value.outcome === 'executed') {
+    throw new Error(`Invalid execution-only receipt: ${basename(filePath)}`)
+  }
   const receipt = value as unknown as ArtifactReproducibilityReceipt
   const expectedChecksum = receiptChecksum(receiptPayload(receipt))
   const filenameChecksum = RECEIPT_FILENAME.exec(basename(filePath))?.[1]
@@ -563,7 +598,10 @@ const decodeArtifactReproducibilityReceipt = (
   const comparisonsMatch = receipt.comparisons.every(
     (comparison) => comparison.status === 'matched'
   )
-  if (receipt.comparisons.length === 0 || (receipt.outcome === 'matched') !== comparisonsMatch) {
+  if (
+    receipt.outcome !== 'executed' &&
+    (receipt.comparisons.length === 0 || (receipt.outcome === 'matched') !== comparisonsMatch)
+  ) {
     throw new Error(`Invalid reproducibility receipt outcome: ${basename(filePath)}`)
   }
   return receipt
@@ -723,7 +761,9 @@ class ArtifactReproducibilityReceiptStore {
           await this.getCheckLog({ ...request, receiptChecksum: receipt.receiptChecksum })
           metadata.add(`${LOG_DIRECTORY}/sha256-${receipt.checkLog.logChecksum}.json`)
         }
-        for (const lock of receipt.environmentLocks) locks.add(lock.lockChecksum)
+        for (const lock of receipt.environmentLocks) {
+          locks.add(lock.lockChecksum)
+        }
         if (!cleared.has(receipt.receiptChecksum))
           for (const comparison of receipt.comparisons) {
             if (!comparison.outputCaptured) continue

@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { sealWorkflowCapture } from '@aipoch/reproducibility'
+import type { ProvenanceNotebookRun } from '@aipoch/reproducibility/contracts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
@@ -18,6 +20,201 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })
+})
+
+const workflowRun = async (): Promise<ProvenanceNotebookRun> => {
+  const lock = JSON.stringify({
+    schemaVersion: 1,
+    format: 'environment-lock-bundle',
+    kernelKind: 'r',
+    environmentName: 'default-r',
+    components: [
+      {
+        ecosystem: 'conda',
+        format: 'conda-explicit-md5',
+        resolution: 'locked',
+        packages: ['r-base'],
+        explicitLock:
+          '@EXPLICIT\nhttps://conda.example/r-base.conda#0123456789abcdef0123456789abcdef\n'
+      }
+    ]
+  })
+  const lockChecksum = sha256(lock)
+  const lockPath = join(root, 'runtime', 'provenance', 'environment-locks', `${lockChecksum}.json`)
+  await mkdir(dirname(lockPath), { recursive: true })
+  await writeFile(lockPath, lock)
+  return {
+    runId: 'run-1',
+    runIndex: 0,
+    agentFrameId: 'frame',
+    messageBranchId: 'branch',
+    runtimeSegmentId: 'segment',
+    promptMessageId: 'prompt',
+    kernelKind: 'r',
+    kernelEpochId: 'epoch',
+    script: 'x <- 1',
+    status: 'completed',
+    startedAt: '2026-10-20T00:00:00Z',
+    outputs: [],
+    inputFileVersionKeys: [],
+    environmentLock: { state: 'available', format: 'environment-lock-bundle', lockChecksum }
+  }
+}
+
+type RunLocation = 'notebook' | 'artifact' | 'workflow'
+const writeWorkflowRun = async (
+  location: RunLocation,
+  run: ProvenanceNotebookRun
+): Promise<void> => {
+  if (location === 'notebook') {
+    const path = join(root, 'notebooks', 'project-1', 'session-1', 'run.json')
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(
+      path,
+      JSON.stringify({ projectId: 'project-1', sessionId: 'session-1', runs: [run] })
+    )
+    return
+  }
+  const directory = join(
+    root,
+    'artifacts',
+    'project-1',
+    'session-1',
+    '.provenance',
+    'artifact-1',
+    'versions',
+    'version-1'
+  )
+  await mkdir(directory, { recursive: true })
+  const capture =
+    location === 'workflow'
+      ? sealWorkflowCapture({
+          schemaVersion: 1,
+          runs: [run],
+          inputFiles: [],
+          graph: {
+            schemaVersion: 1,
+            targetEntityId: 'artifact',
+            completeness: 'complete',
+            reasonCodes: [],
+            activities: [
+              {
+                activityId: run.runId,
+                kind: 'notebook-run',
+                sequence: 0,
+                runIndex: 0,
+                inclusion: 'workflow-capture',
+                evidenceState: 'available'
+              }
+            ],
+            entities: [
+              {
+                entityId: 'artifact',
+                kind: 'artifact-version',
+                versionId: 'version-1',
+                filename: 'result.txt',
+                checksum: sha256('artifact'),
+                sizeBytes: 8
+              }
+            ],
+            edges: []
+          }
+        })
+      : undefined
+  const execution = JSON.stringify({
+    runs: location === 'artifact' ? [run] : [],
+    ...(capture ? { workflowCapture: { state: 'available', capture } } : {})
+  })
+  await writeFile(join(directory, 'content'), 'artifact')
+  await writeFile(join(directory, 'execution.json'), execution)
+  await writeFile(
+    join(directory, 'evidence.json'),
+    JSON.stringify({
+      schema_version: 1,
+      project_id: 'project-1',
+      app_session_id: 'session-1',
+      artifact_id: 'artifact-1',
+      version_id: 'version-1',
+      size_bytes: 8,
+      checksum: sha256('artifact'),
+      execution_status: { state: 'available' },
+      execution_snapshot_checksum: sha256(execution)
+    })
+  )
+}
+
+describe.each<RunLocation>(['notebook', 'artifact', 'workflow'])(
+  'frozen execution environment migration: %s',
+  (location) => {
+    it('validates the original environment lock without any variable snapshots', async () => {
+      const run = await workflowRun()
+      await writeWorkflowRun(location, run)
+      await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+      if (run.environmentLock?.state !== 'available') throw new Error('Missing fixture lock')
+      await rm(
+        join(
+          root,
+          'runtime',
+          'provenance',
+          'environment-locks',
+          run.environmentLock.lockChecksum + '.json'
+        )
+      )
+      await expect(validateProvenanceMigrationState(root)).rejects.toThrow()
+    })
+  }
+)
+
+describe('Frame Notebook migration', () => {
+  it('accepts frame-only history', async () => {
+    const run = await workflowRun()
+    const framePath = join(
+      root,
+      'notebooks',
+      'project-1',
+      'session-1',
+      'frames',
+      run.agentFrameId,
+      'run.json'
+    )
+    await mkdir(dirname(framePath), { recursive: true })
+    await writeFile(
+      framePath,
+      JSON.stringify({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        runs: [{ ...run, agentFrameId: undefined }]
+      })
+    )
+    await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
+  })
+
+  it.each(['project', 'session', 'frame'])(
+    'rejects mismatched child %s ownership',
+    async (owner) => {
+      const run = await workflowRun()
+      const framePath = join(
+        root,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        run.agentFrameId,
+        'run.json'
+      )
+      await mkdir(dirname(framePath), { recursive: true })
+      if (owner === 'frame') run.agentFrameId = 'other-frame'
+      await writeFile(
+        framePath,
+        JSON.stringify({
+          projectId: owner === 'project' ? 'other-project' : 'project-1',
+          sessionId: owner === 'session' ? 'other-session' : 'session-1',
+          runs: [run]
+        })
+      )
+      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/ownership/i)
+    }
+  )
 })
 
 describe('validateProvenanceMigrationState', () => {

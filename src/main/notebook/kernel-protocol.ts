@@ -1,9 +1,12 @@
-// Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
-import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
-
 import type { NotebookEnvironmentPackage } from '@aipoch/environment/contracts'
-import type { NotebookLiveEnvironmentOverlay } from '../../shared/notebook'
-import type { NotebookNamespaceVariable } from '../../shared/notebook'
+// Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
+
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
+import type {
+  NotebookLiveEnvironmentOverlay,
+  NotebookNamespaceVariable
+} from '../../shared/notebook'
 
 export type KernelLoopFigure = { mime: string; path: string }
 
@@ -209,7 +212,7 @@ export function framePythonRequest(
   code: string,
   controlInvocationId?: string,
   protectedDirs?: readonly string[],
-  pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState'],
+  pythonRandomState?: NotebookExecutionContext['before']['pythonRandomState'],
   replPublisher?: string
 ): string {
   return `${JSON.stringify({

@@ -9,14 +9,26 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { ArtifactReproducibilityEnvironmentRequirement } from '../../shared/artifact-provenance'
 import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
-import { micromambaCacheLockKey, selectMicromambaCache } from '@aipoch/environment'
-import { withExclusiveCacheLock } from '@aipoch/environment'
 import type { NotebookSessionExecutor } from './session-aggregate'
 import {
   createNotebookReproductionRuntime,
   type CreateNotebookReproductionRuntimeDependencies
 } from './reproduction-runtime'
-import { pythonBin, rScriptBin } from '@aipoch/environment'
+import {
+  micromambaCacheLockKey,
+  pythonBin,
+  rScriptBin,
+  selectMicromambaCache,
+  withExclusiveCacheLock
+} from '@aipoch/environment'
+
+const testProcessSandbox = (): { wrap: Mock; createTemporaryScope: Mock } => {
+  const wrap = vi.fn()
+  return {
+    wrap,
+    createTemporaryScope: vi.fn(() => ({ wrap, dispose: vi.fn(async () => undefined) }))
+  }
+}
 
 const serializeLock = (
   platform: string = process.platform,
@@ -77,6 +89,73 @@ describe('Notebook reproduction runtime', () => {
       replayRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
     )
   })
+  it.each(['construction', 'abort', 'cleanup-failure', 'unreaped', 'reaped'] as const)(
+    'retains attempt temp ownership through %s',
+    async (scenario) => {
+      const controller = new AbortController()
+      const dispose = vi.fn(async () => {
+        if (scenario === 'cleanup-failure') throw new Error('cleanup unconfirmed')
+      })
+      const scopedSandbox = { wrap: vi.fn(), dispose }
+      const createTemporaryScope = vi.fn(() => {
+        if (scenario === 'abort') controller.abort(new Error('cancelled during creation'))
+        return scopedSandbox
+      })
+      const createExecutor = vi.fn(() => {
+        if (scenario === 'construction' || scenario === 'cleanup-failure') {
+          throw new Error('executor construction failed')
+        }
+        return {
+          execute: vi.fn(),
+          shutdown: vi.fn(async () => ({ reaped: scenario !== 'unreaped' }))
+        }
+      })
+      const runtime = createNotebookReproductionRuntime(
+        {
+          requirements: [],
+          storageRoot: '/original',
+          attemptRoot: '/attempt',
+          projectId: 'project',
+          sessionId: 'session',
+          signal: controller.signal,
+          processSandbox: { wrap: vi.fn(), createTemporaryScope }
+        },
+        { createExecutor }
+      )
+      if (scenario === 'construction' || scenario === 'abort' || scenario === 'cleanup-failure') {
+        await expect(runtime).rejects.toThrow(
+          scenario === 'cleanup-failure'
+            ? 'RUNTIME_CHILD_UNCONFIRMED'
+            : scenario === 'abort'
+              ? 'cancelled during creation'
+              : 'executor construction failed'
+        )
+        expect(dispose).toHaveBeenCalledOnce()
+        if (scenario === 'abort') expect(createExecutor).not.toHaveBeenCalled()
+      } else {
+        const created = await runtime
+        expect(createExecutor).toHaveBeenCalledWith(
+          expect.objectContaining({ processSandbox: scopedSandbox })
+        )
+        expect(await created.shutdown()).toEqual({ reaped: scenario === 'reaped' })
+        expect(dispose).toHaveBeenCalledTimes(scenario === 'reaped' ? 1 : 0)
+      }
+      expect(createTemporaryScope).toHaveBeenCalledWith(join('/attempt', 'command-temp'))
+    }
+  )
+
+  it('fails explicitly when a sandbox cannot own reproduction temporary resources', async () => {
+    await expect(
+      createNotebookReproductionRuntime({
+        requirements: [],
+        storageRoot: '/original',
+        attemptRoot: '/attempt',
+        projectId: 'project',
+        sessionId: 'session',
+        processSandbox: { wrap: vi.fn() }
+      })
+    ).rejects.toThrow('attempt-owned sandbox temporary resources')
+  })
   const replayAcrossLocks = async (
     locks: NotebookEnvironmentLock[]
   ): Promise<{
@@ -136,7 +215,7 @@ describe('Notebook reproduction runtime', () => {
         requirements,
         storageRoot,
         attemptRoot,
-        processSandbox: { wrap: vi.fn() },
+        processSandbox: testProcessSandbox(),
         projectId: 'project',
         sessionId: 'session',
         onEnvironmentProgress: environmentProgress
@@ -393,7 +472,7 @@ describe('Notebook reproduction runtime', () => {
       shutdown: vi.fn(async () => ({ reaped: true }))
     }
     const createExecutor = vi.fn(() => executor)
-    const processSandbox = { wrap: vi.fn() }
+    const processSandbox = testProcessSandbox()
     const environmentProgress = vi.fn()
     const environmentOutput = vi.fn()
 
@@ -466,6 +545,7 @@ describe('Notebook reproduction runtime', () => {
         '--no-rc',
         'create',
         '--offline',
+        '--always-copy',
         '--no-pyc',
         '--root-prefix',
         join(storageRoot, 'runtime')
@@ -564,7 +644,7 @@ describe('Notebook reproduction runtime', () => {
     const runMicromamba = vi.fn<
       NonNullable<CreateNotebookReproductionRuntimeDependencies['runMicromamba']>
     >(async () => undefined)
-    const processSandbox = { wrap: vi.fn() }
+    const processSandbox = testProcessSandbox()
     const partial: ArtifactReproducibilityEnvironmentRequirement = {
       requirementId: 'partial',
       kernelKind: 'python',
@@ -652,7 +732,7 @@ describe('Notebook reproduction runtime', () => {
           ],
           storageRoot,
           attemptRoot,
-          processSandbox: { wrap: vi.fn() },
+          processSandbox: testProcessSandbox(),
           projectId: 'artifact-reproducibility',
           sessionId: 'reproduction-architecture'
         },
@@ -701,7 +781,7 @@ describe('Notebook reproduction runtime', () => {
         ],
         storageRoot,
         attemptRoot,
-        processSandbox: { wrap: vi.fn() },
+        processSandbox: testProcessSandbox(),
         projectId: 'artifact-reproducibility',
         sessionId: 'reproduction-cache-lock'
       },
@@ -775,7 +855,7 @@ describe('Notebook reproduction runtime', () => {
               storageRoot,
               attemptRoot: join(storageRoot, stage),
               signal: controller.signal,
-              processSandbox: { wrap: vi.fn() },
+              processSandbox: testProcessSandbox(),
               projectId: 'project',
               sessionId: 'session',
               onEnvironmentProgress: progress
@@ -841,7 +921,7 @@ describe('Notebook reproduction runtime', () => {
           ],
           storageRoot,
           attemptRoot,
-          processSandbox: { wrap: vi.fn() },
+          processSandbox: testProcessSandbox(),
           projectId: 'artifact-reproducibility',
           sessionId: 'reproduction-native-lock'
         },
@@ -905,7 +985,7 @@ describe('Notebook reproduction runtime', () => {
         requirements,
         storageRoot,
         attemptRoot,
-        processSandbox: { wrap: vi.fn() },
+        processSandbox: testProcessSandbox(),
         projectId: 'artifact-reproducibility',
         sessionId: 'reproduction-1'
       },

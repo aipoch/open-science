@@ -5,7 +5,8 @@ import type {
 } from '../../shared/artifact-provenance'
 import {
   sealArtifactAnalysisRevision,
-  artifactAnalysisRevisionMatchesGraph
+  artifactAnalysisRevisionMatchesGraph,
+  artifactAnalysisRevisionSupportsWorkflowReplay
 } from './provenance-analysis-revision'
 import { decodeArtifactExecutionSnapshot } from './provenance-execution-snapshot-decoder'
 import { projectPublicArtifactExecutionSnapshot } from './provenance-execution-projection'
@@ -62,6 +63,8 @@ const snapshot = (): PersistedArtifactExecutionSnapshot => ({
 
 it('binds immutable analysis identity to both rules and the sealed graph', () => {
   const revision = sealArtifactAnalysisRevision(graph, true)
+  expect(revision.lineageBuilder).toEqual({ version: 1, revision: 'artifact-lineage-2' })
+  expect(artifactAnalysisRevisionSupportsWorkflowReplay(revision, graph)).toBe(true)
   expect(sealArtifactAnalysisRevision(graph, true)).toEqual(revision)
   expect(artifactAnalysisRevisionMatchesGraph(revision, graph)).toBe(true)
   expect(
@@ -76,29 +79,55 @@ it('binds immutable analysis identity to both rules and the sealed graph', () =>
   expect(sealArtifactAnalysisRevision(graph, false).dependencyAnalyzer).toBeUndefined()
   expect(sealArtifactAnalysisRevision(graph, false).revisionId).not.toBe(revision.revisionId)
 })
-it('reads older rule revisions without replacing them with current rules', () => {
-  const fields = sealArtifactAnalysisRevision(graph, true)
-  const { revisionId, ...unsigned } = fields
-  expect(revisionId).toHaveLength(64)
-  unsigned.dependencyAnalyzer = { version: 1, revision: 'tree-sitter-in-process-1' }
-  const analysisRevision = {
-    ...unsigned,
-    revisionId: sha256(canonicalJson(unsigned as unknown as CanonicalJson))
+it.each(['artifact-lineage-1', 'artifact-lineage-2', 'artifact-lineage-3', 'artifact-lineage-4'])(
+  'reads older rule revision %s without replacing it with current rules',
+  (lineageRevision) => {
+    const fields = sealArtifactAnalysisRevision(graph, true)
+    const { revisionId, ...unsigned } = fields
+    expect(revisionId).toHaveLength(64)
+    unsigned.dependencyAnalyzer = { version: 1, revision: 'tree-sitter-in-process-1' }
+    unsigned.lineageBuilder = { version: 1, revision: lineageRevision }
+    const analysisRevision = {
+      ...unsigned,
+      revisionId: sha256(canonicalJson(unsigned as unknown as CanonicalJson))
+    }
+    expect(artifactAnalysisRevisionSupportsWorkflowReplay(analysisRevision, graph)).toBe(false)
+    const serialized = JSON.stringify({ ...snapshot(), analysisRevision })
+    const result = decodeArtifactExecutionSnapshot(serialized)
+    expect(result).toMatchObject({ status: 'valid', value: { analysisRevision } })
+    if (result.status !== 'valid') throw new Error('expected valid snapshot')
+    expect(projectPublicArtifactExecutionSnapshot(result.value, []).analysisRevision).toEqual(
+      analysisRevision
+    )
+    expect(JSON.stringify({ ...snapshot(), analysisRevision })).toBe(serialized)
   }
-  const serialized = JSON.stringify({ ...snapshot(), analysisRevision })
-  const result = decodeArtifactExecutionSnapshot(serialized)
-  expect(result).toMatchObject({ status: 'valid', value: { analysisRevision } })
-  if (result.status !== 'valid') throw new Error('expected valid snapshot')
-  expect(projectPublicArtifactExecutionSnapshot(result.value, []).analysisRevision).toEqual(
-    analysisRevision
-  )
-  expect(JSON.stringify({ ...snapshot(), analysisRevision })).toBe(serialized)
-})
+)
 it('does not invent an analysis revision for historical snapshots', () => {
   const result = decodeArtifactExecutionSnapshot(JSON.stringify(snapshot()))
   expect(result.status).toBe('valid')
   if (result.status !== 'valid') throw new Error('expected valid legacy snapshot')
   expect(result.value.analysisRevision).toBeUndefined()
+  expect(artifactAnalysisRevisionSupportsWorkflowReplay(undefined, graph)).toBe(false)
+})
+it.each([
+  'execution-dependency-proof-20261020',
+  'execution-causality-roots-20261020',
+  'execution-binding-locality-20261020',
+  'r-attached-contract-proof-20261020',
+  'future-proof-rules'
+])('preserves readable analyzer revision %s without authorizing partial replay', (revision) => {
+  const { revisionId, ...fields } = sealArtifactAnalysisRevision(graph, true)
+  expect(revisionId).toHaveLength(64)
+  fields.dependencyAnalyzer = { version: 1, revision }
+  const analysisRevision = {
+    ...fields,
+    revisionId: sha256(canonicalJson(fields as unknown as CanonicalJson))
+  }
+  expect(artifactAnalysisRevisionMatchesGraph(analysisRevision, graph)).toBe(true)
+  expect(artifactAnalysisRevisionSupportsWorkflowReplay(analysisRevision, graph)).toBe(false)
+  expect(
+    decodeArtifactExecutionSnapshot(JSON.stringify({ ...snapshot(), analysisRevision }))
+  ).toMatchObject({ status: 'valid', value: { analysisRevision } })
 })
 it('keeps execution readable but excludes replay metadata from a future analysis format', () => {
   const value = { ...snapshot(), analysisRevision: { schemaVersion: 2 } }

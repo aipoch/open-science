@@ -75,6 +75,48 @@ afterEach(async () => {
 })
 
 describe('ArtifactReproducibilityReceiptStore', () => {
+  it('round-trips execution-only workflow receipts without claiming a match', async () => {
+    const { store } = await createStore()
+    const workflow = {
+      captureId: '1'.repeat(64),
+      targetRunIds: ['memory-stage'],
+      planId: draft.recipe.recipeId,
+      verification: 'execution-only' as const,
+      executionOnlyTargetRunIds: ['memory-stage']
+    }
+    const saved = await store.append(request, {
+      ...draft,
+      schemaVersion: 2,
+      frontier: { frontierId: 'workflow-selection', claimScope: 'downstream-only' },
+      outcome: 'executed',
+      workflow,
+      comparisons: []
+    })
+    expect((await store.list(request)).receipts[0]).toEqual(saved)
+    await expect(
+      store.append(request, { ...draft, outcome: 'executed', comparisons: [] })
+    ).rejects.toThrow()
+    await expect(
+      store.append(request, { ...draft, workflow, outcome: 'matched' })
+    ).rejects.toThrow()
+  })
+  it('preserves the original lock when reopening and packaging receipts', async () => {
+    const { root, store } = await createStore()
+    const environmentLocks = [{ ...draft.environmentLocks[0]! }]
+    const receipt = await store.append(request, { ...draft, schemaVersion: 2, environmentLocks })
+    const reopened = new ArtifactReproducibilityReceiptStore({
+      resolveVersionDirectory: async () => root
+    })
+    expect((await reopened.list(request)).receipts[0]).toEqual(receipt)
+    expect((await reopened.list(request)).receipts[0]!.environmentLocks).toEqual(environmentLocks)
+    expect((await reopened.packageFiles(request)).lockChecksums.sort()).toEqual(['d'.repeat(64)])
+    await expect(
+      store.append(request, {
+        ...draft,
+        environmentLocks: [{ ...environmentLocks[0]!, lockChecksum: 'invalid' }]
+      })
+    ).rejects.toThrow()
+  })
   it.each(['unsupported-format', 'budget-exceeded', 'comparison-failed'] as const)(
     'persists the unavailable content comparison reason %s',
     async (reason) => {
@@ -450,53 +492,77 @@ describe('ArtifactReproducibilityReceiptStore', () => {
   })
 })
 
-it('reads original output through an imported source-to-local entity mapping', async () => {
-  const { root } = await createStore()
-  const {
-    bindArtifactReproducibilityExecutionEvidence,
-    readArtifactReproducibilityOriginalOutput
-  } = await import('./provenance-reproducibility-execution-evidence')
-  const { bindArtifactReproducibilityReceipts } =
-    await import('./artifact-reproducibility-receipts')
-  const owner = {}
-  const bytes = Buffer.from('retained original output')
-  await writeFile(join(root, 'original.bin'), bytes)
-  await writeFile(
-    join(root, 'reproducibility-source.json'),
-    JSON.stringify({
-      sourceScope: request,
-      entityIds: { 'file-generation:source': 'file-generation:local' },
-      omittedOutputChecksums: [],
-      lockChecksums: []
-    })
-  )
-  bindArtifactReproducibilityReceipts(
-    owner,
-    new ArtifactReproducibilityReceiptStore({ resolveVersionDirectory: async () => root })
-  )
-  bindArtifactReproducibilityExecutionEvidence(
-    owner,
-    async () =>
-      ({
-        provenanceGraph: {
-          entities: [
-            {
-              entityId: 'file-generation:local',
-              kind: 'file-generation',
-              contentStorageKey: 'original.bin',
-              checksum: sha256(bytes),
-              sizeBytes: bytes.length
-            }
-          ]
-        }
-      }) as unknown as import('../../shared/artifact-provenance').PersistedArtifactExecutionSnapshot
-  )
-  await expect(
-    readArtifactReproducibilityOriginalOutput(
-      owner,
-      root,
-      { ...request, versionId: 'local-version' },
-      'file-generation:source'
+it.each(['artifact', 'workflow'] as const)(
+  'reads %s original output through an imported source-to-local entity mapping',
+  async (kind) => {
+    const { root } = await createStore()
+    const {
+      bindArtifactReproducibilityExecutionEvidence,
+      readArtifactReproducibilityOriginalOutput
+    } = await import('./provenance-reproducibility-execution-evidence')
+    const { bindArtifactReproducibilityReceipts } =
+      await import('./artifact-reproducibility-receipts')
+    const owner = {}
+    const bytes = Buffer.from('retained original output')
+    await writeFile(join(root, 'original.bin'), bytes)
+    await writeFile(
+      join(root, 'reproducibility-source.json'),
+      JSON.stringify({
+        sourceScope: request,
+        entityIds: { 'file-generation:source': 'file-generation:local' },
+        omittedOutputChecksums: [],
+        lockChecksums: []
+      })
     )
-  ).resolves.toEqual(bytes)
-})
+    bindArtifactReproducibilityReceipts(
+      owner,
+      new ArtifactReproducibilityReceiptStore({ resolveVersionDirectory: async () => root })
+    )
+    bindArtifactReproducibilityExecutionEvidence(
+      owner,
+      async () =>
+        ({
+          [kind === 'workflow' ? 'workflowCapture' : 'provenanceGraph']:
+            kind === 'workflow'
+              ? {
+                  state: 'available',
+                  capture: {
+                    graph: {
+                      entities: [
+                        {
+                          entityId: 'file-generation:local',
+                          kind: 'file-generation',
+                          contentStorageKey: 'original.bin',
+                          checksum: sha256(bytes),
+                          sizeBytes: bytes.length
+                        }
+                      ]
+                    }
+                  }
+                }
+              : {
+                  entities: [
+                    {
+                      entityId: 'file-generation:local',
+                      kind: 'file-generation',
+                      contentStorageKey: 'original.bin',
+                      checksum: sha256(bytes),
+                      sizeBytes: bytes.length
+                    }
+                  ]
+                }
+        }) as unknown as import('../../shared/artifact-provenance').PersistedArtifactExecutionSnapshot
+    )
+    await expect(
+      readArtifactReproducibilityOriginalOutput(
+        owner,
+        root,
+        { ...request, versionId: 'local-version' },
+        'file-generation:source'
+      )
+    ).resolves.toEqual(bytes)
+    await expect(
+      readArtifactReproducibilityOriginalOutput(owner, root, request, 'outside-capture')
+    ).rejects.toThrow('Original output is unavailable')
+  }
+)

@@ -3,6 +3,7 @@ import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type {
   NotebookKernelMetadata,
   NotebookKernelInstanceIdentity,
@@ -13,7 +14,6 @@ import type {
   NotebookRunStatus,
   NotebookWorkingFile
 } from '../../shared/notebook'
-import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { createLogger } from '@aipoch/diagnostics/node'

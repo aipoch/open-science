@@ -15,7 +15,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
@@ -36,7 +36,6 @@ import {
   type NotebookNetworkStatus,
   type NotebookNetworkStatusReason
 } from '../../shared/notebook-network'
-import { NotebookRuntimeAccessCancelledError } from './process-sandbox'
 import { isMigrationInProgress, withDataRootWrite } from '../storage/migration-state'
 import type {
   NotebookProcessSandbox,
@@ -50,14 +49,7 @@ import type {
   NotebookSandboxedSpawn,
   NotebookSandboxInvocation
 } from './process-sandbox'
-import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
-import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
-import {
-  buildNotebookKernelEnvironment,
-  normalizeRProcessLocale,
-  environmentPathRoots,
-  notebookTrustBundleEnvironment
-} from '@aipoch/environment'
+import { NotebookRuntimeAccessCancelledError } from './process-sandbox'
 import {
   notebookTrustBundleStatus,
   resolveNotebookTrustBundle,
@@ -66,14 +58,24 @@ import {
 } from './trust-bundle'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { kernelExecutableReadRoot } from './kernel-executor'
-import { windowsCondaPrefixForR } from '@aipoch/environment'
-import { rKernelProtocolProbe } from '@aipoch/environment'
-import { runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
+  createLogger,
+  diagnosticErrorFields,
+  runtimeChildProcessErrorFields,
+  startDiagnosticOperation,
+  type Logger
+} from '@aipoch/diagnostics/node'
+import {
+  buildNotebookKernelEnvironment,
   condaActivatedPath,
   DEFAULT_R_ENV,
+  environmentPathRoots,
   envPrefix,
-  legacyDefaultEnvPrefix
+  legacyDefaultEnvPrefix,
+  normalizeRProcessLocale,
+  notebookTrustBundleEnvironment,
+  rKernelProtocolProbe,
+  windowsCondaPrefixForR
 } from '@aipoch/environment'
 
 export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
@@ -434,7 +436,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+  async wrap(
+    invocation: NotebookSandboxInvocation,
+    temporaryOwner: NotebookNetworkSandboxOwner = this
+  ): Promise<NotebookSandboxedSpawn> {
     if (
       this.windowsRuntime &&
       invocation.target?.kind !== 'wsl2' &&
@@ -451,7 +456,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       }
     }
     try {
-      return await this.prepare(invocation)
+      return await this.prepare(invocation, temporaryOwner)
     } catch (error) {
       if (
         error instanceof Error &&
@@ -463,7 +468,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         const target = invocation.target ?? { kind: 'native' as const }
         // Retain only the original cleanup capabilities. Admission of another command is not
         // proof that these resources were reaped (notably on macOS).
-        const pending = [...this.pendingCommandCleanups].filter((cleanup) =>
+        const pending = [...temporaryOwner.pendingCommandCleanups].filter((cleanup) =>
           sameCleanupDomain(cleanup.target, target)
         )
         if (pending.length > 0) {
@@ -471,7 +476,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             retryCleanup: async (): Promise<boolean> => {
               const results = await Promise.all(pending.map((cleanup) => cleanup.retry()))
               if (!results.every(cleanupComplete)) return false
-              await this.reconcilePendingCommandCleanups(target)
+              await temporaryOwner.reconcilePendingCommandCleanups(target)
               return true
             }
           })
@@ -481,7 +486,83 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     }
   }
 
-  private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+  createTemporaryScope(temporaryRoot: string): NotebookProcessSandbox & {
+    dispose(): Promise<void>
+  } {
+    // Keep the parent's prepared Windows runtime registration. Only command resources and
+    // their receipts belong to this attempt; normal Notebook temp ownership stays unchanged.
+    const scope = new NotebookNetworkSandboxOwner({
+      ...this.options,
+      windowsRuntimeRoot: undefined,
+      temporaryRoot
+    })
+    let closed = false
+    const preparing = new Set<Promise<NotebookSandboxedSpawn>>()
+    return {
+      ensureRuntimeAccess: this.ensureRuntimeAccess.bind(this),
+      resolveWindowsRuntime: this.resolveWindowsRuntime.bind(this),
+      requestNetworkAccess: this.requestNetworkAccess.bind(this),
+      wrap: (invocation) => {
+        if (closed) return Promise.reject(new Error('Reproduction temporary scope is closed.'))
+        const preparation = (async () => {
+          invocation.signal?.throwIfAborted()
+          if (invocation.runtime === 'r' && /\s/u.test(temporaryRoot)) {
+            throw new Error('R reproduction requires a temporary directory without spaces.')
+          }
+          const root = await realpath(temporaryRoot).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error
+            return realpath(dirname(temporaryRoot)).then((parent) =>
+              join(parent, basename(temporaryRoot))
+            )
+          })
+          for (const denied of new Set([
+            ...invocation.filesystem.deniedReadRoots,
+            ...invocation.filesystem.deniedWriteRoots
+          ])) {
+            const deniedRoot = await realpath(denied).catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== 'ENOENT') throw error
+              return denied
+            })
+            const path = relative(deniedRoot, root)
+            if (
+              path === '' ||
+              (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
+            ) {
+              throw new Error('Reproduction temporary directory is inside a protected directory.')
+            }
+          }
+          return this.wrap(invocation, scope)
+        })()
+        preparing.add(preparation)
+        void preparation.then(
+          () => preparing.delete(preparation),
+          () => preparing.delete(preparation)
+        )
+        return preparation
+      },
+      dispose: async () => {
+        closed = true
+        await Promise.allSettled([...preparing])
+        const results = await Promise.all(
+          [...scope.pendingCommandCleanups].map((cleanup) => cleanup.retry())
+        )
+        await scope.reconcilePendingCommandCleanups({ kind: 'native' })
+        // Only the command cleanup capability can certify stop-before-remove. Never dispose
+        // the shared backend or infer termination from an attempt ending.
+        if (
+          results.some((result) => !cleanupComplete(result)) ||
+          scope.pendingTemporaryRoots.size > 0
+        ) {
+          throw new Error('SHELL_CLEANUP_INCOMPLETE: Reproduction temporary cleanup is unverified.')
+        }
+      }
+    }
+  }
+
+  private async prepare(
+    invocation: NotebookSandboxInvocation,
+    temporaryOwner: NotebookNetworkSandboxOwner = this
+  ): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     const restrictFolders =
       (this.platform === 'win32' && invocation.target?.kind !== 'wsl2') ||
@@ -500,11 +581,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const runtimeAccessRevision = this.runtimeAccessRevision
     await this.initialize()
     const target = invocation.target ?? { kind: 'native' as const }
-    await this.reconcilePendingCommandCleanups(target)
+    await temporaryOwner.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
     const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
-    const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(target)
-    this.pendingTemporaryRoots.set(commandTempRoot, receipt)
+    const { commandTempRoot, receipt, retained } =
+      await temporaryOwner.createCommandTemporaryRoot(target)
+    temporaryOwner.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {
       ...invocation.env,
       ...notebookTrustBundleEnvironment(this.trustBundle?.path),
@@ -676,7 +758,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       if (target.kind === 'wsl2') {
         // Returning from the runtime certifies guest-receipt reconciliation for this exact profile.
         // Host temp recovery must stay behind that stop-before-remove boundary.
-        await this.reconcileCommandTemporaryRoots(target)
+        await temporaryOwner.reconcileCommandTemporaryRoots(target)
       }
       this.log.info('sandbox process prepared', {
         executionReference: invocation.executionReference,
@@ -711,8 +793,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           retained.preparationCleanupReady = true
         }
         try {
-          await this.removeCommandTemporaryRoot(commandTempRoot, receipt, retained)
-          this.pendingTemporaryRoots.delete(commandTempRoot)
+          await temporaryOwner.removeCommandTemporaryRoot(commandTempRoot, receipt, retained)
+          temporaryOwner.pendingTemporaryRoots.delete(commandTempRoot)
         } catch (cleanupError) {
           throw new Error(
             'SHELL_CLEANUP_INCOMPLETE: Command temporary cleanup could not be verified.',
@@ -737,9 +819,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               // Preparation debt requires complete proof; it cannot use independent-command admission.
               if (!cleanupComplete(result)) return { ...result, admission: 'blocked' as const }
               if (retained) retained.preparationCleanupReady = true
-              await this.removeCommandTemporaryRoot(commandTempRoot, receipt, retained)
-              this.pendingTemporaryRoots.delete(commandTempRoot)
-              this.pendingCommandCleanups.delete(pendingCleanup)
+              await temporaryOwner.removeCommandTemporaryRoot(commandTempRoot, receipt, retained)
+              temporaryOwner.pendingTemporaryRoots.delete(commandTempRoot)
+              temporaryOwner.pendingCommandCleanups.delete(pendingCleanup)
               return result
             })().finally(() => {
               retryPromise = undefined
@@ -747,7 +829,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             return retryPromise
           }
         }
-        this.pendingCommandCleanups.add(pendingCleanup)
+        temporaryOwner.pendingCommandCleanups.add(pendingCleanup)
       }
       const preparationCause = completedPreparationCleanupCause(error)
       if (preparationCause !== undefined) {
@@ -756,8 +838,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           retained.preparationCleanupReady = true
         }
         try {
-          await this.removeCommandTemporaryRoot(commandTempRoot, receipt, retained)
-          this.pendingTemporaryRoots.delete(commandTempRoot)
+          await temporaryOwner.removeCommandTemporaryRoot(commandTempRoot, receipt, retained)
+          temporaryOwner.pendingTemporaryRoots.delete(commandTempRoot)
         } catch (cleanupError) {
           throw new Error(
             'SHELL_CLEANUP_INCOMPLETE: Command temporary cleanup could not be verified.',
@@ -813,18 +895,24 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           )
         }
         const temporaryCleanup = backendComplete
-          ? await this.removeCommandTemporaryRoot(commandTempRoot, receipt, retained).then(
-              () => ({ status: 'fulfilled' as const }),
-              (error) => ({ status: 'rejected' as const, reason: error })
-            )
+          ? await temporaryOwner
+              .removeCommandTemporaryRoot(commandTempRoot, receipt, retained)
+              .then(
+                () => ({ status: 'fulfilled' as const }),
+                (error) => ({ status: 'rejected' as const, reason: error })
+              )
           : { status: 'rejected' as const, reason: new Error('Backend cleanup incomplete.') }
         if (temporaryCleanup.status === 'fulfilled') {
-          this.pendingTemporaryRoots.delete(commandTempRoot)
+          temporaryOwner.pendingTemporaryRoots.delete(commandTempRoot)
         }
         let admission: NotebookSandboxCleanupResult['admission']
-        if (retained && !retained.blocked && this.retainedCommandRoots.has(commandTempRoot)) {
+        if (
+          retained &&
+          !retained.blocked &&
+          temporaryOwner.retainedCommandRoots.has(commandTempRoot)
+        ) {
           try {
-            await this.validateRetainedCommandRoot(commandTempRoot, receipt, retained)
+            await temporaryOwner.validateRetainedCommandRoot(commandTempRoot, receipt, retained)
             admission = 'independent-command-allowed'
           } catch {
             retained.blocked = true
@@ -869,15 +957,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       cleanupPromise = cleanupPromise.then(
         (result) => {
           if (cleanupComplete(result)) {
-            this.pendingCommandCleanups.delete(pendingCleanup)
+            temporaryOwner.pendingCommandCleanups.delete(pendingCleanup)
           } else {
-            this.pendingCommandCleanups.add(pendingCleanup)
+            temporaryOwner.pendingCommandCleanups.add(pendingCleanup)
             cleanupPromise = undefined
           }
           return result
         },
         (error) => {
-          this.pendingCommandCleanups.add(pendingCleanup)
+          temporaryOwner.pendingCommandCleanups.add(pendingCleanup)
           cleanupPromise = undefined
           throw error
         }

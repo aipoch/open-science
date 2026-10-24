@@ -97,14 +97,18 @@ DIFFERENT_TINY_PNG_BYTES[DIFFERENT_TINY_PNG_BYTES.length - 1] ^= 0xff
 const startLoop = (
   rscript: string,
   env: NodeJS.ProcessEnv,
-  cwd?: string
+  cwd?: string,
+  vanilla = false
 ): {
   child: ChildProcessWithoutNullStreams
   send: (code: string) => Promise<KernelLoopResponse>
   inspect: (includePrivate?: boolean) => Promise<KernelLoopResponse>
   waitFor: (reqId: string) => Promise<KernelLoopResponse>
 } => {
-  const child = spawn(rscript, [LOOP], { cwd, env: { ...process.env, ...env } })
+  const child = spawn(rscript, [...(vanilla ? ['--vanilla'] : []), LOOP], {
+    cwd,
+    env: { ...process.env, ...env }
+  })
   const rl = createInterface({ input: child.stdout })
   let stderr = ''
   child.stderr.on('data', (chunk) => {
@@ -191,6 +195,49 @@ const installBlankPngMaterializationTrace = (
   ].join('\n')
 
 gate('r_loop.R', () => {
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true]
+  ])(
+    'attests only the first request of an uncustomized vanilla session (vanilla: %s, custom defaults: %s)',
+    async (vanilla, customDefaults) => {
+      const { child, send } = startLoop(
+        rscriptBin(),
+        {
+          R_DEFAULT_PACKAGES: '',
+          R_SCRIPT_DEFAULT_PACKAGES: customDefaults
+            ? 'datasets,utils,grDevices,graphics,stats,methods'
+            : ''
+        },
+        undefined,
+        vanilla
+      )
+      try {
+        const first = await send('x <- base::c(1)')
+        expect(first.error).toBeNull()
+        expect(first.environmentOverlay?.executionContext?.rPackages?.cleanSession).toBe(
+          vanilla && !customDefaults
+        )
+        expect(first.environmentOverlay?.executionContext?.rPackages?.reads).toEqual(
+          expect.arrayContaining([
+            { name: '<-', package: 'base' },
+            { name: '::', package: 'base' }
+          ])
+        )
+        const second = await send('x <- 2')
+        expect(second.error).toBeNull()
+        expect(second.environmentOverlay?.executionContext?.rPackages?.cleanSession).toBe(false)
+      } finally {
+        if (child.exitCode === null) {
+          const exited = once(child, 'exit')
+          child.stdin.end()
+          await exited
+        }
+      }
+    }
+  )
+
   it('keeps responding when a loaded package description becomes unavailable', async () => {
     const root = mkdtempSync(join(tmpdir(), 'r-missing-description-'))
     const library = join(root, 'library')

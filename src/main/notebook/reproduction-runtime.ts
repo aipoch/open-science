@@ -1,20 +1,12 @@
-import type {
-  CreateReproductionRuntime,
-  NotebookReproductionEnvironmentOutput,
-  NotebookReproductionEnvironmentProgress,
-  NotebookReproductionStep,
-  NotebookReproductionRuntime as ReproductionRuntime
-} from '@aipoch/reproducibility'
-import { restoreRRandomState, validatePythonRandomState } from '@aipoch/reproducibility'
+import { notebookPromptInputPath } from './prompt-input-materialization'
 import type { ArtifactReproducibilityEnvironmentRequirement } from '@aipoch/reproducibility/contracts'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
-import type { NotebookSessionExecutionResult } from './session-aggregate'
-
 import {
   buildManagedRuntimeProcessEnvironment,
+  CHILD_UNCONFIRMED,
   createFromLockArgv,
   micromambaCacheLockKey,
   micromambaSpawnEnv,
@@ -33,6 +25,7 @@ import {
 } from '@aipoch/environment'
 import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
+
 import { resolveStorageKey, storageKey } from '../artifacts/provenance-storage'
 import { runMicromamba, verifyExecutable } from './environment-process'
 import { NotebookHelperModuleHost } from './helper-module-host'
@@ -41,7 +34,16 @@ import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './ke
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { resolveLoopScriptPaths } from './runtime-service'
+import type { NotebookSessionExecutionResult } from './session-aggregate'
 import type { NotebookSessionExecutor } from './session-aggregate'
+import type {
+  CreateReproductionRuntime,
+  NotebookReproductionEnvironmentOutput,
+  NotebookReproductionEnvironmentProgress,
+  NotebookReproductionStep,
+  NotebookReproductionRuntime as ReproductionRuntime
+} from '@aipoch/reproducibility'
+import { restoreRRandomState, validatePythonRandomState } from '@aipoch/reproducibility'
 
 type CreateNotebookReproductionRuntimeInput = Parameters<CreateReproductionRuntime>[0] & {
   storageRoot: string
@@ -154,6 +156,7 @@ const loadEnvironmentLock = async (
   return lock
 }
 
+// Derived locks are new immutable evidence. Never overwrite the source environment lock.
 // Reuse only identical restoration contents, never merge locks or mutate a running prefix.
 // Omission records contain names but no prior package version/hash, so they cannot prove that
 // a larger native lock preserves the earlier environment. Pip declaration order can differ;
@@ -219,9 +222,14 @@ const restoreEnvironment = async (
     mkdir(locksRoot, { recursive: true, mode: 0o700 }),
     mkdir(environmentsRoot, { recursive: true, mode: 0o700 })
   ])
-  const lockPath = join(locksRoot, `${requirement.lockChecksum}.lock`)
-  await writeFile(lockPath, conda.explicitLock, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
-  const prefix = join(environmentsRoot, requirement.lockChecksum)
+  const restorationChecksum = requirement.lockChecksum
+  const lockPath = join(locksRoot, `${restorationChecksum}.lock`)
+  await writeFile(lockPath, conda.explicitLock, {
+    encoding: 'utf8',
+    flag: 'wx',
+    mode: 0o600
+  })
+  const prefix = join(environmentsRoot, restorationChecksum)
   const sharedRuntimeRoot = runtimeRoot(input.storageRoot)
   const cache = selectMicromambaCache(sharedRuntimeRoot, undefined, { platform })
   const cacheLockKeys = [
@@ -258,7 +266,11 @@ const restoreEnvironment = async (
         // Python attempts are short-lived: compile only modules actually imported during replay,
         // instead of eagerly compiling every Python package in the restored inventory.
         createFromLockArgv(mm, sharedRuntimeRoot, prefix, lockPath, {
-          compilePyc: requirement.kernelKind !== 'python'
+          compilePyc: requirement.kernelKind !== 'python',
+          // A replay must own its executable and libraries. Shared cache inodes can
+          // resolve a different prefix (notably R_HOME/libR on macOS), defeating
+          // isolation even when the installed archive inventory is correct.
+          alwaysCopy: true
         }),
         micromambaSpawnEnv(sharedRuntimeRoot, undefined, {
           platform,
@@ -349,15 +361,46 @@ const restoreEnvironment = async (
   input.signal?.throwIfAborted()
   progress('completed')
   return {
-    environmentName: `repro-${requirement.lockChecksum.slice(0, 12)}`,
+    environmentName: `repro-${restorationChecksum.slice(0, 12)}`,
     prefix,
     command
   }
 }
 
 const createNotebookReproductionRuntime = async (
-  input: CreateNotebookReproductionRuntimeInput,
+  originalInput: CreateNotebookReproductionRuntimeInput,
   dependencies: CreateNotebookReproductionRuntimeDependencies = {}
+): Promise<NotebookReproductionRuntime> => {
+  originalInput.signal?.throwIfAborted()
+  if (!originalInput.processSandbox.createTemporaryScope) {
+    throw new Error('Notebook reproduction requires attempt-owned sandbox temporary resources.')
+  }
+  const temporaryScope = originalInput.processSandbox.createTemporaryScope(
+    join(originalInput.attemptRoot, 'command-temp')
+  )
+  try {
+    return await createScopedNotebookReproductionRuntime(
+      { ...originalInput, processSandbox: temporaryScope },
+      dependencies,
+      temporaryScope
+    )
+  } catch (error) {
+    try {
+      await temporaryScope.dispose()
+    } catch (cleanupError) {
+      throw new Error(
+        `${CHILD_UNCONFIRMED}: Reproduction temporary cleanup could not be confirmed; attempt retained.`,
+        { cause: new AggregateError([error, cleanupError]) }
+      )
+    }
+    throw error
+  }
+}
+
+const createScopedNotebookReproductionRuntime = async (
+  input: CreateNotebookReproductionRuntimeInput,
+  dependencies: CreateNotebookReproductionRuntimeDependencies,
+  temporaryScope: NotebookProcessSandbox & { dispose(): Promise<void> }
 ): Promise<NotebookReproductionRuntime> => {
   input.signal?.throwIfAborted()
   const restored = new Map<string, RestoredEnvironment>()
@@ -369,11 +412,7 @@ const createNotebookReproductionRuntime = async (
   for (const requirement of input.requirements) {
     input.signal?.throwIfAborted()
     const lock = await loadEnvironmentLock(requirement, input, dependencies)
-    captured.push({
-      requirement,
-      lock,
-      identity: restoreIdentity(lock)
-    })
+    captured.push({ requirement, lock, identity: restoreIdentity(lock) })
   }
   const restoredByIdentity = new Map<string, RestoredEnvironment>()
   for (const [index, { requirement, lock, identity }] of captured.entries()) {
@@ -436,6 +475,12 @@ const createNotebookReproductionRuntime = async (
   }
 
   return {
+    environmentLocks: captured.map(({ requirement }) => ({
+      requirementId: requirement.requirementId,
+      kernelKind: requirement.kernelKind,
+      ...(requirement.environmentName ? { environmentName: requirement.environmentName } : {}),
+      lockChecksum: requirement.lockChecksum
+    })),
     execute: async ({
       step,
       source,
@@ -500,6 +545,7 @@ const createNotebookReproductionRuntime = async (
         environment: execution.name,
         resolvedInterpreter: {
           command: environment.command,
+          ...(step.kernelKind === 'r' ? { args: ['--vanilla'] } : {}),
           condaPrefix: environment.prefix
         },
         sessionId: input.sessionId,
@@ -513,7 +559,11 @@ const createNotebookReproductionRuntime = async (
       }
       return result
     },
-    shutdown: () => executor.shutdown()
+    shutdown: async () => {
+      const result = await executor.shutdown()
+      if (result.reaped) await temporaryScope.dispose()
+      return result
+    }
   }
 }
 
@@ -529,6 +579,8 @@ export type {
 
 import {
   createReproductionExecutor,
+  createWorkflowSliceExecutor,
+  type ExecuteWorkflowSliceInput,
   type ExecuteArtifactReproducibilityDependencies,
   type ExecuteArtifactReproducibilityInput
 } from '@aipoch/reproducibility'
@@ -545,7 +597,9 @@ export type HostReproductionInput = Omit<ExecuteArtifactReproducibilityInput, 'e
 export type HostReproductionDependencies = Omit<
   ExecuteArtifactReproducibilityDependencies,
   'createRuntime'
-> & { createRuntime?: typeof createNotebookReproductionRuntime }
+> & {
+  createRuntime?: typeof createNotebookReproductionRuntime
+}
 
 // This adapter composes existing Notebook ownership, product identity and sandbox policy.
 // The caller retains authorization, storage leases and receipt publication/SQL transactions.
@@ -575,4 +629,33 @@ type NotebookReproductionRuntime = Omit<ReproductionRuntime, 'execute'> & {
   execute(
     input: Parameters<ReproductionRuntime['execute']>[0]
   ): Promise<NotebookSessionExecutionResult>
+}
+
+const executeWorkflow = createWorkflowSliceExecutor({
+  inputPath: notebookPromptInputPath,
+  fileIO: { copyFile: copyFileWithinBudget, digestFile: digestFileWithinBudget }
+})
+export type HostWorkflowReproductionInput = Omit<ExecuteWorkflowSliceInput, 'evidence'> & {
+  storageRoot: string
+  processSandbox: NotebookProcessSandbox
+}
+export const executeWorkflowReproducibility = async (
+  input: HostWorkflowReproductionInput,
+  dependencies: HostReproductionDependencies = {}
+): ReturnType<typeof executeWorkflow> => {
+  const { storageRoot, processSandbox, ...attempt } = input
+  return executeWorkflow(
+    { ...attempt, evidence: reproductionEvidence(storageRoot) },
+    {
+      createAttemptRoot: dependencies.createAttemptRoot,
+      createRuntime: (runtime) =>
+        (dependencies.createRuntime ?? createNotebookReproductionRuntime)({
+          ...runtime,
+          storageRoot,
+          processSandbox,
+          projectId: 'artifact-reproducibility',
+          sessionId: 'workflow-' + input.plan.planId.slice(0, 16)
+        })
+    }
+  )
 }

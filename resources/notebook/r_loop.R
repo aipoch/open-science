@@ -770,7 +770,18 @@ emit <- function(obj) {
 
 # Observe package bindings without evaluating functions, promises, or user data.
 # These are potential calls in each top-level expression, not an execution trace.
-new_package_observer <- function() {
+new_package_observer <- function(clean_session = FALSE) {
+  # Force the request-start observation before the caller increments its sequence.
+  clean_session <- isTRUE(clean_session)
+  if (clean_session) {
+    startup_args <- commandArgs()
+    args_end <- match("--args", startup_args, nomatch = length(startup_args) + 1L) - 1L
+    clean_session <- "--vanilla" %in% startup_args[seq_len(args_end)] &&
+      !any(grepl("^--default-packages(=|$)", startup_args[seq_len(args_end)])) &&
+      !any(nzchar(Sys.getenv(c("R_DEFAULT_PACKAGES", "R_SCRIPT_DEFAULT_PACKAGES")))) &&
+      all(loadedNamespaces() %in% c("base", "utils", "stats", "graphics", "grDevices",
+        "methods", "datasets", "compiler", "tools", "grid", "jsonlite"))
+  }
   complete <- TRUE
   reads <- list()
   seen <- new.env(parent = emptyenv())
@@ -797,8 +808,9 @@ new_package_observer <- function() {
           env <- as.environment(pos)
           if (!exists(op, envir = env, inherits = FALSE)) next
           label <- environmentName(env)
-          if (startsWith(label, "package:") && !bindingIsActive(op, env)) {
-            pkg <- substring(label, 9L)
+          is_base <- identical(env, baseenv())
+          if ((is_base || startsWith(label, "package:")) && !bindingIsActive(op, env)) {
+            pkg <- if (is_base) "base" else substring(label, 9L)
             key <- paste(pkg, op, sep = ":")
             if (!exists(key, envir = seen, inherits = FALSE)) {
               if (length(reads) >= 256L) { complete <<- FALSE; break }
@@ -811,6 +823,11 @@ new_package_observer <- function() {
       }
       # Do not force missing arguments (e.g. matrix[, 1]).
       args <- as.list(node)
+      # A qualified call has a language object in its head. Observe :: itself without
+      # evaluating the namespace/member or treating arbitrary computed callees as calls.
+      head <- args[[1L]]
+      if (is.call(head) && is.symbol(head[[1L]]) &&
+          as.character(head[[1L]]) %in% c("::", ":::")) walk(head, depth + 1L)
       for (i in seq_along(args)) {
         if (i > 1L && !identical(args[[i]], quote(expr = ))) walk(args[[i]], depth + 1L)
         if (visited > 4096L) break
@@ -820,7 +837,8 @@ new_package_observer <- function() {
   }, error = function(e) { complete <<- FALSE })
   list(record = record, finish = function() {
     after <- attached()
-    list(before = as.list(before), after = as.list(after), reads = reads, complete = complete)
+    list(before = as.list(before), after = as.list(after), reads = reads, complete = complete,
+         cleanSession = isTRUE(clean_session))
   })
 }
 environment(new_package_observer) <- baseenv()
@@ -1465,7 +1483,7 @@ run <- base::local({
     if (!base::exists(".Random.seed", envir = base::globalenv(), inherits = FALSE))
       base::set.seed(NULL)
     context_before <- capture_execution_context()
-    package_observer <- new_package_observer()
+    package_observer <- new_package_observer(request_state$sequence == 0L)
     request_state$sequence <- request_state$sequence + 1L
     request_id <- request_state$sequence
     reset_capture_state(request_id = request_id)

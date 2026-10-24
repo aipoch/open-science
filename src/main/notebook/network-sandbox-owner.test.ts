@@ -6,7 +6,7 @@ import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { promisify } from 'node:util'
 import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { rootCertificates } from 'node:tls'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -201,6 +201,108 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'keeps reproduction temp outside protected storage without disposing the shared %s backend',
+    async (platform) => {
+      const fixture = await realpath(await mkdtemp(join(tmpdir(), 'os-repro-temp-')))
+      fixtureDirectories.push(fixture)
+      const storage = join(fixture, 'config')
+      const attempt = join(fixture, 'attempt')
+      await mkdir(storage)
+      await mkdir(attempt)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        temporaryRoot: join(storage, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn(),
+        platform
+      })
+      const invocation: NotebookSandboxInvocation = {
+        executable: '/bin/bash',
+        args: [],
+        env: {},
+        cwd: attempt,
+        commandText: '',
+        sessionId: 'repro',
+        projectId: 'project',
+        runtime: 'r',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [attempt],
+          deniedReadRoots: [storage],
+          deniedWriteRoots: [storage]
+        }
+      }
+      const ordinary = await owner.wrap({
+        ...invocation,
+        filesystem: { ...invocation.filesystem, deniedReadRoots: [], deniedWriteRoots: [] }
+      })
+      const ordinaryRoot = backend.wrap.mock.calls.at(-1)![0].env.TMPDIR as string
+      const scope = owner.createTemporaryScope(join(attempt, 'commands'))
+      const wrapped = await scope.wrap(invocation)
+      const request = backend.wrap.mock.calls.at(-1)![0]
+      const root = request.env.TMPDIR as string
+      expect(root.startsWith(join(attempt, 'commands') + sep)).toBe(true)
+      expect(request.filesystem.deniedReadRoots).toEqual([storage])
+      expect(request.filesystem.deniedWriteRoots).toContain(storage)
+      expect(request.filesystem.readWriteRoots).toContain(root)
+      expect(request.env.TEMP).toBe(root)
+      expect(request.env.TMP).toBe(root)
+      expect(existsSync(`${root}.receipt`)).toBe(true)
+      expect(backend.initialize).toHaveBeenCalledOnce()
+      await wrapped.cleanup('cancel', { processesTerminated: false })
+      await expect(scope.dispose()).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+      expect(existsSync(root)).toBe(true)
+      expect(existsSync(`${root}.receipt`)).toBe(true)
+      backend.cleanup.mockResolvedValue({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      await scope.dispose()
+      expect(existsSync(root)).toBe(false)
+      expect(existsSync(`${root}.receipt`)).toBe(false)
+      expect(existsSync(ordinaryRoot)).toBe(true)
+      expect(backend.dispose).not.toHaveBeenCalled()
+      await expect(scope.wrap(invocation)).rejects.toThrow('scope is closed')
+      await ordinary.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it('rejects a reproduction temp root within a protected parent before sandbox preparation', async () => {
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'os-repro-protected-temp-')))
+    fixtureDirectories.push(fixture)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    const scope = owner.createTemporaryScope(join(fixture, 'commands'))
+    await expect(
+      scope.wrap({
+        executable: '/bin/bash',
+        args: [],
+        env: {},
+        cwd: fixture,
+        commandText: '',
+        sessionId: 'repro',
+        projectId: 'project',
+        runtime: 'r',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [],
+          deniedReadRoots: [fixture],
+          deniedWriteRoots: [fixture]
+        }
+      })
+    ).rejects.toThrow('inside a protected directory')
+    await scope.dispose()
+    expect(backend.wrap).not.toHaveBeenCalled()
+    expect(existsSync(join(fixture, 'commands'))).toBe(false)
+  })
   it.each([true, false])(
     'parks a Shell network request, deduplicates it, and releases only a live connection (%s)',
     async (connectionLive) => {
@@ -3786,6 +3888,62 @@ describe('macOS retained cleanup admission', () => {
       await owner.dispose()
     } finally {
       vi.mocked(mkdir).mockImplementation(actual.mkdir)
+      vi.mocked(rm).mockImplementation(actual.rm)
+    }
+  })
+
+  it('waits for reproduction temp preparation before disposing and rejects late wraps', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { owner, invocation, directory } = await makeFixture(() => gate)
+    const scope = owner.createTemporaryScope(join(directory, 'reproduction-temp'))
+    const preparation = scope.wrap(invocation)
+    await vi.waitFor(() => expect(backend.initialize).toHaveBeenCalledOnce())
+    const disposal = scope.dispose()
+    const rejected = expect(disposal).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+    await expect(scope.wrap(invocation)).rejects.toThrow('scope is closed')
+    release()
+    const wrapped = await preparation
+    await rejected
+    const root = backend.wrap.mock.calls.at(-1)![0].env.TMPDIR as string
+    expect(existsSync(`${root}.receipt`)).toBe(true)
+    await wrapped.cleanup('spawn-failed', {
+      processesTerminated: true,
+      processState: 'never-started'
+    })
+    await scope.dispose()
+    expect(existsSync(`${root}.receipt`)).toBe(false)
+    await owner.dispose()
+  })
+
+  it('retries reproduction temp disposal after a never-started receipt cleanup fails', async () => {
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const { owner, invocation, directory } = await makeFixture()
+    const temporaryRoot = join(directory, 'reproduction-temp')
+    const scope = owner.createTemporaryScope(temporaryRoot)
+    let locked = true
+    vi.mocked(open).mockImplementationOnce(async (...args) => {
+      const handle = await actual.open(...args)
+      vi.spyOn(handle, 'writeFile').mockRejectedValueOnce(new Error('receipt write failed'))
+      return handle
+    })
+    vi.mocked(rm).mockImplementation(async (path, options) => {
+      if (locked && String(path).endsWith('.receipt')) throw new Error('receipt locked')
+      return actual.rm(path, options)
+    })
+    try {
+      await expect(scope.wrap(invocation)).rejects.toThrow('receipt write failed')
+      await expect(scope.dispose()).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+      locked = false
+      await scope.dispose()
+      expect(await actual.readdir(temporaryRoot)).toEqual([])
+      expect(backend.wrap).not.toHaveBeenCalled()
+      expect(backend.dispose).not.toHaveBeenCalled()
+      await owner.dispose()
+    } finally {
+      vi.mocked(open).mockImplementation(actual.open)
       vi.mocked(rm).mockImplementation(actual.rm)
     }
   })
