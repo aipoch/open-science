@@ -585,6 +585,9 @@ jobs:
           echo "node=$node_outcome" >> "$GITHUB_OUTPUT"
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
+      - name: Generate derived consumer index
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        run: npm run generate:module-consumers
       - name: Check complete module ownership and consumer evidence
         # Registration/full plans include these guards in the contract suite below.
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}
@@ -791,6 +794,8 @@ jobs:
           # Portable CPU tests use bundled ONNX binaries, not optional NuGet GPU providers.
           ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Generate derived consumer index
+        run: npm run generate:module-consumers
       - name: Verify ONNX native loading
         run: node -e "require('onnxruntime-node')"
       - name: Select independent package tests from trusted policy
@@ -882,6 +887,9 @@ jobs:
       - name: Install report merge dependencies
         if: ${{ needs.unit_shard.result != 'skipped' }}
         run: node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false
+      - name: Generate derived consumer index
+        if: ${{ needs.unit_shard.result == 'skipped' }}
+        run: npm run generate:module-consumers
       - name: Test affected Modules
         id: unit_macos_related
         if: ${{ needs.unit_shard.result == 'skipped' && fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -979,6 +987,8 @@ jobs:
           cache: npm
       - name: Install parser dependencies
         run: node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false
+      - name: Generate derived consumer index
+        run: npm run generate:module-consumers
       - name: Compare file-level and module test selection
         id: file_test_impact
         continue-on-error: true

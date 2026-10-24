@@ -415,7 +415,6 @@ describe('PR Gate workflow', () => {
           'module-graph/derived-index.mjs',
           'module-graph/layers.mjs',
           'module-boundaries.json',
-          'module-derived-consumers.json',
           'module-impact.json',
           'load-module-impact.mjs',
           'package-test-impact.mjs',
@@ -1298,6 +1297,15 @@ describe('PR Gate workflow', () => {
       "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}"
     )
     expect(guard?.['continue-on-error']).not.toBe(true)
+    const generate = workflow.jobs.static.steps?.find(
+      ({ name }) => name === 'Generate derived consumer index'
+    )
+    expect(generate?.run).toContain('generate:module-consumers')
+    expect(generate?.if).toBe(
+      "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
+    )
+    const steps = workflow.jobs.static.steps ?? []
+    expect(steps.indexOf(generate!)).toBe(steps.indexOf(guard!) - 1)
   })
 
   it('runs manifest-reading contracts as a blocking check for registration and full plans', () => {

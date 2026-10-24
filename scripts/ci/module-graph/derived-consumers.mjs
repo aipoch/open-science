@@ -76,16 +76,27 @@ export function generateDerivedConsumers(manifest, reverse) {
 }
 
 export function checkDerivedConsumers(source, manifest) {
-  const text = source.read(derivedConsumersPath)
-  if (text === undefined) throw Error('Missing derived consumer index')
-  const actual = validateDerivedConsumers(JSON.parse(text), manifest)
   const runtimeEdges = Object.entries(
     JSON.parse(source.read('scripts/ci/module-runtime-consumers.json'))
   )
   const graph = consumerDependencyGraph(source, runtimeEdges)
-  const expected = generateDerivedConsumers(manifest, graph.reverse)
-  if (!isDeepStrictEqual(actual, expected))
-    throw Error('Stale derived consumer index; run npm run generate:module-consumers')
+  const text = source.read(derivedConsumersPath)
+  if (text === undefined) {
+    // Distinguish genuinely absent from a tracked non-regular entry (e.g. a symlink).
+    // source.files includes every tracked path regardless of mode; read() returns undefined
+    // only for non-regular entries. A symlink must be rejected, not treated as absent.
+    if (source.files.has(derivedConsumersPath))
+      throw Error('Derived consumer index must be a regular file')
+    // Index absent (runtime-generated, not committed). Validate the graph itself is correct
+    // so integrity is not a no-op: the generated result must pass schema validation.
+    const expected = generateDerivedConsumers(manifest, graph.reverse)
+    validateDerivedConsumers(expected, manifest)
+  } else {
+    const actual = validateDerivedConsumers(JSON.parse(text), manifest)
+    const expected = generateDerivedConsumers(manifest, graph.reverse)
+    if (!isDeepStrictEqual(actual, expected))
+      throw Error('Stale derived consumer index; run npm run generate:module-consumers')
+  }
   return graph
 }
 
@@ -119,21 +130,21 @@ function derivedConsumerInputsUnchanged(base, head, cwd) {
   return isDeepStrictEqual(expectedAt(base), expectedAt(head))
 }
 
-// Older bases without an index remain supported; once introduced it cannot disappear.
+// Older bases without an index remain supported. The index may be deleted once generation
+// moves to runtime; CI Integrity only validates staleness when it exists at the head revision.
 export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
   const hasIndex = (revision) =>
     execFileSync('git', ['ls-tree', '--name-only', revision, '--', derivedConsumersPath], {
       cwd,
       encoding: 'utf8'
     }).trim() === derivedConsumersPath
+  if (!hasIndex(head)) return
   const mergeBase = execFileSync('git', ['merge-base', base, head], {
     cwd,
     encoding: 'utf8'
   }).trim()
-  if (hasIndex(mergeBase) || hasIndex(head)) {
-    if (derivedConsumerInputsUnchanged(mergeBase, head, cwd)) return
-    checkDerivedConsumersAtRevision(head, cwd)
-  }
+  if (derivedConsumerInputsUnchanged(mergeBase, head, cwd)) return
+  checkDerivedConsumersAtRevision(head, cwd)
 }
 
 // This guard supplements the explicit IPC/behavioral contracts in the manifest. It does not
@@ -149,7 +160,12 @@ export function checkModuleConsumerCoverage({
     'Source-derived module boundary changed'
   )
   const { reverse } = checkDerivedConsumers(source, manifest)
-  const { modules } = withDerivedConsumers(manifest, derived)
+  // When the committed index is absent (runtime generation), derive coverage from the graph so
+  // the whole-tree guard still proves every reachable test has a home in explicit or derived evidence.
+  const effectiveDerived = Object.keys(derived.modules).length
+    ? derived
+    : generateDerivedConsumers(manifest, reverse)
+  const { modules } = withDerivedConsumers(manifest, effectiveDerived)
   for (const [path, consumers] of reverse) {
     if (!isTest(path) || consumers.size === 0 || !/^(src|packages)\//.test(path)) continue
     assert.ok(
