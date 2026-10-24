@@ -2,9 +2,7 @@
   "ownerPaths": [
     "src/main/notebook/reproduction-runtime.integration.test.ts",
     "src/main/notebook/reproduction-runtime.test.ts",
-    "src/main/notebook/reproduction-runtime.ts",
-    "src/main/notebook/reproduction-runtime-subset.ts",
-    "src/main/notebook/reproduction-runtime-subset.test.ts"
+    "src/main/notebook/reproduction-runtime.ts"
   ],
   "interfacePaths": [
     "src/main/artifacts/artifact-provenance-graph.ts",
@@ -97,8 +95,7 @@
   "testFiles": {
     "owner": [
       "src/main/notebook/reproduction-runtime.integration.test.ts",
-      "src/main/notebook/reproduction-runtime.test.ts",
-      "src/main/notebook/reproduction-runtime-subset.test.ts"
+      "src/main/notebook/reproduction-runtime.test.ts"
     ],
     "contract": [
       "src/main/artifacts/artifact-reproducibility-ipc.test.ts",
@@ -733,5 +730,5 @@
     "windows_sensitive"
   ],
   "fallbackCapability": "main_runtime",
-  "fullTestReason": "Conda runtime subset proposals and R checkpoint replay extend the trusted Notebook reproduction boundary and its native process and filesystem imports; retain full validation until the expanded boundary is reviewed and trusted."
+  "fullTestReason": "Dependency-based workflow replay extends the trusted Notebook reproduction boundary and its native process and filesystem imports; retain full validation until the expanded boundary is reviewed and trusted."
 }

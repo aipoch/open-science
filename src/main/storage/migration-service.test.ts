@@ -34,7 +34,6 @@ import {
   MIGRATED_DIRS,
   PROJECT_DATABASE_FILE,
   RUNTIME_ENVIRONMENT_LOCKS_DIR,
-  RUNTIME_R_STAGE_CHECKPOINTS_DIR,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   RUNTIME_REPAIR_REGISTRY_FILE,
   RUNTIME_NPM_DIR,
@@ -983,7 +982,6 @@ describe('runDataRootMigration (copy phase)', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
-          RUNTIME_R_STAGE_CHECKPOINTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
@@ -2501,83 +2499,6 @@ describe('discardStagedCopy', () => {
 })
 
 describe('runtime preservation + old-runtime cleanup', () => {
-  it('copies immutable R state and removes only its journaled source subtree', async () => {
-    const key = join(RUNTIME_R_STAGE_CHECKPOINTS_DIR, `${'a'.repeat(64)}.rds`)
-    await mkdir(dirname(join(currentDataRoot, key)), { recursive: true })
-    await writeFile(join(currentDataRoot, key), 'immutable R state')
-    let token = ''
-    const result = await runDataRootMigration(
-      { ...fakeDeps(), currentDataRoot, validateProvenanceState: async () => undefined },
-      emptyParent,
-      {
-        ...runOpts(),
-        onVerified: (marker) => {
-          token = marker.token
-        }
-      }
-    )
-    expect(result).toEqual({ ok: true })
-    const target = dataRootFor(emptyParent)
-    expect((await readMigrationMarker(target))?.migratedDirs).toContain(
-      RUNTIME_R_STAGE_CHECKPOINTS_DIR
-    )
-    expect(await readFile(join(target, key), 'utf8')).toBe('immutable R state')
-    const cleanupJournal = new DataRootCleanupJournal(join(emptyParent, 'config'))
-    await expect(
-      commitDataRootSwitch(
-        {
-          currentDataRoot,
-          setDataRoot: vi.fn(async () => undefined),
-          cleanupJournal,
-          expectedToken: token,
-          validateProvenanceState: async () => undefined
-        },
-        emptyParent
-      )
-    ).resolves.toEqual({ ok: true, cleanupPending: false })
-    expect(await readFile(join(target, key), 'utf8')).toBe('immutable R state')
-    expect(existsSync(join(currentDataRoot, key))).toBe(false)
-    expect(await cleanupJournal.hasPending()).toBe(false)
-  })
-
-  it('refuses an older verified copy that omitted retained R state before deleting the runtime', async () => {
-    const target = await seedVerifiedMarker(emptyParent, currentDataRoot)
-    const sourceState = join(
-      currentDataRoot,
-      RUNTIME_R_STAGE_CHECKPOINTS_DIR,
-      `${'a'.repeat(64)}.rds`
-    )
-    await mkdir(dirname(sourceState), { recursive: true })
-    await writeFile(sourceState, 'only copy of R state')
-    await mkdir(join(target, 'runtime', 'envs.lock'), { recursive: true })
-    await writeFile(
-      join(target, 'runtime', 'envs.lock', 'default-r.lock'),
-      '@EXPLICIT\nhttps://example.test/pkg'
-    )
-    await writeMigrationMarker(target, {
-      ...(await readMigrationMarker(target))!,
-      runtimeLockInventory: await scanInventory(target, [join('runtime', 'envs.lock')])
-    })
-    const setDataRoot = vi.fn()
-    const deleteSources = vi.fn()
-    const result = await commitDataRootSwitch(
-      {
-        currentDataRoot,
-        setDataRoot,
-        deleteSources,
-        expectedToken: 'tok-test'
-      },
-      emptyParent
-    )
-    expect(result).toEqual({
-      ok: false,
-      error: 'The staged copy does not include all required provenance data. Run the move again.'
-    })
-    expect(setDataRoot).not.toHaveBeenCalled()
-    expect(deleteSources).not.toHaveBeenCalled()
-    expect(await readFile(sourceState, 'utf8')).toBe('only copy of R state')
-  })
-
   it('carries an unconsumed R lock into the verified inventory on another migration', async () => {
     const deps = fakeDeps()
     const pendingDir = join(currentDataRoot, 'runtime', 'envs.lock')
@@ -2643,7 +2564,6 @@ describe('runtime preservation + old-runtime cleanup', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
-          RUNTIME_R_STAGE_CHECKPOINTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
@@ -2679,7 +2599,6 @@ describe('runtime preservation + old-runtime cleanup', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
-          RUNTIME_R_STAGE_CHECKPOINTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')
@@ -2719,7 +2638,6 @@ describe('runtime preservation + old-runtime cleanup', () => {
           ...MIGRATED_DIRS,
           RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
           RUNTIME_ENVIRONMENT_LOCKS_DIR,
-          RUNTIME_R_STAGE_CHECKPOINTS_DIR,
           RUNTIME_REPAIR_REGISTRY_FILE,
           RUNTIME_NPM_DIR,
           join('runtime', 'pkgs')

@@ -8,6 +8,7 @@ import {
   caBundleEnv,
   createFromLockArgv,
   createFromPackagesArgv,
+  installArgv,
   installFromLockArgv,
   listArgv,
   micromambaSpawnEnv,
@@ -15,7 +16,6 @@ import {
   resolveMicromamba,
   resolveMicromambaLocations
 } from './micromamba'
-import { installArgv } from './micromamba'
 
 describe('micromamba argv builders', () => {
   it.each([undefined, { alwaysCopy: false }])(

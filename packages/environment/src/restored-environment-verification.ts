@@ -1,7 +1,6 @@
 import { open, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative } from 'node:path'
-import type { CondaRuntimeSubsetPlan, NotebookEnvironmentLock } from './contracts'
-import { condaRuntimeSubsetPlanMatchesLock } from './conda-lock-subset'
+import type { NotebookEnvironmentLock } from './contracts'
 import type { InstallSpawn } from './package-manager'
 import { lockedPackageVersions } from './native-lock-restoration'
 import { nativeLockRestoreState } from './native-lock-restoration'
@@ -22,7 +21,7 @@ const readMetadata = async (path: string): Promise<Record<string, unknown>> => {
   const file = await open(path, 'r')
   try {
     const stat = await file.stat()
-    if (!stat.isFile() || stat.size > 8 * 1024 * 1024)
+    if (!stat.isFile() || stat.size > 4 * 1024 * 1024)
       throw new Error('Package metadata exceeds verification limits.')
     const buffer = Buffer.alloc(stat.size + 1)
     let length = 0
@@ -40,7 +39,6 @@ const readMetadata = async (path: string): Promise<Record<string, unknown>> => {
 
 export const verifyRestoredEnvironment = async (input: {
   lock: NotebookEnvironmentLock
-  runtimeSubset?: CondaRuntimeSubsetPlan
   prefix: string
   env: NodeJS.ProcessEnv
   spawn: InstallSpawn
@@ -48,21 +46,12 @@ export const verifyRestoredEnvironment = async (input: {
   platform?: NodeJS.Platform
 }): Promise<void> => {
   input.signal?.throwIfAborted()
-  if (
-    input.runtimeSubset !== undefined &&
-    !condaRuntimeSubsetPlanMatchesLock(input.runtimeSubset, input.lock)
-  )
-    throw new Error('Runtime subset does not match its source Conda lock.')
   const root = await realpath(input.prefix)
   const conda = input.lock.components.find((component) => component.ecosystem === 'conda')
   if (!conda) throw new Error('Restored environment has no Conda baseline to verify.')
-  const lines = (input.runtimeSubset?.explicitLock ?? conda.explicitLock)
-    .split(/\r?\n/u)
-    .filter((line) => /^https?:\/\//u.test(line))
+  const lines = conda.explicitLock.split(/\r?\n/u).filter((line) => /^https?:\/\//u.test(line))
   if (!lines.length || lines.length > 10000)
     throw new Error('Conda verification inventory is empty or exceeds its limit.')
-  // Verify every captured package sequentially. The inventory count and per-record
-  // limit bound work and individual allocations without rejecting valid large locks.
   let runtimeVersion: string | undefined
   for (const line of lines) {
     input.signal?.throwIfAborted()
@@ -136,33 +125,6 @@ export const verifyRestoredEnvironment = async (input: {
       for (const entry of parsed.packages ?? [])
         rRecords[entry.package] = { Version: entry.version }
   }
-  const ownedRPackages = new Map<string, string>()
-  const rPackageOwnership = input.runtimeSubset
-    ? input.runtimeSubset.rPackageOwnership
-    : conda.dependencyGraph?.rPackageOwnership
-  if (input.lock.kernelKind === 'r' && rPackageOwnership) {
-    for (const pkg of rPackageOwnership.packages) {
-      const name = pkg.name.toLowerCase().replace(/[-_.]+/gu, '-')
-      // The existing native inventory uses normalized keys. Refuse ambiguity rather
-      // than treating two case-sensitive R names as one package.
-      if (
-        Object.keys(rRecords).some(
-          (other) => other !== pkg.name && other.toLowerCase().replace(/[-_.]+/gu, '-') === name
-        )
-      )
-        throw new Error('Captured R package ownership is ambiguous.')
-      const prior = versions.get(name)
-      if (
-        prior &&
-        ![...prior].every((version) => version && packageVersionsMatch('r', pkg.version, version))
-      )
-        throw new Error('Captured R package ownership conflicts with its native lock.')
-      versions.set(name, new Set([pkg.version]))
-      rRecords[pkg.name] = { ...rRecords[pkg.name], Version: pkg.version }
-      ownedRPackages.set(name, pkg.name)
-    }
-  }
-  const expectedPackageCount = versions.size
   const python = input.lock.kernelKind === 'python'
   const script = python
     ? [
@@ -211,12 +173,11 @@ export const verifyRestoredEnvironment = async (input: {
   ) {
     throw new Error('Restored interpreter version or location does not match its lock.')
   }
-  if (!Array.isArray(observed.packages) || observed.packages.length !== expectedPackageCount)
+  if (!Array.isArray(observed.packages) || observed.packages.length !== names.length)
     throw new Error('Restored package inventory is incomplete.')
   const seen = new Set<string>()
   for (const pkg of observed.packages) {
     const name = typeof pkg.name === 'string' ? pkg.name.toLowerCase().replace(/[-_.]+/gu, '-') : ''
-    const ownedName = ownedRPackages.get(name)
     const expected = versions.get(name)
     if (
       seen.has(name) ||
@@ -226,10 +187,7 @@ export const verifyRestoredEnvironment = async (input: {
         (version) => version && packageVersionsMatch(input.lock.kernelKind, pkg.version, version)
       ) ||
       typeof pkg.path !== 'string' ||
-      !within(root, pkg.path) ||
-      (ownedName !== undefined &&
-        (pkg.name !== ownedName ||
-          pkg.path !== join(root, 'lib', 'R', 'library', ownedName).replace(/\\/gu, '/')))
+      !within(root, pkg.path)
     ) {
       throw new Error(`Restored package version or location does not match its lock: ${name}`)
     }

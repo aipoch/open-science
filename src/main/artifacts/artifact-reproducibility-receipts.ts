@@ -1,5 +1,4 @@
 import { workflowSelectionSchema } from '../../shared/session-reproducibility'
-import type { ReproducibilitySource } from './reproducibility-source'
 import type { Dirent } from 'node:fs'
 import { validOutputComparisonReport } from '@aipoch/reproducibility'
 import { lstat, readFile, readdir } from 'node:fs/promises'
@@ -12,7 +11,6 @@ import {
   readRetainedReproducibilityOutput,
   retainReproducibilityOutput
 } from './artifact-reproducibility-outputs'
-
 import type {
   ArtifactReproducibilityCheckLog,
   ArtifactReproducibilityCheckLogRecord,
@@ -26,6 +24,7 @@ import type {
   GetArtifactReproducibilityCheckLogRequest,
   ListArtifactReproducibilityReceiptsRequest
 } from '../../shared/artifact-reproducibility'
+
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
@@ -33,6 +32,7 @@ import {
   writeDurableJsonFile
 } from '@aipoch/durable-files'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import type { ReproducibilitySource } from './reproducibility-source'
 import {
   readReproducibilityEnvironmentLock,
   readReproducibilitySource
@@ -126,85 +126,6 @@ const isSha256 = (value: unknown): value is string =>
   typeof value === 'string' && SHA256.test(value)
 const isSize = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-
-const isRPackageList = (value: unknown): value is string[] =>
-  Array.isArray(value) &&
-  value.length > 0 &&
-  value.length <= 4096 &&
-  value.every((name) => typeof name === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,127}$/u.test(name)) &&
-  new Set(value).size === value.length
-
-const isStateComparison = (
-  value: unknown
-): value is NonNullable<ArtifactReproducibilityReceiptComparison['stateComparison']> => {
-  if (!isRecord(value) || !['equal', 'different'].includes(String(value.outcome))) return false
-  if (value.packageContext === undefined) return hasExactKeys(value, ['outcome'])
-  const context = value.packageContext
-  return (
-    hasExactKeys(value, ['outcome', 'scientificOutcome', 'packageContext']) &&
-    ['equal', 'different'].includes(String(value.scientificOutcome)) &&
-    (value.outcome !== 'equal' || value.scientificOutcome === 'equal') &&
-    isRecord(context) &&
-    hasExactKeys(context, ['schemaVersion', 'sourcePackages', 'targetPackages']) &&
-    context.schemaVersion === 1 &&
-    isRPackageList(context.sourcePackages) &&
-    isRPackageList(context.targetPackages)
-  )
-}
-
-// The receipt stores a summary only. The host must separately validate the full source lock,
-// candidate plan and scope bindings; these format checks cannot authenticate that relationship.
-const isRuntimeSubsetSummary = (value: unknown): boolean => {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
-      'schemaVersion',
-      'scopeChecksum',
-      'planChecksum',
-      'archiveNames',
-      'missingDependencies'
-    ]) ||
-    value.schemaVersion !== 1 ||
-    !isSha256(value.scopeChecksum) ||
-    !isSha256(value.planChecksum) ||
-    !Array.isArray(value.archiveNames) ||
-    value.archiveNames.length === 0 ||
-    value.archiveNames.length > 10000 ||
-    !value.archiveNames.every(
-      (archive) =>
-        typeof archive === 'string' &&
-        archive.length <= 1024 &&
-        /^[a-z0-9_][a-z0-9_.-]*-[A-Za-z0-9_.+!]+-[A-Za-z0-9_.-]+\.(?:conda|tar\.bz2)$/u.test(
-          archive
-        )
-    ) ||
-    new Set(value.archiveNames).size !== value.archiveNames.length ||
-    !Array.isArray(value.missingDependencies) ||
-    value.missingDependencies.length > 10000
-  )
-    return false
-  const dependencies = new Set<string>()
-  for (const edge of value.missingDependencies) {
-    if (
-      !isRecord(edge) ||
-      !hasExactKeys(edge, ['packageName', 'dependency']) ||
-      typeof edge.packageName !== 'string' ||
-      edge.packageName.length > 1024 ||
-      !/^[a-z0-9_][a-z0-9_.-]*$/u.test(edge.packageName) ||
-      typeof edge.dependency !== 'string' ||
-      edge.dependency.length === 0 ||
-      edge.dependency.length > 4096 ||
-      !/^[a-z0-9_][a-z0-9_.-]*(?: [A-Za-z0-9.*+!<>=~|,_-]+(?: [A-Za-z0-9_.*?-]+)?)?$/u.test(
-        edge.dependency
-      )
-    )
-      return false
-    const identity = JSON.stringify([edge.packageName, edge.dependency])
-    if (dependencies.has(identity)) return false
-    dependencies.add(identity)
-  }
-  return true
-}
 
 const isCheckLogReference = (value: unknown): value is ArtifactReproducibilityCheckLogReference =>
   isRecord(value) &&
@@ -387,8 +308,7 @@ const isComparison = (value: unknown): value is ArtifactReproducibilityReceiptCo
     'outputCaptured',
     'outputCaptureReason',
     'contentComparison',
-    'contentComparisonUnavailableReason',
-    'stateComparison'
+    'contentComparisonUnavailableReason'
   ]
   if (Object.keys(value).some((key) => !allowed.includes(key))) return false
   if (
@@ -402,22 +322,6 @@ const isComparison = (value: unknown): value is ArtifactReproducibilityReceiptCo
     return false
   }
   if (value.actualChecksum !== undefined && !isSha256(value.actualChecksum)) return false
-  if (value.stateComparison !== undefined) {
-    return (
-      isStateComparison(value.stateComparison) &&
-      value.entityId === `r-state:${String(value.stepId).replace(/^step:/u, '')}` &&
-      value.status === (value.stateComparison.outcome === 'equal' ? 'matched' : 'different') &&
-      value.reason === (value.status === 'matched' ? undefined : 'checksum-mismatch') &&
-      [
-        'actualChecksum',
-        'actualSizeBytes',
-        'outputCaptured',
-        'outputCaptureReason',
-        'contentComparison',
-        'contentComparisonUnavailableReason'
-      ].every((key) => value[key] === undefined)
-    )
-  }
   if (value.actualSizeBytes !== undefined && !isSize(value.actualSizeBytes)) return false
   if (
     value.contentComparisonUnavailableReason !== undefined &&
@@ -640,23 +544,12 @@ const decodeArtifactReproducibilityReceipt = (
     if (
       !isRecord(lock) ||
       Object.keys(lock).some(
-        (key) =>
-          ![
-            'requirementId',
-            'kernelKind',
-            'environmentName',
-            'lockChecksum',
-            'sourceLockChecksum',
-            'runtimeSubset'
-          ].includes(key)
+        (key) => !['requirementId', 'kernelKind', 'environmentName', 'lockChecksum'].includes(key)
       ) ||
       !isString(lock.requirementId) ||
       !['python', 'r'].includes(String(lock.kernelKind)) ||
       (lock.environmentName !== undefined && !isString(lock.environmentName)) ||
-      !isSha256(lock.lockChecksum) ||
-      (lock.sourceLockChecksum !== undefined && !isSha256(lock.sourceLockChecksum)) ||
-      (lock.runtimeSubset !== undefined &&
-        (lock.kernelKind !== 'r' || !isRuntimeSubsetSummary(lock.runtimeSubset)))
+      !isSha256(lock.lockChecksum)
     ) {
       throw new Error(`Invalid reproducibility receipt environment: ${basename(filePath)}`)
     }
@@ -669,7 +562,6 @@ const decodeArtifactReproducibilityReceipt = (
       !hasExactKeys(workflow, [
         'captureId',
         'targetRunIds',
-        ...(workflow.independent !== undefined ? ['independent'] : []),
         ...(workflow.boundaryEntityIds !== undefined ? ['boundaryEntityIds'] : []),
         'planId',
         'verification',
@@ -678,15 +570,12 @@ const decodeArtifactReproducibilityReceipt = (
       !workflowSelectionSchema.safeParse({
         captureId: workflow.captureId,
         targetRunIds: workflow.targetRunIds,
-        ...(workflow.independent !== undefined ? { independent: workflow.independent } : {}),
         ...(workflow.boundaryEntityIds !== undefined
           ? { boundaryEntityIds: workflow.boundaryEntityIds }
           : {})
       }).success ||
       !isSha256(workflow.planId) ||
-      !['file-comparison', 'state-comparison', 'execution-only'].includes(
-        String(workflow.verification)
-      ) ||
+      !['file-comparison', 'execution-only'].includes(String(workflow.verification)) ||
       !Array.isArray(workflow.executionOnlyTargetRunIds) ||
       !workflow.executionOnlyTargetRunIds.every(
         (id) => isString(id) && (workflow.targetRunIds as string[]).includes(id)
@@ -700,22 +589,6 @@ const decodeArtifactReproducibilityReceipt = (
   } else if (value.outcome === 'executed') {
     throw new Error(`Invalid execution-only receipt: ${basename(filePath)}`)
   }
-  const stateComparisons = value.comparisons.filter((comparison) => comparison.stateComparison)
-  if (
-    stateComparisons.length > 0 &&
-    (!isRecord(value.workflow) ||
-      !['state-comparison', 'execution-only'].includes(String(value.workflow.verification)) ||
-      stateComparisons.some(
-        (comparison) => !(value.completedStepIds as string[]).includes(comparison.stepId)
-      ))
-  )
-    throw new Error(`Invalid reproducibility state comparison: ${basename(filePath)}`)
-  if (
-    isRecord(value.workflow) &&
-    value.workflow.verification === 'state-comparison' &&
-    !stateComparisons.length
-  )
-    throw new Error(`Missing reproducibility state comparison: ${basename(filePath)}`)
   const receipt = value as unknown as ArtifactReproducibilityReceipt
   const expectedChecksum = receiptChecksum(receiptPayload(receipt))
   const filenameChecksum = RECEIPT_FILENAME.exec(basename(filePath))?.[1]
@@ -890,7 +763,6 @@ class ArtifactReproducibilityReceiptStore {
         }
         for (const lock of receipt.environmentLocks) {
           locks.add(lock.lockChecksum)
-          if (lock.sourceLockChecksum) locks.add(lock.sourceLockChecksum)
         }
         if (!cleared.has(receipt.receiptChecksum))
           for (const comparison of receipt.comparisons) {

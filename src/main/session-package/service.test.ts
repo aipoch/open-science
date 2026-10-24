@@ -5,9 +5,7 @@ import { replayAnnotationId } from '../../shared/replay-reference'
 import { writePackageRoCrateMetadata } from './ro-crate'
 import { initDataRoot } from '../storage-root'
 import { createUploadVersionReference } from '../../shared/uploads'
-import { join, sep } from 'node:path'
-import { dirname } from 'node:path'
-import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join, sep } from 'node:path'
 import { writeFileSync } from 'node:fs'
 import { c as createTar, x as extractTar } from 'tar'
 import { fileChecksum, packageEntry, readPackageArchive } from './archive'
@@ -47,6 +45,7 @@ import {
 import { PackageImportRecoveryRequiredError, SessionPackageService } from './service'
 import * as selection from './selection'
 import * as fsPromises from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, stat, symlink, writeFile } from 'node:fs/promises'
 import * as storageUsage from '../storage/usage'
 import * as fileIo from '../bounded-file-io'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
@@ -1999,6 +1998,24 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
     runtimeContext: {
       version: 1,
       revision: 1,
+      networkApprovals: [
+        {
+          version: 1,
+          kind: 'sandbox-network',
+          state: 'continuing',
+          requestId: 'network-fixture',
+          sessionId: 'session-1',
+          executionId: 'execution-fixture',
+          commandFingerprint: 'a'.repeat(64),
+          hostname: 'service.example.test',
+          port: 443,
+          runtime: 'bash',
+          originatingPromptMessageId: graph.messages[0].id,
+          agentFrameId: graph.activeFrameId,
+          messageBranchId: graph.frames[0].activeBranchId,
+          createdAt: 1
+        }
+      ],
       sideChat: {
         version: 1,
         id: 'side-chat-1',
@@ -2064,6 +2081,7 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
     version: number
     session: { runtimeContext?: Record<string, unknown> }
   }
+  expect(retainedEnvelope.session.runtimeContext?.networkApprovals).toBeUndefined()
   retainedEnvelope.session.runtimeContext = {
     ...(retainedEnvelope.session.runtimeContext ?? { version: 1, revision: 1 }),
     sideChat: {
@@ -2117,6 +2135,7 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
       conversationGraph?: { messages: Array<Record<string, unknown>> }
     }
   }
+  expect(forwardedEnvelope.session.runtimeContext?.networkApprovals).toBeUndefined()
   expect(forwardedEnvelope.session.runtimeContext?.sideChat).toBeUndefined()
   expect(forwardedEnvelope.session.conversationGraph?.messages).toContainEqual(
     expect.objectContaining({
@@ -2139,6 +2158,7 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
     'Use a black line in the main analysis.'
   ])
   expect(reopened?.providerSessionId).toBeUndefined()
+  expect(reopened?.runtimeContext?.networkApprovals).toBeUndefined()
   expect(reopened?.runtimeContext?.sideChat).toBeUndefined()
   expect(reopened?.runtimeContext?.sideChats).toBeUndefined()
   expect(origin.identities['side-chat-1']).toBeUndefined()
@@ -2361,7 +2381,6 @@ it('keeps workflow-only foreign input versions when exporting the consuming Sess
     workspaceCwd: source.storageRoot
   })
   const runs: NotebookRunRecord[] = []
-  const checkpointBlobs = new Map<string, Buffer>()
   for (const [index, runId] of ['setup', 'producer'].entries()) {
     const evidence = {
       schemaVersion: 1 as const,
@@ -2419,33 +2438,6 @@ it('keeps workflow-only foreign input versions when exporting the consuming Sess
       format: 'environment-lock-bundle',
       lockChecksum: 'd'.repeat(64)
     }
-    const blobs = ['input', 'output'].map((kind) => {
-      const bytes = Buffer.from([0x58, 0x0a, index, kind === 'input' ? 1 : 2, 0, 255])
-      const blob = {
-        checksum: sha256(bytes),
-        sizeBytes: bytes.length,
-        storageKey: `runtime/provenance/r-stage-checkpoints/${sha256(bytes)}.rds`
-      }
-      checkpointBlobs.set(blob.storageKey, bytes)
-      return blob
-    })
-    run.stageCheckpoint = {
-      state: 'available',
-      schemaVersion: 1,
-      runId,
-      kernelEpochId: 'epoch',
-      sourceChecksum: sha256(run.script),
-      environmentLockChecksum: 'd'.repeat(64),
-      input: blobs[0]!,
-      output: blobs[1]!,
-      inputNames: ['dds'],
-      outputNames: ['result']
-    }
-    await mkdir(join(source.storageRoot, 'runtime/provenance/r-stage-checkpoints'), {
-      recursive: true
-    })
-    for (const [key, bytes] of checkpointBlobs)
-      await writeFile(join(source.storageRoot, key), bytes)
     runs.push(run)
     await source.notebookRepository.appendRun({
       projectId: 'project-1',
@@ -2502,7 +2494,6 @@ it('keeps workflow-only foreign input versions when exporting the consuming Sess
       cellId: 'consumer',
       script: 'inspect_plot()',
       fileEvidence: undefined,
-      stageCheckpoint: undefined,
       inputFiles: [
         {
           sourceKind: 'artifact-version',
@@ -2531,16 +2522,6 @@ it('keeps workflow-only foreign input versions when exporting the consuming Sess
   })
   try {
     const archive = join(source.storageRoot, 'consumer.science')
-    const [checkpointKey, checkpointBytes] = [...checkpointBlobs][0]!
-    await writeFile(join(source.storageRoot, checkpointKey), Buffer.alloc(checkpointBytes.length))
-    await expect(
-      exporter.exportTo({ projectId: 'project-1', sessionId: 'session-B' }, archive)
-    ).rejects.toThrow(/checkpoint.*mismatch/i)
-    await fsPromises.rm(join(source.storageRoot, checkpointKey))
-    await expect(
-      exporter.exportTo({ projectId: 'project-1', sessionId: 'session-B' }, archive)
-    ).rejects.toThrow()
-    await writeFile(join(source.storageRoot, checkpointKey), checkpointBytes)
     await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-B' }, archive)
     const manifest = await readPackageArchive(archive, join(source.storageRoot, 'expanded'))
     expect(manifest.source.sessionId).toBe('session-B')
@@ -2550,34 +2531,10 @@ it('keeps workflow-only foreign input versions when exporting the consuming Sess
       )
     ).toBe(false)
     expect(manifest.inventory.some((entry) => entry.storageKey === headKey)).toBe(false)
-    for (const [key, bytes] of checkpointBlobs) {
-      const entry = manifest.inventory.find((entry) => entry.storageKey === key)
-      expect(entry).toMatchObject({ checksum: sha256(bytes), sizeBytes: bytes.length })
-      expect(await readFile(join(source.storageRoot, 'expanded', entry!.path))).toEqual(bytes)
-    }
     // The archive is self-contained, including the bytes that exist only in V's frozen Workflow.
-    for (const directory of [
-      'artifacts',
-      'uploads',
-      'notebooks',
-      'execution-file-evidence',
-      'runtime/provenance/r-stage-checkpoints'
-    ]) {
+    for (const directory of ['artifacts', 'uploads', 'notebooks', 'execution-file-evidence']) {
       await fsPromises.rm(join(source.storageRoot, directory), { recursive: true, force: true })
     }
-    await mkdir(join(target.storageRoot, 'runtime/provenance/r-stage-checkpoints'), {
-      recursive: true
-    })
-    await writeFile(join(target.storageRoot, checkpointKey), Buffer.alloc(checkpointBytes.length))
-    await expect(importer.importFrom(archive)).rejects.toThrow(/checkpoint/i)
-    expect(await readFile(join(target.storageRoot, checkpointKey))).toEqual(
-      Buffer.alloc(checkpointBytes.length)
-    )
-    expect(await new ProjectRepository(async () => target.client).list()).toEqual([])
-    await fsPromises.rm(join(target.storageRoot, checkpointKey))
-    // An already installed equal checkpoint is shared safely and is never overwritten.
-    const [sharedKey, sharedBytes] = [...checkpointBlobs][1]!
-    await writeFile(join(target.storageRoot, sharedKey), sharedBytes)
     const imported = await importer.importFrom(archive)
     const origin = await importer.readOrigin(imported)
     const reader = new ArtifactProvenanceRepository(target.repositoryOptions)
@@ -2590,15 +2547,6 @@ it('keeps workflow-only foreign input versions when exporting the consuming Sess
     expect(execution.workflowCapture?.state).toBe('available')
     if (execution.workflowCapture?.state !== 'available') throw new Error('Workflow unavailable')
     expect(validWorkflowCapture(execution.workflowCapture.capture)).toBe(true)
-    for (const [key, bytes] of checkpointBlobs)
-      expect(await readFile(join(target.storageRoot, key))).toEqual(bytes)
-    const localProducer = execution.workflowCapture.capture.runs.find(
-      (run) => run.runId === origin.identities.producer
-    )!
-    expect(localProducer.stageCheckpoint).toEqual({
-      ...runs[1]!.stageCheckpoint,
-      runId: origin.identities.producer
-    })
     const mappedInput = execution.workflowCapture.capture.inputFiles[0]
     const localVersion = await target.client.uploadVersion.findUniqueOrThrow({
       where: { id: origin.identities[input.inputFileVersionId] }

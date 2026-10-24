@@ -1,13 +1,9 @@
 import {
   sealWorkflowCapture,
   validWorkflowCapture,
-  validRStageCheckpointForRun,
   type WorkflowCapture
 } from '@aipoch/reproducibility'
-import type {
-  PersistedArtifactExecutionSnapshot,
-  ProvenanceNotebookRun
-} from '../../shared/artifact-provenance'
+import type { PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
 import { canonicalJson, type CanonicalJson } from './provenance-canonical'
 import {
   artifactProvenanceGraphMatchesTarget,
@@ -36,41 +32,12 @@ const missingWorkflowHistory = (capture: WorkflowCaptureDraft): boolean =>
   capture.truncation !== undefined ||
   capture.runs.some((run) => run.scriptTruncated || run.hasOmittedInputs)
 
-export const validRunStageCheckpoint = (
-  run: Pick<
-    ProvenanceNotebookRun,
-    | 'stageCheckpoint'
-    | 'runId'
-    | 'kernelEpochId'
-    | 'script'
-    | 'kernelKind'
-    | 'status'
-    | 'environmentLock'
-  >
-): boolean => {
-  if (run.stageCheckpoint === undefined) return true
-  const checkpoint = recordValue(run.stageCheckpoint)
-  if (checkpoint?.state === 'unavailable') {
-    return (
-      Object.keys(checkpoint).length === 2 &&
-      typeof checkpoint.reason === 'string' &&
-      checkpoint.reason.length > 0 &&
-      checkpoint.reason.length <= 1024
-    )
-  }
-  return validRStageCheckpointForRun(run)
-}
-
 export const sealBoundedWorkflowCapture = (draft: WorkflowCaptureDraft): WorkflowCaptureState => {
   // Reserve the hash field before sealing; oversize capture is an explicit unavailable result.
   if (captureBytes({ ...draft, captureId: '0'.repeat(64) }) > MAX_WORKFLOW_CAPTURE_BYTES) {
     return { state: 'unavailable', reason: 'payload-limit' }
   }
-  if (
-    !artifactProvenanceGraphValue(draft.graph) ||
-    missingWorkflowHistory(draft) ||
-    draft.runs.some((run) => !validRunStageCheckpoint(run))
-  ) {
+  if (!artifactProvenanceGraphValue(draft.graph) || missingWorkflowHistory(draft)) {
     return { state: 'unavailable', reason: 'incomplete-evidence' }
   }
   try {

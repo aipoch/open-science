@@ -1,5 +1,3 @@
-import { createLogger } from '@aipoch/diagnostics/node'
-import { resolveExternalRLibrary } from '@aipoch/environment'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync } from 'node:fs'
@@ -25,8 +23,10 @@ import {
   windowsNotebookRuntimeEnvironment,
   type WindowsNotebookRuntime
 } from './windows-notebook-runtime'
-
+import { createLogger } from '@aipoch/diagnostics/node'
 import { boundedRuntimeDiagnostic } from '@aipoch/diagnostics/node'
+
+import { resolveExternalRLibrary } from '@aipoch/environment'
 import {
   DEFAULT_R_ENV,
   buildManagedRuntimeProcessEnvironment,
@@ -88,8 +88,6 @@ import {
   framePythonRequest,
   frameRNamespaceRequest,
   frameRRequest,
-  frameRInterruptProbeRequest,
-  frameRStageRequest,
   parseLoopResponse,
   type KernelLoopFigure,
   type KernelLoopResponse
@@ -152,6 +150,10 @@ type CancelIdleTimer = (handle: IdleTimerHandle) => void
 const DEFAULT_IDLE_MS = 0
 const DEFAULT_CANCELLATION_GRACE_MS = 2_000
 const DEFAULT_NAMESPACE_INSPECTION_TIMEOUT_MS = 5_000
+// Queued behind an interrupted R request before its queue is released. The sleep gives a SIGINT that
+// raced with the original response an interruptible, side-effect-free request to land in.
+const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
+
 const presentPaths = (values: readonly string[]): string[] =>
   values.filter((value) => value.length > 0)
 
@@ -735,11 +737,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           ? { confirmedReadPaths: fileObservation.confirmedReadPaths }
           : {}),
         ...(helperModulesInitialized.length ? { helperModulesInitialized } : {}),
-        environmentOverlay: response.environmentOverlay,
-        ...(response.stageCheckpointCapture
-          ? { stageCheckpointCapture: response.stageCheckpointCapture }
-          : {}),
-        ...(response.stageComparison ? { stageComparison: response.stageComparison } : {})
+        environmentOverlay: response.environmentOverlay
       }
     } catch (error) {
       const fileObservation = await workingFileObservation?.finish(
@@ -1753,14 +1751,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       try {
         if (proc.kind === 'r') {
-          proc.child.stdin.write(
-            request.stageCheckpoint ||
-              request.stageRestore ||
-              request.stageSupplement ||
-              request.stageExpectedOutputPath
-              ? frameRStageRequest(reqId, request.code, request)
-              : frameRRequest(reqId, request.code)
-          )
+          proc.child.stdin.write(frameRRequest(reqId, request.code))
         } else {
           // Python and the repl (JS) loop share the same JSON-lines request framing.
           const protectedDirAdditions = (request.protectedDirs ?? []).filter(
@@ -1879,7 +1870,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (proc.pending !== pending || pending.interruptProbeReqId !== undefined) return
     const reqId = randomUUID()
     pending.interruptProbeReqId = reqId
-    proc.child.stdin.write(frameRInterruptProbeRequest(reqId))
+    proc.child.stdin.write(frameRRequest(reqId, R_INTERRUPT_PROBE_CODE))
   }
 
   // Reads each captured figure file, base64-encodes it, and unlinks it. A missing/unreadable file is

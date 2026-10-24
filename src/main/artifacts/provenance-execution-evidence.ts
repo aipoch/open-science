@@ -9,12 +9,12 @@ import type {
   ProvenanceNotebookRun
 } from '../../shared/artifact-provenance'
 import { isArtifactNotebookProducer } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
   NotebookEnvironmentPackage,
   NotebookRunEnvironmentCapture
 } from '@aipoch/environment/contracts'
 import type {
+  NotebookEnvironmentManifest,
   NotebookHelperModuleEvidence,
   NotebookOutput,
   NotebookRunInputFile,
@@ -168,14 +168,6 @@ const sanitizeRun = (
       ? { executionContext: run.environmentManifest.executionContext }
       : {}),
     script,
-    ...(run.stageCheckpoint
-      ? {
-          stageCheckpoint:
-            script === run.script || run.stageCheckpoint.state === 'unavailable'
-              ? run.stageCheckpoint
-              : { state: 'unavailable' as const, reason: 'source-truncated' }
-        }
-      : {}),
     ...(script !== run.script ? { scriptTruncated: true } : {}),
     status: run.status,
     ...(run.executionCount !== undefined ? { executionCount: run.executionCount } : {}),
@@ -350,7 +342,6 @@ const captureArtifactWorkflow = (
     )
     // Workflow code is immutable replay evidence; never apply the legacy display-script clip.
     materialized.script = run.script
-    if (run.stageCheckpoint) materialized.stageCheckpoint = run.stageCheckpoint
     delete materialized.scriptTruncated
     // All working-file generations live in the unpruned graph, rather than this run preview.
     delete materialized.hasOmittedFiles

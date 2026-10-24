@@ -570,13 +570,13 @@ describe('NotebookPreview per-kernel tabs', () => {
       makeRun({ runId: 'failed-r', kernelKind: 'r', status: 'failed' })
     ])
     const button = screen.getByRole('button', {
-      name: 'Reproduce independently'
+      name: 'Reproduce with dependencies'
     }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
     expect(button.getAttribute('aria-disabled')).toBe('false')
     expect(button.textContent).toBe('')
     expect(container.querySelector('[data-run-id="failed-r"]')?.textContent).not.toContain(
-      'Reproduce independently'
+      'Reproduce with dependencies'
     )
     const current = useSessionStore.getState().sessions[0]
     await act(async () =>
@@ -623,17 +623,10 @@ describe('NotebookPreview per-kernel tabs', () => {
           storageKey: 'current-input'
         }
       ],
-      stageCheckpoint: {
+      environmentLock: {
         state: 'available',
-        schemaVersion: 1,
-        runId: 'captured-r',
-        kernelEpochId: 'r-epoch',
-        sourceChecksum: 'source',
-        environmentLockChecksum: 'lock',
-        input: { checksum: 'before', storageKey: 'before', sizeBytes: 12 },
-        output: { checksum: 'after', storageKey: 'after', sizeBytes: 20 },
-        inputNames: ['data'],
-        outputNames: ['result']
+        format: 'environment-lock-bundle',
+        lockChecksum: 'lock'
       }
     })
     const current = useSessionStore.getState().sessions[0]
@@ -673,7 +666,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
     expect(screen.getByRole('button', { name: 'current-input.csv' })).toBeTruthy()
     await act(async () =>
-      fireEvent.click(screen.getByRole('button', { name: 'Reproduce independently' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Reproduce with dependencies' }))
     )
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByRole('button', { name: 'frozen-input.csv' })).toBeTruthy()

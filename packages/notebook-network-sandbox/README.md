@@ -87,6 +87,34 @@ Policy is evaluated in this order:
 “Allow once” and “Always allow” never bypass address validation or create private-service grants.
 A stored public hostname is not proof of DNS eligibility, connectivity, credentials or TLS trust.
 
+### Shell approvals and recovery
+
+For an active `bash_execute` Run, the application persists a destination approval before publishing
+its existing permission card. The proxy holds the connection until a decision; an approved HTTPS
+request (including authentication headers and a body) is forwarded over that same connection.
+Restricted public reads remain unchanged. Repeated requests to the same host and port in one Run
+share a decision. Probes without a Run identity do not prompt.
+
+The application excludes approval time from its Shell execution budget and keeps MCP progress
+notifications active. A client can still impose its own timeout or end its process. In that case the
+application waits for the decision before returning the tool result, but cannot restore the socket
+or undo earlier side effects. It never automatically replays the command. Global allowlist changes
+invalidate existing proxy connections, so they may also require an explicit retry.
+
+Approval authority lives in the optional, versioned `Session.runtimeContext.networkApprovals`
+collection, separately from provider tool approvals. Records bind the Session, Agent Frame,
+Message Branch, prompt, execution, command SHA-256, hostname and port. They contain no shell text,
+request URL, headers or body. The existing `pending` and `continuing` states represent a human wait
+and an approved explicit retry respectively; no new Session status or SQL migration is introduced.
+A one-time recovered grant is consumed only by the same command and destination on its original
+active branch. Stops remove authority; stale branch decisions cannot grant access.
+
+Older Sessions need no backfill. Previous connection errors never imply consent. Session package
+export/import strips network authority. Older readers reject the unknown runtime-context owner
+rather than reviving its authority; downgrading does not preserve pending network approvals.
+Clients that bypass the proxy still fail closed on enforced platforms; native Windows standard
+mode retains its documented advisory protection boundary.
+
 ### Trusted private services
 
 Only the local Settings flow can review and save private services. Review resolves DNS without

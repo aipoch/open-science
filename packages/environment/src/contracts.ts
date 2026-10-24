@@ -183,40 +183,6 @@ export type NotebookEnvironmentLockFile = {
   content: string
 }
 
-// Complete installed Conda metadata, bound to the exact archives in its component. Older locks
-// omit this evidence and remain restorable, but cannot certify a dependency subset.
-export type CondaEnvironmentDependencyGraph = {
-  schemaVersion: 1
-  // Captured DESCRIPTION ownership, never inferred from an R/Conda naming convention.
-  // Absence keeps legacy exact restoration available without certifying stage subsets.
-  rPackageOwnership?: {
-    schemaVersion: 1
-    packages: Array<{ name: string; version: string; condaPackage: string }>
-  }
-  packages: Array<{
-    name: string
-    version: string
-    build: string
-    url: string
-    md5: string
-    depends: string[]
-  }>
-}
-
-// Candidate archive selection for one host-defined replay scope. This is not a complete Conda
-// lock or a completeness certificate; the source lock retains every declared dependency.
-export type CondaRuntimeSubsetPlan = {
-  schemaVersion: 1
-  format: 'conda-runtime-subset'
-  sourceLockChecksum: string
-  scopeChecksum: string
-  archiveNames: string[]
-  explicitLock: string
-  packages: CondaEnvironmentDependencyGraph['packages']
-  rPackageOwnership?: CondaEnvironmentDependencyGraph['rPackageOwnership']
-  missingDependencies: Array<{ packageName: string; dependency: string }>
-}
-
 export type NotebookEnvironmentLockComponent =
   | {
       ecosystem: 'conda'
@@ -224,7 +190,6 @@ export type NotebookEnvironmentLockComponent =
       resolution: 'locked'
       explicitLock: string
       packages: string[]
-      dependencyGraph?: CondaEnvironmentDependencyGraph
     }
   | {
       ecosystem: 'python'

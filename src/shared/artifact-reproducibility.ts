@@ -1,17 +1,17 @@
-import type { WorkflowSelection } from '@aipoch/reproducibility/contracts'
 import type {
   ArtifactReproducibilityCheckComparison,
   ArtifactReproducibilityCheckLog,
-  ArtifactReproducibilityReceiptComparison
+  ArtifactReproducibilityReceiptComparison,
+  WorkflowSelection
 } from '@aipoch/reproducibility/contracts'
+import type { GetArtifactVersionProvenanceRequest } from './artifact-provenance'
+import type { OutputComparisonPolicy } from '@aipoch/reproducibility/comparison'
 export type {
   ArtifactReproducibilityCheckComparison,
   ArtifactReproducibilityCheckLogBase,
   ArtifactReproducibilityCheckLog,
   ArtifactReproducibilityReceiptComparison
 } from '@aipoch/reproducibility/contracts'
-import type { GetArtifactVersionProvenanceRequest } from './artifact-provenance'
-import type { OutputComparisonPolicy } from '@aipoch/reproducibility/comparison'
 
 export type ArtifactReproducibilityCheckRequest = GetArtifactVersionProvenanceRequest & {
   frontierId: string
@@ -167,19 +167,10 @@ export type ArtifactReproducibilityReceipt = {
     kernelKind: 'python' | 'r'
     environmentName?: string
     lockChecksum: string
-    sourceLockChecksum?: string
-    // A scoped candidate summary, not a completeness certificate or an environment lock.
-    runtimeSubset?: {
-      schemaVersion: 1
-      scopeChecksum: string
-      planChecksum: string
-      archiveNames: string[]
-      missingDependencies: Array<{ packageName: string; dependency: string }>
-    }
   }>
   workflow?: WorkflowSelection & {
     planId: string
-    verification: 'file-comparison' | 'state-comparison' | 'execution-only'
+    verification: 'file-comparison' | 'execution-only'
     executionOnlyTargetRunIds: string[]
   }
   completedStepIds: string[]

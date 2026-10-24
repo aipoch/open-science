@@ -7572,15 +7572,11 @@
     "Compared outputs reproduced": "비교한 출력이 일치합니다",
     "Compared outputs differ": "비교한 출력이 다릅니다",
     "Selected captured runs: {{runs}}": "선택한 캡처 실행: {{runs}}",
-    "Reproduce independently": "독립적으로 재현",
-    "Independent reproduction": "독립 재현",
+    "Reproduce with dependencies": "의존성을 포함하여 재현",
     "No frozen capture is available for this run. Create an Artifact Version after this step to capture its evidence.": "이 실행에는 고정 캡처가 없습니다. 이 단계 후 아티팩트 버전을 만들어 증거를 캡처하세요.",
     "Another session check is active. Wait for it to finish before reproducing this run.": "다른 세션에서 검사가 진행 중입니다. 완료될 때까지 기다린 후 이 실행을 재현하세요.",
-    "Captured input bindings": "캡처된 입력 바인딩",
-    "This check restores the captured inputs and environment, then executes only this run.": "이 검사는 캡처된 입력과 환경을 복원한 다음 이 실행만 수행합니다.",
-    "Readiness did not confirm a single run. This check cannot start.": "준비 상태 검사에서 단일 실행을 확인하지 못했습니다. 이 검사를 시작할 수 없습니다.",
+    "This check analyzes cell dependencies, restores the captured inputs and environment, and reruns the required upstream cells through this run.": "이 검사는 셀 의존성을 분석하고 캡처된 입력과 환경을 복원한 다음 필요한 상위 셀부터 이 실행까지 다시 실행합니다.",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "이 세션이 읽기 전용이거나 사용 중 또는 복구 중이면 재현할 수 없습니다.",
-    "Captured R packages: {{count}}_other": "캡처된 R 패키지: {{count}}",
     "Map exact compound identifiers with UniChem.": "UniChem으로 정확히 일치하는 화합물 식별자를 매핑합니다.",
     "Retrieve structure quality and validation statistics from PDBe.": "PDBe에서 구조 품질 및 검증 통계를 가져옵니다.",
     "Search DepMap cell models and their identity metadata.": "DepMap 세포 모델과 식별 메타데이터를 검색합니다.",
@@ -7591,6 +7587,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터.",
     "Export screening results (CSV)": "스크리닝 결과 내보내기(CSV)",
     "Screening results could not be exported.": "스크리닝 결과를 내보내지 못했습니다.",
-    "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요."
+    "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요.",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다."
   }
 }

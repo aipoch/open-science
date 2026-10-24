@@ -15,14 +15,18 @@ import { promisify } from 'node:util'
 import { expect, it, vi } from 'vitest'
 
 import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
-import { parseCondaPackageNames } from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
-import { micromambaSpawnEnv, normalizeExplicitLock } from '@aipoch/environment'
 import {
   createNotebookReproductionRuntime,
   type NotebookReproductionStep
 } from './reproduction-runtime'
-import { pythonBin, rScriptBin } from '@aipoch/environment'
+import {
+  micromambaSpawnEnv,
+  normalizeExplicitLock,
+  parseCondaPackageNames,
+  pythonBin,
+  rScriptBin
+} from '@aipoch/environment'
 
 const execute = promisify(execFile)
 const mm = process.env.OPEN_SCIENCE_TEST_MICROMAMBA

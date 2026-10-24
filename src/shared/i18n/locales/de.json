@@ -7734,16 +7734,11 @@
     "Compared outputs reproduced": "Verglichene Ausgaben stimmen überein",
     "Compared outputs differ": "Verglichene Ausgaben unterscheiden sich",
     "Selected captured runs: {{runs}}": "Ausgewählte erfasste Ausführungen: {{runs}}",
-    "Reproduce independently": "Unabhängig reproduzieren",
-    "Independent reproduction": "Unabhängige Reproduktion",
+    "Reproduce with dependencies": "Mit Abhängigkeiten reproduzieren",
     "No frozen capture is available for this run. Create an Artifact Version after this step to capture its evidence.": "Für diesen Lauf ist keine eingefrorene Erfassung verfügbar. Erstellen Sie nach diesem Schritt eine Artefaktversion, um die Nachweise zu erfassen.",
     "Another session check is active. Wait for it to finish before reproducing this run.": "Eine Prüfung einer anderen Sitzung läuft. Warten Sie, bis sie abgeschlossen ist, bevor Sie diesen Lauf reproduzieren.",
-    "Captured input bindings": "Erfasste Eingabebindungen",
-    "This check restores the captured inputs and environment, then executes only this run.": "Diese Prüfung stellt die erfassten Eingaben und die Umgebung wieder her und führt dann nur diesen Lauf aus.",
-    "Readiness did not confirm a single run. This check cannot start.": "Die Bereitschaftsprüfung hat keinen einzelnen Lauf bestätigt. Diese Prüfung kann nicht gestartet werden.",
+    "This check analyzes cell dependencies, restores the captured inputs and environment, and reruns the required upstream cells through this run.": "Diese Prüfung analysiert die Zellabhängigkeiten, stellt die erfassten Eingaben und die Umgebung wieder her und führt die erforderlichen vorgelagerten Zellen bis zu diesem Lauf erneut aus.",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "Eine Reproduktion ist nicht möglich, solange diese Sitzung schreibgeschützt ist, ausgelastet ist oder wiederhergestellt wird.",
-    "Captured R packages: {{count}}_one": "Erfasste R-Pakete: {{count}}",
-    "Captured R packages: {{count}}_other": "Erfasste R-Pakete: {{count}}",
     "Map exact compound identifiers with UniChem.": "Exakte Verbindungskennungen mit UniChem zuordnen.",
     "Retrieve structure quality and validation statistics from PDBe.": "Strukturqualität und Validierungsstatistiken von PDBe abrufen.",
     "Search DepMap cell models and their identity metadata.": "DepMap-Zellmodelle und ihre Identitätsmetadaten suchen.",
@@ -7754,6 +7749,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Krebsstudien sowie Omik-, Abhängigkeits- und Wirkstoffantwortdaten von Zellmodellen aus cBioPortal und DepMap/CCLE.",
     "Export screening results (CSV)": "Screening-Ergebnisse exportieren (CSV)",
     "Screening results could not be exported.": "Die Screening-Ergebnisse konnten nicht exportiert werden.",
-    "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut."
+    "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut.",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Die Befehlszeile wartet auf Netzwerkzugriff. Falls der Prozess beendet ist, geben Sie den Zugriff frei und führen Sie den Befehl ausdrücklich erneut aus. Er wird nicht automatisch wiederholt."
   }
 }

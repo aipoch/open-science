@@ -7574,15 +7574,11 @@
     "Compared outputs reproduced": "比較的輸出一致",
     "Compared outputs differ": "比較的輸出不一致",
     "Selected captured runs: {{runs}}": "已選取的擷取執行：{{runs}}",
-    "Reproduce independently": "獨立重現",
-    "Independent reproduction": "獨立重現",
+    "Reproduce with dependencies": "連同相依項目一起重現",
     "No frozen capture is available for this run. Create an Artifact Version after this step to capture its evidence.": "此執行沒有可用的凍結擷取。請在此步驟後建立產物版本，以擷取其證據。",
     "Another session check is active. Wait for it to finish before reproducing this run.": "另一個工作階段正在執行檢查。請等待檢查完成後再重現此執行。",
-    "Captured input bindings": "已擷取的輸入繫結",
-    "This check restores the captured inputs and environment, then executes only this run.": "此檢查會還原已擷取的輸入和環境，然後只執行此執行。",
-    "Readiness did not confirm a single run. This check cannot start.": "就緒檢查未確認單一執行。無法啟動此檢查。",
+    "This check analyzes cell dependencies, restores the captured inputs and environment, and reruns the required upstream cells through this run.": "此檢查會分析 cell 相依關係，還原已擷取的輸入和環境，並從必要的上游 cell 開始重新執行，直到目前的執行。",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "此工作階段處於唯讀、忙碌或復原狀態時，無法重現。",
-    "Captured R packages: {{count}}_other": "已擷取的 R 套件：{{count}}",
     "Map exact compound identifiers with UniChem.": "透過 UniChem 對應精確的化合物識別碼。",
     "Retrieve structure quality and validation statistics from PDBe.": "從 PDBe 取得結構品質和驗證統計資料。",
     "Search DepMap cell models and their identity metadata.": "搜尋 DepMap 細胞模型及其身分中繼資料。",
@@ -7593,6 +7589,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "來自 cBioPortal 和 DepMap/CCLE 的癌症研究及細胞模型體學、依賴性與藥物反應資料。",
     "Export screening results (CSV)": "匯出篩選結果（CSV）",
     "Screening results could not be exported.": "無法匯出篩選結果。",
-    "Screening data changed during export. Please try again.": "匯出期間篩選資料發生變更。請重試。"
+    "Screening data changed during export. Please try again.": "匯出期間篩選資料發生變更。請重試。",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令列正在等待網路存取核准。如果程序已結束，請核准後手動重試命令；系統不會自動重新執行。"
   }
 }

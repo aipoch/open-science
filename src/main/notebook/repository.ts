@@ -1,9 +1,9 @@
-import { validRStageCheckpointForRun } from '@aipoch/reproducibility'
 import { indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type {
   NotebookKernelMetadata,
   NotebookKernelInstanceIdentity,
@@ -14,7 +14,6 @@ import type {
   NotebookRunStatus,
   NotebookWorkingFile
 } from '../../shared/notebook'
-import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -273,18 +272,6 @@ const notebookRunCandidate = (value: unknown): boolean => {
     ) {
       return false
     }
-  }
-  if (value.stageCheckpoint !== undefined) {
-    if (!isRecord(value.stageCheckpoint)) return false
-    if (value.stageCheckpoint.state === 'available') {
-      if (!validRStageCheckpointForRun(value as unknown as NotebookRunRecord)) return false
-    } else if (
-      value.stageCheckpoint.state !== 'unavailable' ||
-      typeof value.stageCheckpoint.reason !== 'string' ||
-      !value.stageCheckpoint.reason ||
-      value.stageCheckpoint.reason.length > 1024
-    )
-      return false
   }
   if (value.frozenPermissionScope !== undefined) {
     const scope = isRecord(value.frozenPermissionScope) ? value.frozenPermissionScope : undefined

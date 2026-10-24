@@ -6,7 +6,6 @@ import { notebookHelperEvidenceKey } from './helper-identity'
 import { restoreRRandomState } from './r-random-replay'
 import { validatePythonRandomState } from './python-random-replay'
 import { notebookExecutionContextSchema } from './execution-context'
-import { validRStageCheckpointForRun } from './r-stage-checkpoint'
 import type {
   ArtifactHelperEvidenceStatus,
   ArtifactProvenanceGraphEntity,
@@ -172,19 +171,6 @@ export const validWorkflowCapture = (value: unknown): value is WorkflowCapture =
     if (
       !unique(value.runs.map((run) => run.runId)) ||
       new Set(value.runs.map((run) => run.runIndex)).size !== value.runs.length
-    )
-      return false
-    if (
-      value.runs.some(
-        (run) =>
-          run.stageCheckpoint !== undefined &&
-          (run.stageCheckpoint.state === 'available'
-            ? !validRStageCheckpointForRun(run)
-            : run.stageCheckpoint.state !== 'unavailable' ||
-              typeof run.stageCheckpoint.reason !== 'string' ||
-              !run.stageCheckpoint.reason ||
-              run.stageCheckpoint.reason.length > 1024)
-      )
     )
       return false
     if (
@@ -437,10 +423,12 @@ export const createWorkflowSlices = (
     if (!validWorkflowCapture(capture)) throw new Error('Invalid Workflow capture.')
     if (
       !selection ||
+      Object.keys(selection).some(
+        (key) => !['captureId', 'targetRunIds', 'boundaryEntityIds'].includes(key)
+      ) ||
       !identity(selection.captureId) ||
       !Array.isArray(selection.targetRunIds) ||
       !selection.targetRunIds.every(identity) ||
-      (selection.independent !== undefined && selection.independent !== true) ||
       (selection.boundaryEntityIds !== undefined &&
         (!Array.isArray(selection.boundaryEntityIds) ||
           !selection.boundaryEntityIds.every(identity)))
@@ -461,7 +449,6 @@ export const createWorkflowSlices = (
     )
       reasons.add('workflow-evidence-incomplete')
     const normalized: WorkflowSelection = {
-      ...(selection.independent ? { independent: true } : {}),
       captureId: selection.captureId,
       targetRunIds: sorted(selection.targetRunIds),
       ...(selection.boundaryEntityIds?.length
@@ -508,12 +495,8 @@ export const createWorkflowSlices = (
         return
       }
       visiting.add(activityId)
-      const checkpointed = validRStageCheckpointForRun(runs.get(activityId)!)
-      if (selection.independent && !checkpointed) reasons.add('stage-checkpoint-unavailable')
       for (const edge of edgesByActivity.get(activityId) ?? []) {
         if (edge.kind === 'generated') continue
-        // A sealed pre-execution object boundary replaces memory ancestors, never file evidence.
-        if (checkpointed && edge.kind === 'depends-on') continue
         if (edge.authority !== 'authoritative' || edge.evidenceSource === 'conservative-fallback')
           reasons.add('advisory-dependency')
         if (edge.kind === 'depends-on') {
@@ -539,10 +522,7 @@ export const createWorkflowSlices = (
           if (boundaries.has(entity.entityId)) usedBoundaries.add(entity.entityId)
           continue
         }
-        if (
-          boundaries.has(entity.entityId) ||
-          (checkpointed && !(writers.get(entity.entityId) ?? []).some((id) => targets.has(id)))
-        ) {
+        if (boundaries.has(entity.entityId)) {
           requiredInputs.add(entity.entityId)
           if (boundaries.has(entity.entityId)) usedBoundaries.add(entity.entityId)
           continue
@@ -648,7 +628,6 @@ export const createWorkflowSlices = (
     const executionOnlyTargetRunIds = sorted(
       [...targets].filter(
         (id) =>
-          !validRStageCheckpointForRun(runs.get(id)!) &&
           !(edgesByActivity.get(id) ?? []).some(
             (edge) =>
               edge.kind === 'generated' && entities.get(edge.entityId)?.kind === 'file-generation'
@@ -657,48 +636,12 @@ export const createWorkflowSlices = (
     )
     const sequences = new Set<number>()
     const steps: WorkflowPlan['steps'] = []
-    const stateComparisonRunIds: string[] = []
-    const stageRestoreRunIds: string[] = []
-    const stageSupplementNames: Record<string, string[]> = {}
-    let availableStageNames = new Set<string>()
     for (const activityId of [...selected].sort(
       (a, b) => activities.get(a)!.sequence - activities.get(b)!.sequence
     )) {
       const run = runs.get(activityId)!
       const activity = activities.get(activityId)!
-      const checkpointed = validRStageCheckpointForRun(run)
-      if (checkpointed) {
-        stateComparisonRunIds.push(run.runId)
-        const position = capture.runs.findIndex((candidate) => candidate.runId === run.runId)
-        const previous = capture.runs[position - 1]
-        if (
-          !previous ||
-          !selected.has(previous.runId) ||
-          previous.kernelEpochId !== run.kernelEpochId ||
-          !validRStageCheckpointForRun(previous)
-        ) {
-          stageRestoreRunIds.push(run.runId)
-          availableStageNames = new Set(
-            run.stageCheckpoint?.state === 'available' ? run.stageCheckpoint.inputNames : []
-          )
-        } else if (run.stageCheckpoint?.state === 'available') {
-          const missing = run.stageCheckpoint.inputNames.filter(
-            (name) => !availableStageNames.has(name)
-          )
-          if (missing.length) stageSupplementNames[run.runId] = sorted(missing)
-          for (const name of missing) availableStageNames.add(name)
-        }
-        if (run.stageCheckpoint?.state === 'available')
-          for (const name of run.stageCheckpoint.outputNames) availableStageNames.add(name)
-      }
-      for (const reason of capture.activityReasonCodes?.[activityId] ?? []) {
-        if (
-          checkpointed &&
-          ['kernel-dependencies-unavailable', 'kernel-epoch-conservative'].includes(reason)
-        )
-          continue
-        reasons.add(reason)
-      }
+      for (const reason of capture.activityReasonCodes?.[activityId] ?? []) reasons.add(reason)
       if (sequences.has(activity.sequence)) reasons.add('ambiguous-activity-order')
       sequences.add(activity.sequence)
       if (activity.evidenceState !== 'available') reasons.add('activity-evidence-not-complete')
@@ -797,23 +740,14 @@ export const createWorkflowSlices = (
       crossingFiles,
       targetOutputEntityIds: sorted(targetOutputEntityIds),
       executionOnlyTargetRunIds,
-      ...(stateComparisonRunIds.length
-        ? {
-            stateComparisonRunIds,
-            stageRestoreRunIds,
-            ...(Object.keys(stageSupplementNames).length ? { stageSupplementNames } : {})
-          }
-        : {}),
       environmentRequirements: [...requirements.values()].sort((a, b) =>
         a.requirementId.localeCompare(b.requirementId)
       ),
       verification: executionOnlyTargetRunIds.length
         ? 'execution-only'
-        : stateComparisonRunIds.length
-          ? 'state-comparison'
-          : targetOutputEntityIds.length
-            ? 'file-comparison'
-            : 'execution-only',
+        : targetOutputEntityIds.length
+          ? 'file-comparison'
+          : 'execution-only',
       status: reasons.size ? 'blocked' : 'ready',
       reasonCodes: sorted([...reasons])
     }
@@ -843,21 +777,10 @@ export const createWorkflowSlices = (
     if (plan.status !== 'ready')
       throw new Error(`Workflow slice is blocked: ${plan.reasonCodes.join(', ')}`)
     const disk = await statfs(tmpdir()).catch(() => undefined)
-    const checkpointBytes = (plan.stateComparisonRunIds ?? []).reduce((sum, runId) => {
-      const checkpoint = capture.runs.find((run) => run.runId === runId)?.stageCheckpoint
-      return (
-        sum +
-        (checkpoint?.state === 'available'
-          ? checkpoint.input.sizeBytes + checkpoint.output.sizeBytes
-          : 0)
-      )
-    }, 0)
     if (
       disk &&
       disk.bavail * disk.bsize <
-        plan.crossingFiles.reduce((sum, file) => sum + file.sizeBytes, 0) +
-          checkpointBytes +
-          64 * 1024 * 1024
+        plan.crossingFiles.reduce((sum, file) => sum + file.sizeBytes, 0) + 64 * 1024 * 1024
     )
       throw new Error('Workflow reproduction has insufficient disk space.')
     for (const file of plan.crossingFiles) {
@@ -885,19 +808,6 @@ export const createWorkflowSlices = (
     }
     for (const step of plan.steps) {
       const run = capture.runs.find((candidate) => candidate.runId === step.runId)!
-      if (plan.stateComparisonRunIds?.includes(run.runId)) {
-        if (!validRStageCheckpointForRun(run) || run.stageCheckpoint?.state !== 'available')
-          throw new Error('Workflow state checkpoint identity mismatch.')
-        for (const file of [run.stageCheckpoint.input, run.stageCheckpoint.output]) {
-          const path = evidence.resolveFile(file.storageKey)
-          const metadata = await lstat(path).catch(() => undefined)
-          if (!metadata?.isFile() || metadata.isSymbolicLink() || metadata.size !== file.sizeBytes)
-            throw new Error('Workflow state checkpoint is unavailable.')
-          const actual = await options.fileIO.digestFile(path, file.sizeBytes, signal)
-          if (actual.checksum !== file.checksum || actual.sizeBytes !== file.sizeBytes)
-            throw new Error('Workflow state checkpoint checksum mismatch.')
-        }
-      }
       if (run.kernelKind === 'r') restoreRRandomState('', run.executionContext?.before.rRandomState)
       if (run.kernelKind === 'python')
         validatePythonRandomState(run.executionContext?.before.pythonRandomState)

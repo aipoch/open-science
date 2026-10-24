@@ -1,22 +1,7 @@
-import type { WorkflowCapture } from '@aipoch/reproducibility/contracts'
 import type {
   ArtifactReproducibilityProjection,
-  ArtifactReproducibilityRecipe
-} from '@aipoch/reproducibility/contracts'
-export type {
-  ArtifactReproducibilityBarrierReason,
-  ArtifactReproducibilityActivity,
-  ArtifactReproducibilityEntity,
-  ArtifactReproducibilityOutputGroup,
-  ArtifactReproducibilityEdge,
-  ArtifactReproducibilityStartFrontier,
-  ArtifactReproducibilityProjection,
-  ArtifactReproducibilityRecipeBarrier,
-  ArtifactReproducibilityEnvironmentRequirement,
-  ArtifactReproducibilityRecipeStep,
-  ArtifactReproducibilityRecipeFile,
-  ArtifactReproducibilityFrontierPlan,
-  ArtifactReproducibilityRecipe
+  ArtifactReproducibilityRecipe,
+  WorkflowCapture
 } from '@aipoch/reproducibility/contracts'
 import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource } from './artifacts'
 import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
@@ -48,6 +33,21 @@ import type {
   ScientificOutputRisk,
   ScientificOutputStorageShape
 } from './execution-file-evidence'
+export type {
+  ArtifactReproducibilityBarrierReason,
+  ArtifactReproducibilityActivity,
+  ArtifactReproducibilityEntity,
+  ArtifactReproducibilityOutputGroup,
+  ArtifactReproducibilityEdge,
+  ArtifactReproducibilityStartFrontier,
+  ArtifactReproducibilityProjection,
+  ArtifactReproducibilityRecipeBarrier,
+  ArtifactReproducibilityEnvironmentRequirement,
+  ArtifactReproducibilityRecipeStep,
+  ArtifactReproducibilityRecipeFile,
+  ArtifactReproducibilityFrontierPlan,
+  ArtifactReproducibilityRecipe
+} from '@aipoch/reproducibility/contracts'
 
 export type CreateArtifactVersionRequest = {
   projectId: string
@@ -488,7 +488,6 @@ export type ProvenanceNotebookOutput =
   | { type: 'omitted-media'; mimeType: string; byteLength?: number }
 
 export type ProvenanceNotebookRun = {
-  stageCheckpoint?: import('@aipoch/reproducibility/contracts').RStageCheckpointCapture
   executionContext?: NotebookExecutionContext
   runId: string
   runIndex: number

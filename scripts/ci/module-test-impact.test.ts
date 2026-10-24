@@ -1214,8 +1214,8 @@ function selectiveManifestFor(moduleIds: string[]): ReturnType<typeof loadModule
 it.each([
   [
     'environment_engine',
-    'packages/environment/src/conda-lock-subset.ts',
-    'packages/environment/src/conda-lock-subset.test.ts'
+    'packages/environment/src/environment-lock.ts',
+    'packages/environment/src/environment-lock.test.ts'
   ],
   [
     'notebook_analysis_engine',
@@ -1234,8 +1234,8 @@ it.each([
   ],
   [
     'notebook_reproduction',
-    'src/main/notebook/reproduction-runtime-subset.ts',
-    'src/main/notebook/reproduction-runtime-subset.test.ts'
+    'src/main/notebook/reproduction-runtime.ts',
+    'src/main/notebook/reproduction-runtime.test.ts'
   ]
 ])(
   'prioritizes the production full-validation reason for %s over selective evidence',

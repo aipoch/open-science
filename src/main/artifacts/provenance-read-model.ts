@@ -840,8 +840,8 @@ class ArtifactProvenanceReadModel {
 
 export { ArtifactProvenanceReadModel, projectPublicArtifactExecutionSnapshot }
 export type {
+  ArtifactProvenanceReadModelOptions,
   ArtifactVersionReconstructionProvenance,
   ArtifactVersionReproductionProvenance,
   ResolvedArtifactExecutionSnapshot
 }
-export type { ArtifactProvenanceReadModelOptions }

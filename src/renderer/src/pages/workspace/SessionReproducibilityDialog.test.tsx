@@ -347,7 +347,7 @@ const workflowChecks = (): HTMLInputElement[] => [
   ...document.querySelectorAll<HTMLInputElement>('fieldset input[type="checkbox"]')
 ]
 
-it('requests independent R stages without silently opting into upstream replay', async () => {
+it('requests R endpoints for dependency-closure planning', async () => {
   const view = setupStartingPoints()
   view.getVersionExecution.mockResolvedValue({
     execution: {
@@ -369,7 +369,6 @@ it('requests independent R stages without silently opting into upstream replay',
         targets: [
           expect.objectContaining({
             workflow: expect.objectContaining({
-              independent: true,
               targetRunIds: ['run-1', 'run-2']
             })
           })
@@ -512,39 +511,27 @@ it.each(['matched', 'different'] as const)(
   }
 )
 
-const independentRun = {
+const selectedRun = {
   runId: 'run-7',
   kernelKind: 'r',
   status: 'completed',
   kernelEpochId: 'epoch',
   script: 'answer <- nrow(data)',
-  stageCheckpoint: {
-    state: 'available',
-    schemaVersion: 1,
-    runId: 'run-7',
-    kernelEpochId: 'epoch',
-    sourceChecksum: 'source',
-    environmentLockChecksum: 'lock',
-    input: { checksum: 'before', storageKey: 'input', sizeBytes: 12 },
-    output: { checksum: 'after', storageKey: 'output', sizeBytes: 20 },
-    inputNames: ['data'],
-    outputNames: ['answer'],
-    environmentProof: { schemaVersion: 1, packages: [{ name: 'stats', version: '4.5' }] }
-  }
+  environmentLock: { state: 'available', format: 'environment-lock-bundle', lockChecksum: 'lock' }
 } as NotebookRunRecord
-const independentWorkflow = {
+const selectedWorkflow = {
   captureId: 'a'.repeat(64),
-  independent: true as const,
+
   targetRunIds: ['run-7'],
   boundaryEntityIds: []
 }
-const independentTarget = {
+const selectedTarget = {
   ...target,
   frontierId: 'workflow-selection',
-  workflow: independentWorkflow
+  workflow: selectedWorkflow
 }
 
-type IndependentView = {
+type StepView = {
   command: Mock<
     (request: SessionReproducibilityCommand) => Promise<SessionReproducibilityBatch | undefined>
   >
@@ -553,7 +540,7 @@ type IndependentView = {
   button: (label: string) => HTMLButtonElement
   cleanup: () => Promise<void>
 }
-const setupIndependent = (initial?: SessionReproducibilityBatch): IndependentView => {
+const setupStep = (initial?: SessionReproducibilityBatch): StepView => {
   useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   let batch = initial
   const command = vi.fn(async (request: SessionReproducibilityCommand) => {
@@ -584,11 +571,11 @@ const setupIndependent = (initial?: SessionReproducibilityBatch): IndependentVie
   })
   const getVersionExecution = vi.fn().mockResolvedValue({
     execution: {
-      runs: [{ ...structuredClone(independentRun), runIndex: 6, environmentName: 'r-analysis' }],
+      runs: [{ ...structuredClone(selectedRun), runIndex: 6, environmentName: 'r-analysis' }],
       workflow: {
         state: 'available',
-        captureId: independentWorkflow.captureId,
-        stages: [{ runId: independentRun.runId, runIndex: 6, kernelKind: 'r', outputCount: 1 }],
+        captureId: selectedWorkflow.captureId,
+        stages: [{ runId: selectedRun.runId, runIndex: 6, kernelKind: 'r', outputCount: 1 }],
         boundaries: []
       }
     }
@@ -618,7 +605,7 @@ const setupIndependent = (initial?: SessionReproducibilityBatch): IndependentVie
       root.render(
         <SessionReproducibilityDialog
           session={value}
-          run={independentRun}
+          run={selectedRun}
           disabled={disabled}
           onClose={vi.fn()}
         />
@@ -639,21 +626,19 @@ const setupIndependent = (initial?: SessionReproducibilityBatch): IndependentVie
   }
 }
 
-it('previews the exact R checkpoint and prepares only its pinned independent run before starting', async () => {
-  const view = setupIndependent()
+it('previews the captured R source and prepares its pinned target with dependencies', async () => {
+  const view = setupStep()
   try {
     await view.render(session)
-    expect(document.body.textContent).toContain('Captured input bindings')
-    expect(document.body.textContent).toContain('data')
+    expect(document.body.textContent).toContain('reruns the required upstream cells')
     expect(document.body.textContent).toContain('r-analysis')
-    expect(document.body.textContent).toContain('Captured R packages:')
     expect(document.querySelector('input[type="checkbox"]')).toBeNull()
     await act(async () => fireEvent.click(view.button('Check readiness')))
     expect(view.command).toHaveBeenLastCalledWith({
       projectId: 'p',
       appSessionId: 's',
       action: 'prepare',
-      targets: [independentTarget]
+      targets: [selectedTarget]
     })
     expect(document.body.textContent).toContain('Runs to execute')
     await act(async () => fireEvent.click(view.button('Check reproducibility')))
@@ -678,27 +663,27 @@ it('previews the exact R checkpoint and prepares only its pinned independent run
   }
 })
 
-it('does not start an independent preflight that would execute more than one run', async () => {
-  const view = setupIndependent({
+it('starts a dependency plan that includes multiple upstream runs', async () => {
+  const view = setupStep({
     ...ready,
-    targets: [{ ...independentTarget, status: 'queued', steps: 2 }]
+    targets: [{ ...selectedTarget, status: 'queued', steps: 2 }]
   })
   try {
     await view.render(session)
-    expect(view.button('Check reproducibility').disabled).toBe(true)
-    expect(document.body.textContent).toContain('Readiness did not confirm a single run.')
-    expect(view.command.mock.calls.every(([request]) => request.action === 'get')).toBe(true)
+    expect(view.button('Check reproducibility').disabled).toBe(false)
+    await act(async () => view.button('Check reproducibility').click())
+    expect(view.command).toHaveBeenCalledWith(expect.objectContaining({ action: 'start' }))
   } finally {
     await view.cleanup()
   }
 })
 
 it.each([
-  { ...target, workflow: { ...independentWorkflow, captureId: 'b'.repeat(64) } },
-  { ...independentTarget, versionId: 'another-version' },
-  { ...target, workflow: { ...independentWorkflow, targetRunIds: ['another-run'] } }
+  { ...target, workflow: { ...selectedWorkflow, captureId: 'b'.repeat(64) } },
+  { ...selectedTarget, versionId: 'another-version' },
+  { ...target, workflow: { ...selectedWorkflow, targetRunIds: ['another-run'] } }
 ])('does not start, replace or cancel a foreign running batch', async (foreignTarget) => {
-  const view = setupIndependent({
+  const view = setupStep({
     ...ready,
     status: 'running',
     targets: [{ ...foreignTarget, status: 'running' }]
@@ -716,11 +701,11 @@ it.each([
 })
 
 it('reports missing exact capture without preparing another run and disables recovery writes', async () => {
-  const view = setupIndependent()
+  const view = setupStep()
   view.getVersionExecution.mockResolvedValueOnce({
     execution: {
       runs: [],
-      workflow: { state: 'available', captureId: independentWorkflow.captureId, stages: [] }
+      workflow: { state: 'available', captureId: selectedWorkflow.captureId, stages: [] }
     }
   })
   try {
@@ -737,7 +722,7 @@ it('reports missing exact capture without preparing another run and disables rec
 })
 
 it('ignores a late frozen capture read after switching sessions', async () => {
-  const view = setupIndependent()
+  const view = setupStep()
   let resolveOld!: (value: unknown) => void
   view.getVersionExecution.mockImplementationOnce(
     () =>
@@ -758,19 +743,19 @@ it('ignores a late frozen capture read after switching sessions', async () => {
       projectId: 'p',
       appSessionId: 'other',
       action: 'prepare',
-      targets: [independentTarget]
+      targets: [selectedTarget]
     })
   } finally {
     await view.cleanup()
   }
 })
 
-it('loads the exact batch receipt from later history pages and renders R state without file controls', async () => {
+it('loads the exact batch receipt from later history pages and renders file comparisons', async () => {
   const checksum = 'receipt-checksum'
-  const view = setupIndependent({
+  const view = setupStep({
     ...ready,
     status: 'completed',
-    targets: [{ ...independentTarget, status: 'matched', receiptChecksum: checksum }]
+    targets: [{ ...selectedTarget, status: 'matched', receiptChecksum: checksum }]
   })
   const readReceipts = vi
     .fn()
@@ -782,12 +767,11 @@ it('loads the exact batch receipt from later history pages and renders R state w
           artifactVersion: { projectId: 'p', appSessionId: 's', artifactId: 'a', versionId: 'v1' },
           comparisons: [
             {
-              entityId: 'state',
+              entityId: 'file:result',
               stepId: 'run-7',
-              relativePath: 'R state (run-7)',
+              relativePath: 'result.csv',
               status: 'matched',
-              expectedSizeBytes: 0,
-              stateComparison: { outcome: 'equal' }
+              expectedSizeBytes: 0
             }
           ]
         }
@@ -803,9 +787,9 @@ it('loads the exact batch receipt from later history pages and renders R state w
       versionId: 'v1',
       cursor: 'older'
     })
-    expect(document.body.textContent).toContain('State · R')
-    expect(document.body.textContent).toContain('Matched')
-    expect(document.body.textContent).not.toContain('Original output')
+    expect(document.body.textContent).toContain('result.csv')
+    expect(document.body.textContent).toContain('Compared outputs reproduced')
+    expect(document.body.textContent).toContain('Original output')
     expect(view.button('View output')).toBeUndefined()
   } finally {
     await view.cleanup()
@@ -813,7 +797,7 @@ it('loads the exact batch receipt from later history pages and renders R state w
 })
 
 it('ignores old-epoch command completion and reloads only after the connection recovers', async () => {
-  const view = setupIndependent()
+  const view = setupStep()
   let resolvePrepare!: (value: SessionReproducibilityBatch) => void
   try {
     await view.render(session)
@@ -829,7 +813,7 @@ it('ignores old-epoch command completion and reloads only after the connection r
       useDesktopRuntimeRecoveryStore.setState({ epoch: 1, phase: 'disconnected' })
     )
     await act(async () =>
-      resolvePrepare({ ...ready, targets: [{ ...independentTarget, status: 'queued', steps: 1 }] })
+      resolvePrepare({ ...ready, targets: [{ ...selectedTarget, status: 'queued', steps: 1 }] })
     )
     expect(view.button('Check reproducibility')).toBeUndefined()
     expect(view.button('Preparing…').disabled).toBe(true)

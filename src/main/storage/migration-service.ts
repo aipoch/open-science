@@ -4,15 +4,6 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, type Diren
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
-import type {
-  DataRootKind,
-  DataRootSelection,
-  DataRootRecoveryStatus,
-  DataRootValidationResult,
-  MigrationOutcome,
-  MigrationProgress,
-  MigrationResult
-} from '../../shared/storage'
 import {
   dataRootForPicked,
   isPathInsideOrEqual,
@@ -54,6 +45,15 @@ import {
   dataRootIdentity,
   dataRootDirectoryIdentity
 } from './data-root-selection'
+import type {
+  DataRootKind,
+  DataRootSelection,
+  DataRootRecoveryStatus,
+  DataRootValidationResult,
+  MigrationOutcome,
+  MigrationProgress,
+  MigrationResult
+} from '../../shared/storage'
 import { DATA_ROOT_SELECTION_CHANGED } from '../../shared/storage'
 import type { DataRootCleanupJournal } from './data-root-cleanup'
 import {
@@ -503,7 +503,6 @@ export const RUNTIME_ENVIRONMENT_MANIFESTS_DIR = join(
   'environment-manifests'
 )
 export const RUNTIME_ENVIRONMENT_LOCKS_DIR = join('runtime', 'provenance', 'environment-locks')
-export const RUNTIME_R_STAGE_CHECKPOINTS_DIR = join('runtime', 'provenance', 'r-stage-checkpoints')
 // The SQLite authority stays under the fixed config root. Keep the filename exported for migration
 // validation/tests, but never put it in the relocatable data-root copy/delete set.
 export const PROJECT_DATABASE_FILE = 'open-science.db'
@@ -511,7 +510,6 @@ const BASE_MIGRATION_DIRS = [
   ...MIGRATED_DIRS,
   RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
   RUNTIME_ENVIRONMENT_LOCKS_DIR,
-  RUNTIME_R_STAGE_CHECKPOINTS_DIR,
   RUNTIME_REPAIR_REGISTRY_FILE,
   RUNTIME_NPM_DIR
 ]
@@ -1116,7 +1114,6 @@ export const commitDataRootSwitch = async (
   const requiredPaths = [
     RUNTIME_ENVIRONMENT_MANIFESTS_DIR,
     RUNTIME_ENVIRONMENT_LOCKS_DIR,
-    RUNTIME_R_STAGE_CHECKPOINTS_DIR,
     RUNTIME_REPAIR_REGISTRY_FILE,
     RUNTIME_PKGS_DIR
   ].filter((path) => existsSync(join(deps.currentDataRoot, path)))

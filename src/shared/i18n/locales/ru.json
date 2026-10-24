@@ -8041,18 +8041,11 @@
     "Compared outputs reproduced": "Сравниваемые результаты совпали",
     "Compared outputs differ": "Сравниваемые результаты различаются",
     "Selected captured runs: {{runs}}": "Выбранные зафиксированные запуски: {{runs}}",
-    "Reproduce independently": "Воспроизвести независимо",
-    "Independent reproduction": "Независимое воспроизведение",
+    "Reproduce with dependencies": "Воспроизвести с зависимостями",
     "No frozen capture is available for this run. Create an Artifact Version after this step to capture its evidence.": "Для этого запуска нет доступного зафиксированного снимка. Создайте версию артефакта после этого шага, чтобы зафиксировать свидетельства.",
     "Another session check is active. Wait for it to finish before reproducing this run.": "В другой сессии выполняется проверка. Дождитесь её завершения, прежде чем воспроизводить этот запуск.",
-    "Captured input bindings": "Зафиксированные привязки входных данных",
-    "This check restores the captured inputs and environment, then executes only this run.": "Эта проверка восстанавливает зафиксированные входные данные и окружение, а затем выполняет только этот запуск.",
-    "Readiness did not confirm a single run. This check cannot start.": "Проверка готовности не подтвердила один запуск. Эту проверку нельзя начать.",
+    "This check analyzes cell dependencies, restores the captured inputs and environment, and reruns the required upstream cells through this run.": "Эта проверка анализирует зависимости ячеек, восстанавливает сохранённые входные данные и окружение, затем повторно выполняет необходимые предыдущие ячейки до этого запуска включительно.",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "Воспроизведение недоступно, пока эта сессия доступна только для чтения, занята или восстанавливается.",
-    "Captured R packages: {{count}}_one": "Зафиксированные пакеты R: {{count}}",
-    "Captured R packages: {{count}}_few": "Зафиксированных пакета R: {{count}}",
-    "Captured R packages: {{count}}_many": "Зафиксированных пакетов R: {{count}}",
-    "Captured R packages: {{count}}_other": "Зафиксированных пакета R: {{count}}",
     "Map exact compound identifiers with UniChem.": "Сопоставить точные идентификаторы соединений с помощью UniChem.",
     "Retrieve structure quality and validation statistics from PDBe.": "Получить показатели качества структуры и статистику валидации из PDBe.",
     "Search DepMap cell models and their identity metadata.": "Поиск клеточных моделей DepMap и их идентификационных метаданных.",
@@ -8063,6 +8056,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Исследования рака, омиксные данные, зависимости и ответы на препараты клеточных моделей из cBioPortal и DepMap/CCLE.",
     "Export screening results (CSV)": "Экспортировать результаты отбора (CSV)",
     "Screening results could not be exported.": "Не удалось экспортировать результаты отбора.",
-    "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку."
+    "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку.",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится."
   }
 }

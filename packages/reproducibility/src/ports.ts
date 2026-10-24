@@ -1,5 +1,4 @@
 import type { NotebookExecutionContext } from './execution-context'
-import type { CondaRuntimeSubsetPlan } from '@aipoch/environment/contracts'
 import type {
   ArtifactReproducibilityEnvironmentRequirement,
   ArtifactReproducibilityRecipeStep,
@@ -28,22 +27,7 @@ export type NotebookReproductionStep = Extract<
 >
 export type NotebookReproductionRuntime = {
   environmentLocks?: NotebookReproductionRestoredEnvironment[]
-  // Observed use proposes a candidate; only the execution owner can compare all
-  // frozen outputs and accept it after the reference process has been reaped.
-  proposeRuntimeSubset?: () => Promise<CondaRuntimeSubsetPlan | undefined>
   execute(input: {
-    stageRestore?: {
-      inputPath: string
-      expectedOutputPath: string
-      packageContext?: {
-        schemaVersion: 1
-        sourcePackages: string[]
-        targetPackages: string[]
-      }
-      observeRuntimeFootprint?: true
-    }
-    stageSupplement?: { inputPath: string; expectedOutputPath: string; names: string[] }
-    stageExpectedOutputPath?: string
     step: NotebookReproductionStep
     source: string
     executionContext?: NotebookExecutionContext
@@ -57,21 +41,6 @@ export type NotebookReproductionRuntime = {
     stderr: string
     traceback: string
     truncated?: boolean
-    stageComparison?: {
-      outcome: 'equal' | 'different' | 'unavailable'
-      reason?: string
-      scientificOutcome?: 'equal' | 'different'
-      packageContext?: {
-        schemaVersion: 1
-        sourcePackages: string[]
-        targetPackages: string[]
-      }
-      runtimeFootprint?: {
-        processId: number
-        packages: Array<{ name: string; version: string }>
-        libraryPaths: string[]
-      }
-    }
   }>
   shutdown(): Promise<{ reaped: boolean }>
 }
@@ -80,14 +49,6 @@ export type NotebookReproductionRestoredEnvironment = {
   kernelKind: 'python' | 'r'
   environmentName?: string
   lockChecksum: string
-  sourceLockChecksum?: string
-  runtimeSubset?: {
-    schemaVersion: 1
-    scopeChecksum: string
-    planChecksum: string
-    archiveNames: string[]
-    missingDependencies: Array<{ packageName: string; dependency: string }>
-  }
 }
 export type NotebookReproductionEnvironmentProgress = {
   requirementId: string
@@ -106,13 +67,6 @@ export type NotebookReproductionEnvironmentOutput = {
 }
 export type CreateReproductionRuntime = (input: {
   requirements: ArtifactReproducibilityEnvironmentRequirement[]
-  runtimeSubset?: { scopeChecksum: string; plan?: CondaRuntimeSubsetPlan }
-  selectedRuns?: Array<{
-    stageCheckpoint?: import('./evidence').RStageCheckpointCapture
-    step: NotebookReproductionStep
-    source: string
-    executionContext?: NotebookExecutionContext
-  }>
   attemptRoot: string
   signal?: AbortSignal
   onEnvironmentProgress?: (event: NotebookReproductionEnvironmentProgress) => void

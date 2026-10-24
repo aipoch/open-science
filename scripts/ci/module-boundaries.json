@@ -961,8 +961,7 @@
         "packages/environment/src/pip-install-evidence.ts",
         "packages/environment/src/runtime-relocation.ts",
         "packages/environment/src/package-version-comparison.ts",
-        "packages/environment/src/environment-lock.ts",
-        "packages/environment/src/conda-lock-subset.ts"
+        "packages/environment/src/environment-lock.ts"
       ],
       "layer": "package",
       "sourceLayers": {},
@@ -1021,8 +1020,7 @@
         "packages/environment/src/runtime-relocation.test.ts",
         "packages/environment/src/provisioner.startup.test.ts",
         "packages/environment/src/external-environment-lock.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts",
-        "packages/environment/src/conda-lock-subset.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics",
@@ -3099,8 +3097,7 @@
         "src/main/notebook/shell-process-ownership.windows-posix.ts",
         "src/main/notebook/shell-process.ts",
         "src/main/notebook/trust-bundle.ts",
-        "src/main/notebook/working-file-observer.ts",
-        "src/main/notebook/r-stage-checkpoint.ts"
+        "src/main/notebook/working-file-observer.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -3258,8 +3255,7 @@
         "src/main/notebook/powershell-search-parser.test.ts",
         "src/main/notebook/analysis-file-evidence.test.ts",
         "src/main/notebook-payload.integration.test.ts",
-        "src/main/notebook/r-stage-checkpoint.test.ts",
-        "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
+        "src/main/notebook/execution-owner.no-variable-snapshots.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics/node",
@@ -11130,10 +11126,7 @@
       "externalImports": ["node:fs", "node:path"]
     },
     "notebook_reproduction": {
-      "sources": [
-        "src/main/notebook/reproduction-runtime.ts",
-        "src/main/notebook/reproduction-runtime-subset.ts"
-      ],
+      "sources": ["src/main/notebook/reproduction-runtime.ts"],
       "layer": "application-service",
       "sourceLayers": {},
       "consumerModules": ["session_persistence"],
@@ -11163,8 +11156,7 @@
         "src/shared/renderer-contract-catalog.test.ts",
         "src/shared/renderer-surface-inventory.test.ts",
         "src/shared/renderer-surface-matrix.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts",
-        "src/main/notebook/reproduction-runtime-subset.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": [
         "@aipoch/environment",

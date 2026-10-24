@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -120,48 +119,6 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
-  it('retains exact stage checkpoint bindings after reopening durable history', async () => {
-    const root = await createStorageRoot()
-    const repository = new NotebookRunRepository(root)
-    const projectId = 'default-project',
-      sessionId = 'session-1'
-    const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
-    await repository.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: '/workspace' })
-    const run = admittedRun({
-      kernelKind: 'r',
-      status: 'completed',
-      kernelEpochId: 'epoch',
-      environmentLock: {
-        state: 'available',
-        format: 'environment-lock-bundle',
-        lockChecksum: 'a'.repeat(64)
-      }
-    })
-    run.stageCheckpoint = {
-      state: 'available',
-      schemaVersion: 1,
-      runId: run.runId,
-      kernelEpochId: 'epoch',
-      sourceChecksum: createHash('sha256').update(run.script).digest('hex'),
-      environmentLockChecksum: 'a'.repeat(64),
-      input: {
-        storageKey: `runtime/provenance/r-stage-checkpoints/${'b'.repeat(64)}.rds`,
-        checksum: 'b'.repeat(64),
-        sizeBytes: 10
-      },
-      output: {
-        storageKey: `runtime/provenance/r-stage-checkpoints/${'c'.repeat(64)}.rds`,
-        checksum: 'c'.repeat(64),
-        sizeBytes: 12
-      },
-      inputNames: ['dds'],
-      outputNames: ['res']
-    }
-    await repository.appendRun({ projectId, sessionId, lane, run })
-    const history = await new NotebookRunRepository(root).readSessionRuns(projectId, sessionId)
-    expect(history[0].stageCheckpoint).toEqual(run.stageCheckpoint)
-  })
-
   it('preserves failed runs and optional execution evidence after reopening durable history', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

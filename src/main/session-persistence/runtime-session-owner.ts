@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../../shared/sandbox-network-approval'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { isDeepStrictEqual } from 'node:util'
 import type { AcpRuntimeEvent } from '../../shared/acp'
@@ -368,6 +369,7 @@ const isParkedTurn = (
       })
     )
   }
+  if (hasPendingSandboxNetworkApproval(session)) return true
   const permission = session.runtimeContext?.permission
   if (permission?.state === 'continuing') {
     return permission.originatingPromptMessageId === scope.promptMessageId

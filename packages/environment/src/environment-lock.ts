@@ -20,10 +20,6 @@ import { lockedPackageVersions } from './native-lock-restoration'
 import { nativeLockRestoreState } from './native-lock-restoration'
 import { capturePipInstallEvidence, recoverPipInstallEvidence } from './pip-install-evidence'
 import { normalizeRuntimeArchitecture, rLibraryDir, rScriptBin } from './runtime-paths'
-import {
-  captureCondaDependencyGraph,
-  condaDependencyGraphMatchesComponent
-} from './conda-lock-subset'
 type EnvironmentLockDecodeResult =
   | { status: 'valid'; version: number; value: NotebookEnvironmentLock }
   | { status: 'unsupported'; version: number }
@@ -404,26 +400,12 @@ const lockComponentValue = (value: unknown): value is NotebookEnvironmentLockCom
     !Array.isArray(component.packages) ||
     component.packages.length === 0 ||
     !component.packages.every((name) => typeof name === 'string' && name.length > 0) ||
-    !hasOnlyKeys(component, [
-      'ecosystem',
-      'format',
-      'resolution',
-      'explicitLock',
-      'packages',
-      'dependencyGraph'
-    ])
+    !hasOnlyKeys(component, ['ecosystem', 'format', 'resolution', 'explicitLock', 'packages'])
   ) {
     return false
   }
   try {
-    return (
-      validateExplicitLock(component.explicitLock) === component.explicitLock &&
-      (component.dependencyGraph === undefined ||
-        condaDependencyGraphMatchesComponent(
-          component.dependencyGraph,
-          component as Extract<NotebookEnvironmentLockComponent, { ecosystem: 'conda' }>
-        ))
-    )
+    return validateExplicitLock(component.explicitLock) === component.explicitLock
   } catch {
     return false
   }
@@ -1089,29 +1071,10 @@ class EnvironmentLockCaptureOwner {
         cached.revision === revision &&
         (!cached.retryAfter || Date.now() < cached.retryAfter)
       ) {
-        // history/fingerprint can remain unchanged when a metadata record is damaged. Refresh
-        // optional dependency evidence even on a lock cache hit; never certify stale edges.
-        const components = await Promise.all(
-          cached.lock.components.map(async (component) => {
-            if (component.ecosystem !== 'conda') return component
-            const exact = { ...component }
-            delete exact.dependencyGraph
-            const dependencyGraph =
-              target.language === 'r'
-                ? await captureCondaDependencyGraph(
-                    target.condaPrefix!,
-                    component,
-                    cached.conda.packages
-                  )
-                : undefined
-            return { ...exact, ...(dependencyGraph ? { dependencyGraph } : {}) }
-          })
-        )
-        const lock = { ...cached.lock, components }
         return {
           state: 'captured',
-          lock,
-          ...assessEnvironmentLock(lock, manifest, native.rejected, cached.conda)
+          lock: cached.lock,
+          ...assessEnvironmentLock(cached.lock, manifest, native.rejected, cached.conda)
         }
       }
 
@@ -1126,17 +1089,6 @@ class EnvironmentLockCaptureOwner {
       ])
       stage = 'validating-conda-inventory'
       const conda = parseCondaEnvironmentSnapshot(inventoryRaw)
-      const dependencyGraph =
-        target.language === 'r'
-          ? await captureCondaDependencyGraph(
-              target.condaPrefix,
-              {
-                packages: [...conda.packages.keys()].sort(),
-                explicitLock: conda.explicitLock
-              },
-              conda.packages
-            )
-          : undefined
       let recoveryAttempted = false
       if (
         target.language === 'r' &&
@@ -1229,8 +1181,7 @@ class EnvironmentLockCaptureOwner {
             format: 'conda-explicit-md5',
             resolution: 'locked',
             explicitLock: conda.explicitLock,
-            packages: [...conda.packages.keys()].sort(),
-            ...(dependencyGraph ? { dependencyGraph } : {})
+            packages: [...conda.packages.keys()].sort()
           },
           ...native.components
         ],

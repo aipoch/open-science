@@ -10,25 +10,13 @@ import type { SessionReproducibilityBatch } from '../../../../shared/session-rep
 import { findStepReproductionTarget, isStepReproductionBatch } from './step-reproduction-target'
 
 const scope = { projectId: 'p', appSessionId: 's' }
-const checkpoint = {
-  state: 'available' as const,
-  schemaVersion: 1 as const,
-  runId: 'run-7',
-  kernelEpochId: 'epoch',
-  sourceChecksum: 'source',
-  environmentLockChecksum: 'lock',
-  input: { checksum: 'before', storageKey: 'input', sizeBytes: 12 },
-  output: { checksum: 'after', storageKey: 'output', sizeBytes: 20 },
-  inputNames: ['data'],
-  outputNames: ['result']
-}
 const run = {
   runId: 'run-7',
   kernelKind: 'r',
   status: 'completed',
   script: 'result <- nrow(data)',
   kernelEpochId: 'epoch',
-  stageCheckpoint: checkpoint
+  environmentLock: { state: 'available', format: 'environment-lock-bundle', lockChecksum: 'lock' }
 } as NotebookRunRecord
 const captured = (): ProvenanceNotebookRun =>
   ({ ...structuredClone(run), runIndex: 6 }) as unknown as ProvenanceNotebookRun
@@ -101,7 +89,7 @@ describe('frozen step reproduction target', () => {
     expect(target?.inputFiles).toEqual([input])
   })
 
-  it('pins the enumerated version and its exact captured run without selecting upstream steps', async () => {
+  it('pins the enumerated version and its exact captured run for dependency planning', async () => {
     const readExecution = vi.fn().mockResolvedValue(execution())
     const target = await findStepReproductionTarget({ run, scope, files: [file], readExecution })
     expect(readExecution).toHaveBeenCalledExactlyOnceWith({
@@ -114,7 +102,6 @@ describe('frozen step reproduction target', () => {
       versionId: 'v2',
       workflow: {
         captureId: 'a'.repeat(64),
-        independent: true,
         targetRunIds: ['run-7'],
         boundaryEntityIds: []
       }
@@ -126,11 +113,16 @@ describe('frozen step reproduction target', () => {
     ['epoch', { kernelEpochId: 'new-epoch' }],
     ['truncated source', { scriptTruncated: true }],
     [
-      'input checkpoint',
-      { stageCheckpoint: { ...checkpoint, input: { ...checkpoint.input, checksum: 'other' } } }
+      'environment lock',
+      {
+        environmentLock: {
+          state: 'available',
+          format: 'environment-lock-bundle',
+          lockChecksum: 'other'
+        }
+      }
     ],
-    ['environment lock', { stageCheckpoint: { ...checkpoint, environmentLockChecksum: 'other' } }],
-    ['missing checkpoint', { stageCheckpoint: undefined }]
+    ['missing environment lock', { environmentLock: undefined }]
   ])('rejects a matching run ID with different %s', async (_label, changes) => {
     const readExecution = vi
       .fn()
@@ -150,7 +142,7 @@ describe('frozen step reproduction target', () => {
     ).toBeUndefined()
   })
 
-  it('never resolves failed or non-R runs to independent R reproduction', async () => {
+  it('never resolves failed or non-R runs to R reproduction', async () => {
     const readExecution = vi.fn()
     for (const changes of [{ status: 'failed' }, { kernelKind: 'python' }]) {
       expect(

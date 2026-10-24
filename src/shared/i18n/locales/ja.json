@@ -7574,15 +7574,11 @@
     "Compared outputs reproduced": "比較した出力は一致しました",
     "Compared outputs differ": "比較した出力は異なります",
     "Selected captured runs: {{runs}}": "選択した記録済み実行：{{runs}}",
-    "Reproduce independently": "独立して再現",
-    "Independent reproduction": "独立再現",
+    "Reproduce with dependencies": "依存関係を含めて再現",
     "No frozen capture is available for this run. Create an Artifact Version after this step to capture its evidence.": "この実行には固定キャプチャがありません。このステップの後にArtifact Versionを作成して、証拠をキャプチャしてください。",
     "Another session check is active. Wait for it to finish before reproducing this run.": "別のセッションでチェックが実行中です。完了してからこの実行を再現してください。",
-    "Captured input bindings": "キャプチャされた入力バインディング",
-    "This check restores the captured inputs and environment, then executes only this run.": "このチェックではキャプチャされた入力と環境を復元し、この実行のみを実行します。",
-    "Readiness did not confirm a single run. This check cannot start.": "準備状況の確認で単一の実行を確認できませんでした。このチェックは開始できません。",
+    "This check analyzes cell dependencies, restores the captured inputs and environment, and reruns the required upstream cells through this run.": "このチェックではセルの依存関係を分析し、記録された入力と環境を復元して、必要な上流のセルからこの実行までを再実行します。",
     "Reproduction is unavailable while this session is read-only, busy or recovering.": "このセッションが読み取り専用、処理中、または復旧中の場合、再現できません。",
-    "Captured R packages: {{count}}_other": "キャプチャされたRパッケージ：{{count}}",
     "Map exact compound identifiers with UniChem.": "UniChem で化合物の完全一致識別子を対応付けます。",
     "Retrieve structure quality and validation statistics from PDBe.": "PDBe から構造の品質と検証統計を取得します。",
     "Search DepMap cell models and their identity metadata.": "DepMap の細胞モデルとその識別メタデータを検索します。",
@@ -7593,6 +7589,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal と DepMap/CCLE のがん研究および細胞モデルのオミクス、依存性、薬剤応答データ。",
     "Export screening results (CSV)": "スクリーニング結果をエクスポート（CSV）",
     "Screening results could not be exported.": "スクリーニング結果をエクスポートできませんでした。",
-    "Screening data changed during export. Please try again.": "エクスポート中にスクリーニングデータが変更されました。もう一度お試しください。"
+    "Screening data changed during export. Please try again.": "エクスポート中にスクリーニングデータが変更されました。もう一度お試しください。",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。"
   }
 }

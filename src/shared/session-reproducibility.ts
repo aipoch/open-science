@@ -5,7 +5,6 @@ import type { ArtifactReproducibilityCheckState } from './artifact-reproducibili
 const id = z.string().min(1).max(256)
 export const workflowSelectionSchema = z
   .object({
-    independent: z.literal(true).optional(),
     captureId: z.string().regex(/^[a-f0-9]{64}$/u),
     targetRunIds: z.array(id).min(1).max(256),
     boundaryEntityIds: z.array(id).max(1024).optional()

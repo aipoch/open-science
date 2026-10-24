@@ -386,7 +386,9 @@ class AcpPermissionWaitOwner {
           sessionId,
           expectedRevision: context.revision,
           patch: { permission },
-          sessionStatus,
+          sessionStatus: context.networkApprovals?.some(({ state }) => state === 'pending')
+            ? 'waiting-permission'
+            : sessionStatus,
           ...(beforePersist ? { beforePersist } : {})
         })
         onCommitted?.()

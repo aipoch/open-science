@@ -1,8 +1,10 @@
 import { statSync } from 'node:fs'
 import { join, posix, win32 } from 'node:path'
 
-import { buildManagedRuntimeProcessEnvironment } from './process-environment'
-import { sanitizeManagedRuntimeHostState } from './process-environment'
+import {
+  buildManagedRuntimeProcessEnvironment,
+  sanitizeManagedRuntimeHostState
+} from './process-environment'
 import { DEFAULT_MAX_CACHE_RELATIVE_PATH } from './bundle-manifest'
 import {
   selectMicromambaCache,

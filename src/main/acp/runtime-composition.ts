@@ -1,3 +1,4 @@
+import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
@@ -186,6 +187,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
+  sandboxNetworkApprovalOwner?: SandboxNetworkApprovalOwner
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands &
     SessionMutation &
     SessionCatalog &
@@ -287,6 +289,7 @@ const createAcpRuntime = ({
   afterSessionDelete,
   specialistService,
   sessionPersistenceCoordinator,
+  sandboxNetworkApprovalOwner,
   finalizeRuntimeArtifacts,
   literatureReader,
   pdfElementReader,
@@ -857,6 +860,9 @@ const createAcpRuntime = ({
         ...(!delegatedNotebookConnection && sessionPersistenceCoordinator
           ? {
               permissionWait: {
+                networkApprovalOwner: sandboxNetworkApprovalOwner,
+                allowNetworkDomain:
+                  settingsService.allowNotebookNetworkDomain?.bind(settingsService),
                 sessions: sessionPersistenceCoordinator,
                 onSessionUpdated: (session) => {
                   try {

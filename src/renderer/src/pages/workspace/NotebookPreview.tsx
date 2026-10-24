@@ -285,7 +285,7 @@ const NotebookRunCell = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label={t('Reproduce independently')}
+                aria-label={t('Reproduce with dependencies')}
                 aria-disabled={Boolean(reproductionDisabled)}
                 aria-description={
                   reproductionDisabled
@@ -310,7 +310,7 @@ const NotebookRunCell = ({
                 ? t(
                     'Reproduction is unavailable while this session is read-only, busy or recovering.'
                   )
-                : t('Reproduce independently')}
+                : t('Reproduce with dependencies')}
             </TooltipContent>
           </Tooltip>
         ) : originLabel ? (

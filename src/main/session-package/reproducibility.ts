@@ -13,8 +13,6 @@ import {
 } from '../artifacts/reproducibility-source'
 import { SessionReproducibilityStore } from '../artifacts/session-reproducibility-store'
 import { assertPackageSourcePath } from './archive'
-import { installRStageCheckpointBlob } from '../notebook/r-stage-checkpoint'
-import { validatePackageStageCheckpoints } from './native-snapshot'
 import type { NativeRow, PackageRecords } from './records-contract'
 import type { PackageReproducibility } from './reproducibility-contract'
 import { packageReproducibilitySchema } from './reproducibility-contract'
@@ -49,7 +47,6 @@ export const capturePackageReproducibility = async (
   scope: { projectId: string; sessionId: string },
   signal?: AbortSignal
 ): Promise<PackageReproducibility> => {
-  await validatePackageStageCheckpoints(root, records, signal)
   const versions: PackageReproducibility['versions'] = []
   const locks = new Map<string, string>()
   let lockBytes = 0
@@ -145,34 +142,6 @@ export const capturePackageReproducibility = async (
   })
 }
 
-// The validated import owns the source bytes. Content-addressed checkpoints are shared app
-// evidence, so an interrupted import must not roll them back with its fresh Session directories.
-export const installPackageStageCheckpoints = async (
-  sourceRoot: string,
-  storageRoot: string,
-  inventory: SessionPackageManifest['inventory'],
-  signal?: AbortSignal
-): Promise<void> => {
-  for (const entry of inventory) {
-    if (
-      !entry.storageKey ||
-      !/^runtime\/provenance\/r-stage-checkpoints\/[a-f0-9]{64}\.rds$/u.test(entry.storageKey)
-    )
-      continue
-    signal?.throwIfAborted()
-    await assertPackageSourcePath(sourceRoot, entry.storageKey)
-    await installRStageCheckpointBlob(
-      storageRoot,
-      resolveStorageKey(sourceRoot, entry.storageKey),
-      {
-        storageKey: entry.storageKey,
-        checksum: entry.checksum,
-        sizeBytes: entry.sizeBytes
-      }
-    )
-  }
-}
-
 export const packageReproducibilityKeys = (records: PackageRecords): string[] =>
   records.reproducibility?.versions.flatMap((version) => [
     ...version.metadataKeys,
@@ -234,7 +203,6 @@ export const validatePackageReproducibility = async (
   manifest: SessionPackageManifest,
   sourceIdentity = manifest.source
 ): Promise<void> => {
-  await validatePackageStageCheckpoints(root, records)
   const files = new Map(manifest.inventory.map((entry) => [entry.storageKey, entry]))
   const excluded = new Set(manifest.excludedFiles.map((file) => file.storageKey))
   const seen = new Set<string>()

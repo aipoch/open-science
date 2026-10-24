@@ -1689,5 +1689,8 @@ export {
   ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceRepository
 }
-export type { ArtifactFinalizationProofReason, ArtifactProvenanceRepositoryOptions }
-export type { ArtifactProjectReconciliationSnapshot }
+export type {
+  ArtifactFinalizationProofReason,
+  ArtifactProjectReconciliationSnapshot,
+  ArtifactProvenanceRepositoryOptions
+}

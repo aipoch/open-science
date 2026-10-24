@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import type { CondaRuntimeSubsetPlan } from '@aipoch/environment/contracts'
 import { validateReproductionContext, validateReproductionDiskSpace } from './preflight'
 import type { OutputComparisonPolicy, OutputComparisonReport } from './comparison-contracts'
 import { compareReproducedContent } from './output-comparison'
@@ -9,21 +8,19 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 
 import type {
-  ArtifactReproducibilityCheckLog,
-  ArtifactReproducibilityReceiptComparison
-} from './evidence'
-import type {
-  ArtifactProvenanceGraphEntity,
   ArtifactProvenanceGraph,
-  ArtifactReproducibilityRecipeFile,
+  ArtifactProvenanceGraphEntity,
+  ArtifactReproducibilityCheckLog,
   ArtifactReproducibilityEnvironmentRequirement,
+  ArtifactReproducibilityReceiptComparison,
+  ArtifactReproducibilityRecipeFile,
   ArtifactReproducibilityRecipeStep,
-  ReproductionSnapshot,
+  NotebookHelperModuleEvidence,
   ProvenanceNotebookRun,
+  ReproductionSnapshot,
   WorkflowCapture,
   WorkflowPlan
 } from './evidence'
-import type { NotebookHelperModuleEvidence } from './evidence'
 import type {
   ReproductionEvidence,
   ReproductionFileIO,
@@ -35,13 +32,7 @@ import type {
   NotebookReproductionStep
 } from './ports'
 import { limitUtf8 } from './text'
-import {
-  CHILD_UNCONFIRMED,
-  isChildUnconfirmedError,
-  parseNotebookEnvironmentLock,
-  deriveCondaRuntimeSubsetPlan,
-  condaRuntimeSubsetPlanMatchesLock
-} from '@aipoch/environment'
+import { CHILD_UNCONFIRMED, isChildUnconfirmedError } from '@aipoch/environment'
 import { redactRuntimeDiagnosticText } from '@aipoch/diagnostics/node'
 import { notebookHelperEvidenceKey } from './helper-identity'
 import { createReproductionRecipes } from './recipe'
@@ -60,7 +51,6 @@ export class ReproducibilityCleanupError extends AggregateError {
 }
 
 type ArtifactReproducibilityOutputComparison = {
-  stateComparison?: ArtifactReproducibilityReceiptComparison['stateComparison']
   contentComparison?: OutputComparisonReport
   contentComparisonUnavailableReason?: ArtifactReproducibilityReceiptComparison['contentComparisonUnavailableReason']
   stepId: string
@@ -113,19 +103,6 @@ type ExecuteArtifactReproducibilityInput = {
 type ExecuteArtifactReproducibilityDependencies = {
   createAttemptRoot?: () => Promise<string>
   createRuntime: CreateReproductionRuntime
-  // Host binds implementation bytes, platform, architecture and storage identity.
-  // Absent on legacy/custom hosts: preserve the original single-attempt behavior.
-  runtimeSubsetContextChecksum?: string
-  // Durable candidates are hints, never certificates. Every load is checked against
-  // the original lock and replayed in a fresh runtime before it can be saved again.
-  loadRuntimeSubsetCandidate?: (
-    scopeChecksum: string,
-    sourceLockChecksum: string
-  ) => Promise<unknown>
-  saveRuntimeSubsetCandidate?: (candidate: CondaRuntimeSubsetPlan) => Promise<void>
-  // Returning a previous disk hint after a clean cancellation does not certify
-  // this attempt. Explicit new seeds have no previous hint to return.
-  restoreCancelledRuntimeSubsetCandidate?: () => Promise<void>
 }
 
 type ExecuteWorkflowSliceInput = Omit<
@@ -140,7 +117,7 @@ type WorkflowExecutionResult = Omit<ArtifactReproducibilityExecutionResult, 'mat
   planId: string
   executionOnlyTargetRunIds: string[]
 } & (
-    | { verification: 'file-comparison' | 'state-comparison'; matched: boolean }
+    | { verification: 'file-comparison'; matched: boolean }
     | { verification: 'execution-only'; matched?: never }
   )
 type PreparedExecutionPlan = {
@@ -149,13 +126,6 @@ type PreparedExecutionPlan = {
   steps: ArtifactReproducibilityRecipeStep[]
   environmentRequirements: ArtifactReproducibilityEnvironmentRequirement[]
   verification?: WorkflowPlan['verification']
-  stageRestoreRunIds?: string[]
-  stageSupplementNames?: Record<string, string[]>
-  stateComparisonRunIds?: string[]
-  runtimeSubset?: { scopeChecksum: string; plan?: CondaRuntimeSubsetPlan }
-  packageContext?: NonNullable<
-    Parameters<NotebookReproductionRuntime['execute']>[0]['stageRestore']
-  >['packageContext']
 }
 
 const createExecutionOwner = (options: {
@@ -178,13 +148,6 @@ const createExecutionOwner = (options: {
   } = options.recipes
   const { copyFile: copyFileWithinBudget, digestFile: digestFileWithinBudget } = options.fileIO
   const REPRODUCIBILITY_LOG_ENTRY_LIMIT_BYTES = 16 * 1024
-  // A certificate covers only this immutable run/input/output/implementation scope.
-  // Durable hints still require fresh conformance after restarting the owner.
-  const runtimeSubsets = new Map<string, CondaRuntimeSubsetPlan>()
-  const observedCandidates = new WeakMap<
-    ArtifactReproducibilityExecutionResult,
-    CondaRuntimeSubsetPlan
-  >()
 
   const reproductionLogs = (
     step: NotebookReproductionStep,
@@ -483,204 +446,9 @@ const createExecutionOwner = (options: {
       crossingFiles: plan.crossingFiles,
       steps: plan.steps,
       environmentRequirements: plan.environmentRequirements,
-      verification: plan.verification,
-      stageRestoreRunIds: plan.stageRestoreRunIds,
-      stageSupplementNames: plan.stageSupplementNames,
-      stateComparisonRunIds: plan.stateComparisonRunIds
+      verification: plan.verification
     }
-    const singleStep = plan.steps.length === 1 ? plan.steps[0] : undefined
-    const singleRun =
-      singleStep?.kind === 'notebook-run'
-        ? capture.runs.find((run) => run.runId === singleStep.runId)
-        : undefined
-    // Continuous selections keep one environment and their exact attached context.
-    // File-only independent steps may test an explicit cold package projection;
-    // its scientific state AND every expected output must still match the original.
-    const canConform =
-      /^[a-f0-9]{64}$/u.test(dependencies.runtimeSubsetContextChecksum ?? '') &&
-      plan.selection.independent &&
-      singleStep?.kind === 'notebook-run' &&
-      singleStep.kernelKind === 'r' &&
-      plan.environmentRequirements.length === 1 &&
-      plan.stageRestoreRunIds?.length === 1 &&
-      plan.stageRestoreRunIds[0] === singleStep.runId &&
-      plan.stateComparisonRunIds?.includes(singleStep.runId) &&
-      singleRun?.stageCheckpoint?.state === 'available' &&
-      singleRun.stageCheckpoint.environmentProof !== undefined
-    let loadedCandidateValid = false
-    if (canConform && singleRun?.stageCheckpoint?.state === 'available') {
-      const scopeChecksum = sha256(
-        JSON.stringify([
-          'runtime-subset-conformance-1',
-          dependencies.runtimeSubsetContextChecksum,
-          capture,
-          plan
-        ])
-      )
-      prepared.runtimeSubset = { scopeChecksum }
-      const basePackages = [
-        'jsonlite',
-        'stats',
-        'graphics',
-        'grDevices',
-        'utils',
-        'datasets',
-        'methods',
-        'base'
-      ]
-      const bindings = singleRun.executionContext?.rPackages
-      if (
-        singleRun.stageCheckpoint.inputNames.length === 0 &&
-        bindings?.complete &&
-        JSON.stringify(bindings.before) !== JSON.stringify(basePackages)
-      ) {
-        prepared.packageContext = {
-          schemaVersion: 1,
-          sourcePackages: [...bindings.before],
-          targetPackages: basePackages
-        }
-      }
-      const cached = runtimeSubsets.get(scopeChecksum)
-      if (cached) prepared.runtimeSubset.plan = structuredClone(cached)
-      const lockChecksum = plan.environmentRequirements[0].lockChecksum
-      if (lockChecksum && dependencies.loadRuntimeSubsetCandidate) {
-        try {
-          const hint = await dependencies.loadRuntimeSubsetCandidate(scopeChecksum, lockChecksum)
-          const bytes = await input.evidence.readEnvironmentLock(lockChecksum, input.signal)
-          input.signal?.throwIfAborted()
-          const lock =
-            bytes && sha256(bytes) === lockChecksum
-              ? parseNotebookEnvironmentLock(bytes)
-              : undefined
-          if (
-            lock &&
-            condaRuntimeSubsetPlanMatchesLock(hint, lock) &&
-            hint.sourceLockChecksum === lockChecksum &&
-            hint.scopeChecksum === scopeChecksum
-          ) {
-            const candidate = deriveCondaRuntimeSubsetPlan(
-              lock,
-              lockChecksum,
-              scopeChecksum,
-              hint.archiveNames
-            )
-            loadedCandidateValid = candidate !== undefined
-            if (
-              candidate &&
-              (!cached || candidate.archiveNames.length < cached.archiveNames.length)
-            )
-              prepared.runtimeSubset.plan = candidate
-          }
-        } catch {
-          // Cache IO cannot grant authority or prevent the ordinary replay.
-          input.signal?.throwIfAborted()
-        }
-      }
-    }
-    let result: ArtifactReproducibilityExecutionResult
-    let acceptedSubset: CondaRuntimeSubsetPlan | undefined
-    const rejectOptimization = (): void => {
-      input.onEvent?.({
-        type: 'step-output',
-        entries: [
-          {
-            source: 'notebook',
-            stepId: singleStep!.stepId,
-            runIndex: singleStep!.runIndex,
-            kernelKind: 'r',
-            stream: 'stderr',
-            text: 'Runtime subset was not accepted; using the verified dependency-closure replay.\n'
-          }
-        ]
-      })
-    }
-    const mayFallback = (error: unknown): boolean =>
-      !input.signal?.aborted &&
-      !isChildUnconfirmedError(error) &&
-      !(error instanceof ReproducibilityCleanupError)
-    try {
-      result = await executePreparedPlan(preparedInput, prepared, dependencies)
-      if (result.matched && prepared.runtimeSubset?.plan)
-        acceptedSubset = prepared.runtimeSubset.plan
-    } catch (error) {
-      if (
-        loadedCandidateValid &&
-        input.signal?.aborted &&
-        !isChildUnconfirmedError(error) &&
-        !(error instanceof ReproducibilityCleanupError)
-      ) {
-        try {
-          await dependencies.restoreCancelledRuntimeSubsetCandidate?.()
-        } catch {
-          // Preserve the original cancellation; cache IO never starts a replay.
-        }
-      }
-      if (prepared.runtimeSubset) runtimeSubsets.delete(prepared.runtimeSubset.scopeChecksum)
-      if (
-        !prepared.runtimeSubset ||
-        (!prepared.runtimeSubset.plan && !prepared.packageContext) ||
-        !mayFallback(error)
-      )
-        throw error
-      rejectOptimization()
-      prepared.runtimeSubset = undefined
-      prepared.packageContext = undefined
-      result = await executePreparedPlan(preparedInput, prepared, dependencies)
-    }
-    if (
-      prepared.runtimeSubset &&
-      !prepared.runtimeSubset.plan &&
-      prepared.packageContext &&
-      !result.matched
-    ) {
-      rejectOptimization()
-      prepared.runtimeSubset = undefined
-      prepared.packageContext = undefined
-      result = await executePreparedPlan(preparedInput, prepared, dependencies)
-    }
-    const candidate = observedCandidates.get(result)
-    if (prepared.runtimeSubset && !prepared.runtimeSubset.plan && result.matched && candidate) {
-      // executePreparedPlan has confirmed reaping AND removed its whole workspace.
-      // The candidate gets a new prefix, new files and a new kernel, never an in-place retry.
-      prepared.runtimeSubset.plan = candidate
-      const reference = result
-      try {
-        result = await executePreparedPlan(preparedInput, prepared, dependencies)
-      } catch (error) {
-        if (!mayFallback(error)) throw error
-        rejectOptimization()
-        result = reference
-      }
-      input.signal?.throwIfAborted()
-      if (result !== reference && result.matched) {
-        acceptedSubset = candidate
-        runtimeSubsets.delete(candidate.scopeChecksum)
-        runtimeSubsets.set(candidate.scopeChecksum, structuredClone(candidate))
-        if (runtimeSubsets.size > 64) runtimeSubsets.delete(runtimeSubsets.keys().next().value!)
-      } else {
-        if (result !== reference) rejectOptimization()
-        result = reference
-      }
-    } else if (prepared.runtimeSubset?.plan && !result.matched) {
-      runtimeSubsets.delete(prepared.runtimeSubset.scopeChecksum)
-      rejectOptimization()
-      prepared.runtimeSubset = undefined
-      prepared.packageContext = undefined
-      result = await executePreparedPlan(preparedInput, prepared, dependencies)
-    }
-    input.signal?.throwIfAborted()
-    if (acceptedSubset && result.matched) {
-      // executePreparedPlan returns only after confirmed teardown and cleanup.
-      const accepted = structuredClone(acceptedSubset)
-      runtimeSubsets.set(accepted.scopeChecksum, accepted)
-      if (runtimeSubsets.size > 64) runtimeSubsets.delete(runtimeSubsets.keys().next().value!)
-      try {
-        await dependencies.saveRuntimeSubsetCandidate?.(accepted)
-      } catch {
-        input.signal?.throwIfAborted()
-      }
-      input.signal?.throwIfAborted()
-    }
+    const result = await executePreparedPlan(preparedInput, prepared, dependencies)
     const { matched, ...details } = result
     const identity = {
       captureId: capture.captureId,
@@ -733,12 +501,10 @@ const createExecutionOwner = (options: {
         type: 'attempt-started',
         totalEnvironments: plan.environmentRequirements.length,
         totalSteps: plan.steps.length,
-        totalComparisons:
-          plan.steps.reduce(
-            (total, step) =>
-              total + (step.kind === 'notebook-run' ? step.outputEntityIds.length : 0),
-            0
-          ) + (plan.stateComparisonRunIds?.length ?? 0)
+        totalComparisons: plan.steps.reduce(
+          (total, step) => total + (step.kind === 'notebook-run' ? step.outputEntityIds.length : 0),
+          0
+        )
       })
       const materialized = await materializeInputs(
         plan.crossingFiles,
@@ -749,46 +515,9 @@ const createExecutionOwner = (options: {
         input.signal
       )
       input.onEvent?.({ type: 'inputs-materialized', count: materialized })
-      const statePaths = new Map<string, { inputPath: string; expectedOutputPath: string }>()
-      for (const runId of plan.stateComparisonRunIds ?? []) {
-        const run = input.execution.runs.find((candidate) => candidate.runId === runId)
-        if (run?.stageCheckpoint?.state !== 'available')
-          throw new Error('Missing R stage checkpoint.')
-        const directory = join(workspaceRoot, '.r-stage-checkpoints', sha256(runId))
-        await mkdir(directory, { recursive: true, mode: 0o700 })
-        const paths = {
-          inputPath: join(directory, 'input.rds'),
-          expectedOutputPath: join(directory, 'output.rds')
-        }
-        for (const [file, destination] of [
-          [run.stageCheckpoint.input, paths.inputPath],
-          [run.stageCheckpoint.output, paths.expectedOutputPath]
-        ] as const) {
-          const actual = await options.fileIO.copyFile(
-            input.evidence.resolveFile(file.storageKey),
-            destination,
-            file.sizeBytes,
-            input.signal
-          )
-          if (actual.sizeBytes !== file.sizeBytes || actual.checksum !== file.checksum)
-            throw new Error('Materialized R stage checkpoint checksum mismatch.')
-        }
-        statePaths.set(runId, paths)
-      }
       if (input.signal?.aborted) throw input.signal.reason ?? new Error('Reproduction cancelled.')
       runtime = await dependencies.createRuntime({
         requirements: plan.environmentRequirements,
-        ...(plan.runtimeSubset ? { runtimeSubset: plan.runtimeSubset } : {}),
-        selectedRuns: plan.steps.map((rawStep) => {
-          const step = notebookStep(rawStep)
-          const run = runForStep(step, input.execution.runs)
-          return {
-            step,
-            source: run.script,
-            executionContext: run.executionContext,
-            ...(statePaths.has(run.runId) ? { stageCheckpoint: run.stageCheckpoint } : {})
-          }
-        }),
         attemptRoot,
         signal: input.signal,
         onEnvironmentProgress: (event) =>
@@ -822,24 +551,6 @@ const createExecutionOwner = (options: {
           sessionRoot: workspaceRoot,
           kernelEpochId: run.kernelEpochId,
           helperModules: helpersForRun(run, input.execution.helperModules),
-          ...(statePaths.has(run.runId)
-            ? plan.stageRestoreRunIds?.includes(run.runId)
-              ? {
-                  stageRestore: {
-                    ...statePaths.get(run.runId)!,
-                    ...(plan.packageContext ? { packageContext: plan.packageContext } : {}),
-                    ...(plan.runtimeSubset ? { observeRuntimeFootprint: true as const } : {})
-                  }
-                }
-              : plan.stageSupplementNames?.[run.runId]
-                ? {
-                    stageSupplement: {
-                      ...statePaths.get(run.runId)!,
-                      names: plan.stageSupplementNames[run.runId]!
-                    }
-                  }
-                : { stageExpectedOutputPath: statePaths.get(run.runId)!.expectedOutputPath }
-            : {}),
           signal: input.signal
         })
         const logEntries = reproductionLogs(step, result)
@@ -852,43 +563,6 @@ const createExecutionOwner = (options: {
           )
         }
         completedStepIds.push(step.stepId)
-        if (statePaths.has(run.runId)) {
-          if (!result.stageComparison || result.stageComparison.outcome === 'unavailable')
-            throw new Error(`R stage output comparison unavailable: ${run.runId}`)
-          if (
-            plan.packageContext &&
-            (JSON.stringify(result.stageComparison.packageContext) !==
-              JSON.stringify(plan.packageContext) ||
-              !['equal', 'different'].includes(result.stageComparison.scientificOutcome ?? '') ||
-              (result.stageComparison.outcome === 'equal' &&
-                result.stageComparison.scientificOutcome !== 'equal'))
-          )
-            throw new Error(`R stage package context projection was not verified: ${run.runId}`)
-          const checkpoint = run.stageCheckpoint!
-          if (checkpoint.state !== 'available') throw new Error('R stage checkpoint changed.')
-          const comparison: ArtifactReproducibilityOutputComparison = {
-            stepId: step.stepId,
-            entityId: `r-state:${run.runId}`,
-            relativePath: `R state (${run.runId})`,
-            expectedChecksum: checkpoint.output.checksum,
-            expectedSizeBytes: checkpoint.output.sizeBytes,
-            stateComparison: {
-              outcome: result.stageComparison.outcome,
-              ...(result.stageComparison.packageContext
-                ? {
-                    scientificOutcome: result.stageComparison.scientificOutcome,
-                    packageContext: structuredClone(result.stageComparison.packageContext)
-                  }
-                : {})
-            },
-            status: result.stageComparison.outcome === 'equal' ? 'matched' : 'different',
-            ...(result.stageComparison.outcome === 'different'
-              ? { reason: 'checksum-mismatch' as const }
-              : {})
-          }
-          comparisons.push(comparison)
-          input.onEvent?.({ type: 'output-compared', comparison })
-        }
         input.onEvent?.({
           type: 'step-completed',
           stepId: step.stepId,
@@ -989,27 +663,6 @@ const createExecutionOwner = (options: {
         ...(runtime.environmentLocks
           ? { environmentLocks: runtime.environmentLocks.map((lock) => ({ ...lock })) }
           : {})
-      }
-      if (matched && plan.runtimeSubset) {
-        const candidate = await runtime.proposeRuntimeSubset?.()
-        if (
-          plan.runtimeSubset.plan &&
-          (!candidate ||
-            candidate.scopeChecksum !== plan.runtimeSubset.scopeChecksum ||
-            candidate.sourceLockChecksum !== plan.runtimeSubset.plan.sourceLockChecksum ||
-            candidate.archiveNames.some(
-              (name) => !plan.runtimeSubset!.plan!.archiveNames.includes(name)
-            ))
-        )
-          throw new Error('Runtime subset native loading could not be verified.')
-        if (
-          !plan.runtimeSubset.plan &&
-          candidate &&
-          candidate.scopeChecksum === plan.runtimeSubset.scopeChecksum &&
-          candidate.sourceLockChecksum === plan.environmentRequirements[0]?.lockChecksum
-        ) {
-          observedCandidates.set(result, candidate)
-        }
       }
     } catch (error) {
       executionError = error

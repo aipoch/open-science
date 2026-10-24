@@ -10,12 +10,6 @@ export {
   ReproducibilityCleanupError
 } from './execution'
 export { sealWorkflowCapture, validWorkflowCapture, createWorkflowSlices } from './workflow-slice'
-export {
-  validRStageCheckpoint,
-  validRStageCheckpointForRun,
-  validRStageEnvironmentProof,
-  MAX_R_STAGE_CHECKPOINT_BYTES
-} from './r-stage-checkpoint'
 export type {
   ArtifactReproducibilityExecutionEvent,
   ArtifactReproducibilityExecutionResult,

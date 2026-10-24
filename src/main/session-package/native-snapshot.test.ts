@@ -1,8 +1,5 @@
-import { assertPortablePackageStorageKey } from './validation'
 import { validatePackagePdfNotes } from './pdf-notes'
 import { PrismaClient } from '@prisma/client'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
@@ -15,10 +12,6 @@ import {
 } from '../artifacts/provenance-execution-evidence'
 import {
   captureNativeRecords,
-  nativeStorageKeys,
-  notebookStorageKeys,
-  validatePackageStageCheckpoints,
-  packageNativeTables,
   mapPackageReferences,
   projectIncludedHeads,
   type PackageRecords
@@ -599,158 +592,4 @@ it('remaps workflow barrier ownership together with captured Run identities', ()
       { 'run-source': 'run-local' }
     )
   ).toEqual({ activityReasonCodes: { 'run-local': ['kernel-dependencies-unavailable'] } })
-})
-
-it('admits only fixed content-addressed R checkpoint paths within runtime storage', () => {
-  const key = `runtime/provenance/r-stage-checkpoints/${'a'.repeat(64)}.rds`
-  expect(() => assertPortablePackageStorageKey(key)).not.toThrow()
-  for (const invalid of [
-    key.replace('.rds', '.json'),
-    key.replace('provenance', 'other'),
-    key.replace('a'.repeat(64), 'A'.repeat(64)),
-    `${key}/extra`,
-    'runtime/provenance/environment-locks/lock.json'
-  ]) {
-    expect(() => assertPortablePackageStorageKey(invalid)).toThrow('non-portable')
-  }
-})
-
-it('remaps checkpoint ownership while preserving bytes, names, hashes and content paths', () => {
-  const checkpoint = {
-    state: 'available',
-    runId: 'run',
-    kernelEpochId: 'epoch',
-    sourceChecksum: 'source',
-    environmentLockChecksum: 'lock',
-    inputNames: ['run'],
-    outputNames: ['epoch'],
-    input: {
-      storageKey: `runtime/provenance/r-stage-checkpoints/${'a'.repeat(64)}.rds`,
-      checksum: 'hash',
-      sizeBytes: 12
-    },
-    output: {
-      storageKey: `runtime/provenance/r-stage-checkpoints/${'a'.repeat(64)}.rds`,
-      checksum: 'hash',
-      sizeBytes: 12
-    }
-  }
-  expect(
-    mapPackageReferences(
-      { stageCheckpoint: checkpoint },
-      {
-        run: 'local-run',
-        epoch: 'local-epoch',
-        provenance: 'other',
-        'r-stage-checkpoints': 'wrong'
-      },
-      '',
-      { source: 'changed', lock: 'changed', hash: 'changed' }
-    )
-  ).toEqual({
-    stageCheckpoint: { ...checkpoint, runId: 'local-run', kernelEpochId: 'local-epoch' }
-  })
-})
-
-it.each(['valid', 'corrupt', 'missing', 'size'] as const)(
-  'collects RDS checkpoint evidence and verifies the referenced bytes (%s)',
-  async (scenario) => {
-    const root = await mkdtemp(join(tmpdir(), 'checkpoint-package-'))
-    try {
-      const bytes = Buffer.from([0x58, 0x0a, 0, 1, 2, 3, 255])
-      const blob = {
-        checksum: sha256(bytes),
-        sizeBytes: bytes.length,
-        storageKey: `runtime/provenance/r-stage-checkpoints/${sha256(bytes)}.rds`
-      }
-      const run = {
-        runId: 'run',
-        runIndex: 0,
-        agentFrameId: '',
-        messageBranchId: '',
-        runtimeSegmentId: '',
-        promptMessageId: '',
-        kernelKind: 'r',
-        kernelEpochId: 'epoch',
-        script: 'result <- dds',
-        status: 'completed',
-        startedAt: '2026-10-20T00:00:00.000Z',
-        outputs: [],
-        inputFileVersionKeys: [],
-        environmentLock: {
-          state: 'available',
-          format: 'environment-lock-bundle',
-          lockChecksum: 'd'.repeat(64)
-        },
-        stageCheckpoint: {
-          state: 'available',
-          schemaVersion: 1,
-          runId: 'run',
-          kernelEpochId: 'epoch',
-          sourceChecksum: sha256('result <- dds'),
-          environmentLockChecksum: 'd'.repeat(64),
-          input: blob,
-          output: blob,
-          inputNames: ['dds'],
-          outputNames: ['result']
-        }
-      }
-      if (scenario === 'size') blob.sizeBytes += 1
-      const json = JSON.stringify({
-        schemaVersion: 2,
-        rootFrameId: '',
-        agentFrameId: '',
-        messageBranchId: '',
-        terminalPromptMessageId: '',
-        producerRunId: 'run',
-        producerRunIndex: 0,
-        createdAt: '2026-10-20T00:00:00.000Z',
-        runs: [run],
-        inputFiles: []
-      })
-      const records = {
-        schemaVersion: 1,
-        tables: Object.fromEntries(
-          packageNativeTables.map((table) => [
-            table,
-            table === 'ArtifactVersion'
-              ? [{ executionSnapshotJson: json, executionSnapshotChecksum: sha256(json) }]
-              : []
-          ])
-        )
-      } as unknown as PackageRecords
-      expect(nativeStorageKeys(records)).toEqual([blob.storageKey])
-      await mkdir(join(root, 'runtime/provenance/r-stage-checkpoints'), { recursive: true })
-      if (scenario !== 'missing')
-        await writeFile(
-          join(root, blob.storageKey),
-          scenario === 'corrupt' ? Buffer.alloc(bytes.length) : bytes
-        )
-      const validation = validatePackageStageCheckpoints(root, records)
-      if (scenario === 'valid') await expect(validation).resolves.toBeUndefined()
-      else await expect(validation).rejects.toThrow()
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  }
-)
-
-it('excludes unsealed R checkpoint scratch directories while retaining user files with the same name', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'checkpoint-scratch-package-'))
-  try {
-    const scratch = [
-      'notebooks/project/session/.r-stage-checkpoints/capture/input.rds',
-      'notebooks/project/session/frames/frame/.r-stage-checkpoints/capture/output.rds'
-    ]
-    const userFile = 'notebooks/project/session/data/.r-stage-checkpoints/user.rds'
-    for (const key of [...scratch, userFile]) {
-      await mkdir(join(root, key.slice(0, key.lastIndexOf('/'))), { recursive: true })
-      await writeFile(join(root, key), 'state')
-    }
-    expect(await notebookStorageKeys(root, { projectId: 'project', sessionId: 'session' })).toEqual(
-      [userFile]
-    )
-  } finally {
-    await rm(root, { recursive: true, force: true })
-  }
 })

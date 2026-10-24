@@ -226,7 +226,9 @@
     "src/main/acp/auto-operation-policy.test.ts",
     "src/main/acp/auto-operation-policy.ts",
     "src/main/acp/runtime-activity-port.ts",
-    "src/main/acp/runtime-contract.ts"
+    "src/main/acp/runtime-contract.ts",
+    "src/main/acp/sandbox-network-approval-owner.test.ts",
+    "src/main/acp/sandbox-network-approval-owner.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -398,7 +400,8 @@
       "src/main/acp/auto-operation-adapter.test.ts",
       "src/main/acp/auto-operation-broker.test.ts",
       "src/main/acp/auto-operation-inventory.test.ts",
-      "src/main/acp/auto-operation-policy.test.ts"
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",

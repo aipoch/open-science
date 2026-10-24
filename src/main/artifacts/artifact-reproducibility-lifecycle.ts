@@ -1,16 +1,13 @@
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
-import type { WorkflowExecutionResult, WorkflowPlan } from '@aipoch/reproducibility'
 import { randomUUID } from 'node:crypto'
 import { artifactAnalysisRevisionSupportsWorkflowReplay } from './provenance-analysis-revision'
 import { SessionReproducibilityBatches } from './session-reproducibility'
 import { SessionReproducibilityStore } from './session-reproducibility-store'
-import { validateReproductionContext, validateReproductionDiskSpace } from '@aipoch/reproducibility'
 import {
   reproductionRecipes,
   reproductionEvidence,
   reproductionWorkflowSlices
 } from './reproducibility-host'
-
 import type {
   SessionReproducibilityCommand,
   SessionReproducibilityBatch
@@ -32,14 +29,16 @@ import type {
   GetArtifactReproducibilityCheckRequest,
   ListArtifactReproducibilityReceiptsRequest
 } from '../../shared/artifact-reproducibility'
+
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
 import { isChildUnconfirmedError } from '@aipoch/environment'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, errorLogFields, startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import {
   executeArtifactReproducibility,
   executeWorkflowReproducibility
 } from '../notebook/reproduction-runtime'
+import type { WorkflowExecutionResult, WorkflowPlan } from '@aipoch/reproducibility'
+import { validateReproductionContext, validateReproductionDiskSpace } from '@aipoch/reproducibility'
 import {
   ReproducibilityCleanupError,
   type ArtifactReproducibilityExecutionEvent,
@@ -717,7 +716,7 @@ class ArtifactReproducibilityAttemptOwner {
           !restored ||
           restored.kernelKind !== requirement.kernelKind ||
           restored.environmentName !== requirement.environmentName ||
-          (restored.sourceLockChecksum ?? restored.lockChecksum) !== requirement.lockChecksum
+          restored.lockChecksum !== requirement.lockChecksum
         )
       })
     )

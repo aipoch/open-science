@@ -1,8 +1,7 @@
 import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 import type {
   PersistedArtifactExecutionSnapshot,
-  ProvenanceNotebookOutput,
-  ProvenanceNotebookRun
+  ProvenanceNotebookOutput
 } from '../../shared/artifact-provenance'
 import {
   decodeVersionedJson,
@@ -17,7 +16,6 @@ import { artifactAnalysisRevisionMatchesGraph } from './provenance-analysis-revi
 import { reproductionRecipes } from './reproducibility-host'
 import {
   decodeWorkflowCaptureState,
-  validRunStageCheckpoint,
   MAX_EXTENDED_EXECUTION_SNAPSHOT_BYTES
 } from './provenance-workflow-capture'
 
@@ -237,7 +235,6 @@ const executionRunValue = (value: unknown): boolean => {
     (run.environmentLock === undefined || environmentLockCaptureValue(run.environmentLock)) &&
     (run.executionContext === undefined ||
       notebookExecutionContextSchema.safeParse(run.executionContext).success) &&
-    validRunStageCheckpoint(run as unknown as ProvenanceNotebookRun) &&
     (run.scriptTruncated === undefined || run.scriptTruncated === true) &&
     (run.executionCount === undefined ||
       (typeof run.executionCount === 'number' && Number.isFinite(run.executionCount))) &&

@@ -17,10 +17,8 @@ export type StepReproductionTarget = {
   inputFiles: ProvenanceExecutionInputFile[]
 }
 
-// Run IDs alone are not evidence that an Artifact snapshot captured these exact bytes and state.
+// Run IDs alone are not evidence that an Artifact snapshot captured this exact source and environment.
 const matchesRun = (run: NotebookRunRecord, captured: ProvenanceNotebookRun): boolean => {
-  const original = run.stageCheckpoint
-  const frozen = captured.stageCheckpoint
   return (
     run.status === 'completed' &&
     run.kernelKind === 'r' &&
@@ -31,16 +29,9 @@ const matchesRun = (run: NotebookRunRecord, captured: ProvenanceNotebookRun): bo
     !captured.scriptTruncated &&
     Boolean(run.kernelEpochId) &&
     run.kernelEpochId === captured.kernelEpochId &&
-    original?.state === 'available' &&
-    frozen?.state === 'available' &&
-    original.runId === run.runId &&
-    frozen.runId === run.runId &&
-    original.kernelEpochId === run.kernelEpochId &&
-    frozen.kernelEpochId === run.kernelEpochId &&
-    original.sourceChecksum === frozen.sourceChecksum &&
-    original.environmentLockChecksum === frozen.environmentLockChecksum &&
-    original.input.checksum === frozen.input.checksum &&
-    original.output.checksum === frozen.output.checksum
+    run.environmentLock?.state === 'available' &&
+    captured.environmentLock?.state === 'available' &&
+    run.environmentLock.lockChecksum === captured.environmentLock.lockChecksum
   )
 }
 
@@ -83,7 +74,6 @@ export const findStepReproductionTarget = async ({
       name: file.name,
       workflow: {
         captureId: execution.workflow.captureId,
-        independent: true,
         targetRunIds: [run.runId],
         boundaryEntityIds: []
       },
@@ -113,7 +103,6 @@ export const isStepReproductionBatch = (
     batch.targets[0].artifactId === target.artifactId &&
     batch.targets[0].versionId === target.versionId &&
     batch.targets[0].workflow?.captureId === target.workflow.captureId &&
-    batch.targets[0].workflow?.independent === true &&
     batch.targets[0].workflow.targetRunIds.length === 1 &&
     batch.targets[0].workflow.targetRunIds[0] === target.run.runId &&
     !batch.targets[0].workflow.boundaryEntityIds?.length

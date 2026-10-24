@@ -1,7 +1,5 @@
-import { captureArtifactWorkflow } from './provenance-execution-evidence'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
-
 import type { Prisma } from '@prisma/client'
 
 import type {
@@ -12,11 +10,15 @@ import type {
   ArtifactVersionEvidence,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentManifest } from '../../shared/notebook'
+
 import type { NotebookRunEnvironmentCapture } from '@aipoch/environment/contracts'
-import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
-import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
+import type {
+  NotebookEnvironmentManifest,
+  NotebookRunInputFile,
+  NotebookRunRecord
+} from '../../shared/notebook'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import {
@@ -34,6 +36,7 @@ import {
   sha256,
   type CanonicalJson
 } from './provenance-canonical'
+import { captureArtifactWorkflow } from './provenance-execution-evidence'
 import {
   buildBoundedExecutionSnapshot,
   environmentEvidence,

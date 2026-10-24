@@ -132,9 +132,9 @@
     "src/main/notebook/trust-bundle.test.ts",
     "src/main/notebook/trust-bundle.ts",
     "src/main/notebook/working-file-observer.ts",
-    "src/main/notebook/r-stage-checkpoint.ts",
-    "src/main/notebook/r-stage-checkpoint.test.ts",
-    "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
+    "src/main/notebook/execution-owner.no-variable-snapshots.test.ts",
+    "src/main/notebook/execution-deadline.test.ts",
+    "src/main/notebook/execution-deadline.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -275,8 +275,8 @@
       "src/main/notebook/scientific-output-analysis.test.ts",
       "src/main/notebook/shell-npm-environment.test.ts",
       "src/main/notebook/trust-bundle.test.ts",
-      "src/main/notebook/r-stage-checkpoint.test.ts",
-      "src/main/notebook/execution-owner.stage-checkpoint.test.ts"
+      "src/main/notebook/execution-owner.no-variable-snapshots.test.ts",
+      "src/main/notebook/execution-deadline.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

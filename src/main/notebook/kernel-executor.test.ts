@@ -26,14 +26,6 @@ import {
   type KernelProcessKind
 } from './kernel-executor'
 import { framePythonRequest } from './kernel-protocol'
-import {
-  DEFAULT_PY_ENV,
-  DEFAULT_R_ENV,
-  envPrefix,
-  pythonBin,
-  rBin,
-  rScriptBin
-} from '@aipoch/environment'
 import { terminateProcessTree } from '../process-tree'
 import { TimeoutController } from './timeout-controller'
 import type { NotebookProcessSandbox } from './process-sandbox'
@@ -46,6 +38,14 @@ import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-
 import { verifyReplayCapture } from './scientific-replay.test-support'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { shellNpmPaths } from './shell-npm-environment'
+import {
+  DEFAULT_PY_ENV,
+  DEFAULT_R_ENV,
+  envPrefix,
+  pythonBin,
+  rBin,
+  rScriptBin
+} from '@aipoch/environment'
 import { prepareNotebookWorkloadCache } from '@aipoch/environment'
 
 vi.mock('node:child_process', async (importOriginal) => {
@@ -242,17 +242,8 @@ const resolvePython3 = (): string | undefined =>
 const python3 = resolvePython3()
 const gate = python3 ? describe : describe.skip
 const posixGate = describe.skipIf(process.platform === 'win32' || !python3)
-const rTestPrefix = process.env.OPEN_SCIENCE_TEST_R_ENV
-const rExecutable = [
-  rTestPrefix && join(rTestPrefix, 'bin', 'R'),
-  '/usr/local/bin/R',
-  '/opt/homebrew/bin/R'
-].find((candidate): candidate is string => typeof candidate === 'string' && existsSync(candidate))
-const rScriptExecutable = [
-  rTestPrefix && join(rTestPrefix, 'bin', 'Rscript'),
-  '/usr/local/bin/Rscript',
-  '/opt/homebrew/bin/Rscript'
-].find((candidate): candidate is string => typeof candidate === 'string' && existsSync(candidate))
+const rExecutable = ['/usr/local/bin/R', '/opt/homebrew/bin/R'].find(existsSync)
+const rScriptExecutable = ['/usr/local/bin/Rscript', '/opt/homebrew/bin/Rscript'].find(existsSync)
 
 const processIsAlive = (pid: number): boolean => {
   try {
@@ -696,78 +687,6 @@ it.each([
 )
 
 describe.skipIf(process.platform === 'win32')('managed R kernel isolation', () => {
-  it('forwards trusted R package projection and preserves observed comparison metadata', async () => {
-    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-package-context-wire-'))
-    const request = { ...baseRequest(cwdDir), language: 'r' as const }
-    const prefix = envPrefix(request.runtimeRoot, DEFAULT_R_ENV)
-    const rscript = rScriptBin(prefix)
-    const packageContext = {
-      schemaVersion: 1 as const,
-      sourcePackages: ['DESeq2', 'base'],
-      targetPackages: ['base']
-    }
-    const stageRestore = {
-      inputPath: '/input.rds',
-      expectedOutputPath: '/output.rds',
-      packageContext,
-      observeRuntimeFootprint: true as const
-    }
-    const expectedWire = {
-      input_path: '/input.rds',
-      expected_output_path: '/output.rds',
-      package_context: {
-        schema_version: 1,
-        source_packages: ['DESeq2', 'base'],
-        target_packages: ['base']
-      },
-      observe_runtime_footprint: true
-    }
-    await mkdir(dirname(rscript), { recursive: true })
-    await writeFile(rBin(prefix), '')
-    await writeFile(
-      rscript,
-      [
-        `#!${process.execPath}`,
-        'let input = Buffer.alloc(0)',
-        `const expected = ${JSON.stringify(expectedWire)}`,
-        "process.stdin.on('data', chunk => {",
-        '  input = Buffer.concat([input, chunk])',
-        '  for (;;) {',
-        '    const newline = input.indexOf(10)',
-        '    if (newline < 0) return',
-        "    const [reqId, size, operation] = input.subarray(0, newline).toString().split(' ')",
-        '    const length = Number(size)',
-        '    if (input.length < newline + 1 + length) return',
-        '    const payload = JSON.parse(input.subarray(newline + 1, newline + 1 + length))',
-        '    input = input.subarray(newline + 1 + length)',
-        '    if (operation !== "execute_stage" || payload.code !== "NULL" || JSON.stringify(payload.stage_restore) !== JSON.stringify(expected)) process.exit(41)',
-        '    process.stdout.write(JSON.stringify({ req_id: reqId, stdout: "", stderr: "", error: null, figures: [],',
-        '      stage_comparison: { outcome: "equal", scientific_outcome: "equal", package_context: expected.package_context,',
-        '        runtime_footprint: { process_id: process.pid, packages: [{name: "base", version: "4.5.3"}], library_paths: ["/prefix/libR.dylib"] } } }) + "\\n")',
-        '  }',
-        '})'
-      ].join('\n') + '\n'
-    )
-    await chmod(rscript, 0o755)
-    const executor = new NotebookKernelExecutor({ platform: 'linux' })
-    try {
-      const result = await executor.execute({ ...request, code: 'NULL', stageRestore })
-      expect(result.status, result.stderr).toBe('completed')
-      expect(result.stageComparison).toEqual({
-        outcome: 'equal',
-        scientificOutcome: 'equal',
-        packageContext,
-        runtimeFootprint: {
-          processId: procFor(executor, 'r')!.child.pid,
-          packages: [{ name: 'base', version: '4.5.3' }],
-          libraryPaths: ['/prefix/libR.dylib']
-        }
-      })
-    } finally {
-      await executor.shutdown()
-    }
-  })
-
   it('ignores user startup files and uses only the managed environment library', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-managed-r-kernel-home-'))
     const request = baseRequest(cwdDir)
@@ -1979,15 +1898,6 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       ).resolves.toMatchObject({ status: 'completed' })
       const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
       const killSpy = vi.spyOn(child, 'kill').mockImplementation(() => true)
-      const write = child.stdin.write.bind(child.stdin)
-      let heldProbe: string | Uint8Array | undefined
-      const writeSpy = vi
-        .spyOn(child.stdin, 'write')
-        .mockImplementationOnce((chunk) => write(chunk))
-        .mockImplementationOnce((chunk) => {
-          heldProbe = chunk
-          return true
-        })
       const cancellation = new AbortController()
       const cancelled = executor.execute({
         ...request,
@@ -1998,32 +1908,9 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 
       cancellation.abort()
 
-      let settled = false
-      void cancelled.then(() => {
-        settled = true
-      })
-      await vi.waitFor(() => {
-        const pending = procFor(executor, 'r')?.pending as { response?: unknown } | undefined
-        expect(pending?.response).toBeDefined()
-        expect(heldProbe).toBeDefined()
-      })
-      expect(settled).toBe(false)
-      // The aggregate owns the queue; direct concurrent executor calls must still be rejected
-      // while the original reply has arrived but its control acknowledgement is outstanding.
-      await expect(
-        executor.execute({ ...request, code: '__CHECK_NAMESPACE__' })
-      ).resolves.toMatchObject({
-        status: 'failed',
-        traceback: 'Notebook execution is already running.'
-      })
-      expect(killSpy).toHaveBeenCalledWith('SIGINT')
-      expect(writeSpy.mock.calls.map(([chunk]) => String(chunk))).toEqual([
-        expect.stringMatching(/^[^ ]+ \d+\n__CANCEL_RESPONSE_BEFORE_ACK__$/),
-        expect.stringMatching(/^[^ ]+ 0 interrupt_probe\n$/)
-      ])
-
-      write(heldProbe!)
       await expect(cancelled).resolves.toMatchObject({ status: 'cancelled' })
+      expect(killSpy).toHaveBeenCalledWith('SIGINT')
+
       const first = await executor.execute({ ...request, code: '__CHECK_NAMESPACE__' })
       const second = await executor.execute({ ...request, code: '__CHECK_NAMESPACE__' })
       expect([first.status, second.status]).toEqual(['completed', 'completed'])
@@ -3337,51 +3224,6 @@ describe.skipIf(!process.env.OPEN_SCIENCE_TEST_RSCRIPT || !process.env.OPEN_SCIE
 )
 
 describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (real R loop)', () => {
-  it.skipIf(process.platform === 'win32')(
-    'keeps stage checkpoints available after actual R cancellation and trusted probe reuse',
-    async () => {
-      cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-control-checkpoint-'))
-      const request = { ...baseRequest(cwdDir), language: 'r' as const }
-      await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
-      const executor = new NotebookKernelExecutor({
-        rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
-        platform: 'linux'
-      })
-      try {
-        await expect(
-          executor.execute({ ...request, code: 'preserved <- 41; NULL' })
-        ).resolves.toMatchObject({ status: 'completed' })
-        const child = procFor(executor, 'r')!.child
-        const cancellation = new AbortController()
-        const writes = vi.spyOn(child.stdin, 'write')
-        abortOnNextStdinWrite(child, cancellation)
-        await expect(
-          executor.execute({ ...request, code: 'NULL', signal: cancellation.signal })
-        ).resolves.toMatchObject({ status: 'cancelled' })
-        expect(
-          writes.mock.calls.some(([chunk]) => /^[^ ]+ 0 interrupt_probe\n$/.test(String(chunk)))
-        ).toBe(true)
-        const captured = await executor.execute({
-          ...request,
-          code: 'answer <- preserved + 1; NULL',
-          stageCheckpoint: {
-            inputPath: join(cwdDir, 'input.rds'),
-            outputPath: join(cwdDir, 'output.rds')
-          }
-        })
-        expect(captured, JSON.stringify(captured)).toMatchObject({
-          status: 'completed',
-          stageCheckpointCapture: { state: 'available' }
-        })
-        expect(procFor(executor, 'r')!.child).toBe(child)
-        expect((await executor.execute({ ...request, code: 'cat(answer)' })).stdout).toBe('42')
-      } finally {
-        await executor.shutdown()
-      }
-    },
-    15_000
-  )
-
   it('bounds R output before it crosses the loop protocol', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-output-limit-'))
     const request = baseRequest(cwdDir)

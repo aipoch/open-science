@@ -1,4 +1,3 @@
-import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
 import {
   createLogger,
@@ -63,6 +62,7 @@ import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copySessionBookmarks, readSessionBookmarkTargets } from '../bookmarks/repository'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { paceFileIo } from '../file-io-pacing'
+import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
 import { SessionProjectionRepository } from '../session-persistence/projection'
@@ -117,7 +117,6 @@ import type { PackageRecords } from './records-contract'
 import {
   capturePackageReproducibility,
   installPackageReproducibility,
-  installPackageStageCheckpoints,
   packageReproducibilityExclusions,
   packageReproducibilityKeys
 } from './reproducibility'
@@ -266,6 +265,7 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
     ? {
         ...session.runtimeContext,
         permission: undefined,
+        networkApprovals: undefined,
         sideChat: undefined,
         sideChats: undefined,
         sideChatRelays: undefined,
@@ -293,9 +293,14 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   const runtimeContext = session.runtimeContext
   return (
     isRecord(runtimeContext) &&
-    ['permission', 'sideChat', 'sideChats', 'sideChatRelays', 'sessionContext'].some((key) =>
-      Object.hasOwn(runtimeContext, key)
-    )
+    [
+      'permission',
+      'networkApprovals',
+      'sideChat',
+      'sideChats',
+      'sideChatRelays',
+      'sessionContext'
+    ].some((key) => Object.hasOwn(runtimeContext, key))
   )
 }
 
@@ -1262,6 +1267,7 @@ export class SessionPackageService {
       )
       if (!source) throw new Error('Session not found or unreadable.')
       if (
+        source.runtimeContext?.networkApprovals?.some(({ state }) => state === 'pending') ||
         source.runtimeContext?.permission?.state === 'pending' ||
         source.runtimeContext?.plan?.approval === 'pending'
       )
@@ -1499,6 +1505,7 @@ export class SessionPackageService {
         runtimeContext: mappedSession.runtimeContext
           ? {
               ...mappedSession.runtimeContext,
+              networkApprovals: undefined,
               sideChatRelays: undefined,
               // Local reading links are not part of a portable Session package.
               sessionContext: undefined,
@@ -1615,12 +1622,6 @@ export class SessionPackageService {
         undefined,
         onProgress,
         true
-      )
-      await installPackageStageCheckpoints(
-        destinationRoot,
-        this.options.storageRoot,
-        nativeInventory,
-        this.signal
       )
       onProgress?.({ importStage: 'publish', phase: 'importing' })
       await rename(sourceRoot, join(evidenceDirectory, 'source'))

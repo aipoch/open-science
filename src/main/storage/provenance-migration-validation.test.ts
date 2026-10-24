@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { MAX_R_STAGE_CHECKPOINT_BYTES, sealWorkflowCapture } from '@aipoch/reproducibility'
-import type { ProvenanceNotebookRun, RStageCheckpointFile } from '@aipoch/reproducibility/contracts'
+import { sealWorkflowCapture } from '@aipoch/reproducibility'
+import type { ProvenanceNotebookRun } from '@aipoch/reproducibility/contracts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
@@ -22,7 +22,7 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-const checkpointRun = async (): Promise<ProvenanceNotebookRun> => {
+const workflowRun = async (): Promise<ProvenanceNotebookRun> => {
   const lock = JSON.stringify({
     schemaVersion: 1,
     format: 'environment-lock-bundle',
@@ -43,13 +43,6 @@ const checkpointRun = async (): Promise<ProvenanceNotebookRun> => {
   const lockPath = join(root, 'runtime', 'provenance', 'environment-locks', `${lockChecksum}.json`)
   await mkdir(dirname(lockPath), { recursive: true })
   await writeFile(lockPath, lock)
-  const file = async (bytes: string): Promise<RStageCheckpointFile> => {
-    const checksum = sha256(bytes)
-    const storageKey = `runtime/provenance/r-stage-checkpoints/${checksum}.rds`
-    await mkdir(dirname(join(root, storageKey)), { recursive: true })
-    await writeFile(join(root, storageKey), bytes)
-    return { storageKey, checksum, sizeBytes: Buffer.byteLength(bytes) }
-  }
   return {
     runId: 'run-1',
     runIndex: 0,
@@ -64,24 +57,12 @@ const checkpointRun = async (): Promise<ProvenanceNotebookRun> => {
     startedAt: '2026-10-20T00:00:00Z',
     outputs: [],
     inputFileVersionKeys: [],
-    environmentLock: { state: 'available', format: 'environment-lock-bundle', lockChecksum },
-    stageCheckpoint: {
-      state: 'available',
-      schemaVersion: 1,
-      runId: 'run-1',
-      kernelEpochId: 'epoch',
-      sourceChecksum: sha256('x <- 1'),
-      environmentLockChecksum: lockChecksum,
-      input: await file('RDS input'),
-      output: await file('RDS output'),
-      inputNames: [],
-      outputNames: ['x']
-    }
+    environmentLock: { state: 'available', format: 'environment-lock-bundle', lockChecksum }
   }
 }
 
 type RunLocation = 'notebook' | 'artifact' | 'workflow'
-const writeCheckpointRun = async (
+const writeWorkflowRun = async (
   location: RunLocation,
   run: ProvenanceNotebookRun
 ): Promise<void> => {
@@ -163,72 +144,30 @@ const writeCheckpointRun = async (
 }
 
 describe.each<RunLocation>(['notebook', 'artifact', 'workflow'])(
-  'R stage checkpoint migration: %s',
+  'frozen execution environment migration: %s',
   (location) => {
-    it('validates both referenced state blobs and detects missing or corrupt bytes', async () => {
-      const run = await checkpointRun()
-      await writeCheckpointRun(location, run)
-      const checkpoint = run.stageCheckpoint!
-      if (checkpoint.state !== 'available') throw new Error('fixture checkpoint missing')
+    it('validates the original environment lock without any variable snapshots', async () => {
+      const run = await workflowRun()
+      await writeWorkflowRun(location, run)
       await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
-      const input = join(root, checkpoint.input.storageKey)
-      await writeFile(input, 'RDS other')
-      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/checkpoint checksum/i)
-      await rm(input)
-      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/ENOENT/)
-    })
-
-    it('rejects a renamed or linked state blob', async () => {
-      const run = await checkpointRun()
-      await writeCheckpointRun(location, run)
-      const checkpoint = run.stageCheckpoint!
-      if (checkpoint.state !== 'available') throw new Error('fixture checkpoint missing')
-      const input = join(root, checkpoint.input.storageKey)
-      const renamed = `${input}.renamed`
-      await rename(input, renamed)
-      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/ENOENT/)
-      await symlink(renamed, input)
-      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(
-        /checkpoint storage path/i
+      if (run.environmentLock?.state !== 'available') throw new Error('Missing fixture lock')
+      await rm(
+        join(
+          root,
+          'runtime',
+          'provenance',
+          'environment-locks',
+          run.environmentLock.lockChecksum + '.json'
+        )
       )
+      await expect(validateProvenanceMigrationState(root)).rejects.toThrow()
     })
   }
 )
 
-describe('Frame Notebook checkpoint migration', () => {
-  it.each([false, true])(
-    'validates child history when a root history is present: %s',
-    async (withRoot) => {
-      const run = await checkpointRun()
-      if (withRoot) await writeCheckpointRun('notebook', { ...run, stageCheckpoint: undefined })
-      const framePath = join(
-        root,
-        'notebooks',
-        'project-1',
-        'session-1',
-        'frames',
-        run.agentFrameId,
-        'run.json'
-      )
-      await mkdir(dirname(framePath), { recursive: true })
-      await writeFile(
-        framePath,
-        JSON.stringify({ projectId: 'project-1', sessionId: 'session-1', runs: [run] })
-      )
-      await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
-      const checkpoint = run.stageCheckpoint!
-      if (checkpoint.state !== 'available') throw new Error('fixture checkpoint missing')
-      const inputPath = join(root, checkpoint.input.storageKey)
-      await writeFile(inputPath, 'RDS other')
-      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/checkpoint checksum/i)
-      await rm(inputPath)
-      await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/ENOENT/)
-    }
-  )
-
-  it('accepts legacy frame-only history without a checkpoint', async () => {
-    const run = await checkpointRun()
-    delete run.stageCheckpoint
+describe('Frame Notebook migration', () => {
+  it('accepts frame-only history', async () => {
+    const run = await workflowRun()
     const framePath = join(
       root,
       'notebooks',
@@ -253,7 +192,7 @@ describe('Frame Notebook checkpoint migration', () => {
   it.each(['project', 'session', 'frame'])(
     'rejects mismatched child %s ownership',
     async (owner) => {
-      const run = await checkpointRun()
+      const run = await workflowRun()
       const framePath = join(
         root,
         'notebooks',
@@ -274,49 +213,6 @@ describe('Frame Notebook checkpoint migration', () => {
         })
       )
       await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/ownership/i)
-    }
-  )
-})
-
-describe('R stage checkpoint migration binding', () => {
-  it.each([
-    'runId',
-    'kernelEpochId',
-    'sourceChecksum',
-    'environmentLockChecksum',
-    'schemaVersion',
-    'path',
-    'size',
-    'oversize',
-    'unknown-state'
-  ])('rejects %s mismatches', async (field) => {
-    const run = await checkpointRun()
-    const checkpoint = run.stageCheckpoint!
-    if (checkpoint.state !== 'available') throw new Error('fixture checkpoint missing')
-    if (field === 'runId') checkpoint.runId = 'other-run'
-    if (field === 'kernelEpochId') checkpoint.kernelEpochId = 'other-epoch'
-    if (field === 'sourceChecksum') checkpoint.sourceChecksum = '0'.repeat(64)
-    if (field === 'environmentLockChecksum') checkpoint.environmentLockChecksum = '0'.repeat(64)
-    if (field === 'schemaVersion') Object.assign(checkpoint, { schemaVersion: 2 })
-    if (field === 'path')
-      checkpoint.input.storageKey = 'runtime/provenance/r-stage-checkpoints/wrong.rds'
-    if (field === 'size') checkpoint.input.sizeBytes += 1
-    if (field === 'oversize') checkpoint.input.sizeBytes = MAX_R_STAGE_CHECKPOINT_BYTES + 1
-    if (field === 'unknown-state') Object.assign(checkpoint, { state: 'future-format' })
-    await writeCheckpointRun('notebook', run)
-    await expect(validateProvenanceMigrationState(root)).rejects.toThrow(/checkpoint/i)
-  })
-
-  it.each<RunLocation>(['notebook', 'artifact', 'workflow'])(
-    'preserves legacy and explicitly unavailable %s runs',
-    async (location) => {
-      const run = await checkpointRun()
-      delete run.stageCheckpoint
-      await writeCheckpointRun(location, run)
-      await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
-      run.stageCheckpoint = { state: 'unavailable', reason: 'historical-state-unavailable' }
-      await writeCheckpointRun(location, run)
-      await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
     }
   )
 })

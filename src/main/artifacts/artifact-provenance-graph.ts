@@ -19,7 +19,6 @@ import type {
   NotebookFileDependency
 } from '@aipoch/notebook-analysis'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
-import { validRStageCheckpointForRun } from '@aipoch/reproducibility'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
 const MAX_GRAPH_BYTES = 1024 * 1024
@@ -1280,23 +1279,12 @@ const captureArtifactProvenanceGraph = (
     const candidate = candidateById.get(activityId)
     if (!candidate?.notebookRun) continue
     const fileReadsComplete = candidate.decodedEvidence.fileReads === 'complete'
-    const evidence = candidate.decodedEvidence
-    const checkpointDependenciesComplete =
-      workflow &&
-      validRStageCheckpointForRun(candidate.notebookRun) &&
-      evidence.state === 'available' &&
-      !evidence.failure &&
-      fileReadsComplete &&
-      evidence.writerAttribution === 'complete' &&
-      candidate.notebookRun.fileEvidence?.externalPaths === 'complete'
-    const kernelDependenciesComplete =
-      checkpointDependenciesComplete ||
-      (input.notebookDependencies
-        ? completeKernelDependencyActivityIds.has(activityId)
-        : !workflow && fileReadsComplete)
+    const kernelDependenciesComplete = input.notebookDependencies
+      ? completeKernelDependencyActivityIds.has(activityId)
+      : !workflow && fileReadsComplete
     const missingDependency =
       missingDependencyActivityIds.has(activityId) ||
-      (unresolvedProjectionActivityIds.has(activityId) && !checkpointDependenciesComplete)
+      unresolvedProjectionActivityIds.has(activityId)
     if (missingDependency) recordActivityReason(activityId, 'history-truncated')
     if (kernelDependenciesComplete && !missingDependency) continue
     if (!fileReadsComplete) recordActivityReason(activityId, 'file-reads-unavailable')

@@ -66,6 +66,8 @@ export type NotebookNetworkAccessRequest = Readonly<{
   host: string
   port?: number
   purpose?: 'probe' | 'block'
+  /** Live connection/policy evidence; false means a decision can only authorize an explicit retry. */
+  canResume?: () => boolean
   signal: AbortSignal
 }>
 

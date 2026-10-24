@@ -314,7 +314,7 @@ describe('reproducibility resource lifecycle', () => {
     }
   })
   it.each([true, false])(
-    'binds a derived restored lock to the selected source lock (valid: %s)',
+    'binds the restored lock to the selected original lock (valid: %s)',
     async (valid) => {
       const states: ArtifactReproducibilityCheckState[] = []
       const requirement = {
@@ -326,8 +326,7 @@ describe('reproducibility resource lifecycle', () => {
       const restored = {
         requirementId: requirement.requirementId,
         kernelKind: 'r' as const,
-        lockChecksum: '5'.repeat(64),
-        sourceLockChecksum: (valid ? '4' : '6').repeat(64)
+        lockChecksum: (valid ? '4' : '6').repeat(64)
       }
       const selectedExecution: PersistedArtifactExecutionSnapshot = {
         ...execution,

@@ -1,9 +1,9 @@
 import { notebookErrorRecovery } from '../../shared/notebook-execution-error'
-import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
   NotebookRunEnvironmentCapture,
   NotebookRunEnvironmentLockCapture
 } from '@aipoch/environment/contracts'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
   NotebookHelperModuleEvidence,
   NotebookHelperEvidenceStatus,
@@ -50,7 +50,6 @@ type NotebookRunTerminalResult = {
   environmentManifestChecksum?: string
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentLock?: NotebookRunEnvironmentLockCapture
-  stageCheckpoint?: NotebookRunRecord['stageCheckpoint']
   kernelDispatched?: boolean
   // False proves no user source began execution; absent evidence remains conservative.
   executionStarted?: boolean
@@ -488,7 +487,6 @@ class NotebookRunTerminalizationOwner {
       ...(limitedResult.errorCode ? { shellErrorCode: limitedResult.errorCode } : {}),
       ...(limitedResult.recovery ? { recovery: limitedResult.recovery } : {}),
       environmentCapture,
-      ...(limitedResult.stageCheckpoint ? { stageCheckpoint: limitedResult.stageCheckpoint } : {}),
       ...(limitedResult.environmentLock ? { environmentLock: limitedResult.environmentLock } : {}),
       ...(limitedResult.executionStarted !== undefined
         ? { executionStarted: limitedResult.executionStarted }

@@ -1,6 +1,5 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -14,11 +13,10 @@ const roots: string[] = []
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
-const checksum = (text: string): string => createHash('sha256').update(text).digest('hex')
 
-describe('R stage capture execution ownership', () => {
-  it.each(['available', 'environment-failure', 'file-failure'] as const)(
-    'binds per-run state after environment capture and persists %s evidence',
+describe('R execution without variable snapshots', () => {
+  it.each(['available', 'environment-failure'] as const)(
+    'executes consecutive cells without persisting variable values: %s',
     async (scenario) => {
       const root = await mkdtemp(join(tmpdir(), 'stage-execution-owner-'))
       roots.push(root)
@@ -68,24 +66,14 @@ describe('R stage capture execution ownership', () => {
         executorFactory: () => ({
           execute: async (request) => {
             requests.push(request)
-            expect(request.kernelEpochId).toBeTruthy()
-            expect(request.stageCheckpoint).toBeDefined()
-            // A normal successful cell still completes when optional evidence cannot be published.
-            await writeFile(request.stageCheckpoint!.inputPath, `before-${requests.length}`)
-            if (scenario !== 'file-failure')
-              await writeFile(request.stageCheckpoint!.outputPath, `after-${requests.length}`)
+            expect(request).not.toHaveProperty('stageCheckpoint')
             return {
               status: 'completed',
               stdout: '',
               stderr: '',
               traceback: '',
               cwdAfter: request.cwd,
-              outputs: [],
-              stageCheckpointCapture: {
-                state: 'available',
-                inputNames: ['dds'],
-                outputNames: ['res']
-              }
+              outputs: []
             }
           },
           shutdown: async () => ({ reaped: true })
@@ -101,36 +89,22 @@ describe('R stage capture execution ownership', () => {
       const first = await service.execute(request)
       const second = await service.execute({ ...request, cellId: first.cellId })
       expect(first.runId).not.toBe(second.runId)
-      expect(requests[0].stageCheckpoint!.inputPath).not.toBe(
-        requests[1].stageCheckpoint!.inputPath
-      )
       expect(captureCompletedRun).toHaveBeenCalledTimes(2)
       const history = await new NotebookRunRepository(root).readSessionRuns(
         'default-project',
         'session'
       )
       expect(history).toHaveLength(2)
-      for (const [index, run] of history.entries()) {
+      for (const run of history) {
         expect(run.status).toBe('completed')
-        if (scenario === 'available') {
-          expect(run.stageCheckpoint).toMatchObject({
-            state: 'available',
-            runId: run.runId,
-            kernelEpochId: requests[index].kernelEpochId,
-            sourceChecksum: checksum(request.code),
-            environmentLockChecksum: 'b'.repeat(64),
-            inputNames: ['dds'],
-            outputNames: ['res']
-          })
-          if (run.stageCheckpoint?.state !== 'available') throw new Error('missing sealed state')
-          expect(await readFile(join(root, run.stageCheckpoint.input.storageKey), 'utf8')).toBe(
-            `before-${index + 1}`
-          )
-        } else expect(run.stageCheckpoint).toMatchObject({ state: 'unavailable' })
+        expect(run).not.toHaveProperty('stageCheckpoint')
       }
-      expect(await readdir(join(requests[0].notebookSessionRoot, '.r-stage-checkpoints'))).toEqual(
-        []
-      )
+      await expect(
+        readdir(join(requests[0].notebookSessionRoot, '.r-stage-checkpoints'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(
+        readdir(join(root, 'runtime', 'provenance', 'r-stage-checkpoints'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
       await service.shutdownAll()
     }
   )

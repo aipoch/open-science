@@ -1,14 +1,10 @@
-import { sealWorkflowCapture, validRStageCheckpointForRun } from '@aipoch/reproducibility'
-import type { RStageCheckpointFile } from '@aipoch/reproducibility/contracts'
+import { sealWorkflowCapture } from '@aipoch/reproducibility'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
-import {
-  type PersistedArtifactExecutionSnapshot,
-  type ProvenanceNotebookRun
-} from '../../shared/artifact-provenance'
+import { type PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator
@@ -28,18 +24,13 @@ import { packageLiteratureSchema } from './literature-contract'
 import { validatePackagePdfNotes } from './pdf-notes'
 import type { NativeRow, NativeTable, PackageRecords } from './records-contract'
 import { COLUMNS } from './records-contract'
+export type { NativeRow, NativeTable, PackageRecords } from './records-contract'
 import { packageReproducibilitySchema } from './reproducibility-contract'
-export { type NativeRow, type NativeTable, type PackageRecords } from './records-contract'
 
-import type {
-  NotebookRunDocument,
-  NotebookRunInputFile,
-  NotebookRunRecord
-} from '../../shared/notebook'
+import type { NotebookRunDocument, NotebookRunInputFile } from '../../shared/notebook'
 import { parseArtifactExecutionSnapshot } from '../artifacts/provenance-execution-snapshot-decoder'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { createPackageMaterializer } from './materialize'
-import { digestFileWithinBudget } from '../bounded-file-io'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
 import { assertPackageSourcePath, readPackageJson } from './archive'
@@ -383,71 +374,8 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
   return value as PackageRecords
 }
 
-const stageCheckpointFiles = (
-  runs: readonly (NotebookRunRecord | ProvenanceNotebookRun)[]
-): RStageCheckpointFile[] =>
-  runs.flatMap((run) => {
-    if (run.stageCheckpoint === undefined || run.stageCheckpoint.state === 'unavailable') return []
-    if (!validRStageCheckpointForRun(run)) throw new Error('Invalid R stage checkpoint binding.')
-    return [run.stageCheckpoint.input, run.stageCheckpoint.output]
-  })
-
-const nativeStageCheckpointFiles = (records: PackageRecords): RStageCheckpointFile[] =>
-  records.tables.ArtifactVersion.flatMap((version) => {
-    if (typeof version.executionSnapshotJson !== 'string') return []
-    const value = JSON.parse(version.executionSnapshotJson)
-    const runs = [
-      ...(value.runs ?? []),
-      ...(value.workflowCapture?.state === 'available' ? value.workflowCapture.capture.runs : [])
-    ]
-    if (!runs.some((run: ProvenanceNotebookRun) => run.stageCheckpoint !== undefined)) return []
-    if (sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum)
-      throw new Error('R stage execution snapshot checksum mismatch.')
-    const snapshot = parseArtifactExecutionSnapshot(version.executionSnapshotJson)
-    return stageCheckpointFiles([
-      ...snapshot.runs,
-      ...(snapshot.workflowCapture?.state === 'available'
-        ? snapshot.workflowCapture.capture.runs
-        : [])
-    ])
-  })
-
-const validateStageCheckpointFiles = async (
-  storageRoot: string,
-  files: readonly RStageCheckpointFile[],
-  signal?: AbortSignal
-): Promise<void> => {
-  const seen = new Map<string, RStageCheckpointFile>()
-  for (const file of files) {
-    const previous = seen.get(file.storageKey)
-    if (previous) {
-      if (previous.checksum !== file.checksum || previous.sizeBytes !== file.sizeBytes)
-        throw new Error('Conflicting R stage checkpoint metadata.')
-      continue
-    }
-    seen.set(file.storageKey, file)
-    signal?.throwIfAborted()
-    await assertPackageSourcePath(storageRoot, file.storageKey)
-    const digest = await digestFileWithinBudget(
-      resolveStorageKey(storageRoot, file.storageKey),
-      file.sizeBytes,
-      signal
-    )
-    if (digest.checksum !== file.checksum || digest.sizeBytes !== file.sizeBytes)
-      throw new Error('R stage checkpoint checksum or size mismatch.')
-  }
-}
-
-export const validatePackageStageCheckpoints = async (
-  storageRoot: string,
-  records: PackageRecords,
-  signal?: AbortSignal
-): Promise<void> =>
-  validateStageCheckpointFiles(storageRoot, nativeStageCheckpointFiles(records), signal)
-
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
   ...new Set([
-    ...nativeStageCheckpointFiles(records).map((file) => file.storageKey),
     ...Object.values(records.tables).flatMap((rows) =>
       rows.flatMap((row) =>
         Object.entries(row).flatMap(([key, value]) =>
@@ -478,14 +406,6 @@ export const notebookStorageKeys = async (
         throw error
       })
     for (const entry of entries) {
-      // Capture scratch space is never portable evidence. Only the immutable references on
-      // completed Runs select RDS blobs; a crash may leave an unsealed temporary capture.
-      if (
-        entry.isDirectory() &&
-        entry.name === '.r-stage-checkpoints' &&
-        notebookDocumentIdentity(`${key}/run.json`)
-      )
-        continue
       const child = `${key}/${entry.name}`
       if (entry.isDirectory()) await visit(child, depth + 1)
       else if (entry.isFile()) keys.push(child)
@@ -494,12 +414,6 @@ export const notebookStorageKeys = async (
     }
   }
   await visit(`notebooks/${request.projectId}/${request.sessionId}`)
-  const notebooks = await readPackageNotebooks(storageRoot, keys)
-  keys.push(
-    ...stageCheckpointFiles(notebooks.flatMap((document) => document.runs)).map(
-      (file) => file.storageKey
-    )
-  )
   return [...new Set(keys)].sort()
 }
 
@@ -533,7 +447,6 @@ export const readPackageNotebooks = async (
     if (document.runs.length > 10000) throw new Error('Notebook history exceeds the package limit.')
     if (document.runs.some((run) => run.status === 'running' || run.status === 'queued'))
       throw new Error('Wait for Notebook runs to finish before exporting.')
-    await validateStageCheckpointFiles(storageRoot, stageCheckpointFiles(document.runs))
     documents.push(document)
   }
   return documents
@@ -575,7 +488,6 @@ export const sessionFileVersionIds = (session: PersistedChatSession): string[] =
 }
 
 export const remapStorageKey = (key: string, identities: Record<string, string>): string => {
-  if (/^runtime\/provenance\/r-stage-checkpoints\/[a-f0-9]{64}\.rds$/u.test(key)) return key
   const segments = key.split('/')
   const map = (index: number): void => {
     segments[index] = identities[segments[index]] ?? segments[index]
@@ -649,21 +561,6 @@ export const mapPackageReferences = (
   checksums: Record<string, string> = {}
 ): unknown => {
   if (key === 'sourceScope' || key === 'sourceSessionCheck') return value
-  // RDS bytes, object names and digests are immutable. Only the owning Run/epoch is local.
-  if (
-    key === 'stageCheckpoint' &&
-    value &&
-    typeof value === 'object' &&
-    'state' in value &&
-    value.state === 'available'
-  ) {
-    const checkpoint = value as Record<string, unknown>
-    return {
-      ...checkpoint,
-      runId: identities[String(checkpoint.runId)] ?? checkpoint.runId,
-      kernelEpochId: identities[String(checkpoint.kernelEpochId)] ?? checkpoint.kernelEpochId
-    }
-  }
   if (key === 'activityReasonCodes' && value && typeof value === 'object' && !Array.isArray(value))
     return Object.fromEntries(
       Object.entries(value).map(([runId, reasons]) => [identities[runId] ?? runId, reasons])

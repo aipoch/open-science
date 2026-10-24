@@ -101,26 +101,14 @@ const StepOutputs = ({
   }, [projectId, appSessionId, artifactId, versionId, receiptChecksum])
   return (
     <div className="mt-2 space-y-2">
-      {receipt?.comparisons.map((comparison) =>
-        comparison.stateComparison ? (
-          <div
-            key={comparison.entityId}
-            className="flex justify-between gap-2 rounded-md border border-border-300/60 p-3 text-xs"
-          >
-            <span>{t('State')} · R</span>
-            <span>
-              {comparison.stateComparison.outcome === 'equal' ? t('Matched') : t('Different')}
-            </span>
-          </div>
-        ) : (
-          <ReproducibilityOutput
-            key={comparison.entityId}
-            receipt={receipt}
-            scope={request}
-            comparison={comparison}
-          />
-        )
-      )}
+      {receipt?.comparisons.map((comparison) => (
+        <ReproducibilityOutput
+          key={comparison.entityId}
+          receipt={receipt}
+          scope={request}
+          comparison={comparison}
+        />
+      ))}
       {error ? <ErrorNotice inline description={t('Preview unavailable.')} /> : null}
     </div>
   )
@@ -231,9 +219,6 @@ const StartingPoint = ({
               onWorkflowChange?.({
                 captureId: captured.captureId,
                 targetRunIds: captured.stages.slice(-1).map((stage) => stage.runId),
-                ...(captured.stages.at(-1)?.kernelKind === 'r'
-                  ? { independent: true as const }
-                  : {}),
                 boundaryEntityIds: []
               })
             onChange(value)
@@ -326,9 +311,6 @@ const StartingPoint = ({
                     )
                     onWorkflowChange?.({
                       captureId: captured.captureId,
-                      ...(selectedStages.every((stage) => stage.kernelKind === 'r')
-                        ? { independent: true as const }
-                        : {}),
                       boundaryEntityIds: workflow?.boundaryEntityIds ?? [],
                       targetRunIds: selectedStages.map((stage) => stage.runId)
                     })
@@ -351,9 +333,6 @@ const StartingPoint = ({
                       )
                       onWorkflowChange?.({
                         captureId: captured.captureId,
-                        ...(selectedStages.every((stage) => stage.kernelKind === 'r')
-                          ? { independent: true as const }
-                          : {}),
                         targetRunIds: selectedStages.map((row) => row.runId),
                         boundaryEntityIds: workflow?.boundaryEntityIds ?? []
                       })
@@ -576,7 +555,6 @@ const SessionCheck = ({
   const command = async (request: SessionReproducibilityCommand): Promise<void> => {
     if (busy || disabled || foreignActive) return
     if (run && request.action !== 'prepare' && !ownsBatch) return
-    if (run && request.action === 'start' && batch?.targets[0]?.steps !== 1) return
     const epoch = getDesktopRuntimeEpoch()
     setBusy(true)
     setError(false)
@@ -633,7 +611,7 @@ const SessionCheck = ({
           <div className="flex items-center justify-between gap-3 border-b border-border-300 px-5 py-3">
             <div className="min-w-0">
               <Dialog.Title className={dialogTitleClassName}>
-                {run ? t('Independent reproduction') : t('Check session artifacts')}
+                {run ? t('Reproduce with dependencies') : t('Check session artifacts')}
               </Dialog.Title>
               <Dialog.Description className="truncate text-xs text-text-300">
                 {session.title}
@@ -647,7 +625,7 @@ const SessionCheck = ({
             <p className="mb-3 text-xs text-text-300">
               {run
                 ? t(
-                    'This check restores the captured inputs and environment, then executes only this run.'
+                    'This check analyzes cell dependencies, restores the captured inputs and environment, and reruns the required upstream cells through this run.'
                   )
                 : t(
                     'Each selected version is checked independently from its captured inputs. Closing this dialog keeps the checks running.'
@@ -662,32 +640,9 @@ const SessionCheck = ({
                       {stepTarget.name} · {stepTarget.versionId}
                     </p>
                     <p>
-                      {t('Captured input bindings')} ·{' '}
-                      {stepTarget.run.stageCheckpoint?.state === 'available'
-                        ? stepTarget.run.stageCheckpoint.inputNames.join(', ') || t('None')
-                        : t('Unavailable')}
-                    </p>
-                    <p>
-                      {t('Frozen files')} ·{' '}
-                      {formatBytes(
-                        stepTarget.run.stageCheckpoint?.state === 'available'
-                          ? stepTarget.run.stageCheckpoint.input.sizeBytes
-                          : 0
-                      )}
-                    </p>
-                    <p>
                       {t('Environment')} · {stepTarget.run.environmentName ?? t('Unknown')}
                     </p>
                     {renderStepInputFiles?.(stepTarget.inputFiles)}
-                    {stepTarget.run.stageCheckpoint?.state === 'available' &&
-                    stepTarget.run.stageCheckpoint.environmentProof ? (
-                      <p>
-                        {t('Captured R packages: {{count}}', {
-                          defaultValue_one: 'Captured R package: {{count}}',
-                          count: stepTarget.run.stageCheckpoint.environmentProof.packages.length
-                        })}
-                      </p>
-                    ) : null}
                   </>
                 ) : loaded && !error ? (
                   <ErrorNotice
@@ -710,14 +665,6 @@ const SessionCheck = ({
                     inline
                     description={t(
                       'Reproduction is unavailable while this session is read-only, busy or recovering.'
-                    )}
-                  />
-                ) : null}
-                {batch?.status === 'ready' && batch.targets[0]?.steps !== 1 ? (
-                  <ErrorNotice
-                    inline
-                    description={t(
-                      'Readiness did not confirm a single run. This check cannot start.'
                     )}
                   />
                 ) : null}
@@ -905,10 +852,7 @@ const SessionCheck = ({
                   <Button
                     size="sm"
                     disabled={
-                      busy ||
-                      disabled ||
-                      (Boolean(run) && batch.targets[0]?.steps !== 1) ||
-                      !batch.targets.some((row) => row.status === 'queued')
+                      busy || disabled || !batch.targets.some((row) => row.status === 'queued')
                     }
                     onClick={() =>
                       void command({ ...scope, action: 'start', batchId: batch.batchId })

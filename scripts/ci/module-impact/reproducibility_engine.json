@@ -34,8 +34,7 @@
     "packages/reproducibility/README.md",
     "packages/reproducibility/src/output-files.test.ts",
     "packages/reproducibility/src/workflow-slice.ts",
-    "packages/reproducibility/src/workflow-slice.test.ts",
-    "packages/reproducibility/src/r-stage-checkpoint.ts"
+    "packages/reproducibility/src/workflow-slice.test.ts"
   ],
   "interfacePaths": [
     "packages/reproducibility/src/index.ts",

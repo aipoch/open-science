@@ -12,7 +12,7 @@ import {
   captureArtifactWorkflow,
   decodeArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
-import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
+import { sha256 } from './provenance-canonical'
 import { reproductionWorkflowSlices } from './reproducibility-host'
 import {
   MAX_EXTENDED_EXECUTION_SNAPSHOT_BYTES,
@@ -163,81 +163,7 @@ const snapshot = (source: ReturnType<typeof fixture>): PersistedArtifactExecutio
     source.eligibleRuns
   )
 
-const attachCheckpoint = (run: NotebookRunRecord): void => {
-  run.environmentLock = {
-    state: 'available',
-    format: 'environment-lock-bundle',
-    lockChecksum: 'd'.repeat(64)
-  }
-  const blob = {
-    checksum: 'e'.repeat(64),
-    sizeBytes: 12,
-    storageKey: `runtime/provenance/r-stage-checkpoints/${'e'.repeat(64)}.rds`
-  }
-  run.stageCheckpoint = {
-    state: 'available',
-    schemaVersion: 1,
-    runId: run.runId,
-    kernelEpochId: run.kernelEpochId!,
-    sourceChecksum: sha256(run.script),
-    environmentLockChecksum: 'd'.repeat(64),
-    input: blob,
-    output: blob,
-    inputNames: ['dds'],
-    outputNames: ['result']
-  }
-}
-
 describe('immutable workflow capture', () => {
-  it('seals the original R checkpoint and preserves old runs without inventing evidence', () => {
-    const source = fixture()
-    attachCheckpoint(source.eligibleRuns[0]!.run)
-    const stored = snapshot(source)
-    expect(stored.runs[0]!.stageCheckpoint).toEqual(source.eligibleRuns[0]!.run.stageCheckpoint)
-    expect(stored.runs[1]!.stageCheckpoint).toBeUndefined()
-    expect(stored.workflowCapture?.state).toBe('available')
-    if (stored.workflowCapture?.state !== 'available') throw new Error('Expected workflow')
-    expect(stored.workflowCapture.capture.runs[0]!.stageCheckpoint).toEqual(
-      stored.runs[0]!.stageCheckpoint
-    )
-    expect(decodeArtifactExecutionSnapshot(JSON.stringify(stored)).status).toBe('valid')
-  })
-
-  it.each(['runId', 'kernelEpochId', 'sourceChecksum', 'environmentLockChecksum'] as const)(
-    'rejects an R checkpoint with mismatched %s even after resealing its capture',
-    (field) => {
-      const source = fixture()
-      attachCheckpoint(source.eligibleRuns[0]!.run)
-      const stored = snapshot(source)
-      const workflow = stored.workflowCapture
-      if (workflow?.state !== 'available') throw new Error('Expected workflow')
-      const checkpoint = workflow.capture.runs[0]!.stageCheckpoint!
-      if (checkpoint.state !== 'available') throw new Error('Expected checkpoint')
-      checkpoint[field] = field.endsWith('Checksum') ? 'f'.repeat(64) : 'another-run'
-      const { captureId: _captureId, ...draft } = workflow.capture
-      void _captureId
-      workflow.capture.captureId = sha256(canonicalJson(draft as unknown as CanonicalJson))
-      expect(decodeArtifactExecutionSnapshot(JSON.stringify(stored)).status).toBe('corrupt')
-      source.eligibleRuns[0]!.run.stageCheckpoint = checkpoint
-      expect(captureArtifactWorkflow(source.input, source.eligibleRuns)).toEqual({
-        state: 'unavailable',
-        reason: 'incomplete-evidence'
-      })
-    }
-  )
-
-  it('keeps exact long checkpoint source in the workflow while marking the display copy unavailable', () => {
-    const source = fixture(`# ${'x'.repeat(17000)}\nx <- 1`)
-    attachCheckpoint(source.eligibleRuns[0]!.run)
-    const stored = snapshot(source)
-    expect(stored.runs[0]!.stageCheckpoint).toEqual({
-      state: 'unavailable',
-      reason: 'source-truncated'
-    })
-    expect(stored.workflowCapture?.state).toBe('available')
-    expect(decodeArtifactExecutionSnapshot(JSON.stringify(stored)).status).toBe('valid')
-  })
-
   it('retains per-run helper failures without blocking an unrelated captured run', () => {
     const source = fixture()
     for (const { run } of source.eligibleRuns) {

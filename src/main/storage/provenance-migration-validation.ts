@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, type Dirent } from 'node:fs'
-import { lstat, readFile, readdir, stat } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { validateConversationGraph } from '../../shared/conversation-graph'
 import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
-import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environment'
-import { parseNotebookEnvironmentLock } from '@aipoch/environment'
-import type { ProvenanceNotebookRun } from '@aipoch/reproducibility/contracts'
+import {
+  operationJournalPath,
+  parseNotebookEnvironmentLock,
+  RuntimeOperationJournal
+} from '@aipoch/environment'
 import { validWorkflowCapture } from '@aipoch/reproducibility'
-import { validRunStageCheckpoint } from '../artifacts/provenance-workflow-capture'
-import { digestFileWithinBudget } from '../bounded-file-io'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { resolveContentStorageKey } from './content-repository'
@@ -94,36 +94,7 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined
 
-const validateRunStageCheckpoint = async (
-  root: string,
-  value: Record<string, unknown>
-): Promise<void> => {
-  const run = value as unknown as ProvenanceNotebookRun
-  if (!validRunStageCheckpoint(run)) throw new Error('Invalid R stage checkpoint binding.')
-  if (run.stageCheckpoint?.state !== 'available') return
-  for (const file of [run.stageCheckpoint.input, run.stageCheckpoint.output]) {
-    // Storage keys are already constrained by the shared validator. Reject links in each path
-    // component so migration never blesses a blob living outside the copied directory.
-    let path = root
-    const segments = file.storageKey.split('/')
-    for (const [index, segment] of segments.entries()) {
-      path = join(path, segment)
-      const info = await lstat(path)
-      if (
-        info.isSymbolicLink() ||
-        (index === segments.length - 1
-          ? !info.isFile() || info.size !== file.sizeBytes
-          : !info.isDirectory())
-      )
-        throw new Error('Invalid R stage checkpoint storage path or size.')
-    }
-    const actual = await digestFileWithinBudget(path, file.sizeBytes)
-    if (actual.checksum !== file.checksum || actual.sizeBytes !== file.sizeBytes)
-      throw new Error('R stage checkpoint checksum or size mismatch.')
-  }
-}
-
-const validateExecutionStageCheckpoints = async (
+const validateExecutionEnvironmentLocks = async (
   root: string,
   execution: Record<string, unknown>
 ): Promise<void> => {
@@ -132,9 +103,9 @@ const validateExecutionStageCheckpoints = async (
     execution.workflowCapture !== undefined &&
     (!workflow || (workflow.state !== 'available' && workflow.state !== 'unavailable'))
   )
-    throw new Error('Invalid R stage checkpoint Workflow format.')
+    throw new Error('Invalid Workflow format.')
   if (workflow?.state === 'available' && !validWorkflowCapture(workflow.capture))
-    throw new Error('Invalid R stage checkpoint Workflow capture.')
+    throw new Error('Invalid Workflow capture.')
   const capture = recordValue(workflow?.capture)
   const runs = [
     ...(Array.isArray(execution.runs) ? execution.runs : []),
@@ -144,8 +115,7 @@ const validateExecutionStageCheckpoints = async (
   const validatedLocks = new Set<string>()
   for (const value of runs) {
     const run = recordValue(value)
-    if (!run) throw new Error('Invalid execution checkpoint Run.')
-    await validateRunStageCheckpoint(root, run)
+    if (!run) throw new Error('Invalid execution Run.')
     await validateEnvironmentLockReference(
       root,
       run.environmentLock,
@@ -289,7 +259,6 @@ const validateReferencedEnvironmentManifests = async (
           ) {
             throw new Error(`Notebook run Frame ownership is invalid: ${agentFrameId}`)
           }
-          await validateRunStageCheckpoint(root, run)
           const capture = recordValue(run.environmentCapture)
           const captureState = capture?.state
           const checksum =
@@ -384,7 +353,7 @@ const validateArtifactVersions = async (
               throw new Error(`Artifact execution checksum mismatch: ${version.name}`)
             }
             const execution = await readRecord(executionPath)
-            await validateExecutionStageCheckpoints(root, execution)
+            await validateExecutionEnvironmentLocks(root, execution)
             if (execution.reproducibilityRecipe !== undefined) {
               const decoded = decodeArtifactExecutionSnapshot(JSON.stringify(execution))
               if (decoded.status !== 'valid' || !decoded.value.reproducibilityRecipe) {
@@ -591,7 +560,7 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
           ) {
             throw new Error(`Artifact execution mirror mismatch: ${agentVersion.id}`)
           }
-          await validateExecutionStageCheckpoints(
+          await validateExecutionEnvironmentLocks(
             dataRoot,
             await readRecord(
               resolveManagedStorageKey(dataRoot, agentVersion.executionSnapshotStorageKey!)
