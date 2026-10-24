@@ -53,7 +53,7 @@ import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
 import type { SettingsSnapshot } from '../shared/settings'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
-import { joinDevSession, readDevSession } from './dev-runtime-session'
+import { joinDevSession, readDevSession, relaunchWithDevSession } from './dev-runtime-session'
 import { acquireCredentialBootstrapLease, type RuntimeDirectoryLease } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
@@ -900,7 +900,7 @@ async function startDesktop(): Promise<void> {
           preservedStartupOptions = failure.startupOptions
         }
         if (initialRecoveryError) {
-          app.relaunch()
+          relaunchWithDevSession(devSession, () => app.relaunch())
           app.exit(0)
         } else continueStartup?.()
       } catch (error) {
@@ -1041,7 +1041,7 @@ async function startDesktop(): Promise<void> {
           .waitForStopped()
           .then((lease) => {
             retainShutdownLease(lease)
-            app.relaunch()
+            relaunchWithDevSession(devSession, () => app.relaunch())
             app.exit(0)
           })
           .catch((error) => {

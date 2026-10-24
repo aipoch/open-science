@@ -32,6 +32,26 @@ export function readDevSession(enabled: boolean, value = inheritedSession): DevS
   }
 }
 
+/** Electron synchronously launches its relaunch helper, which inherits this environment. */
+export function relaunchWithDevSession(
+  session: DevSession | undefined,
+  relaunch: () => void
+): void {
+  if (!session) {
+    relaunch()
+    return
+  }
+  // Keep the capability out of ordinary descendants; only the native relaunch call sees it.
+  const previous = process.env.OPEN_SCIENCE_DEV_SESSION
+  process.env.OPEN_SCIENCE_DEV_SESSION = JSON.stringify(session)
+  try {
+    relaunch()
+  } finally {
+    if (previous === undefined) delete process.env.OPEN_SCIENCE_DEV_SESSION
+    else process.env.OPEN_SCIENCE_DEV_SESSION = previous
+  }
+}
+
 export async function expectedDevIdentity(
   session: DevSession,
   entry: string
