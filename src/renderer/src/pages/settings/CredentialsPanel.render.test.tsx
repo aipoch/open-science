@@ -67,12 +67,18 @@ describe('CredentialsPanel', () => {
 
   it('opens Unpaywall from Credentials and edits the same shared contact email', async () => {
     const onNavigate = vi.fn()
+    const onLeaveStateChange = vi.fn()
     const save = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       ncbi: { hasApiKey: true, contactEmail: 'research@lab.org' },
       setNcbiCredentials: save
     })
-    const props = { onNavigate, onOpenConnector: vi.fn(), onOpenProvider: vi.fn() }
+    const props = {
+      onNavigate,
+      onLeaveStateChange,
+      onOpenConnector: vi.fn(),
+      onOpenProvider: vi.fn()
+    }
     await act(async () => root.render(<CredentialsPanel {...props} view={{ kind: 'list' }} />))
     const row = screen.getByText('Unpaywall').parentElement?.parentElement
     const manage = row?.querySelector('button')
@@ -85,13 +91,53 @@ describe('CredentialsPanel', () => {
       )
     )
     expect(screen.getByLabelText('Contact email')).toHaveProperty('value', 'research@lab.org')
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
     fireEvent.change(screen.getByLabelText('Contact email'), {
       target: { value: 'updated@lab.org' }
     })
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })))
     expect(save).toHaveBeenCalledWith({ contactEmail: 'updated@lab.org' })
+    expect(onLeaveStateChange).toHaveBeenCalledWith(null)
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
     expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'list' })
   })
+
+  it('keeps an Unpaywall draft protected after a failed save', async () => {
+    let rejectSave: ((error: Error) => void) | undefined
+    const onLeaveStateChange = vi.fn()
+    useSettingsStore.setState({
+      ncbi: { hasApiKey: false, contactEmail: 'research@lab.org' },
+      setNcbiCredentials: vi.fn().mockImplementation(
+        () =>
+          new Promise((_, reject) => {
+            rejectSave = reject
+          })
+      )
+    })
+    await act(async () =>
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'service', serviceId: 'unpaywall' }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    )
+    fireEvent.change(screen.getByLabelText('Contact email'), {
+      target: { value: 'retry@lab.org' }
+    })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })))
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: true })
+
+    await act(async () => rejectSave?.(new Error('Credential storage unavailable')))
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+    expect(screen.getByLabelText('Contact email')).toHaveProperty('value', 'retry@lab.org')
+    expect(screen.getByRole('alert')).not.toBeNull()
+  })
+
   it('lists device credentials and opens their shared credential editor', async () => {
     const onNavigate = vi.fn()
     useSettingsStore.setState({
@@ -373,5 +419,57 @@ describe('CredentialsPanel', () => {
       contactEmail: 'science@example.test',
       apiKey: ''
     })
+  })
+
+  it('reports service credential drafts and returns to a clean state after saving', async () => {
+    let resolveSave!: () => void
+    const onLeaveStateChange = vi.fn()
+    const setNcbiCredentials = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve
+        })
+    )
+    useSettingsStore.setState({
+      ncbi: { contactEmail: 'research@lab.org', hasApiKey: false },
+      encryptionAvailable: true,
+      setNcbiCredentials
+    })
+    await act(async () =>
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'service', serviceId: 'literature' }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    )
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+
+    fireEvent.change(screen.getByLabelText('Contact email'), {
+      target: { value: 'updated@lab.org' }
+    })
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { getData: vi.fn(() => 'ncbi-secret'), setData: vi.fn() }
+    })
+    act(() => document.body.querySelector('#service-api-key')?.dispatchEvent(paste))
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })))
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: true })
+
+    await act(async () => {
+      useSettingsStore.setState({
+        ncbi: { ...useSettingsStore.getState().ncbi, contactEmail: 'updated@lab.org' }
+      })
+      resolveSave()
+    })
+    expect(setNcbiCredentials).toHaveBeenCalledWith({
+      contactEmail: 'updated@lab.org',
+      apiKey: 'ncbi-secret'
+    })
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
   })
 })

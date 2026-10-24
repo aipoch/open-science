@@ -686,9 +686,20 @@ const WorkspaceMessageScrollerImpl = ({
   )
   const messageScrollerContentRef = useRef<HTMLDivElement | null>(null)
   const scrollToFirstMessageButtonRef = useRef<HTMLButtonElement | null>(null)
+  const scrollToFirstMessageHoveredRef = useRef(false)
+  const scrollToFirstMessageFocusedRef = useRef(false)
   const previousMessageScrollerScrollTopRef = useRef(0)
   const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
+  const handleScrollToFirstMessageButtonRef = useCallback(
+    (node: HTMLButtonElement | null): void => {
+      scrollToFirstMessageButtonRef.current = node
+      if (node) return
+      scrollToFirstMessageHoveredRef.current = false
+      scrollToFirstMessageFocusedRef.current = false
+    },
+    []
+  )
   const handleMessageScrollerViewportRef = useCallback((node: HTMLDivElement | null): void => {
     messageScrollerViewportRef.current = node
     setMessageScrollerViewport(node)
@@ -1129,16 +1140,22 @@ const WorkspaceMessageScrollerImpl = ({
   }, [])
   const hideScrollToFirstMessage = useCallback((): void => {
     clearScrollToFirstMessageHideTimeout()
+    if (scrollToFirstMessageFocusedRef.current) return
     setScrollToFirstMessageRevealed(false)
   }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
-  const revealScrollToFirstMessage = useCallback((): void => {
+  const scheduleScrollToFirstMessageHide = useCallback((): void => {
     clearScrollToFirstMessageHideTimeout()
-    setScrollToFirstMessageRevealed(true)
+    if (scrollToFirstMessageHoveredRef.current || scrollToFirstMessageFocusedRef.current) return
     scrollToFirstMessageHideTimeoutRef.current = window.setTimeout(() => {
       scrollToFirstMessageHideTimeoutRef.current = undefined
+      if (scrollToFirstMessageHoveredRef.current || scrollToFirstMessageFocusedRef.current) return
       setScrollToFirstMessageRevealed(false)
     }, SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS)
   }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
+  const revealScrollToFirstMessage = useCallback((): void => {
+    setScrollToFirstMessageRevealed(true)
+    scheduleScrollToFirstMessageHide()
+  }, [scheduleScrollToFirstMessageHide, setScrollToFirstMessageRevealed])
   const handleMessageScrollerScroll = (): void => {
     const viewport = messageScrollerViewportRef.current
     if (!viewport) return
@@ -2192,13 +2209,30 @@ const WorkspaceMessageScrollerImpl = ({
 
           {showScrollToFirstMessage ? (
             <MessageScrollerButton
-              ref={scrollToFirstMessageButtonRef}
+              ref={handleScrollToFirstMessageButtonRef}
               direction="start"
               onClick={() => {
                 const firstMessage = conversationItems.find((item) => item.type === 'message')
                 if (firstMessage?.type === 'message') {
                   transcriptWindow.revealMessage(firstMessage.message.id)
                 }
+              }}
+              onPointerEnter={() => {
+                scrollToFirstMessageHoveredRef.current = true
+                clearScrollToFirstMessageHideTimeout()
+              }}
+              onPointerLeave={() => {
+                scrollToFirstMessageHoveredRef.current = false
+                scheduleScrollToFirstMessageHide()
+              }}
+              onFocusCapture={() => {
+                scrollToFirstMessageFocusedRef.current = true
+                clearScrollToFirstMessageHideTimeout()
+              }}
+              onBlurCapture={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget)) return
+                scrollToFirstMessageFocusedRef.current = false
+                scheduleScrollToFirstMessageHide()
               }}
               aria-label={t('Scroll to first message')}
               aria-hidden="true"

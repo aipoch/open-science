@@ -191,6 +191,8 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
+    "Input help": "輸入說明",
+    "Your changes have not been saved. Discard them and leave the editor?": "變更尚未儲存。要捨棄變更並離開編輯器嗎？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收錄的鏈查找具有相似三維結構的實驗 PDB 鏈。",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "無法讀取此專家的技能或連接器。請嘗試重新傳送。",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "從 LIPID MAPS 取得脂質分類與化合物詳細資訊。",

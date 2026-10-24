@@ -353,4 +353,36 @@ describe('DeviceCredentialEditor', () => {
       'This imported Connector requires a client secret entered locally.'
     )
   })
+
+  it('reports credential edits and clears the leave state after saving', async () => {
+    const onDone = vi.fn()
+    const onLeaveStateChange = vi.fn()
+    act(() =>
+      root.render(
+        <DeviceCredentialEditor
+          onDone={onDone}
+          onCancel={vi.fn()}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    )
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+
+    const [name, secret] = Array.from(container.querySelectorAll<HTMLInputElement>('input'))
+    setInputValue(name!, 'Lab API')
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { getData: vi.fn(() => 'raw-secret'), setData: vi.fn() }
+    })
+    act(() => secret!.dispatchEvent(paste))
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+
+    const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Save'
+    )
+    await act(async () => save?.click())
+
+    expect(onLeaveStateChange).toHaveBeenCalledWith(null)
+    expect(onDone).toHaveBeenCalledOnce()
+  })
 })

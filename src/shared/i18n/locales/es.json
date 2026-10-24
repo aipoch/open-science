@@ -193,6 +193,8 @@
     "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
+    "Input help": "Ayuda de entrada",
+    "Your changes have not been saved. Discard them and leave the editor?": "Los cambios no se han guardado. ¿Desea descartarlos y salir del editor?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Buscar cadenas experimentales de PDB con estructuras 3D similares a partir de una cadena depositada.",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "No se pudieron cargar las Habilidades o los Conectores del Especialista. Intente enviar el mensaje de nuevo.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Obtener la clasificación de lípidos y los detalles de compuestos de LIPID MAPS.",
