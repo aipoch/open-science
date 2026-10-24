@@ -40,6 +40,43 @@ in the [release notes](../release-notes/README.md).
   or Notebook protection as a universal sandbox.
 - **Details:** [Execution security model](security.md#code-and-notebook-execution).
 
+## Claude native file tools can stall before permission handling
+
+- **Scope / status:** Claude Code; reported upstream-runtime failure, reviewed on **2026-10-24**.
+  [Issue #3281](https://github.com/aipoch/open-science/issues/3281) reports account-dependent
+  Read/Write stalls with Claude CLI 2.1.288/2.1.289 and claude-agent-acp 0.70.0. This is not evidence
+  that every account, version, or native file tool is affected.
+- **Trigger and impact:** A native tool call can stream without starting or requesting permission.
+  The turn can remain pending and cancellation may not complete. Denying future calls does not
+  recover an already stalled turn or provide a tool-start timeout.
+- **Precautions:** Native file tools remain available by default. A host caller constructing an
+  affected Claude session can pass only the required denials through the existing internal
+  `sessionOptions.disallowedTools` input to `AcpSessionPresentationPolicy.buildSessionSetup`:
+
+  ```ts
+  sessionOptions: {
+    disallowedTools: ['Read', 'Write']
+  }
+  ```
+
+  The same input accepts `Edit`, `MultiEdit`, and `NotebookEdit` when those must also be denied.
+  This is an internal integration input, not a Settings field, public CLI flag, environment
+  variable, or instruction the Agent can apply to its own session. Merge it with the caller's
+  existing denials; the adapter retains mandatory delegation/execution restrictions and does not
+  change defaults for subsequent sessions. There is no automatic account detection or live-session
+  toggle. Reapply the input whenever the host constructs session setup; do not assume saved history
+  retains this policy or that existing/resumed CLI sessions have been verified.
+
+- **Replacement capabilities:** Denial does not forward native calls. The Agent must select the
+  app-owned Notebook tools for permitted file work and `write_artifact_file` for generated
+  deliverables. Confirm these capabilities are available before opting in. Notebook's
+  `host.viewImage` can attach images, but that does not establish equivalent PDF text/page viewing
+  or native Notebook editing. Test the actual workflow before denying `Read` or `NotebookEdit`.
+- **Verification gap:** Configuration and session-isolation tests cover this internal contract;
+  they do not demonstrate live recovery on an affected account, successful cancellation, or
+  equivalent image/PDF behavior. This workaround does not change OpenCode or Codex routing,
+  introduce persistent settings, or migrate historical data.
+
 ## Public HTTPS reads are not an allowlist-only boundary
 
 - **Scope / status:** The Notebook gateway's public read channel, excluding the separate WSL2 path;
