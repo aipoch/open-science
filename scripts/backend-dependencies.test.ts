@@ -1,7 +1,17 @@
 import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -15,8 +25,147 @@ import {
   isElectronPackage,
   isBackendRuntimeDependency,
   isShippableDependencyPath,
+  inlineDesktopDependencyMaps,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
+
+it('embeds audited dependency maps without changing executable bytes or mapped exceptions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-inline-map-'))
+  try {
+    const manifest = { name: 'ajv', version: '8.20.0' }
+    const code = 'throw new Error("mapped fixture")\n//# sourceMappingURL=entry.cjs.map\n'
+    const map = JSON.stringify({
+      version: 3,
+      sources: ['original.ts'],
+      sourcesContent: ['throw new Error("mapped fixture")'],
+      names: [],
+      mappings: 'AAAA'
+    })
+    await writeFile(join(root, 'entry.cjs'), code)
+    await writeFile(join(root, 'entry.cjs.map'), map)
+    const stack = async (): Promise<string> => {
+      try {
+        await promisify(execFile)(process.execPath, [
+          '--enable-source-maps',
+          join(root, 'entry.cjs')
+        ])
+        throw new Error('Expected fixture failure')
+      } catch (error) {
+        return (error as { stderr: string }).stderr
+      }
+    }
+    const before = await stack()
+    expect(before).toContain('original.ts:1:1')
+    expect(await inlineDesktopDependencyMaps({ ...manifest, version: '8.20.1' }, root)).toBe(0)
+    expect(await readFile(join(root, 'entry.cjs'), 'utf8')).toBe(code)
+    expect(await inlineDesktopDependencyMaps(manifest, root)).toBe(1)
+    expect(await stack()).toBe(before)
+    const after = await readFile(join(root, 'entry.cjs'), 'utf8')
+    expect(after).toBe(
+      code.replace(
+        'entry.cjs.map',
+        `data:application/json;base64,${Buffer.from(map).toString('base64')}`
+      )
+    )
+    expect(await readdir(root)).toEqual(['entry.cjs'])
+    expect(await inlineDesktopDependencyMaps(manifest, root)).toBe(0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('preserves every real audited module and diagnostic map byte when embedding maps', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-real-maps-'))
+  try {
+    for (const [name, count] of [
+      ['@modelcontextprotocol/sdk', 174],
+      ['ajv', 106],
+      ['tar', 62],
+      ['@agentclientprotocol/sdk', 55]
+    ] as const) {
+      const source = join(process.cwd(), 'node_modules', name)
+      const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+      const target = join(root, name)
+      const includes = createDesktopDependencyFilter(manifest)
+      await cp(source, target, {
+        recursive: true,
+        dereference: true,
+        filter: async (file) => {
+          const path = relative(source, file)
+          return (
+            backendDependencyIncludes(manifest, path) &&
+            includes(path, (await stat(file)).isDirectory())
+          )
+        }
+      })
+      const before = new Map<string, Buffer>()
+      for (const file of await readdir(target, { recursive: true })) {
+        if ((await stat(join(target, file))).isFile())
+          before.set(file, await readFile(join(target, file)))
+      }
+      expect(await inlineDesktopDependencyMaps(manifest, target)).toBe(count)
+      let changed = 0
+      for (const [file, bytes] of before) {
+        const current = await readFile(join(target, file)).catch((error) => {
+          if (error.code !== 'ENOENT') throw error
+          return undefined
+        })
+        if (!current) {
+          expect(file).toMatch(/\.(?:js|mjs|cjs)\.map$/)
+          expect(before.has(file.slice(0, -4))).toBe(true)
+          continue
+        }
+        if (current.equals(bytes)) continue
+        const code = bytes.toString('utf8')
+        const map = before.get(`${file}.map`)!
+        const match = code.match(/\/\/# sourceMappingURL=([^\s]+)(\r?\n)?$/)!
+        expect(current.toString('utf8')).toBe(
+          code.slice(0, match.index) +
+            match[0].replace(match[1], `data:application/json;base64,${map.toString('base64')}`)
+        )
+        changed++
+      }
+      expect(changed).toBe(count)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30000)
+
+it('preserves unsupported and non-adjacent maps and untouched package versions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-map-fallback-'))
+  try {
+    for (const [file, text] of Object.entries({
+      'remote.js': '//# sourceMappingURL=https://example.test/remote.js.map',
+      'parent.js': '//# sourceMappingURL=../parent.js.map',
+      'missing.js': '//# sourceMappingURL=missing.js.map',
+      'indexed.js': '//# sourceMappingURL=indexed.js.map',
+      'indexed.js.map': JSON.stringify({ version: 3, sections: [] }),
+      'invalid.js': '//# sourceMappingURL=invalid.js.map',
+      'invalid.js.map': '{}',
+      'malformed.js': '//# sourceMappingURL=malformed.js.map',
+      'malformed.js.map': 'not JSON',
+      'null.js': '//# sourceMappingURL=null.js.map',
+      'null.js.map': 'null',
+      'LICENSE.map': 'redistribution notice'
+    }))
+      await writeFile(join(root, file), text)
+    const snapshot = await Promise.all(
+      (await readdir(root)).map(async (file) => [file, await readFile(join(root, file), 'utf8')])
+    )
+    expect(
+      await inlineDesktopDependencyMaps({ name: '@aipoch/test', version: '8.20.0' }, root)
+    ).toBe(0)
+    expect(await inlineDesktopDependencyMaps({ name: 'ajv', version: '8.20.0' }, root)).toBe(0)
+    expect(
+      await Promise.all(
+        (await readdir(root)).map(async (file) => [file, await readFile(join(root, file), 'utf8')])
+      )
+    ).toEqual(snapshot)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 describe('desktop-only dependency contents', () => {
   it('rejects an external consumer of bundled i18next in the real staging command', async () => {

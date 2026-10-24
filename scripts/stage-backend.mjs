@@ -5,6 +5,7 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  inlineDesktopDependencyMaps,
   isBackendRuntimeDependency,
   isElectronPackage,
   prismaEngineFilenames
@@ -131,6 +132,7 @@ async function copyDependency(name, from, destinationParent = stage) {
         )
       }
     })
+  if (values.desktop) await inlineDesktopDependencyMaps(pkg, destination)
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
     delete pkg.scripts

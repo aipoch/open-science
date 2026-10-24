@@ -1,6 +1,55 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { builtinModules } from 'node:module'
-import { posix } from 'node:path'
+import { readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { join, posix } from 'node:path'
+
+// Standard inline maps keep diagnostics while avoiding a second installed file per module.
+// Only rewrite audited desktop copies, retaining every executable byte and map byte.
+export async function inlineDesktopDependencyMaps(manifest, directory) {
+  const versions = {
+    '@modelcontextprotocol/sdk': '1.31.0',
+    ajv: '8.20.0',
+    tar: '7.5.22',
+    '@agentclientprotocol/sdk': '1.3.0'
+  }
+  if (!Object.hasOwn(versions, manifest.name) || versions[manifest.name] !== manifest.version)
+    return 0
+  let count = 0
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name !== 'node_modules') count += await inlineDesktopDependencyMaps(manifest, file)
+      continue
+    }
+    if (!entry.isFile() || !/\.(?:js|mjs|cjs)$/.test(entry.name)) continue
+    const code = await readFile(file, 'utf8')
+    const match = code.match(/\/\/# sourceMappingURL=([^\s]+)(\r?\n)?$/)
+    if (!match || match[1] !== `${entry.name}.map`) continue
+    const mapFile = `${file}.map`
+    const map = await readFile(mapFile).catch((error) => {
+      if (error.code !== 'ENOENT') throw error
+      return undefined
+    })
+    if (!map) continue
+    let parsed
+    try {
+      parsed = JSON.parse(map.toString('utf8'))
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error
+      continue
+    }
+    // Indexed maps can contain relative map URLs whose base would change in a data URL.
+    if (parsed?.version !== 3 || !Array.isArray(parsed.sources) || parsed.sections) continue
+    const replacement = match[0].replace(
+      match[1],
+      `data:application/json;base64,${map.toString('base64')}`
+    )
+    await writeFile(file, code.slice(0, match.index) + replacement)
+    await unlink(mapFile)
+    count++
+  }
+  return count
+}
 
 export const isElectronPackage = (name) =>
   /^(?:electron(?:$|\/|-)|@electron(?:-toolkit)?\/)/.test(name)
