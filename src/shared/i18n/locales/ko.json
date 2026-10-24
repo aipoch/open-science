@@ -7285,6 +7285,7 @@
     "Update cancelled and the app recovered. The download is kept. Interrupted tasks will not restart automatically.": "업데이트가 취소되고 앱이 복구되었습니다. 다운로드는 유지됩니다. 중단된 작업은 자동으로 다시 실행되지 않습니다.",
     "Update cancelled. The service is still running and the download is kept.": "업데이트가 취소되었습니다. 서비스는 계속 실행 중이며 다운로드는 유지됩니다.",
     "View task": "작업 보기",
+    "Another Open-Science service is running": "다른 Open-Science 서비스가 실행 중입니다",
     "An older version is still running": "이전 버전이 아직 실행 중입니다",
     "Open-Science needs to close it before opening your projects. Finish any work in other Open-Science windows first.": "프로젝트를 열기 전에 Open-Science가 이를 종료해야 합니다. 다른 Open-Science 창에서 하던 작업을 먼저 마무리해 주세요.",
     "Close it and continue": "종료하고 계속",

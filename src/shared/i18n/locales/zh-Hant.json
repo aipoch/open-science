@@ -7287,6 +7287,7 @@
     "Update cancelled and the app recovered. The download is kept. Interrupted tasks will not restart automatically.": "更新已取消，應用程式已復原。下載仍然保留，中斷的任務不會自動重新執行。",
     "Update cancelled. The service is still running and the download is kept.": "更新已取消。服務仍在執行，下載仍然保留。",
     "View task": "檢視任務",
+    "Another Open-Science service is running": "另一個 Open-Science 服務正在執行",
     "An older version is still running": "舊版本仍在執行",
     "Open-Science needs to close it before opening your projects. Finish any work in other Open-Science windows first.": "開啟專案前，Open-Science 需要先關閉它。請先處理好其他 Open-Science 視窗中的工作。",
     "Close it and continue": "關閉並繼續",

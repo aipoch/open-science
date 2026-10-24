@@ -7751,6 +7751,7 @@
     "Update cancelled and the app recovered. The download is kept. Interrupted tasks will not restart automatically.": "Обновление отменено, приложение восстановлено. Загрузка сохранена. Прерванные задачи не запустятся автоматически.",
     "Update cancelled. The service is still running and the download is kept.": "Обновление отменено. Служба продолжает работать, загрузка сохранена.",
     "View task": "Открыть задачу",
+    "Another Open-Science service is running": "Другая служба Open-Science уже запущена",
     "An older version is still running": "Старая версия всё ещё работает",
     "Open-Science needs to close it before opening your projects. Finish any work in other Open-Science windows first.": "Чтобы открыть проекты, нужно сначала закрыть её. Завершите работу в других окнах Open-Science.",
     "Close it and continue": "Закрыть и продолжить",

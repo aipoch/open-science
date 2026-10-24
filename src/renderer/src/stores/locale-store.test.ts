@@ -9,6 +9,7 @@ const { setI18nLocale, prepareI18nLocale } = vi.hoisted(() => ({
 
 vi.mock('@/i18n', () => ({ setI18nLocale, prepareI18nLocale }))
 
+import type { RuntimeStartupState } from '../../../shared/runtime-startup'
 import { startLocalePreferenceSync, useLocaleStore } from './locale-store'
 
 describe('locale store desktop synchronization', () => {
@@ -43,6 +44,128 @@ describe('locale store desktop synchronization', () => {
     vi.restoreAllMocks()
   })
 
+  it.each(['idle', 'blocked', 'stopping', 'recovering'] as const)(
+    'waits for runtime readiness while %s',
+    async (phase) => {
+      const state: RuntimeStartupState =
+        phase === 'idle'
+          ? { phase }
+          : {
+              phase,
+              issue: {
+                reason: 'startup-recovery-required',
+                desktopVersion: '1',
+                canStop: true,
+                canRecover: false
+              }
+            }
+      let publish!: (next: RuntimeStartupState) => void
+      const detached = vi.fn()
+      window.api.runtimeStartup = {
+        getState: async () => state,
+        onStateChanged: (listener) => {
+          publish = listener
+          return detached
+        },
+        stopAndContinue: vi.fn(),
+        recover: vi.fn(),
+        quit: vi.fn()
+      }
+      initialize.mockResolvedValue({ preference: 'ja', locale: 'ja' })
+      const stop = startLocalePreferenceSync()
+      await Promise.resolve()
+      expect(initialize).not.toHaveBeenCalled()
+      publish({ phase: 'ready' })
+      await vi.waitFor(() => expect(useLocaleStore.getState().locale).toBe('ja'))
+      publish({ phase: 'ready' })
+      expect(initialize).toHaveBeenCalledOnce()
+      stop()
+      expect(detached).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('ignores a ready snapshot superseded by a blocked event and cleans pending reads on disposal', async () => {
+    let publish!: (next: RuntimeStartupState) => void
+    let resolve!: (next: RuntimeStartupState) => void
+    const detached = vi.fn()
+    window.api.runtimeStartup = {
+      getState: () =>
+        new Promise((done) => {
+          resolve = done
+        }),
+      onStateChanged: (listener) => {
+        publish = listener
+        return detached
+      },
+      stopAndContinue: vi.fn(),
+      recover: vi.fn(),
+      quit: vi.fn()
+    }
+    initialize.mockResolvedValue({ preference: 'ja', locale: 'ja' })
+    const stop = startLocalePreferenceSync()
+    publish({
+      phase: 'blocked',
+      issue: {
+        reason: 'startup-recovery-required',
+        desktopVersion: '1',
+        canStop: true,
+        canRecover: false
+      }
+    })
+    resolve({ phase: 'ready' })
+    await Promise.resolve()
+    expect(initialize).not.toHaveBeenCalled()
+    stop()
+    publish({ phase: 'ready' })
+    expect(initialize).not.toHaveBeenCalled()
+    expect(detached).toHaveBeenCalledOnce()
+  })
+
+  it('retries after startup-read failure and rejects locale replies from an interrupted initialization', async () => {
+    let publish!: (next: RuntimeStartupState) => void
+    let resolveOld!: (snapshot: { preference: 'ja'; locale: 'ja' }) => void
+    window.api.runtimeStartup = {
+      getState: async () => {
+        throw new Error('startup unavailable')
+      },
+      onStateChanged: (listener) => {
+        publish = listener
+        return vi.fn()
+      },
+      stopAndContinue: vi.fn(),
+      recover: vi.fn(),
+      quit: vi.fn()
+    }
+    initialize
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolveOld = done
+          })
+      )
+      .mockResolvedValue({ preference: 'system', locale: 'en' })
+    const stop = startLocalePreferenceSync()
+    await Promise.resolve()
+    expect(initialize).not.toHaveBeenCalled()
+    publish({ phase: 'ready' })
+    publish({
+      phase: 'blocked',
+      issue: {
+        reason: 'startup-recovery-required',
+        desktopVersion: '1',
+        canStop: false,
+        canRecover: true
+      }
+    })
+    publish({ phase: 'ready' })
+    await Promise.resolve()
+    resolveOld({ preference: 'ja', locale: 'ja' })
+    await Promise.resolve()
+    expect(initialize).toHaveBeenCalledTimes(2)
+    expect(useLocaleStore.getState().locale).toBe('en')
+    stop()
+  })
+
   it('retains the current language and skips persistence when a catalog fails, then permits retry', async () => {
     prepareI18nLocale.mockRejectedValueOnce(new Error('chunk unavailable'))
     useLocaleStore.getState().setPreference('ja')
@@ -54,6 +177,32 @@ describe('locale store desktop synchronization', () => {
     useLocaleStore.getState().setPreference('ja')
     await vi.waitFor(() => expect(useLocaleStore.getState().locale).toBe('ja'))
     expect(setPreference).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a failed readiness read on focus without requiring another state event', async () => {
+    const getState = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('unavailable'))
+      .mockResolvedValue({ phase: 'ready' })
+    window.api.runtimeStartup = {
+      getState,
+      onStateChanged: () => vi.fn(),
+      stopAndContinue: vi.fn(),
+      recover: vi.fn(),
+      quit: vi.fn()
+    }
+    initialize.mockResolvedValue({ preference: 'ja', locale: 'ja' })
+    const stop = startLocalePreferenceSync()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getState).toHaveBeenCalledOnce()
+    expect(initialize).not.toHaveBeenCalled()
+    window.dispatchEvent(new Event('focus'))
+    await vi.waitFor(() => expect(initialize).toHaveBeenCalledOnce())
+    window.dispatchEvent(new Event('focus'))
+    expect(getState).toHaveBeenCalledTimes(2)
+    stop()
+    window.dispatchEvent(new Event('focus'))
+    expect(getState).toHaveBeenCalledTimes(2)
   })
 
   it('does not commit a slower catalog after a newer selection', async () => {

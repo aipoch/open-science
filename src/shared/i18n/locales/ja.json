@@ -7287,6 +7287,7 @@
     "Update cancelled and the app recovered. The download is kept. Interrupted tasks will not restart automatically.": "更新をキャンセルし、アプリを復旧しました。ダウンロードは保持されます。中断されたタスクは自動的に再実行されません。",
     "Update cancelled. The service is still running and the download is kept.": "更新をキャンセルしました。サービスは実行中で、ダウンロードは保持されます。",
     "View task": "タスクを表示",
+    "Another Open-Science service is running": "別の Open-Science サービスが実行中です",
     "An older version is still running": "古いバージョンがまだ実行中です",
     "Open-Science needs to close it before opening your projects. Finish any work in other Open-Science windows first.": "プロジェクトを開く前に、Open-Science はそれを終了する必要があります。ほかの Open-Science ウィンドウでの作業を先に済ませてください。",
     "Close it and continue": "終了して続行",

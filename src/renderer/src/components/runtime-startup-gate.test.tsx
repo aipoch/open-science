@@ -180,7 +180,8 @@ it('explains a slow forced stop after 8 seconds and offers a way out after 30 se
       expect.arrayContaining(['Quit', 'Save diagnostics', 'Try again'])
     )
     await click('Try again')
-    expect(recover).toHaveBeenCalledOnce()
+    expect(stop).toHaveBeenCalledOnce()
+    expect(recover).not.toHaveBeenCalled()
     await click('Quit')
     expect(quit).toHaveBeenCalledOnce()
     await act(async () => emit({ phase: 'stopping', issue: legacyService.issue }))
@@ -244,4 +245,142 @@ it('keeps confirmation and retry available after a modern stop returns a diagnos
   await click('Continue')
   expect(stop).toHaveBeenCalledTimes(2)
   expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
+})
+
+it.each(['version-mismatch', 'legacy-service', 'startup-recovery-required'] as const)(
+  'exposes an authorized stop for %s even when recovery is unavailable',
+  async (reason) => {
+    state = {
+      phase: 'blocked',
+      issue: {
+        reason,
+        desktopVersion: '1.0.2',
+        runtimeVersion: '1.0.2',
+        pid: 45874,
+        canStop: true,
+        canRecover: false
+      }
+    }
+    await render()
+    if (reason === 'startup-recovery-required') {
+      expect(document.body.textContent).not.toContain(
+        'The previous session has not passed safety checks'
+      )
+    }
+    stop.mockResolvedValueOnce({ phase: 'ready' })
+    if (reason === 'legacy-service') await click('Close it and continue')
+    else {
+      await click('Continue')
+      expect(stop).not.toHaveBeenCalled()
+      await click('Continue')
+    }
+    expect(stop).toHaveBeenCalledOnce()
+    expect(recover).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-testid="workspace"]')).not.toBeNull()
+  }
+)
+
+it('discards a stop confirmation when the authoritative issue changes', async () => {
+  await render()
+  await click('Continue')
+  if (state.phase !== 'blocked') throw new Error('Expected blocked fixture')
+  const issue = state.issue
+  await act(async () => emit({ phase: 'blocked', issue: { ...issue, pid: 456 } }))
+  expect(document.querySelector('[data-testid="runtime-startup-confirmation-S17"]')).toBeNull()
+  await click('Continue')
+  expect(stop).not.toHaveBeenCalled()
+})
+
+it('ignores a rejected operation after a newer authoritative operation starts', async () => {
+  let reject!: (error: Error) => void
+  stop.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, fail) => {
+        reject = fail
+      })
+  )
+  await render()
+  await click('Continue')
+  await click('Continue')
+  if (state.phase !== 'blocked') throw new Error('Expected blocked fixture')
+  const issue = state.issue
+  await act(async () => emit({ phase: 'recovering', issue: { ...issue, canRecover: true } }))
+  await act(async () => reject(new Error('old stop failed')))
+  expect(document.body.textContent).toContain('Checking…')
+  expect(document.body.textContent).not.toContain('The app could not be checked')
+  expect([...document.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+    'Continue'
+  )
+})
+
+it('retries a slow stop through the available stop operation', async () => {
+  vi.useFakeTimers()
+  try {
+    await render()
+    if (state.phase !== 'blocked') throw new Error('Expected blocked fixture')
+    const issue = state.issue
+    await act(async () => emit({ phase: 'stopping', issue }))
+    await act(async () => void vi.advanceTimersByTime(30_000))
+    await click('Try again')
+    expect(stop).toHaveBeenCalledOnce()
+    expect(recover).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it.each(['version-mismatch', 'legacy-service', 'startup-recovery-required'] as const)(
+  'retries a slow recovery without switching to a stop for %s',
+  async (reason) => {
+    vi.useFakeTimers()
+    try {
+      state = {
+        phase: 'recovering',
+        issue: { reason, desktopVersion: '1', canStop: true, canRecover: true }
+      }
+      await render()
+      await act(async () => void vi.advanceTimersByTime(30_000))
+      await click('Try again')
+      expect(recover).toHaveBeenCalledOnce()
+      expect(stop).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
+it.each(['version-mismatch', 'legacy-service', 'startup-recovery-required'] as const)(
+  'routes recovery-only and unavailable capabilities for %s',
+  async (reason) => {
+    state = {
+      phase: 'blocked',
+      issue: { reason, desktopVersion: '1', canStop: false, canRecover: true }
+    }
+    await render()
+    await click('Retry')
+    expect(recover).toHaveBeenCalledOnce()
+    expect(stop).not.toHaveBeenCalled()
+    const issue = state.issue
+    await act(async () => emit({ phase: 'blocked', issue: { ...issue, canRecover: false } }))
+    await click('Quit')
+    expect(quit).toHaveBeenCalledOnce()
+    expect(recover).toHaveBeenCalledOnce()
+    expect(stop).not.toHaveBeenCalled()
+  }
+)
+
+it('prefers a non-stopping recovery when both operations are available for recovery checks', async () => {
+  state = {
+    phase: 'blocked',
+    issue: {
+      reason: 'startup-recovery-required',
+      desktopVersion: '1',
+      canStop: true,
+      canRecover: true
+    }
+  }
+  await render()
+  await click('Retry')
+  expect(recover).toHaveBeenCalledOnce()
+  expect(stop).not.toHaveBeenCalled()
 })
