@@ -38,8 +38,9 @@ const absolutePhysicalPath = (value: string): string => {
     }
     const parent = dirname(value)
     const name = basename(value)
-    if (parent === value || name === '..' || name === '.') throw error
+    if (parent === value || name === '..') throw error
     const physicalParent = absolutePhysicalPath(parent)
+    if (name === '.') return physicalParent
     try {
       if (!statSync(physicalParent).isDirectory())
         throw new Error('Sandbox path ancestor is not a directory')

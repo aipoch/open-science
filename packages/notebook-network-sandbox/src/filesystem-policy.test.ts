@@ -82,6 +82,17 @@ describe('Notebook filesystem policy', () => {
       expect(absolutePhysicalPath(missing)).toBe(
         join(realpathSync.native(`${root}${sep}alias${sep}..`), 'new', 'leaf')
       )
+      const missingDot = `${root}${sep}missing${sep}.${sep}leaf`
+      expect(absolutePhysicalPath(missingDot)).toBe(join(root, 'missing', 'leaf'))
+      expect(absolutePhysicalPath(`${root}${sep}missing${sep}.`)).toBe(join(root, 'missing'))
+      expect(
+        normalizeFilesystemLayout({
+          readOnlyRoots: [],
+          readWriteRoots: [missingDot],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }).readWriteRoots
+      ).toEqual([join(root, 'missing', 'leaf')])
       const missingTraversal = `${root}${sep}missing${sep}..${sep}leaf`
       if (process.platform === 'win32')
         expect(absolutePhysicalPath(missingTraversal)).toBe(join(root, 'leaf'))
@@ -89,6 +100,7 @@ describe('Notebook filesystem policy', () => {
       expect(() => absolutePhysicalPath(join(root, 'secret', 'leaf'))).toThrow()
       symlinkSync(join(root, 'absent'), join(root, 'dangling'), 'junction')
       expect(() => absolutePhysicalPath(join(root, 'dangling', 'leaf'))).toThrow()
+      expect(() => absolutePhysicalPath(`${root}${sep}dangling${sep}.${sep}leaf`)).toThrow()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
