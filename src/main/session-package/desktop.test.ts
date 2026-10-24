@@ -2178,7 +2178,7 @@ it('reports a localized location and rule without exposing the matched value', a
   }
 })
 
-it.each(['minimal', 'full', 'headless'] as const)(
+it.each(['minimal', 'full', 'headless', 'forwarded'] as const)(
   'resumes %s sensitive exports without repeating selection or destination',
   async (mode) => {
     const fixture = await createProvenanceTestFixture()
@@ -2217,6 +2217,14 @@ it.each(['minimal', 'full', 'headless'] as const)(
     const versionRecord = await fixture.client.artifactVersion.findUniqueOrThrow({
       where: { id: version.versionId }
     })
+    let request = { projectId: 'project-1', sessionId: 'session-1' }
+    if (mode === 'forwarded') {
+      const source = join(fixture.storageRoot, 'source.science')
+      await service.exportTo(request, source, { allowSensitiveContent: true })
+      request = await service.importFrom(source, undefined, undefined, undefined, {
+        projectId: 'project-1'
+      })
+    }
     const exportTo = vi.spyOn(service, 'exportTo')
     const release = vi.fn()
     const reserveExport = vi.fn(async () => release)
@@ -2242,7 +2250,6 @@ it.each(['minimal', 'full', 'headless'] as const)(
       }
     })
     const selectFiles = vi.spyOn(desktop.operations, 'selectFiles')
-    const request = { projectId: 'project-1', sessionId: 'session-1' }
     try {
       expect(() =>
         desktop.respond({ action: 'export-with-sensitive-content', operationId: 'missing' })
@@ -2252,8 +2259,10 @@ it.each(['minimal', 'full', 'headless'] as const)(
       ).rejects.toThrow('Sensitive content detected')
       const failed = desktop.operations.snapshot!
       expect(failed.sensitiveContent).toHaveLength(1)
-      expect(selectFiles).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
-      expect(dialog.showSaveDialog).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
+      expect(selectFiles).toHaveBeenCalledTimes(mode === 'headless' || mode === 'forwarded' ? 0 : 1)
+      expect(dialog.showSaveDialog).toHaveBeenCalledTimes(
+        mode === 'headless' || mode === 'forwarded' ? 0 : 1
+      )
       expect(() =>
         desktop.respond({ action: 'export-with-sensitive-content', operationId: 'stale' })
       ).toThrow()
@@ -2263,7 +2272,7 @@ it.each(['minimal', 'full', 'headless'] as const)(
       expect(exportTo.mock.calls[1][2]).toMatchObject({ allowSensitiveContent: true })
       expect(selectFiles).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
       expect(dialog.showSaveDialog).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
-      if (mode !== 'headless') {
+      if (mode === 'minimal' || mode === 'full') {
         const selection = await exportTo.mock.calls[1][2]!.selectFiles!(
           [],
           new AbortController().signal,

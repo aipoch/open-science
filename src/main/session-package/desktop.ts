@@ -255,7 +255,7 @@ export class SessionPackageDesktop {
         failed.kind !== 'export' ||
         failed.state !== 'failed' ||
         !failed.session ||
-        previous?.operationId !== failed.id ||
+        (previous && previous.operationId !== failed.id) ||
         !failed.sensitiveContent?.length ||
         failed.cleanupPending ||
         this.operations.active
@@ -265,8 +265,8 @@ export class SessionPackageDesktop {
         failed.session,
         undefined,
         true,
-        previous.filePath,
-        previous.selection
+        previous?.filePath,
+        previous?.selection
       ).then(() => this.operations.snapshot)
     }
     if (
