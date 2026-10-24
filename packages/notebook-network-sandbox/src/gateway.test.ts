@@ -705,3 +705,199 @@ describe('Notebook command gateway', () => {
     }
   )
 })
+
+describe('HTTP forwarding integrity', () => {
+  const exchange = (
+    port: number,
+    path: string,
+    method = 'GET'
+  ): Promise<{ status: number; body: string; complete: boolean }> =>
+    new Promise((resolve, reject) => {
+      const outgoing = request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path,
+          method,
+          agent: false,
+          headers: { host: 'example.test', 'proxy-authorization': authorization }
+        },
+        (incoming) => {
+          let body = ''
+          incoming.setEncoding('utf8')
+          incoming.on('data', (chunk: string) => {
+            body += chunk
+          })
+          const finish = (): void =>
+            resolve({ status: incoming.statusCode!, body, complete: incoming.complete })
+          incoming.on('end', finish)
+          incoming.on('error', finish)
+        }
+      )
+      outgoing.on('error', reject)
+      outgoing.setTimeout(3000, () => outgoing.destroy(new Error('Fixture request timed out')))
+      outgoing.end()
+    })
+
+  it.each([false, true])('preserves target spelling with parent proxy %s', async (parent) => {
+    const targets: string[] = []
+    const origin = await listen((socket) =>
+      socket.once('data', (data) => {
+        targets.push(data.toString().split('\r\n')[0]!)
+        socket.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok')
+      })
+    )
+    const gateway = await CommandGateway.open({
+      credentials,
+      decide: async () => ({ allowed: true, address: '127.0.0.1' }),
+      ...(parent ? { parentProxy: { http: `http://127.0.0.1:${origin.port}` } } : {})
+    })
+    closeTasks.push(() => gateway.close())
+    for (const path of ['/a/../b', '/a/%2e%2e/b', '//a/b', '/a?', '/a?x=%2F', '/a%2Fb']) {
+      expect((await exchange(gateway.port, `http://example.test:${origin.port}${path}`)).body).toBe(
+        'ok'
+      )
+      expect(targets.at(-1)).toBe(
+        `GET ${parent ? `http://127.0.0.1:${origin.port}` : ''}${path} HTTP/1.1`
+      )
+    }
+  })
+
+  it.each([
+    'http:///example.test/a',
+    'http://example.test/a#fragment',
+    'http://example.test\\a',
+    'ftp://example.test/a',
+    '?query',
+    'http://user@example.test/a'
+  ])('rejects malformed targets before authorization: %s', async (path) => {
+    const decide = vi.fn(async () => ({ allowed: true as const, address: '127.0.0.1' }))
+    const gateway = await CommandGateway.open({ credentials, decide })
+    closeTasks.push(() => gateway.close())
+    if (path.includes('\\') || path === '?query')
+      await expect(exchange(gateway.port, path)).rejects.toThrow('socket hang up')
+    else expect((await exchange(gateway.port, path)).status).toBe(403)
+    expect(decide).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'contains bad responses and preserves complete bodies with parent proxy %s',
+    async (parent) => {
+      let reply = ''
+      const origin = await listen((socket) => socket.once('data', () => socket.end(reply)))
+      const gateway = await CommandGateway.open({
+        credentials,
+        decide: async () => ({ allowed: true, address: '127.0.0.1' }),
+        ...(parent ? { parentProxy: { http: `http://127.0.0.1:${origin.port}` } } : {})
+      })
+      closeTasks.push(() => gateway.close())
+      const path = `http://example.test:${origin.port}/`
+      for (const status of ['099', '000']) {
+        reply = `HTTP/1.1 ${status} Invalid\r\nContent-Length: 6\r\n\r\nsecret`
+        const failed = await exchange(gateway.port, path)
+        expect(failed.status).toBe(502)
+        expect(failed.body).not.toContain('secret')
+      }
+      reply = 'HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcdef'
+      expect(await exchange(gateway.port, path)).toEqual({
+        status: 200,
+        body: 'abc',
+        complete: true
+      })
+      reply = 'HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nabc'
+      expect(await exchange(gateway.port, path)).toEqual({
+        status: 200,
+        body: 'abc',
+        complete: false
+      })
+      reply = 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok'
+      expect(await exchange(gateway.port, path)).toEqual({
+        status: 200,
+        body: 'ok',
+        complete: true
+      })
+    }
+  )
+  it('keeps origin-form double slashes and OPTIONS asterisk on the authorized host', async () => {
+    const targets: string[] = []
+    const origin = await listen((socket) =>
+      socket.once('data', (data) => {
+        targets.push(data.toString().split('\r\n')[0]!)
+        socket.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok')
+      })
+    )
+    const seen: string[] = []
+    const gateway = await CommandGateway.open({
+      credentials,
+      parentProxy: { http: `http://127.0.0.1:${origin.port}` },
+      decide: async (host) => {
+        seen.push(host)
+        return { allowed: true, address: '127.0.0.1' }
+      }
+    })
+    closeTasks.push(() => gateway.close())
+    await exchange(gateway.port, '//other.test/a')
+    await exchange(gateway.port, '*', 'OPTIONS')
+    expect(seen).toEqual(['example.test', 'example.test'])
+    expect(targets).toEqual([
+      'GET http://127.0.0.1//other.test/a HTTP/1.1',
+      'OPTIONS http://127.0.0.1 HTTP/1.1'
+    ])
+  })
+  it('releases a SOCKS tunnel when its client disconnects during setup', async () => {
+    const ready = Promise.withResolvers<Socket>()
+    const ended = Promise.withResolvers<void>()
+    const parent = await listen((socket) => {
+      void (async () => {
+        await readBytes(socket, 3)
+        socket.write(Buffer.from([5, 0]))
+        await readBytes(socket, 10)
+        socket.once('end', () => {
+          socket.end()
+          ended.resolve()
+        })
+        ready.resolve(socket)
+      })().catch(ready.reject)
+    })
+    const gateway = await CommandGateway.open({
+      credentials,
+      parentProxy: { http: `socks5://127.0.0.1:${parent.port}` },
+      decide: async () => ({ allowed: true, address: '127.0.0.1' })
+    })
+    closeTasks.push(() => gateway.close())
+    const client = connect(gateway.port, '127.0.0.1')
+    await once(client, 'connect')
+    client.write(
+      `GET http://example.test/a HTTP/1.1\r\nHost: example.test\r\nProxy-Authorization: ${authorization}\r\n\r\n`
+    )
+    const tunnel = await ready.promise
+    client.destroy()
+    await once(client, 'close')
+    // Let the gateway observe the disconnect before the parent finishes its handshake.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    tunnel.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 80]))
+    await ended.promise
+  })
+
+  it('preserves the raw path through a SOCKS parent connection', async () => {
+    const seen = Promise.withResolvers<string>()
+    const parent = await listen((socket) => {
+      void (async () => {
+        await readBytes(socket, 3)
+        socket.write(Buffer.from([5, 0]))
+        await readBytes(socket, 10)
+        socket.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 80]))
+        seen.resolve(await readHttpHeader(socket))
+        socket.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok')
+      })().catch(seen.reject)
+    })
+    const gateway = await CommandGateway.open({
+      credentials,
+      parentProxy: { http: `socks5://127.0.0.1:${parent.port}` },
+      decide: async () => ({ allowed: true, address: '127.0.0.1' })
+    })
+    closeTasks.push(() => gateway.close())
+    expect((await exchange(gateway.port, 'http://example.test/a/../b?')).body).toBe('ok')
+    expect(await seen.promise).toContain('GET /a/../b? HTTP/1.1')
+  })
+})
