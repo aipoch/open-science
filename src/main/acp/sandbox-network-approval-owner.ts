@@ -274,12 +274,16 @@ export class SandboxNetworkApprovalOwner {
         if (result.status === 'rejected' && result.reason instanceof AggregateError)
           throw result.reason
       }
-      // A decision saved by a prior process is already consent, not an unanswered request.
-      await this.recoverSession(
-        await this.sessions.loadSessionForContinuation(projectId, sessionId)
-      )
-      const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
+      let context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
       if (!context.networkApprovals?.length) return
+      if (context.networkApprovals.some((approval) => approval.decision === 'always-allow')) {
+        // A decision saved by a prior process is already consent, not an unanswered request.
+        await this.recoverSession(
+          await this.sessions.loadSessionForContinuation(projectId, sessionId)
+        )
+        context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
+        if (!context.networkApprovals?.length) return
+      }
       await this.patch(projectId, sessionId, () => [], undefined, true)
     } finally {
       cancellation.active = false

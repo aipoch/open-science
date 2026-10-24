@@ -26403,7 +26403,7 @@ describe('ACP runtime skill force-load + nudge', () => {
         }),
         permissionWait: {
           sessions: {
-            readSessionRuntimeContext: vi.fn(),
+            readSessionRuntimeContext: vi.fn(async () => ({ version: 1 as const, revision: 0 })),
             patchSessionRuntimeContext: vi.fn(),
             containsMessageOnActiveBranch: vi.fn(),
             loadSessionForContinuation: loadHistory

@@ -141,6 +141,14 @@ const attachSettings = (f: ReturnType<typeof fixture>): NotebookNetworkSettingsO
 }
 
 describe('durable sandbox destination approvals', () => {
+  it('leaves unrelated permission cancellation independent of transcript hydration', async () => {
+    const f = fixture()
+    const load = vi.spyOn(f.sessions, 'loadSessionForContinuation')
+    await f.owner.cancel(f.session.projectId, f.session.id)
+    expect(load).not.toHaveBeenCalled()
+    expect(f.allowDomain).not.toHaveBeenCalled()
+  })
+
   it.each(['aborted', 'disabled', 'publication-failed'])(
     'clears only an unadmitted approval when %s',
     async (mode) => {
