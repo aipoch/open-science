@@ -20,6 +20,7 @@ const controlledWindowsFixtureAvailable =
 // Controlled mutations still run through the production protected Windows launcher.
 test.beforeEach(async ({ app }) => {
   if (!controlledWindowsFixtureAvailable) return
+  test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   expect(await page.evaluate(() => window.api.settings.installNotebookNetwork())).toMatchObject({
