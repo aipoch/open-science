@@ -418,6 +418,38 @@ describe('Notebook filesystem policy', () => {
     ).not.toContain('OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED')
   })
 
+  it('preserves diagnostics and recorded violations when a diagnostic path cannot resolve', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'os-diagnostic-path-')))
+    try {
+      writeFileSync(join(root, 'file'), 'fixture')
+      symlinkSync(join(root, 'absent'), join(root, 'dangling'), 'junction')
+      const layout = normalizeFilesystemLayout({
+        privateRoot: root,
+        readOnlyRoots: [],
+        readWriteRoots: [],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      })
+      const paths = [join(root, 'file', 'leaf'), join(root, 'dangling', 'leaf')]
+      if (process.platform !== 'win32') paths.push(`${root}${sep}missing${sep}..${sep}leaf`)
+      const hidden = (path: string): boolean => hiddenByFilesystemLayout(layout, path)
+      const log = new ViolationLog()
+      for (const path of paths) {
+        expect(() => absolutePhysicalPath(path)).toThrow()
+        expect(hidden(path)).toBe(false)
+        const stderr = `cat: '${path}': No such file or directory`
+        expect(log.attach('plain', stderr, hidden)).toBe(stderr)
+        log.record('recorded', 'deny network-outbound example.org:443 (not approved)')
+        const annotated = log.attach('recorded', stderr, hidden)
+        expect(annotated).toContain(stderr)
+        expect(annotated).toContain('deny network-outbound example.org:443 (not approved)')
+        expect(annotated).not.toContain('OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   linuxIt.each([true, false])(
     'projects Linux folder restriction %s while retaining denied roots',
     async (restrictFolders) => {

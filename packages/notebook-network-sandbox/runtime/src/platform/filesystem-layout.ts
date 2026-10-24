@@ -93,7 +93,13 @@ const pathIsDirectory = (path: string): boolean => {
 
 const hiddenByFilesystemLayout = (layout: FilesystemLayout, value: string): boolean => {
   if (!isAbsolute(value)) return false
-  const candidate = absolutePhysicalPath(value)
+  let candidate: string
+  try {
+    candidate = absolutePhysicalPath(value)
+  } catch {
+    // Diagnostics can contain invalid paths; resolution failure does not prove sandbox denial.
+    return false
+  }
   if (layout.deniedReadRoots.some((root) => contains(root, candidate))) return true
   if (
     layout.restrictFolders === false ||
