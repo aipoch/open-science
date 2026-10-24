@@ -15,6 +15,10 @@ import type { PermissionWaitSessions, PublishPermissionWaitSession } from './per
 
 // Owns only destination authority. The provider permission slot and its tool replay stay separate.
 export class SandboxNetworkApprovalOwner {
+  private readonly liveRequests = new Map<
+    string,
+    { abort: AbortController; settled: Promise<void> }
+  >()
   private readonly cancellationStates = new Map<string, { active: boolean }>()
   private readonly globalDecisions = new Map<
     string,
@@ -111,9 +115,15 @@ export class SandboxNetworkApprovalOwner {
     // The durable row exists before the broker exposes its request to any client.
     const request = sandboxNetworkApprovalRequest(approval)
     let admitted = false
+    const recoveryAbort = new AbortController()
+    const settled = Promise.withResolvers<void>()
+    this.liveRequests.set(approval.requestId, { abort: recoveryAbort, settled: settled.promise })
     try {
       return await send({
         ...input,
+        signal: input.signal
+          ? AbortSignal.any([input.signal, recoveryAbort.signal])
+          : recoveryAbort.signal,
         onAdmitted: () => {
           input.onAdmitted?.()
           admitted = true
@@ -128,8 +138,16 @@ export class SandboxNetworkApprovalOwner {
           await this.patch(
             network.projectId,
             input.sessionId,
-            (context) =>
-              (context.networkApprovals ?? []).flatMap((candidate) =>
+            (context) => {
+              if (
+                context.networkApprovals?.some(
+                  (candidate) =>
+                    candidate.requestId === approval.requestId &&
+                    candidate.decision === 'always-allow'
+                )
+              )
+                throw new Error('Network approval was already answered.')
+              return (context.networkApprovals ?? []).flatMap((candidate) =>
                 candidate.requestId !== approval.requestId
                   ? [candidate]
                   : optionId === 'allow-once' &&
@@ -137,12 +155,15 @@ export class SandboxNetworkApprovalOwner {
                       input.canResume?.() === false
                     ? [{ ...candidate, state: 'continuing' as const }]
                     : []
-              ),
+              )
+            },
             optionId === 'allow-once' ? approval : undefined
           )
         }
       })
     } finally {
+      this.liveRequests.delete(approval.requestId)
+      settled.resolve()
       if (!admitted) {
         await this.patch(network.projectId, input.sessionId, (context) =>
           (context.networkApprovals ?? []).filter(
@@ -175,36 +196,6 @@ export class SandboxNetworkApprovalOwner {
       )
     )
       throw new Error('Invalid network approval option.')
-    const context = await this.sessions.readSessionRuntimeContext(projectId, approval.sessionId)
-    const raw = context.networkApprovals?.find(({ requestId }) => requestId === approval.requestId)
-    if (raw?.state === 'continuing' && raw.decision === 'always-allow') {
-      // Restore normalizes the card, not the authority file. Re-arm an interrupted Global claim
-      // before applying the new explicit answer, but never steal a live Settings transaction.
-      const canReconcile = (): boolean => {
-        const live = this.globalDecisions.get(approval.requestId)
-        return isCurrent() && (!live || Boolean(live.rollbackFailure))
-      }
-      await this.patch(
-        projectId,
-        approval.sessionId,
-        (runtime) => {
-          const current = runtime.networkApprovals?.find(
-            ({ requestId }) => requestId === approval.requestId
-          )
-          if (current?.state !== 'continuing' || current.decision !== 'always-allow')
-            throw new Error('Network approval was already answered.')
-          return runtime.networkApprovals!.map((candidate) => {
-            if (candidate.requestId !== approval.requestId) return candidate
-            const { decision: _decision, ...rest } = candidate
-            void _decision
-            return { ...rest, state: 'pending' as const }
-          })
-        },
-        approval,
-        true,
-        canReconcile
-      )
-    }
     if (optionId === 'always-allow') {
       await this.grantGlobal(projectId, approval, true, isCurrent)
       return true
@@ -232,6 +223,37 @@ export class SandboxNetworkApprovalOwner {
     return true
   }
 
+  // Called by host Session hydration, without creating a provider connection or replaying a tool.
+  async recoverSession(session: PersistedChatSession): Promise<PersistedChatSession> {
+    if (
+      !this.sessions ||
+      !session.runtimeContext?.networkApprovals?.some(
+        (approval) => approval.state === 'continuing' && approval.decision === 'always-allow'
+      )
+    )
+      return session
+    const context = await this.sessions.readSessionRuntimeContext(session.projectId, session.id)
+    for (const approval of context.networkApprovals ?? []) {
+      if (approval.state !== 'continuing' || approval.decision !== 'always-allow') continue
+      const live = this.globalDecisions.get(approval.requestId)
+      if (live && !live.rollbackFailure) {
+        // Never take over a live choice. Concurrent recovery readers may join an already saved one.
+        if (live.isCommitted()) await live.done
+        continue
+      }
+      await this.grantGlobal(session.projectId, approval, true, () => true, true)
+      const request = this.liveRequests.get(approval.requestId)
+      if (request) {
+        // A failed live Settings rollback may have left its broker wait pending. Recovery only
+        // finishes authorization: settle that old operation through the broker's existing abort
+        // path, which publishes settlement and requires an explicit command retry.
+        request.abort.abort()
+        await request.settled
+      }
+    }
+    return this.sessions.loadSessionForContinuation(session.projectId, session.id)
+  }
+
   async cancel(projectId: string, sessionId: string): Promise<void> {
     if (!this.sessions) return
     const cancellation = { active: true }
@@ -252,6 +274,10 @@ export class SandboxNetworkApprovalOwner {
         if (result.status === 'rejected' && result.reason instanceof AggregateError)
           throw result.reason
       }
+      // A decision saved by a prior process is already consent, not an unanswered request.
+      await this.recoverSession(
+        await this.sessions.loadSessionForContinuation(projectId, sessionId)
+      )
       const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
       if (!context.networkApprovals?.length) return
       await this.patch(projectId, sessionId, () => [], undefined, true)
@@ -285,13 +311,14 @@ export class SandboxNetworkApprovalOwner {
     projectId: string,
     approval: SandboxNetworkApproval,
     restored = false,
-    isCurrent: () => boolean = () => true
+    isCurrent: () => boolean = () => true,
+    recovering = false
   ): Promise<void> {
     const previous = this.globalDecisions.get(approval.requestId)
     if (previous && !previous.rollbackFailure)
       return Promise.reject(new Error('Network approval is already being saved.'))
     const abort = new AbortController()
-    let committed = false
+    let committed = recovering
     let rollbackFailure: AggregateError | undefined
     const done = this.commitGlobal(
       projectId,
@@ -300,7 +327,8 @@ export class SandboxNetworkApprovalOwner {
       () => !abort.signal.aborted && isCurrent(),
       () => {
         committed = true
-      }
+      },
+      recovering
     )
       .catch((error: unknown) => {
         if (error instanceof AggregateError) rollbackFailure = error
@@ -309,8 +337,8 @@ export class SandboxNetworkApprovalOwner {
       .finally(() => {
         const decision = this.globalDecisions.get(approval.requestId)
         if (decision?.done !== done) return
-        // A repeated Stop must not erase evidence of an unsuccessful rollback. A new explicit
-        // Global decision can replace the failed operation and reconcile Settings with fresh consent.
+        // A repeated Stop must not erase evidence of an unsuccessful rollback. Session hydration
+        // can retry the saved Global decision and reconcile both durable stores.
         if (rollbackFailure) decision.rollbackFailure = rollbackFailure
         else this.globalDecisions.delete(approval.requestId)
       })
@@ -329,29 +357,33 @@ export class SandboxNetworkApprovalOwner {
     approval: SandboxNetworkApproval,
     restored: boolean,
     isCurrent: () => boolean,
-    markCommitted: () => void
+    markCommitted: () => void,
+    recovering: boolean
   ): Promise<void> {
     if (!this.allowDomain) throw new Error('Network settings are unavailable.')
-    // Claim the durable row before entering the Settings transaction. Both queues revalidate
-    // authority; cancellation during persistence/application rolls Settings back in its queue.
-    await this.patch(
-      projectId,
-      approval.sessionId,
-      (context) => {
-        const current = context.networkApprovals?.find(
-          ({ requestId }) => requestId === approval.requestId
-        )
-        if (current?.state !== 'pending') throw new Error('Network approval is no longer pending.')
-        return context.networkApprovals!.map((candidate) =>
-          candidate.requestId === approval.requestId
-            ? { ...candidate, state: 'continuing' as const, decision: 'always-allow' as const }
-            : candidate
-        )
-      },
-      approval,
-      restored,
-      isCurrent
-    )
+    // A recovery resumes saved consent; a live response first claims an unanswered request.
+    if (!recovering)
+      await this.patch(
+        projectId,
+        approval.sessionId,
+        (context) => {
+          const current = context.networkApprovals?.find(
+            ({ requestId }) => requestId === approval.requestId
+          )
+          if (current?.state !== 'pending')
+            throw new Error('Network approval is no longer pending.')
+          return context.networkApprovals!.map((candidate) =>
+            candidate.requestId === approval.requestId
+              ? { ...candidate, state: 'continuing' as const, decision: 'always-allow' as const }
+              : candidate
+          )
+        },
+        approval,
+        restored,
+        isCurrent
+      )
+    const alreadySettled = new Error('Saved network approval was already settled.')
+    let authorityValidated = !recovering
     try {
       await this.allowDomain(
         approval.hostname,
@@ -361,8 +393,7 @@ export class SandboxNetworkApprovalOwner {
             projectId,
             approval.sessionId
           )
-          // Ordinary restored-session reads may re-present an uncertain global claim. Check the
-          // unnormalized authority through the runtime-context port, not that UI projection.
+          // The raw durable decision is authoritative, including after process loss.
           const context = await this.sessions!.readSessionRuntimeContext(
             projectId,
             approval.sessionId
@@ -370,13 +401,15 @@ export class SandboxNetworkApprovalOwner {
           const current = context.networkApprovals?.find(
             ({ requestId }) => requestId === approval.requestId
           )
-          if (
-            !isCurrent() ||
-            current?.state !== 'continuing' ||
-            current.decision !== 'always-allow'
-          )
+          if (current?.state !== 'continuing' || current.decision !== 'always-allow') {
+            // A catalog snapshot may outlive another reader's completed transaction. The Settings
+            // owner runs this first guard before writing; never resurrect that settled decision.
+            if (!authorityValidated) throw alreadySettled
             throw new Error('Network approval is no longer current.')
-          this.assertBound(session, approval)
+          }
+          if (!isCurrent()) throw new Error('Network approval is no longer current.')
+          authorityValidated = true
+          if (!recovering) this.assertBound(session, approval)
         },
         async () => {
           await this.patch(
@@ -386,8 +419,8 @@ export class SandboxNetworkApprovalOwner {
               (context.networkApprovals ?? []).filter(
                 ({ requestId }) => requestId !== approval.requestId
               ),
-            approval,
-            restored,
+            recovering ? undefined : approval,
+            recovering ? 'preserve' : restored,
             isCurrent
           )
           if (!isCurrent()) throw new Error('Network approval execution is no longer current.')
@@ -396,21 +429,36 @@ export class SandboxNetworkApprovalOwner {
         }
       )
     } catch (error) {
+      if (error === alreadySettled) return
       try {
-        await this.patch(projectId, approval.sessionId, (context) => {
-          const approvals = context.networkApprovals ?? []
-          if (!approvals.some(({ requestId }) => requestId === approval.requestId)) {
-            if (approvals.length >= 32) throw new Error('Too many pending network approvals.')
-            return [...approvals, approval]
-          }
-          return approvals.map((candidate) => {
-            if (candidate.requestId !== approval.requestId || candidate.decision !== 'always-allow')
-              return candidate
-            const { decision: _decision, ...rest } = candidate
-            void _decision
-            return { ...rest, state: 'pending' as const }
-          })
-        })
+        await this.patch(
+          projectId,
+          approval.sessionId,
+          (context) => {
+            const retry: SandboxNetworkApproval =
+              recovering || error instanceof AggregateError
+                ? { ...approval, state: 'continuing', decision: 'always-allow' }
+                : { ...approval, state: 'pending' }
+            const approvals = context.networkApprovals ?? []
+            if (!approvals.some(({ requestId }) => requestId === approval.requestId)) {
+              if (approvals.length >= 32) throw new Error('Too many pending network approvals.')
+              return [...approvals, retry]
+            }
+            return approvals.map((candidate) => {
+              if (
+                candidate.requestId !== approval.requestId ||
+                candidate.decision !== 'always-allow'
+              )
+                return candidate
+              if (retry.decision === 'always-allow') return retry
+              const { decision: _decision, ...rest } = retry
+              void _decision
+              return rest
+            })
+          },
+          undefined,
+          recovering ? 'preserve' : restored
+        )
       } catch (restoreError) {
         throw new AggregateError([error, restoreError], 'Could not restore the network approval.')
       }
@@ -423,7 +471,7 @@ export class SandboxNetworkApprovalOwner {
     sessionId: string,
     update: (context: SessionRuntimeContext) => readonly SandboxNetworkApproval[],
     authority?: SandboxNetworkApproval,
-    restored = false,
+    restored: boolean | 'preserve' = false,
     isCurrent?: () => boolean
   ): Promise<void> {
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -436,11 +484,14 @@ export class SandboxNetworkApprovalOwner {
           expectedRevision: context.revision,
           patch: { networkApprovals: next.length ? next : undefined },
           sessionStatus:
-            next.some(({ state }) => state === 'pending') || context.permission?.state === 'pending'
-              ? 'waiting-permission'
-              : restored
-                ? 'idle'
-                : 'running',
+            restored === 'preserve'
+              ? undefined
+              : next.some(({ state }) => state === 'pending') ||
+                  context.permission?.state === 'pending'
+                ? 'waiting-permission'
+                : restored
+                  ? 'idle'
+                  : 'running',
           ...(authority
             ? {
                 beforePersist: (session: PersistedChatSession) => {

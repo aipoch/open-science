@@ -294,26 +294,8 @@ export const normalizeSessionAfterRestore = (
     reconcileCompletedRecovery?: boolean
   } = {}
 ): PersistedChatSession => {
-  // A global decision may have committed its claim before settings were written. Re-present it
-  // after process loss; never turn that uncertain two-owner write into a one-time retry grant.
-  if (
-    session.runtimeContext?.networkApprovals?.some(
-      (approval) => approval.decision === 'always-allow'
-    )
-  ) {
-    session = {
-      ...session,
-      runtimeContext: {
-        ...session.runtimeContext,
-        networkApprovals: session.runtimeContext.networkApprovals.map((approval) => {
-          if (approval.decision !== 'always-allow') return approval
-          const { decision: _decision, ...rest } = approval
-          void _decision
-          return { ...rest, state: 'pending' as const }
-        })
-      }
-    }
-  }
+  // A saved Global decision remains continuing. Main resumes that decision idempotently;
+  // re-presenting it as pending could offer Deny after Settings already persisted the grant.
   // Main releases unadmitted preparations; ordinary reads must retain their exact run witness.
   if (isPreparedSessionRun(session)) return session
   const persistedRuntimeContext = session.runtimeContext

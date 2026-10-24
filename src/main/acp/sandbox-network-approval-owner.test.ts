@@ -265,7 +265,7 @@ describe('durable sandbox destination approvals', () => {
     await result
   })
 
-  it('rearms an uncertain global decision after process loss and retries failed settings writes', async () => {
+  it('retries failed live Settings writes and preserves saved Global consent on restore', async () => {
     const f = fixture()
     f.allowDomain.mockRejectedValueOnce(new Error('settings unavailable'))
     const result = f.owner.request(f.input, 'prompt-fixture', f.send)
@@ -283,9 +283,11 @@ describe('durable sandbox destination approvals', () => {
         networkApprovals: [{ ...approval, state: 'continuing', decision: 'always-allow' }]
       }
     })
-    expect(interrupted.status).toBe('waiting-permission')
-    expect(interrupted.runtimeContext?.networkApprovals?.[0]).toMatchObject({ state: 'pending' })
-    expect(interrupted.runtimeContext?.networkApprovals?.[0].decision).toBeUndefined()
+    expect(interrupted.status).not.toBe('waiting-permission')
+    expect(interrupted.runtimeContext?.networkApprovals?.[0]).toMatchObject({
+      state: 'continuing',
+      decision: 'always-allow'
+    })
     await f.broker.respond({ requestId: request.requestId, optionId: 'always-allow' })
     await expect(result).resolves.toBe('always-allow')
     expect(f.allowDomain).toHaveBeenCalledTimes(2)
@@ -454,7 +456,7 @@ describe('durable sandbox destination approvals', () => {
     await result
   })
 
-  it('uses durable authority when restored reads re-present an in-flight global claim', async () => {
+  it('uses durable authority when restored reads normalize the Session', async () => {
     const f = fixture()
     const result = f.owner.request(f.input, 'prompt-fixture', f.send)
     const request = await f.pending()
@@ -516,19 +518,17 @@ describe('durable sandbox destination approvals', () => {
     release()
     await rejected
     await failedStop
-    expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
+    expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
+      state: 'continuing',
+      decision: 'always-allow'
+    })
     await expect(f.owner.cancel(f.session.projectId, f.session.id)).rejects.toBe(failure)
-    expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
-    await f.owner.respondRestored(
-      {
-        requestId: request.requestId,
-        optionId: 'always-allow',
-        restored: { projectId: f.session.projectId, sessionId: f.session.id }
-      },
-      f.session.projectId
-    )
-    await f.broker.respond({ requestId: request.requestId, cancelled: true })
-    await result
+    await expect(
+      f.broker.respond({ requestId: request.requestId, optionId: 'deny' })
+    ).rejects.toThrow('already answered')
+    await f.owner.recoverSession(f.session)
+    await expect(result).resolves.toBeUndefined()
+    expect(f.broker.getPendingRequests()).toEqual([])
     await expect(f.owner.cancel(f.session.projectId, f.session.id)).resolves.toBeUndefined()
   })
 
@@ -573,9 +573,9 @@ describe('durable sandbox destination approvals', () => {
     expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
   })
 
-  it.each(['allow-once', 'always-allow', 'deny', 'cancelled'])(
-    'settles %s after restart with an unnormalized global claim on disk',
-    async (optionId) => {
+  it.each(['before-settings', 'after-settings', 'after-cleanup', 'stop'])(
+    'finishes saved Global consent after restart at %s without replaying commands',
+    async (crashPoint) => {
       const f = fixture()
       const settings = attachSettings(f)
       const result = f.owner.request(f.input, 'prompt-fixture', f.send)
@@ -595,45 +595,170 @@ describe('durable sandbox destination approvals', () => {
           }))
         }
       })
-      const load = f.sessions.loadSessionForContinuation
-      f.sessions.loadSessionForContinuation = async (...args) =>
-        normalizeSessionAfterRestore(await load(...args))
-      const projected = await f.sessions.loadSessionForContinuation(
-        f.session.projectId,
-        f.session.id
-      )
-      expect(projected.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
-      expect(
-        (await f.sessions.readSessionRuntimeContext(f.session.projectId, f.session.id))
-          .networkApprovals?.[0]
-      ).toMatchObject({ state: 'continuing', decision: 'always-allow' })
-      const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
-      const answer = {
-        requestId: request.requestId,
-        ...(optionId === 'cancelled' ? { cancelled: true } : { optionId }),
-        restored: { projectId: f.session.projectId, sessionId: f.session.id }
-      }
-      await restarted.respondRestored(answer, f.session.projectId)
-      if (optionId === 'allow-once') {
-        expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
-          state: 'continuing'
-        })
-        expect(f.session.runtimeContext?.networkApprovals?.[0]).not.toHaveProperty('decision')
-        await expect(restarted.respondRestored(answer, f.session.projectId)).rejects.toThrow(
-          'already answered'
+      if (crashPoint !== 'before-settings') await settings.allowDomain('service.example.test')
+      if (crashPoint === 'after-cleanup') {
+        const current = await f.sessions.readSessionRuntimeContext(
+          f.session.projectId,
+          f.session.id
         )
-        const send = vi.fn(f.send)
-        await expect(restarted.request(f.input, 'prompt-fixture', send)).resolves.toBe('allow-once')
-        expect(send).not.toHaveBeenCalled()
+        await f.sessions.patchSessionRuntimeContext({
+          projectId: f.session.projectId,
+          sessionId: f.session.id,
+          expectedRevision: current.revision,
+          patch: { networkApprovals: undefined }
+        })
       }
+      const restored = normalizeSessionAfterRestore(f.session)
+      if (crashPoint !== 'after-cleanup') {
+        expect(restored.runtimeContext?.networkApprovals?.[0]).toMatchObject({
+          state: 'continuing',
+          decision: 'always-allow'
+        })
+      }
+      const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
+      if (crashPoint !== 'after-cleanup') {
+        for (const optionId of ['allow-once', 'deny', 'always-allow']) {
+          await expect(
+            restarted.respondRestored(
+              {
+                requestId: request.requestId,
+                optionId,
+                restored: { projectId: f.session.projectId, sessionId: f.session.id }
+              },
+              f.session.projectId
+            )
+          ).rejects.toThrow('already answered')
+        }
+      }
+      if (crashPoint === 'stop') await restarted.cancel(f.session.projectId, f.session.id)
+      else await restarted.recoverSession(restored)
+      await restarted.recoverSession(f.session)
       expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
-      await expect(restarted.respondRestored(answer, f.session.projectId)).resolves.toBe(false)
-      expect(f.allowDomain).toHaveBeenCalledTimes(optionId === 'always-allow' ? 1 : 0)
-      expect((await settings.get()).allowedDomains.includes('service.example.test')).toBe(
-        optionId === 'always-allow'
-      )
+      expect(f.broker.getPendingRequests()).toEqual([])
+      expect(f.allowDomain).toHaveBeenCalledTimes(crashPoint === 'after-cleanup' ? 0 : 1)
+      expect(
+        (await settings.get()).allowedDomains.filter((host) => host === 'service.example.test')
+      ).toHaveLength(1)
     }
   )
+
+  it('retains saved consent after recovery failure and retries on the next load', async () => {
+    const f = fixture()
+    const settings = attachSettings(f)
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    await f.pending()
+    f.broker.abandonAllPending()
+    await result
+    const raw = await f.sessions.readSessionRuntimeContext(f.session.projectId, f.session.id)
+    await f.sessions.patchSessionRuntimeContext({
+      projectId: f.session.projectId,
+      sessionId: f.session.id,
+      expectedRevision: raw.revision,
+      patch: {
+        networkApprovals: raw.networkApprovals!.map((approval) => ({
+          ...approval,
+          state: 'continuing',
+          decision: 'always-allow'
+        }))
+      }
+    })
+    await settings.allowDomain('service.example.test')
+    f.allowDomain.mockRejectedValueOnce(new Error('Settings unavailable'))
+    const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
+    await expect(restarted.recoverSession(f.session)).rejects.toThrow('Settings unavailable')
+    expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
+      state: 'continuing',
+      decision: 'always-allow'
+    })
+    await restarted.recoverSession(f.session)
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+    expect((await settings.get()).allowedDomains).toContain('service.example.test')
+  })
+
+  it('joins concurrent recovery readers and Stop after the branch changes', async () => {
+    const f = fixture()
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    await f.pending()
+    f.broker.abandonAllPending()
+    await result
+    const raw = await f.sessions.readSessionRuntimeContext(f.session.projectId, f.session.id)
+    await f.sessions.patchSessionRuntimeContext({
+      projectId: f.session.projectId,
+      sessionId: f.session.id,
+      expectedRevision: raw.revision,
+      patch: {
+        networkApprovals: raw.networkApprovals!.map((approval) => ({
+          ...approval,
+          state: 'continuing',
+          decision: 'always-allow'
+        }))
+      }
+    })
+    f.session.conversationGraph!.frames[0].activeBranchId = 'different-branch'
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    f.allowDomain.mockImplementationOnce(async (_host, assertCurrent, finalize) => {
+      entered.resolve()
+      await release.promise
+      await assertCurrent?.()
+      await finalize?.()
+      return undefined
+    })
+    const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
+    const recovery = restarted.recoverSession(f.session)
+    await entered.promise
+    const anotherReader = restarted.recoverSession(f.session)
+    const stop = restarted.cancel(f.session.projectId, f.session.id)
+    release.resolve()
+    await Promise.all([recovery, anotherReader, stop])
+    expect(f.allowDomain).toHaveBeenCalledTimes(1)
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it('does not resurrect a saved decision from a stale recovery snapshot', async () => {
+    const f = fixture()
+    const settings = attachSettings(f)
+    const result = f.owner.request(f.input, 'prompt-fixture', f.send)
+    await f.pending()
+    f.broker.abandonAllPending()
+    await result
+    const raw = await f.sessions.readSessionRuntimeContext(f.session.projectId, f.session.id)
+    await f.sessions.patchSessionRuntimeContext({
+      projectId: f.session.projectId,
+      sessionId: f.session.id,
+      expectedRevision: raw.revision,
+      patch: {
+        networkApprovals: raw.networkApprovals!.map((approval) => ({
+          ...approval,
+          state: 'continuing',
+          decision: 'always-allow'
+        }))
+      }
+    })
+    const read = f.sessions.readSessionRuntimeContext
+    const captured = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let first = true
+    f.sessions.readSessionRuntimeContext = async (...args) => {
+      const context = await read(...args)
+      if (first) {
+        first = false
+        captured.resolve()
+        await release.promise
+      }
+      return context
+    }
+    const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
+    const stale = restarted.recoverSession(f.session)
+    await captured.promise
+    await restarted.recoverSession(f.session)
+    // A subsequent user Settings edit must not be undone by the delayed catalog reader.
+    await settings.set({ ...(await settings.get()), allowedDomains: [] })
+    release.resolve()
+    await stale
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+    expect((await settings.get()).allowedDomains).not.toContain('service.example.test')
+  })
 
   it('does not reconcile a projected global claim while its live transaction is pending', async () => {
     const f = fixture()
@@ -662,7 +787,9 @@ describe('durable sandbox destination approvals', () => {
         },
         f.session.projectId
       )
-    ).rejects.toThrow(/already being saved|no longer current/)
+    ).rejects.toThrow('already answered')
+    await f.owner.recoverSession(f.session)
+    expect(f.allowDomain).toHaveBeenCalledTimes(1)
     expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
       state: 'continuing',
       decision: 'always-allow'

@@ -160,11 +160,13 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     options.permissionWait?.sessions,
     options.permissionWait?.onContinuationSessionUpdated
   )
-  const sandboxNetworkApprovalOwner = new SandboxNetworkApprovalOwner(
-    options.permissionWait?.sessions,
-    options.permissionWait?.onSessionUpdated,
-    options.permissionWait?.allowNetworkDomain
-  )
+  const sandboxNetworkApprovalOwner =
+    options.permissionWait?.networkApprovalOwner ??
+    new SandboxNetworkApprovalOwner(
+      options.permissionWait?.sessions,
+      options.permissionWait?.onSessionUpdated,
+      options.permissionWait?.allowNetworkDomain
+    )
   const permissionWaitOwner = new AcpPermissionWaitOwner(
     options.permissionWait?.sessions,
     options.permissionWait?.onSessionUpdated,

@@ -130,6 +130,7 @@ export type AcpRuntimeOptions = {
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
+    networkApprovalOwner?: import('./sandbox-network-approval-owner').SandboxNetworkApprovalOwner
     allowNetworkDomain?: (
       hostname: string,
       assertCurrent?: () => Promise<void>,
