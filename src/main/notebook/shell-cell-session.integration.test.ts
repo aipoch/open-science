@@ -33,6 +33,10 @@ describe('persistent platform shell cells', () => {
     sessionId,
     command: code,
     cwd: join(root, 'workspace'),
+    // Protected application Sessions select the prepared PowerShell/Node runtime.
+    ...(windows && sandbox
+      ? { runtimeBinding: { kind: 'powershell' as const, version: '7.6' as const } }
+      : {}),
     runtimeRoot: join(root, 'runtime'),
     handoffDir: join(root, 'workspace')
   })
@@ -215,7 +219,10 @@ describe('persistent platform shell cells', () => {
       expect(npmCli, 'Run this test through the repository npm test command').toBeTruthy()
       const quote = (value: string): string =>
         windows ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", `'"'"'`)}'`
-      const npm = `${windows ? '& ' : ''}${quote(process.execPath)} ${quote(npmCli!)}`
+      const npm =
+        windows && sandboxed
+          ? 'npm.cmd'
+          : `${windows ? '& ' : ''}${quote(process.execPath)} ${quote(npmCli!)}`
       const workspace = join(root, 'workspace')
       const secondWorkspace = join(root, 'second-workspace')
       await mkdir(secondWorkspace)
