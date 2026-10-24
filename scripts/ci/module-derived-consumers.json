@@ -58,6 +58,7 @@
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts",
       "packages/connector-builtins/src/structures-omnipath.test.ts",
+      "packages/connector-builtins/src/structures-pdb-similarity.test.ts",
       "packages/connector-builtins/src/structures-pdbe.test.ts",
       "packages/connector-builtins/src/tcia.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
@@ -435,6 +436,7 @@
       "src/main/local-fs/service.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/notebook/execution-owner.stage-checkpoint.test.ts",
+      "src/main/process-tree-foreign-service.macos.integration.test.ts",
       "src/main/session-details/composition.test.ts"
     ],
     "notebook_analysis": [

@@ -3,14 +3,24 @@ import { validRStageEnvironmentProof } from '@aipoch/reproducibility'
 import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 
 import type { NotebookEnvironmentPackage } from '@aipoch/environment/contracts'
-import type { NotebookLiveEnvironmentOverlay } from '../../shared/notebook'
-import type { NotebookNamespaceVariable } from '../../shared/notebook'
+import type { RStageCheckpoint } from '@aipoch/reproducibility/contracts'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
+import type {
+  NotebookLiveEnvironmentOverlay,
+  NotebookNamespaceVariable,
+  NotebookRPackageContext,
+  NotebookRStageComparison
+} from '../../shared/notebook'
+import type {
+  NotebookSessionExecutionRequest,
+  NotebookSessionExecutionResult
+} from './session-aggregate'
 
 export type KernelLoopFigure = { mime: string; path: string }
 
 export type KernelLoopResponse = {
-  stageCheckpointCapture?: import('./session-aggregate').NotebookSessionExecutionResult['stageCheckpointCapture']
-  stageComparison?: import('./session-aggregate').NotebookSessionExecutionResult['stageComparison']
+  stageCheckpointCapture?: NotebookSessionExecutionResult['stageCheckpointCapture']
+  stageComparison?: NotebookSessionExecutionResult['stageComparison']
   reqId: string
   stdout: string
   stderr: string
@@ -186,7 +196,7 @@ const parseStageCheckpoint = (value: unknown): KernelLoopResponse['stageCheckpoi
     !validNames(checkpoint.output_names)
   )
     return { state: 'unavailable', reason: 'invalid-checkpoint-response' }
-  let environmentProof: import('@aipoch/reproducibility/contracts').RStageCheckpoint['environmentProof']
+  let environmentProof: RStageCheckpoint['environmentProof']
   if ('environment_proof' in checkpoint) {
     const proof = checkpoint.environment_proof
     if (
@@ -226,7 +236,7 @@ const parseStageComparison = (value: unknown): KernelLoopResponse['stageComparis
       (name) => typeof name === 'string' && /^[A-Za-z][A-Za-z0-9.]{0,127}$/u.test(name)
     ) &&
     new Set(names).size === names.length
-  let packageContext: import('../../shared/notebook').NotebookRPackageContext | undefined
+  let packageContext: NotebookRPackageContext | undefined
   if ('package_context' in comparison) {
     const raw = comparison.package_context
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return invalid()
@@ -246,7 +256,7 @@ const parseStageComparison = (value: unknown): KernelLoopResponse['stageComparis
       targetPackages: context.target_packages
     }
   } else if ('scientific_outcome' in comparison) return invalid()
-  let runtimeFootprint: import('../../shared/notebook').NotebookRStageComparison['runtimeFootprint']
+  let runtimeFootprint: NotebookRStageComparison['runtimeFootprint']
   if ('runtime_footprint' in comparison) {
     const raw = comparison.runtime_footprint
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return invalid()
@@ -337,7 +347,7 @@ export function framePythonRequest(
   code: string,
   controlInvocationId?: string,
   protectedDirs?: readonly string[],
-  pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState'],
+  pythonRandomState?: NotebookExecutionContext['before']['pythonRandomState'],
   replPublisher?: string
 ): string {
   return `${JSON.stringify({
@@ -369,7 +379,7 @@ export function frameRStageRequest(
   reqId: string,
   code: string,
   options: Pick<
-    import('./session-aggregate').NotebookSessionExecutionRequest,
+    NotebookSessionExecutionRequest,
     'stageCheckpoint' | 'stageRestore' | 'stageSupplement' | 'stageExpectedOutputPath'
   >
 ): Buffer {

@@ -20,6 +20,7 @@ const EXPECTED_IDS = [
   'pdb_get_structures',
   'pdb_get_entities',
   'pdb_get_ligands',
+  'pdb_search_structure_similarity',
   'pdbe_get_validation',
   'alphafold_get_prediction',
   'alphafold_check_coverage'

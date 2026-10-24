@@ -7,6 +7,9 @@ import type {
   NotebookRunEnvironmentLockCapture
 } from '@aipoch/environment/contracts'
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import type { RStageCheckpoint, RStageCheckpointCapture } from '@aipoch/reproducibility/contracts'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
+import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type {
@@ -113,7 +116,7 @@ export type NotebookSessionExecutionRequest = {
   }
   stageSupplement?: { inputPath: string; expectedOutputPath: string; names: string[] }
   stageExpectedOutputPath?: string
-  pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState']
+  pythonRandomState?: NotebookExecutionContext['before']['pythonRandomState']
   helperModules?: readonly NotebookHelperModuleInjection[]
   cwd: string
   notebookSessionRoot: string
@@ -147,7 +150,7 @@ export type NotebookSessionExecutionRequest = {
 }
 
 export type NotebookSessionExecutionResult = {
-  recovery?: import('../../shared/execution-recovery').NotebookExecutionRecovery
+  recovery?: NotebookExecutionRecovery
   status: Extract<NotebookRunStatus, 'completed' | 'failed' | 'timeout' | 'cancelled'>
   stdout: string
   stderr: string
@@ -167,13 +170,13 @@ export type NotebookSessionExecutionResult = {
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
   environmentLock?: NotebookRunEnvironmentLockCapture
-  stageCheckpoint?: import('@aipoch/reproducibility/contracts').RStageCheckpointCapture
+  stageCheckpoint?: RStageCheckpointCapture
   stageCheckpointCapture?:
     | {
         state: 'available'
         inputNames: string[]
         outputNames: string[]
-        environmentProof?: import('@aipoch/reproducibility/contracts').RStageCheckpoint['environmentProof']
+        environmentProof?: RStageCheckpoint['environmentProof']
       }
     | { state: 'unavailable'; reason: string }
   stageComparison?: NotebookRStageComparison

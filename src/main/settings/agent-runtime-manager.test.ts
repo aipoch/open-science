@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
@@ -1573,6 +1574,126 @@ describe('AgentRuntimeManager', () => {
       }),
       ['--add-dir', projectionRoot]
     )
+  })
+
+  describe('subscription probe process launch', () => {
+    const installations = [
+      { name: 'native executable with spaces', native: true, spacedExecutable: true },
+      { name: 'native executable with spaced runtime paths', native: true, spacedRuntime: true },
+      { name: 'native executable with space-free paths', native: true },
+      { name: 'JavaScript CLI entry with spaces', native: false, spacedExecutable: true },
+      { name: 'Windows npm shim', native: false, shim: true, spacedExecutable: true }
+    ]
+
+    for (const installation of installations) {
+      it
+        .skipIf(process.platform !== 'win32' && (installation.native || installation.shim))
+        .each(['claude-shared', 'claude-isolated'] as const)(
+        `validates %s using ${installation.name}`,
+        async (type) => {
+          const binDir = join(storageRoot, installation.spacedExecutable ? 'THANH HUY LE' : 'bin')
+          const configDir = join(storageRoot, installation.spacedRuntime ? 'Data Location' : 'data')
+          const projectionRoot = join(configDir, 'skills')
+          const settingsPath = join(configDir, 'settings.json')
+          await mkdir(binDir, { recursive: true })
+          const expectedArgs = [
+            ...(type === 'claude-shared'
+              ? [
+                  '--settings',
+                  settingsPath,
+                  '--setting-sources',
+                  '',
+                  '--strict-mcp-config',
+                  '--permission-mode',
+                  'default'
+                ]
+              : []),
+            '--add-dir',
+            projectionRoot,
+            '-p',
+            'ok'
+          ]
+          const expectedPath = join(binDir, 'expected.txt')
+          await writeFile(expectedPath, expectedArgs.join('\n') + '\n')
+          let executablePath: string
+          if (installation.native) {
+            // Windows ships this compiler with .NET Framework. Use a real executable so cmd.exe's
+            // quoting/empty-argument behavior is exercised, without a Claude account or network.
+            const sourcePath = join(binDir, 'Probe.cs')
+            executablePath = join(binDir, 'claude.exe')
+            await writeFile(
+              sourcePath,
+              `
+using System;
+using System.IO;
+using System.Linq;
+class Probe {
+  static int Main(string[] args) {
+    var expected = File.ReadAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "expected.txt"));
+    if (args.SequenceEqual(expected)) return 0;
+    Console.Error.WriteLine("Invalid CLI arguments: " + string.Join(" | ", args));
+    return 2;
+  }
+}`
+            )
+            execFileSync(
+              join(
+                process.env.SystemRoot!,
+                'Microsoft.NET',
+                'Framework64',
+                'v4.0.30319',
+                'csc.exe'
+              ),
+              ['/nologo', `/out:${executablePath}`, sourcePath],
+              { windowsHide: true }
+            )
+          } else {
+            const packageDir = installation.shim
+              ? join(binDir, 'node_modules', '@anthropic-ai', 'claude-code')
+              : binDir
+            await mkdir(packageDir, { recursive: true })
+            const entryPath = join(packageDir, 'cli.mjs')
+            await writeFile(
+              entryPath,
+              `import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+assert.deepEqual(process.argv.slice(2), ${JSON.stringify(expectedArgs)});
+writeFileSync(${JSON.stringify(join(binDir, 'received.txt'))}, 'validated');
+console.log('ok');\n`
+            )
+            executablePath = entryPath
+            if (installation.shim) {
+              executablePath = join(binDir, 'claude.cmd')
+              await writeFile(
+                executablePath,
+                `@echo off\r\n"${process.execPath}" "${entryPath}" %*\r\n`
+              )
+              await writeFile(
+                join(packageDir, 'package.json'),
+                JSON.stringify({ bin: { claude: 'cli.mjs' } })
+              )
+            }
+          }
+          vi.spyOn(manager, 'provisionClaudeRuntimeConfig').mockResolvedValue({
+            mainAllowedNames: [],
+            privateProfileDir: configDir,
+            settingsPath,
+            privateSettings: {},
+            skillProjection: { root: projectionRoot, revision: 'test' }
+          })
+          const settings = {
+            ...(await repository.getSettings()),
+            claude: { resolvedPath: executablePath, version: '2.1.309' }
+          }
+          await expect(
+            manager.runClaudeSubscriptionProbe({ type, key: 'test-token' }, settings)
+          ).resolves.toEqual({ ok: true, category: 'ok' })
+          if (!installation.native) {
+            await expect(readFile(join(binDir, 'received.txt'), 'utf8')).resolves.toBe('validated')
+          }
+        }
+      )
+    }
   })
 
   it('prepares shared documents without transferring Specialist authority into Main', async () => {

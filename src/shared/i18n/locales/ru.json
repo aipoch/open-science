@@ -194,6 +194,7 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Найти экспериментальные цепи PDB с похожими 3D-структурами по депонированной цепи.",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Не удалось загрузить Навыки или Коннекторы Специалиста. Попробуйте отправить сообщение ещё раз.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Получить классификацию липидов и сведения о соединениях из LIPID MAPS.",
     "Query upstream or downstream human protein regulation with OmniPath.": "Поиск регуляторных связей белков человека выше или ниже по сигнальному пути с помощью OmniPath.",
@@ -7399,8 +7400,8 @@
     "Custom public domains": "Пользовательские публичные домены",
     "Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.": "Разрешение домена допускает отправку данных, а не только загрузку. Даже ограниченное чтение передаёт запрошенный URL.",
     "Enter an exact hostname and a port from 1 to 65535.": "Введите точное имя узла и порт от 1 до 65535.",
-    "Enter an exact hostname without a scheme, path, port, wildcard, or IP address.": "Введите точное имя узла без схемы, пути, порта, подстановочных знаков или IP-адреса.",
-    "Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Только точные имена узлов, без поддоменов. Частные адреса остаются заблокированы. Правила также разрешают поддерживаемые предпросмотры и значки ссылок в диалогах.",
+    "Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.": "Введите имя узла, URL HTTP(S) или шаблон с подстановочным знаком, например *.example.com. IP-адреса и локальные имена узлов не поддерживаются.",
+    "Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Добавьте имя узла или вставьте URL HTTP(S); сохраняется только имя узла. Используйте *.example.com для всех поддоменов, а корневой домен example.com добавьте отдельно. Частные адреса остаются заблокированы. Эти правила также разрешают поддерживаемые предпросмотры и значки ссылок в диалогах.",
     "Hostname": "Имя узла",
     "Manage access": "Управление доступом",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "Управляйте публичными доменами и доверенными частными службами для защищённого выполнения Notebook и командной строки.",

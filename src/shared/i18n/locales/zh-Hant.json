@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
+    "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收錄的鏈查找具有相似三維結構的實驗 PDB 鏈。",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "無法讀取此專家的技能或連接器。請嘗試重新傳送。",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "從 LIPID MAPS 取得脂質分類與化合物詳細資訊。",
     "Query upstream or downstream human protein regulation with OmniPath.": "使用 OmniPath 查詢人類蛋白質的上游或下游調控關係。",
@@ -6935,8 +6936,8 @@
     "Custom public domains": "自訂公用網域",
     "Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.": "網域授權不僅允許下載，也允許傳送資料。即使是受限讀取，也會傳送請求的 URL。",
     "Enter an exact hostname and a port from 1 to 65535.": "請輸入完整主機名稱和 1 到 65535 之間的連接埠。",
-    "Enter an exact hostname without a scheme, path, port, wildcard, or IP address.": "請輸入完整主機名稱，不要包含通訊協定、路徑、連接埠、萬用字元或 IP 位址。",
-    "Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "僅比對完整主機名稱，不包含子網域。私網位址仍遭封鎖。這些規則也允許載入支援的對話連結預覽和圖示。",
+    "Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.": "請輸入主機名稱、HTTP(S) URL 或 *.example.com 形式的萬用字元。不支援 IP 位址和本機主機名稱。",
+    "Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "新增主機名稱或貼上 HTTP(S) URL；僅儲存主機名稱。使用 *.example.com 比對所有子網域，根網域 example.com 需另外新增。私網位址仍遭封鎖。這些規則也允許載入支援的對話連結預覽和圖示。",
     "Hostname": "主機名稱",
     "Manage access": "管理存取",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "管理受保護的 Notebook 和命令列執行所使用的公用網域與受信任私網服務。",

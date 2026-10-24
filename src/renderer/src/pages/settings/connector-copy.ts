@@ -255,6 +255,8 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
         'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
       )
 
+    case 'structures/pdb_search_structure_similarity':
+      return t('Find experimental PDB chains with similar 3D structures using a deposited chain.')
     case 'structures/pdb_search_sequence':
       return t(
         'Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.'

@@ -4,6 +4,8 @@ export type DarwinProcessIdentity = {
   pgid: number
   sid: number
   uniqueId: string
+  // Optional kernel resource coalition; absence never proves non-ownership.
+  coalitionId?: string
   parentUniqueId: string
 }
 

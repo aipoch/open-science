@@ -1,4 +1,5 @@
 import type { ToolDescriptor } from '@aipoch/connector-core'
+import { PDB_SIMILARITY_TOOLS } from './structures-pdb-similarity'
 
 // RCSB PDB search + data REST APIs. We POST to search.rcsb.org: attribute
 // and sequence queries return identifiers + relevance scores and optional alignment metadata.
@@ -482,7 +483,7 @@ function parseSequenceEntity(value: unknown, pdbId: string, entityId: string): P
   return raw as PolymerEntityRaw
 }
 
-// ---- the 5 tools ----------------------------------------------------------------------------
+// ---- PDB tools ----------------------------------------------------------------------------
 
 export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
   {
@@ -941,5 +942,6 @@ export const STRUCTURES_PDB_TOOLS: ToolDescriptor[] = [
         ligands
       }
     }
-  }
+  },
+  ...PDB_SIMILARITY_TOOLS
 ]

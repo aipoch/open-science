@@ -193,6 +193,7 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
+    "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Rechercher des chaînes expérimentales PDB aux structures 3D similaires à partir d’une chaîne déposée.",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "Impossible de charger les Compétences ou les Connecteurs du Spécialiste. Réessayez d’envoyer le message.",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "Récupérer la classification des lipides et les détails des composés depuis LIPID MAPS.",
     "Query upstream or downstream human protein regulation with OmniPath.": "Interroger la régulation des protéines humaines en amont ou en aval avec OmniPath.",
@@ -7261,8 +7262,8 @@
     "Custom public domains": "Domaines publics personnalisés",
     "Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.": "Les autorisations de domaine permettent aussi d’envoyer des données. Même les lectures restreintes transmettent l’URL demandée.",
     "Enter an exact hostname and a port from 1 to 65535.": "Saisissez un nom d’hôte exact et un port de 1 à 65535.",
-    "Enter an exact hostname without a scheme, path, port, wildcard, or IP address.": "Saisissez un nom d’hôte exact, sans protocole, chemin, port, caractère générique ni adresse IP.",
-    "Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Uniquement des noms d’hôte exacts, sans sous-domaines. Les adresses privées restent bloquées. Ces règles autorisent aussi les aperçus et icônes pris en charge pour les liens des conversations.",
+    "Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.": "Saisissez un nom d’hôte, une URL HTTP(S) ou un caractère générique comme *.example.com. Les adresses IP et les noms d’hôte locaux ne sont pas pris en charge.",
+    "Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "Ajoutez un nom d’hôte ou collez une URL HTTP(S) ; seul le nom d’hôte est enregistré. Utilisez *.example.com pour tous les sous-domaines et ajoutez example.com séparément pour le domaine racine. Les adresses privées restent bloquées. Ces règles autorisent aussi les aperçus et icônes pris en charge pour les liens des conversations.",
     "Hostname": "Nom d’hôte",
     "Manage access": "Gérer l’accès",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "Gérez les domaines publics et les services privés de confiance pour l’exécution protégée de Notebook et du Terminal.",

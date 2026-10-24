@@ -27,6 +27,14 @@ struct DarwinUniqueIdentifierInfo {
   uint64_t reserved4;
 };
 
+// PROC_PIDCOALITIONINFO is a private SDK flavor. Resource coalition membership is
+// inherited across fork/exec; a failed optional read must not imply foreign ownership.
+constexpr int kProcPidCoalitionInfo = 20;
+struct DarwinCoalitionInfo {
+  uint64_t coalition_id[2];
+  uint64_t reserved[3];
+};
+
 struct DarwinProcessIdentity {
   int32_t pid;
   int32_t ppid;
@@ -34,6 +42,7 @@ struct DarwinProcessIdentity {
   int32_t sid;
   uint64_t unique_id;
   uint64_t parent_unique_id;
+  uint64_t coalition_id;
 };
 
 enum class ProcessReadStatus { kIncluded, kSafelyIgnored, kIncomplete };
@@ -115,6 +124,10 @@ ProcessReadStatus ReadDarwinProcess(int32_t pid, DarwinProcessIdentity* output) 
     return ProcessVanished(pid) ? ProcessReadStatus::kSafelyIgnored
                                 : ProcessReadStatus::kIncomplete;
   }
+  DarwinCoalitionInfo coalition{};
+  const bool coalition_read =
+      proc_pidinfo(pid, kProcPidCoalitionInfo, 0, &coalition, sizeof(coalition)) ==
+      sizeof(coalition);
   DarwinUniqueIdentifierInfo unique_after{};
   errno = 0;
   if (proc_pidinfo(pid, kProcPidUniqueIdentifierInfo, 0, &unique_after,
@@ -135,6 +148,7 @@ ProcessReadStatus ReadDarwinProcess(int32_t pid, DarwinProcessIdentity* output) 
       static_cast<int32_t>(sid),
       unique_after.unique_id,
       unique_after.parent_unique_id,
+      coalition_read ? coalition.coalition_id[0] : 0,
   };
   return output->pid == pid && output->unique_id != 0 ? ProcessReadStatus::kIncluded
                                                       : ProcessReadStatus::kIncomplete;
@@ -183,6 +197,9 @@ napi_value ProcessIdentity(napi_env env, const DarwinProcessIdentity& identity) 
   napi_set_named_property(env, value, "uniqueId", Uint64String(env, identity.unique_id));
   napi_set_named_property(
       env, value, "parentUniqueId", Uint64String(env, identity.parent_unique_id));
+  if (identity.coalition_id != 0) {
+    napi_set_named_property(env, value, "coalitionId", Uint64String(env, identity.coalition_id));
+  }
   return value;
 }
 #endif

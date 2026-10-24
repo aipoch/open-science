@@ -286,18 +286,23 @@ export function recoverRuledRecordFaces(table, items, captions, rules) {
     }
   }
   const rawColumn = (i) => cuts.slice(1).findIndex((x) => (i.rect[0] + i.rect[2]) / 2 < x)
+  // Anchor evidence is stable; column cuts move while gutters are refined.
+  const columnAnchors = new Map()
   const col = (i) => {
-    const anchors = source.filter(
-      (a) =>
-        a !== i &&
-        (isAdjacentTableScript(i, a) ||
-          (/^[)]+$/.test(i.text) &&
-            a.text.includes('(') &&
-            Math.abs(i.baseline - a.baseline) < a.height * 0.2 &&
-            i.rect[0] >= a.rect[2] &&
-            i.rect[0] - a.rect[2] < a.height * 0.7))
-    )
-    return anchors.length === 1 ? rawColumn(anchors[0]) : rawColumn(i)
+    if (!columnAnchors.has(i)) {
+      const anchors = source.filter(
+        (a) =>
+          a !== i &&
+          (isAdjacentTableScript(i, a) ||
+            (/^[)]+$/.test(i.text) &&
+              a.text.includes('(') &&
+              Math.abs(i.baseline - a.baseline) < a.height * 0.2 &&
+              i.rect[0] >= a.rect[2] &&
+              i.rect[0] - a.rect[2] < a.height * 0.7))
+      )
+      columnAnchors.set(i, anchors.length === 1 ? anchors[0] : i)
+    }
+    return rawColumn(columnAnchors.get(i))
   }
   // Full-width section headings do not constrain column gutters.
   const body = faces

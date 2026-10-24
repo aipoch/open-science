@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "Find experimental PDB chains with similar 3D structures using a deposited chain.": "登録済みの鎖を使って、類似した3D構造を持つ実験由来のPDB鎖を検索します。",
     "The Specialist Skills or Connectors could not be loaded. Try sending again.": "スペシャリストのスキルまたはコネクタを読み込めませんでした。もう一度送信してください。",
     "Retrieve lipid classification and compound details from LIPID MAPS.": "LIPID MAPS から脂質の分類と化合物の詳細を取得します。",
     "Query upstream or downstream human protein regulation with OmniPath.": "OmniPathでヒトタンパク質の上流または下流の制御関係を照会します。",
@@ -6935,8 +6936,8 @@
     "Custom public domains": "カスタム公開ドメイン",
     "Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.": "ドメインの許可はダウンロードだけでなくデータ送信も許可します。制限付きの読み取りでも要求した URL は送信されます。",
     "Enter an exact hostname and a port from 1 to 65535.": "正確なホスト名と 1～65535 のポートを入力してください。",
-    "Enter an exact hostname without a scheme, path, port, wildcard, or IP address.": "スキーム、パス、ポート、ワイルドカード、IP アドレスを含めずに正確なホスト名を入力してください。",
-    "Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "完全一致のホスト名のみで、サブドメインは含まれません。プライベートアドレスはブロックされます。対応する会話リンクのプレビューとアイコンも許可されます。",
+    "Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.": "ホスト名、HTTP(S) URL、または *.example.com などのワイルドカードを入力してください。IP アドレスとローカルホスト名は使用できません。",
+    "Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.": "ホスト名を追加するか、HTTP(S) URL を貼り付けてください。ホスト名のみが保存されます。すべてのサブドメインには *.example.com を使用し、ルートドメインの example.com は別途追加してください。プライベートアドレスは引き続きブロックされます。これらのルールは、対応する会話リンクのプレビューとアイコンの読み込みも許可します。",
     "Hostname": "ホスト名",
     "Manage access": "アクセスを管理",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "保護された Notebook とシェルの実行に使用する公開ドメインと信頼するプライベートサービスを管理します。",
