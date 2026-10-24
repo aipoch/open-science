@@ -28,7 +28,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function fixture() {
+const fixture = (() => {
   const session: PersistedChatSession = {
     id: 'session-fixture',
     projectId: 'project-fixture',
@@ -106,7 +106,7 @@ function fixture() {
     archiveCoordinator: {}
   } as unknown as Parameters<typeof composeSessionProjection>[0])
   return { ...composed, session, allowDomain, coordinator }
-}
+}) satisfies () => ReturnType<typeof composeSessionProjection> & { session: PersistedChatSession }
 
 describe('host network approval recovery', () => {
   it.each(['catalog', 'detail'] as const)(
