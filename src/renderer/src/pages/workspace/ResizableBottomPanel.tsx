@@ -34,6 +34,7 @@ type ResizableBottomPanelProps = Readonly<{
   constrainGrowthToOverflow?: boolean
   minimumContentSelector?: string
   minimumContentIndex?: number
+  contentScrollSelector?: string
   collapseControl?: Readonly<{ label: string; onToggle: () => void }>
   collapsed?: boolean
 }>
@@ -47,6 +48,7 @@ const ResizableBottomPanel = ({
   constrainGrowthToOverflow = false,
   minimumContentSelector,
   minimumContentIndex = 0,
+  contentScrollSelector,
   collapsed = false,
   collapseControl
 }: ResizableBottomPanelProps): React.JSX.Element => {
@@ -64,9 +66,12 @@ const ResizableBottomPanel = ({
       Math.min(window.innerHeight * PANEL_MAX_VIEWPORT_RATIO, PANEL_MAX_HEIGHT_PX)
     )
     const surfaceHeight = surfaceRef.current?.getBoundingClientRect().height ?? 0
-    const scrollSurface = surfaceRef.current?.querySelector<HTMLElement>(
+    const outerScrollSurface = surfaceRef.current?.querySelector<HTMLElement>(
       `[data-testid="${scrollTestId}"]`
     )
+    const scrollSurface = contentScrollSelector
+      ? outerScrollSurface?.querySelector<HTMLElement>(contentScrollSelector)
+      : outerScrollSurface
     const minimumContent = minimumContentSelector
       ? surfaceRef.current?.querySelectorAll<HTMLElement>(minimumContentSelector)[
           minimumContentIndex
@@ -77,6 +82,9 @@ const ResizableBottomPanel = ({
         ? Math.ceil(
             minimumContent.getBoundingClientRect().bottom -
               scrollSurface.getBoundingClientRect().top +
+              (contentScrollSelector
+                ? scrollSurface.scrollTop + surfaceHeight - scrollSurface.clientHeight
+                : 0) +
               PANEL_RESIZE_STEP_PX
           )
         : 0
@@ -94,7 +102,13 @@ const ResizableBottomPanel = ({
       min,
       max
     }
-  }, [scrollTestId, constrainGrowthToOverflow, minimumContentSelector, minimumContentIndex])
+  }, [
+    scrollTestId,
+    constrainGrowthToOverflow,
+    minimumContentSelector,
+    minimumContentIndex,
+    contentScrollSelector
+  ])
 
   const measure = useCallback((): void => {
     const surface = surfaceRef.current
@@ -112,8 +126,15 @@ const ResizableBottomPanel = ({
         ? current
         : next
     )
-    if (!collapsed && height !== undefined && height > bounds.max) setHeight(bounds.max)
-  }, [collapsed, height, resizeBounds])
+    if (!collapsed && height !== undefined) {
+      // Fixed controls can grow after a resize (a new title or a multiline answer).
+      const nextHeight = Math.min(
+        bounds.max,
+        contentScrollSelector ? Math.max(bounds.min, height) : height
+      )
+      if (nextHeight !== height) setHeight(nextHeight)
+    }
+  }, [collapsed, height, resizeBounds, contentScrollSelector])
   const measureObservedResize = useEffectEvent(measure)
 
   useLayoutEffect(() => {
@@ -133,7 +154,14 @@ const ResizableBottomPanel = ({
     const surface = surfaceRef.current
     if (!surface) return
     const scroll = surface.querySelector<HTMLElement>(`[data-testid="${scrollTestId}"]`)
-    const targets = new Set<Element>([surface, ...(scroll ? [scroll, ...scroll.children] : [])])
+    const contentScroll = contentScrollSelector
+      ? scroll?.querySelector(contentScrollSelector)
+      : undefined
+    const targets = new Set<Element>([
+      surface,
+      ...(scroll ? [scroll, ...scroll.children] : []),
+      ...(contentScroll ? [contentScroll, ...contentScroll.children] : [])
+    ])
     // React children change during streaming; only actual DOM replacements need re-observing.
     for (const target of observedTargetsRef.current) {
       if (!targets.has(target)) observerRef.current?.unobserve(target)
@@ -143,7 +171,7 @@ const ResizableBottomPanel = ({
     }
     observedTargetsRef.current = targets
     measure()
-  }, [measure, scrollTestId, children])
+  }, [measure, scrollTestId, children, contentScrollSelector])
 
   const resizeTo = (nextHeight: number): void => {
     const bounds = resizeBounds()
@@ -287,7 +315,11 @@ const ResizableBottomPanel = ({
       <div
         id={panelId}
         className={`min-h-0 flex-1 overscroll-contain rounded-2xl border border-border-200 bg-bg-000 ${
-          variant === 'integrated' ? 'overflow-hidden shadow-none' : 'overflow-y-auto shadow-sm'
+          contentScrollSelector
+            ? 'flex flex-col overflow-hidden shadow-sm'
+            : variant === 'integrated'
+              ? 'overflow-hidden shadow-none'
+              : 'overflow-y-auto shadow-sm'
         }`}
         data-testid={scrollTestId}
       >

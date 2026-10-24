@@ -142,6 +142,135 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it('records a skipped question in the draft and submits it alongside a selected answer', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const onDraftChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: mixedChoiceFields,
+            state: 'pending'
+          }}
+          request={{ ...multiQuestionRequest, fields: mixedChoiceFields }}
+          onRespond={onRespond}
+          onDraftChange={onDraftChange}
+        />
+      )
+    })
+    const button = (name: string): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find(
+        (item) => item.textContent?.trim() === name
+      )
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
+        ?.click()
+    )
+    expect(button('Skip')).toBeDefined()
+    expect(button('Skip')?.getAttribute('data-variant')).toBe('secondary')
+    await act(async () => button('Skip')?.click())
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(onDraftChange).toHaveBeenLastCalledWith([
+      { fieldId: 'question_0_custom', value: 'User skipped' }
+    ])
+    expect(container.textContent).toContain('Which language should the skill use?')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-chinese"]')
+        ?.click()
+    )
+    await act(async () => button('Finish')?.click())
+    const response = onRespond.mock.calls[0]?.[0]
+    expect(response).toEqual({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0_custom', value: 'User skipped' },
+        { fieldId: 'question_1', value: 'chinese' }
+      ]
+    })
+    expect(
+      validateElicitationAnswers(
+        { ...multiQuestionRequest, fields: mixedChoiceFields },
+        response.answers
+      )
+    ).toEqual(response.answers)
+  })
+
+  it('finishes a skipped last question and lets a restored skip be replaced with a choice', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: multiQuestionFields,
+            state: 'pending',
+            draftAnswers: [{ fieldId: 'question_0_custom', value: 'User skipped' }]
+          }}
+          request={multiQuestionRequest}
+          onRespond={onRespond}
+        />
+      )
+    )
+    const button = (name: string): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find(
+        (item) => item.textContent?.trim() === name
+      )
+    await act(async () => button('Back')?.click())
+    expect(container.querySelector('textarea')?.value).toBe('')
+    expect(container.textContent).toContain('User skipped')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
+        ?.click()
+    )
+    await act(async () => button('Next')?.click())
+    expect(button('Skip')).toBeDefined()
+    await act(async () => button('Skip')?.click())
+    expect(onRespond).toHaveBeenCalledWith({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', value: 'clinical' },
+        { fieldId: 'question_1_custom', value: 'User skipped' }
+      ]
+    })
+  })
+
+  it('translates skipped answers in history without marking any option or custom answer selected', async () => {
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    try {
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            elicitation={{
+              message: request.message,
+              fields,
+              state: 'answered',
+              answers: [{ fieldId: 'question_0_custom', value: 'User skipped' }]
+            }}
+          />
+        )
+      )
+      const answer = container.querySelector<HTMLButtonElement>(
+        '[data-testid="elicitation-answer-row"]'
+      )!
+      expect(answer.textContent).toBe('用户跳过')
+      await act(async () => answer.click())
+      expect(container.querySelector('[data-selected="true"]')).toBeNull()
+      expect(container.textContent).not.toContain('User skipped')
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it.each(
     (['answered', 'pending'] as const).flatMap((state) =>
       [true, false].map((withRequest) => ({ state, withRequest }))
@@ -454,16 +583,6 @@ describe('WorkspaceElicitationCard choice question', () => {
         .querySelector('[data-testid="elicitation-question-progress"]')
         ?.getAttribute('aria-label')
     ).toBe('Question 1 of 2')
-    expect(
-      container
-        .querySelector('[data-testid="elicitation-question-progress"]')
-        ?.parentElement?.classList.contains('sticky')
-    ).toBe(true)
-    expect(
-      container
-        .querySelector('[data-testid="elicitation-question-progress"]')
-        ?.parentElement?.classList.contains('top-3')
-    ).toBe(true)
     expect(
       Array.from(
         container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
@@ -1280,7 +1399,7 @@ describe('WorkspaceElicitationCard choice question', () => {
 
     onRespond.mockClear()
     const skip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip'
+      (button) => button.textContent?.trim() === 'Skip all'
     )
     await act(async () => skip?.click())
     expect(onRespond).toHaveBeenCalledWith({

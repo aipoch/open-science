@@ -35,6 +35,8 @@ import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { ChoiceKindChip } from './ChoiceKindChip'
 
+const SKIPPED_ANSWER = 'User skipped'
+
 const displayValue = (
   value: ElicitationValue,
   field?: ElicitationField,
@@ -234,6 +236,7 @@ const WorkspaceElicitationCard = ({
   // Accordion review: indexes of the questions whose original content is expanded in place.
   const [expandedQuestions, setExpandedQuestions] = useState<ReadonlySet<number>>(new Set())
   const customAnswerRef = useRef<HTMLTextAreaElement>(null)
+  const optionsRef = useRef<HTMLDivElement>(null)
 
   const canSubmit = useMemo(
     () =>
@@ -267,11 +270,15 @@ const WorkspaceElicitationCard = ({
   const currentChoiceAnswer = choiceQuestion
     ? answerForChoiceQuestion(choiceQuestion, values)
     : undefined
+  const currentQuestionSkipped = Boolean(
+    currentChoiceAnswer?.fieldId === choiceQuestion?.customField.id &&
+    currentChoiceAnswer?.value === SKIPPED_ANSWER
+  )
   const completedChoiceAnswers = choiceQuestions ? choiceAnswers(choiceQuestions, values) : []
   // The footer tally sits under the current question's options, so it counts only what is
   // selected there — a multi-select answer is an array, other answers count as one.
   const selectedChoiceCount =
-    currentChoiceAnswer === undefined
+    currentChoiceAnswer === undefined || currentQuestionSkipped
       ? 0
       : Array.isArray(currentChoiceAnswer.value)
         ? currentChoiceAnswer.value.length
@@ -288,11 +295,13 @@ const WorkspaceElicitationCard = ({
     currentChoiceAnswer?.value === 'Let the agent decide'
   )
   // Translate the app-owned sentinel only in a choice's custom field, not arbitrary answer text.
-  const displayAnswer = (answer: ElicitationAnswer): string =>
-    answer.value === 'Let the agent decide' &&
-    choiceQuestions?.some((question) => question.customField.id === answer.fieldId)
-      ? t('Let the agent decide')
-      : displayValue(answer.value, fieldsById.get(answer.fieldId), t)
+  const displayAnswer = (answer: ElicitationAnswer): string => {
+    if (choiceQuestions?.some((question) => question.customField.id === answer.fieldId)) {
+      if (answer.value === 'Let the agent decide') return t('Let the agent decide')
+      if (answer.value === SKIPPED_ANSWER) return t('User skipped')
+    }
+    return displayValue(answer.value, fieldsById.get(answer.fieldId), t)
+  }
   const canReviewAnswer = Boolean(elicitation.state === 'answered' && choiceQuestions)
   const isPendingPlaceholder = variant === 'pending-placeholder' && elicitation.state === 'pending'
   const choiceTitle =
@@ -381,7 +390,9 @@ const WorkspaceElicitationCard = ({
       questionAnswer?.value === 'Let the agent decide'
     )
     const questionCustomSelected = Boolean(
-      questionAnswer?.fieldId === question.customField.id && !questionAgentDecides
+      questionAnswer?.fieldId === question.customField.id &&
+      !questionAgentDecides &&
+      questionAnswer?.value !== SKIPPED_ANSWER
     )
     return (
       // Translucent white panel: a different material from the gray summary rows,
@@ -522,15 +533,20 @@ const WorkspaceElicitationCard = ({
     })
   }
 
-  const handleChoiceSubmit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    if (!request || !choiceQuestions || !choiceQuestion || !currentChoiceAnswer) return
+  const confirmChoice = (nextValues: Record<string, ElicitationValue | undefined>): void => {
+    if (
+      !request ||
+      !choiceQuestions ||
+      !choiceQuestion ||
+      !answerForChoiceQuestion(choiceQuestion, nextValues)
+    )
+      return
 
     if (!isFinalChoiceQuestion) {
       const nextConfirmedValues = {
         ...confirmedValues,
-        [choiceQuestion.choiceField.id]: values[choiceQuestion.choiceField.id],
-        [choiceQuestion.customField.id]: values[choiceQuestion.customField.id]
+        [choiceQuestion.choiceField.id]: nextValues[choiceQuestion.choiceField.id],
+        [choiceQuestion.customField.id]: nextValues[choiceQuestion.customField.id]
       }
       setConfirmedValues(nextConfirmedValues)
       onDraftChange?.(choiceAnswers(choiceQuestions, nextConfirmedValues))
@@ -538,14 +554,35 @@ const WorkspaceElicitationCard = ({
       setError(undefined)
       return
     }
-    if (!canFinishChoiceSet) return
+    const answers = choiceAnswers(choiceQuestions, nextValues)
+    if (answers.length !== choiceQuestions.length) return
 
     void respond({
       requestId: request.requestId,
       action: 'accept',
-      answers: completedChoiceAnswers
+      answers
     })
   }
+
+  const handleChoiceSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    confirmChoice(values)
+  }
+
+  const skipQuestion = (): void => {
+    if (!choiceQuestion || isSubmitting) return
+    const nextValues = {
+      ...values,
+      [choiceQuestion.choiceField.id]: undefined,
+      [choiceQuestion.customField.id]: SKIPPED_ANSWER
+    }
+    setValues(nextValues)
+    confirmChoice(nextValues)
+  }
+
+  useEffect(() => {
+    if (optionsRef.current) optionsRef.current.scrollTop = 0
+  }, [activeChoiceIndex])
 
   useEffect(() => {
     const textarea = customAnswerRef.current
@@ -594,6 +631,11 @@ const WorkspaceElicitationCard = ({
       data-testid="elicitation-card"
       className={cn(
         'rounded-2xl p-3 text-text-000 sm:p-4',
+        elicitation.state === 'pending' &&
+          choiceQuestion &&
+          !isPendingPlaceholder &&
+          'flex min-h-0 flex-col overflow-hidden [&>div]:shrink-0',
+        embedded && elicitation.state === 'pending' && choiceQuestion && 'flex-1',
         // Answered and terminal cards read as activity records: match the tool-group surface
         // (gray, no chrome).
         elicitation.state !== 'pending' ? 'bg-bg-200/70' : 'bg-bg-000',
@@ -601,7 +643,7 @@ const WorkspaceElicitationCard = ({
       )}
     >
       {showChoiceProgress && choiceQuestions ? (
-        <div className="pointer-events-none sticky top-3 z-10 mb-2 flex h-5 justify-end sm:top-4">
+        <div className="pointer-events-none mb-2 flex h-5 justify-end">
           <span
             data-testid="elicitation-question-progress"
             role="status"
@@ -702,8 +744,19 @@ const WorkspaceElicitationCard = ({
           {t('Awaiting your answer…')}
         </p>
       ) : elicitation.state === 'pending' && request && choiceQuestion ? (
-        <form className="mt-2" data-testid="elicitation-choice-mode" onSubmit={handleChoiceSubmit}>
-          <div className="max-h-[min(24rem,50vh)] space-y-0.5 overflow-y-auto">
+        <form
+          className="mt-2 flex min-h-0 flex-1 flex-col"
+          data-testid="elicitation-choice-mode"
+          onSubmit={handleChoiceSubmit}
+        >
+          <div
+            ref={optionsRef}
+            data-testid="elicitation-options"
+            className={cn(
+              'scrollbar-auto-hide min-h-0 space-y-0.5 overflow-y-auto overscroll-contain',
+              embedded ? 'flex-1' : 'max-h-[min(24rem,50vh)]'
+            )}
+          >
             {choiceQuestion.choiceField.options?.map((option, index) => {
               const selected = isChoiceOptionSelected(choiceQuestion, values, option.value)
               return (
@@ -786,7 +839,7 @@ const WorkspaceElicitationCard = ({
             </button>
           </div>
 
-          <div className="mt-1.5 flex items-start gap-2 px-2 py-1.5">
+          <div className="mt-1.5 flex shrink-0 items-start gap-2 px-2 py-1.5">
             <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md bg-bg-100 text-text-100">
               <Pencil className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
             </span>
@@ -796,7 +849,9 @@ const WorkspaceElicitationCard = ({
               placeholder={t('Or type your own answer…')}
               rows={1}
               value={
-                !agentDecidesSelected && typeof customChoiceValue === 'string'
+                !agentDecidesSelected &&
+                !currentQuestionSkipped &&
+                typeof customChoiceValue === 'string'
                   ? customChoiceValue
                   : ''
               }
@@ -818,11 +873,13 @@ const WorkspaceElicitationCard = ({
           </div>
 
           {choiceQuestions ? (
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="truncate text-sm text-text-300">
-                {t('{{count}} selected', { count: selectedChoiceCount })}
+            <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
+              <span className="min-w-0 truncate text-sm text-text-300">
+                {currentQuestionSkipped
+                  ? t('User skipped')
+                  : t('{{count}} selected', { count: selectedChoiceCount })}
               </span>
-              <div className="flex shrink-0 items-center justify-end gap-2">
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 {activeChoiceIndex > 0 ? (
                   <Button
                     type="button"
@@ -853,7 +910,15 @@ const WorkspaceElicitationCard = ({
                     <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                   </Button>
                 ) : null}
-                {/* Skipping declines the whole request, so multi-question cards say "Skip all". */}
+                <Button
+                  className="px-3"
+                  type="button"
+                  variant="secondary"
+                  disabled={isSubmitting}
+                  onClick={skipQuestion}
+                >
+                  {t('Skip')}
+                </Button>
                 <Button
                   className="px-3 bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/70 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/70"
                   type="button"
@@ -865,7 +930,7 @@ const WorkspaceElicitationCard = ({
                     })
                   }
                 >
-                  {choiceQuestions.length > 1 ? t('Skip all') : t('Skip')}
+                  {t('Skip all')}
                 </Button>
               </div>
             </div>
@@ -1129,6 +1194,10 @@ const WorkspaceElicitationCard = ({
               const expandable = canReviewAnswer && questionIndex >= 0
               const expanded = expandable && expandedQuestions.has(questionIndex)
               const question = expandable ? choiceQuestions?.[questionIndex] : undefined
+              const skipped =
+                question &&
+                answer.fieldId === question.customField.id &&
+                answer.value === SKIPPED_ANSWER
               return (
                 <div
                   key={answer.fieldId}
@@ -1158,8 +1227,17 @@ const WorkspaceElicitationCard = ({
                       if (expandable) toggleQuestionReview(questionIndex)
                     }}
                   >
-                    <span className="mt-px grid size-5 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
-                      <Check className="size-3" strokeWidth={3} aria-hidden="true" />
+                    <span
+                      className={cn(
+                        'mt-px grid size-5 shrink-0 place-items-center rounded-md',
+                        skipped ? 'bg-bg-300 text-text-100' : 'bg-primary text-primary-foreground'
+                      )}
+                    >
+                      {skipped ? (
+                        <Minus className="size-3" aria-hidden="true" />
+                      ) : (
+                        <Check className="size-3" strokeWidth={3} aria-hidden="true" />
+                      )}
                     </span>
                     <span className="min-w-0 flex-1">
                       {!question && answers.length > 1 ? (

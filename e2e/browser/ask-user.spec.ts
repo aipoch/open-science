@@ -1,5 +1,68 @@
 import { expect, test } from '@playwright/test'
 
+test('embedded question keeps its title and actions fixed while scrolling and resizing choices', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 700 })
+  await page.goto('/ask-user.html?mixed=1&embedded=1')
+  const title = page.getByRole('heading', { name: 'Which outputs?', exact: true })
+  const skipAll = page.getByRole('button', { name: 'Skip all', exact: true })
+  const options = page.getByTestId('elicitation-option-Option 1').locator('..')
+  await expect(skipAll).toBeInViewport({ ratio: 1 })
+  const titleBefore = await title.boundingBox()
+  const footerBefore = await skipAll.boundingBox()
+  await options.hover()
+  await page.mouse.wheel(0, 1000)
+  await expect.poll(() => options.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+  expect((await title.boundingBox())!.y).toBeCloseTo(titleBefore!.y, 0)
+  expect((await skipAll.boundingBox())!.y).toBeCloseTo(footerBefore!.y, 0)
+  expect(
+    await page.getByTestId('elicitation-composer-scroll').evaluate((node) => node.scrollTop)
+  ).toBe(0)
+  const handle = page.getByRole('separator', { name: 'Resize question panel' })
+  await handle.focus()
+  await handle.press('ArrowDown')
+  const smaller = await page.getByTestId('elicitation-composer').boundingBox()
+  await expect(title).toBeInViewport({ ratio: 1 })
+  await expect(skipAll).toBeInViewport({ ratio: 1 })
+  await handle.press('ArrowUp')
+  expect((await page.getByTestId('elicitation-composer').boundingBox())!.height).toBeGreaterThan(
+    smaller!.height
+  )
+  for (let index = 0; index < 12; index += 1) await handle.press('ArrowDown')
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Which approach', exact: false })).toBeVisible()
+  await expect.poll(() => options.evaluate((node) => node.scrollTop)).toBe(0)
+  await page.getByRole('textbox').fill('One\nTwo\nThree\nFour\nFive\nSix\nSeven\nEight')
+  await expect(page.getByRole('button', { name: 'Finish', exact: true })).toBeInViewport({
+    ratio: 1
+  })
+  await expect(skipAll).toBeInViewport({ ratio: 1 })
+  await page.screenshot({ path: test.info().outputPath('question-fixed-actions.png') })
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+    action: 'accept',
+    answers: [
+      { fieldId: 'question_0_custom', value: 'User skipped' },
+      { fieldId: 'question_1_custom', value: 'User skipped' }
+    ]
+  })
+})
+
+test('Chinese single-question skip is recorded and remains reviewable', async ({ page }) => {
+  await page.goto('/ask-user.html?locale=zh-Hans')
+  await page.getByRole('button', { name: '跳过', exact: true }).click()
+  await expect(page.getByTestId('elicitation-answer-row')).toHaveText('用户跳过')
+  expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+    action: 'accept',
+    answers: [{ fieldId: 'question_0_custom', value: 'User skipped' }]
+  })
+  await page.getByTestId('elicitation-answer-row').click()
+  await expect(
+    page.getByTestId('elicitation-choice-review').locator('[data-selected="true"]')
+  ).toHaveCount(0)
+})
+
 for (const surface of ['main', 'delegate']) {
   test(`${surface} supports 16 choices and keyboard multi-selection`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 700 })

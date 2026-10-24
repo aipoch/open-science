@@ -2781,6 +2781,7 @@
     "Skills you imported into Open-Science.": "Open-Science로 가져온 스킬입니다.",
     "Skills you can also delete <muted>(optional)</muted>": "스킬 <muted>(선택사항)</muted>을 삭제할 수도 있습니다.",
     "Skip": "건너뛰기",
+    "User skipped": "사용자가 건너뜀",
     "Skip all": "모두 건너뛰기",
     "Skip approvals": "승인 건너뛰기",
     "Skip approvals for {{name}}": "{{name}}에 대한 승인 건너뛰기",
