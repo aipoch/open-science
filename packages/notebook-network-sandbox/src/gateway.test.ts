@@ -879,25 +879,45 @@ describe('HTTP forwarding integrity', () => {
     await ended.promise
   })
 
-  it('preserves the raw path through a SOCKS parent connection', async () => {
-    const seen = Promise.withResolvers<string>()
+  it('preserves raw paths and closes each SOCKS connection without pooling across destinations', async () => {
+    const seen = [0, 1].map(() => Promise.withResolvers<{ address: string; header: string }>())
+    const closed = [0, 1].map(() => Promise.withResolvers<void>())
+    let connections = 0
     const parent = await listen((socket) => {
+      const index = connections++
+      socket.once('close', () => closed[index]!.resolve())
       void (async () => {
         await readBytes(socket, 3)
         socket.write(Buffer.from([5, 0]))
-        await readBytes(socket, 10)
+        const destination = await readBytes(socket, 10)
         socket.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 80]))
-        seen.resolve(await readHttpHeader(socket))
-        socket.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok')
-      })().catch(seen.reject)
+        seen[index]!.resolve({
+          address: [...destination.subarray(4, 8)].join('.'),
+          header: await readHttpHeader(socket)
+        })
+        // Offer keep-alive so the test detects accidental pooling of the established tunnel.
+        socket.write(
+          `HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: keep-alive\r\n\r\n${index}`
+        )
+      })().catch(seen[index]!.reject)
     })
     const gateway = await CommandGateway.open({
       credentials,
       parentProxy: { http: `socks5://127.0.0.1:${parent.port}` },
-      decide: async () => ({ allowed: true, address: '127.0.0.1' })
+      decide: async (host) => ({
+        allowed: true,
+        address: host === 'first.test' ? '203.0.113.10' : '203.0.113.11'
+      })
     })
     closeTasks.push(() => gateway.close())
-    expect((await exchange(gateway.port, 'http://example.test/a/../b?')).body).toBe('ok')
-    expect(await seen.promise).toContain('GET /a/../b? HTTP/1.1')
+    for (const [index, host] of ['first.test', 'second.test'].entries()) {
+      expect((await exchange(gateway.port, `http://${host}/a/../b?`)).body).toBe(String(index))
+      expect(await seen[index]!.promise).toEqual({
+        address: `203.0.113.${10 + index}`,
+        header: expect.stringContaining('GET /a/../b? HTTP/1.1')
+      })
+      await closed[index]!.promise
+    }
+    expect(connections).toBe(2)
   })
 })

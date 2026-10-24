@@ -909,6 +909,8 @@ class CommandGateway {
         }
         const send = target.protocol === 'https:' ? httpsRequest : httpRequest
         const upstream = send({
+          // Without an agent, Node uses this socket directly; agent:false creates an Agent
+          // that ignores this callback and opens a different connection.
           createConnection: () => connection,
           method: request.method,
           path,
