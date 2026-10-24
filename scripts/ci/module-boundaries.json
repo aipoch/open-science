@@ -3442,6 +3442,7 @@
     },
     "notebook_network_sandbox": {
       "sources": [
+        "scripts/build-notebook-host.mjs",
         "packages/notebook-network-sandbox/src/config.ts",
         "packages/notebook-network-sandbox/src/index.ts",
         "packages/notebook-network-sandbox/src/types.ts",
@@ -3500,6 +3501,7 @@
         "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
         "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
         "packages/notebook-network-sandbox/src/installed-package.test.ts",
+        "scripts/windows-dev-notebook-host.integration.test.ts",
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": [
