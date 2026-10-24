@@ -10,6 +10,7 @@ import { ComputePanel } from './ComputePanel'
 
 let container: HTMLDivElement
 let root: Root
+const loadHosts = useComputeStore.getState().loadHosts
 
 const host = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
@@ -51,6 +52,49 @@ afterEach(() => {
 })
 
 describe('ComputePanel', () => {
+  it.each(['success', 'failure'] as const)(
+    'retries a failed host load in place and settles after %s',
+    async (outcome) => {
+      let resolve!: (hosts: ComputeHost[]) => void
+      let reject!: (error: Error) => void
+      const retry = new Promise<ComputeHost[]>((done, fail) => {
+        resolve = done
+        reject = fail
+      })
+      const list = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Initial load failed'))
+        .mockReturnValueOnce(retry)
+      window.api.compute.list = list
+      useComputeStore.setState({ isLoaded: false, loadHosts })
+      const onNavigate = vi.fn()
+      await act(async () => root.render(<ComputePanel onNavigate={onNavigate} />))
+
+      expect(container.textContent).toContain("Couldn't load hosts.")
+      const retryButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === 'Retry'
+      )!
+      expect(retryButton).toBeDefined()
+      await act(async () => retryButton.click())
+      expect(retryButton.disabled).toBe(true)
+      await act(async () => retryButton.click())
+      expect(list).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        if (outcome === 'success') resolve([host()])
+        else reject(new Error('Retry failed'))
+      })
+      if (outcome === 'success') {
+        expect(container.textContent).toContain('biowulf')
+        expect(container.textContent).not.toContain("Couldn't load hosts.")
+      } else {
+        expect(container.textContent).toContain("Couldn't load hosts.")
+        expect(retryButton.disabled).toBe(false)
+      }
+      expect(onNavigate).not.toHaveBeenCalled()
+    }
+  )
+
   it('renders the header banner and empty state', () => {
     act(() => {
       root.render(<ComputePanel onNavigate={vi.fn()} />)

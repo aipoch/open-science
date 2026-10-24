@@ -138,6 +138,7 @@ type AcpRuntimeArtifacts = {
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
+  runtimeSessionOwner?: RuntimeSessionOwner
   appVersion: string
   mcpEntryPath: string
   uploadRepository: UploadRepository
@@ -291,6 +292,7 @@ const createAcpRuntime = ({
   sessionPersistenceCoordinator,
   sandboxNetworkApprovalOwner,
   finalizeRuntimeArtifacts,
+  runtimeSessionOwner: sharedRuntimeSessionOwner,
   literatureReader,
   pdfElementReader,
   literatureAttachments,
@@ -341,7 +343,8 @@ const createAcpRuntime = ({
     configRoot
   )
   const runtimeSessionOwner =
-    !delegatedNotebookConnection && sessionPersistenceCoordinator && finalizeRuntimeArtifacts
+    sharedRuntimeSessionOwner ??
+    (!delegatedNotebookConnection && sessionPersistenceCoordinator && finalizeRuntimeArtifacts
       ? new RuntimeSessionOwner({
           loadSession: (scope) =>
             sessionPersistenceCoordinator.loadSessionForContinuation(
@@ -358,7 +361,7 @@ const createAcpRuntime = ({
               waitForWriteRelease
             )
         })
-      : undefined
+      : undefined)
   const eventBroadcast = createAcpRuntimeEventBroadcastCoalescer({
     publish: (events) => broadcastToRenderers('acp:event', events)
   })

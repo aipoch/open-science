@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { prepareCredentialValidation } from './bootstrap'
-import { readCredentialCiphertexts } from './ciphertext-inventory'
+import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
 import {
   consumeCredentialInventoryFromEnv,
   readCredentialInventory,
@@ -156,12 +156,32 @@ describe('credential inventory handoff', () => {
     await writeCredentialInventory({
       path: target.path,
       ...startup,
-      ciphertexts: [Buffer.from('cookie-ciphertext')]
+      ciphertexts: [
+        { kind: 'application', value: Buffer.from('application-ciphertext') },
+        {
+          kind: 'cookie',
+          value: Buffer.from('cookie-ciphertext'),
+          hostKey: '.example.test',
+          databaseVersion: 24
+        }
+      ]
     })
 
-    await expect(readCredentialInventory({ path: target.path, ...startup })).resolves.toEqual([
-      Buffer.from('cookie-ciphertext')
-    ])
+    const inventory = await readCredentialInventory({ path: target.path, ...startup })
+    const cipher = { decryptString: vi.fn(), validateEncryptedCookie: vi.fn() }
+    verifyCredentialCiphertexts(inventory, cipher)
+    expect(cipher.decryptString).toHaveBeenCalledExactlyOnceWith(
+      Buffer.from('application-ciphertext')
+    )
+    expect(cipher.validateEncryptedCookie).toHaveBeenCalledExactlyOnceWith(
+      Buffer.from('cookie-ciphertext'),
+      {
+        kind: 'cookie',
+        value: Buffer.from('cookie-ciphertext'),
+        hostKey: '.example.test',
+        databaseVersion: 24
+      }
+    )
     await expect(stat(target.path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
@@ -191,12 +211,12 @@ describe('credential inventory handoff', () => {
     await writeFile(
       target.path,
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         capturedAt: Date.now(),
         attemptId: startup.attemptId,
         configRoot: startup.configRoot,
         profilePath: startup.profilePath,
-        ciphertexts: ['not-base64']
+        ciphertexts: [{ kind: 'application', value: 'not-base64' }]
       })
     )
 
@@ -238,7 +258,7 @@ describe('credential inventory handoff', () => {
     await writeCredentialInventory({
       path: target.path,
       ...startup,
-      ciphertexts: [Buffer.from('keep')]
+      ciphertexts: [{ kind: 'application', value: Buffer.from('keep') }]
     })
     const previous = process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH
     process.env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH = target.path

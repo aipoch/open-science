@@ -9,6 +9,7 @@ import {
 } from './filesystem-layout.js'
 import { proxyEnvironment } from './proxy-environment.js'
 import type { GatewayCredentials } from '../gateway/command-gateway.js'
+import { validateLocalService, type NotebookLocalService } from './local-service.js'
 
 type MacLaunchRequest = Readonly<{
   command: string
@@ -17,6 +18,7 @@ type MacLaunchRequest = Readonly<{
   gatewayCredentials: GatewayCredentials
   env: NodeJS.ProcessEnv
   localRpcSocketPath?: string
+  localService?: NotebookLocalService
   filesystem: FilesystemLayoutInput
 }>
 
@@ -40,6 +42,14 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
   const rules = ['(version 1)', '(allow default)', '(deny network*)']
   // Seatbelt accepts only `localhost` or `*` here. proxyEnvironment must advertise the same host.
   rules.push(`(allow network-outbound (remote ip "localhost:${request.gatewayPort}"))`)
+  if (request.localService) {
+    const service = validateLocalService(request.localService, 'darwin')
+    // Seatbelt's localhost TCP filter also permits wildcard binds. Unix paths are the boundary;
+    // service workloads retain the ordinary denial of all TCP listening and direct connections.
+    rules.push(`(allow network-bind (literal ${literal(service.socketPath)}))`)
+    rules.push(`(allow network-inbound (literal ${literal(service.socketPath)}))`)
+    rules.push(`(allow network-outbound (literal ${literal(service.socketPath)}))`)
+  }
   if (request.localRpcSocketPath) {
     rules.push(
       `(allow network-outbound (literal ${literal(absolutePhysicalPath(request.localRpcSocketPath))}))`

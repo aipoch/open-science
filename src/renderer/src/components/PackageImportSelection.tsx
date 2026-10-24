@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, FolderPlus, GalleryVerticalEnd, PackageOpen, Plus } from 'lucide-react'
 import { ProjectPicker } from '@/components/ProjectPicker'
@@ -44,10 +44,29 @@ export const PackageImportSelection = ({
   const wasCreating = useRef(false)
   const [pending, setPending] = useState(false)
   const [localError, setError] = useState<string>()
+  const [loadingProjects, setLoadingProjects] = useState(false)
+  const projectLoadInFlight = useRef(false)
   const preview = operation.importPreview
-  useEffect(() => {
-    void loadProjects().catch(() => undefined)
+  const reloadProjects = useCallback(async (): Promise<void> => {
+    if (projectLoadInFlight.current) return
+    projectLoadInFlight.current = true
+    setLoadingProjects(true)
+    try {
+      await loadProjects()
+    } finally {
+      projectLoadInFlight.current = false
+      setLoadingProjects(false)
+    }
   }, [loadProjects])
+  useEffect(() => {
+    let active = true
+    queueMicrotask(() => {
+      if (active) void reloadProjects()
+    })
+    return () => {
+      active = false
+    }
+  }, [reloadProjects])
   useEffect(() => {
     if (creatingProject) nameRef.current?.focus()
     else if (wasCreating.current) createButtonRef.current?.focus()
@@ -190,7 +209,7 @@ export const PackageImportSelection = ({
                 {t('Created when you confirm the import.')}
               </p>
             </form>
-          ) : (
+          ) : loadError && available.length === 0 ? null : (
             <>
               <ProjectPicker
                 projects={available}
@@ -227,12 +246,20 @@ export const PackageImportSelection = ({
               />
             </>
           )}
-          {error || localError || loadError ? (
+          {error || localError ? (
+            <ErrorNotice inline role="alert" tone="amber" description={error ?? localError} />
+          ) : null}
+          {loadError ? (
             <ErrorNotice
               inline
               role="alert"
               tone="amber"
-              description={error ?? localError ?? loadError}
+              description={t('Open-Science could not load projects. Retry to continue.')}
+              primaryButton={{
+                label: t('Retry'),
+                onClick: () => void reloadProjects(),
+                loading: loadingProjects
+              }}
             />
           ) : null}
         </div>

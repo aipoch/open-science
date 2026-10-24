@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { ErrorNotice } from '@/components/error-notice'
 import type { LiteratureProject, LiteratureNavigation } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
@@ -37,7 +39,7 @@ export function LiteratureLibraryHeader({
   selectedCollection: LiteratureCollectionView | undefined
   selectedProject: LiteratureProject | undefined
   section: LibrarySection
-  openProject: LiteratureNavigation['openProject']
+  openProject: (projectId: string) => Promise<boolean>
   smartSetup: boolean
   showLiteratureReviewAction: boolean
   reviewProjectId: string | undefined
@@ -63,6 +65,7 @@ export function LiteratureLibraryHeader({
   exportCurrentScope: (format: 'bibtex' | 'ris') => Promise<boolean>
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const [projectEntryFailed, setProjectEntryFailed] = useState(false)
   return (
     <div
       className={
@@ -70,6 +73,13 @@ export function LiteratureLibraryHeader({
       }
     >
       <div className="min-w-0 flex-1">
+        {projectEntryFailed ? (
+          <ErrorNotice
+            inline
+            tone="amber"
+            description={t('Could not open this project. Please retry.')}
+          />
+        ) : null}
         <div className="flex w-fit max-w-full min-w-0 items-center gap-1.5">
           <h2
             className="min-w-0 truncate text-2xl font-semibold tracking-tight"
@@ -89,7 +99,10 @@ export function LiteratureLibraryHeader({
               className="shrink-0"
               aria-label={t('Open project')}
               title={t('Open project')}
-              onClick={() => openProject(selectedProject.id, 'user')}
+              onClick={() => {
+                setProjectEntryFailed(false)
+                void openProject(selectedProject.id).catch(() => setProjectEntryFailed(true))
+              }}
             >
               <ExternalLink className="size-4" aria-hidden="true" />
             </Button>

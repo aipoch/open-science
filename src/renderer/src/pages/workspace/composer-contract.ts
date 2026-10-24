@@ -1,3 +1,4 @@
+import type { ResearchMembership } from '../../../../shared/session-persistence'
 import type { Annotation } from '../../../../shared/annotation-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import type {
@@ -46,6 +47,7 @@ export type ComposerSendSnapshot = {
   doc: ComposerDoc
   annotations: Annotation[]
   discussionFocus?: SessionDiscussionCapture
+  researchMembership?: ResearchMembership
   attachments: UploadedAttachment[]
   automaticReadingEnabled?: boolean
   pdfContext?: MessagePdfContextSnapshot

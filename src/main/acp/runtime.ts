@@ -48,23 +48,23 @@ import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { ResolvedReasoningEffort } from '@aipoch/providers'
-import { sanitizeSessionReferences } from '../../shared/session-persistence'
 import type { MessageAttribution } from '../../shared/session-message-contract'
+import { sanitizeSessionReferences } from '../../shared/session-persistence'
 import type {
   ActivePlanProjection,
   PlanResponseCommand,
   PlanResponseIdentity
 } from '../../shared/session-plan/contract'
 import { isCodexSubscriptionProviderId, type AgentFrameworkId } from '../../shared/settings'
+import {
+  type AgentFramework,
+  type AgentModelChangeTarget,
+  type ResolvedAgentBackend
+} from '../agent-framework'
 import { renderAppMcpToolReferences } from '../agent-framework/app-mcp-names'
 import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { opencodeStorageDir } from '../agent-framework/opencode'
-import type {
-  AgentFramework,
-  AgentModelChangeTarget,
-  ResolvedAgentBackend
-} from '../agent-framework/types'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import { LITERATURE_MCP_SERVER_NAME } from '../literature/mcp-server'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
@@ -81,7 +81,7 @@ import {
   artifactPublicationContinuationText,
   type NotebookWorkingFile
 } from './artifact-publication-continuation'
-import type { ArtifactTurnOwner } from './artifact-turn-owner'
+import type { ArtifactTurnOwner, ArtifactTurnWriteScope } from './artifact-turn-owner'
 import type {
   AcpBackendGenerationOwner,
   AcpBackendGenerationView
@@ -2877,6 +2877,23 @@ class AcpRuntime {
   // Writes an inline file into the in-flight turn's pending artifact run so it attaches to the resulting
   // message and surfaces to the renderer like any generated artifact. Used by app-side connector tools
   // (e.g. molecule preview). Throws when no assistant turn is active (e.g. a user-run notebook cell).
+  trackManagedExecutionArtifactWrite<Result extends ArtifactFile>(
+    sessionId: string,
+    ownerExecutionId: string,
+    write: (scope: ArtifactTurnWriteScope) => Promise<Result>
+  ): Promise<Result> {
+    const execution = this.sessionInteractions.current(sessionId)
+    if (
+      !this.artifactTurns ||
+      execution?.kind !== 'prompt' ||
+      execution.turnToken !== ownerExecutionId
+    ) {
+      return Promise.reject(new Error('Managed output requires its original active Agent turn.'))
+    }
+    const handle = this.artifactTurns.handleForExecution(ownerExecutionId)
+    return this.artifactTurns.trackWrite(handle, write)
+  }
+
   async writeArtifactForCurrentRun(
     sessionId: string,
     input: {

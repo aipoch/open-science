@@ -29,7 +29,7 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
-import type { TransientViewImage } from './execution-model-contract'
+import type { NestedWorkingFileReader, TransientViewImage } from './execution-model-contract'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 
 export type NotebookSessionResolvedInterpreter = {
@@ -132,6 +132,8 @@ export type NotebookSessionExecutionRequest = {
   // Opaque per-control invocation identity forwarded through the REPL request frame. It binds a
   // host.agents.switch approval to this exact outer repl_execute completion.
   controlInvocationId?: string
+  // Main-owned live child-generation references, never serialized into a kernel request.
+  nestedWorkingFiles?: NestedWorkingFileReader
 }
 
 export type NotebookSessionExecutionResult = {

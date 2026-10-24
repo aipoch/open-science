@@ -33,7 +33,11 @@
     "src/shared/renderer-contract.test.ts",
     "src/shared/renderer-surface-inventory.test.ts",
     "src/shared/renderer-surface-matrix.test.ts",
-    "src/shared/web-rpc-contract.test.ts"
+    "src/shared/web-rpc-contract.test.ts",
+    "src/shared/renderer-contracts/research-execution-profiles.ts",
+    "src/shared/renderer-contracts/research-runs.ts",
+    "src/shared/renderer-contracts/run-observation.ts",
+    "src/shared/renderer-contracts/research-demos.ts"
   ],
   "interfacePaths": [
     "src/shared/renderer-contract-catalog.ts",
@@ -64,7 +68,11 @@
     "src/shared/renderer-contracts/system.ts",
     "src/shared/renderer-contracts/update.ts",
     "src/shared/renderer-contracts/window.ts",
-    "src/shared/renderer-contracts/session-replay.ts"
+    "src/shared/renderer-contracts/session-replay.ts",
+    "src/shared/renderer-contracts/research-execution-profiles.ts",
+    "src/shared/renderer-contracts/research-runs.ts",
+    "src/shared/renderer-contracts/run-observation.ts",
+    "src/shared/renderer-contracts/research-demos.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -83,7 +91,7 @@
     "contract": [],
     "consumer": []
   },
-  "capabilityOverlays": [],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "shared_contract",
   "fullTestReason": "The renderer contract catalog and generated Web API map dispatch methods and events by name across Electron, local Web and remote Web surfaces; retain complete validation."
 }

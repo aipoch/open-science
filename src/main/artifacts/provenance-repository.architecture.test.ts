@@ -215,6 +215,8 @@ describe('Artifact Provenance repository architecture', () => {
   it('keeps the established public facade and private projection helpers', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'readPublishedVersionForWrite',
+        'resolvePublishedSessionVersionsByContent',
         'saveVersion',
         'withSessionMutation',
         'activateFinalizedRun',
@@ -311,6 +313,7 @@ describe('Artifact Provenance repository architecture', () => {
     expect(mutableFields(facade)).toEqual([])
     expect(topLevelValues(facadeFile)).toEqual(
       [
+        'assertExpectedArtifactContent',
         'SAFE_SEGMENT_PATTERN',
         'assertSafeSegment',
         'hasServerInferredProducer',
@@ -418,13 +421,12 @@ describe('Artifact Provenance repository architecture', () => {
     const module = manifest.modules.artifact_provenance
 
     expectBoundaryPaths(manifest, 'artifact_provenance', [
-      'src/main/artifacts/artifact-provenance-graph.ts',
+      'src/main/artifacts/session-version-content-reader.test.ts',
+      'src/main/artifacts/session-version-content-reader.ts',
       'src/main/artifacts/artifact-reproducibility-export.ts',
       'src/main/artifacts/artifact-reproducibility-ipc.ts',
       'src/main/artifacts/artifact-reproducibility-lifecycle.ts',
-      'src/main/artifacts/artifact-reproducibility-receipts.ts',
       'src/main/artifacts/compute-output-evidence.ts',
-      'src/main/artifacts/provenance-canonical.ts',
       'src/main/artifacts/provenance-content-status.ts',
       'src/main/artifacts/provenance-core-evidence.ts',
       'src/main/artifacts/provenance-dependency-reader.ts',
@@ -437,34 +439,22 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/provenance-repository.ts',
       'src/main/artifacts/provenance-reproducibility-execution-evidence.ts',
       'src/main/artifacts/provenance-staging-recovery.ts',
-      'src/main/artifacts/provenance-storage-contract.ts',
-      'src/main/artifacts/provenance-storage.ts',
       'src/main/artifacts/provenance-unindexed-recovery.ts',
-      'src/main/artifacts/provenance-version-writer.ts',
       'src/main/artifacts/ro-crate-export.test.ts',
       'src/main/artifacts/ro-crate-export.ts',
       'src/main/artifacts/reviewer-turn-file-evidence-reader.ts',
       'src/main/artifacts/write-budget-owner.ts',
-      'src/main/notebook/reproduction-runtime.ts',
       'src/main/notebook/stdlib-replay.fixture.ts',
-      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
-      'src/shared/artifact-reproducibility.ts',
-      'src/main/artifacts/artifact-provenance-graph.test.ts',
       'src/main/artifacts/artifact-reproducibility-execution.test.ts',
       'src/main/artifacts/artifact-reproducibility-export.test.ts',
       'src/main/artifacts/artifact-reproducibility-ipc.test.ts',
       'src/main/artifacts/artifact-reproducibility-lifecycle.test.ts',
-      'src/main/artifacts/artifact-reproducibility-outputs.test.ts',
-      'src/main/artifacts/artifact-reproducibility-outputs.ts',
-      'src/main/artifacts/artifact-reproducibility-receipts.test.ts',
       'src/main/artifacts/artifact-reproducibility-recipe.test.ts',
       'src/main/artifacts/artifact-save-crash.integration.test.ts',
       'src/main/artifacts/artifact-save.integration.test.ts',
       'src/main/artifacts/artifact-test-fixtures.ts',
       'src/main/artifacts/code-reconstruction.test.ts',
       'src/main/artifacts/code-reconstruction.ts',
-      'src/main/artifacts/content-type.test.ts',
-      'src/main/artifacts/content-type.ts',
       'src/main/artifacts/ipc.test.ts',
       'src/main/artifacts/ipc.ts',
       'src/main/artifacts/literature-manifest.test.ts',
@@ -473,11 +463,8 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/mcp-server.ts',
       'src/main/artifacts/prepared-literature-sidecar.test.ts',
       'src/main/artifacts/prepared-literature-sidecar.ts',
-      'src/main/artifacts/provenance-analysis-revision.test.ts',
-      'src/main/artifacts/provenance-analysis-revision.ts',
       'src/main/artifacts/provenance-dependency-read.test.ts',
       'src/main/artifacts/provenance-execution-projection.ts',
-      'src/main/artifacts/provenance-execution-snapshot-decoder.ts',
       'src/main/artifacts/provenance-helper-evidence.test.ts',
       'src/main/artifacts/provenance-lifecycle-contract.test.ts',
       'src/main/artifacts/provenance-message-snapshot-durability.test.ts',
@@ -490,16 +477,11 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/provenance-snapshot-decoder.ts',
       'src/main/artifacts/provenance-startup.integration.test.ts',
       'src/main/artifacts/provenance-test-fixtures.ts',
-      'src/main/artifacts/provenance-version-kind.test.ts',
-      'src/main/artifacts/provenance-version-kind.ts',
       'src/main/artifacts/provenance-write-contract.test.ts',
       'src/main/artifacts/repository.characterization.test.ts',
       'src/main/artifacts/reproducibility-notebook-lifecycle.ts',
-      'src/main/artifacts/reproducibility-source.ts',
       'src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts',
       'src/main/artifacts/run-registry.ts',
-      'src/main/artifacts/save-request.test.ts',
-      'src/main/artifacts/save-request.ts',
       'src/main/artifacts/save-test-fixtures.ts',
       'src/main/artifacts/session-reproducibility-store.test.ts',
       'src/main/artifacts/session-reproducibility-store.ts',
@@ -508,14 +490,51 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/storage-access.context.test.ts',
       'src/main/artifacts/test-support/save-crash-child.ts',
       'src/main/artifacts/write-budget-owner.test.ts',
-      'src/main/notebook/reproduction-runtime.test.ts',
-      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
       'src/main/artifacts/export-filename.ts',
       'src/main/artifacts/artifact-reproducibility-commands.test.ts',
-      'src/main/artifacts/artifact-reproducibility-commands.ts',
+      'src/main/artifacts/artifact-reproducibility-commands.ts'
+    ])
+    expectBoundaryPaths(manifest, 'artifact_storage_validation', [
+      'src/main/artifacts/artifact-provenance-graph.ts',
+      'src/main/artifacts/artifact-reproducibility-receipts.ts',
+      'src/main/artifacts/provenance-storage-contract.ts',
+      'src/main/artifacts/provenance-storage.ts',
+      'src/main/artifacts/artifact-provenance-graph.test.ts',
+      'src/main/artifacts/artifact-reproducibility-outputs.test.ts',
+      'src/main/artifacts/artifact-reproducibility-outputs.ts',
+      'src/main/artifacts/artifact-reproducibility-receipts.test.ts',
+      'src/main/artifacts/provenance-analysis-revision.test.ts',
+      'src/main/artifacts/provenance-analysis-revision.ts',
+      'src/main/artifacts/provenance-execution-snapshot-decoder.ts',
+      'src/main/artifacts/reproducibility-source.ts',
       'src/main/artifacts/reproducibility-host.ts',
       'src/main/artifacts/reproducibility-host.test.ts'
+    ])
+    expectBoundaryPaths(manifest, 'artifact_content_contracts', [
+      'src/main/artifacts/provenance-canonical.ts',
+      'src/main/artifacts/content-type.test.ts',
+      'src/main/artifacts/content-type.ts',
+      'src/main/artifacts/provenance-version-kind.test.ts',
+      'src/main/artifacts/provenance-version-kind.ts'
+    ])
+    expectBoundaryPaths(manifest, 'managed_version_files', [
+      'src/main/artifacts/provenance-version-writer.ts'
+    ])
+    expectBoundaryPaths(manifest, 'notebook_reproduction', [
+      'src/main/notebook/reproduction-runtime.ts',
+      'src/main/notebook/reproduction-runtime.test.ts'
+    ])
+    expectBoundaryPaths(manifest, 'workspace_reproducibility_presentation', [
+      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.tsx',
+      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx'
+    ])
+    expectBoundaryPaths(manifest, 'artifact_reproducibility_contract', [
+      'src/shared/artifact-reproducibility.ts'
+    ])
+    expectBoundaryPaths(manifest, 'artifact_publication_request', [
+      'src/main/artifacts/save-request.test.ts',
+      'src/main/artifacts/save-request.ts'
     ])
     expect(module.interfacePaths).toEqual(
       expect.arrayContaining([
@@ -557,12 +576,16 @@ describe('Artifact Provenance repository architecture', () => {
       ])
     )
     expect(module.consumerModules).toEqual(expect.arrayContaining(['session_persistence']))
-    expectBoundaryOwnerTests(manifest, 'artifact_provenance', [
+    expectBoundaryOwnerTests(manifest, 'artifact_storage_validation', [
       'src/main/artifacts/artifact-provenance-graph.test.ts',
+      'src/main/artifacts/artifact-reproducibility-receipts.test.ts',
+      'src/main/artifacts/artifact-reproducibility-outputs.test.ts',
+      'src/main/artifacts/provenance-analysis-revision.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'artifact_provenance', [
       'src/main/artifacts/artifact-reproducibility-execution.test.ts',
       'src/main/artifacts/artifact-reproducibility-export.test.ts',
       'src/main/artifacts/artifact-reproducibility-lifecycle.test.ts',
-      'src/main/artifacts/artifact-reproducibility-receipts.test.ts',
       'src/main/artifacts/artifact-reproducibility-recipe.test.ts',
       'src/main/artifacts/provenance-dependency-read.test.ts',
       'src/main/artifacts/provenance-lifecycle-contract.test.ts',
@@ -575,26 +598,32 @@ describe('Artifact Provenance repository architecture', () => {
       'src/main/artifacts/provenance-write-contract.test.ts',
       'src/main/artifacts/reviewer-turn-file-evidence-reader.test.ts',
       'src/main/artifacts/write-budget-owner.test.ts',
-      'src/main/notebook/reproduction-runtime.test.ts',
-      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx',
-      'src/main/artifacts/artifact-reproducibility-outputs.test.ts',
       'src/main/artifacts/artifact-save-crash.integration.test.ts',
       'src/main/artifacts/artifact-save.integration.test.ts',
-      'src/main/artifacts/content-type.test.ts',
       'src/main/artifacts/literature-manifest.test.ts',
       'src/main/artifacts/prepared-literature-sidecar.test.ts',
-      'src/main/artifacts/provenance-analysis-revision.test.ts',
       'src/main/artifacts/provenance-helper-evidence.test.ts',
       'src/main/artifacts/provenance-snapshot-decoder.test.ts',
-      'src/main/artifacts/provenance-version-kind.test.ts',
       'src/main/artifacts/repository.characterization.test.ts',
       'src/main/artifacts/ro-crate-export.test.ts',
-      'src/main/artifacts/save-request.test.ts',
       'src/main/artifacts/session-reproducibility-store.test.ts',
       'src/main/artifacts/session-reproducibility.test.ts',
       'src/main/artifacts/storage-access.context.test.ts',
       'src/main/artifacts/resumed-finalization-ownership.test.ts',
       'src/main/artifacts/artifact-reproducibility-commands.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'notebook_reproduction', [
+      'src/main/notebook/reproduction-runtime.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'workspace_reproducibility_presentation', [
+      'src/renderer/src/pages/workspace/ArtifactReproducibilityPanel.test.tsx'
+    ])
+    expectBoundaryOwnerTests(manifest, 'artifact_content_contracts', [
+      'src/main/artifacts/content-type.test.ts',
+      'src/main/artifacts/provenance-version-kind.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'artifact_publication_request', [
+      'src/main/artifacts/save-request.test.ts'
     ])
     expect(module.testFiles.contract).toEqual(
       expect.arrayContaining([
@@ -609,6 +638,63 @@ describe('Artifact Provenance repository architecture', () => {
         'src/shared/renderer-surface-inventory.test.ts',
         'src/shared/renderer-surface-matrix.test.ts',
         'src/main/artifacts/reproducibility-host.test.ts'
+      ])
+    )
+    expect(module.testFiles.consumer).toEqual(
+      expect.arrayContaining([
+        'src/main/composition/session-packages.lifecycle.test.ts',
+        'src/main/session-package/research-reproduction.integration.test.ts',
+        'src/main/composition/artifact-surfaces.test.ts',
+        'src/main/composition/handoff.test.ts',
+        'src/main/composition/managed-execution.integration.test.ts',
+        'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+        'src/main/notebook/managed-auxiliary-output.test.ts',
+        'src/main/notebook/managed-execution-collection.integration.test.ts',
+        'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+        'src/main/notebook/managed-execution-output.test.ts',
+        'src/main/notebook/managed-execution-service.test.ts',
+        'src/main/notebook/managed-nested-generation.integration.test.ts',
+        'src/main/notebook/managed-output-publication.integration.test.ts',
+        'src/main/notebook/research-material-authority.test.ts',
+        'src/main/notebook/screened-auxiliary-output.test.ts',
+        'src/main/notebook/session-operation-owner.integration.test.ts',
+        'src/main/research-execution-profiles/ipc.test.ts',
+        'src/main/session-package/headless.test.ts',
+        'src/main/run-observation/capture-package.integration.test.ts',
+        'src/main/run-observation/recorded-reader.test.ts',
+        'src/main/run-observation/managed-coordinator.test.ts',
+        'src/main/project-recordings/managed-adapter.test.ts',
+        'src/main/run-observation-external-port.test.ts',
+        'src/main/browser-recordings/external-port.test.ts',
+        'src/main/runtime-view/browser-host.integration.test.ts',
+        'src/main/replay-viewer/http-host.integration.test.ts',
+        'src/main/run-observation/managed-port.test.ts',
+        'src/main/run-observation/managed-status.test.ts',
+        'src/main/browser-recordings/owner.test.ts',
+        'src/main/run-observation/media-collector.test.ts',
+        'src/main/project-recordings/recorder.test.ts',
+        'src/main/managed-runtime-views.integration.test.ts',
+        'src/main/observation-desktop/bridge.test.ts',
+        'src/main/research-demos/owner.macos.integration.test.ts',
+        'src/main/notebook/offline-plan-admission.test.ts',
+        'src/renderer/replay-viewer/browser-recording.integration.test.ts',
+        'src/renderer/replay-viewer/browser.integration.test.ts',
+        'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
+        'src/main/research-demos/ipc.test.ts',
+        'src/main/research-demos/owner.test.ts',
+        'src/main/research-demos/inspection.test.ts',
+        'src/renderer/replay-viewer/research-browser.integration.test.ts',
+        'src/main/research-replay/http-host.integration.test.ts',
+        'src/main/research-replay/observation-association.test.ts',
+        'src/main/research-replay/observation-selection.test.ts',
+        'src/main/research-replay/service-timing.test.ts',
+        'src/main/research-replay/service.test.ts',
+        'src/main/research-runs/inspection.test.ts',
+        'src/main/research-runs/ipc.test.ts',
+        'src/main/replay-viewer/desktop-embed.integration.test.ts',
+        'src/main/notebook/managed-execution-service.macos.integration.test.ts',
+        'src/main/notebook/managed-research-acceptance.macos.integration.test.ts',
+        'src/main/runtime-view/tuanzi.macos.integration.test.ts'
       ])
     )
     expect(module.capabilityOverlays).toEqual(

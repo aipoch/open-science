@@ -1272,7 +1272,8 @@ describe('notebook runtime service', () => {
     await expect(shell).resolves.toEqual({
       stdout: '',
       stderr: 'Shell command was cancelled.',
-      exitCode: null
+      exitCode: null,
+      cancelled: true
     })
     await expect(deleting).resolves.toBeUndefined()
   })
@@ -4851,7 +4852,8 @@ describe('notebook runtime service', () => {
         await expect(queued).resolves.toEqual({
           stdout: '',
           stderr: 'Shell command was cancelled.',
-          exitCode: null
+          exitCode: null,
+          cancelled: true
         })
         expect(entered).toEqual(['first'])
 
@@ -5065,8 +5067,8 @@ describe('notebook runtime service', () => {
       const shutdown = service.shutdown(scope)
 
       await expect(Promise.all([running, queued])).resolves.toEqual([
-        { stdout: '', stderr: 'Shell command was cancelled.', exitCode: null },
-        expect.objectContaining({ exitCode: null })
+        { stdout: '', stderr: 'Shell command was cancelled.', exitCode: null, cancelled: true },
+        expect.objectContaining({ exitCode: null, cancelled: true })
       ])
       await expect(shutdown).resolves.toEqual({ sessionId: 'session-1', status: 'shutdown' })
       expect(execute).toHaveBeenCalledOnce()
@@ -5115,7 +5117,8 @@ describe('notebook runtime service', () => {
       await expect(execution).resolves.toEqual({
         stdout: '',
         stderr: 'Shell command was cancelled.',
-        exitCode: null
+        exitCode: null,
+        cancelled: true
       })
       expect(executionSignal?.aborted).toBe(true)
       await expect(disposal).resolves.toEqual({ reaped: true })
@@ -5734,6 +5737,7 @@ describe('notebook runtime service', () => {
             repository: new NotebookRunRepository(root),
             platform: 'linux'
           })
+          liveShellServices.push(service)
 
           const result = await service.executeShell({
             sessionId: 'session-1',

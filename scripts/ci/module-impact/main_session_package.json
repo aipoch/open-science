@@ -66,6 +66,9 @@
     "src/main/session-package/literature-source.test.ts",
     "src/main/session-package/materialize.ts",
     "src/main/session-package/materialize.test.ts",
+    "src/main/session-package/research-reproduction.integration.test.ts",
+    "src/main/session-package/headless.test.ts",
+    "src/main/session-package/headless.ts",
     "src/main/session-package/content-verification.test.ts"
   ],
   "interfacePaths": [
@@ -79,7 +82,8 @@
     "src/main/session-package/pdf-notes.ts",
     "src/main/session-package/browser-import.ts",
     "src/main/session-package/browser-import-protocol.ts",
-    "src/main/session-package/literature-source.ts"
+    "src/main/session-package/literature-source.ts",
+    "src/main/session-package/headless.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -110,6 +114,8 @@
       "src/main/session-package/browser-import-protocol.test.ts",
       "src/main/session-package/browser-import-sdk.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/session-package/headless.test.ts",
       "src/main/session-package/content-verification.test.ts"
     ],
     "contract": [
@@ -128,9 +134,40 @@
       "src/main/session-package/desktop-composition.test.ts",
       "src/main/session-persistence/prompt-preparation-restart.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/composition/session-packages.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/acp/runtime.test.ts",
+      "src/main/settings/bootstrap.integration.test.ts",
+      "src/main/web-service/artifact-download.integration.test.ts",
+      "src/main/web-service/http-server.test.ts",
+      "src/main/web-service/task-api.test.ts",
+      "src/main/remote-access/service.test.ts",
+      "src/main/web-service/controller.test.ts",
+      "src/main/remote-access/ipc.test.ts",
+      "src/main/host-application-commands.test.ts",
+      "src/main/application-command-client.test.ts",
+      "src/main/application-command-composition.test.ts",
+      "src/main/application-command-electron-adapter.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/literature/scale-regressions.test.ts",
+      "src/shared/renderer-surface-inventory.test.ts",
+      "src/main/remote-access/pairing.test.ts",
+      "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Headless portable package operations extend the reviewed package owner across import recovery, authorization, restart and shutdown lifecycles; retain full validation of desktop, CLI and browser consumers."
 }

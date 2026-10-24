@@ -15,6 +15,7 @@ import {
   toGitHubOutputPlan
 } from './classify-pr-changes.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { createModuleImpactModel } from './module-impact-model.test-support'
 
 const readManifest = (): ReturnType<JSON['parse']> =>
   JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
@@ -321,19 +322,27 @@ describe('pull request change classification', () => {
     ['packages/notebook-network-sandbox/README.md', 'notebook_network_sandbox']
   ])('keeps documentation and package checks without full fallback for %s', (path, owner) => {
     const changes = [{ path, status: 'modified' }]
-    const plan = classifyChanges(changes)
+    const moduleManifest = createModuleImpactModel({
+      notebook_network_sandbox: {
+        ownerPaths: ['packages/notebook-network-sandbox/README.md'],
+        ownerTests: ['packages/notebook-network-sandbox/src/config.test.ts'],
+        fallbackCapability: 'notebook_network_sandbox'
+      }
+    })
+    const plan = classifyChanges(changes, undefined, { moduleManifest })
     const manifest = readManifest()
     manifest.rules = manifest.rules.filter(({ id }: { id: string }) => id !== 'documentation')
-    const packagePlan = classifyChanges(changes, manifest)
+    const packagePlan = classifyChanges(changes, manifest, { moduleManifest })
 
     expect(plan.mode).toBe('selective')
     expect(plan.roots).toEqual(expect.arrayContaining(['documentation', owner]))
     expect(plan.lanes).toEqual(expect.arrayContaining(['docs', ...packagePlan.lanes]))
     expect(plan.roots).not.toContain('owner_ambiguity')
-    const tests = createAffectedTestPlan(changes, {
-      status: 'unavailable-manifest-only',
-      testFiles: []
-    })
+    const tests = createAffectedTestPlan(
+      changes,
+      { status: 'unavailable-manifest-only', testFiles: [] },
+      moduleManifest
+    )
     expect(tests.mode).toBe('selective')
     if (owner === 'cli_sdk') {
       // CLI tests execute in their dedicated static lane, not the portable module bundle.
@@ -852,6 +861,7 @@ describe('pull request change classification', () => {
     'src/main/notebook/runtime-service.ts',
     'src/main/notebook/environment-resources.ts',
     'src/shared/tool-detail-sanitizer.ts',
+    'src/shared/research-reproduction.ts',
     'src/shared/renderer-contract-catalog.ts',
     'src/shared/renderer-contracts/settings-preferences.ts'
   ])('adds Windows GUI consumers for Windows-sensitive source %s', (path) => {

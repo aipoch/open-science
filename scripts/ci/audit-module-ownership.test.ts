@@ -4,6 +4,11 @@ import { basename, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import {
+  createModuleImpactModel,
+  productionFullReasonContracts
+} from './module-impact-model.test-support'
+import { reviewedBoundaries } from './module-graph/policy.mjs'
 import { auditModuleOwnership, auditModuleRouting } from './audit-module-ownership.mjs'
 import {
   createAffectedTestPlan,
@@ -26,6 +31,50 @@ const files = [
 ]
 const packageRegistry = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
 const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+
+// A bounded ownership example has only the declared sources, contracts and consumers below.
+const ownershipModel = (): ReturnType<typeof createModuleImpactModel> =>
+  createModuleImpactModel({
+    reviewer_orchestrator: {
+      ownerPaths: ['src/main/reviewer/correction.ts', 'src/main/reviewer/correction-owner.test.ts'],
+      interfacePaths: ['src/main/reviewer/correction.ts'],
+      ownerTests: ['src/main/reviewer/correction-owner.test.ts']
+    },
+    connector_core: {
+      ownerPaths: ['packages/connector-core/src/engine.ts'],
+      ownerTests: ['packages/connector-core/src/engine.test.ts'],
+      consumerModules: ['reviewer_orchestrator']
+    },
+    connector_builtins: {
+      ownerPaths: ['packages/connector-builtins/src/genes-ontology.ts'],
+      ownerTests: ['packages/connector-builtins/src/genes.test.ts'],
+      consumerModules: ['reviewer_orchestrator']
+    },
+    i18n_shared_runtime: {
+      ownerPaths: ['src/shared/i18n/core.ts'],
+      ownerTests: ['src/shared/i18n/core.test.ts'],
+      consumerTests: ['src/renderer/src/pages/settings/SkillsPanel.render.test.tsx']
+    },
+    delegation_contract: {
+      ownerPaths: [
+        'src/main/delegation/certification-contract.test.ts',
+        'src/main/delegation/execution-contract.test.ts'
+      ],
+      interfacePaths: [
+        'src/main/delegation/certification-contract.test.ts',
+        'src/main/delegation/execution-contract.test.ts'
+      ],
+      ownerTests: [
+        'src/main/delegation/certification-contract.test.ts',
+        'src/main/delegation/execution-contract.test.ts'
+      ],
+      consumerModules: ['delegation_execution']
+    },
+    delegation_execution: {
+      ownerPaths: ['src/main/delegation/acp-execution.ts'],
+      ownerTests: ['src/main/delegation/acp-execution.test.ts']
+    }
+  })
 
 describe('complete module ownership', () => {
   it.each([
@@ -181,7 +230,7 @@ describe('complete module ownership', () => {
 
   it('runs a changed registered test directly without expanding its source consumers', () => {
     const path = 'src/main/reviewer/correction-owner.test.ts'
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, ownershipModel())
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toEqual([path])
     expect(plan.modules).toEqual(['reviewer_orchestrator'])
@@ -189,14 +238,34 @@ describe('complete module ownership', () => {
 
   it('keeps source consumers in mixed source and test changes', () => {
     const test = 'src/main/reviewer/correction-owner.test.ts'
-    const path = 'packages/connector-core/src/engine.ts'
-    const sourcePlan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const path = 'packages/connector-builtins/src/genes-ontology.ts'
+    const model = ownershipModel()
+    const sourcePlan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     const mixed = createAffectedTestPlan(
       [
         { path, status: 'modified' },
         { path: test, status: 'modified' }
       ],
-      graph
+      graph,
+      model
+    )
+    expect(sourcePlan.mode).toBe('selective')
+    expect(mixed.mode).toBe('selective')
+    expect(mixed.testFiles).toEqual([...new Set([...sourcePlan.testFiles, test])].sort())
+  })
+
+  it('keeps connector-core consumers in mixed source and test changes', () => {
+    const test = 'src/main/reviewer/correction-owner.test.ts'
+    const path = 'packages/connector-core/src/engine.ts'
+    const model = ownershipModel()
+    const sourcePlan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
+    const mixed = createAffectedTestPlan(
+      [
+        { path, status: 'modified' },
+        { path: test, status: 'modified' }
+      ],
+      graph,
+      model
     )
     expect(sourcePlan.mode).toBe('selective')
     expect(mixed.mode).toBe('selective')
@@ -232,7 +301,8 @@ describe('complete module ownership', () => {
     ])
     const runtime = createAffectedTestPlan(
       [{ path: 'src/shared/i18n/core.ts', status: 'modified' }],
-      graph
+      graph,
+      ownershipModel()
     )
     expect(runtime.modules).toContain('i18n_shared_runtime')
     expect(runtime.testFiles).toContain(
@@ -245,7 +315,7 @@ it.each(['certification-contract', 'execution-contract'])(
   'expands consumers of the shared Delegation %s test contract',
   (name) => {
     const path = `src/main/delegation/${name}.test.ts`
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, ownershipModel())
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toContain(path)
     expect(plan.testFiles).toContain('src/main/delegation/acp-execution.test.ts')
@@ -281,3 +351,56 @@ it.each([
   expect(plan.mode).toBe('selective')
   expect(plan.testFiles).toContain(test)
 })
+
+const reclassifiedOwners = Object.entries(manifest.modules).filter(
+  ([id, module]) => Object.hasOwn(reviewedBoundaries, id) && module.fullTestReason
+)
+
+it('retains all 116 reclassified owners, the ten original full owners and the split catalog', () => {
+  expect(reclassifiedOwners).toHaveLength(116)
+  expect(
+    Object.entries(manifest.modules)
+      .filter(([id, module]) => !Object.hasOwn(reviewedBoundaries, id) && module.fullTestReason)
+      .map(([id]) => id)
+      .sort()
+  ).toEqual([
+    'diagnostics_package',
+    'shared_acp_media',
+    'shared_application_contracts',
+    'shared_command_protocol',
+    'shared_conversation_contracts',
+    'shared_network_contracts',
+    'shared_permission_contracts',
+    'shared_preview_contracts',
+    'shared_renderer_contract_catalog',
+    'shared_session_configuration',
+    'shared_workspace_contracts'
+  ])
+})
+
+it.each(reclassifiedOwners)(
+  'keeps the real %s fallback and its exact production explanation',
+  (id, module) => {
+    const path = module.interfacePaths.find((path) => module.ownerPaths.includes(path))!
+    const reason = `${id} -> ${module.fullTestReason} -> full`
+    expect(createModuleTestPlan(id, manifest)).toMatchObject({
+      mode: 'full',
+      reasonChains: [reason]
+    })
+    const affected = createAffectedTestPlan([{ path, status: 'modified' }], graph, manifest)
+    expect(affected.mode).toBe('full')
+    expect(affected.reasonChains.join('\n')).toContain(reason)
+    expect(affected.reasonChains.join('\n')).not.toContain('unknown module owner')
+  }
+)
+
+it.each(Object.entries(productionFullReasonContracts))(
+  'pins the independently reviewed production explanation for %s',
+  (id, reason) => {
+    expect(manifest.modules[id].fullTestReason).toBe(reason)
+    expect(createModuleTestPlan(id, manifest)).toMatchObject({
+      mode: 'full',
+      reasonChains: [`${id} -> ${reason} -> full`]
+    })
+  }
+)

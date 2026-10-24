@@ -12,9 +12,11 @@ import {
   shouldHandlePreviewContextMenu,
   type PreviewCapabilityId
 } from '../preview-actions/preview-action-model'
+import { RecordedResourcePreview } from './results/RecordedResourcePreview'
+import { readRecordedResource } from './results/recorded-resource-reader'
 
-// Interactive inspection uses the normal renderers, without editing, annotation or latest-version
-// navigation. Capture preparation remains on replay's bounded, deterministic resource reader.
+// Replay's HTML and simple files use the same inert byte renderer as the browser viewer.
+// Rich document readers remain read-only, without annotation or latest-version navigation.
 export default function ReplayFilePreview({
   resource,
   onClose
@@ -88,7 +90,13 @@ export default function ReplayFilePreview({
             className="relative size-full min-h-0 overflow-hidden"
             data-replay-file-preview={resource.id}
           >
-            <PreviewFileContent item={item} readOnly />
+            {resource.mimeType?.startsWith('text/') ||
+            resource.mimeType?.startsWith('image/') ||
+            /\.(?:html?|json|csv|tsv|md|txt|xml|log|svg|png|jpe?g|webp)$/i.test(resource.name) ? (
+              <RecordedResourcePreview resource={resource} read={readRecordedResource} />
+            ) : (
+              <PreviewFileContent item={item} readOnly />
+            )}
           </div>
         </ActionMenuTarget>
       </PreviewActionMenuAdapterProvider>

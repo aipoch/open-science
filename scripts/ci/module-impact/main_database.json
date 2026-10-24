@@ -93,7 +93,9 @@
     "src/main/database/migrations/0050-literature-translation.ts",
     "src/main/database/literature-translation-migration.test.ts",
     "src/main/database/workspace-pdf-translation-migration.test.ts",
-    "scripts/database-migration-ledger-smoke.test.ts"
+    "scripts/database-migration-ledger-smoke.test.ts",
+    "src/main/database/migrations/0051-session-research-membership.ts",
+    "src/main/database/session-research-membership-migration.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -102,7 +104,8 @@
     "src/main/database/migration-service.ts",
     "src/main/database/migration-sql-executor.ts",
     "src/main/database/migrations/0047-session-replay.ts",
-    "test/fixtures/application-database.ts"
+    "test/fixtures/application-database.ts",
+    "src/main/database/migrations/0051-session-research-membership.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -139,7 +142,8 @@
       "src/main/database/literature-smart-collections-migration.test.ts",
       "src/main/database/pascalcase-table-names-migration.test.ts",
       "src/main/database/literature-translation-migration.test.ts",
-      "src/main/database/workspace-pdf-translation-migration.test.ts"
+      "src/main/database/workspace-pdf-translation-migration.test.ts",
+      "src/main/database/session-research-membership-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -528,9 +532,63 @@
       "src/main/desktop-native-electron.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
+      "src/main/session-package/research-reproduction.integration.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/notebook/local-rpc-server.managed-execution.test.ts",
+      "src/main/notebook/managed-auxiliary-output.test.ts",
+      "src/main/notebook/managed-execution-collection.integration.test.ts",
+      "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
+      "src/main/notebook/managed-execution-output.test.ts",
+      "src/main/notebook/managed-execution-service.test.ts",
+      "src/main/notebook/managed-nested-generation.integration.test.ts",
+      "src/main/notebook/managed-output-publication.integration.test.ts",
+      "src/main/notebook/research-material-authority.test.ts",
+      "src/main/notebook/screened-auxiliary-output.test.ts",
+      "src/main/notebook/session-operation-owner.integration.test.ts",
+      "src/main/research-execution-profiles/ipc.test.ts",
+      "src/main/session-package/headless.test.ts",
+      "src/main/run-observation/capture-package.integration.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/browser-recordings/external-port.test.ts",
+      "src/main/run-observation/managed-coordinator.test.ts",
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/project-recordings/managed-adapter.test.ts",
+      "src/main/run-observation-external-port.test.ts",
+      "src/main/runtime-view/browser-host.integration.test.ts",
+      "src/main/replay-viewer/http-host.integration.test.ts",
+      "src/main/browser-recordings/owner.test.ts",
+      "src/main/run-observation/media-collector.test.ts",
+      "src/main/project-recordings/recorder.test.ts",
+      "src/main/run-observation/managed-status.test.ts",
+      "src/main/managed-runtime-views.integration.test.ts",
+      "src/main/observation-desktop/bridge.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/research-replay/http-host.integration.test.ts",
+      "src/main/research-replay/observation-association.test.ts",
+      "src/main/research-replay/observation-selection.test.ts",
+      "src/main/research-replay/service-timing.test.ts",
+      "src/main/research-replay/service.test.ts",
+      "src/main/research-demos/owner.test.ts",
+      "src/main/research-runs/inspection.test.ts",
+      "src/main/research-runs/ipc.test.ts",
+      "src/main/research-demos/ipc.test.ts",
+      "src/main/notebook/offline-plan-admission.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/main/research-demos/inspection.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/main/notebook/managed-execution-service.macos.integration.test.ts",
+      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts",
+      "src/main/runtime-view/tuanzi.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Research membership adds a persisted database migration and session lifecycle state outside the reviewed database source boundary; validate all migration, restart and persistence consumers in full."
 }

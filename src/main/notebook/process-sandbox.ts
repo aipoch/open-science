@@ -1,6 +1,9 @@
 import type { RequestNotebookNetworkAccessResult } from '../../shared/notebook'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { WindowsNotebookRuntime } from './windows-notebook-runtime'
+import type { ExecutionConfinement } from '@aipoch/notebook-network-sandbox'
+import type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
+export type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
 
 export const NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE =
   'NETWORK_APPROVAL_RETRY_REQUIRED: Network access was approved, but the connection or execution has ended. Review possible side effects and retry the command explicitly. The command was not replayed.'
@@ -52,6 +55,10 @@ export const withNotebookSandboxProcessState = (
 }
 
 export type NotebookSandboxInvocation = Readonly<{
+  /** Main-owned per-execution ceiling; never widened by global or session grants. */
+  confinement?: ExecutionConfinement
+  /** Trusted host capability; its identity must match this invocation's executionReference. */
+  localService?: NotebookLocalService
   target?: NotebookSandboxTarget
   executable: string
   args: readonly string[]

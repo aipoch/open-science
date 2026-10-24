@@ -35,6 +35,7 @@ import {
 import { type ReviewerRuntimeShutdownOwner } from './reviewer'
 
 export async function composeHandoff({
+  managedExecution,
   declareElectronAdapter,
   webSessionPersistenceFlush,
   settingsService,
@@ -51,6 +52,7 @@ export async function composeHandoff({
   loadSessionSummaries,
   modules
 }: {
+  managedExecution?: import('./managed-execution').ManagedExecutionComposition
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   webSessionPersistenceFlush: ReturnType<typeof createWebSessionPersistenceFlush>
   settingsService: SettingsService
@@ -143,10 +145,13 @@ export async function composeHandoff({
     createDurableInstallGate(
       createDataRootResearchSafeInstallGate(
         detectResearchBlockers,
-        () =>
-          shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
+        async () => {
+          await managedExecution?.quiesce()
+          await managedExecution?.environments.prepareForDataRootHandoff()
+          return shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
             holdSideChatAdmission: true
-          }),
+          })
+        },
         confirmedInterruption
       ),
       async () => {
@@ -164,6 +169,7 @@ export async function composeHandoff({
   // quit the running app to install.
   let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    managedExecution?.resume()
     packageHandoffHeld.current = false
     const releaseAdmission = releaseSettingsInstallAdmission
     releaseSettingsInstallAdmission = undefined
@@ -259,6 +265,7 @@ export async function composeHandoff({
 }
 
 export function composeStorageHandoff({
+  resumeManagedExecution,
   declareElectronAdapter,
   webSessionPersistenceFlush,
   settingsService,
@@ -275,6 +282,7 @@ export function composeStorageHandoff({
   durableDataRootHandoffGate,
   notifyRendererDurabilityAborted
 }: {
+  resumeManagedExecution?: () => void
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   webSessionPersistenceFlush: ReturnType<typeof createWebSessionPersistenceFlush>
   settingsService: SettingsService
@@ -314,6 +322,7 @@ export function composeStorageHandoff({
     micromambaRunner,
     acknowledgeWebRendererFlush: webSessionPersistenceFlush.acknowledge,
     notifyDataRootHandoffAborted: () => {
+      resumeManagedExecution?.()
       abortDataRootInstallAdmission()
       try {
         sideChatRuntime.resumeAfterHandoff()
@@ -334,6 +343,7 @@ export function composeStorageHandoff({
         return prepared
       } finally {
         if (!prepared) {
+          resumeManagedExecution?.()
           abortDataRootInstallAdmission()
           sideChatRuntime.resumeAfterHandoff()
         }

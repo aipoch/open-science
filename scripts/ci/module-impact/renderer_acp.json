@@ -103,9 +103,13 @@
       "src/renderer/src/components/WebEventRecoveryDialog.test.tsx",
       "src/renderer/src/pages/workspace/composer-draft-storage.test.ts",
       "src/renderer/src/pages/workspace/workspace-composer-controller.test.ts",
-      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
+      "src/renderer/src/pages/workspace/use-run-observation-question.test.tsx",
+      "src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The renderer_acp owner retains 1 explicit research consumer obligation beyond its reviewed source-derived edges, including use-run-observation-question.test.tsx. 1 consumer cone has opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
 }

@@ -1,6 +1,13 @@
 import type {
+  ReadObservationBindingsRequest,
+  ReadObservationBindingsResult
+} from '../research-replay-observations'
+import type { PersistedChatSession } from '../session-persistence'
+import type {
+  SetResearchMembershipRequest,
   UnlinkSessionReadingRequest,
   SessionReplayRequest,
+  SessionDiscussionMatch,
   SessionReplayListRequest,
   SessionReplaySnapshot,
   SaveSessionReplayProgressRequest,
@@ -12,6 +19,33 @@ import type {
 import { callable, WEB, RUNTIME_VALIDATED } from './definition'
 
 export const contracts = {
+  'sessionReplay.readObservationBindings': callable<
+    (request: ReadObservationBindingsRequest) => Promise<ReadObservationBindingsResult>
+  >()('session-replay', [
+    'session-replay:read-observation-bindings',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessionReplay.setResearchMembership': callable<
+    (request: SetResearchMembershipRequest) => Promise<PersistedChatSession>
+  >()('session-replay', [
+    'session-replay:set-research-membership',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'sessionReplay.findDiscussion': callable<
+    (request: SessionReplayRequest) => Promise<SessionDiscussionMatch>
+  >()('session-replay', [
+    'session-replay:find-discussion',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'sessionReplay.unlinkSession': callable<
     (request: UnlinkSessionReadingRequest) => Promise<void>
   >()('session-replay', [

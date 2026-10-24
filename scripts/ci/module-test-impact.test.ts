@@ -6,6 +6,8 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { createModuleImpactModel } from './module-impact-model.test-support'
+import { reviewedBoundaries } from './module-graph/policy.mjs'
 import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
 import {
@@ -16,6 +18,300 @@ import {
   formatModuleTestPlan,
   runModuleTestCli
 } from './module-test-impact.mjs'
+
+// These fixtures exercise policy mechanics against the protected reviewed source cohorts.
+// Evidence, edges and capabilities are declared below for each scenario, independently of
+// the expanded production manifest. This does not certify the PR's expanded runtime graph.
+const selectionModel = (): ReturnType<typeof createModuleImpactModel> => {
+  type Owner = Parameters<typeof createModuleImpactModel>[0][string]
+  const reviewed = (id: string, evidence: Omit<Owner, 'ownerPaths'>): Owner => ({
+    ownerPaths: [
+      ...reviewedBoundaries[id].sources,
+      ...(reviewedBoundaries[id].resourcePaths ?? [])
+    ],
+    ...evidence
+  })
+  const processTests = [
+    'src/main/delegation/process-ownership.test.ts',
+    'src/main/process-tree.windows.integration.test.ts',
+    'src/main/delegation/production-composition.test.ts',
+    'src/main/delegation/production-framework-runtime.test.ts'
+  ]
+  const hostNotebookTests = [
+    'src/main/notebook/runtime-service.test.ts',
+    'src/main/notebook/dependency-analysis-adapter.test.ts',
+    'src/main/notebook/working-file-observer.test.ts',
+    'src/main/notebook/code-risk-admission.test.ts',
+    'src/main/notebook/working-file-observer.write-scope.integration.test.ts',
+    'src/main/notebook/analysis-file-evidence.test.ts',
+    'src/main/notebook/serialized-file-provenance.test.ts'
+  ]
+  const analysisUnits = [
+    'packages/notebook-analysis/src/input-path-analysis.test.ts',
+    'packages/notebook-analysis/src/input-resource-analysis.test.ts',
+    'packages/notebook-analysis/src/dependency-projection.r-packages.test.ts'
+  ]
+  const codeRiskUnits = ['packages/notebook-code-risk/src/index.test.ts']
+  const skillConsumers = [
+    'src/main/skills/user-skill-repository.architecture.test.ts',
+    'src/main/skills/host-skills-service.test.ts',
+    'src/main/skills/conversation-import.test.ts',
+    'src/main/notebook/local-rpc-server.test.ts',
+    'src/main/notebook/local-rpc-server.mcpcall.test.ts',
+    'src/main/notebook/local-rpc-server.skill-import.test.ts',
+    'src/main/notebook/local-rpc-server.skills.test.ts',
+    'src/main/notebook/mcp-server.test.ts',
+    'src/main/skills/catalog.test.ts',
+    'src/main/settings/service.test.ts',
+    'src/main/settings/ipc.test.ts',
+    'src/main/specialist/package/release-certification.test.ts',
+    'src/main/specialist/package/service.test.ts',
+    'src/main/web-service/http-server.test.ts',
+    'src/preload/index.test.ts',
+    'src/renderer/src/pages/settings/SkillsPanel.render.test.tsx',
+    'src/renderer/src/stores/settings-skills-slice.test.ts',
+    'src/renderer/src/stores/settings-store.test.ts',
+    'src/renderer/web/api-installer.test.ts'
+  ]
+  return createModuleImpactModel({
+    artifact_storage: reviewed('artifact_storage', {
+      ownerTests: [
+        'src/main/artifacts/repository.test.ts',
+        'src/main/artifacts/ipc.test.ts',
+        'src/main/artifacts/provenance-repository.test.ts',
+        'src/main/reviewer/ipc.test.ts'
+      ],
+      consumerModules: ['artifact_provenance']
+    }),
+    artifact_provenance: reviewed('artifact_provenance', {
+      ownerTests: ['src/main/artifacts/provenance-lifecycle-contract.test.ts'],
+      consumerModules: ['session_persistence']
+    }),
+    session_persistence: reviewed('session_persistence', {
+      ownerTests: ['src/main/session-persistence/delegated-work-records.test.ts'],
+      consumerTests: ['src/renderer/src/hooks/useLifecycleSync.test.tsx']
+    }),
+    compute_package: {
+      ownerPaths: [
+        'packages/compute/src/compute-job-lifecycle.ts',
+        'packages/compute/src/job-deletion-owner.ts',
+        'packages/compute/src/concurrency-manager.ts',
+        'packages/compute/src/job-dispatcher.ts',
+        'packages/compute/src/job-poller.ts'
+      ],
+      ownerTests: [
+        'packages/compute/src/concurrency-manager.test.ts',
+        'packages/compute/src/job-deletion-owner.test.ts'
+      ],
+      consumerModules: ['compute_service']
+    },
+    compute_service: reviewed('compute_service', {
+      ownerTests: [
+        'src/main/compute/dispatch-evidence.test.ts',
+        'src/main/compute/compute-service.architecture.test.ts',
+        'src/main/compute/compute-job-lifecycle.test.ts',
+        'src/main/compute/job-deletion-runtime-isolation.test.ts',
+        'src/main/compute/compute-service.test.ts',
+        'src/main/compute/connection-broker.test.ts',
+        'src/main/compute/concurrency-integration.test.ts',
+        'src/main/compute/job-dispatcher.test.ts',
+        'src/main/compute/job-poller.test.ts',
+        'src/main/compute/compute-jobs.integration.test.ts',
+        'src/main/compute/ipc.test.ts',
+        'src/main/compute/application-commands.test.ts',
+        'src/main/notebook/local-rpc-server.test.ts',
+        'src/main/notebook/local-rpc-server.mcpcall.test.ts'
+      ],
+      capabilityOverlays: ['e2e_delegation', 'e2e_regressions', 'windows_sensitive']
+    }),
+    skill_package: {
+      ownerPaths: [
+        'packages/skills/src/user-skill-catalog-observer.ts',
+        'packages/skills/src/user-skill-compatibility-index.ts',
+        'packages/skills/src/user-skill-store.ts',
+        'packages/skills/src/agent-home-skill-owner.ts',
+        'packages/skills/src/skill-bundle-import-owner.ts',
+        'packages/skills/src/user-skill-import-contracts.ts',
+        'packages/skills/src/skill-mutation-owner.ts',
+        'packages/skills/src/skill-package-transaction-owner.ts'
+      ],
+      ownerTests: [
+        'packages/skills/src/user-skill-catalog-observer.test.ts',
+        'packages/skills/src/user-skill-compatibility-index.test.ts'
+      ],
+      consumerModules: ['skill_marketplace', 'user_skills_repository']
+    },
+    skill_marketplace: reviewed('skill_marketplace', {
+      ownerTests: [
+        'src/main/skill-marketplace/installation.test.ts',
+        'src/main/skill-marketplace/service.test.ts',
+        'src/main/settings/workflows.test.ts'
+      ],
+      consumerModules: ['settings_operations']
+    }),
+    user_skills_repository: reviewed('user_skills_repository', {
+      ownerTests: skillConsumers,
+      consumerModules: ['settings_service_facade']
+    }),
+    settings_extension_presentation: reviewed('settings_extension_presentation', {
+      ownerTests: ['src/renderer/src/pages/settings/SkillsPanel.render.test.tsx'],
+      fallbackCapability: 'renderer_view'
+    }),
+    skill_provisioning: {
+      ownerPaths: ['src/main/compute/skill-provisioning.ts'],
+      ownerTests: ['src/main/compute/skill-provisioning.test.ts']
+    },
+    settings_operations: {
+      ownerPaths: ['src/main/settings/workflows.ts'],
+      ownerTests: ['src/main/settings/workflows.test.ts']
+    },
+    settings_repository: reviewed('settings_repository', {
+      ownerTests: [
+        'src/main/settings/repository.test.ts',
+        'src/main/settings/document-store.test.ts',
+        'src/main/settings/compute-grants.test.ts',
+        'src/shared/renderer-contract-catalog.test.ts'
+      ],
+      consumerModules: ['settings_provider_accounts', 'settings_service_facade'],
+      capabilityOverlays: ['windows_sensitive']
+    }),
+    settings_provider_accounts: reviewed('settings_provider_accounts', {
+      ownerTests: [
+        'src/main/settings/provider-accounts.test.ts',
+        'src/main/settings/provider-runtime-projection.test.ts',
+        'src/main/settings/backend-resolver.test.ts',
+        'src/main/settings/service.providers.test.ts',
+        'src/main/settings/runtime-application-commands.test.ts',
+        'src/shared/renderer-contract-catalog.test.ts'
+      ],
+      consumerModules: ['settings_backend_resolution', 'settings_service_facade'],
+      capabilityOverlays: ['windows_sensitive', 'settings_ipc', 'renderer_settings']
+    }),
+    settings_backend_resolution: reviewed('settings_backend_resolution', {
+      ownerTests: [
+        'src/main/settings/backend-route-planner.test.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.test.ts',
+        'src/main/agent-framework/claude-code.test.ts',
+        'src/main/agent-framework/codex.test.ts',
+        'src/main/agent-framework/opencode.test.ts'
+      ],
+      consumerModules: ['settings_service_facade', 'reviewer_orchestrator'],
+      capabilityOverlays: ['windows_sensitive']
+    }),
+    providers_package: reviewed('providers_package', {
+      ownerTests: [
+        'packages/providers/src/responses/request.test.ts',
+        'packages/providers/src/responses/response.test.ts',
+        'packages/providers/src/responses/replay.test.ts',
+        'src/main/settings/responses-to-chat-completions-bridge.test.ts'
+      ],
+      consumerModules: ['settings_backend_resolution', 'settings_service_facade'],
+      fallbackCapability: 'shared_contract',
+      capabilityOverlays: ['windows_sensitive']
+    }),
+    settings_service_facade: reviewed('settings_service_facade', {
+      ownerTests: [
+        'src/main/settings/service.providers.test.ts',
+        'src/main/settings/service.connectors.test.ts',
+        'src/main/settings/application-commands.test.ts',
+        'src/main/settings/runtime-application-commands.test.ts',
+        'src/main/settings/ipc.test.ts'
+      ],
+      consumerModules: ['workspace_runtime'],
+      capabilityOverlays: ['windows_sensitive']
+    }),
+    reviewer_orchestrator: reviewed('reviewer_orchestrator', {
+      ownerTests: [
+        'src/main/reviewer/reviewer-orchestrator.architecture.test.ts',
+        'src/main/reviewer/orchestrator-drive.test.ts',
+        'src/main/reviewer/orchestrator.start-contract.test.ts',
+        'src/main/reviewer/lifecycle.test.ts',
+        'src/main/reviewer/correction-owner.test.ts'
+      ],
+      consumerModules: [
+        'session_replay',
+        'workspace_runtime',
+        'workspace_page',
+        'artifact_provenance'
+      ]
+    }),
+    workspace_runtime: reviewed('workspace_runtime', {
+      ownerTests: ['src/main/acp/runtime.test.ts'],
+      consumerModules: ['workspace_page']
+    }),
+    workspace_page: reviewed('workspace_page', {
+      ownerTests: ['src/renderer/src/pages/workspace/WorkspacePage.render.test.tsx'],
+      fallbackCapability: 'renderer_view'
+    }),
+    session_replay: reviewed('session_replay', {
+      ownerTests: ['src/main/session-persistence/replay.test.ts']
+    }),
+    upload_repository: reviewed('upload_repository', {
+      ownerTests: ['src/main/uploads/repository.test.ts']
+    }),
+    main_delegation: reviewed('main_delegation', {
+      ownerTests: processTests,
+      capabilityOverlays: ['windows_sensitive']
+    }),
+    host_process_runtime: reviewed('host_process_runtime', {
+      ownerTests: processTests,
+      capabilityOverlays: ['windows_sensitive']
+    }),
+    connector_core: reviewed('connector_core', {
+      ownerTests: ['packages/connector-core/src/engine.test.ts']
+    }),
+    session_diagnostics: reviewed('session_diagnostics', {
+      ownerTests: [
+        'src/main/session-diagnostics/desktop.test.ts',
+        'src/main/session-diagnostics/collector.test.ts',
+        'src/main/desktop-runtime-transport.integration.test.ts'
+      ],
+      capabilityOverlays: ['e2e_regressions', 'windows_sensitive']
+    }),
+    notebook_syntax: reviewed('notebook_syntax', {
+      ownerTests: ['packages/notebook-syntax/src/index.test.ts'],
+      contractTests: [...codeRiskUnits, ...analysisUnits],
+      consumerTests: hostNotebookTests
+    }),
+    notebook_code_risk: reviewed('notebook_code_risk', {
+      ownerTests: codeRiskUnits,
+      consumerTests: hostNotebookTests
+    }),
+    notebook_analysis: reviewed('notebook_analysis', {
+      ownerTests: ['packages/notebook-analysis/src/dependency-analysis.contracts.test.ts'],
+      consumerTests: hostNotebookTests
+    }),
+    notebook_analysis_engine: reviewed('notebook_analysis_engine', {
+      ownerTests: analysisUnits,
+      consumerTests: hostNotebookTests
+    }),
+    notebook_runtime_fixture: {
+      ownerPaths: [
+        'src/main/notebook/runtime-service.ts',
+        'src/main/notebook/dependency-analysis-adapter.ts'
+      ],
+      ownerTests: hostNotebookTests
+    },
+    notebook_execution: reviewed('notebook_execution', {
+      ownerTests: hostNotebookTests
+    }),
+    main_storage: reviewed('main_storage', {
+      ownerTests: ['src/main/storage/content-repository.test.ts']
+    }),
+    main_literature: reviewed('main_literature', {
+      ownerTests: ['src/main/literature/command-owner.test.ts'],
+      consumerTests: [
+        'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx'
+      ]
+    }),
+    main_tags: reviewed('main_tags', {
+      ownerTests: ['src/main/tags/repository.test.ts'],
+      consumerTests: [
+        'src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx'
+      ]
+    })
+  })
+}
 
 type NpmInvocation = (command: string, args: string[], options: object) => { status: number }
 
@@ -166,12 +462,37 @@ describe('module test impact commands', () => {
   it.each([1, null])('preserves failed or interrupted selective test status %s', (status) => {
     const spawn = vi.fn(() => ({ status }))
     expect(
-      executeModuleTestPlan(createModuleTestPlan('artifact_storage'), {
+      executeModuleTestPlan(createModuleTestPlan('artifact_storage', selectionModel()), {
         spawn,
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       })
     ).toBe(1)
     expect(spawn).toHaveBeenCalledOnce()
+  })
+
+  it.each(['0', '1'])('honors package-only selections in portable CI mode %s', (portable) => {
+    const plan = createAffectedTestPlan([], { status: 'unavailable-manifest-only', testFiles: [] })
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const environment = {
+      npm_execpath: '/npm/bin/npm-cli.js',
+      VITEST_PORTABLE_CI: portable,
+      OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '["packages/connector-core"]'
+    }
+    try {
+      expect(executeModuleTestPlan(plan, { spawn, environment, nodeExecutable: '/node' })).toBe(0)
+      if (portable === '1') {
+        expect(spawn).toHaveBeenCalledExactlyOnceWith(
+          '/node',
+          ['/npm/bin/npm-cli.js', 'test', '--', 'packages/connector-core'],
+          expect.objectContaining({ env: environment })
+        )
+      } else {
+        expect(spawn).not.toHaveBeenCalled()
+      }
+    } finally {
+      write.mockRestore()
+    }
   })
 
   it.each([
@@ -241,7 +562,7 @@ describe('module test impact commands', () => {
   })
 
   it('builds a deterministic declared-test plan for one module', () => {
-    const plan = createModuleTestPlan('artifact_storage')
+    const plan = createModuleTestPlan('artifact_storage', selectionModel())
 
     expect(plan.mode).toBe('selective')
     expect(plan.modules).toEqual(['artifact_storage'])
@@ -257,7 +578,7 @@ describe('module test impact commands', () => {
   })
 
   it('builds the Compute service contract and fallback plan', () => {
-    const plan = createModuleTestPlan('compute_service')
+    const plan = createModuleTestPlan('compute_service', selectionModel())
 
     expect(plan.testFiles).toEqual(
       expect.arrayContaining([
@@ -278,7 +599,8 @@ describe('module test impact commands', () => {
 
     const affected = createAffectedTestPlan(
       [{ path: 'src/main/compute/dispatch-evidence.ts', status: 'added' }],
-      { status: 'current', testFiles: [] }
+      { status: 'current', testFiles: [] },
+      selectionModel()
     )
     expect(affected.modules).toEqual(['compute_service'])
     expect(affected.testFiles).toEqual(
@@ -297,10 +619,14 @@ describe('module test impact commands', () => {
     'packages/compute/src/job-dispatcher.ts',
     'packages/compute/src/job-poller.ts'
   ])('routes Compute lifecycle changes through its complete certification set for %s', (path) => {
-    const affected = createAffectedTestPlan([{ path, status: 'modified' }], {
-      status: 'current',
-      testFiles: []
-    })
+    const affected = createAffectedTestPlan(
+      [{ path, status: 'modified' }],
+      {
+        status: 'current',
+        testFiles: []
+      },
+      selectionModel()
+    )
 
     expect(affected.mode).toBe('selective')
     expect(affected.modules).toEqual(
@@ -332,7 +658,8 @@ describe('module test impact commands', () => {
   })
 
   it('expands User Skill repository changes through Settings and cross-surface consumers', () => {
-    const manifest = loadModuleImpactManifest()
+    const productionManifest = loadModuleImpactManifest()
+    const manifest = selectionModel()
     const packageTests = manifest.modules.skill_package.testFiles.owner
     expect(packageTests.length).toBeGreaterThan(0)
     const registry = validatePackageTestRegistry(
@@ -340,7 +667,7 @@ describe('module test impact commands', () => {
     )
     // Check local module plans too: CI's package exclusions must not hide stale host evidence.
     // A primitive package may legitimately register Skills as its downstream consumer.
-    for (const [id, module] of Object.entries(manifest.modules)) {
+    for (const [id, module] of Object.entries(productionManifest.modules)) {
       const packagePaths = module.ownerPaths.filter((path) =>
         registry.packages.some((entry) => path.startsWith(entry.root + '/'))
       )
@@ -359,17 +686,21 @@ describe('module test impact commands', () => {
       'src/renderer/src/pages/settings/SkillEditor.tsx',
       'src/main/compute/skill-provisioning.ts'
     ]) {
-      const hostPlan = createAffectedTestPlan([{ path, status: 'modified' }], {
-        status: 'unavailable-manifest-only',
-        testFiles: []
-      })
+      const hostPlan = createAffectedTestPlan(
+        [{ path, status: 'modified' }],
+        {
+          status: 'unavailable-manifest-only',
+          testFiles: []
+        },
+        selectionModel()
+      )
       expect(hostPlan.mode, path).toBe('selective')
       expect(
         hostPlan.testFiles.some((file) => file.startsWith('packages/skills/')),
         path
       ).toBe(false)
     }
-    const direct = createModuleTestPlan('user_skills_repository')
+    const direct = createModuleTestPlan('user_skills_repository', selectionModel())
     expect(direct.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/skills/user-skill-repository.architecture.test.ts',
@@ -399,10 +730,14 @@ describe('module test impact commands', () => {
       { path: 'packages/skills/src/skill-mutation-owner.ts', status: 'modified' },
       { path: 'packages/skills/src/skill-package-transaction-owner.ts', status: 'modified' }
     ] as const) {
-      const affected = createAffectedTestPlan([{ path, status }], {
-        status: 'current',
-        testFiles: []
-      })
+      const affected = createAffectedTestPlan(
+        [{ path, status }],
+        {
+          status: 'current',
+          testFiles: []
+        },
+        selectionModel()
+      )
       const prefix = path.startsWith('packages/skills/') ? 'skill_package -> ' : ''
       expect([...affected.modules].sort()).toEqual([
         ...(prefix ? ['skill_marketplace', 'skill_package'] : []),
@@ -456,7 +791,8 @@ describe('module test impact commands', () => {
   it('expands changed owners through consumer modules and graph candidates', () => {
     const plan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
-      { status: 'current', testFiles: ['src/main/reviewer/ipc.test.ts'] }
+      { status: 'current', testFiles: ['src/main/reviewer/ipc.test.ts'] },
+      selectionModel()
     )
 
     expect(plan.mode).toBe('selective')
@@ -470,10 +806,14 @@ describe('module test impact commands', () => {
   it.each(['src/main/reviewer/reviewer-session-driver.ts'])(
     'expands Reviewer changes through downstream consumers for %s',
     (path) => {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-        status: 'current',
-        testFiles: []
-      })
+      const plan = createAffectedTestPlan(
+        [{ path, status: 'modified' }],
+        {
+          status: 'current',
+          testFiles: []
+        },
+        selectionModel()
+      )
 
       expect(plan.modules).toEqual(['reviewer_orchestrator'])
       expect(plan.reasonChains).toEqual(
@@ -508,10 +848,14 @@ describe('module test impact commands', () => {
   ])(
     'selects Settings evidence while retaining platform routing for %s',
     (path, expectedModules) => {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-        status: 'current',
-        testFiles: []
-      })
+      const plan = createAffectedTestPlan(
+        [{ path, status: 'modified' }],
+        {
+          status: 'current',
+          testFiles: []
+        },
+        selectionModel()
+      )
 
       expect(plan.mode).toBe('selective')
       expect([...plan.modules].sort()).toEqual(expectedModules)
@@ -671,7 +1015,7 @@ describe('module test impact commands', () => {
   it.each(['win32', 'darwin', 'linux'])(
     'transports large selections without dropping filters or options on %s',
     (platform) => {
-      const plan = createModuleTestPlan('upload_repository')
+      const plan = createModuleTestPlan('upload_repository', selectionModel())
       plan.testFiles = Array.from(
         { length: 2200 },
         (_, index) => `src/renderer/src/components/long-consumer-${index}.test.ts`
@@ -721,7 +1065,7 @@ describe('module test impact commands', () => {
   )
 
   it.each(['return', 'throw'])('cleans temporary arguments when spawn errors %s', (failure) => {
-    const plan = createModuleTestPlan('upload_repository')
+    const plan = createModuleTestPlan('upload_repository', selectionModel())
     plan.testFiles = ['x'.repeat(10000) + '.test.ts']
     let argumentFile = ''
     const error = new Error('spawn failed')
@@ -826,7 +1170,7 @@ describe('module test impact commands', () => {
   it.each(['npm_execpath', 'NPM_EXECPATH', 'Npm_ExecPath'])(
     'launches npm through Node with the Windows environment key %s',
     (key) => {
-      const plan = createModuleTestPlan('upload_repository')
+      const plan = createModuleTestPlan('upload_repository', selectionModel())
       const { spawn, invocation } = captureNpmInvocation()
       executeModuleTestPlan(plan, {
         platform: 'win32',
@@ -843,7 +1187,7 @@ describe('module test impact commands', () => {
   )
 
   it('prints the exact file list before invoking portable npm test arguments', () => {
-    const plan = createModuleTestPlan('upload_repository')
+    const plan = createModuleTestPlan('upload_repository', selectionModel())
     const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 
@@ -970,7 +1314,8 @@ describe('module test impact commands', () => {
     const environment = { npm_execpath: '/npm/bin/npm-cli.js' }
     const expectedPlan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
-      { status: 'current', testFiles: [] }
+      { status: 'current', testFiles: [] },
+      selectionModel()
     )
 
     expect(
@@ -978,6 +1323,7 @@ describe('module test impact commands', () => {
         ['affected', '--base', base, '--head', head, '--coverage-changed', coverageBase],
         {
           cwd: '/repo',
+          manifest: selectionModel(),
           execute,
           spawn,
           environment,
@@ -1015,7 +1361,7 @@ describe('module test impact commands', () => {
   })
 
   it('fails with an actionable error instead of spawning a Windows command shim', () => {
-    const plan = createModuleTestPlan('artifact_storage')
+    const plan = createModuleTestPlan('artifact_storage', selectionModel())
     const spawn = vi.fn()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 
@@ -1031,7 +1377,7 @@ describe('module test impact commands', () => {
   })
 
   it('retains the PATH-based npm fallback for direct POSIX execution', () => {
-    const plan = createModuleTestPlan('artifact_storage')
+    const plan = createModuleTestPlan('artifact_storage', selectionModel())
     const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 
@@ -1052,7 +1398,7 @@ describe('module test impact commands', () => {
   })
 
   it('keeps delegated-work behavior in the Session persistence Module plan', () => {
-    expect(createModuleTestPlan('session_persistence').testFiles).toContain(
+    expect(createModuleTestPlan('session_persistence', selectionModel()).testFiles).toContain(
       'src/main/session-persistence/delegated-work-records.test.ts'
     )
   })
@@ -1076,10 +1422,14 @@ it.each([
   'src/main/process-tree-windows.ts',
   'src/main/process-tree.windows.integration.test.ts'
 ])('selects process ownership and lifecycle tests with Windows coverage for %s', (path) => {
-  const plan = createAffectedTestPlan([{ path, status: 'added' }], {
-    status: 'unavailable-manifest-only',
-    testFiles: []
-  })
+  const plan = createAffectedTestPlan(
+    [{ path, status: 'added' }],
+    {
+      status: 'unavailable-manifest-only',
+      testFiles: []
+    },
+    selectionModel()
+  )
 
   expect(plan.mode).toBe('selective')
   expect(plan.modules).toContain(
@@ -1101,7 +1451,7 @@ it.each([
 })
 
 it('uses only declared owner tests to recover colocated implementation ownership', () => {
-  const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
+  const manifest = selectionModel()
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }
   const module = manifest.modules.connector_core
   // Synthetic main-process path exercises owner inference independently of package routing.
@@ -1129,10 +1479,14 @@ it.each([
   ['packages/connector-core/src/engine.ts', 'packages/connector-core/src/engine.test.ts'],
   ['src/main/reviewer/correction.ts', 'src/main/reviewer/correction-owner.test.ts']
 ])('retains the direct owner/aggregate contract when %s changes', (path, testFile) => {
-  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-    status: 'unavailable-manifest-only',
-    testFiles: []
-  })
+  const plan = createAffectedTestPlan(
+    [{ path, status: 'modified' }],
+    {
+      status: 'unavailable-manifest-only',
+      testFiles: []
+    },
+    selectionModel()
+  )
   expect(plan.mode).toBe('selective')
   expect(plan.testFiles).toContain(testFile)
 })
@@ -1164,7 +1518,7 @@ it.each([
   'src/main/session-diagnostics/worker-entry.ts',
   'src/main/session-diagnostics/desktop.ts'
 ])('keeps Session export selective with storage, transport and UI contracts for %s', (path) => {
-  const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
+  const manifest = selectionModel()
   const plan = createAffectedTestPlan(
     [{ path, status: 'modified' }],
     {
@@ -1257,7 +1611,7 @@ describe('Notebook package module boundaries', () => {
       'src/main/notebook/runtime-service.ts',
       'src/main/notebook/dependency-analysis-adapter.ts'
     ]) {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, selectionModel())
       expect(plan.mode).toBe('selective')
       expect(packageTests(plan.testFiles)).toEqual([])
       expect(plan.testFiles).toContain('src/main/notebook/code-risk-admission.test.ts')
@@ -1275,7 +1629,7 @@ describe('Notebook package module boundaries', () => {
     ],
     ['src/main/storage/content-repository.ts', 'src/main/storage/content-repository.test.ts']
   ])('keeps host integrations without upstream package units for %s', (path, integration) => {
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, selectionModel())
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toContain(integration)
     expect(packageTests(plan.testFiles)).toEqual([])
@@ -1296,10 +1650,10 @@ describe('Notebook package module boundaries', () => {
   ])(
     'selects only downstream package suites and host integrations for %s',
     (id, path, selected) => {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, selectionModel())
       expect(plan.mode).toBe('selective')
       for (const candidate of packageModules) {
-        const owned = manifest.modules[candidate].testFiles.owner
+        const owned = selectionModel().modules[candidate].testFiles.owner
         if (candidate !== 'notebook_analysis') expect(owned.length).toBeGreaterThan(0)
         if (candidate === id) expect(plan.testFiles).toEqual(expect.arrayContaining(owned))
         else if (selected.includes(candidate))
@@ -1320,11 +1674,13 @@ it('separates analysis implementation consumers from broad shared contract consu
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }
   const implementation = createAffectedTestPlan(
     [{ path: 'packages/notebook-analysis/src/dependency-analysis-python.ts', status: 'modified' }],
-    graph
+    graph,
+    selectionModel()
   )
   const contract = createAffectedTestPlan(
     [{ path: 'packages/notebook-analysis/src/contracts.ts', status: 'modified' }],
-    graph
+    graph,
+    selectionModel()
   )
   expect(implementation.modules).toContain('notebook_analysis_engine')
   expect(implementation.modules).not.toContain('notebook_analysis')
@@ -1435,10 +1791,91 @@ it.each([
     'src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx'
   ]
 ])('preserves the explicit command or event consumer for %s', (path, test) => {
-  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-    status: 'not-used',
-    testFiles: []
-  })
+  const plan = createAffectedTestPlan(
+    [{ path, status: 'modified' }],
+    {
+      status: 'not-used',
+      testFiles: []
+    },
+    selectionModel()
+  )
   expect(plan.mode).toBe('selective')
   expect(plan.testFiles).toContain(test)
 })
+
+// Independently pinned production contracts accompany the controlled policy examples above.
+// The actual CLI receives no fixture manifest and must keep these expanded owners on full.
+it.each([
+  {
+    id: 'artifact_storage',
+    path: 'src/main/artifacts/repository.ts',
+    reason:
+      'The artifact_storage owner retains 1 explicit research consumer obligation beyond its reviewed source-derived edges, including run-observation-external-port.test.ts. 1 consumer cone has opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  },
+  {
+    id: 'compute_service',
+    path: 'src/main/compute/job-repository.ts',
+    reason:
+      'The compute_service owner retains 41 explicit research consumer obligations beyond its reviewed source-derived edges, including local-rpc-server.managed-execution.test.ts, managed-auxiliary-output.test.ts, managed-execution-collection.integration.test.ts. 36 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  },
+  {
+    id: 'user_skills_repository',
+    path: 'src/main/skills/catalog.ts',
+    reason:
+      'The user_skills_repository owner retains 50 explicit research consumer obligations beyond its reviewed source-derived edges, including research-reproduction.integration.test.ts, local-service.macos.integration.test.ts, research-service.macos.integration.test.ts. 45 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  },
+  {
+    id: 'settings_provider_accounts',
+    path: 'src/main/settings/provider-accounts.ts',
+    reason:
+      'The settings_provider_accounts owner retains 56 explicit research consumer obligations beyond its reviewed source-derived edges, including research-service.macos.integration.test.ts, local-service.macos.integration.test.ts, research-reproduction.integration.test.ts. 51 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  },
+  {
+    id: 'connector_core',
+    path: 'packages/connector-core/src/engine.ts',
+    reason:
+      'The connector_core owner retains 4 explicit research consumer obligations beyond its reviewed source-derived edges, including local-rpc-server.managed-execution.test.ts, managed-nested-generation.integration.test.ts, managed-output-publication.integration.test.ts. 4 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  },
+  {
+    id: 'main_delegation',
+    path: 'src/main/delegation/process-ownership.ts',
+    reason:
+      'The main_delegation owner retains 38 explicit research consumer obligations beyond its reviewed source-derived edges, including managed-auxiliary-output.test.ts, managed-execution-collection.integration.test.ts, managed-execution-output.test.ts. 33 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  },
+  {
+    id: 'notebook_analysis_engine',
+    path: 'packages/notebook-analysis/src/dependency-analysis.ts',
+    reason:
+      'The notebook_analysis_engine owner retains 1 explicit research consumer obligation beyond its reviewed source-derived edges, including run-observation-external-port.test.ts. 1 consumer cone has opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  }
+])(
+  'retains the real full boundary and selective-execution refusal for $id',
+  async ({ id, path, reason }) => {
+    const manifest = loadModuleImpactManifest()
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+      status: 'unavailable-manifest-only',
+      testFiles: []
+    })
+    expect(manifest.modules[id].fullTestReason).toBe(reason)
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains.join('\n')).toContain(`${id} -> ${reason} -> full`)
+    expect(createModuleTestPlan(id)).toMatchObject({
+      mode: 'full',
+      testFiles: [],
+      reasonChains: [`${id} -> ${reason} -> full`]
+    })
+    const spawn = vi.fn(() => ({ status: 0 }))
+    await expect(
+      runModuleTestCli(['affected', '--base', 'base', '--head', 'head', '--require-selective'], {
+        execute: (command: string, args: string[]) => {
+          if (command === 'git' && args[0] === 'merge-base') return 'base\n'
+          if (command === 'git' && args[0] === 'diff') return Buffer.from(`M\0${path}\0`)
+          throw new Error('CodeGraph unavailable in fixture')
+        },
+        spawn,
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+      })
+    ).rejects.toThrow('Selective test plan required; refusing full execution.')
+    expect(spawn).not.toHaveBeenCalled()
+  }
+)

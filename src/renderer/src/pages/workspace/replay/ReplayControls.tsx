@@ -10,6 +10,11 @@ import {
   replayStepFailure
 } from './replay-navigation'
 import { cn } from '@/lib/utils'
+import {
+  formatReplayRecordedTime,
+  replayRecordedCoverage,
+  type ReplayRecordedRange
+} from './replay-recorded-gaps'
 import { matchNotebookRunTool, resolveNotebookRunToolName } from '../notebook-tool-names'
 import {
   Select,
@@ -19,6 +24,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronLeft,
@@ -41,7 +47,8 @@ import {
   CircleX,
   ChevronDown,
   FileSearch,
-  RotateCcw
+  RotateCcw,
+  Settings2
 } from 'lucide-react'
 import {
   REPLAY_SPEEDS,
@@ -51,10 +58,19 @@ import {
 } from '../../../../../shared/replay'
 
 export type ReplayControlsProps = {
+  compact?: boolean
+  hideAsk?: boolean
   playing: boolean
+  skipNoNewRecords?: boolean
+  onSkipNoNewRecords?: (skip: boolean) => void
+  // Observation steps are recorded snapshots, without a reconstructed presentation clock.
+  recordNavigation?: boolean
   ready: boolean
   positionMs: number
   durationMs: number
+  recordedCoverage?: readonly ReplayRecordedRange[]
+  recordedTimeOrigin?: number
+  nextObservationPosition?: number
   stepIndex: number
   steps: readonly ReplayStep[]
   resources?: readonly ReplayResource[]
@@ -67,6 +83,7 @@ export type ReplayControlsProps = {
   onSeek: (positionMs: number) => void
   onSpeed: (speed: ReplaySpeed) => void
   onAsk: () => void
+  discussionPending?: boolean
 }
 
 const PAGE_SIZE = 40
@@ -106,6 +123,7 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
     setNavigation(null)
   }
   const [page, setPage] = useState(0)
+  const [stepNumber, setStepNumber] = useState('')
   const [detail, setDetail] = useState<number | null>(null)
   const track = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLOListElement>(null)
@@ -132,6 +150,15 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
   const breaks = useMemo(
     () => replayChapterBreaks(props.steps, props.durationMs, width),
     [props.steps, props.durationMs, width]
+  )
+  const coverage = useMemo(
+    () =>
+      replayRecordedCoverage(
+        props.recordedCoverage ?? [],
+        props.recordedTimeOrigin,
+        props.durationMs
+      ),
+    [props.recordedCoverage, props.recordedTimeOrigin, props.durationMs]
   )
   const typeLabel = (step: ReplayStep): string =>
     step.kind === 'review'
@@ -195,6 +222,7 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
     if (value) {
       props.onPause()
       setPage(Math.floor(Math.max(0, props.stepIndex) / PAGE_SIZE))
+      setStepNumber(String(props.stepIndex + 1))
       setDetail(null)
       detailTrigger.current = null
     }
@@ -222,26 +250,141 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
   const hoveredStep =
     hoverTime === null ? undefined : props.steps[replayStepAtTime(props.steps, hoverTime)]
   const ended = !empty && props.positionMs >= props.durationMs
+  const requestedStep = Number(stepNumber)
+  const validRequestedStep =
+    Number.isSafeInteger(requestedStep) && requestedStep >= 1 && requestedStep <= count
   const playLabel = ended ? t('Watch again') : props.playing ? t('Pause replay') : t('Play replay')
   return (
     <div
-      className="shrink-0 space-y-1 border-t border-border-200 bg-bg-000 px-3 py-2"
+      className={`shrink-0 border-t border-border-200 bg-bg-000 px-3 ${props.compact ? 'flex flex-wrap items-center gap-x-1 py-1' : props.recordNavigation ? 'flex items-center gap-1 py-1' : 'space-y-1 py-2'}`}
       data-testid="replay-controls"
     >
+      {!props.recordNavigation && coverage.footage.length ? (
+        <div className="order-first w-full min-w-0" data-testid="replay-recording-coverage">
+          <div className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-text-300">
+            <button
+              type="button"
+              className="min-w-0 truncate rounded py-0.5 text-left hover:text-text-100 focus-visible:keyboard-focus"
+              title={t('Coverage combines saved recordings in this branch.')}
+              onClick={() => props.onSeek(coverage.footage[0].startMs)}
+            >
+              {t('Recorded footage')} · {formatReplayRecordedTime(coverage.footage[0].startMs)}–
+              {formatReplayRecordedTime(coverage.footage.at(-1)!.endMs)}
+            </button>
+            {coverage.gaps.length ? (
+              <Popover
+                onOpenChange={(open) => {
+                  if (open) props.onPause()
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="h-5 shrink-0 px-1 text-[10px] text-status-warning-foreground"
+                  >
+                    {t('Recording gaps')}
+                    <ChevronDown size={10} aria-hidden="true" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="end"
+                  className="max-h-64 w-64 overflow-y-auto p-2"
+                >
+                  <p className="mb-1 text-xs text-text-300">
+                    {t('Coverage combines saved recordings in this branch.')}
+                  </p>
+                  {coverage.gaps.map((range) => (
+                    <PopoverClose asChild key={range.startMs}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start text-xs"
+                        onClick={() => props.onSeek(range.startMs)}
+                      >
+                        {t('No footage: {{from}}–{{to}}', {
+                          from: formatReplayRecordedTime(range.startMs),
+                          to: formatReplayRecordedTime(range.endMs)
+                        })}
+                      </Button>
+                    </PopoverClose>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            ) : null}
+          </div>
+          <div
+            className="relative h-2 w-full rounded bg-muted"
+            role="group"
+            aria-label={t('Recording coverage')}
+          >
+            {coverage.footage.map((range) => (
+              <button
+                key={range.startMs}
+                type="button"
+                className="absolute inset-y-0 rounded-sm bg-status-info-foreground/60 hover:bg-status-info-foreground focus-visible:keyboard-focus"
+                style={{
+                  left: `${(range.startMs / props.durationMs) * 100}%`,
+                  width: `${((range.endMs - range.startMs) / props.durationMs) * 100}%`
+                }}
+                aria-label={t('Footage: {{from}}–{{to}}', {
+                  from: formatReplayRecordedTime(range.startMs),
+                  to: formatReplayRecordedTime(range.endMs)
+                })}
+                title={t('Footage: {{from}}–{{to}}', {
+                  from: formatReplayRecordedTime(range.startMs),
+                  to: formatReplayRecordedTime(range.endMs)
+                })}
+                onClick={() => props.onSeek(range.startMs)}
+              />
+            ))}
+            {coverage.gaps.map((range) => (
+              <button
+                key={range.startMs}
+                type="button"
+                className="absolute inset-y-0 border-y border-dashed border-status-warning-foreground/70 bg-status-warning-surface dark:bg-status-warning-dark-surface focus-visible:keyboard-focus"
+                style={{
+                  left: `${(range.startMs / props.durationMs) * 100}%`,
+                  width: `${((range.endMs - range.startMs) / props.durationMs) * 100}%`
+                }}
+                aria-label={t('No footage: {{from}}–{{to}}', {
+                  from: formatReplayRecordedTime(range.startMs),
+                  to: formatReplayRecordedTime(range.endMs)
+                })}
+                title={t('No footage: {{from}}–{{to}}', {
+                  from: formatReplayRecordedTime(range.startMs),
+                  to: formatReplayRecordedTime(range.endMs)
+                })}
+                onClick={() => props.onSeek(range.startMs)}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
       <Popover open={open} onOpenChange={changeOpen}>
-        <div className="flex min-w-0 items-center gap-1" data-testid="replay-step-actions">
+        <div
+          className={`flex min-w-0 items-center gap-1${props.compact ? ' order-3' : props.recordNavigation ? ' flex-1' : ''}`}
+          data-testid="replay-step-actions"
+        >
           <PopoverTrigger asChild>
             <Button
               variant="ghost"
-              className="h-8 min-w-0 max-w-xl flex-1 justify-start gap-2 px-1 text-xs"
+              className={`h-8 min-w-0 max-w-xl justify-start gap-2 px-1 text-xs ${props.compact ? '' : 'flex-1'}`}
               disabled={empty}
               data-replay-browse-steps
               aria-label={t('Browse steps')}
               title={current ? label(current) : t('No steps')}
             >
-              <StepIcon step={current} />
-              <span className="min-w-0 truncate">{current ? label(current) : t('No steps')}</span>
-              {!empty ? (
+              {props.compact ? (
+                <ListOrdered size={14} aria-hidden="true" />
+              ) : (
+                <StepIcon step={current} />
+              )}
+              <span className={props.compact ? 'sr-only' : 'min-w-0 truncate'}>
+                {props.compact ? t('Browse steps') : current ? label(current) : t('No steps')}
+              </span>
+              {!empty && !props.compact ? (
                 <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
                   {props.stepIndex + 1} / {count}
                 </span>
@@ -249,122 +392,127 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
               <ChevronDown size={12} aria-hidden="true" />
             </Button>
           </PopoverTrigger>
-          <div role="group" aria-label={t('Step actions')} className="ml-auto shrink-0">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger
-                  asChild
-                  onFocus={(event) => {
-                    if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
-                  }}
-                >
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    className={controlClass}
-                    onClick={props.onAsk}
-                    disabled={empty}
-                    aria-label={t('Ask about this step')}
+          {!props.hideAsk ? (
+            <div role="group" aria-label={t('Step actions')} className="ml-auto shrink-0">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
                   >
-                    <MessageSquare size={14} />
-                    <span className={width < 560 ? 'sr-only' : 'min-w-0 truncate'}>
-                      {t('Ask about this step')}
-                    </span>
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      className={props.compact ? 'h-8 w-7 shrink-0 px-1 text-xs' : controlClass}
+                      onClick={props.onAsk}
+                      disabled={empty || props.discussionPending}
+                      aria-label={t('Ask about this step')}
+                    >
+                      <MessageSquare size={14} />
+                      <span className={width < 560 ? 'sr-only' : 'min-w-0 truncate'}>
+                        {t('Ask about this step')}
+                      </span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Ask about this step')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          ) : null}
+        </div>
+        {!props.recordNavigation ? (
+          <div
+            ref={track}
+            className={`group/timeline relative flex h-6 items-center ${props.compact ? 'order-1 w-full' : ''}`}
+            data-testid="replay-timeline"
+            onPointerMove={(event) => {
+              if (empty) return
+              const rect = event.currentTarget.getBoundingClientRect()
+              setHoverTime(
+                Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) *
+                  props.durationMs
+              )
+            }}
+            onPointerLeave={() => setHoverTime(null)}
+            onPointerUp={(event) => {
+              if (event.pointerType === 'touch') setHoverTime(null)
+            }}
+          >
+            <Slider.Root
+              data-testid="replay-progress-track"
+              min={0}
+              max={Math.max(1, props.durationMs)}
+              step={1}
+              onKeyDown={(event) => {
+                const direction = ['ArrowRight', 'ArrowUp', 'PageUp'].includes(event.key)
+                  ? 1
+                  : ['ArrowLeft', 'ArrowDown', 'PageDown'].includes(event.key)
+                    ? -1
+                    : 0
+                if (!direction || empty) return
+                event.preventDefault()
+                props.onSeek(
+                  Math.max(
+                    0,
+                    Math.min(
+                      props.durationMs,
+                      props.positionMs + direction * (event.key.startsWith('Page') ? 10000 : 5000)
+                    )
+                  )
+                )
+              }}
+              value={[props.positionMs]}
+              onValueChange={([value]) => props.onSeek(value)}
+              disabled={empty}
+              className="relative flex h-6 w-full touch-none select-none items-center data-[disabled]:opacity-40"
+            >
+              <Slider.Track className="relative h-1 w-full grow overflow-hidden rounded-full bg-muted transition-[height] group-hover/timeline:h-1.5 group-focus-within/timeline:h-1.5 motion-reduce:transition-none">
+                <Slider.Range className="absolute h-full bg-primary" />
+                {breaks.map((percent) => (
+                  <span
+                    key={percent}
+                    aria-hidden="true"
+                    data-replay-chapter-break
+                    className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-bg-000"
+                    style={{ left: `${percent}%` }}
+                  />
+                ))}
+              </Slider.Track>
+              <Slider.Thumb
+                aria-label={t('Replay progress')}
+                aria-valuetext={`${t('{{current}} of {{duration}}', { current: formatReplayTime(props.positionMs), duration: formatReplayTime(props.durationMs) })}${current ? ` · ${label(current)}` : ''}`}
+                className="relative z-10 block size-3 rounded-full bg-primary opacity-0 transition-opacity hover:opacity-100 group-hover/timeline:opacity-100 group-focus-within/timeline:opacity-100 [@media(hover:none)]:opacity-100 focus-visible:keyboard-focus motion-reduce:transition-none"
+              />
+            </Slider.Root>
+            <TooltipProvider>
+              <Tooltip open={hoveredStep !== undefined && !open}>
+                <TooltipTrigger asChild>
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute top-0 h-px w-px"
+                    style={{ left: `${((hoverTime ?? 0) / Math.max(1, props.durationMs)) * 100}%` }}
+                  />
                 </TooltipTrigger>
-                <TooltipContent>{t('Ask about this step')}</TooltipContent>
+                <TooltipContent
+                  side="top"
+                  sideOffset={8}
+                  className="max-w-64"
+                  data-testid="replay-seek-preview"
+                >
+                  {hoveredStep ? (
+                    <div className="flex items-center gap-2">
+                      <StepIcon step={hoveredStep} />
+                      <span className="truncate">{label(hoveredStep)}</span>
+                    </div>
+                  ) : null}
+                  <p className="mt-1 font-mono text-xs">{formatReplayTime(hoverTime ?? 0)}</p>
+                </TooltipContent>
               </Tooltip>
             </TooltipProvider>
           </div>
-        </div>
-        <div
-          ref={track}
-          className="group/timeline relative flex h-6 items-center"
-          data-testid="replay-timeline"
-          onPointerMove={(event) => {
-            if (empty) return
-            const rect = event.currentTarget.getBoundingClientRect()
-            setHoverTime(
-              Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * props.durationMs
-            )
-          }}
-          onPointerLeave={() => setHoverTime(null)}
-          onPointerUp={(event) => {
-            if (event.pointerType === 'touch') setHoverTime(null)
-          }}
-        >
-          <Slider.Root
-            data-testid="replay-progress-track"
-            min={0}
-            max={Math.max(1, props.durationMs)}
-            step={1}
-            onKeyDown={(event) => {
-              const direction = ['ArrowRight', 'ArrowUp', 'PageUp'].includes(event.key)
-                ? 1
-                : ['ArrowLeft', 'ArrowDown', 'PageDown'].includes(event.key)
-                  ? -1
-                  : 0
-              if (!direction || empty) return
-              event.preventDefault()
-              props.onSeek(
-                Math.max(
-                  0,
-                  Math.min(
-                    props.durationMs,
-                    props.positionMs + direction * (event.key.startsWith('Page') ? 10000 : 5000)
-                  )
-                )
-              )
-            }}
-            value={[props.positionMs]}
-            onValueChange={([value]) => props.onSeek(value)}
-            disabled={empty}
-            className="relative flex h-6 w-full touch-none select-none items-center data-[disabled]:opacity-40"
-          >
-            <Slider.Track className="relative h-1 w-full grow overflow-hidden rounded-full bg-muted transition-[height] group-hover/timeline:h-1.5 group-focus-within/timeline:h-1.5 motion-reduce:transition-none">
-              <Slider.Range className="absolute h-full bg-primary" />
-              {breaks.map((percent) => (
-                <span
-                  key={percent}
-                  aria-hidden="true"
-                  data-replay-chapter-break
-                  className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-bg-000"
-                  style={{ left: `${percent}%` }}
-                />
-              ))}
-            </Slider.Track>
-            <Slider.Thumb
-              aria-label={t('Replay progress')}
-              aria-valuetext={`${t('{{current}} of {{duration}}', { current: formatReplayTime(props.positionMs), duration: formatReplayTime(props.durationMs) })}${current ? ` · ${label(current)}` : ''}`}
-              className="relative z-10 block size-3 rounded-full bg-primary opacity-0 transition-opacity hover:opacity-100 group-hover/timeline:opacity-100 group-focus-within/timeline:opacity-100 [@media(hover:none)]:opacity-100 focus-visible:keyboard-focus motion-reduce:transition-none"
-            />
-          </Slider.Root>
-          <TooltipProvider>
-            <Tooltip open={hoveredStep !== undefined && !open}>
-              <TooltipTrigger asChild>
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute top-0 h-px w-px"
-                  style={{ left: `${((hoverTime ?? 0) / Math.max(1, props.durationMs)) * 100}%` }}
-                />
-              </TooltipTrigger>
-              <TooltipContent
-                side="top"
-                sideOffset={8}
-                className="max-w-64"
-                data-testid="replay-seek-preview"
-              >
-                {hoveredStep ? (
-                  <div className="flex items-center gap-2">
-                    <StepIcon step={hoveredStep} />
-                    <span className="truncate">{label(hoveredStep)}</span>
-                  </div>
-                ) : null}
-                <p className="mt-1 font-mono text-xs">{formatReplayTime(hoverTime ?? 0)}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
+        ) : null}
         <PopoverContent
           side="top"
           align="start"
@@ -399,6 +547,29 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
               </Button>
             </PopoverClose>
           </div>
+          {props.recordNavigation && !selected && lastPage > 0 ? (
+            <form
+              className="mb-2 flex shrink-0 items-center gap-2 px-1"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (validRequestedStep) jump(requestedStep - 1)
+              }}
+            >
+              <Input
+                type="number"
+                min={1}
+                max={count}
+                step={1}
+                aria-label={t('Step number')}
+                value={stepNumber}
+                onChange={(event) => setStepNumber(event.currentTarget.value)}
+                className="w-24 text-xs"
+              />
+              <Button type="submit" size="sm" variant="outline" disabled={!validRequestedStep}>
+                {t('Go to step')}
+              </Button>
+            </form>
+          ) : null}
           {selected ? (
             <div className="min-h-0 space-y-3 overflow-auto p-2 text-xs">
               <p className="text-muted-foreground">
@@ -472,7 +643,7 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
                         onClick={() => jump(index)}
                       >
                         <span className="w-10 shrink-0 font-mono tabular-nums text-muted-foreground">
-                          {formatReplayTime(step.startMs)}
+                          {props.recordNavigation ? index + 1 : formatReplayTime(step.startMs)}
                         </span>
                         <StepIcon step={step} />
                         <span className="min-w-0 truncate">{name}</span>
@@ -566,11 +737,35 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
           ) : null}
         </PopoverContent>
       </Popover>
-      <div className="flex items-center gap-1" role="group" aria-label={t('Playback controls')}>
+      {props.nextObservationPosition !== undefined ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 max-w-full px-2 text-xs"
+          onClick={() => props.onSeek(props.nextObservationPosition!)}
+        >
+          {t('Next status record')}
+        </Button>
+      ) : null}
+      {props.skipNoNewRecords !== undefined && !props.compact ? (
+        <label className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={props.skipNoNewRecords}
+            onChange={(event) => props.onSkipNoNewRecords?.(event.currentTarget.checked)}
+          />
+          {t('Skip intervals without new records')}
+        </label>
+      ) : null}
+      <div
+        className={`flex min-w-0 shrink-0 items-center gap-1 ${props.compact ? 'order-2 flex-1' : ''}`}
+        role="group"
+        aria-label={t('Playback controls')}
+      >
         <Button
           variant="ghost"
           type="button"
-          className={controlClass}
+          className={props.compact ? 'h-8 w-7 shrink-0 px-1 text-xs' : controlClass}
           onClick={props.onPrevious}
           disabled={empty || props.stepIndex <= 0}
           title={t('Previous step')}
@@ -578,30 +773,32 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
         >
           <SkipBack size={16} />
         </Button>
-        <Button
-          variant="secondary"
-          type="button"
-          className={controlClass}
-          onClick={props.onToggle}
-          disabled={empty}
-          aria-label={playLabel}
-        >
-          {ended ? (
-            <RotateCcw size={16} />
-          ) : props.playing ? (
-            <Pause size={16} />
-          ) : (
-            <Play size={16} />
-          )}
-          <span className="sr-only">{playLabel}</span>
-          <span role="status" className="sr-only">
-            {props.playing && !props.ready ? t('Preparing recorded material…') : null}
-          </span>
-        </Button>
+        {!props.recordNavigation ? (
+          <Button
+            variant="secondary"
+            type="button"
+            className={props.compact ? 'h-8 w-7 shrink-0 px-1 text-xs' : controlClass}
+            onClick={props.onToggle}
+            disabled={empty}
+            aria-label={playLabel}
+          >
+            {ended ? (
+              <RotateCcw size={16} />
+            ) : props.playing ? (
+              <Pause size={16} />
+            ) : (
+              <Play size={16} />
+            )}
+            <span className="sr-only">{playLabel}</span>
+            <span role="status" className="sr-only">
+              {props.playing && !props.ready ? t('Preparing recorded material…') : null}
+            </span>
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           type="button"
-          className={controlClass}
+          className={props.compact ? 'h-8 w-7 shrink-0 px-1 text-xs' : controlClass}
           onClick={props.onNext}
           disabled={empty || props.stepIndex >= count - 1}
           title={t('Next step')}
@@ -609,35 +806,62 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
         >
           <SkipForward size={16} />
         </Button>
-        <div className="ml-auto flex min-w-0 flex-1 justify-end">
-          <span className="truncate px-1 text-xs text-muted-foreground">
-            {empty ? (
-              t('No steps')
-            ) : ended ? (
-              t('Completed')
-            ) : (
-              <span className="font-mono tabular-nums">
-                {formatReplayTime(props.positionMs)}
-                {' / '}
-                {formatReplayTime(props.durationMs)}
+        {!props.recordNavigation ? (
+          <>
+            <div
+              className={`ml-auto flex flex-1 justify-end ${props.compact ? 'min-w-[5.5rem]' : 'min-w-0'}`}
+            >
+              <span
+                className={`${props.compact ? 'whitespace-nowrap' : 'truncate'} px-1 text-xs text-muted-foreground`}
+              >
+                {empty ? (
+                  t('No steps')
+                ) : ended ? (
+                  t('Completed')
+                ) : (
+                  <span className="font-mono tabular-nums">
+                    {formatReplayTime(props.positionMs)}
+                    {' / '}
+                    {formatReplayTime(props.durationMs)}
+                  </span>
+                )}
               </span>
-            )}
-          </span>
-        </div>
-        <Select
-          value={String(props.speed)}
-          onValueChange={(value) => props.onSpeed(Number(value) as ReplaySpeed)}
-          disabled={empty}
-        >
-          <SelectTrigger aria-label={t('Playback speed')} className="h-8 w-16 shrink-0 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {REPLAY_SPEEDS.map((speed) => (
-              <SelectItem key={speed} value={String(speed)}>{`${speed}×`}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            </div>
+            <Select
+              value={String(props.speed)}
+              onValueChange={(value) => props.onSpeed(Number(value) as ReplaySpeed)}
+              disabled={empty}
+            >
+              <SelectTrigger aria-label={t('Playback speed')} className="h-8 w-16 shrink-0 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REPLAY_SPEEDS.map((speed) => (
+                  <SelectItem key={speed} value={String(speed)}>{`${speed}×`}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        ) : null}
+        {props.compact && props.skipNoNewRecords !== undefined ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={t('Playback options')}>
+                <Settings2 size={14} aria-hidden="true" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="end" className="w-72 p-3">
+              <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={props.skipNoNewRecords}
+                  onChange={(event) => props.onSkipNoNewRecords?.(event.currentTarget.checked)}
+                />
+                {t('Skip intervals without new records')}
+              </label>
+            </PopoverContent>
+          </Popover>
+        ) : null}
       </div>
     </div>
   )

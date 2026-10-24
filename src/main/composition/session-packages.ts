@@ -16,6 +16,7 @@ import {
 } from '../projects/ipc'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createSessionPackageDesktop } from '../session-package/desktop-composition'
+import { SessionPackageHeadless } from '../session-package/headless'
 import { createPackageInspector } from '../session-package/inspection-worker'
 import createInspectionWorker from '../session-package/inspection-worker-entry?nodeWorker'
 import type { PackageSensitiveContentSource } from '../session-package/sensitive-content'
@@ -30,7 +31,12 @@ import { SettingsRepository } from '../settings/repository'
 import { SettingsService } from '../settings/service'
 import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { detectActiveSessions } from '../storage/detect-active'
-import { runDataRootStartupRecovery } from '../storage/migration-state'
+import {
+  runDataRootStartupRecovery,
+  withDataRootWrite,
+  isMigrationInProgress,
+  isMigrationPending
+} from '../storage/migration-state'
 import { normalizeLegacyDataPaths } from '../storage/normalize-legacy-paths'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
@@ -100,7 +106,9 @@ export async function composeSessionPackages({
       name: 'session-package',
       capability: service,
       dispose: async () => {
-        await Promise.all([service.close(), sessionPackageDesktopLifecycle.close()])
+        // Surface owners cancel and drain transfers before their backing service is closed.
+        await sessionPackageDesktopLifecycle.close()
+        await service.close()
       }
     }
   })
@@ -186,6 +194,7 @@ export function composeSessionPackageSurfaces({
 }): {
   conversationExportService: ReturnType<typeof createConversationExportService>
   sessionPackageDesktop: ReturnType<typeof createSessionPackageDesktop>
+  sessionPackageHeadless: SessionPackageHeadless
   browserPackageImport: BrowserPackageImport
 } {
   const conversationExportService = createConversationExportService({
@@ -232,9 +241,58 @@ export function composeSessionPackageSurfaces({
     applicationEvents,
     projectRepository,
     sessionRepository,
-    isPackageHandoffHeld: () => packageHandoffHeld.current,
+    isPackageHandoffHeld: () =>
+      packageHandoffHeld.current || sessionPackageHeadless.hasActiveTransfer(),
     cancelBrowserTransfer: (id) => browserPackageImport.cancel(id),
     onSensitiveContentFailure: rememberSensitiveContentFailure
+  })
+  const sessionPackageHeadless = new SessionPackageHeadless({
+    service: sessionPackageService,
+    withDataRootWrite,
+    assertCanStart: () => {
+      if (
+        packageHandoffHeld.current ||
+        isMigrationInProgress() ||
+        isMigrationPending() ||
+        sessionPackageDesktop.hasActiveTransfer() ||
+        browserPackageImport.active
+      )
+        throw new Error('Wait for the current package transfer or application handoff to finish.')
+    },
+    reserveImport: (projectId, signal) =>
+      archiveCoordinator.reserveProjectImport(projectId, signal),
+    reserveExport: async (request, signal) => {
+      let releasePersistence: (() => void) | undefined
+      try {
+        const releaseAdmission = await archiveCoordinator.reserveSessionExport(
+          request.projectId,
+          request.sessionId,
+          async () => {
+            releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
+              request.projectId,
+              request.sessionId
+            )
+            await sessionPackageService.assertExportIdle(request)
+          },
+          signal
+        )
+        return () => {
+          releasePersistence?.()
+          releaseAdmission()
+        }
+      } catch (error) {
+        releasePersistence?.()
+        throw error
+      }
+    },
+    afterImport: async (identity, originClientId, projectCreated) => {
+      const [project, session] = await Promise.all([
+        projectRepository.get(identity.projectId),
+        sessionRepository.loadSession(identity.projectId, identity.sessionId)
+      ])
+      if (project && projectCreated) applicationEvents.publish('project:created', project)
+      if (session) applicationEvents.publish('session:created', { session, originClientId })
+    }
   })
   const browserPackageImport = new BrowserPackageImport({
     root: join(resolveConfigRoot(), 'browser-package-imports'),
@@ -244,10 +302,15 @@ export function composeSessionPackageSurfaces({
   })
   // Browser receipt precedes the desktop queue and must survive quit/update preparation too.
   sessionPackageDesktopLifecycle.isActive = () =>
-    browserPackageImport.active || sessionPackageDesktop.operations.active
+    browserPackageImport.active ||
+    sessionPackageDesktop.operations.active ||
+    sessionPackageHeadless.hasActiveTransfer()
   declareElectronAdapter('session-package-quit-guard', () =>
     desktopInteraction('Session package quit confirmation').installPackageQuitGuard(
-      () => browserPackageImport.active || sessionPackageDesktop.hasActiveTransfer(),
+      () =>
+        browserPackageImport.active ||
+        sessionPackageDesktop.hasActiveTransfer() ||
+        sessionPackageHeadless.hasActiveTransfer(),
       () => {
         desktopInteraction('Confirm desktop action').confirmSync({
           type: 'info',
@@ -262,8 +325,23 @@ export function composeSessionPackageSurfaces({
   )
   sessionPackageDesktopLifecycle.close = async () => {
     browserPackageImport.stop()
-    await sessionPackageDesktop.close()
-    await browserPackageImport.close()
+    const closeDesktop = async (): Promise<void> => {
+      await sessionPackageDesktop.close()
+      // The desktop queue must release every admitted source before browser staging is removed.
+      await browserPackageImport.close()
+    }
+    const results = await Promise.allSettled([sessionPackageHeadless.close(), closeDesktop()])
+    const failures = results.filter((result) => result.status === 'rejected')
+    if (failures.length)
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        'Session package transfers did not finish closing.'
+      )
   }
-  return { conversationExportService, sessionPackageDesktop, browserPackageImport }
+  return {
+    conversationExportService,
+    sessionPackageDesktop,
+    sessionPackageHeadless,
+    browserPackageImport
+  }
 }

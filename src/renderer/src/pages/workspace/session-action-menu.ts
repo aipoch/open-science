@@ -12,7 +12,10 @@ import {
   PinOff,
   Trash2,
   PackageCheck,
-  Package
+  Package,
+  FolderInput,
+  FolderOutput,
+  ScrollText
 } from 'lucide-react'
 
 import type {
@@ -31,6 +34,9 @@ export type SessionActionId =
   | 'view-notebook'
   | 'view-replay'
   | 'discuss'
+  | 'view-original-record'
+  | 'assign-research'
+  | 'remove-research'
   | 'export'
   | 'export-package'
   | 'export-diagnostics'
@@ -51,6 +57,9 @@ export const SESSION_ACTION_CATALOG = {
   'view-notebook': { labelKey: 'View notebook', icon: BookOpen },
   'view-replay': { labelKey: 'View replay', icon: Play },
   discuss: { labelKey: 'Discuss', icon: MessageSquare },
+  'view-original-record': { labelKey: 'View original record', icon: ScrollText },
+  'assign-research': { labelKey: 'Assign to research', icon: FolderInput },
+  'remove-research': { labelKey: 'Remove from research', icon: FolderOutput },
   export: { labelKey: 'Export conversation…', icon: Download },
   'export-package': { labelKey: 'Export Session package', icon: Package },
   'export-diagnostics': { labelKey: 'Export diagnostics…', icon: Stethoscope },
@@ -64,6 +73,9 @@ export const SESSION_ACTION_RECIPE = [
   { kind: 'action', action: 'edit' },
   { kind: 'separator' },
   { kind: 'action', action: 'discuss' },
+  { kind: 'action', action: 'view-original-record' },
+  { kind: 'action', action: 'assign-research' },
+  { kind: 'action', action: 'remove-research' },
   { kind: 'action', action: 'view-replay' },
   { kind: 'action', action: 'download-artifacts' },
   { kind: 'action', action: 'check-artifacts' },
@@ -92,6 +104,9 @@ type SessionActionOptions = {
   onViewNotebook?: (session: ChatSession) => void
   onViewReplay?: (session: ChatSession) => void
   onDiscussSession?: (session: ChatSession) => Promise<void>
+  onViewOriginalRecord?: (session: ChatSession) => void
+  onAssignResearch?: (session: ChatSession) => void
+  onRemoveResearch?: (session: ChatSession) => Promise<void>
   onExportSession?: (session: ChatSession) => void
   onForkSession?: (session: ChatSession) => Promise<void>
   onExportPackage?: (session: ChatSession) => Promise<void>
@@ -112,7 +127,7 @@ const hasTransferActivity = ({ session, presentedStatus }: SessionActionInvocati
 // Imported runtime fields are evidence; transient renderer work still blocks a transfer.
 // Fork keeps the stricter admission below because its destination is writable.
 const hasExportActivity = (invocation: SessionActionInvocation): boolean =>
-  invocation.session.packageOrigin
+  invocation.session.packageOrigin || invocation.session.importedResearch
     ? Boolean(invocation.session.compacting || invocation.session.agentPromptInFlight)
     : hasTransferActivity(invocation)
 
@@ -168,6 +183,31 @@ export const createSessionActionBindings = (
     execute: ({ session }) => options.onDiscussSession?.(session),
     hidden: !options.onDiscussSession,
     disabled: ({ session }) => Boolean(session.isPending)
+  },
+  'view-original-record': {
+    execute: ({ session }) => options.onViewOriginalRecord?.(session),
+    hidden: ({ session }) =>
+      !options.onViewOriginalRecord || !(session.packageOrigin || session.importedResearch)
+  },
+  'assign-research': {
+    execute: ({ session }) => options.onAssignResearch?.(session),
+    hidden: ({ session }) =>
+      !options.onAssignResearch || Boolean(session.packageOrigin || session.importedResearch),
+    disabled: (invocation) =>
+      !options.canMutateConversations ||
+      Boolean(invocation.session.isPending) ||
+      hasTransferActivity(invocation)
+  },
+  'remove-research': {
+    execute: ({ session }) => options.onRemoveResearch?.(session),
+    hidden: ({ session }) =>
+      !options.onRemoveResearch ||
+      !session.researchMembership ||
+      Boolean(session.packageOrigin || session.importedResearch),
+    disabled: (invocation) =>
+      !options.canMutateConversations ||
+      Boolean(invocation.session.isPending) ||
+      hasTransferActivity(invocation)
   },
   export: {
     execute: ({ session }) => options.onExportSession?.(session),

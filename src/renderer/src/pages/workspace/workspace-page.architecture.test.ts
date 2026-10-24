@@ -1,6 +1,7 @@
 import {
   runtimeModuleSpecifiers,
-  expectBoundaryPaths
+  expectBoundaryPaths,
+  expectBoundaryOwnerTests
 } from '../../../../../test/module-boundary-assertions'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
@@ -287,10 +288,62 @@ describe('workspace page architecture', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
     const workspacePage = manifest.modules.workspace_page
 
-    expectBoundaryPaths(
-      manifest,
-      'workspace_page',
-      Object.values(ownerPaths).map((path) => relative(repositoryRoot, path).replaceAll('\\', '/'))
+    // Pin the upstream split explicitly and keep every original owner path covered.
+    // Pure queue/side-chat contracts do not inherit the expanded page's full marker.
+    const boundaryPaths = {
+      workspace_page: [
+        ownerPaths.page,
+        ownerPaths.layout,
+        ownerPaths.composer,
+        ownerPaths.conversation,
+        ownerPaths.messageQueue,
+        ownerPaths.branchSwitchGuard,
+        ownerPaths.session,
+        ownerPaths.sessionDetails,
+        ownerPaths.sessionAgentConfiguration
+      ],
+      workspace_composer_model: [ownerPaths.messageQueueOwner],
+      workspace_side_chat: [ownerPaths.sideChat]
+    }
+    expect(Object.values(boundaryPaths).flat().sort()).toEqual(Object.values(ownerPaths).sort())
+    for (const [moduleId, paths] of Object.entries(boundaryPaths)) {
+      expectBoundaryPaths(
+        manifest,
+        moduleId,
+        paths.map((path) => relative(repositoryRoot, path).replaceAll('\\', '/'))
+      )
+    }
+    const splitTests = {
+      workspace_composer_model: [
+        'src/renderer/src/pages/workspace/composer-attachment-intake.test.ts',
+        'src/renderer/src/pages/workspace/composer-draft-storage.test.ts',
+        'src/renderer/src/pages/workspace/composer/composer-doc.test.ts',
+        'src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts'
+      ],
+      workspace_side_chat: [
+        'src/renderer/src/pages/workspace/side-chat-availability.test.ts',
+        'src/renderer/src/pages/workspace/use-side-chat-controller.test.ts'
+      ]
+    }
+    for (const [moduleId, tests] of Object.entries(splitTests)) {
+      expectBoundaryPaths(manifest, moduleId, tests)
+      expectBoundaryOwnerTests(manifest, moduleId, tests)
+      expect(manifest.modules[moduleId].fullTestReason).toBeUndefined()
+      expect(manifest.modules[moduleId].testFiles.contract).toEqual(
+        expect.arrayContaining([
+          'src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx',
+          'src/renderer/src/pages/workspace/HandoffLifecycleStatus.integration.test.tsx',
+          'src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx',
+          'src/renderer/src/pages/workspace/handoff-lifecycle-projection.test.ts',
+          'src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts',
+          'src/renderer/src/stores/session-store.test.ts',
+          'src/main/host-layer-dependencies.architecture.test.ts'
+        ])
+      )
+    }
+
+    expect(workspacePage.fullTestReason).toBe(
+      'The workspace_page owner retains 21 explicit research consumer obligations beyond its reviewed source-derived edges, including ReplayPanel.layout.test.tsx, RecordedRunObservationPreview.test.tsx, ViewerApp.test.tsx. 21 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
     )
     expect(workspacePage.ownerPaths).toContain('src/renderer/src/pages/workspace/WorkspacePage.tsx')
     for (const internalPath of Object.values(queueInternalPaths)) {

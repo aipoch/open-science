@@ -105,7 +105,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx"
     ]
   },
-  "capabilityOverlays": [],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "shared_contract",
   "fullTestReason": "Remaining shared contracts are bound by value across processes: IPC channel and event names, persisted settings/locale/plan and annotation-marker formats, serialized error markers, MCP tool names, and the CLI, Task API and bootstrap protocols; static imports cannot bound their consumers."
 }

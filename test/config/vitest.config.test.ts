@@ -292,6 +292,7 @@ it('serializes real kernels, TCP servers, and integration files', () => {
       '**/*.integration.test.ts',
       '**/*.certification.test.ts',
       'src/main/notebook/kernel-executor.test.ts',
+      'src/main/notebook/runtime-service.test.ts',
       'src/main/local-rpc-transport.test.ts',
       'src/main/session-plan/plan-mcp-server.test.ts',
       'src/main/acp/mcp-http-host.test.ts'
@@ -312,7 +313,8 @@ it('serializes migration and Session package round trips after other schema-usin
     'src/main/storage/provenance-migration-validation.test.ts',
     'src/main/session-package/service.test.ts',
     'src/main/session-package/literature.test.ts',
-    'src/main/session-package/fork.test.ts'
+    'src/main/session-package/fork.test.ts',
+    'src/main/session-package/deletion.test.ts'
   ])
   const database = projectByName('database')
   expect(database.include).toEqual([...VITEST_DATABASE_TEST_GLOBS])
@@ -323,6 +325,30 @@ it('serializes migration and Session package round trips after other schema-usin
   expect(projectByName('default').exclude).toEqual(
     expect.arrayContaining([...VITEST_DATABASE_TEST_GLOBS])
   )
+
+  const probe = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+      import { createVitest } from 'vitest/node'
+      const ctx = await createVitest('test', { watch: false })
+      try {
+        const specs = await ctx.globTestSpecifications(['src/main/session-package/deletion.test.ts'])
+        console.log(JSON.stringify(specs.map(spec => ({
+          project: spec.project.name, path: spec.moduleId
+        }))))
+      } finally { await ctx.close() }
+    `
+    ],
+    { encoding: 'utf8', timeout: 30000 }
+  )
+  expect(probe.error).toBeUndefined()
+  expect(probe.status, probe.stderr).toBe(0)
+  expect(JSON.parse(probe.stdout)).toEqual([
+    { project: 'database', path: resolve('src/main/session-package/deletion.test.ts') }
+  ])
 })
 
 it('does not treat a 50ms scheduler delay as ACP deadlock', () => {

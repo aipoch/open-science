@@ -54,6 +54,10 @@ export type PreviewFileItem = PreviewItemBase & {
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
+  // Exact local Run identity only; viewer credentials and URLs never enter preview persistence.
+  replayRunTarget?: import('../../../shared/run-observation').RunObservationTarget
+  replayRecordingFormat?: 'run-observation' | 'project-recording' | 'web-recording'
+  replayRecordingTarget?: import('../../../shared/run-observation-recorded').RecordedObservationTarget
   sideChatId?: string
   // A message chip can request a transient Library scope without changing the durable tab format.
   libraryScopeRequest?: { section?: 'inbox'; collectionId?: string; collectionName?: string }
@@ -72,7 +76,11 @@ export type PreviewToolItem = PreviewItemBase & {
   replaySourceSessionId?: string
   replayStepId?: string
   replayBranchId?: string
+  // Transient explicit navigation to the player; excluded from durable preview state.
   replayRevealRequest?: number
+  replayRevealMode?: 'runs' | 'replay'
+  // Transient navigation-owned preview. A deliberate tab selection makes it a user reference.
+  replayAutomatic?: boolean
   notebook?: NotebookSessionReference
   notebookRunId?: string
   notebookRunFocusRequest?: number

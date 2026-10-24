@@ -1,12 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
-import { useSessionReplayStore } from '@/stores/session-replay-store'
+import type { TextAnnotation } from '../../../../shared/annotations'
 import type { SaveSessionDiscussionSnapshotRequest } from '../../../../shared/session-replay'
 import type { SessionDiscussionCapture } from './replay/replay-context'
-import {
-  captureDiscussionSendContext,
-  prepareDiscussionSendAnnotations
-} from './discussion-send-context'
+import { prepareDiscussionSendAnnotations } from './discussion-send-context'
 import {
   createSessionDiscussionAnnotation,
   replayAnnotationTarget
@@ -24,23 +21,43 @@ const focus = (): SessionDiscussionCapture => ({
   excerpt: 'saved evidence',
   evidence: [{ kind: 'message', id: 'message', projectId: 'project', sessionId: 'source' }]
 })
-const binding = {
-  projectId: 'project',
-  sessionId: 'source',
-  contextId: 'old',
-  title: 'Study',
-  branchId: 'main',
-  promptMessageId: 'previous'
-}
+const ordinary = (): TextAnnotation => ({
+  id: 'ordinary',
+  kind: 'text',
+  target: 'agent',
+  source: { kind: 'agent-message', sessionId: 'source', messageId: 'message' },
+  quote: 'Quoted text'
+})
 
 afterEach(() => {
-  useSessionReplayStore.setState({ playhead: undefined })
   vi.unstubAllGlobals()
 })
 
-it('captures only at Send, freezes evidence and retains the frame across async preparation', async () => {
+it.each(['step', 'session'] as const)(
+  'retains an explicit %s selection instead of replacing it with an older queued capture',
+  async (scope) => {
+    const save = vi.fn()
+    vi.stubGlobal('window', { api: { sessionReplay: { saveSelectionSnapshot: save } } })
+    const selected = createSessionDiscussionAnnotation({ ...focus(), scope }, 'selected')!
+    const annotations = [ordinary(), selected]
+    const result = await prepareDiscussionSendAnnotations(annotations, {
+      ...focus(),
+      scope: 'step',
+      stepId: 'two',
+      stepNumber: 2
+    })
+    expect(result).toEqual(annotations)
+    expect(replayAnnotationTarget(result[1])).toMatchObject({
+      contextId: 'selected',
+      stepId: 'one',
+      scope
+    })
+    expect(save).not.toHaveBeenCalled()
+  }
+)
+
+it('freezes legacy queued evidence while awaiting storage without mutating ordinary annotations', async () => {
   const current = focus()
-  const capture = vi.fn(() => current)
   let finish!: () => void
   const save = vi.fn<(request: SaveSessionDiscussionSnapshotRequest) => Promise<void>>(
     () =>
@@ -49,68 +66,26 @@ it('captures only at Send, freezes evidence and retains the frame across async p
       })
   )
   vi.stubGlobal('window', { api: { sessionReplay: { saveSelectionSnapshot: save } } })
-  useSessionReplayStore.setState({ playhead: { ...current, capture } })
+  const annotations = [ordinary()]
+  const preparing = prepareDiscussionSendAnnotations(annotations, current)
   current.stepId = 'two'
-  current.stepNumber = 2
-  expect(save).not.toHaveBeenCalled()
-  expect(capture).not.toHaveBeenCalled()
-  const frozen = captureDiscussionSendContext([], binding, 'discussion')!
-  const original = createSessionDiscussionAnnotation(focus(), 'old')!
-  const ordinary = { ...original, id: 'ordinary' }
-  const annotations = [ordinary, original]
-  const preparing = prepareDiscussionSendAnnotations(annotations, frozen)
-  current.stepId = 'three'
   current.evidence[0].id = 'different-message'
   finish()
   const result = await preparing
   expect(save.mock.calls[0][0]).toMatchObject({
     context: {
-      stepId: 'two',
-      stepNumber: 2,
+      stepId: 'one',
+      stepNumber: 1,
       stepOffsetMs: 50,
-      scope: 'step',
       evidence: [{ id: 'message' }]
     }
   })
-  expect(replayAnnotationTarget(result[1])).toMatchObject({
-    stepId: 'two',
-    scope: 'step',
-    stepOffsetMs: 50
-  })
-  expect(result[0]).toBe(ordinary)
-  expect(annotations).toEqual([ordinary, original])
+  expect(replayAnnotationTarget(result[1])).toMatchObject({ stepId: 'one', stepOffsetMs: 50 })
+  expect(result[0]).toBe(annotations[0])
+  expect(annotations).toEqual([ordinary()])
 })
 
-it('matches the selected source, ignores self and unrelated replay, and preserves focus with no visible source', () => {
-  const capture = vi.fn(focus)
-  useSessionReplayStore.setState({ playhead: { ...focus(), capture } })
-  expect(captureDiscussionSendContext([], undefined, 'discussion')).toBeUndefined()
-  expect(captureDiscussionSendContext([], binding, 'source')).toBeUndefined()
-  expect(
-    captureDiscussionSendContext([], { ...binding, projectId: 'other' }, 'discussion')
-  ).toBeUndefined()
-  const other = createSessionDiscussionAnnotation(
-    {
-      ...focus(),
-      sourceSessionId: 'other',
-      evidence: [{ kind: 'message', id: 'message', projectId: 'project', sessionId: 'other' }]
-    },
-    'other'
-  )!
-  expect(captureDiscussionSendContext([other], binding, 'discussion')).toBeUndefined()
-  expect(capture).not.toHaveBeenCalled()
-  expect(
-    captureDiscussionSendContext(
-      [createSessionDiscussionAnnotation(focus(), 'old')!],
-      undefined,
-      'discussion'
-    )
-  ).toMatchObject({ stepId: 'one' })
-  useSessionReplayStore.setState({ playhead: undefined })
-  expect(captureDiscussionSendContext([], binding, 'discussion')).toBeUndefined()
-})
-
-it('rejects failed saves without mutating the original message annotations', async () => {
+it('rejects failed legacy saves without changing the capture or original annotations', async () => {
   vi.stubGlobal('window', {
     api: {
       sessionReplay: {
@@ -118,9 +93,12 @@ it('rejects failed saves without mutating the original message annotations', asy
       }
     }
   })
-  const annotations = [createSessionDiscussionAnnotation(focus(), 'old')!]
-  await expect(prepareDiscussionSendAnnotations(annotations, focus())).rejects.toThrow(
+  const annotations = [ordinary()]
+  const capture = focus()
+  const before = structuredClone(capture)
+  await expect(prepareDiscussionSendAnnotations(annotations, capture)).rejects.toThrow(
     'disk unavailable'
   )
-  expect(replayAnnotationTarget(annotations[0])?.contextId).toBe('old')
+  expect(annotations).toEqual([ordinary()])
+  expect(capture).toEqual(before)
 })

@@ -774,12 +774,29 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   // Moves focus only to an item that is still present in the preview list.
   activateItem: (itemId) => {
     if (!get().items.some((item) => item.id === itemId)) return
-    if (get().activeItemId === itemId) return
+    if (get().activeItemId === itemId) {
+      const active = get().items.find((item) => item.id === itemId)
+      if (active?.type !== 'tool' || !active.replayAutomatic) return
+      set((state) => ({
+        items: state.items.map((item) =>
+          item.id === itemId && item.type === 'tool' && item.replayAutomatic
+            ? { ...item, replayAutomatic: undefined }
+            : item
+        )
+      }))
+      return
+    }
     previewLeaveGuards.request(activeWorkbenchGuardScope(get()), () =>
       set((state) => ({
         activeItemId: itemId,
         items: state.items.map((item) =>
-          item.id === itemId ? { ...item, updatedAt: Date.now() } : item
+          item.id === itemId
+            ? {
+                ...item,
+                ...(item.type === 'tool' ? { replayAutomatic: undefined } : {}),
+                updatedAt: Date.now()
+              }
+            : item
         )
       }))
     )

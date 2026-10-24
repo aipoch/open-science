@@ -1071,10 +1071,58 @@ describe('Session Store architecture', () => {
           'src/renderer/src/stores/session-store-attention.test.ts'
         ],
         contract: ['src/shared/session-persistence.test.ts'],
-        // Source dependencies are derived centrally; executable dynamic contracts are pinned below.
-        consumer: []
+        // Preserve research contracts while source dependencies remain centrally derived.
+        consumer: [
+          'src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts',
+          'src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx',
+          'src/renderer/src/pages/workspace/ResearchWorkspaceHeader.test.tsx',
+          'src/renderer/src/pages/workspace/research-navigation-model.test.ts',
+          'src/renderer/src/pages/workspace/replay/ResearchDemoPanel.test.tsx',
+          'src/renderer/src/pages/workspace/use-research-run-launcher.test.tsx',
+          'src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx',
+          'src/renderer/src/pages/workspace/RecordedRunObservationPreview.test.tsx',
+          'src/renderer/replay-viewer/ViewerApp.test.tsx',
+          'src/renderer/replay-viewer/browser-recording-viewer.test.tsx',
+          'src/renderer/replay-viewer/recorded-viewer.test.tsx',
+          'src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx',
+          'src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx',
+          'src/renderer/replay-viewer/research-client.test.ts',
+          'src/renderer/replay-viewer/research-viewer.test.tsx',
+          'src/renderer/src/pages/workspace/use-run-observation-question.test.tsx',
+          'src/renderer/src/lib/replay/transcript.test.ts',
+          'src/renderer/src/lib/research-project-entry.test.ts',
+          'src/renderer/src/pages/workspace/project-workspace-entry.test.ts',
+          'src/renderer/src/pages/workspace/replay/ReplaySourceBar.test.tsx',
+          'src/renderer/src/pages/workspace/replay/use-observation-question-recovery.test.tsx',
+          'src/renderer/src/pages/workspace/use-research-run-observer.test.tsx',
+          'src/renderer/src/pages/workspace/RunObservationPreview.test.tsx',
+          'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.recorded.test.tsx',
+          'src/renderer/src/pages/workspace/replay/recorded-file-entry.test.ts',
+          'src/renderer/src/pages/workspace/research-preview-navigation.test.ts',
+          'src/renderer/src/pages/workspace/replay/recording-discovery.test.ts',
+          'src/renderer/src/pages/workspace/replay/NotebookRunObservationActions.test.tsx',
+          'src/renderer/src/pages/workspace/browser-recording-question.test.tsx',
+          'src/renderer/src/stores/research-run-store.test.ts',
+          'src/main/composition/handoff.test.ts',
+          'src/main/composition/managed-execution.integration.test.ts',
+          'src/main/index-fatal-errors.test.ts',
+          'src/main/index-startup-failure.test.ts',
+          'src/main/replay-viewer/assets.test.ts',
+          'src/main/runtime-electron-wiring.test.ts',
+          'src/renderer/replay-viewer/browser.integration.test.ts',
+          'src/main/replay-viewer/desktop-embed.integration.test.ts',
+          'src/main/research-demos/owner.macos.integration.test.ts',
+          'src/renderer/replay-viewer/browser-recording.integration.test.ts',
+          'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
+          'src/renderer/replay-viewer/research-browser.integration.test.ts',
+          'src/main/runtime-view/tuanzi.macos.integration.test.ts',
+          'src/main/application-command-wiring.test.ts',
+          'src/main/node-entry.test.ts'
+        ]
       },
       capabilityOverlays: ['renderer_state'],
+      fullTestReason:
+        'The session_renderer owner retains 2 explicit research consumer obligations beyond its reviewed source-derived edges, including index-fatal-errors.test.ts, index-startup-failure.test.ts. 2 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.',
       fallbackCapability: 'renderer_view'
     })
   })

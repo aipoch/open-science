@@ -48,7 +48,9 @@ Shell executable lookup and directory searches use the same filesystem policy as
 commands. There is no separate search parser restricting them to the session directory;
 expansions, pipelines, and working-directory changes are evaluated by the selected shell.
 Code-risk approval and managed-runtime write protection still apply. Removing the search
-preflight does not grant a directory or disable OS sandbox enforcement.
+preflight does not grant a directory or disable OS sandbox enforcement. Managed research
+executions retain their additional bounded search preflight and immutable runtime-variable
+admission; ordinary Notebook commands do not use that managed-only preflight.
 
 - On macOS, Seatbelt enforces declared filesystem and network rules.
 - On Linux, bubblewrap enforces declared filesystem and network rules.
