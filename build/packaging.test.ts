@@ -8,6 +8,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -220,6 +221,29 @@ SectionEnd
 )
 
 describe('packaging config', () => {
+  it('excludes previous dist artifacts when the output directory is overridden', () => {
+    const config = load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
+      files: string[]
+    }
+    const { FileMatcher } = appBuilderRequire('./out/fileMatcher')
+    const matcher = new FileMatcher(
+      repoRoot,
+      join(tmpdir(), 'external-package-output'),
+      (s: string) => s,
+      ['**/*', ...config.files]
+    )
+    const filter = matcher.createFilter()
+    const file = statSync(join(repoRoot, 'package.json'))
+    const directory = statSync(repoRoot)
+    expect(filter(join(repoRoot, 'dist'), directory)).toBe(false)
+    expect(filter(join(repoRoot, 'dist', 'old-setup.exe'), file)).toBe(false)
+    expect(filter(join(repoRoot, 'dist', 'win-unpacked', 'resources', 'app.asar'), file)).toBe(
+      false
+    )
+    expect(filter(join(repoRoot, 'out', 'main', 'index.js'), file)).toBe(true)
+    expect(filter(join(repoRoot, 'node_modules', 'zod', 'dist', 'index.js'), file)).toBe(true)
+  })
+
   it('loads both tiktoken WASM encodings from a packed ASAR in Electron', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'tiktoken-asar-')))
     try {
