@@ -360,6 +360,8 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setDefaultPermissionProfile': 'settings:set-default-permission-profile',
   'settings.setNcbiCredentials': 'settings:set-ncbi-credentials',
   'settings.setNetworkProxy': 'settings:set-network-proxy',
+  'settings.setNotebookFolderRestrictionEnabled':
+    'settings:set-notebook-folder-restriction-enabled',
   'settings.setNotebookNetwork': 'settings:set-notebook-network',
   'settings.setNotificationsEnabled': 'settings:set-notifications-enabled',
   'settings.setOpenAlexCredential': 'settings:set-openalex-credential',

@@ -10,7 +10,8 @@
     "src/main/node-process-host.ts",
     "src/main/node-process-host.test.ts",
     "src/main/windows-executable-trust.ts",
-    "src/main/windows-executable-trust.test.ts"
+    "src/main/windows-executable-trust.test.ts",
+    "src/main/process-tree-foreign-service.macos.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/process-tree.ts",
@@ -27,7 +28,8 @@
       "src/main/windows-powershell.test.ts",
       "src/main/process-tree.windows.integration.test.ts",
       "src/main/node-process-host.test.ts",
-      "src/main/windows-executable-trust.test.ts"
+      "src/main/windows-executable-trust.test.ts",
+      "src/main/process-tree-foreign-service.macos.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

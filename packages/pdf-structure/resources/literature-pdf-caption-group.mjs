@@ -8,6 +8,8 @@ import {
 // Offline geometry heuristic; a caption candidate is not a semantic classification.
 import assert from 'node:assert/strict'
 import { recoverNativeRaisedCaptionFragments } from './literature-pdf-native-caption-raised-glyphs.mjs'
+import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
 
 // A PDF stream may paint a small script after the rest of its physical line.
 // Move it only when exactly one earlier token adjoins it and all intervening
@@ -377,7 +379,7 @@ export function captionKind(text) {
   const narrativeReferenceVerb =
     '(?:is|are|was|were|has|have|had|shows?|shown|presents?|presented|compares?|compared(?=\\s+(?:the|these|those|this|that|our)\\b)|contrasts?|measures?|reports?|reported|confirms?|reveals?|illustrat(?:es?|ed)|visuali[sz](?:es?|ed)|analy[sz](?:es?|ed)|provides?|plots|flips|clarifies|assesses|gives?|follows?|splits?|separates?|breaks?|lists?|decomposes?|contains?|depict(?:s|ed)?|represents?|reiterates?|reviews?|summari[sz](?:e(?:s|d)?|ing)|indicates?|suggests?|describes?|demonstrates?|displays?|exhibits?|highlights?|details?|achieves?|carr(?:y|ies|ied)|extends?|preserves?|retains?|grounds?|defines?|makes?|sets?|adds?|complements?|uses?(?=\\s+(?:one|a|an|the|our|this|these|those|its|their|\\d+)\\b)|examines?|var(?:y|ies|ied)|evaluates?|isolates?|paves?|introduces?)'
   const narrativeReference = new RegExp(
-    `^${narrativeReferenceLabel}${narrativeReferencePanel}(?:\\s*(?:,|and|&)\\s*(?:${narrativeReferenceLabel}|[A-Z]?\\d+(?:\\.\\d+)?)${narrativeReferencePanel})*\\s+(?:(?:also|further)\\s+)?${narrativeReferenceVerb}\\b`,
+    `^${narrativeReferenceLabel}${narrativeReferencePanel}(?:\\s*(?:,|and|&)\\s*(?:${narrativeReferenceLabel}|[A-Z]?\\d+(?:\\.\\d+)?)${narrativeReferencePanel})*\\s+(?:(?:also|further|first)\\s+)?${narrativeReferenceVerb}\\b`,
     'i'
   )
   // An unpunctuated figure subject followed by an inflected transitive verb
@@ -612,8 +614,10 @@ export function captionKind(text) {
   // rule broad enough for ordinary `Fig./Figure N. As|For|In ...` references
   // while requiring a later finite verb so noun titles such as
   // `Figure 3. Inference results` remain valid captions.
+  // A complete parenthetical qualifier before that sentence-ending period
+  // still belongs to the reference; a caption colon before it remains distinct.
   if (
-    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+(?:As|For|In|When|Where|Since|Because|Like|Unlike)\b(?=[\s\S]*\b(?:is|are|was|were|has|have|had|does|do|did|shows?|presents?|contains?|includes?|uses?|provides?|reports?|describes?|demonstrates?|indicates?|suggests?|reveals?|means?)\b)/i.test(
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*(?:\s+\([^()\r\n]+\))?[.:]\s+(?:As|For|In|When|Where|Since|Because|Like|Unlike)\b(?=[\s\S]*\b(?:is|are|was|were|has|have|had|does|do|did|shows?|presents?|contains?|includes?|uses?|provides?|reports?|describes?|demonstrates?|indicates?|suggests?|reveals?|means?)\b)/i.test(
       text ?? ''
     )
   )
@@ -4171,9 +4175,17 @@ function recoverNativeClosedCaptionBlock(candidate, page, rules, fonts) {
     if (
       captionKind(row.text) &&
       !(
-        reference &&
-        rows.length === candidate.lines.length &&
-        /^Supplementary\s+Table\s+\d+\.\s+\p{L}/u.test(row.text)
+        (reference &&
+          rows.length === candidate.lines.length &&
+          /^Supplementary\s+Table\s+\d+\.\s+\p{L}/u.test(row.text)) ||
+        // A wrapped panel pointer can start a physical row inside this same
+        // centered paragraph. The complete native cadence, literal inventory,
+        // closed tail and independent graphic remain mandatory below.
+        (centered &&
+          wideCadence &&
+          rows.length >= 3 &&
+          /\bin$/u.test(rows.at(-1).text.trim()) &&
+          /^(?:Figure|Fig\.)\s+\d+[a-z]\.\s+\p{Lu}/u.test(row.text))
       )
     )
       break
@@ -4634,7 +4646,169 @@ function recoverNativeRomanLiteralTail(candidate, page, rules, fonts) {
   return { lines: [candidate.lines[0], rows[1].text, rows[2].text], rect }
 }
 
-export function applyRuledCaptionRecovery(captions, ruledCaptions, page, rules, fonts = []) {
+function nativeRuledOutdentedTail(caption, page, rules, fonts, context) {
+  try {
+    return proveNativeRuledOutdentedTail(caption, page, rules, fonts, context)
+  } catch {
+    return
+  }
+}
+
+function proveNativeRuledOutdentedTail(caption, page, rules, fonts, context) {
+  if (
+    caption.lines.length !== 1 ||
+    !/,$/u.test(caption.lines[0].trim()) ||
+    context?.pageNumber !== page.pageNumber ||
+    !/^[a-f0-9]{64}$/u.test(context.sourceSha256 ?? '') ||
+    JSON.stringify(context.graphicsBounds) !== JSON.stringify(page.graphicsBounds) ||
+    JSON.stringify(context.viewport?.transform) !== JSON.stringify([1, 0, 0, -1, 0, page.height])
+  )
+    return
+  const first = page.lines.filter(
+    (l) =>
+      l.text === caption.lines[0] &&
+      [l.x, l.y, l.x + l.width, l.y + l.height].every(
+        (n, i) => Math.abs(n - caption.rect[i]) < 1e-6
+      )
+  )
+  if (first.length !== 1) return
+  const head = first[0],
+    em = head.fontSize
+  if (!(em > 0) || Math.abs(head.height - em) > 0.02) return
+  const viewport = { ...context.viewport, convertToViewportPoint: (x, y) => [x, page.height - y] }
+  const native = { ...context, viewport }
+  const tokens = native.content?.items
+    ?.map((r) => tableTextToken(r, viewport, 0))
+    .filter((t) => t.text?.trim())
+  if (!tokens) return
+  const inventory = nativePageTextPacketInventory(page, tokens, native, true)
+  if (!inventory) return
+  // Renderer font aliases stay inside this matched context. The current text
+  // tokens must independently preserve every whole source index/text/rectangle.
+  const current = fonts.filter((f) => f.text?.trim())
+  if (
+    current.length !== inventory.records.length ||
+    inventory.records.some((r) => {
+      const matches = current.filter(
+        (f) =>
+          f.sourceItem?.pageNumber === page.pageNumber &&
+          f.sourceItem.index === r.index &&
+          f.sourceItem.text === r.r.str &&
+          f.text === r.r.str
+      )
+      return (
+        matches.length !== 1 ||
+        matches[0].rect?.length !== 4 ||
+        matches[0].rect.some((n, i) => Math.abs(n - r.rect[i]) > 1e-6)
+      )
+    })
+  )
+    return
+  const proof = context.captionPaintProof
+  if (
+    !Array.isArray(proof?.rules) ||
+    !(proof.rulePaintBounds instanceof Map) ||
+    !Array.isArray(proof.graphics) ||
+    !Array.isArray(proof.identities) ||
+    proof.graphics.length !== page.graphicsBounds.length ||
+    proof.identities.length !== page.graphicsBounds.length ||
+    proof.graphics.some(
+      (r, i) =>
+        !Array.isArray(r) ||
+        r.length !== 4 ||
+        !r.every(Number.isFinite) ||
+        r[0] >= r[2] ||
+        r[1] >= r[3] ||
+        proof.identities[i].operationIndex !== page.graphicsBounds[i].operationIndex ||
+        proof.identities[i].kind !== page.graphicsBounds[i].kind ||
+        proof.identities[i].rect.some(
+          (v, n) =>
+            Math.abs(
+              v - page.graphicsBounds[i].normalizedRect[n] * (n % 2 ? page.height : page.width)
+            ) > 1e-6
+        ) ||
+        r.some((v, n) =>
+          n < 2 ? v < proof.identities[i].rect[n] - 1e-6 : v > proof.identities[i].rect[n] + 1e-6
+        )
+    )
+  )
+    return
+  const nativeRules = proof.rules
+  const borders = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[1] > caption.rect[3] &&
+        r[1] - caption.rect[3] < em * 5 &&
+        r[0] < head.x &&
+        head.x - r[0] <= em * 1.8 &&
+        Math.abs(r[2] - caption.rect[2]) <= 2 &&
+        nativeRules.some((n) => n.every((v, i) => Math.abs(v - r[i]) < 0.02))
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (!borders.length || borders.filter((r) => r[1] === borders[0][1]).length !== 1) return
+  const border = borders[0],
+    nativeBorder = nativeRules.find((n) => n.every((v, i) => Math.abs(v - border[i]) < 0.02)),
+    paint = proof.rulePaintBounds.get(nativeBorder.join(','))
+  if (
+    !Array.isArray(paint) ||
+    paint.length !== 4 ||
+    !paint.every(Number.isFinite) ||
+    paint[0] > border[0] + 0.02 ||
+    paint[2] < border[2] - 0.02 ||
+    paint[1] > border[1] ||
+    paint[3] < border[1] ||
+    paint[1] >= paint[3]
+  )
+    return
+  const frame = [border[0] - 0.02, head.y, Math.max(border[2], caption.rect[2]), paint[1]]
+  const over = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const rows = page.lines
+    .filter((l) => over([l.x, l.y, l.x + l.width, l.y + l.height], frame))
+    .sort((a, b) => a.y - b.y)
+  if (rows.length !== 2 || rows[0] !== head) return
+  const tail = rows[1],
+    tailRect = [tail.x, tail.y, tail.x + tail.width, tail.y + tail.height]
+  if (
+    captionKind(tail.text) ||
+    !/^\p{Ll}/u.test(tail.text.trim()) ||
+    Math.abs(tail.x - border[0]) > 0.02 ||
+    tail.x + tail.width > border[2] ||
+    Math.abs(tail.fontSize - em) > 0.02 ||
+    Math.abs(tail.height - em) > 0.02 ||
+    tail.y <= head.y ||
+    tail.y - head.y > em * 1.6 ||
+    tail.y < caption.rect[3] ||
+    tailRect[3] >= border[1] ||
+    border[1] - tailRect[3] > em * 1.5
+  )
+    return
+  const owned = inventory.records.filter((r) => over(r.rect, frame))
+  if (
+    owned.length !== 2 ||
+    owned[0].r.str !== head.text ||
+    owned[1].r.str !== tail.text ||
+    inventory.records.indexOf(owned[1]) !== inventory.records.indexOf(owned[0]) + 1 ||
+    owned[0].r.fontName !== owned[1].r.fontName ||
+    owned.some(
+      (r, i) =>
+        r.rect.some((v, n) => Math.abs(v - (i ? tailRect : caption.rect)[n]) > 1e-6) ||
+        ![em, 0, 0, em].every((v, n) => Math.abs(r.r.transform[n] - v) < 1e-6)
+    )
+  )
+    return
+  if (proof.graphics.some((r) => over(r, frame))) return
+  return { lines: [head.text, tail.text], rect: [tail.x, head.y, caption.rect[2], tailRect[3]] }
+}
+
+export function applyRuledCaptionRecovery(
+  captions,
+  ruledCaptions,
+  page,
+  rules,
+  fonts = [],
+  context
+) {
   const ordinal = (text) =>
     /^(?:Legend to\s+)?(?:Fig(?:ure)?\.?|Chart)\s+([A-Z]?\d+(?:[.-]\d+)*|[A-Z]\.\d+(?:\.\d+)*)(?=[.:\s]|$)/i.exec(
       text
@@ -4642,6 +4816,17 @@ export function applyRuledCaptionRecovery(captions, ruledCaptions, page, rules, 
   for (const candidate of captions.filter((c) => c.page === page.pageNumber)) {
     const kind = captionKind(candidate.lines[0])
     if (!['table', 'figure'].includes(kind)) continue
+    if (
+      kind === 'table' &&
+      captions.filter((c) => c.page === candidate.page && c.lines[0] === candidate.lines[0])
+        .length === 1
+    ) {
+      const outdented = nativeRuledOutdentedTail(candidate, page, rules, fonts, context)
+      if (outdented) {
+        Object.assign(candidate, outdented)
+        continue
+      }
+    }
     if (
       kind === 'table' &&
       captions.filter((c) => c.page === candidate.page && c.lines[0] === candidate.lines[0])
@@ -4684,7 +4869,25 @@ export function applyRuledCaptionRecovery(captions, ruledCaptions, page, rules, 
       const led = recoverNativeLedMixedCaption(candidate, page, rules, fonts)
       if (led) Object.assign(candidate, led)
       const closed = recoverNativeClosedCaptionBlock(candidate, page, rules, fonts)
-      if (closed) Object.assign(candidate, closed)
+      if (closed) {
+        Object.assign(candidate, closed)
+        // A complete native paragraph owns its interior source rows. Remove
+        // only an exact consecutive row projection, not a nearby caption.
+        for (const interior of [...captions]) {
+          const at = closed.lines.indexOf(interior.lines[0])
+          if (
+            interior !== candidate &&
+            interior.page === candidate.page &&
+            at > 0 &&
+            interior.lines.every((line, index) => line === closed.lines[at + index]) &&
+            interior.rect[0] >= closed.rect[0] &&
+            interior.rect[1] > closed.rect[1] &&
+            interior.rect[2] <= closed.rect[2] &&
+            interior.rect[3] <= closed.rect[3]
+          )
+            captions.splice(captions.indexOf(interior), 1)
+        }
+      }
     }
   }
 }
@@ -6905,9 +7108,440 @@ function nativeWrappedCaptionReference(page, start, rows, runs, next, rules = []
   )
 }
 
+// A complete native prose paragraph can wrap a numbered reference after an
+// unfinished grammatical cue. Calibrate leading on three independent preceding
+// source rows; a larger gap alone never identifies prose. Foreign text uses all
+// four corners of its native font envelope, including rotated chart axes. This
+// proves local paragraph ownership, not a full-page loaded-glyph inventory.
+function isNativeWrappedBodyReference(candidate, page, context, rules) {
+  try {
+    return proveNativeWrappedBodyReference(candidate, page, context, rules) === true
+  } catch {
+    return false
+  }
+}
+function proveNativeWrappedBodyReference(candidate, page, context, rules = []) {
+  const finite = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite),
+    hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const raw = context?.content?.items,
+    m = context?.viewport?.transform,
+    creditReference = /^(?:Fig\.|Figure)\s+\d+[A-Z]:/u.test(candidate?.lines?.[0] ?? ''),
+    sectionReference = /^(?:Figure|Fig\.)\s+\d+\s+and\s+Table\s+\d+\s+\p{Ll}/u.test(
+      candidate?.lines?.[0] ?? ''
+    )
+  if (
+    !candidate ||
+    candidate.regions ||
+    candidate.page !== page?.pageNumber ||
+    context?.pageNumber !== page.pageNumber ||
+    !finite(m, 6) ||
+    m.some((v, i) => v !== [1, 0, 0, -1, 0, page.height][i]) ||
+    context.viewport.width !== page.width ||
+    context.viewport.height !== page.height ||
+    !Array.isArray(raw) ||
+    !Array.isArray(page.lines) ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.graphicsBounds) ||
+    !finite(candidate.rect, 4) ||
+    !Array.isArray(candidate.lines) ||
+    !candidate.lines.length ||
+    (!/^(?:Figure|Fig\.)\s+[A-Z]?\d+\.\s+\p{Lu}/u.test(candidate.lines[0]) &&
+      !sectionReference &&
+      !creditReference)
+  )
+    return
+  const records = [],
+    keys = new Set()
+  for (let i = 0; i < raw.length; i++) {
+    const r = raw[i]
+    if (!r || typeof r !== 'object') return
+    if (!('str' in r)) continue
+    const s = r.sourceItem
+    if (
+      typeof r.str !== 'string' ||
+      s?.pageNumber !== page.pageNumber ||
+      s.index !== i ||
+      s.text !== r.str ||
+      keys.has(i) ||
+      ['sourceToken', 'sourceSegment', 'sourceItems', 'sourceSegments'].some(
+        (k) => r[k] !== undefined
+      )
+    )
+      return
+    keys.add(i)
+    if (!r.str.trim()) continue
+    const t = r.transform,
+      f = context.content.styles?.[r.fontName]
+    if (
+      !finite(t, 6) ||
+      !f ||
+      f.vertical !== false ||
+      ![f.ascent, f.descent, r.width, r.height].every(Number.isFinite) ||
+      f.ascent <= 0 ||
+      f.ascent <= f.descent ||
+      f.descent > 0 ||
+      r.width <= 0 ||
+      r.height <= 0 ||
+      r.dir !== 'ltr'
+    )
+      return
+    const u = Math.hypot(t[0], t[1]),
+      v = Math.hypot(t[2], t[3])
+    if (!(u > 0 && v > 0) || Math.abs(t[0] * t[2] + t[1] * t[3]) > u * v * 1e-6) return
+    const ps = []
+    for (const x of [0, r.width])
+      for (const y of [
+        Math.min(0, f.descent * v, (f.ascent - 1) * v),
+        Math.max(r.height, f.ascent * v)
+      ]) {
+        const px = t[4] + (t[0] / u) * x + (t[2] / v) * y,
+          py = t[5] + (t[1] / u) * x + (t[3] / v) * y
+        ps.push([px, page.height - py])
+      }
+    const envelope = [
+      Math.min(...ps.map((p) => p[0])),
+      Math.min(...ps.map((p) => p[1])),
+      Math.max(...ps.map((p) => p[0])),
+      Math.max(...ps.map((p) => p[1]))
+    ]
+    records.push({
+      r,
+      index: i,
+      envelope,
+      rect: [t[4], page.height - t[5] - r.height, t[4] + r.width, page.height - t[5]]
+    })
+  }
+  if (creditReference) return proveNativeCreditReference(candidate, page, context, records, rules)
+  if (sectionReference) return proveNativeSectionBodyReference(candidate, page, records, rules)
+  const starts = records.filter((v) => v.r.str === candidate.lines[0])
+  if (starts.length !== 1) return
+  const ix = records.indexOf(starts[0]),
+    start = starts[0],
+    em = start.r.height,
+    tol = em * 0.015
+  if (
+    ix < 4 ||
+    ix + 1 >= records.length ||
+    !/(?:\bin(?: the)?|\bof)$/u.test(records[ix - 1].r.str.trim()) ||
+    /[.!?:;]$/u.test(records[ix - 1].r.str.trim()) ||
+    /[.!?]$/u.test(start.r.str.trim()) ||
+    !/^[\p{Ll}\p{N}]/u.test(records[ix + 1].r.str)
+  )
+    return
+  const calibration = records.slice(ix - 4, ix - 1),
+    cue = records[ix - 1],
+    pitch = calibration[1].rect[1] - calibration[0].rect[1]
+  if (!(pitch >= em) || Math.abs(calibration[2].rect[1] - calibration[1].rect[1] - pitch) > tol)
+    return
+  const tail = []
+  for (let n = ix; n < records.length && tail.length < 32; n++) {
+    tail.push(records[n])
+    if (n > ix && /[.!?]$/u.test(records[n].r.str.trim())) break
+  }
+  if (
+    tail.length < 2 ||
+    !/[.!?]$/u.test(tail.at(-1).r.str.trim()) ||
+    candidate.lines.length > tail.length ||
+    candidate.lines.some((s, n) => s !== tail[n].r.str)
+  )
+    return
+  const owned = [...calibration, cue, ...tail],
+    font = start.r.fontName
+  for (let n = 0; n < owned.length; n++) {
+    const z = owned[n],
+      r = z.r,
+      t = r.transform,
+      b = z.rect
+    if (
+      r.fontName !== font ||
+      r.str.length < 25 ||
+      t[0] <= 0 ||
+      t[1] !== 0 ||
+      t[2] !== 0 ||
+      t[3] !== em ||
+      r.height !== em ||
+      (n < owned.length - 1 && !r.hasEOL) ||
+      (n && Math.abs(b[1] - owned[n - 1].rect[1] - pitch) > tol) ||
+      b[0] < start.rect[0] - em * 0.05 ||
+      b[0] > start.rect[0] + em * 2 ||
+      b[0] < 0 ||
+      b[1] < 0 ||
+      b[2] > page.width ||
+      b[3] > page.height
+    )
+      return
+    const rows = page.lines.filter(
+      (l) =>
+        l.text === r.str &&
+        Math.abs(l.x - b[0]) < 1e-6 &&
+        Math.abs(l.y - b[1]) < 1e-6 &&
+        Math.abs(l.x + l.width - b[2]) < 1e-6 &&
+        Math.abs(l.y + l.height - b[3]) < 1e-6 &&
+        l.fontSize === em
+    )
+    if (rows.length !== 1) return
+  }
+  if (
+    candidate.rect[0] !== start.rect[0] ||
+    Math.abs(candidate.rect[1] - start.rect[1]) > tol ||
+    Math.abs(
+      candidate.rect[2] - Math.max(...tail.slice(0, candidate.lines.length).map((z) => z.rect[2]))
+    ) > 1e-6 ||
+    Math.abs(candidate.rect[3] - tail[candidate.lines.length - 1].rect[3]) > tol
+  )
+    return
+  const box = [
+    Math.min(...owned.map((z) => z.rect[0])),
+    owned[0].rect[1],
+    Math.max(...owned.map((z) => z.rect[2])),
+    owned.at(-1).rect[3]
+  ]
+  if (records.some((z) => !owned.includes(z) && hit(z.envelope, box))) return
+  const lines = page.lines.filter(
+    (l) => l.text?.trim() && hit([l.x, l.y, l.x + l.width, l.y + l.height], box)
+  )
+  if (lines.length !== owned.length) return
+  if (
+    rules.some(
+      (r) =>
+        !finite(r, 4) ||
+        hit(
+          [Math.min(r[0], r[2]), Math.min(r[1], r[3]), Math.max(r[0], r[2]), Math.max(r[1], r[3])],
+          box
+        )
+    )
+  )
+    return
+  if (
+    page.graphicsBounds.some(
+      (g) =>
+        !finite(g.normalizedRect, 4) ||
+        hit(
+          g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)),
+          box
+        )
+    )
+  )
+    return
+  return true
+}
+
+// A coordinated reference beneath a native section title is ordinary prose only
+// when the whole paragraph and independent following body cadence close its bounds.
+function proveNativeSectionBodyReference(candidate, page, records, rules) {
+  const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
+    finite = (a) => Array.isArray(a) && a.length === 4 && a.every(Number.isFinite),
+    same = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) < 1e-6)
+  const matches = records.filter((z) => z.r.str === candidate.lines[0])
+  if (matches.length !== 1) return false
+  const first = matches[0],
+    i = records.indexOf(first),
+    em = first.r.height,
+    tol = em * 0.015,
+    owned = records.slice(i, i + candidate.lines.length),
+    number = records[i - 2],
+    title = records[i - 1],
+    previous = records[i - 3],
+    next = records[i + owned.length],
+    calibration = records.slice(i + owned.length + 1, i + owned.length + 4)
+  if (i < 3 || owned.length < 3 || owned.length > 32 || calibration.length !== 3 || !next)
+    return false
+  const font = first.r.fontName,
+    body = (z, requireEol = true) =>
+      z &&
+      z.r.fontName === font &&
+      z.r.height === em &&
+      z.r.dir === 'ltr' &&
+      z.r.transform[0] > 0 &&
+      z.r.transform[1] === 0 &&
+      z.r.transform[2] === 0 &&
+      z.r.transform[3] === em &&
+      (!requireEol || z.r.hasEOL === true) &&
+      z.r.str.length >= 20 &&
+      z.envelope[0] >= 0 &&
+      z.envelope[1] >= 0 &&
+      z.envelope[2] <= page.width &&
+      z.envelope[3] <= page.height &&
+      page.lines.filter(
+        (l) =>
+          l.text === z.r.str &&
+          l.fontSize === em &&
+          same([l.x, l.y, l.x + l.width, l.y + l.height], z.rect)
+      ).length === 1
+  if (
+    !number ||
+    !title ||
+    !previous ||
+    !/^\d+(?:\.\d+)+$/u.test(number.r.str) ||
+    !/^\p{Lu}[\p{L}\p{N} -]+$/u.test(title.r.str) ||
+    number.r.fontName === font ||
+    number.r.fontName !== title.r.fontName ||
+    number.r.height !== em ||
+    title.r.height !== em ||
+    Math.abs(number.rect[1] - title.rect[1]) > 1e-6 ||
+    Math.abs(number.rect[0] - first.rect[0]) > tol ||
+    number.rect[2] >= title.rect[0] ||
+    title.rect[2] >= first.rect[2] ||
+    ![number, title].every(
+      (z) =>
+        z.r.transform[0] === em &&
+        z.r.transform[1] === 0 &&
+        z.r.transform[2] === 0 &&
+        z.r.transform[3] === em
+    )
+  )
+    return false
+  if (
+    !body(previous, false) ||
+    Math.abs(previous.rect[0] - first.rect[0]) > em * 0.05 ||
+    !/[.!?]$/u.test(previous.r.str) ||
+    previous.envelope[3] >= number.rect[1] ||
+    title.envelope[3] >= first.rect[1] ||
+    first.rect[1] - title.rect[1] > em * 2
+  )
+    return false
+  if (
+    calibration.some((z) => Math.abs(z.rect[0] - first.rect[0]) > em * 0.05) ||
+    ![next, ...calibration].every((z) => body(z)) ||
+    Math.abs(next.rect[0] - first.rect[0] - em) > tol ||
+    !/[.!?]$/u.test(owned.at(-1).r.str)
+  )
+    return false
+  const pitch = calibration[1].rect[1] - calibration[0].rect[1]
+  if (
+    pitch < em ||
+    Math.abs(calibration[2].rect[1] - calibration[1].rect[1] - pitch) > tol ||
+    Math.abs(calibration[0].rect[1] - next.rect[1] - pitch) > tol ||
+    owned.at(-1).envelope[3] >= next.rect[1]
+  )
+    return false
+  for (let n = 0; n < owned.length; n++) {
+    const z = owned[n],
+      b = z.rect
+    if (
+      !body(z) ||
+      z.r.str !== candidate.lines[n] ||
+      Math.abs(b[0] - first.rect[0]) > em * 0.05 ||
+      (n && Math.abs(b[1] - owned[n - 1].rect[1] - pitch) > tol) ||
+      b[0] < 0 ||
+      b[1] < 0 ||
+      b[2] > page.width ||
+      z.envelope[3] > page.height
+    )
+      return false
+    if (
+      page.lines.filter(
+        (l) =>
+          l.text === z.r.str &&
+          l.fontSize === em &&
+          same([l.x, l.y, l.x + l.width, l.y + l.height], b)
+      ).length !== 1
+    )
+      return false
+  }
+  const union = [
+    Math.min(...owned.map((z) => z.rect[0])),
+    first.rect[1],
+    Math.max(...owned.map((z) => z.rect[2])),
+    owned.at(-1).rect[3]
+  ]
+  if (!same(candidate.rect, union)) return false
+  const selected = [number, title, ...owned],
+    box = [
+      union[0],
+      number.rect[1],
+      Math.max(title.rect[2], union[2]),
+      Math.max(...owned.map((z) => z.envelope[3]))
+    ]
+  if (
+    selected.some(
+      (z) =>
+        z.envelope[0] < 0 ||
+        z.envelope[1] < 0 ||
+        z.envelope[2] > page.width ||
+        z.envelope[3] > page.height
+    )
+  )
+    return false
+  if (records.some((z) => !selected.includes(z) && hit(z.envelope, box))) return false
+  const headingBox = [number.rect[0], number.rect[1], title.rect[2], title.rect[3]],
+    headingLines = page.lines.filter((l) =>
+      hit([l.x, l.y, l.x + l.width, l.y + l.height], headingBox)
+    ),
+    nativeHeading = [number, title]
+  const rowMatches = (l, z) =>
+    l.text === z.r.str &&
+    l.fontSize === em &&
+    same([l.x, l.y, l.x + l.width, l.y + l.height], z.rect)
+  if (
+    !(
+      headingLines.length === 1 &&
+      headingLines[0].text === number.r.str + ' ' + title.r.str &&
+      headingLines[0].fontSize === em &&
+      same(
+        [
+          headingLines[0].x,
+          headingLines[0].y,
+          headingLines[0].x + headingLines[0].width,
+          headingLines[0].y + headingLines[0].height
+        ],
+        headingBox
+      )
+    ) &&
+    !(
+      headingLines.length === 2 &&
+      nativeHeading.every((z) => headingLines.filter((l) => rowMatches(l, z)).length === 1)
+    )
+  )
+    return false
+  const bodyBox = box
+  if (
+    page.lines.some(
+      (l) =>
+        typeof l.text !== 'string' ||
+        ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) ||
+        l.width <= 0 ||
+        l.height <= 0 ||
+        l.fontSize <= 0
+    ) ||
+    page.lines.filter(
+      (l) => l.text.trim() && hit([l.x, l.y, l.x + l.width, l.y + l.height], bodyBox)
+    ).length !==
+      owned.length + headingLines.length
+  )
+    return false
+  if (
+    rules.some(
+      (r) =>
+        !finite(r) ||
+        hit(
+          [Math.min(r[0], r[2]), Math.min(r[1], r[3]), Math.max(r[0], r[2]), Math.max(r[1], r[3])],
+          box
+        )
+    )
+  )
+    return false
+  if (
+    page.graphicsBounds.some(
+      (g) =>
+        !finite(g.normalizedRect) ||
+        g.normalizedRect.some((n) => n < 0 || n > 1) ||
+        g.normalizedRect[2] <= g.normalizedRect[0] ||
+        g.normalizedRect[3] <= g.normalizedRect[1] ||
+        hit(
+          g.normalizedRect.map((n, i) => n * (i % 2 ? page.height : page.width)),
+          box
+        )
+    )
+  )
+    return false
+  return true
+}
+
 // A complete native paragraph can wrap its figure reference after a row-of cue.
 // This late metadata refusal requires untouched whole source items, not geometry order.
 export function isNativeRowReference(candidate, page, context, rules = []) {
+  if (isNativeWrappedBodyReference(candidate, page, context, rules)) return true
   const finite = (r, n) => Array.isArray(r) && r.length === n && r.every(Number.isFinite)
   const raw = context?.content?.items,
     m = context?.viewport?.transform
@@ -8561,14 +9195,75 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         // An unfinished caption can refer to another numbered figure and
         // continue on the same physical baseline sequence. Keep that literal
         // reference with its owner only when no new plate separates the rows.
+        // A caption may finish a row-of reference with two table ordinals.
+        // Require the complete short terminal row and untouched native rows;
+        // a separate table title or an open-ended paragraph is not evidence.
+        const coordinatedTableReference =
+          next &&
+          /\brows\s+of$/iu.test(previous.text.trim()) &&
+          /^Table\s+\d+(?:\.\d+)*\s+and\s+Table\s+\d+(?:\.\d+)*\.\s+\p{Lu}/u.test(next.text) &&
+          page.invalidGraphicsBounds === 0 &&
+          Array.isArray(page.graphicsBounds) &&
+          (() => {
+            const pitch = previous.y - lines.at(-2)?.y
+            const tail = runs
+              .filter((row) => row.y > next.y && row.x < start.right && row.right > start.x)
+              .sort((a, b) => a.y - b.y)[0]
+            if (
+              !tail ||
+              !/^[a-z].*[.!?]$/u.test(tail.text.trim()) ||
+              tail.right - tail.x >= (start.right - start.x) * 0.8 ||
+              pitch < start.fontSize ||
+              pitch > start.fontSize * 1.6 ||
+              Math.abs(tail.y - next.y - pitch) > start.fontSize * 0.1 ||
+              Math.abs(tail.x - start.x) > start.fontSize * 0.1 ||
+              Math.abs(tail.fontSize - start.fontSize) > start.fontSize * 0.015
+            )
+              return false
+            const selected = [...lines, next, tail]
+            if (
+              selected.some(
+                (row) =>
+                  page.lines.filter(
+                    (native) =>
+                      native.text === row.text &&
+                      native.x === row.x &&
+                      native.y === row.y &&
+                      native.x + native.width === row.right &&
+                      native.y + native.height === row.bottom &&
+                      native.fontSize === row.fontSize
+                  ).length !== 1
+              ) ||
+              page.graphicsBounds.some((graphic) => {
+                const r = graphic.normalizedRect
+                if (!Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite)) return true
+                const box = r.map((v, axis) => v * (axis % 2 ? page.height : page.width))
+                return (
+                  box[0] < start.right &&
+                  box[2] > start.x &&
+                  box[1] < tail.bottom &&
+                  box[3] > previous.bottom
+                )
+              })
+            )
+              return false
+            return !(rulesByPage.get(page.pageNumber) ?? []).some(
+              (r) =>
+                r[0] < start.right &&
+                r[2] > start.x &&
+                Math.max(r[1], r[3]) > previous.bottom &&
+                Math.min(r[1], r[3]) < tail.bottom
+            )
+          })()
         const internalReference =
           next &&
           lines.length >= 3 &&
           captionKind(start.text) === 'figure' &&
-          /\b(?:discussed|shown|described|reported|illustrated|explained)(?:\s+further)?\s+in$/i.test(
+          ((/\b(?:discussed|shown|described|reported|illustrated|explained)(?:\s+further)?\s+in$/i.test(
             previous.text.trim()
           ) &&
-          /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+\p{L}/u.test(next.text) &&
+            /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+\p{L}/u.test(next.text)) ||
+            coordinatedTableReference) &&
           Math.abs(next.x - start.x) < start.fontSize * 0.1 &&
           Math.abs(next.fontSize - start.fontSize) < start.fontSize * 0.015 &&
           Math.abs(next.y - previous.y - (previous.y - lines.at(-2).y)) < start.fontSize * 0.1 &&
@@ -9294,4 +9989,200 @@ export function recoverStyledMathCaption(candidate, page, rules, fonts, context)
   if (new Set(page.graphicsBounds.map((g) => g.operationIndex)).size !== page.graphicsBounds.length)
     return
   return { lines: rows.map((r) => r.text), rect }
+}
+
+// Refuse a phantom caption only inside a complete native image-credit list.
+// This classifies metadata; all native text, regions and painted images stay intact.
+function proveNativeCreditReference(candidate, page, context, records, rules) {
+  const same = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-6),
+    hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
+    rectangle = (l) => [l.x, l.y, l.x + l.width, l.y + l.height]
+  if (
+    ![page.width, page.height].every((v) => Number.isFinite(v) && v > 0) ||
+    page.lines.some(
+      (l) =>
+        !l ||
+        typeof l.text !== 'string' ||
+        ![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) ||
+        l.width <= 0 ||
+        l.height <= 0 ||
+        l.fontSize <= 0
+    ) ||
+    rules.length ||
+    page.graphicsBounds.length ||
+    candidate.lines.length < 3 ||
+    candidate.lines.length > 8
+  )
+    return false
+  const headings = records.filter((z) => /^image credits$/iu.test(z.r.str))
+  if (headings.length !== 1) return false
+  const heading = headings[0],
+    raw = context.content.items,
+    rows = page.lines.filter((l) => l.y > heading.rect[3]),
+    startPattern = /^(?:Figs?\.|Figures?)\s+\d+[A-Za-z]?(?:\s*(?:,|and)\s*\d+[A-Za-z]?)*:\s+/u,
+    starts = rows.filter((l) => startPattern.test(l.text))
+  if (starts.length !== 3 || starts[2].text !== candidate.lines[0]) return false
+  const first = starts[0],
+    em = first.fontSize,
+    selectedRows = rows.slice(rows.indexOf(first)),
+    groups = [],
+    owned = []
+  if (
+    !(em > 0) ||
+    heading.r.height <= em ||
+    heading.rect[0] !== first.x ||
+    heading.envelope[0] < 0 ||
+    heading.envelope[1] < 0 ||
+    heading.envelope[2] > page.width ||
+    heading.envelope[3] > first.y ||
+    page.lines.filter(
+      (l) =>
+        l.text === heading.r.str &&
+        l.fontSize === heading.r.height &&
+        same(rectangle(l), heading.rect)
+    ).length !== 1
+  )
+    return false
+  if (
+    heading.r.transform[0] !== heading.r.height ||
+    heading.r.transform[1] !== 0 ||
+    heading.r.transform[2] !== 0 ||
+    heading.r.transform[3] !== heading.r.height ||
+    records.some((z) => z !== heading && hit(z.envelope, heading.envelope)) ||
+    page.lines.filter((l) => l.text.trim() && hit(rectangle(l), heading.envelope)).length !== 1
+  )
+    return false
+  for (const line of selectedRows) {
+    const bounds = rectangle(line)
+    if (
+      ![...bounds, line.fontSize].every(Number.isFinite) ||
+      line.fontSize !== em ||
+      line.height !== em ||
+      Math.abs(line.x - first.x) > 1e-6 ||
+      line.width <= 0 ||
+      bounds[0] < 0 ||
+      bounds[1] < 0 ||
+      bounds[2] > page.width ||
+      bounds[3] > page.height
+    )
+      return false
+    const matches = records.filter(
+      (z) => Math.abs(z.rect[1] - line.y) < 1e-6 && Math.abs(z.rect[3] - bounds[3]) < 1e-6
+    )
+    if (
+      !matches.length ||
+      matches.some(
+        (z) =>
+          z.r.height !== em ||
+          z.r.transform[0] !== em ||
+          z.r.transform[1] !== 0 ||
+          z.r.transform[2] !== 0 ||
+          z.r.transform[3] !== em ||
+          z.envelope[0] < 0 ||
+          z.envelope[1] < 0 ||
+          z.envelope[2] > page.width ||
+          z.envelope[3] > page.height
+      )
+    )
+      return false
+    const indices = matches.map((z) => z.index),
+      lo = indices[0],
+      hi = indices.at(-1)
+    if (owned.length && lo <= owned.at(-1).index) return false
+    const literal = raw
+      .slice(lo, hi + 1)
+      .map((r) => r.str ?? '')
+      .join('')
+    const union = [
+      Math.min(...matches.map((z) => z.rect[0])),
+      line.y,
+      Math.max(...matches.map((z) => z.rect[2])),
+      bounds[3]
+    ]
+    if (
+      literal !== line.text ||
+      !same(union, bounds) ||
+      page.lines.filter((l) => l.text === line.text && same(rectangle(l), bounds)).length !== 1
+    )
+      return false
+    if (startPattern.test(line.text)) groups.push([])
+    if (!groups.length) return false
+    groups.at(-1).push({ line, matches })
+    owned.push(...matches)
+  }
+  if (groups.length !== 3 || owned.at(-1)?.index !== records.at(-1)?.index) return false
+  const fontRoles = []
+  for (const group of groups) {
+    if (group.length < 3 || group.length > 8) return false
+    const head = group[0],
+      prefix = head.line.text.match(startPattern)?.[0].trim(),
+      headingFont = head.matches[0].r.fontName,
+      titleAt = head.matches.findIndex((z) => z.r.fontName !== headingFont)
+    if (!prefix || titleAt < 1 || titleAt >= head.matches.length) return false
+    const prefixItems = head.matches.slice(0, titleAt),
+      title = head.matches.slice(titleAt),
+      titleFont = title[0].r.fontName,
+      bodyFont = group[1].matches[0].r.fontName,
+      prefixText = raw
+        .slice(prefixItems[0].index, prefixItems.at(-1).index + 1)
+        .map((r) => r.str ?? '')
+        .join('')
+    if (
+      prefixText !== prefix ||
+      title.some((z) => z.r.fontName !== titleFont) ||
+      new Set([headingFont, titleFont, bodyFont]).size !== 3 ||
+      !/^[“"][^”"]+[”"]\s+by\s+\S/u.test(head.line.text.slice(prefix.length).trim())
+    )
+      return false
+    fontRoles.push([headingFont, titleFont, bodyFont])
+    const fullText = group.map(({ line }) => line.text).join(' ')
+    if (
+      !/\blicensed under\b/u.test(fullText) ||
+      !/[.!?]$/u.test(fullText) ||
+      (fullText.match(/https?:\/\/[^\s)]+/gu) ?? []).length < 2
+    )
+      return false
+    for (let n = 0; n < group.length; n++) {
+      const { line, matches } = group[n]
+      if (
+        (n && (line.y - group[n - 1].line.y < em || line.y - group[n - 1].line.y > em * 1.5)) ||
+        (n < group.length - 1 && Math.abs(line.width - first.width) > em * 0.05) ||
+        (n && matches.some((z) => z.r.fontName !== bodyFont))
+      )
+        return false
+    }
+  }
+  if (fontRoles.some((v) => v.some((font, i) => font !== fontRoles[0][i]))) return false
+  for (let i = 1; i < groups.length; i++) {
+    const previous = groups[i - 1].at(-1).line,
+      next = groups[i][0].line,
+      gap = next.y - previous.y
+    if (!(gap > em * 1.5 && gap < em * 2)) return false
+  }
+  const last = groups[2],
+    union = [
+      Math.min(...last.map(({ line }) => line.x)),
+      last[0].line.y,
+      Math.max(...last.map(({ line }) => line.x + line.width)),
+      last.at(-1).line.y + last.at(-1).line.height
+    ]
+  if (
+    !same(union, candidate.rect) ||
+    last.length !== candidate.lines.length ||
+    last.some(({ line }, i) => line.text !== candidate.lines[i])
+  )
+    return false
+  const box = [
+    Math.min(...owned.map((z) => z.envelope[0])),
+    Math.min(...owned.map((z) => z.envelope[1])),
+    Math.max(...owned.map((z) => z.envelope[2])),
+    Math.max(...owned.map((z) => z.envelope[3]))
+  ]
+  if (
+    records.some((z) => !owned.includes(z) && hit(z.envelope, box)) ||
+    page.lines.filter((l) => l.text?.trim() && hit(rectangle(l), box)).length !==
+      selectedRows.length
+  )
+    return false
+  return true
 }

@@ -26,6 +26,70 @@ const unusedInterpreter = (kernelKind: 'python' | 'r'): NotebookDependencyInterp
   command: kernelKind === 'python' ? 'unused-python' : 'unused-rscript'
 })
 
+describe('R data.frame internal double dispatch', () => {
+  const method = 'as.data.frame.double'
+  const replacement =
+    method +
+    ' <- function(x,...) { writeLines("dispatch","method.txt");base::as.data.frame.vector(x,...) }'
+
+  it.each(['data.frame', 'base::data.frame'])(
+    'records the implicit method used by %s',
+    async (constructor) => {
+      const source = 'x<-c(1,2,3);out<-' + constructor + '(x=x);write.csv(out,"out.csv")'
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.priorUsedNames).toContain(method)
+      expect(facts.safeCallNames).toContain(method)
+      expect((await analyzeNotebookSourceFileAccess('r', source)).writeState).toBe('complete')
+    }
+  )
+
+  it.each(['data.frame', 'base::data.frame'])(
+    'withholds effect and value authority after a same-cell method replacement: %s',
+    async (constructor) => {
+      const source =
+        replacement + ';x<-c(1,2,3);out<-' + constructor + '(x=x);write.csv(out,"out.csv")'
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.usedNames).toContain(method)
+      expect(facts.copyOnModifyNames ?? []).not.toContain('out')
+      expect((await analyzeNotebookSourceFileAccess('r', source)).writeState).toBe('partial')
+    }
+  )
+
+  it.each(['function(x) data.frame(x=x)', 'data.frame', 'base::data.frame'])(
+    'keeps constructor callbacks uncertain after method replacement: %s',
+    async (callback) => {
+      const source = replacement + ';out<-lapply(list(c(1,2)), ' + callback + ')'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).externalState).toBe('partial')
+    }
+  )
+
+  it('keeps the internal numeric fallback lexical', async () => {
+    const source =
+      replacement.replaceAll(method, 'as.data.frame.numeric') +
+      ';x<-c(1,2,3);out<-data.frame(x=x);write.csv(out,"out.csv")'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).writeState).toBe('complete')
+  })
+
+  it('invalidates the constructor and withholds later exports when the method changes', async () => {
+    const projection = await projectScripts(
+      'r',
+      [
+        'x<-c(1,2,3)',
+        'out<-data.frame(x=x)',
+        'alias<-out;write.csv(alias,"out.csv")',
+        replacement,
+        'future<-data.frame(x=x);write.csv(future,"future.csv")'
+      ],
+      'r-frame-dispatch-'
+    )
+    expect(projection.invalidatedByRunId['run-4']).toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId: 'run-2', names: [method] })])
+    )
+    expect(projection.stalenessByRunId['run-2']?.state).not.toBe('clear')
+    expect(projection.stalenessByRunId['run-5']?.state).toBe('unknown')
+  })
+})
+
 const temporaryRoots: string[] = []
 
 // Insert only at the outer function body; nested bodies must stay unchanged.
@@ -5634,6 +5698,7 @@ describe('R opaque scientific closure captures', () => {
   it.each([
     ['direct helper', 'v <- mm_response(c(0.1,0.2),200,0.1)', false],
     ['nls formula', fit, false],
+    ['loess formula', 'fit <- stats::loess(rate~mm_response(conc,200,0.1),data=d)', false],
     ['fit and later prediction', fit, true]
   ] as const)(
     'retains known captures through %s without certifying the call',
@@ -13885,5 +13950,150 @@ describe.each([
     expect((await analyzeNotebookSourceFileAccess('r', source, context)).externalState).toBe(
       'partial'
     )
+  })
+})
+
+describe('R interpolation ties captures', () => {
+  it.each(['approx', 'approxfun', 'spline', 'splinefun'])(
+    'retains named ties captures without certifying %s',
+    async (name) => {
+      const helper = 'tie_mean<-function(z) { center<-sum(z)/length(z);tie_gain*center }'
+      const call = 'fit<-stats::' + name + '(c(1,1,2),c(2,4,6),ties=tie_mean)'
+      const { facts } = await analyzeRNotebookSource(helper + ';' + call)
+      expect(facts.usedNames).toContain('tie_gain')
+      expect(facts.safeCallNames ?? []).not.toContain('stats::' + name)
+      expect(facts.copyOnModifyNames ?? []).not.toContain('fit')
+      expect(facts.state).toBe('unknown')
+      const projection = await projectScripts(
+        'r',
+        ['tie_gain<-1', helper, call, 'tie_gain<-2'],
+        'r-ties-captures-'
+      )
+      expect(projection.invalidatedByRunId['run-4']).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            runId: 'run-3',
+            state: 'unknown',
+            names: expect.arrayContaining(['tie_gain'])
+          })
+        ])
+      )
+    }
+  )
+})
+
+describe('R optimHess exact named callback captures', () => {
+  it.each([
+    'stats::optimHess(par=c(0.3,-0.2),fn=curve)',
+    'optimHess(par=c(0.3,-0.2),fn=curve)',
+    'stats::optimHess(par=c(0.3,-0.2),fn=sum,gr=curve)'
+  ])('retains late curvature captures without certifying %s', async (call) => {
+    const helper = 'curve<-function(par)curvature_gain*sum(par*par)'
+    const { facts } = await analyzeRNotebookSource(helper + ';control_H<-' + call)
+    expect(facts.usedNames).toContain('curvature_gain')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::optimHess')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('control_H')
+    expect(facts.state).toBe('unknown')
+    const projection = await projectScripts(
+      'r',
+      ['curvature_gain<-1', helper, 'control_H<-' + call, 'curvature_gain<-2'],
+      'r-curvature-captures-'
+    )
+    expect(projection.invalidatedByRunId['run-4']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-3',
+          state: 'unknown',
+          names: expect.arrayContaining(['curvature_gain'])
+        })
+      ])
+    )
+  })
+  it.each([
+    'stats::optimHess(c(0.3,-0.2),curve)',
+    'stats::optimHess(par=c(0.3,-0.2),f=curve)',
+    'optimHess<-function(...)1;optimHess(par=c(0.3,-0.2),fn=curve)',
+    'other::optimHess(par=c(0.3,-0.2),fn=curve)'
+  ])('does not invent a callback matching proof for %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource(
+      'curve<-function(par)curvature_gain*sum(par*par);H<-' + call
+    )
+    expect(facts.usedNames ?? []).not.toContain('curvature_gain')
+  })
+})
+
+describe('R acf exact named preprocessing captures', () => {
+  it.each([
+    'stats::acf(series,plot=FALSE,na.action=curve)',
+    'acf(series,plot=FALSE,na.action=curve)',
+    'stats::acf(x=series,type="covariance",lag.max=0,plot=FALSE,na.action=curve)'
+  ])('retains late amplitude captures without certifying %s', async (call) => {
+    const helper = 'curve<-function(z)amplitude*z'
+    const { facts } = await analyzeRNotebookSource(helper + ';control_acf<-' + call)
+    expect(facts.usedNames).toContain('amplitude')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::acf')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('control_acf')
+    expect(facts.state).toBe('unknown')
+    const projection = await projectScripts(
+      'r',
+      ['amplitude<-1', helper, 'control_acf<-' + call, 'amplitude<-2'],
+      'r-acf-captures-'
+    )
+    expect(projection.invalidatedByRunId['run-4']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-3',
+          state: 'unknown',
+          names: expect.arrayContaining(['amplitude'])
+        })
+      ])
+    )
+  })
+  it.each([
+    'stats::acf(series,NULL,"covariance",FALSE,curve)',
+    'stats::acf(series,na.act=curve,plot=FALSE)',
+    'acf<-function(...)1;acf(series,plot=FALSE,na.action=curve)',
+    'other::acf(series,plot=FALSE,na.action=curve)'
+  ])('does not invent a callback matching proof for %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource('curve<-function(z)amplitude*z;H<-' + call)
+    expect(facts.usedNames ?? []).not.toContain('amplitude')
+  })
+})
+
+describe('R periodogram exact named preprocessing captures', () => {
+  it.each([
+    'stats::spec.pgram(series,plot=FALSE,na.action=curve)',
+    'spec.pgram(series,plot=FALSE,na.action=curve)',
+    'stats::spectrum(x=series,method="pgram",plot=FALSE,na.action=curve)'
+  ])('retains late amplitude captures without certifying %s', async (call) => {
+    const helper = 'curve<-function(z)amplitude*z'
+    const { facts } = await analyzeRNotebookSource(helper + ';control_spec<-' + call)
+    expect(facts.usedNames).toContain('amplitude')
+    expect(facts.safeCallNames ?? []).not.toContain('stats::spec.pgram')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('control_spec')
+    expect(facts.state).toBe('unknown')
+    const projection = await projectScripts(
+      'r',
+      ['amplitude<-1', helper, 'control_spec<-' + call, 'amplitude<-2'],
+      'r-periodogram-captures-'
+    )
+    expect(projection.invalidatedByRunId['run-4']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: 'run-3',
+          state: 'unknown',
+          names: expect.arrayContaining(['amplitude'])
+        })
+      ])
+    )
+  })
+  it.each([
+    'stats::spec.pgram(series,NULL,NULL,0,0,FALSE,TRUE,FALSE,FALSE,curve)',
+    'stats::spec.pgram(series,na.act=curve,plot=FALSE)',
+    'spec.pgram<-function(...)1;spec.pgram(series,plot=FALSE,na.action=curve)',
+    'other::spec.pgram(series,plot=FALSE,na.action=curve)'
+  ])('does not invent a callback matching proof for %s', async (call) => {
+    const { facts } = await analyzeRNotebookSource('curve<-function(z)amplitude*z;H<-' + call)
+    expect(facts.usedNames ?? []).not.toContain('amplitude')
   })
 })

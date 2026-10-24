@@ -19,7 +19,7 @@ export function packageTestRegistrationViolations(manifest, registry) {
         if (root && !selected.includes(root)) violations.push({ id, kind, test })
       }
     }
-    for (const consumer of module.consumerModules) {
+    for (const consumer of module.consumerModules ?? []) {
       for (const root of ownedRoots(manifest.modules[consumer])) {
         if (!selected.includes(root))
           violations.push({ id, kind: 'consumerModules', test: consumer })

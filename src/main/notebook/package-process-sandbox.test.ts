@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { terminateProcessTree } from '../process-tree'
 
 const temporaryDirectories: string[] = []
 
@@ -221,6 +222,7 @@ describe('sandboxedPackageSpawn', () => {
       ).resolves.toMatchObject({ code: 0 })
       expect(vi.mocked(processSandbox.wrap).mock.calls[0]?.[0].cwd).toBe(runtimeRoot)
       const invocation = vi.mocked(processSandbox.wrap).mock.calls[0]?.[0]
+      expect(invocation?.windowsProtectionRequired).toBe(platform === 'win32' ? true : undefined)
       expect(invocation?.env.PIP_REPORT).toBeUndefined()
       expect(invocation?.env.PIP_CONFIG_FILE).toBeUndefined()
       expect(invocation?.env.PIP_TARGET).toBeUndefined()
@@ -333,6 +335,66 @@ describe('sandboxedPackageSpawn', () => {
       confirmTermination: expect.any(Function)
     })
   })
+
+  it.each(['confirmed', 'unconfirmed', 'rejected'] as const)(
+    'lets the native owner restore installer permissions on cancellation (%s)',
+    async (outcome) => {
+      let pid: number | undefined
+      const requestTermination = vi.fn(async () => {
+        if (outcome === 'rejected') throw new Error('native owner unavailable')
+        if (outcome === 'unconfirmed') return false
+        process.kill(pid!)
+        return true
+      })
+      const terminateTree = vi.fn(terminateProcessTree)
+      const confirmTermination = vi.fn(async () => outcome === 'confirmed')
+      const cleanup = vi.fn()
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => ({
+          executable: invocation.executable,
+          args: invocation.args,
+          env: invocation.env,
+          requestProcessTreeTermination: requestTermination,
+          confirmProcessTreeTermination: confirmTermination,
+          annotateStderr: (stderr: string) => stderr,
+          cleanup
+        }))
+      }
+      const spawn = sandboxedPackageSpawn({
+        processSandbox,
+        request: { language: 'python', packages: ['example'] },
+        runtimeRoot: process.cwd(),
+        storageRoot: process.cwd(),
+        terminateTree
+      })
+      const cancellation = new AbortController()
+      const completion = spawn(
+        process.execPath,
+        ['-e', 'setTimeout(() => {}, 30_000)'],
+        process.env,
+        (childPid) => {
+          pid = childPid
+          cancellation.abort(new DOMException('Package operation cancelled.', 'AbortError'))
+        },
+        undefined,
+        false,
+        undefined,
+        { signal: cancellation.signal }
+      )
+      if (outcome === 'confirmed') {
+        await expect(completion).rejects.toMatchObject({ name: 'AbortError' })
+        expect(terminateTree).not.toHaveBeenCalled()
+      } else {
+        await expect(completion).rejects.toThrow('could not be confirmed stopped')
+        expect(terminateTree).toHaveBeenCalledOnce()
+      }
+      expect(requestTermination).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+        processesTerminated: outcome === 'confirmed',
+        confirmTermination
+      })
+    }
+  )
 
   it('confirms an aborted installer tree before recording retryable cleanup', async () => {
     const confirmTermination = vi.fn(async () => true)

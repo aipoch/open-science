@@ -16,6 +16,8 @@ const proxyEnvironment = (
     no_proxy: '',
     HTTP_PROXY: http,
     HTTPS_PROXY: http,
+    // Node's built-in fetch and HTTP(S) agents require an explicit environment-proxy opt-in.
+    NODE_USE_ENV_PROXY: '1',
     http_proxy: http,
     https_proxy: http,
     ALL_PROXY: http,

@@ -595,7 +595,8 @@ it('applies existing desktop asset exclusions to the standalone copy', () => {
   for (const path of [
     'legacy/build/pdf.mjs',
     'cmaps/Adobe-Japan1-UCS2.bcmap',
-    'standard_fonts/FoxitSans.pfb'
+    'standard_fonts/FoxitSans.pfb',
+    'wasm/openjpeg.wasm'
   ])
     expect(backendDependencyIncludes({ name: 'pdfjs-dist' }, path)).toBe(true)
   expect(

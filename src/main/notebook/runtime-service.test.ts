@@ -220,6 +220,40 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('holds session creation behind a folder policy commit and releases admission after failure', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project'
+    })
+    const started = createDeferred<void>()
+    const release = createDeferred<void>()
+    const change = service.shutdownAll({
+      afterShutdown: async () => {
+        started.resolve()
+        await release.promise
+        throw new Error('settings write failed')
+      }
+    })
+    const rejected = expect(change).rejects.toThrow('settings write failed')
+    await started.promise
+    let opened = false
+    const state = service
+      .state({ sessionId: 'folder-policy', workspaceCwd: root })
+      .then((value) => {
+        opened = true
+        return value
+      })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(opened).toBe(false)
+    release.resolve()
+    await rejected
+    await state
+    expect(opened).toBe(true)
+    await service.shutdownAll()
+  })
+
   it('rejects export-locked execution before creating a Notebook or kernel', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

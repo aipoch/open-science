@@ -182,6 +182,7 @@ class NotebookNetworkSandbox {
           const allowed = await command.onNetworkAccessRequest({
             host: request.host,
             purpose: request.purpose,
+            ...(request.canResume ? { canResume: request.canResume } : {}),
             ...(request.port === undefined ? {} : { port: request.port }),
             signal: command.controller.signal
           })

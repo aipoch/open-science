@@ -3,11 +3,12 @@ import { STRUCTURES_OMNIPATH_TOOLS } from './structures-omnipath'
 import { STRUCTURES_EMDB_TOOLS } from './structures-emdb'
 import { STRUCTURES_COMPLEXPORTAL_TOOLS } from './structures-complexportal'
 import { STRUCTURES_INTACT_TOOLS } from './structures-intact'
+import { STRUCTURES_PDBE_TOOLS } from './structures-pdbe'
 import { STRUCTURES_PDB_TOOLS } from './structures-pdb'
 import { STRUCTURES_ALPHAFOLD_TOOLS } from './structures-alphafold'
 
 // "Structures & Interactions" connector: 3D structures and molecular interactions across PDB,
-// AlphaFold, EMDB (cryo-EM), Complex Portal, IntAct, and OmniPath. Tools are split across descriptor files
+// PDBe validation, AlphaFold, EMDB (cryo-EM), Complex Portal, IntAct, and OmniPath. Tools are split across descriptor files
 // by upstream source; this module aggregates them in the connector's display order.
 export const STRUCTURES_TOOLS: ToolDescriptor[] = [
   ...STRUCTURES_EMDB_TOOLS,
@@ -15,5 +16,6 @@ export const STRUCTURES_TOOLS: ToolDescriptor[] = [
   ...STRUCTURES_INTACT_TOOLS,
   ...STRUCTURES_OMNIPATH_TOOLS,
   ...STRUCTURES_PDB_TOOLS,
+  ...STRUCTURES_PDBE_TOOLS,
   ...STRUCTURES_ALPHAFOLD_TOOLS
 ]

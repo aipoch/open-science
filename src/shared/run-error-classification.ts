@@ -36,6 +36,19 @@ export const RESUME_MODEL_INCOMPATIBLE_MESSAGE =
 export const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
   'This conversation needs image replay, but the selected model does not support image input.'
 
+// Capability reads can fail while the bound Specialist still exists and is enabled.
+// Keep this app-owned message stable across Electron's string-only invoke errors.
+export const SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE =
+  'The Specialist Skills or Connectors could not be loaded. Try sending again.'
+
+export const isSpecialistCapabilityReadFailure = (error: string | null | undefined): boolean => {
+  const message = error?.trim()
+  return (
+    message === SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE ||
+    message?.endsWith(`Error: ${SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE}`) === true
+  )
+}
+
 // App-owned Vision relay failures cross Electron's invoke boundary as Error text, so public error
 // identity is kept in shared constants instead of depending on non-enumerable Error properties.
 export const VISION_MODEL_NOT_CONFIGURED_MESSAGE =

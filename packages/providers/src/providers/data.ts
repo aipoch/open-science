@@ -403,12 +403,23 @@ const definitions: readonly OfficialVendor[] = [
     modelsListUrl: 'https://api.moonshot.cn/v1/models',
     models: [
       { id: 'kimi-k3', contextWindow: 1_000_000 },
+      // https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart
+      {
+        id: 'kimi-k3.1-pro',
+        contextWindow: 1_048_576,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
+      },
+      {
+        id: 'kimi-k3.1-pro-highspeed',
+        contextWindow: 1_048_576,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
+      },
       { id: 'kimi-k2.7-code', contextWindow: 256_000 },
       { id: 'kimi-k2.6', contextWindow: 256_000 },
       { id: 'kimi-k2.5', contextWindow: 256_000 }
     ],
     // Vision arrives with the k3 generation; older k2.x chat models are text-only.
-    multimodal: { multimodalModels: ['kimi-k3'] }
+    multimodal: { multimodalModels: ['kimi-k3', 'kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'] }
   },
   {
     id: 'kimiforcode',

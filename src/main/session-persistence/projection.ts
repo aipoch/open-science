@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../../shared/sandbox-network-approval'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
@@ -287,6 +288,7 @@ const presentedStatus = (session: PersistedChatSession): PersistedSessionStatus 
   if (session.packageOrigin) return deriveSessionAttention(session) ? 'error' : 'idle'
   if (
     session.runtimeContext?.permission?.state === 'pending' ||
+    hasPendingSandboxNetworkApproval(session) ||
     session.status === 'waiting-permission'
   ) {
     return 'waiting-permission'

@@ -23,6 +23,154 @@ const {
 } = await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
 
 it.each([
+  ['Figure 3 (for the upper panel). Since both paths are retained, the result follows.', undefined],
+  [
+    'Figure 3: (a) Independent paths. Since both paths are retained, the result is comparable.',
+    'figure'
+  ],
+  ['Figure 3 (overview). Inference results for independent paths.', 'figure'],
+  ['Figure 3 (for the upper panel. Since both paths are retained, the result follows.', 'figure']
+])('keeps a complete parenthetical reference distinct from a caption: %s', (text, kind) => {
+  expect(captionKind(text)).toBe(kind)
+})
+
+function coordinatedTableReferenceCaption(): {
+  pageNumber: number
+  width: number
+  height: number
+  invalidGraphicsBounds: number
+  lines: CaptionLine[]
+  graphicsBounds: { kind: string; normalizedRect: number[] }[]
+} {
+  const lines = [
+    'Figure 2: Independent results for the measured groups in both panels.',
+    'Each measurement uses the same source conditions and separate trials.',
+    'The displayed bars compare the corresponding rows of',
+    'Table 1 and Table 2. Each group is evaluated independently;',
+    'controls remain unchanged.'
+  ].map((text, i) => ({
+    text,
+    x: 50,
+    y: 300 + i * 12,
+    width: i === 4 ? 140 : 450,
+    height: 10,
+    fontSize: 10
+  }))
+  lines.push({
+    text: 'An independent body paragraph starts after the caption.',
+    x: 65,
+    y: 390,
+    width: 435,
+    height: 10,
+    fontSize: 10
+  })
+  return {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines,
+    graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 60 / 800, 500 / 600, 280 / 800] }]
+  }
+}
+
+it('keeps a coordinated table reference inside its complete native figure caption', () => {
+  const page = coordinatedTableReferenceCaption()
+  const captions = findCaptionCandidates([page])
+  expect(captions).toHaveLength(1)
+  expect(captions[0].lines).toEqual(page.lines.slice(0, 5).map((l) => l.text))
+  expect(captions[0].rect[3]).toBe(358)
+})
+
+const coordinatedReferenceRefusals: [
+  string,
+  (p: ReturnType<typeof coordinatedTableReferenceCaption>) => void
+][] = [
+  [
+    'closed preceding sentence',
+    (p) => {
+      p.lines[2].text += '.'
+    }
+  ],
+  [
+    'different caption font',
+    (p) => {
+      p.lines[3].fontSize = 12
+    }
+  ],
+  [
+    'different column',
+    (p) => {
+      p.lines[3].x += 25
+    }
+  ],
+  [
+    'different leading',
+    (p) => {
+      p.lines[3].y += 4
+    }
+  ],
+  [
+    'unproved graphics',
+    (p) => {
+      p.invalidGraphicsBounds = 1
+    }
+  ],
+  [
+    'missing graphics inventory',
+    (p) => {
+      Object.defineProperty(p, 'graphicsBounds', { value: undefined })
+    }
+  ],
+  [
+    'no preceding plate',
+    (p) => {
+      p.graphicsBounds = []
+    }
+  ],
+  [
+    'duplicate native row',
+    (p) => {
+      p.lines.push({ ...p.lines[3] })
+    }
+  ],
+  [
+    'intervening paint',
+    (p) => {
+      p.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [50 / 600, 334 / 800, 500 / 600, 335 / 800]
+      })
+    }
+  ],
+  [
+    'new table caption',
+    (p) => {
+      p.lines[3].text = 'Table 1: Independently measured values from the second experiment.'
+    }
+  ],
+  [
+    'unfinished final row',
+    (p) => {
+      p.lines[4].text = 'controls remain unchanged and'
+    }
+  ]
+]
+it.each(coordinatedReferenceRefusals)(
+  'keeps an unproved table-reference caption separate: %s',
+  (_label, mutate) => {
+    const page = coordinatedTableReferenceCaption()
+    mutate(page)
+    const before = structuredClone(page)
+    const figure = findCaptionCandidates([page]).find((c: { lines: string[] }) =>
+      c.lines[0].startsWith('Figure 2:')
+    )
+    expect(figure.lines).not.toContain(page.lines[3].text)
+    expect(page).toEqual(before)
+  }
+)
+
+it.each([
   'Table 77-81 82.2 86.3',
   'Table 77 - S81 82.2 86.3',
   'Tab. A2–B4 10% (20/30)',
@@ -80,6 +228,16 @@ it('recognizes manuscript legend headings without treating past-tense references
 it('keeps noun-phrase figure titles distinct from finite-verb references', () => {
   expect(captionKind('Figure 1 Plot of the results.')).toBe('figure')
   expect(captionKind('Figure 1 plots the results.')).toBeUndefined()
+})
+
+it('keeps first-qualified references in prose while retaining caption titles', () => {
+  for (const text of [
+    'Figure 4 first shows the predicted trend.',
+    'Table C.2 first lists the measured values.'
+  ])
+    expect(captionKind(text)).toBeUndefined()
+  expect(captionKind('Figure 4. First shows and later comparisons.')).toBe('figure')
+  expect(captionKind('Figure 4 First-order response.')).toBe('figure')
 })
 
 it.each([
@@ -1066,3 +1224,553 @@ it.each(nativeRowReferenceNegatives)(
     expect(a).toEqual(original)
   }
 )
+
+const { associateTableCaptions } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
+)
+const mixedIndependentTableCaptions = (): ReturnType<typeof JSON.parse> => {
+  const captions = [
+    { page: 1, rect: [280, 58, 520, 68], lines: ['Table 1: A preceding independent result.'] },
+    {
+      page: 1,
+      rect: [280, 155, 520, 165],
+      lines: ['Table 2: Complete independent numeric records.']
+    },
+    { page: 1, rect: [280, 325, 520, 335], lines: ['Table 3: Another complete numeric result.'] },
+    { page: 1, rect: [40, 365, 250, 375], lines: ['Table 4: Independent descriptive records.'] }
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    lines: captions.map((c) => ({
+      text: c.lines[0],
+      x: c.rect[0],
+      y: c.rect[1],
+      width: c.rect[2] - c.rect[0],
+      height: 10,
+      fontSize: 10
+    }))
+  }
+  const rules: number[][] = []
+  for (const top of [70, 240]) {
+    for (const y of [top, top + 20, top + 80]) rules.push([300, y, 500, y])
+    page.lines.push({
+      text: 'Group and independent values',
+      x: 310,
+      y: top + 4,
+      width: 160,
+      height: 8,
+      fontSize: 8
+    })
+    for (let row = 0; row < 3; row++)
+      for (const [col, text] of ['1', '2'].entries())
+        page.lines.push({
+          text,
+          x: 320 + col * 80,
+          y: top + 28 + row * 14,
+          width: 12,
+          height: 8,
+          fontSize: 8
+        })
+  }
+  for (let row = 0; row < 4; row++)
+    page.lines.push({
+      text: 'A complete descriptive record',
+      x: 50,
+      y: 90 + row * 60,
+      width: 170,
+      height: 10,
+      fontSize: 10
+    })
+  return {
+    page,
+    captions,
+    rules,
+    tables: [
+      { rect: [300, 78, 500, 142] },
+      { rect: [300, 248, 500, 312] },
+      { rect: [40, 70, 250, 350] }
+    ]
+  }
+}
+it('keeps independently proved below captions when an unrelated descriptive table has no numeric proof', () => {
+  const f = mixedIndependentTableCaptions(),
+    before = structuredClone(f)
+  const result = associateTableCaptions(f.page, f.tables, f.captions, f.rules)
+  expect(result[0].caption).toBe(f.captions[1])
+  expect(result[1].caption).toBe(f.captions[2])
+  expect(f).toEqual(before)
+})
+it('does not reserve an otherwise proved below caption across another native caption inside its table', () => {
+  const f = mixedIndependentTableCaptions()
+  f.captions.push({
+    page: 1,
+    rect: [310, 100, 490, 110],
+    lines: ['Table 5: A competing native owner.']
+  })
+  const result = associateTableCaptions(f.page, f.tables, f.captions, f.rules)
+  expect(result[0].caption).not.toBe(f.captions[1])
+})
+
+it('reserves a proved footer once when it is also adjacent above the next table', () => {
+  const f = mixedIndependentTableCaptions()
+  for (const line of f.page.lines) if (line.y >= 240 && line.y < 340) line.y -= 70
+  for (const rule of f.rules)
+    if (rule[1] >= 240) {
+      rule[1] -= 70
+      rule[3] -= 70
+    }
+  f.tables[1].rect[1] -= 70
+  f.tables[1].rect[3] -= 70
+  f.captions[2].rect[1] -= 70
+  f.captions[2].rect[3] -= 70
+  const result = associateTableCaptions(f.page, f.tables, f.captions, f.rules)
+  expect(result[0].caption).toBe(f.captions[1])
+  expect(result[1].caption).toBe(f.captions[2])
+  expect(result.filter((r: { caption?: unknown }) => r.caption === f.captions[1])).toHaveLength(1)
+  f.captions.splice(2, 1)
+  f.page.lines = f.page.lines.filter((l: { text: string }) => !l.text.startsWith('Table 3:'))
+  const uncertain = associateTableCaptions(f.page, f.tables, f.captions, f.rules)
+  expect(uncertain[0].caption).toBe(f.captions[0])
+  expect(uncertain[1].caption).toBe(f.captions[1])
+  expect(uncertain.filter((r: { caption?: unknown }) => r.caption === f.captions[1])).toHaveLength(
+    1
+  )
+})
+
+it('keeps a complete unique above-caption stack when a partial footer also matches the next title', () => {
+  const f = mixedIndependentTableCaptions()
+  f.tables = f.tables.slice(0, 2)
+  f.captions = f.captions.slice(0, 2)
+  f.page.lines = f.page.lines.filter(
+    (line: { x: number; text: string }) => line.x >= 280 && !/^Table [34]:/.test(line.text)
+  )
+  for (const line of f.page.lines) if (line.y >= 240) line.y -= 70
+  for (const rule of f.rules)
+    if (rule[1] >= 240) {
+      rule[1] -= 70
+      rule[3] -= 70
+    }
+  f.tables[1].rect[1] -= 70
+  f.tables[1].rect[3] -= 70
+  const before = structuredClone(f)
+  const result = associateTableCaptions(f.page, f.tables, f.captions, f.rules)
+  expect(result.map((r: { caption?: unknown }) => r.caption)).toEqual(f.captions)
+  expect(f).toEqual(before)
+})
+
+it('rejects a shared adjacent title when neither competing table has a complete native proof', () => {
+  const caption = { page: 1, rect: [100, 110, 300, 120], lines: ['Table 1: Shared results.'] }
+  const page = {
+    pageNumber: 1,
+    width: 400,
+    height: 600,
+    lines: [{ text: caption.lines[0], x: 100, y: 110, width: 200, height: 10, fontSize: 10 }]
+  }
+  const result = associateTableCaptions(
+    page,
+    [{ rect: [100, 60, 300, 100] }, { rect: [100, 130, 300, 170] }],
+    [caption],
+    []
+  )
+  expect(result).toEqual([{ reason: 'shared-table-caption' }, { reason: 'shared-table-caption' }])
+})
+
+// Native paragraph cadence is calibrated before the wrapped reference.
+const nativeMeasuredReferenceFixture = (pitch = 18): NativeRowReferenceFixture => {
+  const a = nativeRowReferenceFixture()
+  const texts = [
+    'The independently measured outcomes remain stable across repeated samples',
+    'All repeated observations retain their complete source order and alignment',
+    'The independent calibration paragraph has ended with the same typography.',
+    'The next set of observations is presented in',
+    'Figure 3. For the first group, the method exhibits reliable coverage',
+    'through all repeated observations under these independent conditions.'
+  ]
+  a.page.lines = texts.map((text, index) => ({
+    text,
+    x: index === 3 ? 62 : 50,
+    y: 60 + index * pitch,
+    width: index === 3 ? 388 : 400,
+    height: 10,
+    fontSize: 10
+  }))
+  a.context.content.items = a.page.lines.map((l, index) => ({
+    str: l.text,
+    dir: 'ltr',
+    width: l.width,
+    height: 10,
+    transform: [10.2, 0, 0, 10, l.x, 600 - l.y - 10],
+    fontName: 'body',
+    hasEOL: true,
+    sourceItem: { pageNumber: 1, index, text: l.text }
+  }))
+  return a
+}
+const measuredReferenceCandidate = (a: NativeRowReferenceFixture): object => {
+  const l = a.page.lines[4]
+  return { page: 1, lines: [l.text], rect: [l.x, l.y, l.x + l.width, l.y + l.height] }
+}
+it.each([12, 18])(
+  'uses independent native prose cadence for a punctuated wrapped reference (%s)',
+  (pitch) => {
+    const a = nativeMeasuredReferenceFixture(pitch)
+    expect(isNativeRowReference(measuredReferenceCandidate(a), a.page, a.context, a.rules)).toBe(
+      true
+    )
+  }
+)
+it.each([
+  [
+    'source identity',
+    (a: NativeRowReferenceFixture) => {
+      a.context.content.items[2].sourceItem.index = 1
+    }
+  ],
+  [
+    'independent cadence',
+    (a: NativeRowReferenceFixture) => {
+      a.context.content.items[1].transform[5] += 2
+    }
+  ],
+  [
+    'complete native row',
+    (a: NativeRowReferenceFixture) => {
+      a.page.lines.pop()
+    }
+  ],
+  [
+    'unclipped text transform',
+    (a: NativeRowReferenceFixture) => {
+      a.context.content.items[5].transform[2] = 1
+    }
+  ],
+  [
+    'font envelope',
+    (a: NativeRowReferenceFixture) => {
+      a.context.content.styles.body = {}
+    }
+  ],
+  [
+    'paint-free paragraph',
+    (a: NativeRowReferenceFixture) => {
+      a.page.graphicsBounds.push({ normalizedRect: [0.1, 0.2, 0.9, 0.25] })
+    }
+  ],
+  [
+    'rule-free paragraph',
+    (a: NativeRowReferenceFixture) => {
+      a.rules.push([50, 100, 450, 100])
+    }
+  ]
+] as const)('retains the caption when measured paragraph proof lacks %s', (_name, edit) => {
+  const a = nativeMeasuredReferenceFixture()
+  const candidate = measuredReferenceCandidate(a)
+  edit(a)
+  expect(isNativeRowReference(candidate, a.page, a.context, a.rules)).toBe(false)
+})
+it('retains an explicit colon caption beside a measured native paragraph', () => {
+  const a = nativeMeasuredReferenceFixture()
+  const candidate = measuredReferenceCandidate(a) as { lines: string[] }
+  candidate.lines[0] = candidate.lines[0].replace('3.', '3:')
+  expect(isNativeRowReference(candidate, a.page, a.context, a.rules)).toBe(false)
+})
+
+it('retains a wrapped candidate when native font metrics have no measured extent', () => {
+  const a = nativeMeasuredReferenceFixture()
+  Object.assign(a.context.content.styles.body, { ascent: 0, descent: 0 })
+  expect(isNativeRowReference(measuredReferenceCandidate(a), a.page, a.context, a.rules)).toBe(
+    false
+  )
+})
+
+const nativeSectionReferenceFixture = (): NativeRowReferenceFixture => {
+  const a = nativeRowReferenceFixture()
+  const values: [string, number, number, number, string][] = [
+    ['The preceding native discussion has ended.', 50, 80, 240, 'body'],
+    ['2.3', 50, 110, 20, 'heading'],
+    ['Independent evaluation', 90, 110, 140, 'heading'],
+    ['Figure 2 and Table 3 describe the repeated native observations', 50, 130, 400, 'body'],
+    ['under independently measured conditions with original source order', 49.8, 144, 400, 'body'],
+    ['and retain the complete ordinary paragraph across native source rows', 50, 158, 400, 'body'],
+    ['ending with an independently observed complete sentence.', 50, 172, 270, 'body'],
+    ['The following independent paragraph calibrates the native body style', 60, 190, 390, 'body'],
+    ['with complete literal records in their independently measured order', 50, 204, 400, 'body'],
+    ['and further ordinary observations under the same native typography', 50, 218, 400, 'body'],
+    ['before the next independently measured sentence has ended.', 50, 232, 300, 'body']
+  ]
+  a.context.content.styles.heading = { ascent: 0.8, descent: -0.2, vertical: false }
+  a.page.lines = values.map(([text, x, y, width]) => ({
+    text,
+    x,
+    y,
+    width,
+    height: 10,
+    fontSize: 10
+  }))
+  a.context.content.items = values.map(([str, x, y, width, fontName], index) => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: 10,
+    transform: [10, 0, 0, 10, x, 600 - y - 10],
+    fontName,
+    hasEOL: index > 2,
+    sourceItem: { pageNumber: 1, index, text: str }
+  }))
+  return a
+}
+
+it.each([
+  'complete',
+  'source identity',
+  'font envelope',
+  'paragraph end',
+  'complete source row',
+  'independent cadence',
+  'foreign paint',
+  'foreign geometric line',
+  'off-page predecessor',
+  'off-page cadence',
+  'foreign heading line',
+  'foreign predecessor lane',
+  'foreign cadence lane',
+  'explicit caption'
+])('requires complete section paragraph evidence for a coordinated reference: %s', (variant) => {
+  const a = nativeSectionReferenceFixture()
+  const lines = a.page.lines.slice(3, 7)
+  const candidate = {
+    page: 1,
+    lines: lines.map((l) => l.text),
+    rect: [
+      Math.min(...lines.map((l) => l.x)),
+      lines[0].y,
+      Math.max(...lines.map((l) => l.x + l.width)),
+      lines.at(-1)!.y + 10
+    ]
+  }
+  if (variant === 'source identity') a.context.content.items[4].sourceItem.index = 3
+  if (variant === 'font envelope') a.context.content.styles.body = {}
+  if (variant === 'paragraph end') candidate.lines.pop()
+  if (variant === 'complete source row') a.page.lines.splice(4, 1)
+  if (variant === 'independent cadence') a.context.content.items[9].transform[5] -= 2
+  if (variant === 'foreign paint')
+    a.page.graphicsBounds.push({ normalizedRect: [0.1, 0.2, 0.8, 0.4] })
+  if (variant === 'foreign geometric line')
+    a.page.lines.push({
+      text: 'Independent foreign row',
+      x: 80,
+      y: 150,
+      width: 200,
+      height: 10,
+      fontSize: 10
+    })
+  if (variant === 'off-page predecessor') {
+    a.page.lines[0].y = -100
+    a.context.content.items[0].transform[5] = 690
+  }
+  if (variant === 'off-page cadence') {
+    for (let index = 7; index < 11; index++) {
+      a.page.lines[index].y += 1000
+      a.context.content.items[index].transform[5] -= 1000
+    }
+  }
+  if (variant === 'foreign heading line')
+    a.page.lines.push({
+      text: 'Foreign heading row',
+      x: 240,
+      y: 112,
+      width: 100,
+      height: 10,
+      fontSize: 10
+    })
+  if (variant === 'foreign predecessor lane') {
+    a.page.lines[0].x += 200
+    a.context.content.items[0].transform[4] += 200
+  }
+  if (variant === 'foreign cadence lane') {
+    for (let index = 8; index < 11; index++) {
+      a.page.lines[index].x += 40
+      a.page.lines[index].width -= 40
+      a.context.content.items[index].transform[4] += 40
+      a.context.content.items[index].width -= 40
+    }
+  }
+  if (variant === 'explicit caption')
+    candidate.lines[0] = candidate.lines[0].replace('2 and', '2: and')
+  const before = structuredClone(a)
+  expect(isNativeRowReference(candidate, a.page, a.context, a.rules)).toBe(variant === 'complete')
+  expect(a).toEqual(before)
+})
+
+const nativeImageCreditFixture = (): {
+  fixture: NativeRowReferenceFixture
+  candidate: { page: number; lines: string[]; rect: number[] }
+} => {
+  const fixture = nativeRowReferenceFixture()
+  fixture.page.lines = []
+  fixture.context.content.items = []
+  fixture.context.content.styles = Object.fromEntries(
+    ['body', 'reference', 'title'].map((font) => [
+      font,
+      { ascent: 0.8, descent: -0.2, vertical: false }
+    ])
+  )
+  const add = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    size = 10
+  ): void => {
+    const index = fixture.context.content.items.length
+    fixture.context.content.items.push({
+      str,
+      dir: 'ltr',
+      width,
+      height: size,
+      transform: [size, 0, 0, size, x, 600 - y - size],
+      fontName,
+      hasEOL: true,
+      sourceItem: { pageNumber: 1, index, text: str }
+    })
+  }
+  fixture.page.lines.push({
+    text: 'Image credits',
+    x: 50,
+    y: 60,
+    width: 120,
+    height: 14,
+    fontSize: 14
+  })
+  add('Image credits', 50, 60, 120, 'body', 14)
+  for (let group = 0; group < 3; group++) {
+    const y = 100 + group * 59
+    const prefix = group === 2 ? 'Fig. 5A:' : `Figs. ${group + 1} and ${group + 2}:`
+    const title = '“Independent plate” by Example Author'
+    const texts = [
+      prefix + ' ' + title,
+      'https://example.invalid/source, licensed under a permissive licence.',
+      'The licence terms are at https://example.invalid/licence and remain unchanged.',
+      'The credited source retains its original attribution.'
+    ]
+    texts.forEach((text, row) =>
+      fixture.page.lines.push({
+        text,
+        x: 50,
+        y: y + row * 14,
+        width: row === 3 ? 200 : 400,
+        height: 10,
+        fontSize: 10
+      })
+    )
+    add(prefix, 50, y, 80, 'reference')
+    add(' ', 130, y, 4, 'reference')
+    add(title, 134, y, 316, 'title')
+    for (let row = 1; row < 4; row++)
+      add(texts[row], 50, y + row * 14, row === 3 ? 200 : 400, 'body')
+  }
+  const rows = fixture.page.lines.slice(-4)
+  return {
+    fixture,
+    candidate: {
+      page: 1,
+      lines: rows.map((l) => l.text),
+      rect: [50, rows[0].y, 450, rows.at(-1)!.y + 10]
+    }
+  }
+}
+
+it.each([
+  'complete',
+  'source identity',
+  'font envelope',
+  'section heading',
+  'foreign paint',
+  'foreign heading line',
+  'complete source row',
+  'licensed source'
+])(
+  'requires complete native credit-list evidence before refusing a phantom caption: %s',
+  (variant) => {
+    const { fixture: a, candidate } = nativeImageCreditFixture()
+    if (variant === 'source identity') a.context.content.items.at(-1)!.sourceItem.index--
+    if (variant === 'font envelope') a.context.content.styles.body = {}
+    if (variant === 'section heading') a.page.lines[0].text = 'Illustrated results'
+    if (variant === 'foreign paint')
+      a.page.graphicsBounds.push({ normalizedRect: [0.1, 0.3, 0.9, 0.5] })
+    if (variant === 'foreign heading line')
+      a.page.lines.push({
+        text: 'Independent heading',
+        x: 100,
+        y: 62,
+        width: 120,
+        height: 10,
+        fontSize: 10
+      })
+    if (variant === 'complete source row') a.page.lines.splice(a.page.lines.length - 2, 1)
+    if (variant === 'licensed source') {
+      const item = a.context.content.items.at(-3)!
+      const before = item.str
+      item.str = item.str.replace('licensed under', 'discussed under')
+      item.sourceItem.text = item.str
+      a.page.lines.find((l) => l.text === before)!.text = item.str
+      candidate.lines[1] = item.str
+    }
+    const before = structuredClone({ a, candidate })
+    expect(isNativeRowReference(candidate, a.page, a.context, a.rules)).toBe(variant === 'complete')
+    expect({ a, candidate }).toEqual(before)
+  }
+)
+
+it.each([
+  'upper heading fringe',
+  'lower heading fringe',
+  'unbounded viewport',
+  'nonfinite unrelated line',
+  'negative unrelated width',
+  'missing unrelated text'
+])('keeps a credit candidate when its ambient proof is incomplete: %s', (variant) => {
+  const { fixture: a, candidate } = nativeImageCreditFixture()
+  if (variant.endsWith('heading fringe')) {
+    const y = variant.startsWith('upper') ? 57.5 : 75
+    const size = variant.startsWith('upper') ? 1 : 2
+    if (variant.startsWith('upper'))
+      a.context.content.styles.body = { ascent: 1.2, descent: -0.2, vertical: false }
+    const str = 'Independent heading fringe'
+    a.context.content.items.splice(1, 0, {
+      str,
+      dir: 'ltr',
+      width: 70,
+      height: size,
+      transform: [size, 0, 0, size, 80, 600 - y - size],
+      fontName: 'body',
+      hasEOL: true,
+      sourceItem: { pageNumber: 1, index: 1, text: str }
+    })
+    a.context.content.items.forEach((item, index) => {
+      item.sourceItem = { pageNumber: 1, index, text: item.str }
+    })
+    a.page.lines.splice(1, 0, { text: str, x: 80, y, width: 70, height: size, fontSize: size })
+  } else if (variant === 'unbounded viewport') {
+    a.page.width = a.context.viewport.width = Infinity
+  } else {
+    const line: CaptionLine = {
+      text: 'Independent row',
+      x: 10,
+      y: 20,
+      width: 70,
+      height: 10,
+      fontSize: 10
+    }
+    if (variant === 'nonfinite unrelated line') line.x = NaN
+    if (variant === 'negative unrelated width') line.width = -1
+    if (variant === 'missing unrelated text') Object.assign(line, { text: undefined })
+    a.page.lines.unshift(line)
+  }
+  const before = structuredClone({ a, candidate })
+  expect(isNativeRowReference(candidate, a.page, a.context, a.rules)).toBe(false)
+  expect({ a, candidate }).toEqual(before)
+})

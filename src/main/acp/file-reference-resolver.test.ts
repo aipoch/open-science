@@ -1,7 +1,8 @@
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, type ReadStream } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile,
   realpath,
   rename,
@@ -24,17 +25,25 @@ import { createManagedFileReferenceResolver } from './file-reference-resolver'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...actual, stat: vi.fn(actual.stat), realpath: vi.fn(actual.realpath) }
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    stat: vi.fn(actual.stat),
+    realpath: vi.fn(actual.realpath)
+  }
 })
 
-const copying = vi.hoisted(() => ({ path: '', mutate: undefined as (() => void) | undefined }))
+const copying = vi.hoisted(() => ({
+  path: '',
+  mutate: undefined as ((stream: ReadStream) => void) | undefined
+}))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return {
     ...actual,
     createReadStream: (...args: Parameters<typeof actual.createReadStream>) => {
       const stream = actual.createReadStream(...args)
-      if (args[0] === copying.path) stream.once('data', () => copying.mutate?.())
+      if (args[0] === copying.path) stream.once('data', () => copying.mutate?.(stream))
       return stream
     }
   }
@@ -876,43 +885,100 @@ describe('TB-03 linked-folder snapshot identity', () => {
 })
 
 describe('TB-03 snapshot completion', () => {
-  it('rejects a same-size source mutation during copying and refunds its budget', async () => {
-    root = await mkdtemp(join(tmpdir(), 'linked-copy-change-'))
-    const path = join(root, 'data.txt')
-    const original = 'a'.repeat(128 * 1024)
-    await writeFile(path, original)
-    copying.path = await realpath(path)
-    let mutated = false
-    copying.mutate = () => {
-      mutated = true
-      writeFileSync(path, 'b'.repeat(original.length))
-    }
-    const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
-      readOnlyProjectionMaxSessionBytes: original.length
-    })
-    const context = { projectId: 'project', sessionId: 'session' }
-    const reference = {
-      id: 'file',
-      name: 'data.txt',
-      source: 'linked-folder' as const,
-      rootId: 'root',
-      relativePath: 'data.txt'
-    }
-    try {
-      await expect(resolver.resolve(context, reference)).rejects.toThrow(/file changed/i)
-      expect(mutated).toBe(true)
-      copying.path = ''
-      copying.mutate = undefined
-      await expect(resolver.resolve(context, reference)).resolves.toMatchObject({
-        size: original.length
+  it.each(['resetSession', 'clearGeneration', 'clear'] as const)(
+    'stops snapshot verification promptly after %s and releases its budget',
+    async (cleanup) => {
+      root = await mkdtemp(join(tmpdir(), 'linked-verification-cancel-'))
+      const path = join(root, 'data.txt')
+      const contents = 'a'.repeat(1024 * 1024)
+      await writeFile(path, contents)
+      const resolver = createManagedFileReferenceResolver({
+        grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
+        readOnlyProjectionMaxSessionBytes: contents.length
       })
-    } finally {
-      copying.path = ''
-      copying.mutate = undefined
-      resolver.clear()
+      const context = { projectId: 'project', sessionId: 'session', connectionGeneration: 1 }
+      const reference = {
+        id: 'file',
+        name: 'data.txt',
+        source: 'linked-folder' as const,
+        rootId: 'root',
+        relativePath: 'data.txt'
+      }
+      copying.path = await realpath(path)
+      let reads = 0
+      let verification: ReadStream | undefined
+      copying.mutate = (stream) => {
+        if (++reads !== 2) return
+        verification = stream
+        if (cleanup === 'resetSession') resolver.resetSession('session')
+        else if (cleanup === 'clearGeneration') resolver.clearGeneration(1)
+        else resolver.clear()
+      }
+      try {
+        await expect(resolver.resolve(context, reference)).rejects.toThrow(/superseded/i)
+        expect(verification?.destroyed).toBe(true)
+        expect(verification?.bytesRead).toBeLessThan(contents.length)
+        copying.path = ''
+        copying.mutate = undefined
+        const resolved = await resolver.resolve(context, reference)
+        expect(await readFile(resolved.absolutePath, 'utf8')).toBe(contents)
+      } finally {
+        copying.path = ''
+        copying.mutate = undefined
+        resolver.clear()
+      }
     }
-  })
+  )
+
+  it.each([false, true])(
+    'rejects a same-size source mutation during copying and refunds its budget (unchanged metadata: %s)',
+    async (unchangedMetadata) => {
+      root = await mkdtemp(join(tmpdir(), 'linked-copy-change-'))
+      const path = join(root, 'data.txt')
+      const original = 'a'.repeat(128 * 1024)
+      await writeFile(path, original)
+      if (unchangedMetadata) {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+        vi.mocked(open).mockImplementationOnce(async (...args) => {
+          const handle = await actual.open(...args)
+          const initial = await handle.stat()
+          vi.spyOn(handle, 'stat').mockResolvedValue(initial)
+          return handle
+        })
+      }
+      copying.path = await realpath(path)
+      let mutated = false
+      copying.mutate = () => {
+        mutated = true
+        writeFileSync(path, 'b'.repeat(original.length))
+      }
+      const resolver = createManagedFileReferenceResolver({
+        grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
+        readOnlyProjectionMaxSessionBytes: original.length
+      })
+      const context = { projectId: 'project', sessionId: 'session' }
+      const reference = {
+        id: 'file',
+        name: 'data.txt',
+        source: 'linked-folder' as const,
+        rootId: 'root',
+        relativePath: 'data.txt'
+      }
+      try {
+        await expect(resolver.resolve(context, reference)).rejects.toThrow(/file changed/i)
+        expect(mutated).toBe(true)
+        copying.path = ''
+        copying.mutate = undefined
+        await expect(resolver.resolve(context, reference)).resolves.toMatchObject({
+          size: original.length
+        })
+      } finally {
+        copying.path = ''
+        copying.mutate = undefined
+        resolver.clear()
+      }
+    }
+  )
 
   it.each(['remove', 'change-access'] as const)(
     'rejects a root %s before snapshot copying',

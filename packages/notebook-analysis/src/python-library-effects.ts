@@ -970,6 +970,8 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       },
       read_fwf: {
         effect: 'read',
+        callbackKeywords: ['converters', 'usecols', 'skiprows', 'on_bad_lines'],
+        callbackContainerKeywords: ['converters'],
         returnType: 'pandas.DataFrame',
         possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'filepath_or_buffer'
@@ -1041,12 +1043,16 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       },
       read_table: {
         effect: 'read',
+        callbackKeywords: ['converters', 'usecols', 'skiprows', 'on_bad_lines'],
+        callbackContainerKeywords: ['converters'],
         returnType: 'pandas.DataFrame',
         possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'filepath_or_buffer'
       },
       read_xml: {
         effect: 'read',
+        callbackKeywords: ['converters'],
+        callbackContainerKeywords: ['converters'],
         returnType: 'pandas.DataFrame',
         possiblyMutatesFirstArgument: true,
         firstArgumentKeyword: 'path_or_buffer'
@@ -1196,7 +1202,9 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       },
       chi2_contingency: { effect: 'read' },
       mannwhitneyu: { effect: 'read' },
-      pearsonr: { effect: 'read' },
+      // Non-default method objects may contain arbitrary sample callbacks.
+      // Call-site specialization closes only the default analytic path.
+      pearsonr: { effect: 'read', callbackKeywords: ['method'] },
       spearmanr: { effect: 'read' },
       ttest_1samp: { effect: 'read' },
       ttest_ind: { effect: 'read' },
@@ -1762,7 +1770,8 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       to_csv: {
         effect: 'read',
         possiblyMutatesFirstArgument: true,
-        possiblyMutatesKeyword: 'path_or_buf'
+        possiblyMutatesKeyword: 'path_or_buf',
+        callbackKeywords: ['float_format']
       },
       to_excel: {
         effect: 'read',
@@ -1777,7 +1786,8 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       to_json: {
         effect: 'read',
         possiblyMutatesFirstArgument: true,
-        possiblyMutatesKeyword: 'path_or_buf'
+        possiblyMutatesKeyword: 'path_or_buf',
+        callbackKeywords: ['default_handler']
       },
       to_html: { effect: 'read' },
       to_latex: { effect: 'read' },
@@ -1923,7 +1933,8 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       to_csv: {
         effect: 'read',
         possiblyMutatesFirstArgument: true,
-        possiblyMutatesKeyword: 'path_or_buf'
+        possiblyMutatesKeyword: 'path_or_buf',
+        callbackKeywords: ['float_format']
       },
       to_dict: {
         effect: 'read',

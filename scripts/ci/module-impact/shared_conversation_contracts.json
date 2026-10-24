@@ -56,7 +56,9 @@
     "src/shared/session-persistence/prompt-preparation.test.ts",
     "src/shared/runtime-tool-identity.ts",
     "src/shared/history-preamble.ts",
-    "src/shared/session-replay-commands.ts"
+    "src/shared/session-replay-commands.ts",
+    "src/shared/sandbox-network-approval.ts",
+    "src/shared/session-persistence/network-approvals.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -182,7 +184,8 @@
     "src/shared/wsl-setup.ts",
     "src/shared/runtime-tool-identity.ts",
     "src/shared/history-preamble.ts",
-    "src/shared/session-replay-commands.ts"
+    "src/shared/session-replay-commands.ts",
+    "src/shared/sandbox-network-approval.ts"
   ],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {

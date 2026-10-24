@@ -112,8 +112,8 @@ export const createPackageMaterializer = async (
 const observation = (stat: BigIntStats): string =>
   `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`
 
-// Reuse reads only within one validation pass, including immutable hardlink aliases. A changed
-// observation requires a fresh digest; separate calls never trust an earlier import/export.
+// On non-Windows platforms, reuse reads only within one validation pass, including hardlink
+// aliases. A changed observation requires a fresh digest; later passes always read again.
 export const createPackageContentVerifier = (): typeof digestFileWithinBudget => {
   const verified = new Map<string, Awaited<ReturnType<typeof digestFileWithinBudget>>>()
   return async (path, maxBytes, signal) => {
@@ -123,8 +123,9 @@ export const createPackageContentVerifier = (): typeof digestFileWithinBudget =>
     if (!before.isFile()) throw new Error('Session package content is not a regular file.')
     assertWithinResourceBudget('file', Number(before.size), maxBytes)
     const key = observation(before)
-    // Filesystems without a usable inode identity cannot establish that aliases share bytes.
-    const reusable = before.ino > 0n
+    // Windows can report the same identity, size and timestamps after a same-size write.
+    // Without a usable inode identity, other filesystems cannot establish shared bytes either.
+    const reusable = process.platform !== 'win32' && before.ino > 0n
     const cached = reusable ? verified.get(key) : undefined
     if (cached) return cached
     const digest = await digestFileWithinBudget(path, maxBytes, signal)

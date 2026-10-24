@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
+import { Path2D } from '@napi-rs/canvas'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 const nativeRenderPaths = new WeakMap()
@@ -213,10 +214,29 @@ export function captureNativeFigureRenderContext(
           f.glyphs.reduce((n, g) => n + 256 + g.fontChar.length * 2, 0),
         0
       ) ?? 0
+    const type3GlyphPrograms = nativeType3GlyphPrograms(
+      operators,
+      commonObjs,
+      content,
+      16 * 1024 * 1024 - size - glyphBytes
+    )
+    if (type3GlyphPrograms) snapshot.type3GlyphPrograms = type3GlyphPrograms
+    const type3Bytes = type3GlyphPrograms
+      ? nativeSnapshotSize(type3GlyphPrograms, 16 * 1024 * 1024)
+      : 0
+    const skippedSpaceGlyphs = nativeSkippedSpaceGlyphs(
+      operators,
+      commonObjs,
+      16 * 1024 * 1024 - size - glyphBytes - type3Bytes
+    )
+    if (skippedSpaceGlyphs?.length) snapshot.skippedSpaceGlyphs = skippedSpaceGlyphs
+    const skippedBytes = skippedSpaceGlyphs
+      ? (nativeSnapshotSize(skippedSpaceGlyphs, 16 * 1024 * 1024) ?? 16 * 1024 * 1024)
+      : 0
     const opaqueRasterImages = nativeOpaqueRasterImages(
       operators,
       task.objs,
-      16 * 1024 * 1024 - size - glyphBytes
+      16 * 1024 * 1024 - size - glyphBytes - type3Bytes - skippedBytes
     )
     if (opaqueRasterImages?.length) snapshot.opaqueRasterImages = opaqueRasterImages
     return snapshot
@@ -276,6 +296,8 @@ export function matchNativeFigureRenderContext(
       ...(snapshot.partialFontGlyphBounds
         ? { partialFontGlyphBounds: snapshot.partialFontGlyphBounds }
         : {}),
+      ...(snapshot.type3GlyphPrograms ? { type3GlyphPrograms: snapshot.type3GlyphPrograms } : {}),
+      ...(snapshot.skippedSpaceGlyphs ? { skippedSpaceGlyphs: snapshot.skippedSpaceGlyphs } : {}),
       ...(snapshot.opaqueRasterImages ? { opaqueRasterImages: snapshot.opaqueRasterImages } : {}),
       graphicsBounds: snapshot.graphicsBounds,
       viewport: {
@@ -395,6 +417,68 @@ function nativeGlyphBounds(operators, objects, budget) {
   }
 }
 
+// CanvasGraphics.showText skips a glyph outside an ordinary loaded font, even
+// when its .notdef outline is nonempty. The invalid-font and Type3 branches
+// bypass that guard. Bind only spaces to their exact show/glyph occurrence;
+// another occurrence of the same fontChar can still paint the real outline.
+function nativeSkippedSpaceGlyphs(operators, objects, budget) {
+  if (!objects || typeof objects.get !== 'function' || !(budget > 0)) return
+  try {
+    const result = [],
+      stack = []
+    let active,
+      bytes = 0
+    for (let i = 0; i < operators.fnArray.length; i++) {
+      const op = operators.fnArray[i],
+        args = operators.argsArray[i]
+      if (op === OPS.setFont) active = args?.[0]
+      else if (op === OPS.save || op === OPS.paintFormXObjectBegin) stack.push(active)
+      else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+        if (!stack.length) return
+        active = stack.pop()
+      } else if (op === OPS.showText) {
+        if (typeof active !== 'string' || !Array.isArray(args?.[0])) return
+        for (const [glyphIndex, glyph] of args[0].entries()) {
+          if (
+            glyph?.unicode !== ' ' ||
+            glyph.isSpace !== true ||
+            glyph.isInFont !== false ||
+            typeof glyph.fontChar !== 'string' ||
+            !glyph.fontChar ||
+            !Number.isFinite(glyph.width) ||
+            glyph.width < 0 ||
+            glyph.accent != null ||
+            glyph.operatorListId != null ||
+            glyph.vmetric != null
+          )
+            continue
+          const font = objects.get(active)
+          if (
+            font?.loadedName !== active ||
+            font.missingFile !== false ||
+            font.isInvalidPDFjsFont !== false ||
+            font.isType3Font !== false ||
+            typeof font.getPathGenerator !== 'function'
+          )
+            continue
+          result.push({
+            operationIndex: i,
+            glyphIndex,
+            fontName: active,
+            fontChar: glyph.fontChar,
+            width: glyph.width
+          })
+          bytes += 256 + (active.length + glyph.fontChar.length) * 2
+          if (bytes > budget) return
+        }
+      }
+    }
+    return stack.length || nativeSnapshotSize(result, budget) === undefined ? undefined : result
+  } catch {
+    return
+  }
+}
+
 // Every returned font is complete for its whole original showText inventory.
 // Missing fonts are omitted atomically; only an explicitly partial-aware
 // consumer may use this evidence. Reuse the strict path collector per font.
@@ -441,6 +525,166 @@ function nativePartialFontGlyphBounds(operators, objects, budget) {
       }
     }
     return result.length ? result : undefined
+  } catch {
+    return
+  }
+}
+
+// A Type3 font paints a charproc, not the ordinary fontChar outline. Retain only
+// a complete used-program inventory of native filled paths with their own clip.
+// This separate optional field never substitutes for all-font glyphBounds.
+function nativeType3GlyphPrograms(operators, objects, content, budget) {
+  if (!objects || typeof objects.get !== 'function' || !(budget > 0)) return
+  try {
+    const fonts = new Map(),
+      unicodeOwners = new Map(),
+      stack = [],
+      finite = (a, n) =>
+        (Array.isArray(a) || ArrayBuffer.isView(a)) &&
+        a.length === n &&
+        Array.from(a).every(Number.isFinite),
+      same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+    let active,
+      bytes = 0
+    for (let i = 0; i < operators.fnArray.length; i++) {
+      const op = operators.fnArray[i],
+        args = operators.argsArray[i]
+      if (op === OPS.setFont) active = args?.[0]
+      else if (op === OPS.save || op === OPS.paintFormXObjectBegin) stack.push(active)
+      else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+        if (!stack.length) return
+        active = stack.pop()
+      } else if (op === OPS.showText) {
+        if (typeof active !== 'string' || !Array.isArray(args?.[0])) return
+        const font = objects.get(active)
+        if (font?.loadedName !== active || typeof font.isType3Font !== 'boolean') return
+        if (!font.isType3Font) continue
+        let entry = fonts.get(active)
+        if (!entry) {
+          const matrix = font.fontMatrix,
+            sourceIndices = content.items.flatMap((r, index) =>
+              r.fontName === active && typeof r.str === 'string' && r.str.length ? [index] : []
+            )
+          if (
+            font.missingFile !== false ||
+            font.isInvalidPDFjsFont !== false ||
+            (font.vertical !== undefined && font.vertical !== false) ||
+            (font.remeasure !== undefined && font.remeasure !== false) ||
+            !finite(matrix, 6) ||
+            matrix[0] <= 0 ||
+            matrix[3] <= 0 ||
+            [1, 2, 4, 5].some((n) => matrix[n] !== 0) ||
+            !content.styles?.[active] ||
+            (content.styles[active].vertical !== undefined &&
+              content.styles[active].vertical !== false) ||
+            !sourceIndices.length
+          )
+            return
+          entry = {
+            fontName: active,
+            fontMatrix: Array.from(matrix),
+            sourceIndices,
+            glyphs: new Map()
+          }
+          fonts.set(active, entry)
+          unicodeOwners.set(active, new Map())
+          bytes += 512 + active.length * 2 + sourceIndices.length * 8
+        }
+        for (const [glyphIndex, g] of args[0].entries()) {
+          if (typeof g === 'number') {
+            if (!Number.isFinite(g)) return
+            continue
+          }
+          if (
+            g?.fontChar !== '' ||
+            typeof g.operatorListId !== 'string' ||
+            !g.operatorListId.length ||
+            g.operatorListId.length > 256 ||
+            typeof g.unicode !== 'string' ||
+            Array.from(g.unicode).length !== 1 ||
+            !Number.isFinite(g.width) ||
+            g.width <= 0 ||
+            g.isInFont !== true ||
+            g.accent != null ||
+            g.vmetric != null
+          )
+            return
+          const owner = unicodeOwners.get(active),
+            previous = entry.glyphs.get(g.operatorListId)
+          if (
+            (owner.has(g.unicode) && owner.get(g.unicode) !== g.operatorListId) ||
+            (previous && (previous.unicode !== g.unicode || previous.width !== g.width))
+          )
+            return
+          let proof = previous
+          if (!proof) {
+            const program = font.charProcOperatorList?.[g.operatorListId]
+            if (
+              !Array.isArray(program?.fnArray) ||
+              !Array.isArray(program.argsArray) ||
+              program.fnArray.length !== program.argsArray.length
+            )
+              return
+            const empty = g.unicode === ' ' && g.isSpace === true,
+              n = empty ? 0 : 1
+            if (
+              program.fnArray.length !== n + 1 ||
+              program.fnArray[n] !== OPS.constructPath ||
+              (!empty && (g.isSpace !== false || program.fnArray[0] !== OPS.setCharWidthAndBounds))
+            )
+              return
+            const paint = program.argsArray[n]
+            if (
+              !Array.isArray(paint) ||
+              paint.length !== 3 ||
+              ![OPS.fill, OPS.eoFill].includes(paint[0]) ||
+              !Array.isArray(paint[1]) ||
+              paint[1].length !== 1 ||
+              !(paint[1][0] instanceof Path2D)
+            )
+              return
+            const bounds = Array.from(paint[1][0].getBounds()),
+              tight = Array.from(paint[1][0].computeTightBounds())
+            if (!finite(bounds, 4) || !finite(tight, 4) || !same(bounds, tight)) return
+            let clip = null
+            if (empty) {
+              if (paint[2] !== null || bounds.some((v) => v !== 0)) return
+            } else {
+              const widthAndBounds = program.argsArray[0]
+              if (
+                !finite(widthAndBounds, 6) ||
+                widthAndBounds[0] !== g.width ||
+                widthAndBounds[1] !== 0 ||
+                !(bounds[2] > bounds[0] && bounds[3] > bounds[1]) ||
+                !finite(paint[2], 4)
+              )
+                return
+              clip = Array.from(widthAndBounds).slice(2)
+              if (!same(clip, bounds) || !same(Array.from(paint[2]), bounds)) return
+            }
+            proof = {
+              operatorListId: g.operatorListId,
+              unicode: g.unicode,
+              width: g.width,
+              kind: empty ? 'empty-space' : 'filled-path',
+              bounds,
+              clip,
+              paint: paint[0],
+              occurrences: []
+            }
+            entry.glyphs.set(g.operatorListId, proof)
+            owner.set(g.unicode, g.operatorListId)
+            bytes += 512 + (g.operatorListId.length + g.unicode.length) * 2
+          }
+          proof.occurrences.push({ operationIndex: i, glyphIndex })
+          bytes += 128
+          if (bytes > budget) return
+        }
+      }
+    }
+    if (stack.length || !fonts.size) return
+    const result = [...fonts.values()].map((f) => ({ ...f, glyphs: [...f.glyphs.values()] }))
+    return nativeSnapshotSize(result, budget) === undefined ? undefined : result
   } catch {
     return
   }

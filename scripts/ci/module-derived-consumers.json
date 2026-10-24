@@ -2,30 +2,101 @@
   "schemaVersion": 1,
   "modules": {
     "acp_runtime": [
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/settings/managed-codex.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "acp_session_policy": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
     "artifact_content_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "artifact_publication_request": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "artifact_storage_validation": [
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
-    "delegation_execution_contracts": [
-      "src/main/notebook/authorized-directories.integration.test.ts"
+    "compute_package": ["src/main/session-details/composition.test.ts"],
+    "compute_session_access": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
     ],
-    "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
-    "host_rpc_transport": ["src/main/notebook/authorized-directories.integration.test.ts"],
-    "host_value_guards": [
+    "compute_skill_contract": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "delegation_execution_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "desktop_composition": ["src/main/session-details/composition.test.ts"],
+    "framework_installation": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "framework_process_launch": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "host_command_runtime": [
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "host_credential_identity": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "host_file_publisher": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "host_http_transport": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "host_managed_preview": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "host_rpc_transport": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "host_value_guards": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
@@ -59,6 +130,7 @@
       "src/renderer/src/pages/literature/duplicates/LiteratureDuplicatesView.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureLibraryCount.test.tsx",
       "src/renderer/src/pages/literature/workflows/LiteratureBackgroundTasks.test.tsx",
+      "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",
@@ -74,8 +146,18 @@
       "src/renderer/src/pages/workspace/replay/LiveReplayView.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx"
     ],
+    "main_agents": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "main_diagnostics": [
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
     "managed_version_files": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -144,16 +226,24 @@
       "src/main/notebook/wsl-setup-powershell.integration.test.ts",
       "src/main/notebook/wsl2-scheduling.integration.test.ts",
       "src/main/notebook/wsl2-shell.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts"
     ],
+    "native_credential_identity": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
     "native_file_publisher": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -191,15 +281,28 @@
       "src/main/notebook/working-file-observer.performance.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/notebook/working-file-observer.write-scope.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
     "native_process_tree": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/local-fs/service.test.ts",
-      "src/main/notebook/authorized-directories.integration.test.ts"
+      "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/process-tree-foreign-service.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "notebook_application": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
     ],
     "notebook_input_materialization": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "notebook_observation_actions": [
@@ -208,11 +311,19 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "notebook_repository": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
+    "notebook_reproduction": ["src/main/session-details/composition.test.ts"],
+    "observation_desktop_contract": ["src/main/session-details/composition.test.ts"],
     "package_literature_library": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
@@ -220,6 +331,8 @@
       "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
+      "src/renderer/src/pages/literature/workflows/screening-results-csv.test.ts",
+      "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -233,9 +346,14 @@
       "src/main/settings/codex-bridge-tools.test.ts"
     ],
     "package_literature_screening": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
+      "src/renderer/src/pages/literature/workflows/screening-results-csv.test.ts",
+      "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/agent-authentication-error.test.ts",
@@ -251,8 +369,14 @@
       "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-structure.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
-    "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
+    "pdf_annotation_repository": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-details/composition.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "pdf_annotations": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -266,6 +390,14 @@
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-preparation.test.tsx"
     ],
     "pdf_structure_engine": [
+      "packages/pdf-structure/test/figure-bottom-legend-crop.test.ts",
+      "packages/pdf-structure/test/figure-clipped-native-grid-crop.test.ts",
+      "packages/pdf-structure/test/figure-labeled-raster-crop.test.ts",
+      "packages/pdf-structure/test/figure-paired-raster-tail-crop.test.ts",
+      "packages/pdf-structure/test/figure-raster-grid-crop.test.ts",
+      "packages/pdf-structure/test/figure-stacked-raster-crop.test.ts",
+      "packages/pdf-structure/test/native-caption-internal-panel-reference.test.ts",
+      "packages/pdf-structure/test/native-fraction-row-conflict.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-structure-source.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-whole-region-retention.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -275,12 +407,15 @@
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_text": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/browser-recordings/owner.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
       "src/main/composition/handoff.test.ts",
       "src/main/composition/managed-execution.integration.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/local-rpc-server.managed-execution.test.ts",
       "src/main/notebook/managed-execution-collection.integration.test.ts",
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
@@ -301,6 +436,7 @@
       "src/main/run-observation/media-collector.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/headless.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts",
@@ -340,16 +476,29 @@
       "src/renderer/src/pages/workspace/workspace-discussion-navigation.test.ts",
       "src/renderer/src/stores/research-run-store.test.ts"
     ],
-    "project_database": ["src/main/session-package/materialize.test.ts"],
+    "project_database": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "project_file_mentions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
-    "provider_credentials": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "provider_credentials": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
     "providers_package": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/browser-recordings/owner.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -369,6 +518,7 @@
       "src/main/run-observation/managed-coordinator.test.ts",
       "src/main/run-observation/media-collector.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/session-persistence/create-local-session.test.ts",
       "src/main/session-persistence/create-managed-session.test.ts",
@@ -629,7 +779,9 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "reproducibility_engine": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "research_observation_composer": [
@@ -655,9 +807,11 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "research_runtime_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -679,9 +833,14 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "reviewer_evidence": ["src/main/session-package/materialize.test.ts"],
-    "reviewer_repository": ["src/main/session-package/materialize.test.ts"],
+    "reviewer_repository": [
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "reviewer_tool_contracts": [
       "src/main/browser-recordings/owner.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/local-rpc-server.managed-execution.test.ts",
       "src/main/notebook/managed-execution-collection.integration.test.ts",
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
@@ -694,17 +853,32 @@
       "src/main/run-observation/media-collector.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/headless.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts"
     ],
+    "session_plan_delivery": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
     "settings_file_browser": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
+    "settings_model_owners": [
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
     ],
     "settings_network_model": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
+    ],
+    "settings_operations": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
     ],
     "settings_presentation_primitives": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -715,10 +889,22 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "settings_provider_resolution": [
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "settings_proxy_runtime": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
     "settings_record_contracts": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
-      "src/main/literature/pdf-translation/text-generation.test.ts"
+      "src/main/literature/pdf-translation/text-generation.test.ts",
+      "src/main/session-details/composition.test.ts"
     ],
     "shared_agent_runtime_policy": [
       "src/main/acp/agent-connection-adapter.test.ts",
@@ -768,6 +954,7 @@
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -785,6 +972,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/job-deletion-runtime-drain.test.ts",
       "src/main/compute/job-deletion-runtime-isolation.test.ts",
       "src/main/compute/session-catalog-hydration.integration.test.ts",
@@ -832,6 +1020,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-network-node.integration.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",
@@ -1192,10 +1381,12 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -1241,6 +1432,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -1447,6 +1639,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
       "src/main/session-deletion/owner.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -1903,6 +2096,7 @@
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/application-commands.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
@@ -1923,6 +2117,7 @@
       "src/main/remote-access/ipc.test.ts",
       "src/main/remote-access/service.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-persistence/coordinator-contract.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
       "src/main/tasks/task-runner.test.ts",
@@ -1989,9 +2184,11 @@
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime-snapshot-owner.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/completion-gate.execute-control.integration.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -2021,6 +2218,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/job-deletion-runtime-drain.test.ts",
       "src/main/compute/job-deletion-runtime-isolation.test.ts",
@@ -2094,6 +2292,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
       "src/main/session-deletion/owner.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -2530,8 +2729,10 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/vision-evidence-repository.test.ts",
       "src/main/app-startup.test.ts",
@@ -2566,6 +2767,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-no-launch.integration.test.ts",
       "src/main/compute/cancellation-persistence.integration.test.ts",
@@ -2735,6 +2937,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
       "src/main/session-deletion/owner.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -3205,12 +3408,14 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agents/agents-dispatch.test.ts",
@@ -3230,6 +3435,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
       "src/main/compute/compute-password-auth.release.test.ts",
@@ -3275,6 +3481,7 @@
       "src/main/reviewer/model-runtime-owner.test.ts",
       "src/main/reviewer/orchestrator.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/settings/agent-runtime-manager.test.ts",
       "src/main/settings/backend-resolver.test.ts",
@@ -3355,6 +3562,7 @@
       "src/main/acp/ipc.test.ts",
       "src/main/acp/runtime-composition.test.ts",
       "src/main/acp/runtime-coordinator.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/artifact-save.integration.test.ts",
@@ -3402,6 +3610,7 @@
       "src/main/run-observation/capture-package.integration.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/archive.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/desktop-composition.test.ts",
@@ -3551,6 +3760,7 @@
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
@@ -3563,6 +3773,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/database/literature-inbox-integrity-migration.test.ts",
       "src/main/database/migration-service.test.ts",
       "src/main/delegation/production-composition.test.ts",
@@ -3599,6 +3810,7 @@
       "src/main/reviewer/orchestrator.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/literature.test.ts",
       "src/main/settings/backend-resolver.test.ts",
       "src/main/settings/backend-route-planner.test.ts",
@@ -3750,12 +3962,14 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -3778,6 +3992,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/database/agent-memory-project-scope-migration.test.ts",
       "src/main/database/application-database.integration.test.ts",
@@ -3840,6 +4055,7 @@
       "src/main/reviewer/orchestrator.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-package/service.test.ts",
       "src/main/session-persistence/deletion-integration.test.ts",
@@ -3956,6 +4172,8 @@
       "src/main/acp/opencode-immediate-handoff.integration.test.ts",
       "src/main/acp/runtime-plan-composition.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
       "src/main/agents/agents-repl.privileged.integration.test.ts",
@@ -3974,6 +4192,7 @@
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
@@ -4049,6 +4268,7 @@
       "src/main/run-observation/managed-coordinator.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/session-package/service.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
@@ -4370,12 +4590,14 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -4417,6 +4639,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -4594,6 +4817,7 @@
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/session-package/archive.test.ts",
       "src/main/session-package/deletion.test.ts",
@@ -4759,6 +4983,7 @@
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/code-reconstruction.test.ts",
@@ -4795,6 +5020,7 @@
       "src/main/reviewer/orchestrator.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/settings/backend-resolver.test.ts",
       "src/main/side-chat/runtime-owner.test.ts",
       "src/main/specialist/specialist-identity-injection.test.ts",
@@ -4920,6 +5146,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
@@ -4927,6 +5154,7 @@
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -4966,6 +5194,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
@@ -5139,6 +5368,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
       "src/main/session-deletion/owner.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -5556,7 +5786,10 @@
       "src/shared/session-replay.test.ts"
     ],
     "shared_promise_identity": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -5564,6 +5797,7 @@
     "shared_provider_policy": [
       "src/main/acp/runtime.test.ts",
       "src/main/acp/session-agent-target.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/task-agent-port.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
@@ -5573,6 +5807,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
       "src/main/compute/compute-password-auth.release.test.ts",
@@ -5616,6 +5851,7 @@
       "src/main/reviewer/ipc.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-diagnostics/schema-compatibility.integration.test.ts",
       "src/main/settings/agent-runtime-manager.test.ts",
       "src/main/settings/backend-resolver.test.ts",
@@ -5943,6 +6179,7 @@
       "src/main/notebook/local-rpc-server.mcpcall.test.ts",
       "src/main/replay-viewer/desktop-embed.integration.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/JobDetailModal.render.test.tsx",
       "src/renderer/src/main.render.test.tsx",
@@ -6030,9 +6267,11 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/session-update-projector.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/completion-gate.execute-control.integration.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -6063,6 +6302,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
@@ -6171,6 +6411,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
       "src/main/session-deletion/owner.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -6687,6 +6928,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/artifact-save.integration.test.ts",
@@ -6699,6 +6941,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/job-deletion-runtime-drain.test.ts",
       "src/main/compute/job-deletion-runtime-isolation.test.ts",
       "src/main/compute/session-catalog-hydration.integration.test.ts",
@@ -6740,6 +6983,7 @@
       "src/main/reviewer/orchestrator.test.ts",
       "src/main/run-observation/capture-package.integration.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-package/literature.test.ts",
@@ -6796,6 +7040,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/artifacts/code-reconstruction.test.ts",
@@ -6816,6 +7061,7 @@
       "src/main/reviewer/lifecycle.test.ts",
       "src/main/reviewer/model-runtime-owner.test.ts",
       "src/main/reviewer/orchestrator.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
@@ -6903,6 +7149,7 @@
       "src/main/acp/runtime.test.ts",
       "src/main/acp/session-agent-target.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/task-agent-port.test.ts",
       "src/main/application-command-composition.test.ts",
@@ -6928,6 +7175,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/job-deletion-runtime-drain.test.ts",
       "src/main/compute/job-deletion-runtime-isolation.test.ts",
@@ -6980,6 +7228,7 @@
       "src/main/run-observation/media-collector.test.ts",
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -7373,12 +7622,14 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
       "src/main/acp/side-chat-relay-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -7416,6 +7667,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/compute-password-auth.real-ssh.integration.test.ts",
@@ -7547,6 +7799,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
       "src/main/session-deletion/owner.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -7979,6 +8232,7 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-wiring.test.ts",
@@ -8010,6 +8264,7 @@
       "src/main/reviewer/model-runtime-owner.test.ts",
       "src/main/reviewer/orchestrator.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",
@@ -8153,6 +8408,7 @@
       "src/main/acp/session-capability-owner.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -8189,6 +8445,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -8354,6 +8611,7 @@
       "src/main/run-observation/recorded-reader.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/archive.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/deletion.test.ts",
@@ -8483,6 +8741,7 @@
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-presentation-policy.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/acp/turn-skill-owner.test.ts",
       "src/main/agent-framework/claude-code.test.ts",
@@ -8511,6 +8770,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/compute-job-workflow-owner.test.ts",
       "src/main/compute/job-deletion-runtime-drain.test.ts",
       "src/main/compute/job-deletion-runtime-isolation.test.ts",
@@ -8619,6 +8879,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-network-node.integration.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/session-package/service.test.ts",
@@ -9043,10 +9304,12 @@
       "src/main/acp/runtime-session-composition.test.ts",
       "src/main/acp/runtime-session-plan.test.ts",
       "src/main/acp/runtime.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
       "src/main/acp/session-capability-handover.integration.test.ts",
       "src/main/acp/session-environment-policy.test.ts",
       "src/main/acp/session-plan-delivery-owner.test.ts",
       "src/main/acp/side-chat-interaction-admission.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/specialist-switch-recovery.integration.test.ts",
       "src/main/agents/agents-repl.integration.test.ts",
       "src/main/agents/agents-repl.mutations.integration.test.ts",
@@ -9092,6 +9355,7 @@
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -9314,6 +9578,7 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-view/tuanzi.macos.integration.test.ts",
       "src/main/session-deletion/owner.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts",
       "src/main/session-diagnostics/export-evidence.integration.test.ts",
@@ -9783,19 +10048,52 @@
       "src/shared/session-persistence/turn-outcome.test.ts",
       "src/shared/session-replay.test.ts"
     ],
-    "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "side_chat_message_bridge": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "skill_activation_policy": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "skill_package": [
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "skill_runtime_transport": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
+      "src/main/session-details/composition.test.ts"
+    ],
+    "specialist_package": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/session-details/composition.test.ts",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
     "storage_location": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "storage_state": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "upload_file_transport": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
@@ -9976,8 +10274,11 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "wsl_runtime_admission": [
+      "src/main/acp/specialist-capability-resolution.test.ts",
+      "src/main/composition/session-projection.test.ts",
       "src/main/local-fs/service.test.ts",
-      "src/main/notebook/authorized-directories.integration.test.ts"
+      "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/session-details/composition.test.ts"
     ]
   }
 }

@@ -162,10 +162,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // preserve linked-PDF identity, mounted-server checks and single-use authorization.
         'literature/mcp-server.ts':
           'e1ec395347887d9b6645ae0f74c268901712e26ff5b93ec7b128d46134c986ed',
-        // Reviewed: shorter tool guidance preserves restrictions; schemas, operation classifiers
-        // and handlers are unchanged, including their positive/negative authorization tests.
+        // Reviewed: Shell destination wait/retry guidance only; schemas, handlers and Auto
+        // operation dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '12fcd8f64f19279e275205c3206d6729a35956eaffbee3639db67b7e738decf4',
+          '53e92fd88f277e24ea76825aa54d843253176c7f33255e1a750bf9f0e948c632',
         'session-plan/plan-mcp-server.ts':
           'b32ac73d8a2655f556c50b067892eb4caa3940acdcae6df7d8475d81cf7b98d9',
         'skills/mcp-server.ts': '3064af8275f8026e9dbf84b445f3a5061d41619c523def579c4b759c0aac338b'

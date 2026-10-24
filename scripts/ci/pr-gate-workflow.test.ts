@@ -723,6 +723,7 @@ describe('PR Gate workflow', () => {
             'windows-e2e-mainline',
             'windows-process',
             'windows-notebook-runtime',
+            'linux-notebook-isolation',
             'e2e',
             'source-regressions',
             'macos-smoke'
@@ -938,7 +939,9 @@ describe('PR Gate workflow', () => {
       try {
         const output = join(dir, 'output')
         const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
-        const run = spawnSync('bash', ['-eu', '-c', classify!.run!], {
+        // Pass the script through stdin so Windows argument quoting cannot alter its heredoc.
+        const run = spawnSync('bash', ['-eu'], {
+          input: classify!.run!,
           env: {
             ...process.env,
             EVENT_NAME: event,
@@ -1636,7 +1639,8 @@ describe('PR Gate workflow', () => {
 
   it.each([
     ['runtime_checks', 'Install dependencies'],
-    ['linux_runtime', 'Install application dependencies']
+    ['linux_runtime', 'Install application dependencies'],
+    ['unit_shard', 'Install dependencies']
   ])('avoids optional GPU downloads while retaining native loading in %s', (job, installStep) => {
     const steps = workflow.jobs[job].steps
     expect(steps?.find(({ name }) => name === installStep)).toMatchObject({
@@ -1797,7 +1801,8 @@ describe('PR Gate workflow', () => {
       ['policy', 'e2e_functional_windows', 'e2e_workspace_windows', 'e2e_browser_windows']
     ],
     ['windows-process', ['policy', 'windows_core'], ['policy', 'windows_runtime']],
-    ['windows-notebook-runtime', ['policy', 'windows_core'], ['policy', 'windows_runtime']]
+    ['windows-notebook-runtime', ['policy', 'windows_core'], ['policy', 'windows_runtime']],
+    ['linux-notebook-isolation', ['policy', 'linux_runtime'], ['policy', 'linux_runtime']]
   ])(
     'executes the focused %s plan through the real preflight script',
     (dryRunMode, bundles, lanes) => {
@@ -1940,7 +1945,7 @@ describe('PR Gate workflow', () => {
     expect(unfilteredNative).toContain('test -x "$OPEN_SCIENCE_TEST_PY_ENV"')
     expect(unfilteredNative).toContain('export OPEN_SCIENCE_TEST_PY_ENV')
     expect(native?.run).toContain(
-      "-t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'"
+      "-t 'executes the repl loop through the production network sandbox|recovers cross-session REPL|keeps folder authority'"
     )
     expect(enforce?.env).toMatchObject({
       UNIT_MACOS_NATIVE_OUTCOME: '${{ steps.unit_macos_native.outcome }}'
@@ -2033,6 +2038,21 @@ describe('PR Gate workflow', () => {
         ({ name }) => name === 'Test real Linux filesystem and network isolation'
       )?.run
     ).toContain('src/main/notebook/shell-cell-session.integration.test.ts')
+    const folderAuthority = workflow.jobs.linux_runtime.steps?.find(
+      ({ name }) => name === 'Test Linux Folder authority across kernel restart'
+    )
+    expect(
+      workflow.jobs.linux_runtime.steps?.find(
+        ({ name }) => name === 'Test real Linux filesystem and network isolation'
+      )?.run
+    ).toContain('packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts')
+    expect(
+      workflow.jobs.linux_runtime.steps?.find(
+        ({ name }) => name === 'Test WSL guest launch arguments'
+      )?.run
+    ).toContain('packages/notebook-network-sandbox/src/wsl2-isolation.test.ts')
+    expect(folderAuthority?.run).toContain('src/main/notebook/kernel-executor.test.ts')
+    expect(folderAuthority?.run).toContain("-t 'keeps folder authority'")
     expect(workflow.jobs.linux_runtime.env?.VITEST_PORTABLE_CI).not.toBe('1')
 
     expect(workflow.jobs.windows_core).toMatchObject({
@@ -2122,6 +2142,7 @@ describe('PR Gate workflow', () => {
     )
     for (const file of [
       'src/main/notebook/windows-shell.integration.test.ts',
+      'src/main/notebook/package-process-sandbox.windows.integration.test.ts',
       'src/main/notebook/powershell-search-parser.windows.integration.test.ts',
       'src/main/notebook/shell-search-scope.test.ts'
     ])

@@ -3,7 +3,10 @@ import { union, area, intersection, lineRect } from './literature-pdf-page-geome
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
+import { isDeepStrictEqual as sameNativeHeader } from 'node:util'
+import { nativeFigureLabelBounds } from './literature-pdf-figure-crop-geometry.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
 
 // The same proved margin exclusion must reach face association and completion.
 // Otherwise a later label pass can reattach the printed page number. An explicit
@@ -1177,6 +1180,178 @@ export function nativeOwnedFigureTopLabel(page, caption, captions, tables, rect,
   )
     return
   return r
+}
+
+// One closed square raster and its independently closed numeric palette own
+// their shared native title. The whole Form/source/font program must agree;
+// its BBox never supplies crop edges and unpainted spaces supply no ink.
+export function nativeOwnedRasterPaletteTitle(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  foreignOwns,
+  context
+) {
+  if (
+    figure?.reason !== 'native-raster-vector-strip' ||
+    !Array.isArray(captions) ||
+    !Array.isArray(tables) ||
+    typeof foreignOwns !== 'function'
+  )
+    return
+  const inventory = nativePageTextPacketInventory(page, tokens, context, true)
+  if (!inventory) return
+  const { valid, inside, o, records, glyphs, evidence } = inventory,
+    rect = figure.rect,
+    caption = figure.caption
+  if (
+    !valid(rect) ||
+    !valid(caption?.rect) ||
+    caption.page !== page.pageNumber ||
+    captions.filter((c) => c === caption).length !== 1 ||
+    tables.some((t) => !valid(t)) ||
+    captions.some((c) => !valid(c.rect))
+  )
+    return
+  const cap = records.filter((r) => inside(caption.rect, r.rect))
+  if (
+    !cap.length ||
+    cap
+      .map((r) => r.r.str)
+      .join('')
+      .replace(/\s/gu, '') !== caption.lines?.join('').replace(/\s/gu, '')
+  )
+    return
+  const em = Math.max(...cap.flatMap((r) => r.part.map((z) => z.g.height)))
+  if (!(em > 0) || rect[3] >= caption.rect[1] || caption.rect[1] - rect[3] > em * 5) return
+  const scopes = [],
+    stack = [],
+    owner = new Map(),
+    textState = new Map()
+  let state = { form: null, alpha: 1, color: '#000000' }
+  for (let i = 0; i < o.fnArray.length; i++) {
+    const op = o.fnArray[i],
+      a = o.argsArray[i]
+    if (op === OPS.save || op === OPS.paintFormXObjectBegin) {
+      stack.push({ state: { ...state }, form: op === OPS.paintFormXObjectBegin })
+      if (op === OPS.paintFormXObjectBegin) {
+        if (state.form || !valid(a?.[1])) return
+        state = { ...state, form: { start: i, end: null } }
+        scopes.push(state.form)
+      }
+    } else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+      const saved = stack.pop()
+      if (!saved || saved.form !== (op === OPS.paintFormXObjectEnd)) return
+      if (saved.form) state.form.end = i
+      state = saved.state
+    } else if (op === OPS.setFillRGBColor) state.color = a?.[0]
+    else if (op === OPS.setGState) {
+      for (const [k, v] of a[0]) if (k === 'ca') state.alpha = v
+    }
+    owner.set(i, state.form)
+    if (op === OPS.showText) textState.set(i, { alpha: state.alpha, color: state.color })
+  }
+  if (stack.length || scopes.some((s) => s.end === null)) return
+  const plans = []
+  for (const scope of scopes) {
+    const native = records.filter((r) => r.part.every((z) => owner.get(z.g.i) === scope))
+    const titles = native.filter(
+      (r) =>
+        r.rect[1] < rect[1] &&
+        r.rect[3] <= rect[1] &&
+        rect[1] - r.rect[3] <= em * 2 &&
+        /^\p{L}[\p{L}\p{N} ()/-]{10,99}$/u.test(r.r.str) &&
+        r.part.every(
+          (z) =>
+            z.g.height >= em * 0.5 &&
+            z.g.height <= em &&
+            textState.get(z.g.i)?.alpha === 1 &&
+            textState.get(z.g.i)?.color === '#000000'
+        )
+    )
+    if (titles.length !== 1) continue
+    const title = titles[0],
+      titlePackets = [...new Set(title.part.map((z) => z.g.packet))]
+    if (
+      titlePackets.length !== 1 ||
+      titlePackets[0].text.replace(/\s/gu, '') !== title.r.str.replace(/\s/gu, '') ||
+      !valid(titlePackets[0].ink)
+    )
+      continue
+    const images = evidence.images.filter((im) => owner.get(im.operationIndex) === scope)
+    if (images.length !== 2 || images.some((im) => !valid(im.rect) || !inside(rect, im.rect)))
+      continue
+    images.sort((a, b) => a.rect[0] - b.rect[0])
+    const [main, palette] = images.map((im) => im.rect),
+      mainSize = main[2] - main[0],
+      paletteWidth = palette[2] - palette[0]
+    if (
+      mainSize < em * 8 ||
+      Math.abs(mainSize - (main[3] - main[1])) > em * 0.1 ||
+      paletteWidth <= 0 ||
+      paletteWidth >= em * 2 ||
+      palette[0] <= main[2] ||
+      palette[0] - main[2] > em * 4 ||
+      Math.abs(palette[1] - main[1]) > em * 0.1 ||
+      Math.abs(palette[3] - main[3]) > em * 0.1 ||
+      images.some(
+        (im) =>
+          [...evidence.frames].filter(
+            ([i, r]) => owner.get(i) === scope && r.every((x, n) => Math.abs(x - im.rect[n]) < 0.01)
+          ).length !== 1
+      )
+    )
+      continue
+    const digits = native.filter((r) => r !== title).sort((a, b) => b.rect[1] - a.rect[1])
+    if (
+      digits.length < 4 ||
+      digits.length > 64 ||
+      digits.some(
+        (r, n) =>
+          r.r.str !== String(n) ||
+          !inside(rect, r.rect) ||
+          r.rect[0] < palette[2] ||
+          r.rect[2] > palette[2] + em * 3 ||
+          r.rect[1] < main[1] - em ||
+          r.rect[3] > main[3] + em ||
+          (n > 0 && r.rect[3] >= digits[n - 1].rect[1])
+      )
+    )
+      continue
+    const component = union([main, palette, ...digits.map((r) => r.rect)])
+    if (
+      title.rect[0] < component[0] ||
+      title.rect[2] > component[2] ||
+      Math.abs((title.rect[0] + title.rect[2] - component[0] - component[2]) / 2) > em ||
+      title.rect[3] >= main[1] ||
+      main[1] - title.rect[3] > em * 4
+    )
+      continue
+    const result = union([rect, title.rect, titlePackets[0].ink]),
+      added = [result[0], result[1], result[2], rect[1]]
+    if (
+      !inside([0, 0, page.width, page.height], result) ||
+      foreignOwns(result) ||
+      tables.some((t) => intersection(t, result) > 0) ||
+      captions.some((c) => c.page === page.pageNumber && intersection(c.rect, added) > 0) ||
+      glyphs.some(
+        (g) => g.packet !== titlePackets[0] && area(g.ink) > 0 && intersection(g.ink, added) > 0
+      ) ||
+      (page.graphicsBounds ?? []).some(
+        (g) =>
+          !valid(g.normalizedRect) ||
+          intersection(
+            g.normalizedRect.map((x, n) => x * (n % 2 ? page.height : page.width)),
+            added
+          ) > 0
+      )
+    )
+      continue
+    plans.push(result)
+  }
+  return plans.length === 1 ? plans[0] : undefined
 }
 // Four literal keys can sit above the four groups of an already complete
 // paired-face plate. Closed faces and whole paint establish the existing
@@ -2891,4 +3066,280 @@ function nativeCutRasterLabelRow(page, caption, captions, tables, rect, tokens, 
   )
     return []
   return row.map((t) => t.rect)
+}
+
+// A vector page's body-margin folio needs a same-document, same-parity header witness.
+// Exclude only its complete native row before every ordinary figure pass.
+export function nativeRepeatedFigureHeader(...args) {
+  try {
+    return proveRepeatedFigureHeader(...args)
+  } catch {
+    return undefined
+  }
+}
+function proveRepeatedFigureHeader(page, tokens, captions, tables, context) {
+  const same = sameNativeHeader
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  const finite = (r, n) => Array.isArray(r) && r.length === n && r.every(Number.isFinite)
+  const intersects = (a, b) =>
+    Math.min(a[2], b[2]) > Math.max(a[0], b[0]) && Math.min(a[3], b[3]) > Math.max(a[1], b[1])
+
+  const witness = context?.runningHeadWitness,
+    current = witness?.currentContent,
+    native = context?.content,
+    other = witness?.witnessContent,
+    v = context?.viewport
+  if (
+    !Number.isSafeInteger(page?.pageNumber) ||
+    page.pageNumber < 3 ||
+    page.rotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    (page.pageLabel !== undefined && page.pageLabel !== String(page.pageNumber)) ||
+    ![tokens, captions, tables, page.lines, page.graphicsBounds].every(Array.isArray) ||
+    !page.graphicsBounds.length ||
+    !witness ||
+    !/^[a-f0-9]{64}$/i.test(context.sourceSha256 ?? '') ||
+    witness.sourceSha256 !== context.sourceSha256 ||
+    witness.currentPageNumber !== page.pageNumber ||
+    witness.witnessPageNumber !== page.pageNumber - 2 ||
+    !Array.isArray(native?.items) ||
+    !Array.isArray(current?.items) ||
+    !Array.isArray(other?.items) ||
+    native.items.length !== current.items.length ||
+    ['width', 'height', 'scale', 'rotation', 'transform'].some(
+      (k) => !same(v?.[k], witness.witnessViewport?.[k])
+    ) ||
+    v.width !== page.width ||
+    v.height !== page.height ||
+    v.scale !== 1 ||
+    v.rotation !== 0 ||
+    !same(v.transform, [1, 0, 0, -1, 0, page.height])
+  )
+    return
+  const aliases = new Map(),
+    reverse = new Map()
+  for (let index = 0; index < native.items.length; index++) {
+    const a = native.items[index],
+      b = current.items[index]
+    if (
+      ['str', 'width', 'height', 'dir', 'hasEOL'].some((k) => a?.[k] !== b?.[k]) ||
+      !same(a?.transform, b?.transform) ||
+      !same(a?.sourceItem, b?.sourceItem) ||
+      !native.styles?.[a.fontName] ||
+      !same(native.styles[a.fontName], current.styles?.[b.fontName]) ||
+      (aliases.has(a.fontName) && aliases.get(a.fontName) !== b.fontName) ||
+      (reverse.has(b.fontName) && reverse.get(b.fontName) !== a.fontName)
+    )
+      return
+    aliases.set(a.fontName, b.fontName)
+    reverse.set(b.fontName, a.fontName)
+  }
+  const viewport = { ...v, convertToViewportPoint: (x, y) => [x, page.height - y] }
+  const fontDomain = (r, style) => {
+    const label = nativeFigureLabelBounds(r, style, viewport)
+    if (!valid(label)) return
+    const [a, b, c, d, x, y] = r.transform,
+      advance = Math.hypot(a, b),
+      height = Math.hypot(c, d),
+      points = [0, r.width].flatMap((u) =>
+        [style.descent * height, style.ascent * height].map((z) =>
+          viewport.convertToViewportPoint(
+            x + (a / advance) * u + (c / height) * z,
+            y + (b / advance) * u + (d / height) * z
+          )
+        )
+      )
+    return union([
+      label,
+      [
+        Math.min(...points.map((p) => p[0])),
+        Math.min(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        Math.max(...points.map((p) => p[1]))
+      ]
+    ])
+  }
+  const row = (content, number) => {
+    const all = content.items.flatMap((r, index) =>
+        typeof r?.str === 'string' && r.str.trim() ? [{ r, index }] : []
+      ),
+      prefix = all.slice(0, 3),
+      numbers = prefix.filter((x) => x.r.str === String(number))
+    if (numbers.length !== 1) return
+    const baseline = numbers[0].r.transform?.[5],
+      parts = all.filter((x) => x.r.transform?.[5] === baseline)
+    if (
+      !parts.length ||
+      parts.length > 2 ||
+      !same(
+        parts.map((x) => x.index),
+        prefix.slice(0, parts.length).map((x) => x.index)
+      )
+    )
+      return
+    const rects = []
+    for (const { r } of parts) {
+      const style = content.styles?.[r.fontName]
+      if (
+        !finite(r.transform, 6) ||
+        r.dir !== 'ltr' ||
+        r.transform[0] !== r.height ||
+        r.transform[3] !== r.height ||
+        r.transform[1] !== 0 ||
+        r.transform[2] !== 0 ||
+        !Number.isFinite(r.width) ||
+        r.width <= 0 ||
+        !Number.isFinite(r.height) ||
+        r.height <= 0 ||
+        style?.vertical !== false ||
+        !Number.isFinite(style?.ascent) ||
+        style.ascent <= 0 ||
+        style.descent > 0 ||
+        !Number.isFinite(style?.descent) ||
+        style.ascent <= style.descent
+      )
+        return
+      const domain = fontDomain(r, style)
+      if (!valid(domain)) return
+      rects.push(domain)
+    }
+    const bounds = [
+        Math.min(...rects.map((r) => r[0])),
+        Math.min(...rects.map((r) => r[1])),
+        Math.max(...rects.map((r) => r[2])),
+        Math.max(...rects.map((r) => r[3]))
+      ],
+      font = Math.max(...parts.map((x) => x.r.height))
+    if (
+      !valid(bounds) ||
+      bounds[0] < 0 ||
+      bounds[2] > page.width ||
+      bounds[1] <= 0 ||
+      bounds[3] > page.height * 0.08 ||
+      parts.some(
+        (x, n) =>
+          x.r.str !== String(number) &&
+          (!/\p{Lu}/u.test(x.r.str) ||
+            /[.!?]$/u.test(x.r.str) ||
+            (n > 0 && rects[n - 1][2] >= rects[n][0]))
+      )
+    )
+      return
+    return { parts, bounds, font }
+  }
+  const a = row(current, page.pageNumber),
+    b = row(other, witness.witnessPageNumber)
+  if (
+    !a ||
+    !b ||
+    a.parts.length !== b.parts.length ||
+    !same(
+      a.parts.map((x) => x.index),
+      b.parts.map((x) => x.index)
+    )
+  )
+    return
+  for (let n = 0; n < a.parts.length; n++) {
+    const x = a.parts[n].r,
+      y = b.parts[n].r
+    if (
+      (x.str !== String(page.pageNumber) && x.str !== y.str) ||
+      ['width', 'height', 'dir', 'fontName', 'hasEOL'].some((k) => x[k] !== y[k]) ||
+      !same(x.transform, y.transform) ||
+      !same(current.styles?.[x.fontName], other.styles?.[y.fontName])
+    )
+      return
+  }
+  const fonts = [],
+    domains = new Map()
+  const near = (a, b) =>
+    finite(a, 4) && finite(b, 4) && a.every((n, i) => Math.abs(n - b[i]) < 1e-6)
+  for (let index = 0; index < current.items.length; index++) {
+    const r = current.items[index]
+    if (typeof r?.str !== 'string' || !r.str.trim()) continue
+    if (
+      r.sourceItem?.index !== index ||
+      r.sourceItem.pageNumber !== page.pageNumber ||
+      r.sourceItem.text !== r.str ||
+      !finite(r.transform, 6) ||
+      !Number.isFinite(r.width) ||
+      r.width <= 0 ||
+      !Number.isFinite(r.height) ||
+      r.height <= 0
+    )
+      return
+    const matching = tokens.filter(
+      (t) =>
+        t.sourceItem?.index === index &&
+        t.sourceItem.pageNumber === page.pageNumber &&
+        t.sourceItem.text === r.str &&
+        t.text === r.str &&
+        t.sourceSegment == null &&
+        t.sourceToken == null
+    )
+    if (
+      matching.length !== 1 ||
+      !valid(matching[0].nativeLabelRect) ||
+      !Number.isFinite(matching[0].fontAscent) ||
+      !Number.isFinite(matching[0].fontDescent) ||
+      matching[0].fontAscent <= matching[0].fontDescent
+    )
+      return
+    const style = current.styles?.[r.fontName]
+    if (style?.vertical !== false || !(style.ascent > 0) || !(style.descent <= 0)) return
+    const expected = tableTextToken(r, viewport, 0),
+      label = nativeFigureLabelBounds(r, style, viewport),
+      t = matching[0],
+      domain = fontDomain(r, style)
+    if (
+      t.fontAscent !== style?.ascent ||
+      t.fontDescent !== style?.descent ||
+      !near(t.rect, expected.rect) ||
+      !near(t.nativeLabelRect, label) ||
+      t.horizontal !== expected.horizontal ||
+      Math.abs(t.baseline - expected.baseline) > 1e-6 ||
+      Math.abs(t.height - expected.height) > 1e-6 ||
+      !valid(domain) ||
+      domain[0] < 0 ||
+      domain[1] < 0 ||
+      domain[2] > page.width ||
+      domain[3] > page.height
+    )
+      return
+    fonts.push(matching[0])
+    domains.set(matching[0], domain)
+  }
+  if (fonts.length !== tokens.filter((t) => t.text?.trim()).length) return
+  const owned = fonts.filter((t) => a.parts.some((p) => p.index === t.sourceItem.index)),
+    bottom = a.bounds[3] + a.font * 0.5
+  if (!proveNativeUniqueWholeFonts(owned, tokens)) return
+  if (
+    fonts.some((t) => !owned.includes(t) && domains.get(t)[1] <= bottom) ||
+    page.graphicsBounds.some(
+      (g) =>
+        g.kind !== 'path' ||
+        !valid(g.normalizedRect) ||
+        g.normalizedRect.some((n) => n < 0 || n > 1) ||
+        g.normalizedRect[1] * page.height <= bottom
+    ) ||
+    captions.some((c) => c.page === page.pageNumber && (!valid(c.rect) || c.rect[1] <= bottom)) ||
+    tables.some((r) => !valid(r) || r[1] <= bottom)
+  )
+    return
+  const lines = page.lines.filter((l) =>
+    intersects([l.x, l.y, l.x + l.width, l.y + l.height], a.bounds)
+  )
+  if (
+    lines.length !== 1 ||
+    lines[0].text.replace(/\s+/gu, ' ').trim() !== a.parts.map((p) => p.r.str).join(' ') ||
+    page.lines.some(
+      (l) =>
+        l !== lines[0] &&
+        l.text?.trim() &&
+        (![l.x, l.y, l.width, l.height].every(Number.isFinite) || l.y <= bottom)
+    )
+  )
+    return
+  return { lines, tokens: owned }
 }

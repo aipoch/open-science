@@ -55,16 +55,20 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
       `(allow network-outbound (literal ${literal(absolutePhysicalPath(request.localRpcSocketPath))}))`
     )
   }
-  const sensitiveReadRoots = [
-    '/Users',
-    '/Volumes',
-    tmpdir(),
-    '/tmp',
-    '/private/tmp',
-    '/var/tmp',
-    '/private/var/tmp',
-    ...(layout.privateRoot && layout.privateRoot !== '/Users' ? [layout.privateRoot] : [])
-  ].map(absolutePhysicalPath)
+  const sensitiveReadRoots = (
+    layout.restrictFolders === false
+      ? []
+      : [
+          '/Users',
+          '/Volumes',
+          tmpdir(),
+          '/tmp',
+          '/private/tmp',
+          '/var/tmp',
+          '/private/var/tmp',
+          ...(layout.privateRoot && layout.privateRoot !== '/Users' ? [layout.privateRoot] : [])
+        ]
+  ).map(absolutePhysicalPath)
   for (const sensitiveRoot of new Set(sensitiveReadRoots)) {
     rules.push(
       `(deny file-read* ${allFilters([
@@ -79,8 +83,19 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
     // This exposes directory metadata only; file contents and directory listings remain denied.
     rules.push('(allow file-read-metadata (vnode-type DIRECTORY))')
   }
+  if (layout.restrictFolders === false) {
+    for (const root of layout.readOnlyRoots) {
+      rules.push(
+        `(deny file-write* ${allFilters([
+          subtree(root),
+          ...layout.readWriteRoots.map((writable) => `(require-not ${subtree(writable)})`)
+        ])})`
+      )
+    }
+  }
   const outsideWritable = exceptRoots([...layout.readWriteRoots, '/dev/null'])
-  rules.push(outsideWritable ? `(deny file-write* ${outsideWritable})` : '(deny file-write*)')
+  if (layout.restrictFolders !== false)
+    rules.push(outsideWritable ? `(deny file-write* ${outsideWritable})` : '(deny file-write*)')
   for (const root of new Set([...layout.deniedReadRoots, ...layout.deniedWriteRoots])) {
     rules.push(`(deny file-write* ${subtree(root)})`)
   }

@@ -1,3 +1,4 @@
+import type { SandboxNetworkApprovalOwner } from '../acp/sandbox-network-approval-owner'
 import { runtimeMetadata } from '../runtime-metadata'
 import { ImageInputCompatibilityOwner } from '../acp/image-input-compatibility-owner'
 import { createAcpRuntime } from '../acp/runtime-composition'
@@ -61,6 +62,7 @@ export async function composeAgentRuntime({
   sessionPersistenceCoordinator,
   runtimeSessionOwner,
   stopManagedSession,
+  sandboxNetworkApprovalOwner,
   pdfElementReader,
   literatureDocumentReader,
   mainPromptSideChatRelay,
@@ -104,6 +106,7 @@ export async function composeAgentRuntime({
   artifactReproducibilityAttemptOwnerRef: {
     current?: ArtifactReproducibilityAttemptOwner
   }
+  sandboxNetworkApprovalOwner: SandboxNetworkApprovalOwner
   sessionPersistenceCoordinator: SessionCatalog &
     SessionMutation &
     SessionRuntimeContextCommands &
@@ -200,6 +203,7 @@ export async function composeAgentRuntime({
       specialistService,
       sessionPersistenceCoordinator,
       runtimeSessionOwner,
+      sandboxNetworkApprovalOwner,
       finalizeRuntimeArtifacts: async (request) => {
         const handlers = artifactHandlersRef.current
         if (!handlers) throw new Error('Artifact finalization is not initialized.')

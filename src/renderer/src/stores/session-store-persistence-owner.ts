@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../../../shared/sandbox-network-approval'
 import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
 import type { StoreApi } from 'zustand'
 import type { ChatArtifact, ChatMessage, ChatSession, ToolActivity } from './session-store-contract'
@@ -1046,7 +1047,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         const permissionPending =
           (current.liveInteractionState?.presentationOnly !== true &&
             current.liveInteractionState?.permission === true) ||
-          session.runtimeContext?.permission?.state === 'pending'
+          session.runtimeContext?.permission?.state === 'pending' ||
+          hasPendingSandboxNetworkApproval(session)
         const interactionState = {
           ...inferSessionInteractionState(current),
           permission: permissionPending
@@ -1094,7 +1096,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           permission:
             (current.liveInteractionState?.presentationOnly !== true &&
               current.liveInteractionState?.permission === true) ||
-            session.runtimeContext?.permission?.state === 'pending',
+            session.runtimeContext?.permission?.state === 'pending' ||
+            hasPendingSandboxNetworkApproval(session),
           plan: projectionIsNewer
             ? activePlanProjection.approval === 'pending'
             : session.runtimeContext?.plan?.approval === 'pending'

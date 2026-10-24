@@ -262,6 +262,8 @@ roles remain explicit in the tables above.
 
 ### PDF reading and annotations
 
+- All single-page PDFs, including Literature attachments, use an image-style preview with centered fit, pan and zoom controls. Hide reading tabs, annotations, translation, search and page navigation; do not offer a full-reader switch. Existing saved annotations and translations remain stored. Multi-page PDFs retain the complete reader.
+
 - PDF floating toolbars use 28px fine-pointer buttons, at least 24px-wide split disclosures, compact gaps and 44px coarse-pointer targets. Keep selected states, focus indicators and tooltips. Notes & Annotations uses 32px controls, 12px utility text and 4px vertical toolbar padding, matching Replay density.
 - Completed PDF analysis shows the figures/tables directly, including cached results on reopen, with a screen-reader completion announcement. Keep analysis options (parallel pages and explicit re-analysis) in the result header's overflow popover, or beside the empty-result message. Loading, active progress, cancellation, partial results and failures retain their existing visible feedback and recovery actions.
 
@@ -886,6 +888,11 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Put hostname validation beside the input, distinguish Add to list from Save changes, and report
   unsaved changes through the shared leave guard. Save blocks concurrent edits; errors retain drafts.
   Explain that saving resets protected connections. Inactive protection gets an explicit scope notice.
+- Custom public domains accept exact hostnames, leading `*.` rules, and pasted HTTP(S) URLs.
+  URL input saves only the hostname, preserving subdomain labels such as `www`; scheme, port,
+  path, query and fragment are discarded. Wildcards cover every descendant subdomain but not the
+  root domain, which must be added separately. Explicit ask rules and private-address blocks remain
+  effective. Existing exact-host settings need no migration; older versions may drop wildcard rules.
 - Trusted private services have a separate local-only flow: exact hostname and port, DNS review,
   displayed address set and installation-wide data-sending consequence, then explicit Add and Save.
   Input edits invalidate prior reviews; late results cannot restore them. Saved rules support review

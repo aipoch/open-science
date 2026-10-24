@@ -1,3 +1,5 @@
+import { NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE } from './process-sandbox'
+import { ExecutionDeadline } from './execution-deadline'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server, type Socket } from 'node:net'
@@ -17,7 +19,10 @@ type Launch = (
   controlPipe?: string
 ) => Promise<{
   completion: Promise<NotebookShellResult>
-  beginExecution: (command: string) => () => void
+  beginExecution: (
+    request: NotebookShellProcessRequest,
+    onNetworkWaitChange: (waiting: boolean) => void
+  ) => () => void | Promise<boolean | void>
   retryCleanup?: () => Promise<boolean>
 }>
 
@@ -53,7 +58,7 @@ export class ShellCellSession {
   private cleanupVerified = false
   private retryCleanup?: () => Promise<boolean>
   private lifetime = new AbortController()
-  private beginExecution?: (command: string) => () => void
+  private beginExecution?: Awaited<ReturnType<Launch>>['beginExecution']
   private cell?: Cell
   private closed = false
   private cwd?: string
@@ -244,8 +249,8 @@ export class ShellCellSession {
     }
     if (this.closed || request.signal?.aborted) return cancelledResult()
     const powershell = request.runtimeBinding?.kind === 'powershell'
-    let endExecution: (() => void) | undefined
-    let timer: ReturnType<typeof setTimeout> | undefined
+    let endExecution: (() => void | Promise<boolean | void>) | undefined
+    let timer: ExecutionDeadline | undefined
     let connectionTimer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
     if (!this.child) this.lifetime = new AbortController()
@@ -321,18 +326,25 @@ export class ShellCellSession {
         }
       }
       if (!this.child) return await result
-      endExecution = this.beginExecution?.(request.command)
+      endExecution = this.beginExecution?.(request, (waiting) => timer?.setPaused(waiting))
       if (this.closed || request.signal?.aborted) abort()
       if (!this.lifetime.signal.aborted) {
         const timeoutMs = request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
-        timer = setTimeout(() => {
+        timer = new ExecutionDeadline(timeoutMs, () => {
           timedOut = true
           abort()
-        }, timeoutMs)
+        })
         const input = powershell && !this.nativeControl ? this.controlSocket! : this.child.stdin
         input.write(this.frame(request.command, this.cell!.marker, powershell))
       }
       const completed = await result
+      timer?.cancel()
+      const retryRequired = await endExecution?.()
+      endExecution = undefined
+      if (request.signal?.aborted || this.closed)
+        return { ...completed, cancelled: true, exitCode: null }
+      if (retryRequired && !completed.stderr.includes('NETWORK_APPROVAL_RETRY_REQUIRED'))
+        completed.stderr += `\n${NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE}`
       if (completed.cwd) this.cwd = completed.cwd
       if (reset)
         completed.stderr =
@@ -362,10 +374,13 @@ export class ShellCellSession {
         exitCode: null
       }
     } finally {
-      clearTimeout(timer)
+      timer?.cancel()
       clearTimeout(connectionTimer)
-      request.signal?.removeEventListener('abort', abort)
-      endExecution?.()
+      try {
+        await endExecution?.()
+      } finally {
+        request.signal?.removeEventListener('abort', abort)
+      }
       this.cell = undefined
     }
   }

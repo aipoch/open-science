@@ -527,6 +527,7 @@ export const createApplicationModules = async (
     stopManagedSession: (projectId, sessionId) =>
       managedExecution.stopSession(projectId, sessionId),
     runtimeSessionOwner: managedExecution.runtimeSessions,
+    sandboxNetworkApprovalOwner: sessionProjection.sandboxNetworkApprovalOwner,
     ...settingsBootstrap,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,

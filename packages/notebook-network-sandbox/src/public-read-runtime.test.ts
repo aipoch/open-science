@@ -285,6 +285,7 @@ describe('public-read runtime decision lifecycle', () => {
       host: 'unknown.example',
       port: 443,
       commandId,
+      canResume: expect.any(Function),
       purpose: 'probe'
     })
     expect(runtime.annotateStderr(commandId, '')).toBe('')
@@ -296,6 +297,7 @@ describe('public-read runtime decision lifecycle', () => {
       host: 'unknown.example',
       port: 443,
       commandId,
+      canResume: expect.any(Function),
       purpose: 'block'
     })
     expect(runtime.annotateStderr(commandId, '')).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
@@ -351,6 +353,7 @@ describe('public-read runtime decision lifecycle', () => {
       host: 'unknown.example',
       port: 443,
       commandId,
+      canResume: expect.any(Function),
       purpose: 'block'
     })
     expect(runtime.annotateStderr(commandId, '')).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')

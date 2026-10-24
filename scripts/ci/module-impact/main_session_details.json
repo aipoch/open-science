@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/session-details/composition.test.ts",
     "src/main/session-details/owner.test.ts",
     "src/main/session-details/owner.ts",
     "src/main/session-details/startup-catalog.test.ts",
@@ -12,6 +13,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/session-details/composition.test.ts",
       "src/main/session-details/owner.test.ts",
       "src/main/session-details/startup-catalog.test.ts"
     ],

@@ -15,6 +15,24 @@ import {
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
 
+it('preserves the Windows profile paths for controlled Notebook mutations', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  try {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const storageRoot = resolve('fixture/storage')
+    const localAppData = resolve('fixture/user/AppData/Local')
+    const environment = launchEnvironment(storageRoot, undefined, {
+      LOCALAPPDATA: localAppData,
+      OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS: 'enabled'
+    })
+    expect(environment.LOCALAPPDATA).toBe(localAppData)
+    expect(environment.OPEN_SCIENCE_CONFIG_ROOT).toBe(storageRoot)
+    expect(environment.OPEN_SCIENCE_E2E_STORAGE_ROOT).toBe(storageRoot)
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
+})
+
 it('keeps the Linux test desktop session while isolating home and provider credentials', () => {
   const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
     OPEN_SCIENCE_E2E_ISOLATE_HOME: '1',

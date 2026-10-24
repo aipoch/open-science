@@ -230,6 +230,7 @@
         "src/main/ipc.ts",
         "src/main/legacy-service-termination.ts",
         "src/main/lifecycle-shutdown.ts",
+        "src/main/session-package/materialize.ts",
         "src/main/literature/pdf-structure/engine.ts",
         "src/main/literature/pdf-translation/local.ts",
         "src/main/local-rpc-transport.ts",

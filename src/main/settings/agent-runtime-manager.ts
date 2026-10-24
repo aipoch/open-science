@@ -1,4 +1,5 @@
 import { nodeRuntimeEnvironment } from '../node-process-host'
+import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdir } from 'node:fs/promises'
@@ -143,14 +144,18 @@ export type ExecuteClaudeProbe = (
 ) => Promise<void>
 
 const executeClaudeProbe: ExecuteClaudeProbe = async (executablePath, env, runtimeArgs = []) => {
-  await execFileAsync(executablePath, [...runtimeArgs, '-p', 'ok'], {
-    env,
-    timeout: CLAUDE_PROBE_TIMEOUT_MS,
-    // On Windows the detected claude is a `claude.cmd` shim, which execFile cannot launch without a
-    // shell. Keep the probe on the same platform-specific path as the pre-extraction implementation.
-    shell: process.platform === 'win32',
-    windowsHide: true
-  })
+  const resolvedPath = resolveClaudeExecutableForSpawn(executablePath)
+  const isScript = /\.(js|mjs)$/i.test(resolvedPath)
+  // Match the auth controllers: resolve npm shims and preserve argument boundaries without a shell.
+  await execFileAsync(
+    isScript ? process.execPath : resolvedPath,
+    [...(isScript ? [resolvedPath] : []), ...runtimeArgs, '-p', 'ok'],
+    {
+      env: isScript ? { ...env, ...nodeRuntimeEnvironment() } : env,
+      timeout: CLAUDE_PROBE_TIMEOUT_MS,
+      windowsHide: true
+    }
+  )
 }
 
 const runCodexAdapterVersion = async (

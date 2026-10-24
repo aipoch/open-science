@@ -10,6 +10,7 @@ const { associateFigures } = await import(
 )
 const {
   nativeCaptionedPlotBand,
+  nativePlotStripHasOmittedAxes,
   nativeFigureRunningHead,
   nativeClosedCategoryLabels,
   nativeAlignedNodeFigure,
@@ -568,6 +569,324 @@ it.each([
       f.frames,
       f.tokens,
       reason === 'missing-owned' ? undefined : f.owned
+    )
+  ).toBeUndefined()
+})
+
+// Only the optional label proof receives loaded-font evidence. The ordinary
+// mixed-strip fixture deliberately remains useful without any font claims.
+function disjointGroupFonts(): ReturnType<typeof JSON.parse> {
+  const f = disjointMixedGroups()
+  for (const token of f.tokens) token.baseline = token.rect[3]
+  const glyphs = new Map<string, number[]>()
+  for (const [i, op] of f.context.operators.fnArray.entries()) {
+    if (op !== OPS.showText) continue
+    for (const glyph of f.context.operators.argsArray[i][0]) {
+      glyph.fontChar = glyph.unicode
+      glyph.isInFont = true
+      glyphs.set(glyph.fontChar, [0, -0.2, 0.5, 0.8])
+    }
+  }
+  f.context.glyphBounds = [
+    { fontName: 'face', glyphs: [...glyphs].map(([fontChar, bounds]) => ({ fontChar, bounds })) }
+  ]
+  return f
+}
+it('claims whole group-owned words with independent native glyph ink', () => {
+  const f = disjointGroupFonts(),
+    before = structuredClone(f)
+  const result = nativeDisjointMixedFigureGroup(
+    f.page,
+    { caption: f.captions[0], rect: [60, 65, 550, 300], reason: 'native-raster-vector-strip' },
+    f.captions,
+    [],
+    f.tokens,
+    f.context
+  )
+  expect(result.sourceItems).toEqual([{ pageNumber: 1, index: 1, text: 'Axis' }])
+  expect(result.issue).toBe('native-disjoint-mixed-group')
+  expect(result.reason).toBe('native-raster-vector-strip')
+  expect(f).toEqual(before)
+})
+it.each(['missing-font', 'missing-glyph', 'not-in-font', 'glyph-outside-clip', 'source-alias'])(
+  'retains a complete group crop without incomplete optional text claims: %s',
+  (mode) => {
+    const f = disjointGroupFonts(),
+      ops = f.context.operators
+    if (mode === 'missing-font') f.context.glyphBounds = []
+    if (mode === 'missing-glyph')
+      f.context.glyphBounds[0].glyphs = f.context.glyphBounds[0].glyphs.filter(
+        (g) => g.fontChar !== 'A'
+      )
+    if (mode === 'not-in-font')
+      ops.argsArray[
+        ops.fnArray.indexOf(OPS.showText, ops.fnArray.lastIndexOf(OPS.beginGroup))
+      ][0][0].isInFont = false
+    if (mode === 'glyph-outside-clip')
+      f.context.glyphBounds[0].glyphs.find((g) => g.fontChar === 'A').bounds[2] = 5
+    if (mode === 'source-alias')
+      f.tokens[1].sourceToken = { sourceItem: { ...f.tokens[1].sourceItem } }
+    const result = nativeDisjointMixedFigureGroup(
+      f.page,
+      { caption: f.captions[0], rect: [60, 65, 550, 300], reason: 'native-raster-vector-strip' },
+      f.captions,
+      [],
+      f.tokens,
+      f.context
+    )
+    expect(result.rect).toEqual([320, 60, 560, 300])
+    expect(result.sourceItems).toBeUndefined()
+    expect(result.issue).toBeUndefined()
+  }
+)
+
+const { nativeUncaptionedFormPlate } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-form-plate.mjs')).href
+)
+function textFreeFormPlate(): ReturnType<typeof JSON.parse> {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [],
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const context = {
+    viewport: { width: 600, height: 800, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    content: { items: [], styles: {} },
+    glyphBounds: [],
+    graphicsBounds: page.graphicsBounds,
+    operators: { fnArray: [] as number[], argsArray: [] as unknown[] }
+  }
+  const emit = (op: number, args: unknown = []): number => {
+    context.operators.fnArray.push(op)
+    return context.operators.argsArray.push(args) - 1
+  }
+  emit(OPS.paintFormXObjectBegin, [null, Float32Array.from([120, 200, 480, 600])])
+  emit(OPS.paintFormXObjectBegin, [null, Float32Array.from([100, 180, 500, 620])])
+  for (const [x, y, right, bottom] of [
+    [100, 180, 500, 620],
+    [140, 220, 300, 400],
+    [300, 400, 460, 580]
+  ]) {
+    const operationIndex = emit(OPS.constructPath, [
+      OPS.fill,
+      [Float32Array.from([0, x, y, 1, right, y, 1, right, bottom, 1, x, bottom, 4])],
+      Float32Array.from([x, y, right, bottom])
+    ])
+    page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [x / 600, (800 - bottom) / 800, right / 600, (800 - y) / 800]
+    })
+  }
+  emit(OPS.paintFormXObjectEnd)
+  emit(OPS.paintFormXObjectEnd)
+  return { page, context, tokens: [] }
+}
+function addFormPlateText(f: ReturnType<typeof JSON.parse>, internal: boolean): void {
+  const x = 200,
+    baseline = internal ? 500 : 700,
+    sourceItem = { pageNumber: 1, index: 0, text: 'A' }
+  f.context.content.items = [
+    {
+      str: 'A',
+      dir: 'ltr',
+      fontName: 'face',
+      width: 5,
+      height: 10,
+      transform: [10, 0, 0, 10, x, baseline],
+      sourceItem
+    }
+  ]
+  f.context.content.styles.face = { ascent: 0.8, descent: -0.2 }
+  f.context.glyphBounds = [
+    { fontName: 'face', glyphs: [{ fontChar: 'A', bounds: [0, -0.2, 0.5, 0.8] }] }
+  ]
+  f.context.viewport.convertToViewportPoint = (x: number, y: number): number[] => [x, 800 - y]
+  f.tokens.push({
+    text: 'A',
+    sourceItem,
+    rect: [x, 800 - baseline - 10, x + 5, 800 - baseline],
+    height: 10,
+    baseline: 800 - baseline,
+    horizontal: true
+  })
+  const position = internal
+    ? f.context.operators.fnArray.length - 2
+    : f.context.operators.fnArray.length
+  f.context.operators.fnArray.splice(
+    position,
+    0,
+    OPS.beginText,
+    OPS.setFont,
+    OPS.setTextMatrix,
+    OPS.showText,
+    OPS.endText
+  )
+  f.context.operators.argsArray.splice(
+    position,
+    0,
+    [],
+    ['face', 10],
+    [[1, 0, 0, 1, x, baseline]],
+    [[{ unicode: 'A', fontChar: 'A', isInFont: true, width: 500 }]],
+    []
+  )
+}
+it('retains one complete text-free vector plate at its actual Form clip', () => {
+  const f = textFreeFormPlate(),
+    before = structuredClone(f)
+  expect(nativeUncaptionedFormPlate(f.page, [], [], f.tokens, f.context)).toEqual({
+    rect: [120, 200, 480, 600],
+    graphicsCount: 3,
+    reason: 'native-uncaptioned-form-plate'
+  })
+  expect(f).toEqual(before)
+})
+function turnedFormPlate(
+  transform: readonly number[] = [0, 1, -1, 0, 650, -100]
+): ReturnType<typeof JSON.parse> {
+  const f = textFreeFormPlate()
+  f.context.operators.fnArray.unshift(OPS.save, OPS.transform)
+  f.context.operators.argsArray.unshift([], transform)
+  f.context.operators.fnArray.push(OPS.restore)
+  f.context.operators.argsArray.push([])
+  for (const graphic of f.page.graphicsBounds) {
+    graphic.operationIndex += 2
+    const [left, top, right, bottom] = graphic.normalizedRect.map(
+      (v: number, i: number) => v * (i % 2 ? 800 : 600)
+    )
+    const points = [
+      [left, 800 - top],
+      [right, 800 - top],
+      [right, 800 - bottom],
+      [left, 800 - bottom]
+    ].map(([x, y]) => [
+      transform[0] * x + transform[2] * y + transform[4],
+      800 - (transform[1] * x + transform[3] * y + transform[5])
+    ])
+    graphic.normalizedRect = [
+      Math.min(...points.map(([x]) => x)),
+      Math.min(...points.map(([, y]) => y)),
+      Math.max(...points.map(([x]) => x)),
+      Math.max(...points.map(([, y]) => y))
+    ].map((v, i) => v / (i % 2 ? 800 : 600))
+  }
+  return f
+}
+it.each([
+  ['forward', [0, 1, -1, 0, 650, -100]],
+  ['backward', [0, -1, 1, 0, -150, 500]]
+] as const)(
+  'retains a complete quarter-turned Form near the page bottom: %s',
+  (_label, transform) => {
+    const f = turnedFormPlate(transform),
+      before = structuredClone(f)
+    expect(nativeUncaptionedFormPlate(f.page, [], [], f.tokens, f.context)).toEqual({
+      rect: [50, 420, 450, 780],
+      graphicsCount: 3,
+      reason: 'native-uncaptioned-form-plate',
+      clipToForm: true
+    })
+    expect(f).toEqual(before)
+  }
+)
+it.each([
+  'mirror',
+  'unequal-scale',
+  'shear',
+  'singular',
+  'nonfinite',
+  'outside-page',
+  'internal-text',
+  'foreign-text',
+  'missing-paint',
+  'unclosed-form',
+  'missing-background'
+])('declines a turned Form without complete native closure: %s', (mode) => {
+  const f = turnedFormPlate(),
+    o = f.context.operators
+  if (mode === 'mirror') o.argsArray[1][2] = 1
+  if (mode === 'unequal-scale') o.argsArray[1][2] = -2
+  if (mode === 'shear') o.argsArray[1][0] = 0.01
+  if (mode === 'singular') o.argsArray[1][1] = 0
+  if (mode === 'nonfinite') o.argsArray[1][4] = Infinity
+  if (mode === 'outside-page') o.argsArray[1][5] = -140
+  if (mode === 'internal-text') addFormPlateText(f, true)
+  if (mode === 'foreign-text') {
+    addFormPlateText(f, false)
+    f.context.content.items[0].transform[5] = 300
+    f.tokens[0].rect = [200, 490, 205, 500]
+    f.tokens[0].baseline = 500
+    o.argsArray[o.fnArray.indexOf(OPS.setTextMatrix)][0][5] = 300
+  }
+  if (mode === 'missing-paint') f.page.graphicsBounds.pop()
+  if (mode === 'unclosed-form') {
+    o.fnArray.pop()
+    o.argsArray.pop()
+  }
+  if (mode === 'missing-background') o.argsArray[4][0] = OPS.stroke
+  expect(nativeUncaptionedFormPlate(f.page, [], [], f.tokens, f.context)).toBeUndefined()
+})
+it.each([false, true])(
+  'separates complete native exterior text from internal Form text: internal=%s',
+  (internal) => {
+    const f = textFreeFormPlate()
+    addFormPlateText(f, internal)
+    const result = nativeUncaptionedFormPlate(f.page, [], [], f.tokens, f.context)
+    if (internal) expect(result).toBeUndefined()
+    else expect(result.rect).toEqual([120, 200, 480, 600])
+  }
+)
+it.each([
+  'missing-bbox',
+  'unclosed-form',
+  'wrong-scope',
+  'group',
+  'foreign-paint',
+  'background-incomplete',
+  'background-degenerate',
+  'caption',
+  'table',
+  'unknown-path',
+  'invalid-graphics'
+])('declines an uncaptioned vector plate without complete native closure: %s', (mode) => {
+  const f = textFreeFormPlate(),
+    o = f.context.operators
+  if (mode === 'missing-bbox') o.argsArray[0][1] = null
+  if (mode === 'unclosed-form') {
+    o.fnArray.pop()
+    o.argsArray.pop()
+  }
+  if (mode === 'wrong-scope') o.fnArray[0] = OPS.save
+  if (mode === 'group') o.fnArray[0] = OPS.beginGroup
+  if (mode === 'foreign-paint')
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex: 999,
+      normalizedRect: [0.8, 0.1, 0.9, 0.2]
+    })
+  if (mode === 'background-incomplete') {
+    o.argsArray[2][1][0] = Float32Array.from([
+      0, 140, 220, 1, 300, 220, 1, 300, 400, 1, 140, 400, 4
+    ])
+    o.argsArray[2][2] = [140, 220, 300, 400]
+  }
+  if (mode === 'background-degenerate')
+    o.argsArray[2][1][0] = Float32Array.from([
+      0, 100, 180, 1, 500, 180, 1, 100, 180, 1, 100, 620, 4
+    ])
+  if (mode === 'unknown-path') o.argsArray[2][0] = -1
+  if (mode === 'invalid-graphics') f.page.invalidGraphicsBounds = 1
+  expect(
+    nativeUncaptionedFormPlate(
+      f.page,
+      mode === 'caption' ? [{ page: 1, rect: [80, 80, 300, 100] }] : [],
+      mode === 'table' ? [[140, 220, 300, 400]] : [],
+      f.tokens,
+      f.context
     )
   ).toBeUndefined()
 })
@@ -1904,4 +2223,1732 @@ it.each([
   expect(
     nativeCaptionedPlotBand(f.page, f.caption, f.captions, [], f.rules, f.frames)
   ).toBeUndefined()
+})
+
+const openSpineStrip = (): ReturnType<typeof JSON.parse> => {
+  const caption = {
+    page: 1,
+    lines: ['Figure 1: Independent response panels.'],
+    rect: [40, 230, 560, 240]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [{ text: caption.lines[0], x: 40, y: 230, width: 520, height: 10, fontSize: 10 }],
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const rules: number[][] = [],
+    tokens: ReturnType<typeof JSON.parse>[] = []
+  for (const [index, left] of [70, 200, 330, 460].entries()) {
+    for (const y of [100, 120, 140, 160, 180]) rules.push([left, y, left + 90, y])
+    rules.push([left, 100, left, 180])
+    if (index >= 2) rules.push([left + 90, 100, left + 90, 180])
+    page.graphicsBounds.push({
+      kind: 'path',
+      normalizedRect: [left, 100, left + 90, 180].map((v, axis) => v / (axis % 2 ? 800 : 600))
+    })
+    const text = `Panel ${String.fromCharCode(65 + index)}`
+    page.lines.push({ text, x: left + 25, y: 87, width: 40, height: 8, fontSize: 8 })
+    tokens.push({
+      text,
+      rect: [left + 25, 87, left + 65, 95],
+      height: 8,
+      baseline: 95,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index, text }
+    })
+    for (let n = 0; n < 5; n++)
+      page.lines.push({
+        text: String(n),
+        x: left - 9,
+        y: 105 + n * 15,
+        width: 5,
+        height: 6,
+        fontSize: 6
+      })
+    for (let n = 0; n < 6; n++)
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [left + 5 + n, 110 + n, left + 85 - n, 175 - n].map(
+          (v, axis) => v / (axis % 2 ? 800 : 600)
+        )
+      })
+  }
+  page.lines.push({
+    text: 'Common horizontal axis',
+    x: 230,
+    y: 190,
+    width: 140,
+    height: 8,
+    fontSize: 8
+  })
+  return { page, caption, captions: [caption], rules, tokens }
+}
+it('keeps independently titled open-spine panels when a later closed-face match owns only a subset', () => {
+  const f = openSpineStrip(),
+    before = structuredClone(f)
+  const result = associateFigures(f.page, f.captions, [], f.rules, [], f.tokens)
+  expect(result).toHaveLength(1)
+  expect(result[0].rect[0]).toBeLessThanOrEqual(70)
+  expect(result[0].rect[2]).toBeGreaterThanOrEqual(550)
+  expect(result[0].rect[1]).toBeLessThanOrEqual(87)
+  expect(result[0].rect[3]).toBeGreaterThanOrEqual(198)
+  expect(f).toEqual(before)
+})
+it.each([
+  'unproved-omitted-axes',
+  'unproved-omitted-titles',
+  'duplicate-title',
+  'foreign-caption',
+  'foreign-table',
+  'no-omitted-face'
+])('keeps the ordinary completion path when omitted-strip evidence is incomplete: %s', (mode) => {
+  const f = openSpineStrip(),
+    old = { reason: 'native-vector-chart-strip', caption: f.caption, rect: [61, 87, 550, 198] },
+    closed = { rect: [321, 87, 550, 198] }
+  if (mode === 'unproved-omitted-axes')
+    f.rules = f.rules.filter((r: number[]) => !(r[0] < 330 && r[0] === r[2]))
+  if (mode === 'unproved-omitted-titles') f.tokens.splice(0, 2)
+  if (mode === 'duplicate-title')
+    f.tokens.push({ ...f.tokens[0], sourceItem: { ...f.tokens[0].sourceItem, index: 99 } })
+  if (mode === 'foreign-caption')
+    f.captions.push({
+      page: 1,
+      lines: ['Figure 2: Independent object.'],
+      rect: [80, 110, 150, 125]
+    })
+  if (mode === 'no-omitted-face') closed.rect = [61, 87, 550, 198]
+  expect(
+    nativePlotStripHasOmittedAxes(
+      f.page,
+      old,
+      closed,
+      f.captions,
+      mode === 'foreign-table' ? [[80, 110, 150, 125]] : [],
+      f.rules,
+      f.tokens
+    )
+  ).toBe(false)
+})
+const vectorOverIndependentRaster = (): ReturnType<typeof JSON.parse> => {
+  const captions = [
+    { page: 1, lines: ['Figure 1: Measured response curves.'], rect: [60, 250, 300, 260] },
+    { page: 1, lines: ['Figure 2: Independent raster surface.'], rect: [60, 440, 300, 450] }
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: captions.map((c) => ({
+      text: c.lines[0],
+      x: c.rect[0],
+      y: c.rect[1],
+      width: c.rect[2] - c.rect[0],
+      height: 10,
+      fontSize: 10
+    })),
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const add = (kind: string, r: number[]): void => {
+    page.graphicsBounds.push({ kind, normalizedRect: r.map((v, n) => v / (n % 2 ? 800 : 600)) })
+  }
+  add('path', [80, 60, 280, 225])
+  for (let n = 0; n < 9; n++) add('path', [85 + n, 65 + n, 275 - n, 220 - n])
+  for (let n = 0; n < 5; n++)
+    page.lines.push({ text: String(n), x: 65, y: 80 + n * 30, width: 8, height: 8, fontSize: 8 })
+  page.lines.push({
+    text: 'Measured response axis',
+    x: 100,
+    y: 230,
+    width: 160,
+    height: 8,
+    fontSize: 8
+  })
+  add('path', [80, 270, 280, 430])
+  add('image', [80, 270, 280, 430])
+  return { page, captions }
+}
+it('recovers the proved upper vector chart after rejecting a lower raster with its own owner', () => {
+  const f = vectorOverIndependentRaster(),
+    before = structuredClone(f)
+  const result = associateFigures(f.page, f.captions)
+  expect(result).toHaveLength(2)
+  expect(result[0].rect).toEqual([65, 60, 280, 238])
+  expect(result[1].rect).toEqual([80, 270, 280, 430])
+  expect(f).toEqual(before)
+})
+const { nativeUpperVectorAfterRasterConflict } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-illustration.mjs')).href
+)
+it.each([
+  'missing-owner',
+  'different-owner-rect',
+  'unproved-upper-chart',
+  'foreign-label-table',
+  'foreign-label-caption'
+])('retains no-crop when the upper-chart recovery lacks independent proof: %s', (mode) => {
+  const f = vectorOverIndependentRaster(),
+    rect = [80, 270, 280, 430],
+    upper = { caption: f.captions[0], rect },
+    lower = { caption: f.captions[1], rect: [...rect] }
+  if (mode === 'foreign-label-caption')
+    f.captions.push({ page: 1, lines: ['Figure 3: Independent label.'], rect: [64, 80, 79, 88] })
+  if (mode === 'missing-owner') Object.defineProperty(lower, 'rect', { value: undefined })
+  if (mode === 'different-owner-rect') lower.rect[0]++
+  if (mode === 'unproved-upper-chart')
+    f.page.graphicsBounds = f.page.graphicsBounds.filter(
+      (g: { normalizedRect: number[] }) => g.normalizedRect[1] >= 270 / 800
+    )
+  expect(
+    nativeUpperVectorAfterRasterConflict(
+      f.page,
+      upper,
+      lower,
+      [upper, lower],
+      f.captions,
+      mode === 'foreign-label-table' ? [[64, 80, 79, 100]] : [],
+      [],
+      undefined
+    )
+  ).toBeUndefined()
+})
+
+// The two renderer groups have separate closed clips and source captions.
+// One borrowed path is enough for the generic mixed strip to absorb its peer.
+function disjointMixedGroups(foreignText = false): ReturnType<typeof JSON.parse> {
+  const captions = [
+    { page: 1, lines: ['Figure 1: Mixed measurements.'], rect: [320, 312, 560, 390] },
+    { page: 1, lines: ['Figure 2: Independent curves.'], rect: [40, 342, 280, 420] }
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: captions.map((c) => ({
+      text: c.lines[0],
+      x: c.rect[0],
+      y: c.rect[1],
+      width: 240,
+      height: 10,
+      fontSize: 10
+    })),
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const context = {
+    viewport: { width: 600, height: 800, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    operators: { fnArray: [] as number[], argsArray: [] as unknown[] },
+    graphicsBounds: page.graphicsBounds,
+    content: {
+      items: [] as ReturnType<typeof JSON.parse>[],
+      styles: { face: { ascent: 0.8, descent: -0.2 } }
+    }
+  }
+  const emit = (op: number, args: unknown = null): number => {
+    context.operators.fnArray.push(op)
+    return context.operators.argsArray.push(args) - 1
+  }
+  const tokens: ReturnType<typeof JSON.parse>[] = []
+  const text = (value: string, x: number, y: number): void => {
+    emit(OPS.beginText)
+    emit(OPS.setFont, ['face', 10])
+    emit(OPS.setTextMatrix, [1, 0, 0, 1, x, 800 - y - 10])
+    emit(OPS.showText, [Array.from(value, (unicode) => ({ unicode, width: 500 }))])
+    emit(OPS.endText)
+    const index = context.content.items.length,
+      rect = [x, y, x + value.length * 5, y + 10],
+      sourceItem = { pageNumber: 1, index, text: value }
+    context.content.items.push({
+      str: value,
+      dir: 'ltr',
+      fontName: 'face',
+      width: value.length * 5,
+      height: 10,
+      transform: [10, 0, 0, 10, x, 800 - y - 10],
+      sourceItem
+    })
+    tokens.push({
+      text: value,
+      rect,
+      nativeLabelRect: rect,
+      height: 10,
+      horizontal: true,
+      sourceItem
+    })
+  }
+  for (const [column, bottom] of [
+    [40, 330],
+    [320, 300]
+  ]) {
+    const group = {
+      matrix: null,
+      bbox: [column, 800 - bottom, column + 240, 740],
+      smask: null,
+      isolated: false,
+      knockout: false
+    }
+    emit(OPS.beginGroup, [group])
+    emit(OPS.paintFormXObjectBegin, [null, null])
+    const add = (kind: string, rect: number[]): void => {
+      const operationIndex = emit(
+        kind === 'image' ? OPS.paintImageXObject : OPS.constructPath,
+        kind === 'image'
+          ? ['image', 10, 10]
+          : [
+              OPS.stroke,
+              [[0, rect[0], 800 - rect[1], 1, rect[2], 800 - rect[3]]],
+              [rect[0], 800 - rect[3], rect[2], 800 - rect[1]]
+            ]
+      )
+      page.graphicsBounds.push({
+        operationIndex,
+        kind,
+        normalizedRect: rect.map((v, n) => v / (n % 2 ? 800 : 600))
+      })
+    }
+    if (column === 40) add('path', [60, 70, 270, 300])
+    else {
+      add('image', [330, 65, 390, 295])
+      for (let n = 0; n < 12; n++) add('path', [420 + n, 70 + n, 550 - n, 270 - n])
+    }
+    text(column === 40 ? 'Peer' : 'Axis', column + 219.9, 100)
+    emit(OPS.paintFormXObjectEnd, [])
+    emit(OPS.endGroup, [group])
+  }
+  for (const c of captions) text(c.lines[0], c.rect[0], c.rect[1])
+  if (foreignText) text('Note', 552, 80)
+  return { page, captions, context, tokens }
+}
+it.each([1, 1.5])('uses the complete renderer clip with native token scale=%s', (scale) => {
+  const f = disjointMixedGroups(),
+    before = structuredClone(f)
+  for (const t of f.tokens) t.rect = t.rect.map((v: number) => (v * scale) / scale)
+  if (scale === 1.5) {
+    for (const [i, op] of f.context.operators.fnArray.entries()) {
+      if (op !== OPS.constructPath) continue
+      const a = f.context.operators.argsArray[i]
+      a[1][0] = Float32Array.from(a[1][0])
+      a[2] = Float32Array.from(a[2])
+    }
+  }
+  const supplied = structuredClone(f),
+    result = associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context),
+    own = result.find((r: { caption: unknown }) => r.caption === f.captions[0])
+  expect(own.rect).toEqual([320, 60, 560, 300])
+  expect(f).toEqual(supplied)
+  expect(before.context.content).toEqual(f.context.content)
+})
+const { nativeDisjointMixedFigureGroup, nativeSingleVectorGroupPng } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-group.mjs')).href
+)
+
+// The numeric ticks can be vector paths. A complete renderer group, rather
+// than a guessed text-tick column, owns the keys and rotated source title.
+function singleVectorGroup(drawing = false, paired = false): ReturnType<typeof JSON.parse> {
+  const title = drawing
+      ? paired
+        ? 'Figure 1. Drawings of (a) mount A and (b) B. Dimensions are in mm.'
+        : 'Figure 1. Drawings of (a) mount A and (b) mount B. Dimensions are in mm.'
+      : 'Figure 1. Independent native panels and their axes.',
+    right = 50 + title.length * 3.75,
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines: [] as ReturnType<typeof JSON.parse>[],
+      graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+    },
+    context = {
+      viewport: {
+        width: 600,
+        height: 800,
+        scale: 1,
+        rotation: 0,
+        transform: [1, 0, 0, -1, 0, 800]
+      },
+      operators: { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] },
+      graphicsBounds: page.graphicsBounds,
+      content: {
+        items: [] as ReturnType<typeof JSON.parse>[],
+        styles: { face: { ascent: 0.8, descent: -0.2 } }
+      },
+      glyphBounds: [{ fontName: 'face', glyphs: [] as ReturnType<typeof JSON.parse>[] }]
+    },
+    tokens: ReturnType<typeof JSON.parse>[] = [],
+    emit = (op: number, args: unknown = null): number => {
+      context.operators.fnArray.push(op)
+      return context.operators.argsArray.push(args) - 1
+    },
+    text = (value: string, x: number, y: number, size = 10, rotated = false): void => {
+      const width = (value.length * size) / 2,
+        transform = rotated
+          ? [0, size, -size, 0, x + size, 800 - y - width]
+          : [size, 0, 0, size, x, 800 - y - size],
+        basis = transform.map((v, n) => (n < 4 ? v / size : v))
+      emit(OPS.beginText)
+      emit(OPS.setFont, ['face', size])
+      emit(OPS.setTextMatrix, basis)
+      emit(OPS.showText, [
+        Array.from(value, (unicode) => {
+          const glyphs = context.glyphBounds[0].glyphs
+          if (!glyphs.some((g) => g.fontChar === unicode))
+            glyphs.push({ fontChar: unicode, bounds: [0, -0.2, 0.5, 0.8] })
+          return { unicode, fontChar: unicode, width: 500, isInFont: true }
+        })
+      ])
+      emit(OPS.endText)
+      const index = context.content.items.length,
+        sourceItem = { pageNumber: 1, index, text: value },
+        rect = rotated ? [x, y, x + size, y + width] : [x, y, x + width, y + size]
+      context.content.items.push({
+        str: value,
+        dir: 'ltr',
+        fontName: 'face',
+        width,
+        height: size,
+        transform,
+        sourceItem
+      })
+      tokens.push({
+        text: value,
+        sourceItem,
+        rect,
+        height: size,
+        baseline: rect[3],
+        horizontal: !rotated,
+        fontAscent: 0.8,
+        fontDescent: -0.2
+      })
+      page.lines.push({
+        text: value,
+        x: rect[0],
+        y: rect[1],
+        width: rect[2] - rect[0],
+        height: rect[3] - rect[1],
+        fontSize: size,
+        horizontal: !rotated
+      })
+    }
+  text('Article heading', 50, 20)
+  const group = {
+    matrix: null,
+    bbox: [50, 240, right, 740],
+    smask: null,
+    isolated: false,
+    knockout: false
+  }
+  emit(OPS.beginGroup, [group])
+  emit(OPS.paintFormXObjectBegin, [null, null])
+  for (const [n, y] of (drawing ? [100, 350] : [100, 250, 400]).entries()) {
+    for (let k = 0; k < (drawing ? 6 : 4); k++) {
+      const rect = [130 + k, y + k, right - 20 - k, y + 100 - k],
+        operationIndex = emit(OPS.constructPath, [
+          OPS.stroke,
+          [Float32Array.from([0, rect[0], 800 - rect[1], 1, rect[2], 800 - rect[3]])],
+          Float32Array.from([rect[0], 800 - rect[3], rect[2], 800 - rect[1]])
+        ])
+      page.graphicsBounds.push({
+        operationIndex,
+        kind: 'path',
+        normalizedRect: rect.map((v, i) => v / (i % 2 ? 800 : 600))
+      })
+    }
+    if (paired) {
+      text(`(${String.fromCharCode(97 + n)})`, 60, y - 30)
+      text('11', 180, y + 20, 8)
+      text('9', 210, y + 40, 8)
+      text('7', 240, y + 60, 8)
+    }
+    text(
+      drawing ? ['Mount A', 'Mount B'][n] : `(${String.fromCharCode(97 + n)})`,
+      80,
+      y - (drawing ? 30 : 10)
+    )
+  }
+  if (!drawing) text('Bridge voltage', 89, 420, 9, true)
+  emit(OPS.paintFormXObjectEnd)
+  emit(OPS.endGroup, [group])
+  text(title, 50, 572, 7.5)
+  const caption = { page: 1, lines: [title], rect: [50, 572, right, 579.5] }
+  return { page, context, tokens, caption, captions: [caption], rect: [50, 60, right, 560] }
+}
+
+it('retains two independently proved engineering prefix and header rows', () => {
+  const f = singleVectorGroup(true, true),
+    before = structuredClone(f),
+    result = associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)
+  expect(result[0].rect).toEqual(f.rect)
+  expect(result[0].reason).toBe('native-single-vector-group')
+  expect(result[0].sourceItems).toBeUndefined()
+  expect(result[0].fallbackFigure.rect).toEqual([130, 100, 277.5, 450])
+  expect(result[0].fallbackFigure.fallbackFigure).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'unloaded-key',
+  'missing-key-outline',
+  'duplicate-source',
+  'unproved-group',
+  'foreign-table',
+  'foreign-caption',
+  'not-engineering',
+  'no-dimensions',
+  'unpaired-header'
+])('keeps the ordinary crop without complete paired engineering evidence: %s', (mode) => {
+  const f = singleVectorGroup(true, true),
+    o = f.context.operators,
+    keyShow = o.fnArray.findIndex(
+      (op: number, i: number) =>
+        op === OPS.showText && o.argsArray[i][0].map((g) => g.unicode ?? '').join('') === '(a)'
+    )
+  let tables: number[][] = []
+  if (mode === 'unloaded-key') o.argsArray[keyShow][0][1].isInFont = false
+  if (mode === 'missing-key-outline')
+    f.context.glyphBounds[0].glyphs = f.context.glyphBounds[0].glyphs.filter(
+      (g) => g.fontChar !== '('
+    )
+  if (mode === 'duplicate-source')
+    f.tokens.push(structuredClone(f.tokens.find((t) => t.text === '(a)')))
+  if (mode === 'unproved-group') o.argsArray[o.fnArray.indexOf(OPS.beginGroup)][0].knockout = true
+  if (mode === 'foreign-table') tables = [[50, 60, 70, 80]]
+  if (mode === 'foreign-caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Other.'], rect: [50, 60, 70, 80] })
+  if (mode === 'not-engineering') f.caption.lines = ['Figure 1. Paired panels.']
+  if (mode === 'no-dimensions') {
+    // Preserve the complete native packet program while replacing dimension semantics.
+    for (const raw of f.context.content.items)
+      if (['11', '9', '7'].includes(raw.str)) {
+        raw.str = raw.str.replace(/\d/g, 'q')
+        raw.sourceItem.text = raw.str
+      }
+    for (const token of f.tokens)
+      if (['11', '9', '7'].includes(token.text)) {
+        token.text = token.text.replace(/\d/g, 'q')
+        token.sourceItem.text = token.text
+      }
+    for (const [i, op] of o.fnArray.entries())
+      if (op === OPS.showText)
+        for (const glyph of o.argsArray[i][0])
+          if (/^[179]$/.test(glyph.unicode ?? '')) glyph.unicode = 'q'
+  }
+  if (mode === 'unpaired-header') {
+    // A title packet remains complete, but is no longer alongside its key.
+    const raw = f.context.content.items.find((r) => r.str === 'Mount B'),
+      token = f.tokens.find((t) => t.text === 'Mount B'),
+      show = o.fnArray.findIndex(
+        (op: number, i: number) =>
+          op === OPS.showText &&
+          o.argsArray[i][0].map((g) => g.unicode ?? '').join('') === 'Mount B'
+      )
+    raw.transform[4] += 30
+    token.rect[0] += 30
+    token.rect[2] += 30
+    o.argsArray[show - 1][0] += 30
+  }
+  const result = associateFigures(f.page, f.captions, tables, [], [], f.tokens, f.context)
+  expect(result[0]?.reason).not.toBe('native-single-vector-group')
+})
+
+it('retains complete caption-named drawing titles through the original independent native group', () => {
+  const f = singleVectorGroup(true),
+    before = structuredClone(f),
+    result = associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)
+  expect(result[0].rect).toEqual(f.rect)
+  expect(result[0].reason).toBe('native-single-vector-group')
+  expect(result[0].sourceItems).toBeUndefined()
+  expect(result[0].fallbackFigure.rect).toEqual([130, 100, 300, 450])
+  expect(result[0].fallbackFigure.fallbackFigure).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'abbreviated-name',
+  'duplicate-owner',
+  'different-font',
+  'unloaded-title',
+  'unproved-group',
+  'outside-ink',
+  'foreign-table',
+  'foreign-caption'
+])('keeps the ordinary drawing crop when caption-named ownership is incomplete: %s', (mode) => {
+  const f = singleVectorGroup(true),
+    o = f.context.operators,
+    shows = o.fnArray.flatMap((op: number, i: number) => (op === OPS.showText ? [i] : []))
+  let tables: number[][] = []
+  if (mode === 'abbreviated-name' || mode === 'duplicate-owner') {
+    // Keep the entire changed caption packet/source/geometry coherent so
+    // rejection proves the title naming gate, not a stale source mismatch.
+    const text = f.caption.lines[0].replace(
+        '(b) mount B',
+        mode === 'abbreviated-name' ? '(b) B' : '(b) mount A'
+      ),
+      raw = f.context.content.items.at(-1),
+      token = f.tokens.at(-1),
+      line = f.page.lines.at(-1),
+      width = (text.length * raw.height) / 2
+    raw.str = raw.sourceItem.text = token.text = token.sourceItem.text = line.text = text
+    raw.width = line.width = width
+    token.rect[2] = token.rect[0] + width
+    f.caption.lines = [text]
+    f.caption.rect[2] = f.caption.rect[0] + width
+    o.argsArray[shows.at(-1)!] = [
+      Array.from(text, (unicode) => ({ unicode, fontChar: unicode, width: 500, isInFont: true }))
+    ]
+  }
+  if (mode === 'different-font') {
+    f.context.content.items[2].fontName = 'other'
+    f.context.content.styles.other = { ...f.context.content.styles.face }
+    f.context.glyphBounds.push({
+      fontName: 'other',
+      glyphs: structuredClone(f.context.glyphBounds[0].glyphs)
+    })
+    o.argsArray[shows[2] - 2] = ['other', 10]
+  }
+  if (mode === 'unloaded-title') o.argsArray[shows[1]][0][0].isInFont = false
+  if (mode === 'unproved-group') o.argsArray[o.fnArray.indexOf(OPS.beginGroup)][0].smask = {}
+  if (mode === 'outside-ink')
+    f.context.glyphBounds[0].glyphs.find(
+      (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'A'
+    ).bounds = [0, -20, 0.5, 0.8]
+  if (mode === 'foreign-table') tables = [[100, 200, 180, 212]]
+  if (mode === 'foreign-caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Other.'], rect: [100, 200, 180, 212] })
+  const result = associateFigures(f.page, f.captions, tables, [], [], f.tokens, f.context)
+  expect(result.some((r) => r.reason === 'native-single-vector-group')).toBe(false)
+})
+
+it('preserves all native group keys and a rotated axis when ticks are painted paths', () => {
+  const f = singleVectorGroup(),
+    before = structuredClone(f),
+    result = associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)
+  expect(result[0].rect).toEqual(f.rect)
+  expect(result[0].reason).toBe('native-single-vector-group')
+  expect(result[0].sourceItems).toBeUndefined()
+  expect(result[0].fallbackFigure.rect).toEqual([130, 100, 221.25, 500])
+  expect(result[0].fallbackFigure.fallbackFigure).toBeUndefined()
+  expect(f).toEqual(before)
+})
+
+it.each([
+  'missing-source',
+  'missing-key',
+  'unknown-paint',
+  'unbalanced',
+  'soft-mask',
+  'foreign-font',
+  'missing-outline',
+  'foreign-ink',
+  'table-owner',
+  'foreign-caption'
+])('declines a single vector group without complete independent proof: %s', (mode) => {
+  const f = singleVectorGroup(),
+    o = f.context.operators
+  let tables: number[][] = []
+  if (mode === 'missing-source') f.context.content.items[1].sourceItem.index = 99
+  if (mode === 'missing-key') {
+    f.tokens[1].text = f.tokens[1].sourceItem.text = f.context.content.items[1].str = '(z)'
+    const packet =
+      o.argsArray[o.fnArray.indexOf(OPS.showText, o.fnArray.indexOf(OPS.beginGroup))][0]
+    packet[1].unicode = packet[1].fontChar = 'z'
+    f.context.glyphBounds[0].glyphs.push({ fontChar: 'z', bounds: [0, -0.2, 0.5, 0.8] })
+  }
+  if (mode === 'unknown-paint') o.fnArray[o.fnArray.indexOf(OPS.constructPath)] = OPS.shadingFill
+  if (mode === 'unbalanced') o.fnArray[o.fnArray.indexOf(OPS.endGroup)] = OPS.restore
+  if (mode === 'soft-mask') o.argsArray[o.fnArray.indexOf(OPS.beginGroup)][0].smask = {}
+  if (mode === 'foreign-font') o.argsArray[o.fnArray.indexOf(OPS.showText)][0][0].isInFont = false
+  if (mode === 'missing-outline') f.context.glyphBounds[0].glyphs = []
+  if (mode === 'foreign-ink')
+    f.context.glyphBounds[0].glyphs.find(
+      (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'A'
+    ).bounds = [0, -20, 0.5, 0.8]
+  if (mode === 'table-owner') tables = [[100, 100, 200, 200]]
+  if (mode === 'foreign-caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Other.'], rect: [80, 100, 160, 112] })
+  const results = associateFigures(f.page, f.captions, tables, [], [], f.tokens, f.context)
+  expect(results.some((r) => r.reason === 'native-single-vector-group')).toBe(false)
+})
+
+it('validates the actual single-group PNG halo at both initial and retried scales', () => {
+  const f = singleVectorGroup(),
+    candidate = associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)[0],
+    png = (scale: number): Uint8Array => {
+      const b = Buffer.alloc(33)
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(b)
+      b.writeUInt32BE(13, 8)
+      b.write('IHDR', 12)
+      b.writeUInt32BE(Math.ceil((f.rect[2] - f.rect[0]) * scale), 16)
+      b.writeUInt32BE(Math.ceil((f.rect[3] - f.rect[1]) * scale), 20)
+      return b
+    }
+  expect(nativeSingleVectorGroupPng(png(4), candidate)).toBe(true)
+  expect(nativeSingleVectorGroupPng(png(0.8), candidate)).toBe(true)
+  // This outside loaded ink misses the exact group by .005pt, but lies in
+  // the canvas/antialiasing halo. A clip alone cannot authorize publication.
+  const near = structuredClone(candidate)
+  near.groupRasterProof.outsideInk.push([49.98, 100, 49.995, 110])
+  expect(nativeSingleVectorGroupPng(png(4), near)).toBe(false)
+  expect(nativeSingleVectorGroupPng(png(0.8), near)).toBe(false)
+  expect(nativeSingleVectorGroupPng(new Uint8Array(32), candidate)).toBe(false)
+})
+
+const { nativeCaptionedFormScope } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-captioned-form.mjs')).href
+)
+
+// One native Form and one independent article rule reproduce a borrowed
+// paragraph. Its exact clip owns the picture, without claiming its labels.
+function captionedVectorForm(bottom = 180): ReturnType<typeof JSON.parse> {
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [] as ReturnType<typeof JSON.parse>[],
+    graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+  }
+  const context = {
+    viewport: { width: 600, height: 800, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    operators: { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] },
+    graphicsBounds: page.graphicsBounds,
+    content: {
+      items: [] as ReturnType<typeof JSON.parse>[],
+      styles: { face: { ascent: 0.8, descent: -0.2 } }
+    },
+    glyphBounds: [{ fontName: 'face', glyphs: [] as ReturnType<typeof JSON.parse>[] }]
+  }
+  const tokens: ReturnType<typeof JSON.parse>[] = [],
+    glyphs = context.glyphBounds[0].glyphs,
+    emit = (op: number, args: unknown = null): number => {
+      context.operators.fnArray.push(op)
+      return context.operators.argsArray.push(args) - 1
+    },
+    text = (value: string, x: number, y: number): void => {
+      emit(OPS.beginText)
+      emit(OPS.setFont, ['face', 10])
+      emit(OPS.setTextMatrix, [1, 0, 0, 1, x, 800 - y - 10])
+      emit(OPS.showText, [
+        Array.from(value, (unicode) => {
+          if (!glyphs.some((g) => g.fontChar === unicode))
+            glyphs.push({ fontChar: unicode, bounds: [0, -0.2, 0.5, 0.8] })
+          return { unicode, fontChar: unicode, width: 500, isInFont: true }
+        })
+      ])
+      emit(OPS.endText)
+      const index = context.content.items.length,
+        sourceItem = { pageNumber: 1, index, text: value },
+        rect = [x, y, x + value.length * 5, y + 10]
+      context.content.items.push({
+        str: value,
+        dir: 'ltr',
+        fontName: 'face',
+        width: value.length * 5,
+        height: 10,
+        transform: [10, 0, 0, 10, x, 800 - y - 10],
+        sourceItem
+      })
+      tokens.push({
+        text: value,
+        rect,
+        height: 10,
+        baseline: y + 10,
+        horizontal: true,
+        fontAscent: 0.8,
+        fontDescent: -0.2,
+        sourceItem
+      })
+      page.lines.push({ text: value, x, y, width: value.length * 5, height: 10, fontSize: 10 })
+    },
+    path = (rect: number[]): void => {
+      const operationIndex = emit(OPS.constructPath, [
+        OPS.stroke,
+        [Float32Array.from([0, rect[0], 800 - rect[1], 1, rect[2], 800 - rect[3]])],
+        Float32Array.from([rect[0], 800 - rect[3], rect[2], 800 - rect[1]])
+      ])
+      page.graphicsBounds.push({
+        operationIndex,
+        kind: 'path',
+        normalizedRect: rect.map((v, n) => v / (n % 2 ? 800 : 600))
+      })
+    }
+  text('Neighbor paragraph and explanation', 50, 100)
+  path([210, 150, 270, 151])
+  emit(OPS.paintFormXObjectBegin, [null, Float32Array.from([320, 800 - bottom, 560, 740])])
+  for (let n = 0; n < 3; n++) path([330 + n, 70 + n, 550 - n, bottom - 10 - n])
+  text('Value', 350, 110)
+  emit(OPS.paintFormXObjectEnd)
+  const caption = {
+    page: 1,
+    lines: ['Figure 1: Complete native vector panel example.'],
+    rect: [320, bottom + 0.1, 555, bottom + 10.1]
+  }
+  text(caption.lines[0], 320, bottom + 0.1)
+  const figure = { caption, rect: [210, 70, 550, bottom - 10], graphicsCount: 4 }
+  return { page, context, tokens, caption, captions: [caption], figure }
+}
+
+it('isolates a whole captioned Form at the actual association seam without claiming text', () => {
+  const f = captionedVectorForm(),
+    before = structuredClone(f)
+  for (const token of f.tokens) token.rect = token.rect.map((v: number) => (v * 1.5) / 1.5)
+  const result = associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)
+  expect(result).toEqual([
+    {
+      ...f.figure,
+      rect: [320, 60, 560, 180],
+      graphicsCount: 3,
+      raster: {
+        scale: 4,
+        pixelWidth: 960,
+        pixelHeight: 480,
+        protection: [319.75, 59.75, 560.25, 180.25]
+      },
+      reason: 'native-captioned-form-scope',
+      fallbackFigure: f.figure
+    }
+  ])
+  expect(result[0].sourceItems).toBeUndefined()
+  expect(f.page).toEqual(before.page)
+  expect(f.context).toEqual(before.context)
+})
+
+it.each([
+  'bad-scope',
+  'unbalanced',
+  'unknown-paint',
+  'missing-render-paint',
+  'foreign-loaded-font',
+  'missing-font-outline',
+  'external-ink-crosses',
+  'external-space-ink-crosses',
+  'near-edge-glyph',
+  'near-edge-paint',
+  'oversized-raster',
+  'foreign-caption',
+  'table-overlap',
+  'wrong-caption-source',
+  'no-borrowed-paint'
+])('declines a Form crop with incomplete or conflicting native proof: %s', (mode) => {
+  const f = captionedVectorForm(mode === 'oversized-raster' ? 300 : 180),
+    o = f.context.operators
+  let tables: number[][] = []
+  if (mode === 'bad-scope')
+    o.argsArray[o.fnArray.indexOf(OPS.paintFormXObjectBegin)][1] = Float32Array.from([
+      40, 620, 560, 740
+    ])
+  if (mode === 'unbalanced') o.fnArray[o.fnArray.indexOf(OPS.paintFormXObjectEnd)] = OPS.restore
+  if (mode === 'unknown-paint') o.fnArray[o.fnArray.indexOf(OPS.constructPath)] = OPS.shadingFill
+  if (mode === 'missing-render-paint') {
+    f.page.graphicsBounds = f.page.graphicsBounds.slice(0, -1)
+    f.context.graphicsBounds = f.page.graphicsBounds
+  }
+  if (mode === 'foreign-loaded-font')
+    o.argsArray[o.fnArray.indexOf(OPS.showText)][0][0].isInFont = false
+  if (mode === 'missing-font-outline')
+    f.context.glyphBounds[0].glyphs = f.context.glyphBounds[0].glyphs.filter(
+      (g: ReturnType<typeof JSON.parse>) => g.fontChar !== 'N'
+    )
+  if (mode === 'external-ink-crosses')
+    f.context.glyphBounds[0].glyphs.find(
+      (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'N'
+    ).bounds = [0, -0.2, 40, 0.8]
+  if (mode === 'external-space-ink-crosses')
+    f.context.glyphBounds[0].glyphs.find(
+      (g: ReturnType<typeof JSON.parse>) => g.fontChar === ' '
+    ).bounds = [0, -0.2, 40, 0.8]
+  if (mode === 'near-edge-glyph')
+    f.context.glyphBounds[0].glyphs.find(
+      (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'N'
+    ).bounds = [0, -0.2, 26.9995, 0.8]
+  if (mode === 'near-edge-paint') {
+    const g = f.page.graphicsBounds[0],
+      rect = [319.98, 150, 319.995, 151]
+    g.normalizedRect = rect.map((v: number, n: number) => v / (n % 2 ? 800 : 600))
+    o.argsArray[g.operationIndex] = [
+      OPS.stroke,
+      [Float32Array.from([0, rect[0], 800 - rect[1], 1, rect[2], 800 - rect[3]])],
+      Float32Array.from([rect[0], 800 - rect[3], rect[2], 800 - rect[1]])
+    ]
+  }
+  if (mode === 'foreign-caption')
+    f.captions.push({ page: 1, lines: ['Table 2. Other.'], rect: [350, 100, 450, 120] })
+  if (mode === 'table-overlap') tables = [[350, 100, 450, 120]]
+  if (mode === 'wrong-caption-source') f.caption.lines = ['Figure 1: Different native title.']
+  if (mode === 'no-borrowed-paint') f.figure.rect = [320, 60, 560, 180]
+  expect(
+    nativeCaptionedFormScope(f.page, f.figure, f.captions, tables, f.tokens, f.context)
+  ).toBeUndefined()
+})
+it.each([
+  'soft-mask',
+  'knockout',
+  'group-matrix',
+  'unclosed-group',
+  'unknown-paint',
+  'wrong-text-matrix',
+  'wrong-token-geometry',
+  'duplicate-source',
+  'foreign-paint',
+  'foreign-native-text',
+  'foreign-caption',
+  'foreign-final-clip-table',
+  'caption-without-source'
+])('retains the ordinary strip when the independent renderer group lacks proof: %s', (mode) => {
+  const f = disjointMixedGroups(mode === 'foreign-native-text'),
+    ops = f.context.operators,
+    ownBegin = ops.fnArray.lastIndexOf(OPS.beginGroup),
+    group = ops.argsArray[ownBegin][0],
+    figure = {
+      caption: f.captions[0],
+      rect: [60, 65, 550, 300],
+      reason: 'native-raster-vector-strip'
+    }
+  if (mode === 'soft-mask') group.smask = { subtype: 'Alpha' }
+  if (mode === 'knockout') group.knockout = true
+  if (mode === 'group-matrix') group.matrix = [1, 0, 0, 1, 0, 0]
+  if (mode === 'unclosed-group') ops.fnArray[ops.fnArray.lastIndexOf(OPS.endGroup)] = OPS.restore
+  if (mode === 'unknown-paint') ops.argsArray[ops.fnArray.indexOf(OPS.constructPath)][0] = -1
+  if (mode === 'wrong-text-matrix')
+    ops.argsArray[ops.fnArray.indexOf(OPS.setTextMatrix, ownBegin)][4]++
+  if (mode === 'wrong-token-geometry') f.tokens[1].rect[2] += 0.001
+  if (mode === 'duplicate-source') f.tokens.push(structuredClone(f.tokens[1]))
+  if (mode === 'foreign-paint') {
+    f.page.graphicsBounds[0].normalizedRect = [550 / 600, 80 / 800, 558 / 600, 100 / 800]
+  }
+  if (mode === 'foreign-caption')
+    f.captions.push({ page: 1, lines: ['Figure 3: Separate text.'], rect: [552, 80, 558, 100] })
+  if (mode === 'caption-without-source') f.captions[0].lines[0] += ' Changed.'
+  expect(
+    nativeDisjointMixedFigureGroup(
+      f.page,
+      figure,
+      f.captions,
+      mode === 'foreign-final-clip-table' ? [[552, 80, 558, 100]] : [],
+      f.tokens,
+      f.context
+    )
+  ).toBeUndefined()
+})
+
+function balancedNativeDrawing(): ReturnType<typeof JSON.parse> {
+  const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      invalidGraphicsBounds: 0,
+      lines: [] as ReturnType<typeof JSON.parse>[],
+      graphicsBounds: [] as ReturnType<typeof JSON.parse>[]
+    },
+    viewport = {
+      width: 600,
+      height: 800,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 800],
+      convertToViewportPoint: (x: number, y: number) => [x, 800 - y]
+    },
+    context = {
+      pageNumber: 1,
+      sourceSha256: '0'.repeat(64),
+      viewport,
+      graphicsBounds: page.graphicsBounds,
+      operators: { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] },
+      content: { items: [] as ReturnType<typeof JSON.parse>[] },
+      glyphBounds: [{ fontName: 'face', glyphs: [] as ReturnType<typeof JSON.parse>[] }]
+    },
+    emit = (op: number, args: unknown = null): number => {
+      context.operators.fnArray.push(op)
+      return context.operators.argsArray.push(args) - 1
+    },
+    text = (value: string, x: number, top: number, painted = value): void => {
+      emit(OPS.beginText)
+      emit(OPS.setFont, ['face', 10])
+      emit(OPS.setTextMatrix, [Float32Array.from([1, 0, 0, 1, x, 790 - top])])
+      emit(OPS.showText, [
+        Array.from(painted, (unicode) => {
+          if (!context.glyphBounds[0].glyphs.some((g) => g.fontChar === unicode))
+            context.glyphBounds[0].glyphs.push({
+              fontChar: unicode,
+              bounds: unicode === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 1]
+            })
+          return { unicode, fontChar: unicode, width: 500, isInFont: true }
+        })
+      ])
+      emit(OPS.endText)
+      const index = context.content.items.length
+      context.content.items.push({
+        str: value,
+        dir: 'ltr',
+        fontName: 'face',
+        width: value.length * 5,
+        height: 10,
+        transform: [10, 0, 0, 10, x, 790 - top],
+        sourceItem: { pageNumber: 1, index, text: value }
+      })
+      page.lines.push({ text: value, x, y: top, width: value.length * 5, height: 10, fontSize: 10 })
+    },
+    path = (rect: number[], frame = false, padding = 2): void => {
+      const [l, t, r, b] = rect,
+        operationIndex = emit(OPS.constructPath, [
+          OPS.stroke,
+          [
+            Float32Array.from(
+              frame
+                ? [0, l, 800 - t, 1, r, 800 - t, 1, r, 800 - b, 1, l, 800 - b, 4]
+                : [0, l, 800 - t, 1, r, 800 - b]
+            )
+          ],
+          Float32Array.from([l, 800 - b, r, 800 - t])
+        ])
+      page.graphicsBounds.push({
+        operationIndex,
+        kind: 'path',
+        normalizedRect: rect.map((n, i) => (n + (i < 2 ? -padding : padding)) / (i % 2 ? 800 : 600))
+      })
+    }
+  emit(OPS.save)
+  emit(OPS.save)
+  emit(OPS.setLineWidth, [0.4])
+  for (const [x, y] of [
+    [60, 90],
+    [150, 150],
+    [240, 90]
+  ]) {
+    path([x, y, x + 35, y + 25], true)
+    text('Node', x, y + 5)
+  }
+  for (let i = 0; i < 9; i++)
+    path(i === 0 ? [42, 62, 278, 263] : [70 + i * 3, 210 + i * 3, 240 + i * 3, 211 + i * 3])
+  text('Before', 40, 60)
+  text('After', 245, 60)
+  text('Native legend', 100, 250)
+  emit(OPS.restore)
+  emit(OPS.restore)
+  text('Neighbor paragraph', 330, 80)
+  path([286, 130, 550, 131], false, 5)
+  text('μ', 450, 400, 'µ')
+  const caption = {
+    page: 1,
+    lines: ['Figure 1: Complete vector diagram.'],
+    rect: [40, 280, 280, 290]
+  }
+  text(caption.lines[0], 40, 280)
+  const native = context.content.items.map((item) => ({
+    text: item.str,
+    sourceItem: item.sourceItem,
+    rect: [
+      item.transform[4],
+      800 - item.transform[5] - 10,
+      item.transform[4] + item.width,
+      800 - item.transform[5]
+    ],
+    height: 10,
+    baseline: 800 - item.transform[5],
+    horizontal: true
+  }))
+  return {
+    page,
+    context,
+    tokens: native,
+    caption,
+    captions: [caption],
+    figure: { caption, rect: [40, 60, 550, 270], graphicsCount: 13 }
+  }
+}
+
+it('isolates an independently closed balanced native drawing without claiming neighboring source', () => {
+  const f = balancedNativeDrawing(),
+    before = structuredClone({
+      ...f,
+      context: {
+        ...f.context,
+        viewport: { ...f.context.viewport, convertToViewportPoint: undefined }
+      }
+    }),
+    result = associateFigures(f.page, f.captions, [], [], [], f.tokens, f.context)
+  expect(result[0].reason).toBe('native-balanced-vector-scope')
+  expect(result[0].rect[2]).toBeLessThan(300)
+  expect(result[0].fallbackFigure).toBeDefined()
+  expect(result[0].sourceItems).toBeUndefined()
+  expect({
+    ...f,
+    context: {
+      ...f.context,
+      viewport: { ...f.context.viewport, convertToViewportPoint: undefined }
+    }
+  }).toEqual(before)
+})
+
+const { nativeBalancedVectorFigureScope } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-balanced-scope.mjs')).href
+)
+const balancedScopeRefusals: [string, (f: ReturnType<typeof balancedNativeDrawing>) => void][] = [
+  [
+    'same-column unowned legend',
+    (f) => {
+      const r = f.context.content.items[6]
+      r.transform[4] = 80
+      r.transform[5] = 522
+      const show = f.context.operators.fnArray.flatMap((op: number, i: number) =>
+        op === OPS.showText ? [i] : []
+      )[6]
+      f.context.operators.argsArray[show - 1] = [Float32Array.from([1, 0, 0, 1, 80, 522])]
+    }
+  ],
+  [
+    'later overlapping paint',
+    (f) => {
+      const g = f.page.graphicsBounds.at(-1),
+        a = f.context.operators.argsArray[g.operationIndex]
+      a[1] = [Float32Array.from([0, 150, 600, 1, 200, 599])]
+      a[2] = Float32Array.from([150, 599, 200, 600])
+      g.normalizedRect = [145 / 600, 195 / 800, 205 / 600, 206 / 800]
+    }
+  ],
+  [
+    'missing complete foreign glyph',
+    (f) => {
+      f.context.glyphBounds[0].glyphs = f.context.glyphBounds[0].glyphs.filter(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar !== 'µ'
+      )
+    }
+  ],
+  [
+    'normalization required by a claimed source',
+    (f) => {
+      const r = f.context.content.items[0]
+      r.str = 'μode'
+      r.sourceItem.text = r.str
+      const show = f.context.operators.fnArray.indexOf(OPS.showText)
+      f.context.operators.argsArray[show][0][0] = {
+        unicode: 'µ',
+        fontChar: 'µ',
+        width: 500,
+        isInFont: true
+      }
+    }
+  ],
+  [
+    'unaccounted painted path',
+    (f) => {
+      f.page.graphicsBounds.pop()
+    }
+  ],
+  [
+    'malformed optional source evidence',
+    (f) => {
+      f.context.content.items[0] = null
+    }
+  ],
+  [
+    'unbalanced drawing save',
+    (f) => {
+      f.context.operators.fnArray.push(OPS.save)
+      f.context.operators.argsArray.push(null)
+    }
+  ],
+  [
+    'hairline stroke without a finite ink envelope',
+    (f) => {
+      f.context.operators.argsArray[2] = [0]
+    }
+  ],
+  [
+    'source packet crossing drawing closure',
+    (f) => {
+      const o = f.context.operators,
+        show = o.fnArray.indexOf(OPS.showText),
+        tail = o.argsArray[show][0].splice(2),
+        close = o.fnArray.indexOf(OPS.restore)
+      o.fnArray.splice(close, 1)
+      o.argsArray.splice(close, 1)
+      o.fnArray.splice(show + 1, 0, OPS.restore, OPS.showText)
+      o.argsArray.splice(show + 1, 0, null, [tail])
+      for (const g of f.page.graphicsBounds)
+        if (g.operationIndex > show) g.operationIndex += g.operationIndex < close ? 2 : 1
+    }
+  ]
+]
+it.each(balancedScopeRefusals)('keeps the ordinary figure without %s', (_name, mutate) => {
+  const f = balancedNativeDrawing()
+  mutate(f)
+  expect(
+    nativeBalancedVectorFigureScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+})
+it('retains a zero-advance foreign source and refuses a PNG halo touching foreign ink', () => {
+  const f = balancedNativeDrawing(),
+    r = f.context.content.items[7],
+    o = f.context.operators
+  r.str = '̸'
+  r.sourceItem.text = r.str
+  r.width = 0
+  f.context.glyphBounds[0].glyphs.push({ fontChar: '̸', bounds: [-0.2, 0, 0.2, 1] })
+  const show = o.fnArray.flatMap((op: number, i: number) => (op === OPS.showText ? [i] : []))[7]
+  o.argsArray[show][0] = [{ unicode: '̸', fontChar: '̸', width: 0, isInFont: true }]
+  const result = nativeBalancedVectorFigureScope(
+    f.page,
+    f.figure,
+    f.captions,
+    [],
+    f.tokens,
+    f.context
+  )
+  expect(result?.reason).toBe('native-balanced-vector-scope')
+  expect(r.str).toBe('̸')
+  expect(o.argsArray[show][0][0].width).toBe(0)
+  const png = new Uint8Array(33),
+    view = new DataView(png.buffer)
+  png.set([137, 80, 78, 71, 13, 10, 26, 10])
+  view.setUint32(8, 13)
+  view.setUint32(12, 0x49484452)
+  view.setUint32(16, 960)
+  view.setUint32(20, 820)
+  expect(nativeSingleVectorGroupPng(png, result)).toBe(true)
+  const near = {
+    ...result,
+    groupRasterProof: {
+      ...result.groupRasterProof,
+      outsideInk: [...result.groupRasterProof.outsideInk, [280.005, 100, 280.1, 120]]
+    }
+  }
+  expect(nativeSingleVectorGroupPng(png, near)).toBe(false)
+})
+
+function shadedNativeDiffExample(): ReturnType<typeof JSON.parse> {
+  const f = balancedNativeDrawing(),
+    c = f.context
+  f.page.graphicsBounds.length = 0
+  f.page.lines.length = 0
+  c.operators.fnArray.length = 0
+  c.operators.argsArray.length = 0
+  c.content.items.length = 0
+  c.glyphBounds[0].glyphs.length = 0
+  c.content.styles = { face: { fontFamily: 'monospace' } }
+  const emit = (op: number, a: unknown = null): number => {
+    c.operators.fnArray.push(op)
+    return c.operators.argsArray.push(a) - 1
+  }
+  for (let block = 0; block < 2; block++)
+    for (const [row, text] of [
+      '@@ sample ' + (block ? 'two' : 'one') + ' @@',
+      'value = build()',
+      '-value = old()',
+      '+value = next()',
+      'consume(value)'
+    ].entries()) {
+      const top = 60 + block * 90 + row * 14,
+        operationIndex = emit(OPS.setFillRGBColor, ['#eeeeee']) + 1
+      emit(OPS.constructPath, [
+        OPS.fill,
+        [
+          Float32Array.from([
+            0,
+            30,
+            801 - top,
+            1,
+            270,
+            801 - top,
+            1,
+            270,
+            789 - top,
+            1,
+            30,
+            789 - top,
+            4
+          ])
+        ],
+        Float32Array.from([30, 789 - top, 270, 801 - top])
+      ])
+      f.page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex,
+        normalizedRect: [30 / 600, (top - 1) / 800, 270 / 600, (top + 11) / 800]
+      })
+      emit(OPS.setFillRGBColor, ['#000000'])
+      emit(OPS.beginText)
+      emit(OPS.setFont, ['face', 10])
+      emit(OPS.setTextMatrix, [Float32Array.from([1, 0, 0, 1, 35, 790 - top])])
+      emit(OPS.showText, [
+        Array.from(text, (unicode) => {
+          if (!c.glyphBounds[0].glyphs.some((g) => g.fontChar === unicode))
+            c.glyphBounds[0].glyphs.push({
+              fontChar: unicode,
+              bounds: unicode === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 1]
+            })
+          return {
+            unicode,
+            fontChar: unicode,
+            width: 500,
+            isInFont: true,
+            isSpace: unicode === ' ',
+            originalCharCode: unicode.codePointAt(0)
+          }
+        })
+      ])
+      emit(OPS.endText)
+      const index = c.content.items.length
+      c.content.items.push({
+        str: text,
+        width: text.length * 5,
+        height: 10,
+        dir: 'ltr',
+        fontName: 'face',
+        transform: [10, 0, 0, 10, 35, 790 - top],
+        sourceItem: { pageNumber: 1, index, text }
+      })
+    }
+  return {
+    page: f.page,
+    context: c,
+    options: {
+      competingRects: [],
+      captions: [],
+      current: structuredClone({
+        operators: c.operators,
+        content: c.content,
+        viewport: { ...c.viewport, convertToViewportPoint: undefined },
+        sourceSha256: c.sourceSha256,
+        pageNumber: c.pageNumber
+      })
+    },
+    facts: [
+      {
+        fontName: 'face',
+        loadedFontName: 'face',
+        isMonospace: true,
+        missingFile: false,
+        isType3Font: false,
+        isInvalidPDFjsFont: false
+      }
+    ],
+    candidate: {
+      id: 'p1-graphical-table-1',
+      page: 1,
+      region: [29 / 600, 58 / 800, 271 / 600, 219 / 800],
+      sourceViewport: { width: 900, height: 1200, scale: 1.5 },
+      thumbnail: 'thumbnails/p1-graphical-table-1.png',
+      grid: [],
+      cells: [],
+      unassigned: [],
+      issues: ['no-source-cell-grid']
+    }
+  }
+}
+it('proves a whole shaded monospaced diff without changing its existing crop or image', async () => {
+  const { proveNativeDiffCodeFigure } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-diff-code.mjs')).href
+    ),
+    f = shadedNativeDiffExample(),
+    result = proveNativeDiffCodeFigure(f.page, f.candidate, f.context, f.options, f.facts)
+  expect(result?.sourceItems).toHaveLength(10)
+  expect(result?.issue).toBe('native-diff-code-packet')
+  expect(result?.region).toEqual(f.candidate.region)
+  expect(result?.thumbnail).toBe(f.candidate.thumbnail)
+  expect(result?.grid).toBeUndefined()
+  expect(result?.cells).toBeUndefined()
+})
+const diffCodeRefusals: [string, (f: ReturnType<typeof shadedNativeDiffExample>) => void][] = [
+  ['missing current program', (f) => delete f.options.current],
+  ['changed current source', (f) => (f.options.current.content.items[0].width += 1)],
+  ['unbound current font', (f) => (f.facts[0].loadedFontName = 'other-face')],
+  [
+    'current-only opaque overlay',
+    (f) => {
+      const o = f.options.current.operators
+      o.fnArray.push(OPS.save, OPS.setFillRGBColor, OPS.constructPath, OPS.restore)
+      o.argsArray.push(
+        null,
+        ['#ff00ff'],
+        [
+          OPS.fill,
+          [Float32Array.from([0, 35, 740, 1, 100, 740, 1, 100, 730, 1, 35, 730, 4])],
+          Float32Array.from([35, 730, 100, 740])
+        ],
+        null
+      )
+    }
+  ],
+  [
+    'missing loaded mono font',
+    (f) => {
+      f.facts = []
+    }
+  ],
+  [
+    'duplicate packet header',
+    (f) => {
+      const c = f.context,
+        r = c.content.items[5],
+        first = c.content.items[0]
+      r.str = first.str
+      r.sourceItem.text = r.str
+      const shows = c.operators.fnArray.flatMap((op: number, i: number) =>
+        op === OPS.showText ? [i] : []
+      )
+      c.operators.argsArray[shows[5]] = structuredClone(c.operators.argsArray[shows[0]])
+    }
+  ],
+  [
+    'proportional font facts',
+    (f) => {
+      f.facts[0].isMonospace = false
+    }
+  ],
+  [
+    'missing loaded header outline',
+    (f) => {
+      f.context.glyphBounds[0].glyphs = f.context.glyphBounds[0].glyphs.filter(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar !== '@'
+      )
+    }
+  ],
+  [
+    'context tail outside the crop',
+    (f) => {
+      f.candidate.region[3] = 205 / 800
+    }
+  ],
+  [
+    'competing native owner',
+    (f) => {
+      f.options.competingRects.push([30, 60, 50, 80])
+    }
+  ],
+  [
+    'additional native subpath',
+    (f) => {
+      f.context.operators.argsArray[1][1].push(
+        Float32Array.from([0, 80, 710, 1, 90, 710, 1, 90, 700, 1, 80, 700, 4])
+      )
+    }
+  ],
+  [
+    'degenerate shaded rectangle',
+    (f) => {
+      const q = f.context.operators.argsArray[1][1][0]
+      q[7] = q[1]
+      q[8] = q[2]
+    }
+  ],
+  [
+    'a mapped logical table',
+    (f) => {
+      f.candidate.cells.push({ row: 0, column: 0, text: 'existing mapping' })
+    }
+  ],
+  [
+    'foreign shaded fill between packets',
+    (f) => {
+      const o = f.context.operators,
+        id = o.fnArray.length
+      o.fnArray.push(OPS.setFillRGBColor, OPS.constructPath)
+      o.argsArray.push(
+        ['#eeeeee'],
+        [
+          OPS.fill,
+          [Float32Array.from([0, 100, 665, 1, 110, 665, 1, 110, 661, 1, 100, 661, 4])],
+          Float32Array.from([100, 661, 110, 665])
+        ]
+      )
+      f.page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: id + 1,
+        normalizedRect: [100 / 600, 135 / 800, 110 / 600, 139 / 800]
+      })
+    }
+  ]
+]
+it.each(diffCodeRefusals)(
+  'retains the previous preview without complete diff evidence: %s',
+  async (_name, mutate) => {
+    const { proveNativeDiffCodeFigure } = await import(
+        pathToFileURL(resolve('resources/literature-pdf-native-diff-code.mjs')).href
+      ),
+      f = shadedNativeDiffExample()
+    mutate(f)
+    expect(
+      proveNativeDiffCodeFigure(f.page, f.candidate, f.context, f.options, f.facts)
+    ).toBeUndefined()
+  }
+)
+it('declines invalid diff PNG validation without mutating the old graphical preview', async () => {
+  const { proveNativeDiffCodeFigure, acceptsNativeDiffCodePng } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-diff-code.mjs')).href
+    ),
+    f = shadedNativeDiffExample(),
+    before = JSON.stringify(f.candidate),
+    result = proveNativeDiffCodeFigure(f.page, f.candidate, f.context, f.options, f.facts)
+  expect(result).toBeDefined()
+  expect(acceptsNativeDiffCodePng(new Uint8Array(32), result)).toBe(false)
+  expect(JSON.stringify(f.candidate)).toBe(before)
+})
+it('proves the complete current diff program with independent font aliases and operation indices', async () => {
+  const { proveNativeDiffCodeFigure } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-diff-code.mjs')).href
+    ),
+    f = shadedNativeDiffExample(),
+    current = f.options.current
+  current.operators.fnArray.unshift(OPS.save, OPS.restore)
+  current.operators.argsArray.unshift(null, null)
+  current.content.styles = { loadedFace: current.content.styles.face }
+  for (const r of current.content.items) r.fontName = 'loadedFace'
+  current.operators.fnArray.forEach((op: number, i: number) => {
+    if (op === OPS.setFont) current.operators.argsArray[i][0] = 'loadedFace'
+  })
+  f.facts[0].loadedFontName = 'loadedFace'
+  const result = proveNativeDiffCodeFigure(f.page, f.candidate, f.context, f.options, f.facts)
+  expect(result?.sourceItems).toHaveLength(10)
+  expect(result?.diffCodeProof.currentOwnedPaintIndices).toEqual(
+    result?.diffCodeProof.ownedPaintIndices.map((i: number) => i + 2)
+  )
+})
+
+function repeatedHeaderNativeDrawing(): ReturnType<typeof JSON.parse> {
+  const f = balancedNativeDrawing(),
+    c = f.context,
+    headers = ['4', 'Example et al.'].map((str, i) => ({
+      str,
+      dir: 'ltr',
+      fontName: 'face',
+      width: str.length * 5,
+      height: 10,
+      transform: [10, 0, 0, 10, i ? 70 : 40, 770]
+    })),
+    ops: number[] = [],
+    args: ReturnType<typeof JSON.parse>[] = []
+  for (const r of headers) {
+    ops.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    args.push(
+      null,
+      ['face', 10],
+      [Float32Array.from([1, 0, 0, 1, r.transform[4], 770])],
+      [
+        Array.from(r.str, (unicode) => {
+          if (!c.glyphBounds[0].glyphs.some((g) => g.fontChar === unicode))
+            c.glyphBounds[0].glyphs.push({
+              fontChar: unicode,
+              bounds: unicode === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 1]
+            })
+          return { unicode, fontChar: unicode, width: 500, isInFont: true }
+        })
+      ],
+      null
+    )
+  }
+  c.operators.fnArray.unshift(...ops)
+  c.operators.argsArray.unshift(...args)
+  for (const g of f.page.graphicsBounds) g.operationIndex += ops.length
+  c.content.items.unshift(...headers)
+  c.content.items.forEach((r, index) => (r.sourceItem = { pageNumber: 4, index, text: r.str }))
+  c.content.styles = { face: { fontFamily: 'serif', ascent: 1, descent: 0, vertical: false } }
+  f.page.pageNumber = c.pageNumber = f.caption.page = 4
+  f.page.lines.unshift({
+    text: '4 Example et al.',
+    x: 40,
+    y: 20,
+    width: 100,
+    height: 10,
+    fontSize: 10
+  })
+  f.tokens = c.content.items.map((r) => ({
+    text: r.str,
+    sourceItem: r.sourceItem,
+    rect: [
+      r.transform[4],
+      800 - r.transform[5] - 10,
+      r.transform[4] + r.width,
+      800 - r.transform[5]
+    ],
+    height: 10,
+    baseline: 800 - r.transform[5],
+    horizontal: true
+  }))
+  f.figure.rect = [35, 20, 280, 270]
+  const currentContent = structuredClone(c.content),
+    witnessContent = structuredClone(c.content)
+  currentContent.items.forEach((r) => (r.fontName = 'loadedFace'))
+  currentContent.styles = { loadedFace: currentContent.styles.face }
+  witnessContent.items.forEach((r) => {
+    r.fontName = 'loadedFace'
+    delete r.sourceItem
+  })
+  witnessContent.styles = { loadedFace: witnessContent.styles.face }
+  witnessContent.items[0].str = '2'
+  c.runningHeadWitness = {
+    sourceSha256: c.sourceSha256,
+    currentPageNumber: 4,
+    witnessPageNumber: 2,
+    currentContent,
+    witnessContent,
+    witnessViewport: { ...c.viewport, convertToViewportPoint: undefined }
+  }
+  return f
+}
+
+it('excludes only an independently repeated header from a complete native drawing scope', async () => {
+  const m = await import(
+      pathToFileURL(resolve('resources/literature-pdf-figure-native-balanced-scope.mjs')).href
+    ),
+    f = repeatedHeaderNativeDrawing(),
+    result = m.nativeRepeatedHeaderVectorFigureScope?.(
+      f.page,
+      f.figure,
+      f.captions,
+      [],
+      f.tokens,
+      f.context
+    )
+  expect(result?.reason).toBe('native-repeated-header-vector-scope')
+  expect(result?.rect[1]).toBeGreaterThan(50)
+  expect(result?.rect[3]).toBeGreaterThan(260)
+  expect(result?.sourceItems).toBeUndefined()
+  expect(
+    m.nativeBalancedVectorFigureScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+  ).toBeUndefined()
+})
+
+const repeatedHeaderRefusals: [
+  string,
+  (f: ReturnType<typeof repeatedHeaderNativeDrawing>) => void
+][] = [
+  ['missing independent witness', (f) => delete f.context.runningHeadWitness],
+  [
+    'missing current font proof',
+    (f) => delete f.context.runningHeadWitness.currentContent.styles.loadedFace
+  ],
+  ['wrong witness page number', (f) => (f.context.runningHeadWitness.witnessPageNumber = 3)],
+  [
+    'wrong printed witness number',
+    (f) => (f.context.runningHeadWitness.witnessContent.items[0].str = '3')
+  ],
+  ['different page domain', (f) => (f.context.runningHeadWitness.witnessViewport.width += 1)],
+  [
+    'nonfinite witness width',
+    (f) => (f.context.runningHeadWitness.witnessContent.items[1].width = Infinity)
+  ],
+  [
+    'witness header outside the page',
+    (f) => (f.context.runningHeadWitness.witnessContent.items[1].transform[4] = -1)
+  ],
+  [
+    'same text in body rather than repeated header',
+    (f) => (f.context.runningHeadWitness.witnessContent.items[1].transform[5] -= 40)
+  ],
+  [
+    'different native witness face',
+    (f) => (f.context.runningHeadWitness.witnessContent.items[1].fontName = 'otherFace')
+  ],
+  [
+    'legend outside the claimed scope',
+    (f) => {
+      const c = f.context,
+        o = c.operators,
+        i =
+          o.fnArray.findIndex(
+            (op: number, i: number) =>
+              op === OPS.showText &&
+              o.argsArray[i][0].map((g: ReturnType<typeof JSON.parse>) => g.unicode).join('') ===
+                'Native legend'
+          ) - 3
+      o.fnArray.splice(i, 0, OPS.restore, OPS.restore, OPS.save, OPS.save)
+      o.argsArray.splice(i, 0, null, null, null, null)
+      for (const g of f.page.graphicsBounds) if (g.operationIndex >= i) g.operationIndex += 4
+    }
+  ],
+  [
+    'foreign same-column paint',
+    (f) => {
+      const o = f.context.operators,
+        id = o.fnArray.length
+      o.fnArray.push(OPS.constructPath)
+      o.argsArray.push([
+        OPS.stroke,
+        [Float32Array.from([0, 50, 760, 1, 100, 760])],
+        Float32Array.from([50, 760, 100, 760])
+      ])
+      f.page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: id,
+        normalizedRect: [48 / 600, 38 / 800, 102 / 600, 42 / 800]
+      })
+    }
+  ]
+]
+it.each(repeatedHeaderRefusals)(
+  'preserves the previous drawing without repeated-header evidence: %s',
+  async (_name, mutate) => {
+    const m = await import(
+        pathToFileURL(resolve('resources/literature-pdf-figure-native-balanced-scope.mjs')).href
+      ),
+      f = repeatedHeaderNativeDrawing()
+    mutate(f)
+    expect(
+      m.nativeRepeatedHeaderVectorFigureScope(f.page, f.figure, f.captions, [], f.tokens, f.context)
+    ).toBeUndefined()
+  }
+)
+it('checks the actual PNG halo beyond the independently repeated header drawing', async () => {
+  const m = await import(
+      pathToFileURL(resolve('resources/literature-pdf-figure-native-balanced-scope.mjs')).href
+    ),
+    f = repeatedHeaderNativeDrawing(),
+    first = m.nativeRepeatedHeaderVectorFigureScope(
+      f.page,
+      f.figure,
+      f.captions,
+      [],
+      f.tokens,
+      f.context
+    ),
+    right = first.rect[2],
+    o = f.context.operators,
+    id = o.fnArray.length
+  o.fnArray.push(OPS.constructPath)
+  o.argsArray.push([
+    OPS.fill,
+    [
+      Float32Array.from([
+        0,
+        right + 0.01,
+        650,
+        1,
+        right + 0.02,
+        650,
+        1,
+        right + 0.02,
+        640,
+        1,
+        right + 0.01,
+        640,
+        4
+      ])
+    ],
+    Float32Array.from([right + 0.01, 640, right + 0.02, 650])
+  ])
+  f.page.graphicsBounds.push({
+    kind: 'path',
+    operationIndex: id,
+    normalizedRect: [(right + 0.01) / 600, 150 / 800, (right + 0.02) / 600, 160 / 800]
+  })
+  const candidate = m.nativeRepeatedHeaderVectorFigureScope(
+      f.page,
+      f.figure,
+      f.captions,
+      [],
+      f.tokens,
+      f.context
+    ),
+    png = Buffer.alloc(32)
+  expect(candidate).toBeDefined()
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png)
+  png.writeUInt32BE(13, 8)
+  png.write('IHDR', 12)
+  png.writeUInt32BE(Math.ceil((candidate.rect[2] - candidate.rect[0]) * 4), 16)
+  png.writeUInt32BE(Math.ceil((candidate.rect[3] - candidate.rect[1]) * 4), 20)
+  expect(nativeSingleVectorGroupPng(png, candidate)).toBe(false)
 })

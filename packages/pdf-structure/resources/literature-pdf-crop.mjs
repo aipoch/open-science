@@ -3,8 +3,117 @@ import assert from 'node:assert/strict'
 import { createCanvas } from '@napi-rs/canvas'
 
 // Keep these limits aligned with the main-process worker and cache image boundaries.
-const MAX_EDGE = 2400
-const MAX_BYTES = 4 * 1024 ** 2
+export const MAX_EDGE = 2400
+export const MAX_BYTES = 4 * 1024 ** 2
+export const MAX_SCALE = 4
+
+// Optional native families must prove the exact initial raster, including its
+// ceil-sized last pixel and an antialiasing pixel on every side. Keep raw RGBA
+// below half the PNG budget so admission does not depend on a byte-limit retry.
+export const getInitialPdfCropRaster = (rect, bounds) => {
+  if (
+    !Array.isArray(rect) ||
+    rect.length !== 4 ||
+    !rect.every(Number.isFinite) ||
+    !Number.isFinite(bounds?.width) ||
+    !Number.isFinite(bounds?.height) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    rect[0] < 0 ||
+    rect[1] < 0 ||
+    rect[2] > bounds.width ||
+    rect[3] > bounds.height ||
+    rect[2] <= rect[0] ||
+    rect[3] <= rect[1]
+  )
+    return
+  const width = rect[2] - rect[0],
+    height = rect[3] - rect[1],
+    scale = Math.min(MAX_SCALE, MAX_EDGE / Math.max(width, height)),
+    pixelWidth = Math.min(MAX_EDGE, Math.max(1, Math.ceil(width * scale))),
+    pixelHeight = Math.min(MAX_EDGE, Math.max(1, Math.ceil(height * scale)))
+  if (pixelWidth * pixelHeight > MAX_BYTES / 8) return
+  return {
+    scale,
+    pixelWidth,
+    pixelHeight,
+    protection: [
+      rect[0] - 1 / scale,
+      rect[1] - 1 / scale,
+      rect[0] + pixelWidth / scale + 1 / scale,
+      rect[1] + pixelHeight / scale + 1 / scale
+    ]
+  }
+}
+
+// A byte-limit retry changes the raster footprint. Optional native families
+// accept only a PNG whose encoded dimensions match their initial proof.
+export const matchesInitialPdfCropPng = (png, raster) => {
+  if (
+    !(png instanceof Uint8Array) ||
+    png.byteLength < 33 ||
+    ![137, 80, 78, 71, 13, 10, 26, 10].every((byte, i) => png[i] === byte)
+  )
+    return false
+  const header = new DataView(png.buffer, png.byteOffset, png.byteLength)
+  return (
+    header.getUint32(8) === 13 &&
+    header.getUint32(12) === 0x49484452 &&
+    header.getUint32(16) === raster?.pixelWidth &&
+    header.getUint32(20) === raster?.pixelHeight
+  )
+}
+
+// Ceil dimensions constrain an interval, not a unique rendering scale. Use
+// its conservative lower bound to protect the actual canvas and one extra
+// antialiasing pixel, including output from the existing byte-limit retries.
+export const getPdfCropRasterProtectionFromPng = (png, rect, bounds) => {
+  if (
+    !(png instanceof Uint8Array) ||
+    png.byteLength < 33 ||
+    png.byteLength > MAX_BYTES ||
+    !Array.isArray(rect) ||
+    rect.length !== 4 ||
+    !rect.every(Number.isFinite) ||
+    !Number.isFinite(bounds?.width) ||
+    !Number.isFinite(bounds?.height) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    rect[0] < 0 ||
+    rect[1] < 0 ||
+    rect[2] > bounds.width ||
+    rect[3] > bounds.height ||
+    rect[2] <= rect[0] ||
+    rect[3] <= rect[1]
+  )
+    return
+  const header = new DataView(png.buffer, png.byteOffset, png.byteLength),
+    pixelWidth = header.getUint32(16),
+    pixelHeight = header.getUint32(20)
+  if (
+    !matchesInitialPdfCropPng(png, { pixelWidth, pixelHeight }) ||
+    pixelWidth < 1 ||
+    pixelHeight < 1 ||
+    pixelWidth > MAX_EDGE ||
+    pixelHeight > MAX_EDGE
+  )
+    return
+  const width = rect[2] - rect[0],
+    height = rect[3] - rect[1],
+    lower = Math.max((pixelWidth - 1) / width, (pixelHeight - 1) / height),
+    scaleUpper = Math.min(pixelWidth / width, pixelHeight / height, MAX_SCALE)
+  if (!(lower > 0) || !(lower < scaleUpper)) return
+  // Round downward conservatively across the divisions and renderer product.
+  const scaleLower = lower * (1 - 8 * Number.EPSILON),
+    protection = [
+      rect[0] - 1 / scaleLower,
+      rect[1] - 1 / scaleLower,
+      rect[0] + (pixelWidth + 1) / scaleLower,
+      rect[1] + (pixelHeight + 1) / scaleLower
+    ]
+  if (!(scaleLower > 0) || !protection.every(Number.isFinite)) return
+  return { scaleLower, scaleUpper, pixelWidth, pixelHeight, protection }
+}
 
 export const renderPdfCrop = async (page, rect, rotation = page.rotate, regions) => {
   assert(rect.length === 4 && rect.every(Number.isFinite), 'Invalid PDF crop region.')
@@ -30,7 +139,7 @@ export const renderPdfCrop = async (page, rect, rotation = page.rotate, regions)
     width = Math.min(bounds.width, rect[2]) - left,
     height = Math.min(bounds.height, rect[3]) - top
   assert(width > 0 && height > 0, 'Empty PDF crop region.')
-  let scale = Math.min(4, MAX_EDGE / Math.max(width, height))
+  let scale = Math.min(MAX_SCALE, MAX_EDGE / Math.max(width, height))
   for (;;) {
     const canvas = createCanvas(
       Math.min(MAX_EDGE, Math.max(1, Math.ceil(width * scale))),

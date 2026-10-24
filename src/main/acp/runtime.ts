@@ -281,6 +281,7 @@ class AcpRuntime {
     }>
   >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
+  private readonly sandboxNetworkApprovalOwner: AcpRuntimeSessionOwners['sandboxNetworkApprovalOwner']
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
   private readonly planDeliveryOwner: SessionPlanDeliveryOwner | undefined
   private durablePermissionContinuations?: Map<string, RestoredPermissionContinuation>
@@ -370,6 +371,7 @@ class AcpRuntime {
       options.hasPendingCredentialRequest?.(sessionId) === true
 
     this.durableContinuationContext = session.durableContinuationContext
+    this.sandboxNetworkApprovalOwner = session.sandboxNetworkApprovalOwner
     this.permissionWaitOwner = session.permissionWaitOwner
     this.planDeliveryOwner = options.plan
       ? new SessionPlanDeliveryOwner(options.plan.sessions)
@@ -1649,6 +1651,10 @@ class AcpRuntime {
 
     if (!interactionInFlight && !durablePermission) {
       try {
+        await this.sandboxNetworkApprovalOwner.cancel(
+          this.sessionEnvironment.projectId(request.sessionId),
+          request.sessionId
+        )
         const permissionRequestId = await this.permissionWaitOwner.cancelPendingSession(
           request.sessionId
         )
@@ -1737,6 +1743,10 @@ class AcpRuntime {
       onAccepted()
     }
     if (cancellationAccepted) {
+      await this.sandboxNetworkApprovalOwner.cancel(
+        this.sessionEnvironment.projectId(request.sessionId),
+        request.sessionId
+      )
       await this.settleCancelledDurablePermissionContinuation(request.sessionId)
       this.emitState()
     }
@@ -1761,6 +1771,15 @@ class AcpRuntime {
       .getPendingRequests()
       .find((request) => request.requestId === response.requestId)
     if (!permissionRequest && response.restored) {
+      if (
+        await this.sandboxNetworkApprovalOwner.respondRestored(
+          response,
+          this.sessionEnvironment.projectId(response.restored.sessionId)
+        )
+      ) {
+        this.emitState()
+        return this.getSnapshot()
+      }
       return this.respondToRestoredPermission(response)
     }
     const selectedOption = permissionRequest?.options.find(
@@ -1772,6 +1791,7 @@ class AcpRuntime {
     const promptInteraction = interaction?.kind === 'prompt' ? interaction : undefined
     const continueAfterProviderCancellation = Boolean(
       permissionRequest &&
+      !permissionRequest.appOwned &&
       promptInteraction &&
       this.getSessionFramework(permissionRequest.sessionId) === 'claude-code' &&
       !response.cancelled &&
@@ -2785,6 +2805,26 @@ class AcpRuntime {
   }
 
   async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
+    if (input.networkApproval) {
+      const scope = this.sessionInteractions.current(input.sessionId)
+      if (
+        scope?.kind !== 'prompt' ||
+        scope.permissionPrompts === 'none' ||
+        this.sessionInteractions.isCancellationAccepted(scope)
+      )
+        return undefined
+      if (this.sessionEnvironment.projectId(input.sessionId) !== input.networkApproval.projectId)
+        return undefined
+      return this.sandboxNetworkApprovalOwner.request(
+        input,
+        scope.promptMessageId,
+        (request) => this.permissionContext.requestAppPermission(request),
+        () =>
+          !input.signal?.aborted &&
+          this.sessionInteractions.current(input.sessionId) === scope &&
+          !this.sessionInteractions.isCancellationAccepted(scope)
+      )
+    }
     return this.permissionContext.requestAppPermission(input)
   }
 

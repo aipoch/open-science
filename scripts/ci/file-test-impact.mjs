@@ -191,7 +191,7 @@ export function compareTestPlans(modulePlan, filePlan, manifest) {
       if ((module.derivedConsumerTests ?? []).includes(test)) found.push(`${id}:derived`)
       else
         for (const kind of ['owner', 'contract', 'consumer'])
-          if (module.testFiles[kind].includes(test)) found.push(`${id}:${kind}`)
+          if ((module.testFiles[kind] ?? []).includes(test)) found.push(`${id}:${kind}`)
     }
     return found.length ? found : ['direct']
   }

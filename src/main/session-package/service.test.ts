@@ -2005,6 +2005,24 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
     runtimeContext: {
       version: 1,
       revision: 1,
+      networkApprovals: [
+        {
+          version: 1,
+          kind: 'sandbox-network',
+          state: 'continuing',
+          requestId: 'network-fixture',
+          sessionId: 'session-1',
+          executionId: 'execution-fixture',
+          commandFingerprint: 'a'.repeat(64),
+          hostname: 'service.example.test',
+          port: 443,
+          runtime: 'bash',
+          originatingPromptMessageId: graph.messages[0].id,
+          agentFrameId: graph.activeFrameId,
+          messageBranchId: graph.frames[0].activeBranchId,
+          createdAt: 1
+        }
+      ],
       sideChat: {
         version: 1,
         id: 'side-chat-1',
@@ -2076,6 +2094,7 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
     sourceImportId: 'local-import',
     sourceTitle: 'Local group'
   }
+  expect(retainedEnvelope.session.runtimeContext?.networkApprovals).toBeUndefined()
   retainedEnvelope.session.runtimeContext = {
     ...(retainedEnvelope.session.runtimeContext ?? { version: 1, revision: 1 }),
     sideChat: {
@@ -2132,6 +2151,7 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
   expect(
     (forwardedEnvelope.session as { researchMembership?: unknown }).researchMembership
   ).toBeUndefined()
+  expect(forwardedEnvelope.session.runtimeContext?.networkApprovals).toBeUndefined()
   expect(forwardedEnvelope.session.runtimeContext?.sideChat).toBeUndefined()
   expect(forwardedEnvelope.session.conversationGraph?.messages).toContainEqual(
     expect.objectContaining({
@@ -2154,6 +2174,7 @@ it('transfers conversation branches and delivered Side Chat relays without auxil
     'Use a black line in the main analysis.'
   ])
   expect(reopened?.providerSessionId).toBeUndefined()
+  expect(reopened?.runtimeContext?.networkApprovals).toBeUndefined()
   expect(reopened?.runtimeContext?.sideChat).toBeUndefined()
   expect(reopened?.runtimeContext?.sideChats).toBeUndefined()
   expect(origin.identities['side-chat-1']).toBeUndefined()

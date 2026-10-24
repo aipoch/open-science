@@ -1,3 +1,4 @@
+import { SinglePagePdfPreview } from './SinglePagePdfPreview'
 import { desktopRuntimeWritable } from '@/stores/desktop-runtime-recovery-store'
 import { isPdfTranslationLanguageSupported } from '@aipoch/pdf-translation/text'
 import type {
@@ -2501,39 +2502,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   )
 })
 
-export const PdfPreviewContent = ({
-  path,
-  name,
-  source = 'local',
-  projectId,
-  sessionId,
-  managedFileId,
-  selectedVersionId,
-  mimeType,
-  size,
-  mtimeMs,
-  onReadingPositionChange,
-  onPdfTranslationChange,
-  pdfProseRegions,
-  pdfProseRegionIdentityKey,
-  onPdfProseRegionsChange,
-  annotationProps,
-  pdfEvidenceSource,
-  pdfBookmarkSource,
-  structureSource,
-  pdfBookmarkSourceUnavailable = false,
-  pdfRevealSource,
-  nativeImportProgress,
-  onCancelNativeImport,
-  presentation = 'reader',
-  translationSource: suppliedTranslationSource,
-  translation: suppliedTranslation,
-  translationLayout,
-  translationExecutor,
-  translationDocumentSource,
-  translationArtifact,
-  onTranslationDocument
-}: {
+type PdfPreviewContentProps = {
   path: string
   name: string
   source?: PreviewFileSource
@@ -2566,6 +2535,207 @@ export const PdfPreviewContent = ({
   translationExecutor?: PdfTranslationExecutor
   translationDocumentSource?: PdfDocumentSource
   onTranslationDocument?: (context: PdfTranslationDocumentContext) => void | Promise<void>
+}
+
+// One resource owner determines presentation before mounting either preview surface.
+export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const {
+    source = 'local',
+    path,
+    projectId,
+    sessionId,
+    managedFileId,
+    selectedVersionId,
+    mimeType
+  } = props
+  const requestKey = createPreviewResourceKey({ ...props, source })
+  const generation = usePreviewResourceGeneration()
+  const resourceRequestKey = `${requestKey}:${generation}`
+  const [documentState, setDocumentState] = useState<DocumentState | null>(null)
+  const pageDisposersRef = useMemo(
+    () => ({ requestKey: resourceRequestKey, current: new Set<() => void>() }),
+    [resourceRequestKey]
+  )
+  useEffect(() => {
+    if (!desktopRuntimeWritable()) return
+    let canceled = false
+    let document: PdfDocument | undefined
+    let loadingTask: ReturnType<typeof createManagedPdfLoadingTask> | undefined
+    let resourceId: string | undefined
+    let disposePromise: Promise<void> | undefined
+    const dispose = (): Promise<void> => {
+      disposePromise ??= (async () => {
+        // Cancel page renders before destroying their shared PDF.js document and resource.
+        for (const disposePage of pageDisposersRef.current) disposePage()
+        pageDisposersRef.current.clear()
+
+        try {
+          if (document) await document.destroy()
+          else if (loadingTask) await loadingTask.destroy()
+        } catch (error) {
+          console.error('Failed to destroy PDF preview', error)
+        }
+
+        if (resourceId) {
+          try {
+            await window.api.previewResources.release({ resourceId })
+          } catch (error) {
+            // A disconnected backend has already revoked its preview resources.
+            if (desktopRuntimeWritable()) {
+              console.error('Failed to release PDF preview resource', error)
+            }
+          }
+        }
+      })()
+      return disposePromise
+    }
+
+    void (async () => {
+      try {
+        const resource = await window.api.previewResources.acquire(
+          createManagedPreviewRequest({
+            source,
+            path,
+            projectId,
+            sessionId,
+            managedFileId,
+            selectedVersionId,
+            mimeType
+          })
+        )
+        resourceId = resource.id
+        const sourceIdentity =
+          typeof resource.sourceChecksum === 'string' &&
+          /^[a-f0-9]{64}$/.test(resource.sourceChecksum) &&
+          Number.isSafeInteger(resource.size) &&
+          resource.size > 0
+            ? Object.freeze({
+                sourceChecksum: resource.sourceChecksum,
+                sourceSizeBytes: resource.size
+              })
+            : undefined
+        if (canceled) {
+          await dispose()
+          return
+        }
+
+        loadingTask = createManagedPdfLoadingTask(resource)
+        document = await loadingTask.promise
+        if (canceled) {
+          await dispose()
+          return
+        }
+
+        setDocumentState({
+          requestKey: resourceRequestKey,
+          status: 'ready',
+          document,
+          size: resource.size,
+          sourceIdentity
+        })
+      } catch (error: unknown) {
+        // Closing or switching a preview can reject the PDF.js task while cleanup destroys it.
+        if (!canceled) {
+          if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
+          setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
+        }
+        await dispose()
+      }
+    })()
+
+    return () => {
+      canceled = true
+      if (resourceId) void dispose()
+    }
+  }, [
+    managedFileId,
+    mimeType,
+    path,
+    projectId,
+    resourceRequestKey,
+    selectedVersionId,
+    sessionId,
+    source,
+    pageDisposersRef
+  ])
+
+  const currentState = documentState?.requestKey === resourceRequestKey ? documentState : null
+  const singlePage = currentState?.status === 'ready' && currentState.document.numPages === 1
+  const onReadingPositionChange = props.onReadingPositionChange
+  useEffect(() => {
+    if (singlePage) onReadingPositionChange?.({ pageNumber: 1, pageCount: 1 })
+  }, [singlePage, resourceRequestKey, onReadingPositionChange])
+  // Keep a multi-page reader mounted during backend recovery so it retains its viewport anchor.
+  const [multiPageKey, setMultiPageKey] = useState<string>()
+  if (
+    currentState?.status === 'ready' &&
+    currentState.document.numPages > 1 &&
+    multiPageKey !== requestKey
+  )
+    setMultiPageKey(requestKey)
+  if (currentState?.status === 'error' && multiPageKey !== requestKey) {
+    return (
+      <PreviewErrorCard
+        name={props.name}
+        error={currentState.error}
+        fallbackMessage={t("This PDF couldn't be rendered for preview")}
+      />
+    )
+  }
+  if (currentState?.status === 'ready' && currentState.document.numPages === 1) {
+    return (
+      <SinglePagePdfPreview
+        key={resourceRequestKey}
+        document={currentState.document}
+        name={props.name}
+        pageDisposersRef={pageDisposersRef}
+      />
+    )
+  }
+  if (!currentState && multiPageKey !== requestKey) return <PreviewLoadingContent />
+  return (
+    <PdfReaderContent {...props} documentState={currentState} pageDisposersRef={pageDisposersRef} />
+  )
+}
+
+const PdfReaderContent = ({
+  path,
+  name,
+  source = 'local',
+  projectId,
+  sessionId,
+  managedFileId,
+  selectedVersionId,
+  mimeType,
+  size,
+  mtimeMs,
+  onReadingPositionChange,
+  onPdfTranslationChange,
+  pdfProseRegions,
+  pdfProseRegionIdentityKey,
+  onPdfProseRegionsChange,
+  annotationProps,
+  pdfEvidenceSource,
+  pdfBookmarkSource,
+  structureSource,
+  pdfBookmarkSourceUnavailable = false,
+  pdfRevealSource,
+  nativeImportProgress,
+  onCancelNativeImport,
+  presentation = 'reader',
+  translationSource: suppliedTranslationSource,
+  translation: suppliedTranslation,
+  translationLayout,
+  translationExecutor,
+  translationDocumentSource,
+  translationArtifact,
+  onTranslationDocument,
+  documentState,
+  pageDisposersRef
+}: PdfPreviewContentProps & {
+  documentState: DocumentState | null
+  pageDisposersRef: React.RefObject<Set<() => void>>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const pdfAnnotations = usePdfAnnotations()
@@ -2613,7 +2783,6 @@ export const PdfPreviewContent = ({
     pendingLinkRef.current = undefined
     pendingAnnotationPageRef.current = undefined
   }, [resourceRequestKey])
-  const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const [zoom, setZoom] = useState(1)
   const [cursorMode, setCursorMode] = useState<PdfCursorMode>('select')
   const [proseSelection, setProseSelection] = useState(false)
@@ -2777,11 +2946,13 @@ export const PdfPreviewContent = ({
   // overflows the viewport — distinct from the capped fitWidth that sizes a 100% page.
   const [viewportWidth, setViewportWidth] = useState(0)
   const measureRef = useRef<HTMLDivElement | null>(null)
-  const pageDisposersRef = useRef(new Set<() => void>())
-  const registerPageDisposer = useCallback((dispose: () => void): (() => void) => {
-    pageDisposersRef.current.add(dispose)
-    return () => pageDisposersRef.current.delete(dispose)
-  }, [])
+  const registerPageDisposer = useCallback(
+    (dispose: () => void): (() => void) => {
+      pageDisposersRef.current.add(dispose)
+      return () => pageDisposersRef.current.delete(dispose)
+    },
+    [pageDisposersRef]
+  )
   const handleTextLayerRendered = useCallback(() => {
     setTextLayerEpoch((epoch) => epoch + 1)
   }, [])
@@ -2890,108 +3061,6 @@ export const PdfPreviewContent = ({
     if (readerRef.current) observer.observe(readerRef.current)
     return () => observer.disconnect()
   }, [captureViewportAnchor])
-
-  useEffect(() => {
-    if (!desktopRuntimeWritable()) return
-    let canceled = false
-    let document: PdfDocument | undefined
-    let loadingTask: ReturnType<typeof createManagedPdfLoadingTask> | undefined
-    let resourceId: string | undefined
-    let disposePromise: Promise<void> | undefined
-    const dispose = (): Promise<void> => {
-      disposePromise ??= (async () => {
-        // Cancel page renders before destroying their shared PDF.js document and resource.
-        for (const disposePage of pageDisposersRef.current) disposePage()
-        pageDisposersRef.current.clear()
-
-        try {
-          if (document) await document.destroy()
-          else if (loadingTask) await loadingTask.destroy()
-        } catch (error) {
-          console.error('Failed to destroy PDF preview', error)
-        }
-
-        if (resourceId) {
-          try {
-            await window.api.previewResources.release({ resourceId })
-          } catch (error) {
-            // A disconnected backend has already revoked its preview resources.
-            if (desktopRuntimeWritable()) {
-              console.error('Failed to release PDF preview resource', error)
-            }
-          }
-        }
-      })()
-      return disposePromise
-    }
-
-    void (async () => {
-      try {
-        const resource = await window.api.previewResources.acquire(
-          createManagedPreviewRequest({
-            source,
-            path,
-            projectId,
-            sessionId,
-            managedFileId,
-            selectedVersionId,
-            mimeType
-          })
-        )
-        resourceId = resource.id
-        const sourceIdentity =
-          typeof resource.sourceChecksum === 'string' &&
-          /^[a-f0-9]{64}$/.test(resource.sourceChecksum) &&
-          Number.isSafeInteger(resource.size) &&
-          resource.size > 0
-            ? Object.freeze({
-                sourceChecksum: resource.sourceChecksum,
-                sourceSizeBytes: resource.size
-              })
-            : undefined
-        if (canceled) {
-          await dispose()
-          return
-        }
-
-        loadingTask = createManagedPdfLoadingTask(resource)
-        document = await loadingTask.promise
-        if (canceled) {
-          await dispose()
-          return
-        }
-
-        setDocumentState({
-          requestKey: resourceRequestKey,
-          status: 'ready',
-          document,
-          size: resource.size,
-          sourceIdentity
-        })
-      } catch (error: unknown) {
-        // Closing or switching a preview can reject the PDF.js task while cleanup destroys it.
-        if (!canceled) {
-          if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
-          setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
-        }
-        await dispose()
-      }
-    })()
-
-    return () => {
-      canceled = true
-      if (resourceId) void dispose()
-    }
-  }, [
-    managedFileId,
-    mimeType,
-    path,
-    projectId,
-    resourceRequestKey,
-    selectedVersionId,
-    sessionId,
-    source
-  ])
 
   const currentDocumentState =
     documentState?.requestKey === resourceRequestKey ? documentState : null

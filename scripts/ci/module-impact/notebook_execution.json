@@ -149,7 +149,9 @@
     "src/main/notebook/managed-shell-execution.ts",
     "src/main/notebook/managed-shell-runtime.test.ts",
     "src/main/notebook/managed-shell.macos.integration.test.ts",
-    "src/main/notebook/shell-search-scope.ts"
+    "src/main/notebook/shell-search-scope.ts",
+    "src/main/notebook/execution-deadline.test.ts",
+    "src/main/notebook/execution-deadline.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -306,7 +308,8 @@
       "src/main/notebook/managed-research-node-runtime.test.ts",
       "src/main/notebook/managed-shell-execution.test.ts",
       "src/main/notebook/managed-shell-runtime.test.ts",
-      "src/main/notebook/managed-shell.macos.integration.test.ts"
+      "src/main/notebook/managed-shell.macos.integration.test.ts",
+      "src/main/notebook/execution-deadline.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -2,7 +2,7 @@ import { NotebookNetworkSandbox, validateLocalService } from '@aipoch/notebook-n
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, type Stats } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   lstat,
   mkdir,
@@ -86,6 +86,9 @@ type NotebookNetworkDecisionRequest = Readonly<{
   runtime?: NotebookSandboxInvocation['runtime']
   reason?: string
   allowOnce: boolean
+  executionId?: string
+  commandFingerprint?: string
+  canResume?: () => boolean
   signal: AbortSignal
 }>
 
@@ -194,6 +197,7 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
+  getFolderRestrictionEnabled?: () => Promise<boolean>
   persistAlwaysAllow: (hostname: string) => Promise<NotebookNetworkSettings>
   requestDecision: (request: NotebookNetworkDecisionRequest) => Promise<NotebookNetworkDecision>
   getParentProxy?: () => Promise<
@@ -501,6 +505,20 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
+    const restrictFolders =
+      invocation.confinement !== undefined ||
+      (this.platform === 'win32' && invocation.target?.kind !== 'wsl2') ||
+      (await this.options.getFolderRestrictionEnabled?.()) !== false
+    if (
+      invocation.windowsProtectionRequired === true &&
+      this.platform === 'win32' &&
+      invocation.target?.kind !== 'wsl2' &&
+      !(await this.windowsProtectionConfigured())
+    ) {
+      throw new Error(
+        'Notebook folder restrictions require Windows protected mode. Prepare protection in Settings before running code.'
+      )
+    }
     assertProcessTreeSupport(this.platform)
     const runtimeAccessRevision = this.runtimeAccessRevision
     await this.initialize()
@@ -522,6 +540,23 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     let activeExecutionGrants: ReadonlySet<string> = new Set()
     let executionActive = false
     let activeCommandText = invocation.commandText
+    let activeExecutionId = invocation.executionReference
+    let activeSignal = invocation.signal
+    let executionGeneration = 0
+    let executionWaitListener: ((waiting: boolean) => void) | undefined
+    const waitListeners = new Set<(waiting: boolean) => void>()
+    const decisions = new Map<string, Promise<boolean>>()
+    const connections = new Map<string, Set<() => boolean>>()
+    let retryRequired = false
+    const pendingDecisions = new Set<Promise<boolean>>()
+    const notifyWait = (): void => {
+      const waiting = pendingDecisions.size > 0
+      executionWaitListener?.(waiting)
+      for (const listener of waitListeners) listener(waiting)
+    }
+    const waitForNetworkApprovals = async (): Promise<void> => {
+      await Promise.allSettled([...pendingDecisions])
+    }
     const allowedNetworkHosts = new Set(
       (invocation.allowedNetworkHosts ?? []).flatMap((host) => {
         const normalized = validateCustomAllowedDomain(host)
@@ -558,6 +593,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { windowsShellControlPipe: invocation.windowsShellControlPipe }
           : {}),
         filesystem: {
+          restrictFolders,
           privateRoot: homedir(),
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,
@@ -593,7 +629,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ]
         },
         ...(invocation.signal ? { signal: invocation.signal } : {}),
-        onNetworkAccessRequest: (request) => {
+        onNetworkAccessRequest: async (request) => {
           const confinement = invocation.confinement
           if (
             confinement &&
@@ -602,16 +638,77 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
                 request.host.toLowerCase().replace(/\.$/, '')
               ))
           )
-            return Promise.resolve(false)
-          return this.isCommandGrantAllowed(
-            invocation.sessionId,
-            invocation.runtime,
-            activeCommandText,
-            executionActive,
-            activeExecutionGrants,
-            confinement ? new Set() : allowedNetworkHosts,
-            request
+            return false
+          if (
+            await this.isCommandGrantAllowed(
+              invocation.sessionId,
+              invocation.runtime,
+              activeCommandText,
+              executionActive,
+              activeExecutionGrants,
+              confinement ? new Set() : allowedNetworkHosts,
+              request
+            )
           )
+            return true
+          // Only a running Shell execution with a durable Run identity may originate an automatic
+          // approval. Startup probes and other runtimes keep their explicit access workflow.
+          if (
+            !executionActive ||
+            invocation.runtime !== 'bash' ||
+            !activeExecutionId ||
+            request.signal.aborted ||
+            activeSignal?.aborted
+          )
+            return false
+          const normalized = validateCustomAllowedDomain(request.host)
+          if (!normalized.ok) return false
+          const hostname = normalized.hostname
+          const port = request.port ?? 443
+          const generation = executionGeneration
+          const key = `${generation}:${hostname}:${port}`
+          const existing = decisions.get(key)
+          if (request.purpose === 'probe' && !existing) return false
+          const existingConnections = connections.get(key) ?? new Set<() => boolean>()
+          existingConnections.add(request.canResume ?? (() => !request.signal.aborted))
+          connections.set(key, existingConnections)
+          if (existing) return existing
+          const signal = activeSignal ?? new AbortController().signal
+          const canResume = (): boolean =>
+            executionActive &&
+            generation === executionGeneration &&
+            !signal.aborted &&
+            [...existingConnections].some((alive) => alive())
+          const decision = this.options
+            .requestDecision({
+              sessionId: invocation.sessionId,
+              projectId: invocation.projectId,
+              hostname,
+              port,
+              runtime: 'bash',
+              allowOnce: true,
+              executionId: activeExecutionId,
+              commandFingerprint: createHash('sha256').update(activeCommandText).digest('hex'),
+              canResume,
+              signal
+            })
+            .then(
+              (choice) => {
+                const allowed = choice === 'allowOnce' || choice === 'alwaysAllow'
+                const live = canResume() && !request.signal.aborted
+                if (allowed && !live && !signal.aborted) retryRequired = true
+                return live && allowed
+              },
+              () => false
+            )
+          decisions.set(key, decision)
+          pendingDecisions.add(decision)
+          notifyWait()
+          void decision.finally(() => {
+            pendingDecisions.delete(decision)
+            notifyWait()
+          })
+          return decision
         }
       })
       if (target.kind === 'wsl2') {
@@ -804,6 +901,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               }
             : {})
         })
+        await waitForNetworkApprovals()
         return result
       })()
       cleanupPromise = cleanupPromise.then(
@@ -869,6 +967,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         wrapped.resetNetworkConnections()
         executionActive = true
         activeCommandText = request?.commandText ?? invocation.commandText
+        activeExecutionId = request?.executionReference ?? invocation.executionReference
+        activeSignal = request?.signal ?? invocation.signal
+        executionWaitListener = request?.onNetworkWaitChange
+        executionGeneration += 1
+        decisions.clear()
+        connections.clear()
+        retryRequired = false
         wrapped.setExecutionActive(true)
         const grantKey = commandGrantKey(
           invocation.sessionId,
@@ -901,6 +1006,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           executionActive = false
           wrapped.setExecutionActive(false)
           wrapped.resetNetworkConnections()
+        }
+      },
+      waitForNetworkApprovals,
+      networkApprovalRetryRequired: () => retryRequired,
+      onNetworkWaitChange: (listener) => {
+        waitListeners.add(listener)
+        listener(pendingDecisions.size > 0)
+        return () => {
+          waitListeners.delete(listener)
         }
       },
       annotateStderr: wrapped.annotateStderr,

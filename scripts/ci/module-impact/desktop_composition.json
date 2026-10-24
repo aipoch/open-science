@@ -208,7 +208,8 @@
     "src/main/composition/artifact-surfaces.test.ts",
     "src/main/composition/handoff.test.ts",
     "src/main/composition/managed-execution.integration.test.ts",
-    "src/main/composition/managed-execution.ts"
+    "src/main/composition/managed-execution.ts",
+    "src/main/composition/session-projection.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -389,7 +390,8 @@
       "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
       "src/main/composition/handoff.test.ts",
-      "src/main/composition/managed-execution.integration.test.ts"
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/session-projection.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

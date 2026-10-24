@@ -397,7 +397,9 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
       actionTitleKey: 'Connect to {{domain}}?',
       actionTitleValues: { domain: networkApproval.hostname },
       categoryLabel: 'Network access',
-      description: 'Notebook code wants to connect to an external domain.',
+      description: request.durable
+        ? 'Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.'
+        : 'Notebook code wants to connect to an external domain.',
       hideToolIdentity: true,
       ...(networkApproval.runtime ? { notebookRuntime: networkApproval.runtime } : {})
     }

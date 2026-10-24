@@ -5,6 +5,9 @@ import type { ExecutionConfinement } from '@aipoch/notebook-network-sandbox'
 import type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
 export type { NotebookLocalService } from '@aipoch/notebook-network-sandbox'
 
+export const NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE =
+  'NETWORK_APPROVAL_RETRY_REQUIRED: Network access was approved, but the connection or execution has ended. Review possible side effects and retry the command explicitly. The command was not replayed.'
+
 export type NotebookSandboxTarget =
   | Readonly<{ kind: 'native' }>
   | Readonly<{
@@ -76,7 +79,7 @@ export type NotebookSandboxInvocation = Readonly<{
   superviseProcessTree?: boolean
   /** Native Windows host forwards its stdin into this private Shell control pipe. */
   windowsShellControlPipe?: string
-  /** Transient R admission decision; launch must retain this protection requirement. */
+  /** Execution admission requirement, retained through launch; installers leave mode selection unchanged. */
   windowsProtectionRequired?: boolean
   /** A durable grant used for admission must still be authorized at launch. */
   windowsRuntimeAccessRequired?: boolean
@@ -99,7 +102,15 @@ export type NotebookSandboxedSpawn = Readonly<{
   requestProcessTreeTermination?: () => Promise<boolean>
   confirmProcessState?: () => Promise<NotebookSandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
-  beginExecution?: (request?: { commandText: string }) => () => void
+  beginExecution?: (request?: {
+    commandText: string
+    executionReference?: string
+    signal?: AbortSignal
+    onNetworkWaitChange?: (waiting: boolean) => void
+  }) => () => void
+  waitForNetworkApprovals?: () => Promise<void>
+  networkApprovalRetryRequired?: () => boolean
+  onNetworkWaitChange?: (listener: (waiting: boolean) => void) => () => void
   annotateStderr: (stderr: string, stdout?: string) => string
   cleanup: (
     reason: NotebookSandboxCleanupReason,

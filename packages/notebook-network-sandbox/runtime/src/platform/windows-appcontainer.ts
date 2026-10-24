@@ -250,13 +250,14 @@ const verifyWindowsNetworkFence = async (
   installationId: string,
   ownershipRoot: string,
   gatewayPort: number
-): Promise<boolean> => {
+): Promise<void> => {
   let outside: Server | undefined
   let gateway: Server | undefined
   try {
     outside = await listen(0)
     const outsideAddress = outside.address()
-    if (!outsideAddress || typeof outsideAddress === 'string') return false
+    if (!outsideAddress || typeof outsideAddress === 'string')
+      throw new Error('The outside-port probe listener is unavailable.')
     if (!sharedGatewayPortActive(gatewayPort)) gateway = await listen(gatewayPort)
     const outsideProbe = await runCapture(hostPath, [
       'launch',
@@ -264,16 +265,22 @@ const verifyWindowsNetworkFence = async (
       ownershipRoot,
       connectionProbeSpecification(outsideAddress.port)
     ])
-    if (outsideProbe.code === 0) return false
+    if (outsideProbe.code === 0) throw new Error('The outside-port probe unexpectedly connected.')
+    if (outsideProbe.code !== 33 && outsideProbe.code !== 34)
+      throw new Error(`The outside-port probe exited with code ${outsideProbe.code}.`)
     const gatewayProbe = await runCapture(hostPath, [
       'launch',
       installationId,
       ownershipRoot,
       connectionProbeSpecification(gatewayPort)
     ])
-    return gatewayProbe.code === 0
-  } catch {
-    return false
+    if (gatewayProbe.code !== 0)
+      throw new Error(`The gateway probe exited with code ${gatewayProbe.code}.`)
+  } catch (cause) {
+    throw new Error(
+      `Windows Notebook network protection could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause }
+    )
   } finally {
     await Promise.all([closeServer(outside), closeServer(gateway)])
   }
@@ -309,47 +316,26 @@ const probeWindowsAppContainer = async (
   } catch {
     return { warnings: [], errors: [`Notebook AppContainer host not executable at ${hostPath}`] }
   }
-  try {
-    const status = await readAppContainerStatus(hostPath, installationId, ownershipRoot)
-    const errors: string[] = []
-    if (!status.profileExists) errors.push('Notebook AppContainer profile is not installed')
-    if (!status.loopbackAllowed)
-      errors.push('Notebook AppContainer loopback access is not installed')
-    if (!status.networkFenceReady)
-      errors.push('Notebook AppContainer loopback network fence is not installed')
-    if (!status.owned || status.ownershipState !== 'owned')
-      errors.push('Notebook AppContainer resources have no valid Open-Science ownership receipt')
-    if (status.gatewayPort === null) {
-      errors.push('Notebook AppContainer gateway port is not configured')
-    } else if (!sharedGatewayPortActive(status.gatewayPort)) {
-      if (!(await loopbackPortAvailable(status.gatewayPort))) {
-        errors.push(`Notebook AppContainer gateway port ${status.gatewayPort} is unavailable`)
-      } else if (
-        errors.length === 0 &&
-        !(await verifyWindowsNetworkFence(
-          hostPath,
-          installationId,
-          ownershipRoot,
-          status.gatewayPort
-        ))
-      ) {
-        errors.push('Notebook AppContainer loopback network fence is not installed')
-      }
-    } else if (
-      errors.length === 0 &&
-      !(await verifyWindowsNetworkFence(
-        hostPath,
-        installationId,
-        ownershipRoot,
-        status.gatewayPort
-      ))
-    ) {
-      errors.push('Notebook AppContainer loopback network fence is not installed')
+  const status = await readAppContainerStatus(hostPath, installationId, ownershipRoot)
+  const errors: string[] = []
+  if (!status.profileExists) errors.push('Notebook AppContainer profile is not installed')
+  if (!status.loopbackAllowed) errors.push('Notebook AppContainer loopback access is not installed')
+  if (!status.networkFenceReady)
+    errors.push('Notebook AppContainer loopback network fence is not installed')
+  if (!status.owned || status.ownershipState !== 'owned')
+    errors.push('Notebook AppContainer resources have no valid Open-Science ownership receipt')
+  if (status.gatewayPort === null) {
+    errors.push('Notebook AppContainer gateway port is not configured')
+  } else if (!sharedGatewayPortActive(status.gatewayPort)) {
+    if (!(await loopbackPortAvailable(status.gatewayPort))) {
+      errors.push(`Notebook AppContainer gateway port ${status.gatewayPort} is unavailable`)
+    } else if (errors.length === 0) {
+      await verifyWindowsNetworkFence(hostPath, installationId, ownershipRoot, status.gatewayPort)
     }
-    return { warnings: [], errors }
-  } catch (error) {
-    return { warnings: [], errors: [error instanceof Error ? error.message : String(error)] }
+  } else if (errors.length === 0) {
+    await verifyWindowsNetworkFence(hostPath, installationId, ownershipRoot, status.gatewayPort)
   }
+  return { warnings: [], errors }
 }
 
 const powershellString = (value: string): string => `'${value.replaceAll("'", "''")}'`

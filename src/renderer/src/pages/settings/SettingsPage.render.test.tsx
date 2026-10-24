@@ -76,6 +76,7 @@ const originalSettingsActions = (() => {
 // Suspense boundary; lazy-loading itself has separate architecture coverage.
 beforeAll(async () => {
   await Promise.all([
+    import('../workspace/pdf-annotations/PdfAnnotationPreviewDialog'),
     import('./AgentPanel'),
     import('./ArchivedPanel'),
     import('./ComputeAddForm'),

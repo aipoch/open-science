@@ -430,6 +430,61 @@ describe('A03 unavailable permission downgrade projection', () => {
 })
 
 describe('workspace permission wait recovery', () => {
+  it('rehydrates independent network cards and removes them when the branch no longer owns them', () => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'network-session',
+      content: 'Run sample client',
+      projectId: 'project-fixture',
+      cwd: '/workspace'
+    })
+    const source = useSessionStore.getState().sessions[0]
+    const persisted = materializeSessionConversationGraph(toPersistedSession(source))
+    const graph = persisted.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    const approvals = ['first.example.test', 'second.example.test'].map((hostname, index) => ({
+      version: 1 as const,
+      kind: 'sandbox-network' as const,
+      state: 'pending' as const,
+      requestId: `network-${index}`,
+      sessionId: source.id,
+      executionId: 'execution-fixture',
+      commandFingerprint: 'a'.repeat(64),
+      hostname,
+      port: 443,
+      runtime: 'bash' as const,
+      originatingPromptMessageId: source.messages[0].id,
+      agentFrameId: frame.id,
+      messageBranchId: frame.activeBranchId,
+      createdAt: 1
+    }))
+    const session: ChatSession = {
+      ...source,
+      conversationGraph: graph,
+      status: 'waiting-permission',
+      runtimeContext: { version: 1, revision: 1, networkApprovals: approvals }
+    }
+    const restored = pendingWorkspacePermissions([session], [])
+    expect(restored.map(({ requestId }) => requestId)).toEqual(['network-0', 'network-1'])
+    expect(restored[0]).toMatchObject({
+      appOwned: true,
+      durable: true,
+      rawInput: { notebookNetworkApproval: { retryRequired: true } }
+    })
+    expect(pendingWorkspacePermissions([session], [restored[0]])).toHaveLength(2)
+    const inactive = {
+      ...session,
+      runtimeContext: {
+        ...session.runtimeContext!,
+        networkApprovals: approvals.map((item) => ({
+          ...item,
+          messageBranchId: 'different-branch'
+        }))
+      }
+    }
+    expect(pendingWorkspacePermissions([inactive], [])).toEqual([])
+  })
+
   it('projects a restored main-owned request and prefers a matching live request', () => {
     useSessionStore.setState(createInitialSessionState())
     useSessionStore.getState().appendUserMessage({

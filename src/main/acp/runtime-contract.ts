@@ -134,6 +134,12 @@ export type AcpRuntimeOptions = {
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
+    networkApprovalOwner?: import('./sandbox-network-approval-owner').SandboxNetworkApprovalOwner
+    allowNetworkDomain?: (
+      hostname: string,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => Promise<unknown>
     sessions: SessionRuntimeContextCommands &
       Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
       Partial<Pick<SessionCatalog, 'sessionProjectId'> & SessionMutation>
