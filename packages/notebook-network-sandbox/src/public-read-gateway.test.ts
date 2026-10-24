@@ -251,6 +251,30 @@ describe('inspected CONNECT over real sockets (injected public address via local
     }
   })
 
+  it.each(['fixture-expectation', '100-continue, fixture-expectation'])(
+    'rejects unsupported Expect %s without asking or opening upstream',
+    async (expectation) => {
+      const { open, seen, blocked, authorities } = await setup({
+        approve: async () => true,
+        readBody: true
+      })
+      const socket = await open()
+      let reply = ''
+      socket.on('data', (chunk: Buffer) => {
+        reply += chunk.toString()
+      })
+      socket.write(
+        `POST /synthetic HTTP/1.1\r\nHost: data.example\r\nExpect: ${expectation}\r\nContent-Length: 16\r\n\r\n`
+      )
+      // A client waits for the expectation response before sending its body.
+      await vi.waitFor(() => expect(reply).toContain('417 Expectation Failed'))
+      expect(reply).not.toContain('100 Continue')
+      expect(blocked).not.toHaveBeenCalled()
+      expect(authorities).toEqual([])
+      expect(seen).toEqual([])
+    }
+  )
+
   it('never forwards a pending approved request after the gateway has closed', async () => {
     const approval = Promise.withResolvers<boolean>()
     const { open, seen, blocked, gateway } = await setup({ approve: () => approval.promise })

@@ -1157,6 +1157,17 @@ class CommandGateway {
           }
           clearTimeout(timer)
           sawRequest = true
+          if (
+            request.headers.expect !== undefined &&
+            request.headers.expect.toLowerCase() !== '100-continue'
+          ) {
+            // Reject unsupported expectations locally, including lists that Node routes through
+            // checkContinue. A waiting client must not depend on an upstream handshake.
+            busy = true
+            response.writeHead(417, { connection: 'close' })
+            response.end()
+            return
+          }
           const verdict = inspectReadRequest(request, host, headerBytes)
           if (verdict.kind === 'invalid' || verdict.kind === 'limit') {
             if (verdict.kind === 'limit') {
