@@ -25,6 +25,30 @@ import {
   usesReviewedBoundary
 } from './module-graph/policy.mjs'
 
+// When the committed index is absent (runtime-generated), generate it lazily so preflight
+// (git-archived code without node_modules) never imports the typescript dependency.
+async function loadOrGenerateDerivedConsumers(
+  manifest = loadModuleImpactManifest(),
+  cwd = process.cwd()
+) {
+  const loaded = loadDerivedConsumers()
+  if (Object.keys(loaded.modules).length > 0) return loaded
+  // Index absent; try generating from the working tree. If git or the parser is unavailable
+  // (test environments, preflight archives), fall back to an empty index rather than crashing.
+  try {
+    const { consumerDependencyGraph, generateDerivedConsumers, workingTreeSource } = await import(
+      './module-graph/index.mjs'
+    )
+    const source = workingTreeSource(cwd)
+    const runtimeEdges = Object.entries(
+      JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
+    )
+    return generateDerivedConsumers(manifest, consumerDependencyGraph(source, runtimeEdges).reverse)
+  } catch {
+    return { schemaVersion: 1, modules: {} }
+  }
+}
+
 const defaultManifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
 // Older trusted extraction bundles have no registry: retain all tests rather than guess.
@@ -466,7 +490,9 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (command === 'module') {
     const moduleId = arguments_[1]
     if (!moduleId || moduleId.startsWith('--')) throw new Error('Module id is required')
-    const plan = createModuleTestPlan(moduleId)
+    const manifest = loadModuleImpactManifest()
+    const derived = await loadOrGenerateDerivedConsumers(manifest, options.cwd ?? process.cwd())
+    const plan = createModuleTestPlan(moduleId, withDerivedConsumers(manifest, derived))
     return executeModuleTestPlan(plan, { ...options, testArguments })
   }
   if (command !== 'affected') throw new Error(`Unknown module test-impact command: ${command}`)
@@ -530,9 +556,12 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
 // The plan `affected` executes for a revision range, including CodeGraph and host/package
 // refinement. Shadow reports compare against this, not the unrefined registered plan.
 export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...options } = {}) {
+  const derivedConsumers =
+    options.derivedConsumers ??
+    (await loadOrGenerateDerivedConsumers(loadModuleImpactManifest(), options.cwd ?? process.cwd()))
   const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
     changesFromGit(base, head, options),
-    { base, head, ...options }
+    { base, head, ...options, derivedConsumers }
   )
   const paths = sorted(
     changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
