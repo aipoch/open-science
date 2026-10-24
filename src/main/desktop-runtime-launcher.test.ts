@@ -10,6 +10,7 @@ import {
   DesktopRuntimeStoppingError
 } from './desktop-runtime-launcher'
 import * as devSession from './dev-runtime-session'
+import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 const directories: string[] = []
 afterEach(async () => {
@@ -78,7 +79,7 @@ describe('desktop backend discovery', () => {
       issue: { reason: 'startup-recovery-required', canStop: true }
     })
   })
-  it.each(['sessionId', 'buildId', 'workspaceRoot'] as const)(
+  it.each(['sessionId', 'buildId', 'workspaceRoot', 'malformed'] as const)(
     'rejects a mismatched dev %s while preserving ordinary release discovery',
     async (field) => {
       const { root, owner, fetcher } = await fixture()
@@ -88,17 +89,50 @@ describe('desktop backend discovery', () => {
           new Response(
             JSON.stringify({
               ...proof(root, owner),
-              devIdentity: {
-                ...identity,
-                [field]: field === 'workspaceRoot' ? join(root, 'other') : randomUUID()
-              }
+              devIdentity:
+                field === 'malformed'
+                  ? null
+                  : {
+                      ...identity,
+                      [field]: field === 'workspaceRoot' ? join(root, 'other') : randomUUID()
+                    }
             })
           )
       )
-      await expect(discoverDesktopBackend(root, 'test', undefined, identity)).rejects.toThrow(
-        'development session'
+      const error = await discoverDesktopBackend(root, 'test', undefined, identity).catch(
+        (error: unknown) => error
       )
+      expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
+      if (!(error instanceof DesktopRuntimeStartupError)) throw new Error('Expected startup issue')
+      expect(error.issue).toMatchObject({
+        reason: 'startup-recovery-required',
+        canStop: false,
+        canRecover: true,
+        diagnostics: expect.stringContaining('Stop its npm run dev command')
+      })
+      await expect(error.stopAndContinue()).rejects.toBe(error)
+      await expect(error.recover()).rejects.toBeInstanceOf(DesktopRuntimeStartupError)
       await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(owner.desktop)
+      const replacement = { ...owner, pid: 456, generation: randomUUID() }
+      await writeFile(join(root, 'runtime-owner.json'), JSON.stringify(replacement))
+      fetcher.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ...proof(root, replacement),
+            devIdentity: { ...identity, sessionId: randomUUID() }
+          })
+        )
+      )
+      await expect(error.recover()).rejects.toMatchObject({
+        issue: { pid: 456, canStop: false, canRecover: true }
+      })
+      expect(
+        fetcher.mock.calls.every(
+          ([url, options]) => String(url).endsWith('/owner') && options.method === undefined
+        )
+      ).toBe(true)
+      fetcher.mockRejectedValue(new Error('Previous owner exited'))
+      await expect(error.recover()).resolves.toBeUndefined()
     }
   )
   it('admits only the matching live dev session and build', async () => {

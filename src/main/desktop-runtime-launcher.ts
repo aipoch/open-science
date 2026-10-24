@@ -126,8 +126,30 @@ async function discoverVerifiedDesktopBackend(
   // Other managed sessions cannot be taken over. Older services without dev identity retain
   // the explicit, user-confirmed startup recovery path below, never automatic adoption.
   const missingDevIdentity = Boolean(devIdentity && !('devIdentity' in proof))
-  if (devIdentity && !missingDevIdentity)
-    assertDevRuntimeIdentity('devIdentity' in proof ? proof.devIdentity : undefined, devIdentity)
+  if (devIdentity && !missingDevIdentity) {
+    try {
+      assertDevRuntimeIdentity('devIdentity' in proof ? proof.devIdentity : undefined, devIdentity)
+    } catch {
+      const message =
+        'Another development session or build owns this backend. Stop its npm run dev command, then retry.'
+      throw new DesktopRuntimeStartupError(
+        {
+          reason: 'startup-recovery-required',
+          desktopVersion: version,
+          runtimeVersion: owner.desktop?.version,
+          pid: owner.pid,
+          canStop: false,
+          canRecover: true,
+          diagnostics: message
+        },
+        message,
+        undefined,
+        async () => {
+          await discoverDesktopBackend(configRoot, version, terminationDeps, devIdentity)
+        }
+      )
+    }
+  }
   if ('stopping' in proof && proof.stopping === true && owner.desktop)
     throw new DesktopRuntimeStoppingError(owner.pid, owner.desktop.generation)
   if (owner.host !== 'node' || !owner.desktop) {
