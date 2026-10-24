@@ -10630,6 +10630,28 @@ it('recovers independent multiplier leaves and complete native-fenced model grou
   expect(f).toEqual(before)
 })
 
+it('bounds anchor inspection when a dense ruled face must fall through to another recovery', async () => {
+  const { recoverRuledRecordFaces } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-ruled-record-faces.mjs')).href
+  )
+  const f = fixture('fenced-smallcaps-stub-owner')
+  let textReads = 0
+  for (const item of f.items) {
+    const text = item.text
+    Object.defineProperty(item, 'text', {
+      enumerable: true,
+      get: () => {
+        textReads++
+        return text
+      }
+    })
+  }
+  const result = recoverRuledRecordFaces(f.table, f.items, f.captions, f.rules)
+  // Count work, not elapsed time: column refinement must not repeat the all-pairs scan.
+  expect(textReads).toBeLessThan(f.items.length ** 2 * 6)
+  expect(result).toBeUndefined()
+})
+
 it('repairs only a same-baseline small-caps native fenced stub without rebuilding rich peers', () => {
   const f = fixture('fenced-smallcaps-stub-owner'),
     before = structuredClone(f),

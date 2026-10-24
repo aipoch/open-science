@@ -7894,6 +7894,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Estudios del cáncer y datos ómicos, dependencias y respuestas a fármacos de modelos celulares de cBioPortal y DepMap/CCLE.",
     "Export screening results (CSV)": "Exportar los resultados del cribado (CSV)",
     "Screening results could not be exported.": "No se pudieron exportar los resultados del cribado.",
-    "Screening data changed during export. Please try again.": "Los datos del cribado cambiaron durante la exportación. Inténtelo de nuevo."
+    "Screening data changed during export. Please try again.": "Los datos del cribado cambiaron durante la exportación. Inténtelo de nuevo.",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "La línea de comandos espera autorización para acceder a la red. Si el proceso ha finalizado, autorice el acceso y vuelva a ejecutar el comando explícitamente; no se ejecutará de nuevo automáticamente."
   }
 }

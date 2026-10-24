@@ -212,6 +212,10 @@ export async function composeSettingsBootstrap({
         runtime,
         reason,
         allowOnce,
+        projectId,
+        executionId,
+        commandFingerprint,
+        canResume,
         signal
       }) => {
         if (headless && !permissionApprovalPresence.isAvailable()) return 'unavailable'
@@ -221,6 +225,19 @@ export async function composeSettingsBootstrap({
           .requestAppPermission({
             sessionId,
             title: `Connect to ${hostname}?`,
+            ...(executionId && commandFingerprint && runtime === 'bash'
+              ? {
+                  networkApproval: {
+                    projectId,
+                    executionId,
+                    commandFingerprint,
+                    hostname,
+                    port: port ?? 443,
+                    runtime
+                  },
+                  canResume
+                }
+              : {}),
             rawInput: {
               notebookNetworkApproval: {
                 hostname,

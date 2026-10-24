@@ -501,6 +501,7 @@ export const createApplicationModules = async (
     translate
   })
   const agentRuntime = await composeAgentRuntime({
+    sandboxNetworkApprovalOwner: sessionProjection.sandboxNetworkApprovalOwner,
     ...settingsBootstrap,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,

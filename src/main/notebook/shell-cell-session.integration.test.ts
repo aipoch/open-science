@@ -365,6 +365,66 @@ console.log(JSON.stringify(result))
     }
   )
 
+  it.each(['approve', 'cancel'] as const)(
+    'keeps Shell approval time outside the deadline and handles %s after client completion',
+    async (decision) => {
+      const pending = Promise.withResolvers<void>()
+      const entered = Promise.withResolvers<void>()
+      const controller = new AbortController()
+      let waiting = true
+      adapter = new NotebookShellProcessAdapter(process.platform, {
+        wrap: async (invocation) => ({
+          executable: invocation.executable,
+          args: [...invocation.args],
+          env: invocation.env,
+          annotateStderr: (stderr) => stderr,
+          beginExecution: (execution) => {
+            execution?.signal?.addEventListener('abort', () => pending.resolve(), { once: true })
+            queueMicrotask(() => {
+              execution?.onNetworkWaitChange?.(true)
+              entered.resolve()
+            })
+            return () => undefined
+          },
+          waitForNetworkApprovals: () => pending.promise,
+          networkApprovalRetryRequired: () => !waiting && !controller.signal.aborted,
+          cleanup: async () => ({
+            processesTerminated: true,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      })
+      let settled = false
+      const run = adapter.execute({
+        ...request(
+          command(
+            'sleep 0.1; printf synthetic',
+            'Start-Sleep -Milliseconds 100; [Console]::Write("synthetic")'
+          )
+        ),
+        timeoutMs: 50,
+        signal: controller.signal
+      })
+      void run.then(() => {
+        settled = true
+      })
+      await entered.promise
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(settled).toBe(false)
+      waiting = false
+      if (decision === 'cancel') controller.abort()
+      else pending.resolve()
+      const result = await run
+      expect(result.stderr).not.toContain('timed out')
+      if (decision === 'cancel') expect(result.cancelled).toBe(true)
+      else {
+        expect(result).toMatchObject({ exitCode: 0, stdout: 'synthetic' })
+        expect(result.stderr).toContain('NETWORK_APPROVAL_RETRY_REQUIRED')
+      }
+    }
+  )
+
   it('retains variables, exports, functions and cwd through ordered cells', async () => {
     const first = await adapter.execute(
       request(

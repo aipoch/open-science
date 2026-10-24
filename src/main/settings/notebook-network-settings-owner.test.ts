@@ -21,7 +21,9 @@ describe('NotebookNetworkSettingsOwner', () => {
     owner: NotebookNetworkSettingsOwner
     repository: {
       getSettings: ReturnType<typeof vi.fn>
-      setNotebookNetwork: ReturnType<typeof vi.fn>
+      setNotebookNetwork: ReturnType<
+        typeof vi.fn<(next: NotebookNetworkSettings) => Promise<StoredSettings>>
+      >
     }
     apply: ReturnType<typeof vi.fn>
     read: () => NotebookNetworkSettings
@@ -78,6 +80,65 @@ describe('NotebookNetworkSettingsOwner', () => {
       2,
       expect.objectContaining(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
     )
+  })
+
+  it.each(['persist', 'apply'])('rolls back a cancelled approval during %s', async (phase) => {
+    const state = harness()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let entered = false
+    let current = true
+    if (phase === 'persist') {
+      const persist = state.repository.setNotebookNetwork.getMockImplementation()!
+      state.repository.setNotebookNetwork.mockImplementationOnce(async (next) => {
+        const stored = await persist(next)
+        entered = true
+        await gate
+        return stored
+      })
+    } else {
+      state.apply.mockImplementationOnce(async () => {
+        entered = true
+        await gate
+      })
+    }
+    const result = state.owner.allowDomain('service.example.test', async () => {
+      if (!current) throw new Error('approval cancelled')
+    })
+    const rejected = expect(result).rejects.toThrow('approval cancelled')
+    await vi.waitFor(() => expect(entered).toBe(true))
+    current = false
+    release()
+    await rejected
+    expect(state.read()).toEqual(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+    expect(state.apply).toHaveBeenLastCalledWith(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+  })
+
+  it('rejects an approval cancelled while queued behind another settings write', async () => {
+    const state = harness()
+    let release!: () => void
+    state.apply.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+    )
+    const previous = state.owner.allowDomain('existing.example.test')
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    let current = true
+    const result = state.owner.allowDomain('cancelled.example.test', async () => {
+      if (!current) throw new Error('approval cancelled')
+    })
+    const rejected = expect(result).rejects.toThrow('approval cancelled')
+    current = false
+    release()
+    await previous
+    await rejected
+    expect(state.read().allowedDomains).toContain('existing.example.test')
+    expect(state.read().allowedDomains).not.toContain('cancelled.example.test')
+    expect(state.repository.setNotebookNetwork).toHaveBeenCalledTimes(1)
   })
 
   it('merges a stale form delta with an always-allow write in either queue order', async () => {

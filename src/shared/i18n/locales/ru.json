@@ -8033,6 +8033,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Исследования рака, омиксные данные, зависимости и ответы на препараты клеточных моделей из cBioPortal и DepMap/CCLE.",
     "Export screening results (CSV)": "Экспортировать результаты отбора (CSV)",
     "Screening results could not be exported.": "Не удалось экспортировать результаты отбора.",
-    "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку."
+    "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку.",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится."
   }
 }
