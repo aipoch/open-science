@@ -174,8 +174,20 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
         autoClose: false,
         start: 0,
         end: Math.max(0, sourceInfo.size - 1)
-      }))
+      })) {
+        if (
+          !this.isCurrent(
+            connectionGeneration,
+            sessionId,
+            generation,
+            connectionProjectionGeneration,
+            sessionGeneration
+          )
+        ) {
+          throw new Error('Read-only linked-folder projection was superseded.')
+        }
         sourceHash.update(chunk)
+      }
       if (snapshotHash.digest('hex') !== sourceHash.digest('hex')) {
         throw new Error('Linked-folder file changed while preparing its snapshot.')
       }
