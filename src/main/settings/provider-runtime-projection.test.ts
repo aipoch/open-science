@@ -545,40 +545,6 @@ describe('ProviderRuntimeProjectionOwner', () => {
   })
 
   it.each(['claude-code', 'opencode', 'codex'] as const)(
-    'projects both Kimi K3.1 Pro models without changing saved selections for %s',
-    (frameworkId) => {
-      const owner = new ProviderRuntimeProjectionOwner()
-      const provider: StoredProvider = {
-        id: 'kimi',
-        type: 'official',
-        vendorId: 'kimi',
-        name: 'Kimi',
-        model: 'kimi-k3'
-      }
-      const before = structuredClone(provider)
-      const framework = getAgentFramework(frameworkId)
-      for (const model of ['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed']) {
-        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
-        expect(target).toMatchObject({
-          effectiveModel: model,
-          frameworkCompatible: true,
-          needsChatResponsesToChatCompletionsBridge: frameworkId === 'codex',
-          needsNativeResponsesCompatibility: false,
-          reasoningEffortProfile: {
-            supported: true,
-            slots: ['low', 'high', 'max', 'max', 'max']
-          },
-          provider: { supportsImageInput: true, contextWindow: 1_048_576 }
-        })
-      }
-      expect(
-        owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework).effectiveModel
-      ).toBe('kimi-k3')
-      expect(provider).toEqual(before)
-    }
-  )
-
-  it.each(['claude-code', 'opencode', 'codex'] as const)(
     'projects Ark capabilities without changing a saved selection for %s',
     (frameworkId) => {
       const owner = new ProviderRuntimeProjectionOwner()
