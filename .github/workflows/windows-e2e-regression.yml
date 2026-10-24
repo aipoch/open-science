@@ -99,7 +99,9 @@ jobs:
     needs: [plan, windows_e2e_setup]
     if: ${{ !cancelled() && needs.plan.outputs.should_test == 'true' && needs.windows_e2e_setup.result == 'success' }}
     runs-on: windows-latest
-    timeout-minutes: 40
+    # Budget both 7-minute browser attempts, two 15-minute Electron suites,
+    # setup and diagnostic uploads; 40 minutes can cancel a healthy final suite.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
