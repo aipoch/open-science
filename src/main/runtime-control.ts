@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { loadOrCreateWebToken } from './web-service/auth'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import type { DesktopEndpoint } from './desktop-connection'
+import type { DevRuntimeIdentity } from './dev-runtime-session'
 
 export const RUNTIME_OWNER_FILE = 'runtime-owner.json'
 export type RuntimeOwnerRecord = Readonly<{
@@ -26,7 +27,8 @@ export async function startRuntimeControl(
   ensureWeb: (port: number) => Promise<unknown>,
   desktop?: DesktopEndpoint,
   startupOptions?: RuntimeStartupOptions,
-  isStopping?: () => boolean
+  isStopping?: () => boolean,
+  devIdentity?: DevRuntimeIdentity
 ): Promise<{ close(): Promise<void> }> {
   const verifiedOptions = startupOptions
     ? runtimeStartupOptionsSchema.parse(startupOptions)
@@ -53,6 +55,7 @@ export async function startRuntimeControl(
         JSON.stringify({
           generation,
           pid: process.pid,
+          ...(devIdentity ? { devIdentity } : {}),
           ...(isStopping?.() ? { stopping: true } : {}),
           ...(verifiedOptions && desktop
             ? {

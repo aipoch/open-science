@@ -33,6 +33,16 @@ describe('single Node runtime production startup', () => {
     before('system.installPowerMonitorListeners()', 'await startOrAttachDesktopBackend(')
     before("app.on('before-quit', holdStartupQuit)", 'await app.whenReady()')
     before('if (startupQuitRequested)', "app.removeListener('before-quit', holdStartupQuit)")
+    before('system.installPowerMonitorListeners()', 'await joinDevSession(')
+    before('await joinDevSession(', 'await startOrAttachDesktopBackend(')
+    const recoveryWait = mainSource.slice(
+      mainSource.indexOf('const waitForStartupRetry ='),
+      mainSource.indexOf('const showStartupWindow =')
+    )
+    expect(recoveryWait.indexOf('if (startupQuitRequested)')).toBeGreaterThan(-1)
+    expect(recoveryWait.indexOf('await exitFromBlockedStartup()')).toBeLessThan(
+      recoveryWait.indexOf('await new Promise<void>')
+    )
   })
   it('installs preview handlers in both native sessions before a first window can exist', () => {
     before('await startOrAttachDesktopBackend(', 'session.defaultSession')

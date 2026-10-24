@@ -1,4 +1,5 @@
 import { app, dialog, shell } from 'electron'
+import { readDevSession, relaunchWithDevSession } from './dev-runtime-session'
 import { resolveLocale } from '../shared/locale'
 import { DesktopBackendStartupError } from './backend-startup'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
@@ -50,7 +51,10 @@ export async function recoverDesktopBackendStartup(
         })
       continue
     }
-    if (response === retryIndex) app.relaunch()
+    if (response === retryIndex)
+      relaunchWithDevSession(readDevSession(!app.isPackaged && import.meta.env.DEV), () =>
+        app.relaunch()
+      )
     app.exit(1)
     return
   }

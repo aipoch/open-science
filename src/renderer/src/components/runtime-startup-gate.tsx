@@ -40,6 +40,7 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
     const unsubscribe = api.onStateChanged((next) => {
       if (mounted) {
         revision.current++
+        setConfirmation(false)
         setSequence((value) => value + 1)
         setState(next)
         setInitialized(true)
@@ -99,6 +100,7 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
   const busy = pending || state.phase === 'stopping' || state.phase === 'recovering'
   const legacyService = issue.reason === 'legacy-service'
   const recovery = issue.reason === 'startup-recovery-required'
+  const stopRequired = recovery && issue.canStop && !issue.canRecover
   const perform = async (action: () => Promise<RuntimeStartupState>): Promise<void> => {
     if (busy) return
     const observed = revision.current
@@ -108,6 +110,7 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
       const next = await action()
       if (observed === revision.current) setState(next)
     } catch {
+      if (observed !== revision.current) return
       setState((current) =>
         current.phase === 'stopping' || current.phase === 'recovering'
           ? { phase: 'blocked', issue: current.issue }
@@ -123,21 +126,29 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
     legacyService &&
     !busy &&
     (failed || (state.phase === 'blocked' && issue.diagnostics !== undefined))
-  const canProceed = issue.canRecover || (!recovery && issue.canStop)
-  const retryOnly = recovery || !issue.canStop
+  const canProceed = issue.canRecover || issue.canStop
+  const retryOnly = issue.canRecover && (!issue.canStop || recovery)
   const checking = state.phase === 'recovering' || (pending && !stopping)
   const diagnosticsText = issue.diagnostics ?? JSON.stringify(issue, null, 2)
   const tryAgain = (): void => {
     if (!api) return
+    const action =
+      issue.canStop && (stopping || (state.phase !== 'recovering' && !retryOnly))
+        ? api.stopAndContinue
+        : issue.canRecover
+          ? api.recover
+          : undefined
+    if (!action) return
     if (busy) {
-      void api
-        .recover()
+      const observed = revision.current
+      void action()
         .then((next) => {
+          if (observed !== revision.current) return
           setSequence((value) => value + 1)
           setState(next)
         })
         .catch(() => {})
-    } else void perform(issue.canStop && legacyService ? api.stopAndContinue : api.recover)
+    } else void perform(action)
   }
   const quit = t('Quit', { context: 'verb', ns: 'common' })
   const title =
@@ -153,11 +164,13 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
             ? t('Checking…')
             : failure
               ? t("We couldn't close the older version")
-              : legacyService
-                ? t('An older version is still running')
-                : recovery
-                  ? t("Open-Science couldn't start")
-                  : t('Service version mismatch')
+              : stopRequired
+                ? t('Another Open-Science service is running')
+                : legacyService
+                  ? t('An older version is still running')
+                  : recovery
+                    ? t("Open-Science couldn't start")
+                    : t('Service version mismatch')
   const description =
     busy && stalled
       ? t('Open-Science is still working on it. You can wait, try again, or save a report.')
@@ -171,7 +184,7 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
             ? t('Checking whether the app can safely continue. Please wait.')
             : failure
               ? t('Your projects are safe. Try again, or save a report so we can help.')
-              : legacyService
+              : legacyService || stopRequired
                 ? t(
                     'Open-Science needs to close it before opening your projects. Finish any work in other Open-Science windows first.'
                   )
@@ -219,7 +232,7 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
           primaryButton={
             !actionable
               ? undefined
-              : fallback || failure
+              : (fallback || failure) && canProceed
                 ? { label: t('Try again'), disabled: false, onClick: tryAgain }
                 : {
                     label: !canProceed

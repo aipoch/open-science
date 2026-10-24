@@ -9,7 +9,8 @@
   "packages/process-tree-native/index.cjs": [
     "src/main/process-tree.ts",
     "src/main/process-tree-native-loading.macos.integration.test.ts",
-    "src/main/update/installation-occupancy.ts"
+    "src/main/update/installation-occupancy.ts",
+    "scripts/dev-process-identity.mjs"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
     "packages/safe-file-publisher-native/index.cjs"
@@ -190,5 +191,7 @@
   "resources/pdf-translation-local/worker.mjs": [
     "src/main/literature/pdf-translation/local.ts",
     "src/main/literature/pdf-translation/local-worker.integration.test.ts"
-  ]
+  ],
+  "src/main/runtime-ownership.ts": ["scripts/dev-session.mjs"],
+  "src/main/dev-build-identity.ts": ["scripts/build-backend.mjs"]
 }

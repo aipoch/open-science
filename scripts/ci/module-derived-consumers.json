@@ -192,6 +192,7 @@
       "src/main/session-details/composition.test.ts"
     ],
     "host_runtime_lifecycle": [
+      "scripts/dev-session.integration.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/composition/session-projection.test.ts",
       "src/main/notebook/authorized-directories.integration.test.ts",
@@ -467,6 +468,7 @@
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
     "native_process_tree": [
+      "scripts/dev-session.integration.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/composition/session-projection.test.ts",
       "src/main/local-fs/service.test.ts",

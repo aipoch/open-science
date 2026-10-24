@@ -8,6 +8,7 @@ import {
   resolveLocalePreference,
   resolvePreference
 } from '@/lib/locale-preference'
+import type { RuntimeStartupState } from '../../../shared/runtime-startup'
 import type { LanguagePreference, Locale, LocalePreferenceSnapshot } from '../../../shared/locale'
 
 type LocaleStore = {
@@ -102,30 +103,84 @@ export const startLocalePreferenceSync = (): (() => void) => {
   let unsubscribe: () => void
 
   if (localeApi) {
-    const versionAtStart = broadcastVersion
-    const operationAtStart = operation
-    unsubscribe = localeApi.onChanged((snapshot) => {
+    let initialized = false
+    let initialization = 0
+    const unsubscribeLocale = localeApi.onChanged((snapshot) => {
       if (!active) return
       broadcastVersion += 1
       confirmed = snapshot
       if (pendingOperation === undefined) applyLocaleSnapshot(snapshot)
     })
-    const cachedPreference = useLocaleStore.getState().preference
-    void localeApi
-      .initialize({ cachedPreference })
-      .then((snapshot) => {
-        if (!active || versionAtStart !== broadcastVersion) return
-        if (operationAtStart >= confirmedOperation) confirmed = snapshot
-        // Startup can arrive after a failed optimistic choice. Reconcile that failure too, but never
-        // replace a pending choice or a newer successful command with an old startup snapshot.
-        if (
-          pendingOperation === undefined &&
-          (operationAtStart === operation || useLocaleStore.getState().saveFailed)
-        ) {
-          applyLocaleSnapshot(confirmed)
+    const initialize = (): void => {
+      if (!active || initialized) return
+      initialized = true
+      const attempt = ++initialization
+      const versionAtStart = broadcastVersion
+      const operationAtStart = operation
+      const cachedPreference = useLocaleStore.getState().preference
+      void localeApi
+        .initialize({ cachedPreference })
+        .then((snapshot) => {
+          if (!active || attempt !== initialization || versionAtStart !== broadcastVersion) return
+          if (operationAtStart >= confirmedOperation) confirmed = snapshot
+          // Do not replace a pending choice or a newer successful command with a startup reply.
+          if (
+            pendingOperation === undefined &&
+            (operationAtStart === operation || useLocaleStore.getState().saveFailed)
+          ) {
+            applyLocaleSnapshot(confirmed)
+          }
+        })
+        .catch(() => {
+          if (attempt === initialization) initialized = false
+        })
+    }
+    const startup = window.api.runtimeStartup
+    let unsubscribeStartup: (() => void) | undefined
+    if (startup) {
+      let revision = 0
+      let reading = false
+      const observe = (state: RuntimeStartupState): void => {
+        if (!active) return
+        if (state.phase === 'ready') initialize()
+        else {
+          initialized = false
+          initialization++
         }
+      }
+      // The recovery window can render before the backend IPC relay exists. Subscribe first
+      // and ignore an old snapshot if a newer readiness event arrives while reading it.
+      const detachState = startup.onStateChanged((state) => {
+        revision++
+        observe(state)
       })
-      .catch(() => undefined)
+      const readReadiness = (): void => {
+        if (!active || initialized || reading) return
+        reading = true
+        const observed = revision
+        void startup
+          .getState()
+          .then((state) => {
+            if (observed === revision) observe(state)
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            reading = false
+          })
+      }
+      // A transient IPC failure can miss the sole ready event. Retry when the user returns,
+      // using a fresh readiness check rather than invoking an unavailable locale handler.
+      window.addEventListener('focus', readReadiness)
+      unsubscribeStartup = () => {
+        window.removeEventListener('focus', readReadiness)
+        detachState()
+      }
+      readReadiness()
+    } else initialize()
+    unsubscribe = () => {
+      unsubscribeStartup?.()
+      unsubscribeLocale()
+    }
   } else {
     const onStorage = (event: StorageEvent): void => {
       if (

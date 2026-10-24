@@ -53,6 +53,7 @@ import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
 import type { SettingsSnapshot } from '../shared/settings'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
+import { joinDevSession, readDevSession, relaunchWithDevSession } from './dev-runtime-session'
 import { acquireCredentialBootstrapLease, type RuntimeDirectoryLease } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
@@ -551,6 +552,14 @@ async function startDesktop(): Promise<void> {
     requestSystemShutdown: () => requestSystemShutdown()
   })
   system.installPowerMonitorListeners()
+  const devSession = readDevSession(!app.isPackaged && import.meta.env.DEV)
+  if (devSession) {
+    await joinDevSession({
+      session: devSession,
+      desktopOnly: true,
+      stop: async () => requestSystemShutdown()
+    })
+  }
   const isApplicationWindow = (sender: WebContents): boolean => {
     const window = BrowserWindow.fromWebContents(sender)
     return Boolean(window && isMainWindow(window))
@@ -808,6 +817,10 @@ async function startDesktop(): Promise<void> {
     startupBlocked = true
     startupFailure = failure
     publishRuntimeStartup({ phase: 'blocked', issue: failure.issue })
+    if (startupQuitRequested) {
+      await exitFromBlockedStartup()
+      return
+    }
     showStartupWindow()
     showMainWindow = showStartupWindow
     await new Promise<void>((resolve) => {
@@ -887,7 +900,7 @@ async function startDesktop(): Promise<void> {
           preservedStartupOptions = failure.startupOptions
         }
         if (initialRecoveryError) {
-          app.relaunch()
+          relaunchWithDevSession(devSession, () => app.relaunch())
           app.exit(0)
         } else continueStartup?.()
       } catch (error) {
@@ -1028,7 +1041,7 @@ async function startDesktop(): Promise<void> {
           .waitForStopped()
           .then((lease) => {
             retainShutdownLease(lease)
-            app.relaunch()
+            relaunchWithDevSession(devSession, () => app.relaunch())
             app.exit(0)
           })
           .catch((error) => {

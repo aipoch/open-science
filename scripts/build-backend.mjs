@@ -3,9 +3,9 @@ import { windowsSigningBuildDefines } from './windows-signing-policy.mjs'
 import { assertBackendImports, desktopBundledDependencies } from './backend-dependencies.mjs'
 import { context } from 'esbuild'
 import { fileURLToPath } from 'node:url'
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
 
@@ -26,6 +26,7 @@ export async function createBackendBuilder({
   const workers = new Map()
   const contexts = new Map()
   let metadata = []
+  let devIdentity
   const buildEntry = async (entry, outfile) => {
     let builder = contexts.get(entry)
     if (!builder) {
@@ -54,6 +55,10 @@ export async function createBackendBuilder({
           {
             name: 'open-science-node-resources',
             setup(plugin) {
+              plugin.onLoad({ filter: /[\\/]dev-build-identity\.ts$/ }, () => ({
+                contents: `export const devBuildIdentity = ${JSON.stringify(devIdentity) ?? 'undefined'};`,
+                loader: 'js'
+              }))
               if (inlineI18next)
                 plugin.onResolve({ filter: /^i18next$/ }, () => ({
                   path: require.resolve('i18next')
@@ -93,6 +98,12 @@ export async function createBackendBuilder({
     metadata.push(result.metafile)
   }
   const rebuild = async () => {
+    // A failed rebuild must never leave the previous readiness marker usable by a new desktop.
+    await rm(join(out, 'dev-build.json'), { force: true })
+    devIdentity =
+      development && !desktop
+        ? { buildId: randomUUID(), workspaceRoot: await realpath(root) }
+        : undefined
     workers.clear()
     metadata = []
     await buildEntry(join(root, 'src/main/node-entry.ts'), join(out, 'index.cjs'))
@@ -125,6 +136,11 @@ export async function createBackendBuilder({
       await writeFile(join(out, 'native-locales', file), JSON.stringify({ common, native }))
     }
     await writeFile(join(out, 'dependencies.json'), JSON.stringify(metadata, null, 2))
+    if (devIdentity) {
+      const temporary = join(out, `dev-build.${devIdentity.buildId}.tmp`)
+      await writeFile(temporary, JSON.stringify(devIdentity))
+      await rename(temporary, join(out, 'dev-build.json'))
+    }
     return workers.size
   }
   return {

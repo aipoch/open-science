@@ -1,4 +1,6 @@
 import { withRuntimeShutdownLifetime } from './runtime-shutdown-lifetime'
+import { devBuildIdentity } from './dev-build-identity'
+import { joinDevSession, readDevSession } from './dev-runtime-session'
 import {
   installationRootForEntry,
   registerInstallationRuntime
@@ -107,6 +109,9 @@ async function main(): Promise<void> {
   if (await runRuntimeHelper(process.argv)) return
   const configRoot = resolveBootstrapConfigRoot(home, packaged)
   const generation = randomUUID()
+  const runnerSession = readDevSession(
+    Boolean(devBuildIdentity) && !packaged && process.argv.includes('--desktop')
+  )
   const installationLease = registerInstallationRuntime({
     installationRoot: installationRootForEntry(mainEntryPath),
     configRoot,
@@ -128,6 +133,7 @@ async function main(): Promise<void> {
   let cipher: ReturnType<typeof createNodeSecureStorageCipher> | undefined
   let remoteAccess: RemoteAccessService | undefined
   let stopping: Promise<void> | undefined
+  let devSession: Awaited<ReturnType<typeof joinDevSession>> | undefined
   const startupCancellation = new AbortController()
   let unsubscribeLocale: (() => void) | undefined
   let restartRequested = false
@@ -218,12 +224,16 @@ async function main(): Promise<void> {
         }
       }
       process.exitCode = failed || credentialFailure ? 1 : 0
+      devSession?.close()
       if (restartRequested && !desktopWillRestart && !failed) {
         const { spawn } = await import('node:child_process')
         const child = spawn(process.execPath, process.argv.slice(1), {
           detached: true,
           stdio: 'inherit',
-          env: process.env
+          env: {
+            ...process.env,
+            ...(runnerSession ? { OPEN_SCIENCE_DEV_SESSION: JSON.stringify(runnerSession) } : {})
+          }
         })
         child.once('error', (error) => {
           createLogger('node-runtime').error('restart failed', diagnosticErrorFields(error))
@@ -262,6 +272,16 @@ async function main(): Promise<void> {
     exit: (code) => process.exit(code)
   })
   try {
+    if (runnerSession && devBuildIdentity) {
+      devSession = await joinDevSession({
+        session: runnerSession,
+        build: devBuildIdentity,
+        configRoot,
+        generation,
+        stop
+      })
+      abortStartupIfStopping()
+    }
     startupReporter.phase('credentials')
     configureCredentialStore(process.argv, process.platform, true)
     const passwordStore = process.argv
@@ -552,7 +572,8 @@ async function main(): Promise<void> {
       },
       desktop.endpoint,
       runtimeStartupOptions,
-      () => stopRequested
+      () => stopRequested,
+      devSession?.identity
     )
     startupReporter.phase('database')
     const state = await databaseStartup.start()

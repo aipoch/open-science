@@ -1,4 +1,11 @@
 import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
+import {
+  assertDevRuntimeIdentity,
+  expectedDevIdentity,
+  joinDevSession,
+  readDevSession,
+  type DevRuntimeIdentity
+} from './dev-runtime-session'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
 import {
   isRuntimeProcessAlive,
@@ -58,13 +65,24 @@ export class DesktopRuntimeStoppingError extends Error {
 
 export type DesktopBackendLaunch = { endpoint: DesktopEndpoint; startedProcess?: ChildProcess }
 
-// State files are hints only. Verify the current authenticated generation before attaching; never
-// delete a lock, kill a recorded PID or restart a different generation on connection loss.
 export async function discoverDesktopBackend(
   configRoot: string,
   version: string,
-  terminationDeps?: Partial<LegacyTerminationDeps>
+  terminationDeps?: Partial<LegacyTerminationDeps>,
+  devIdentity?: DevRuntimeIdentity
 ): Promise<DesktopEndpoint | undefined> {
+  return (await discoverVerifiedDesktopBackend(configRoot, version, terminationDeps, devIdentity))
+    ?.endpoint
+}
+
+// State files are hints only. Verify the current authenticated generation before attaching; never
+// delete a lock, kill a recorded PID or restart a different generation on connection loss.
+async function discoverVerifiedDesktopBackend(
+  configRoot: string,
+  version: string,
+  terminationDeps?: Partial<LegacyTerminationDeps>,
+  devIdentity?: DevRuntimeIdentity
+): Promise<{ endpoint: DesktopEndpoint; pid: number } | undefined> {
   let owner: z.infer<typeof ownerSchema>
   let token: string
   try {
@@ -105,6 +123,33 @@ export async function discoverDesktopBackend(
     proof.pid !== owner.pid
   )
     return undefined
+  // Other managed sessions cannot be taken over. Older services without dev identity retain
+  // the explicit, user-confirmed startup recovery path below, never automatic adoption.
+  const missingDevIdentity = Boolean(devIdentity && !('devIdentity' in proof))
+  if (devIdentity && !missingDevIdentity) {
+    try {
+      assertDevRuntimeIdentity('devIdentity' in proof ? proof.devIdentity : undefined, devIdentity)
+    } catch {
+      const message =
+        'Another development session or build owns this backend. Stop its npm run dev command, then retry.'
+      throw new DesktopRuntimeStartupError(
+        {
+          reason: 'startup-recovery-required',
+          desktopVersion: version,
+          runtimeVersion: owner.desktop?.version,
+          pid: owner.pid,
+          canStop: false,
+          canRecover: true,
+          diagnostics: message
+        },
+        message,
+        undefined,
+        async () => {
+          await discoverDesktopBackend(configRoot, version, terminationDeps, devIdentity)
+        }
+      )
+    }
+  }
   if ('stopping' in proof && proof.stopping === true && owner.desktop)
     throw new DesktopRuntimeStoppingError(owner.pid, owner.desktop.generation)
   if (owner.host !== 'node' || !owner.desktop) {
@@ -112,7 +157,7 @@ export async function discoverDesktopBackend(
     // relies on the process identity checks alone; the authenticated owner response above only
     // establishes that the recorded generation and PID are current.
     const recheck = async (): Promise<void> => {
-      await discoverDesktopBackend(configRoot, version, terminationDeps)
+      await discoverDesktopBackend(configRoot, version, terminationDeps, devIdentity)
     }
     throw new DesktopRuntimeStartupError(
       {
@@ -147,10 +192,14 @@ export async function discoverDesktopBackend(
     startup.success && startup.data.startupOptions.configRoot === configRoot
       ? startup.data.startupOptions
       : undefined
-  if (owner.desktop.version !== version || !startupOptions) {
+  if (owner.desktop.version !== version || !startupOptions || missingDevIdentity) {
     const legacy = !startupOptions
     const issue = {
-      reason: legacy ? ('legacy-service' as const) : ('version-mismatch' as const),
+      reason: legacy
+        ? ('legacy-service' as const)
+        : missingDevIdentity
+          ? ('startup-recovery-required' as const)
+          : ('version-mismatch' as const),
       desktopVersion: version,
       runtimeVersion: owner.desktop.version,
       pid: owner.pid,
@@ -159,7 +208,9 @@ export async function discoverDesktopBackend(
     }
     throw new DesktopRuntimeStartupError(
       issue,
-      'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.',
+      missingDevIdentity
+        ? 'The running backend has no development session identity. Stop it explicitly before starting npm run dev.'
+        : 'The running Open-Science server has a different version. Stop it explicitly before opening this desktop version.',
       async () => {
         // The service may have exited while its confirmation was open. Confirm the
         // released directory and, for modern services, the exact clean-exit receipt.
@@ -201,7 +252,7 @@ export async function discoverDesktopBackend(
             undefined,
             legacy
               ? async () => {
-                  await discoverDesktopBackend(configRoot, version, terminationDeps)
+                  await discoverDesktopBackend(configRoot, version, terminationDeps, devIdentity)
                 }
               : undefined
           )
@@ -216,7 +267,7 @@ export async function discoverDesktopBackend(
             undefined,
             legacy
               ? async () => {
-                  await discoverDesktopBackend(configRoot, version, terminationDeps)
+                  await discoverDesktopBackend(configRoot, version, terminationDeps, devIdentity)
                 }
               : undefined
           )
@@ -274,13 +325,13 @@ export async function discoverDesktopBackend(
       },
       legacy
         ? async () => {
-            await discoverDesktopBackend(configRoot, version, terminationDeps)
+            await discoverDesktopBackend(configRoot, version, terminationDeps, devIdentity)
           }
         : undefined,
       startupOptions
     )
   }
-  return owner.desktop
+  return { endpoint: owner.desktop, pid: owner.pid }
 }
 
 export function desktopBackendPaths(options: {
@@ -313,7 +364,11 @@ const MAX_OWNERSHIP_RESPAWNS = 2
 async function settleStoppingRuntime(
   configRoot: string,
   stopping: DesktopRuntimeStoppingError,
-  options: { waitMs: number; terminationDeps?: Partial<LegacyTerminationDeps> }
+  options: {
+    waitMs: number
+    terminationDeps?: Partial<LegacyTerminationDeps>
+    devIdentity?: DevRuntimeIdentity
+  }
 ): Promise<void> {
   try {
     const lease = await waitForRuntimeStopped({
@@ -336,14 +391,38 @@ async function settleStoppingRuntime(
 async function discoverOrWaitForStop(
   configRoot: string,
   version: string,
-  options: { waitMs: number; terminationDeps?: Partial<LegacyTerminationDeps> }
-): Promise<DesktopEndpoint | undefined> {
+  options: {
+    waitMs: number
+    terminationDeps?: Partial<LegacyTerminationDeps>
+    devIdentity?: DevRuntimeIdentity
+  }
+): Promise<{ endpoint: DesktopEndpoint; pid: number } | undefined> {
   try {
-    return await discoverDesktopBackend(configRoot, version, options.terminationDeps)
+    return await discoverVerifiedDesktopBackend(
+      configRoot,
+      version,
+      options.terminationDeps,
+      options.devIdentity
+    )
   } catch (error) {
     if (!(error instanceof DesktopRuntimeStoppingError)) throw error
-    await settleStoppingRuntime(configRoot, error, options)
-    return discoverDesktopBackend(configRoot, version, options.terminationDeps)
+    if (options.devIdentity) {
+      // The runner owns escalation for dev. Never use legacy command-line heuristics here.
+      const lease = await waitForRuntimeStopped({
+        configRoot,
+        generation: error.generation,
+        pid: error.pid,
+        requireCleanExit: false,
+        timeoutMs: options.waitMs
+      })
+      lease.release()
+    } else await settleStoppingRuntime(configRoot, error, options)
+    return discoverVerifiedDesktopBackend(
+      configRoot,
+      version,
+      options.terminationDeps,
+      options.devIdentity
+    )
   }
 }
 
@@ -364,12 +443,31 @@ export async function startOrAttachDesktopBackend(options: {
   respawnAttempt?: number
   onStatus?: (status: BackendStartupStatus & { elapsedMs: number }) => void
 }): Promise<DesktopBackendLaunch> {
+  const devSession = readDevSession(!options.packaged && import.meta.env.DEV)
   const wait = {
     waitMs: options.ownershipWaitMs ?? OWNERSHIP_RELEASE_WAIT_MS,
-    terminationDeps: options.terminationDeps
+    terminationDeps: options.terminationDeps,
+    devIdentity: devSession ? await expectedDevIdentity(devSession, options.entry) : undefined
+  }
+  const registerDesktop = async (pid: number): Promise<{ close(): void } | undefined> => {
+    if (!devSession || !wait.devIdentity) return undefined
+    return joinDevSession({
+      session: devSession,
+      build: wait.devIdentity,
+      configRoot: options.configRoot,
+      backendPid: pid,
+      stop: async () => {
+        process.emit('SIGTERM')
+      }
+    })
   }
   const existing = await discoverOrWaitForStop(options.configRoot, options.version, wait)
-  if (existing) return { endpoint: existing }
+  if (existing) {
+    // Vite may replace Electron without ending this dev invocation. Register the current
+    // Desktop even when the backend's original parent has already exited.
+    await registerDesktop(existing.pid)
+    return { endpoint: existing.endpoint }
+  }
   await Promise.all([access(options.command), access(options.entry)])
   const logs = join(options.configRoot, 'logs')
   await mkdir(logs, { recursive: true, mode: 0o700 })
@@ -387,6 +485,8 @@ export async function startOrAttachDesktopBackend(options: {
     OPEN_SCIENCE_USER_DATA: options.profilePath,
     OPEN_SCIENCE_STARTUP_ATTEMPT: attemptId
   }
+  delete env.OPEN_SCIENCE_DEV_SESSION
+  if (devSession) env.OPEN_SCIENCE_DEV_SESSION = JSON.stringify(devSession)
   // A direct backend/CLI process may inherit a stale handoff path from its parent. Never let a
   // launch without a fresh snapshot read or remove that unrelated file.
   delete env.OPEN_SCIENCE_CREDENTIAL_INVENTORY_PATH
@@ -454,6 +554,21 @@ export async function startOrAttachDesktopBackend(options: {
     throw error
   }
   await file.close()
+  if (devSession && wait.devIdentity && child.pid) {
+    try {
+      // Register the actual child before waiting for Node imports, credentials, or readiness.
+      // Keep this connection as Desktop's graceful shutdown route (including Windows, where
+      // sending SIGTERM externally would terminate Electron without running its save hooks).
+      const registration = await registerDesktop(child.pid)
+      child.once('exit', () => registration?.close())
+      if (child.exitCode !== null || child.signalCode !== null) registration?.close()
+    } catch (error) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+      if (child.connected) child.disconnect()
+      if (credentialInventoryPath) await removeCredentialInventory(credentialInventoryPath)
+      throw error
+    }
+  }
   child.unref()
   child.channel?.unref()
   const deadline = startedAt + (options.timeoutMs ?? 60_000)
@@ -467,7 +582,10 @@ export async function startOrAttachDesktopBackend(options: {
         const releaseDeadline = Date.now() + wait.waitMs
         while (Date.now() < releaseDeadline) {
           const endpoint = await discoverOrWaitForStop(options.configRoot, options.version, wait)
-          if (endpoint) return { endpoint }
+          if (endpoint) {
+            await registerDesktop(endpoint.pid)
+            return { endpoint: endpoint.endpoint }
+          }
           if (!lockHeld(options.configRoot)) break
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
@@ -499,7 +617,10 @@ export async function startOrAttachDesktopBackend(options: {
           status
         )
       const endpoint = await discoverOrWaitForStop(options.configRoot, options.version, wait)
-      if (endpoint && status?.kind !== 'failed') return { endpoint, startedProcess: child }
+      if (endpoint && status?.kind !== 'failed') {
+        if (endpoint.pid !== child.pid) await registerDesktop(endpoint.pid)
+        return { endpoint: endpoint.endpoint, startedProcess: child }
+      }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
     throw new DesktopBackendStartupError(
