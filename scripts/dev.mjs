@@ -50,6 +50,7 @@ export async function runDev({
     await rm(resolve(root, 'out/backend/dev-build.json'), { force: true })
     // Keep the existing preparation order. A failed step never launches Electron on old output.
     for (const command of [
+      ['scripts/build-notebook-host.mjs'],
       ['scripts/build-dev-packages.mjs'],
       ['scripts/native-components.mjs'],
       ['scripts/build-backend.mjs', '--development'],

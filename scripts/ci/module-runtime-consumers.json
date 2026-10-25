@@ -193,5 +193,6 @@
     "src/main/literature/pdf-translation/local-worker.integration.test.ts"
   ],
   "src/main/runtime-ownership.ts": ["scripts/dev-session.mjs"],
-  "src/main/dev-build-identity.ts": ["scripts/build-backend.mjs"]
+  "src/main/dev-build-identity.ts": ["scripts/build-backend.mjs"],
+  "scripts/build-notebook-host.mjs": ["scripts/dev.mjs"]
 }

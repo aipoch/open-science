@@ -343,7 +343,17 @@ export const sandboxedPackageSpawn =
         captureCondaJson ?? args.includes('--json'),
         cwd,
         spawnOptions,
-        options.terminateTree,
+        sandboxed.requestProcessTreeTermination
+          ? async (child) => {
+              // Let the native owner restore temporary ACLs before exiting; taskkill skips rollback.
+              if (await sandboxed.requestProcessTreeTermination!().catch(() => false)) {
+                return { reaped: true }
+              }
+              await (options.terminateTree ?? terminateProcessTree)(child)
+              // A forced host exit cannot prove that its native cleanup completed.
+              return { reaped: false }
+            }
+          : options.terminateTree,
         platform,
         sandboxed.confirmProcessTreeTermination
       )

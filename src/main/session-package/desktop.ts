@@ -12,6 +12,7 @@ import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
+  PackageFileSelection,
   SensitiveContentEvidence,
   SessionPackageExportResult,
   SessionPackageImportResult,
@@ -58,6 +59,11 @@ export class SessionPackageDesktop {
   readonly operations: SessionPackageOperation
   private pendingFiles: NativeImportFile[] = []
   private activeFile?: NativeImportFile
+  private lastExport?: {
+    operationId: string
+    filePath: string
+    selection?: PackageFileSelection
+  }
   private lastImportFile?: NativeImportFile
   private enqueueing: Promise<void> = Promise.resolve()
   private busy = false
@@ -87,6 +93,14 @@ export class SessionPackageDesktop {
     }
   ) {
     this.operations = new SessionPackageOperation((snapshot) => {
+      if (
+        this.lastExport &&
+        (this.lastExport.operationId !== snapshot.id ||
+          snapshot.state === 'succeeded' ||
+          snapshot.state === 'cancelled' ||
+          (snapshot.state === 'failed' && !snapshot.sensitiveContent?.length))
+      )
+        this.lastExport = undefined
       options.onOperationChanged?.(snapshot)
       // Defer until run() has completed ownership release and any active file has settled.
       if (!this.operations.active) queueMicrotask(() => this.pumpOpenFiles())
@@ -234,20 +248,26 @@ export class SessionPackageDesktop {
     }
     if (request.action === 'export-with-sensitive-content') {
       const failed = this.operations.snapshot
+      const previous = this.lastExport
       if (
         !failed ||
         failed.id !== request.operationId ||
         failed.kind !== 'export' ||
         failed.state !== 'failed' ||
         !failed.session ||
+        (previous && previous.operationId !== failed.id) ||
         !failed.sensitiveContent?.length ||
         failed.cleanupPending ||
         this.operations.active
       )
         throw new Error('No failed sensitive-content export is available.')
-      return this.exportWithPolicy(failed.session, undefined, true).then(
-        () => this.operations.snapshot
-      )
+      return this.exportWithPolicy(
+        failed.session,
+        undefined,
+        true,
+        previous?.filePath,
+        previous?.selection
+      ).then(() => this.operations.snapshot)
     }
     if (
       request.action === 'dismiss-queue-warning' ||
@@ -339,6 +359,7 @@ export class SessionPackageDesktop {
     const sources = [...this.pendingFiles, this.lastImportFile, this.activeFile]
     this.pendingFiles = []
     this.lastImportFile = undefined
+    this.lastExport = undefined
     this.operations.cancel()
     this.shutdown.abort(new Error('Session package desktop is closed.'))
     await this.operations.close()
@@ -637,13 +658,20 @@ export class SessionPackageDesktop {
     request: SessionPackageRequest,
     callerId?: string,
     allowSensitiveContent = false,
-    destinationPath?: string
+    destinationPath?: string,
+    selection?: PackageFileSelection
   ): Promise<SessionPackageExportResult> {
     let operationSignal: AbortSignal | undefined
     return this.operations
       .run('export', request, async (signal) => {
         operationSignal = signal
         this.options.assertCanStart?.()
+        if (destinationPath)
+          this.lastExport = {
+            operationId: this.operations.snapshot!.id,
+            filePath: destinationPath,
+            selection
+          }
         this.operations.setCleanupPending(this.pendingCleanup.size > 0)
         const release = await this.options.reserveExport?.(request, signal)
         try {
@@ -656,42 +684,48 @@ export class SessionPackageDesktop {
                   ...(allowSensitiveContent ? { allowSensitiveContent: true } : {}),
                   signal,
                   onProgress: this.operations.report,
-                  // A supplied destination is a headless caller (CLI / local Web RPC): there is no
-                  // renderer to ask, so include every package file and skip the native save dialog.
-                  ...(destinationPath
-                    ? {}
-                    : {
-                        selectFiles: async (files, budgetSignal, summary, title) => {
-                          const excluded = await this.operations.selectFiles(
-                            files,
-                            budgetSignal,
-                            summary
-                          )
-                          this.operations.report({ phase: 'choosing-location' })
-                          signal.throwIfAborted()
-                          const today = new Date()
-                          const date = [
-                            today.getFullYear(),
-                            String(today.getMonth() + 1).padStart(2, '0'),
-                            String(today.getDate()).padStart(2, '0')
-                          ].join('-')
-                          const options = {
-                            title: this.options.translate('Export Session package'),
-                            defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
-                            filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
-                          }
-                          const selected = await this.nativeDialog(
-                            desktopFileInteraction().chooseSavePath(options, callerId),
-                            AbortSignal.any([signal, budgetSignal])
-                          )
-                          if (selected.canceled || !selected.filePath) {
-                            this.operations.cancel()
+                  // Reuse acknowledged choices; headless callers without a selection include all files.
+                  ...(selection
+                    ? { selectFiles: async () => selection }
+                    : destinationPath
+                      ? {}
+                      : {
+                          selectFiles: async (files, budgetSignal, summary, title) => {
+                            const excluded = await this.operations.selectFiles(
+                              files,
+                              budgetSignal,
+                              summary
+                            )
+                            this.operations.report({ phase: 'choosing-location' })
                             signal.throwIfAborted()
+                            const today = new Date()
+                            const date = [
+                              today.getFullYear(),
+                              String(today.getMonth() + 1).padStart(2, '0'),
+                              String(today.getDate()).padStart(2, '0')
+                            ].join('-')
+                            const options = {
+                              title: this.options.translate('Export Session package'),
+                              defaultPath: `${sanitizeExportFilename(title || 'Session', 220)}-${date}.science`,
+                              filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
+                            }
+                            const selected = await this.nativeDialog(
+                              desktopFileInteraction().chooseSavePath(options, callerId),
+                              AbortSignal.any([signal, budgetSignal])
+                            )
+                            if (selected.canceled || !selected.filePath) {
+                              this.operations.cancel()
+                              signal.throwIfAborted()
+                            }
+                            filePath = selected.filePath
+                            this.lastExport = {
+                              operationId: this.operations.snapshot!.id,
+                              filePath: filePath!,
+                              selection: excluded
+                            }
+                            return excluded
                           }
-                          filePath = selected.filePath
-                          return excluded
-                        }
-                      })
+                        })
                 })
               )
             )

@@ -470,27 +470,36 @@ it.each([false, true])(
   20_000
 )
 
-it('cleans the owned backend when the dev command receives SIGTERM', async () => {
-  const { root, entry, buildId } = await fixture()
-  await mkdir(join(root, 'scripts'))
-  for (const name of [
-    'build-dev-packages',
-    'native-components',
-    'build-backend',
-    'stage-node-runtime'
-  ])
-    await writeFile(join(root, `scripts/${name}.mjs`), '')
-  await writeFile(
-    join(root, 'scripts/build-backend.mjs'),
-    `
-    import { writeFileSync } from 'node:fs';
+it.each(['ready', 'compiler-failure'])(
+  'prepares the Notebook host before backend launch and cleans up on SIGTERM (%s)',
+  async (scenario) => {
+    const { root, entry, buildId } = await fixture()
+    await mkdir(join(root, 'scripts'))
+    for (const name of [
+      'build-dev-packages',
+      'native-components',
+      'build-backend',
+      'stage-node-runtime'
+    ])
+      await writeFile(join(root, `scripts/${name}.mjs`), '')
+    await writeFile(
+      join(root, 'scripts/build-notebook-host.mjs'),
+      `import { writeFileSync } from 'node:fs';
+     if (${JSON.stringify(scenario)} === 'compiler-failure') process.exit(17);
+     writeFileSync('notebook-host-ready', 'ready');`
+    )
+    await writeFile(
+      join(root, 'scripts/build-backend.mjs'),
+      `
+    import { readFileSync, writeFileSync } from 'node:fs';
+    if (readFileSync('notebook-host-ready', 'utf8') !== 'ready') process.exit(18);
     writeFileSync('out/backend/dev-build.json', ${JSON.stringify(JSON.stringify({ buildId, workspaceRoot: root }))});
   `
-  )
-  await mkdir(join(root, 'node_modules/electron-vite/bin'), { recursive: true })
-  await writeFile(
-    join(root, 'node_modules/electron-vite/bin/electron-vite.js'),
-    `
+    )
+    await mkdir(join(root, 'node_modules/electron-vite/bin'), { recursive: true })
+    await writeFile(
+      join(root, 'node_modules/electron-vite/bin/electron-vite.js'),
+      `
     const { spawn } = require('node:child_process');
     const { writeFileSync } = require('node:fs');
     const child = spawn(process.execPath, [${JSON.stringify(entry)}], { detached: true, stdio: ['ignore','pipe','inherit'], env: process.env });
@@ -498,32 +507,42 @@ it('cleans the owned backend when the dev command receives SIGTERM', async () =>
     child.stdout.on('data', data => process.stdout.write(data));
     setInterval(() => {}, 1000);
   `
-  )
-  const runner = spawn(
-    process.execPath,
-    [
-      '--input-type=module',
-      '-e',
-      `
+    )
+    const runner = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
     import { runDev } from ${JSON.stringify(new URL('./dev.mjs', import.meta.url).href)};
     await runDev({ root: ${JSON.stringify(root)}, args: [] });
   `
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'] }
-  )
-  children.push(runner)
-  await new Promise<void>((resolve, reject) => {
-    runner.stdout!.on('data', (chunk) => {
-      if (chunk.toString().includes('READY')) resolve()
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    children.push(runner)
+    const runnerExited = once(runner, 'exit')
+    if (scenario === 'compiler-failure') {
+      expect(await runnerExited).toEqual([17, null])
+      await expect(readFile(join(root, 'backend-pid'))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(join(root, 'out/backend/dev-build.json'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      return
+    }
+    await new Promise<void>((resolve, reject) => {
+      runner.stdout!.on('data', (chunk) => {
+        if (chunk.toString().includes('READY')) resolve()
+      })
+      runner.once('exit', () => reject(new Error('Dev fixture exited before readiness.')))
     })
-    runner.once('exit', () => reject(new Error('Dev fixture exited before readiness.')))
-  })
-  const pid = Number(await readFile(join(root, 'backend-pid'), 'utf8'))
-  const exited = once(runner, 'exit')
-  runner.kill('SIGTERM')
-  await exited
-  // On Windows SIGTERM kills the runner directly; the backend then observes socket loss.
-  await expect.poll(async () => inspectDevProcess(pid), { timeout: 5000 }).toBeUndefined()
-  const lease = acquireRuntimeDirectorySync(join(root, 'config'))
-  lease.release()
-}, 15_000)
+    const pid = Number(await readFile(join(root, 'backend-pid'), 'utf8'))
+    runner.kill('SIGTERM')
+    await runnerExited
+    // On Windows SIGTERM kills the runner directly; the backend then observes socket loss.
+    await expect.poll(async () => inspectDevProcess(pid), { timeout: 5000 }).toBeUndefined()
+    const lease = acquireRuntimeDirectorySync(join(root, 'config'))
+    lease.release()
+  },
+  15_000
+)

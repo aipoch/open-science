@@ -1140,3 +1140,51 @@ it('includes PDF annotations in global Tag resources and routes them to their ow
     expect.objectContaining({ resourceType: 'pdf.annotation', resourceId: 'a1' })
   )
 })
+
+it('reports a Tag draft and clears the leave state after a successful save', async () => {
+  let resolveSave!: (id: string) => void
+  const createTag = vi.fn(
+    () =>
+      new Promise<string>((resolve) => {
+        resolveSave = resolve
+      })
+  )
+  const onNavigate = vi.fn()
+  const onLeaveStateChange = vi.fn()
+  useTagStore.setState({ create: createTag })
+  await act(async () =>
+    root.render(
+      <TagsPanel
+        view={{ kind: 'create' }}
+        onNavigate={onNavigate}
+        onOpenResource={vi.fn()}
+        onLeaveStateChange={onLeaveStateChange}
+      />
+    )
+  )
+  expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+
+  const name = container.querySelector<HTMLInputElement>('#tag-form-name')!
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+      name,
+      'Research draft'
+    )
+    name.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+
+  await act(async () => {
+    container.querySelector<HTMLFormElement>('[data-slot="tag-form"]')?.requestSubmit()
+  })
+  expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: true })
+  expect(name.matches(':disabled')).toBe(true)
+  const editableButtons = [
+    ...container.querySelectorAll<HTMLButtonElement>('[data-slot="tag-form"] fieldset button')
+  ]
+  expect(editableButtons.length).toBeGreaterThan(0)
+  expect(editableButtons.every((button) => button.matches(':disabled'))).toBe(true)
+  await act(async () => resolveSave('tag-research'))
+  expect(onLeaveStateChange).toHaveBeenCalledWith(null)
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'list', tagId: 'tag-research' })
+})

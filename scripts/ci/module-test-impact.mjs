@@ -20,11 +20,46 @@ import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 
 import {
+  derivedConsumersPath,
   loadDerivedConsumers,
   withDerivedConsumers,
   usesReviewedBoundary
 } from './module-graph/policy.mjs'
 
+// When the committed index is absent (runtime-generated), generate it lazily so preflight
+// (git-archived code without node_modules) never imports the typescript dependency.
+async function loadOrGenerateDerivedConsumers(
+  manifest = loadModuleImpactManifest(),
+  cwd = process.cwd(),
+  revision
+) {
+  // A generated local index describes the checkout, not the requested revision; only an index
+  // committed at that revision is authoritative for it.
+  const committedAtRevision =
+    revision &&
+    execFileSync('git', ['ls-tree', '--name-only', revision, '--', derivedConsumersPath], {
+      cwd,
+      encoding: 'utf8'
+    }).trim() === derivedConsumersPath
+  if (!revision || committedAtRevision) {
+    const loaded = loadDerivedConsumers()
+    if (Object.keys(loaded.modules).length > 0) return loaded
+  }
+  // Generate from the requested revision or checkout. Failures propagate; an empty index
+  // would silently narrow selection to explicit tests only.
+  const { consumerDependencyGraph, generateDerivedConsumers, sourceSnapshot, workingTreeSource } =
+    await import('./module-graph/index.mjs')
+  // A revision range is planned from its immutable head, never a possibly dirty checkout.
+  const source = revision ? sourceSnapshot(revision, cwd) : workingTreeSource(cwd)
+  const runtimeEdges = Object.entries(
+    JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
+  )
+  return generateDerivedConsumers(manifest, consumerDependencyGraph(source, runtimeEdges).reverse)
+}
+
+// Synchronous planners cannot generate the index (module load must stay free of the TypeScript
+// parser for trusted preflight). Every production caller passes an effective manifest; the
+// default only carries a committed index, if any.
 const defaultManifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
 // Older trusted extraction bundles have no registry: retain all tests rather than guess.
@@ -466,7 +501,11 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (command === 'module') {
     const moduleId = arguments_[1]
     if (!moduleId || moduleId.startsWith('--')) throw new Error('Module id is required')
-    const plan = createModuleTestPlan(moduleId)
+    const manifest = loadModuleImpactManifest()
+    const derived =
+      options.derivedConsumers ??
+      (await loadOrGenerateDerivedConsumers(manifest, options.cwd ?? process.cwd()))
+    const plan = createModuleTestPlan(moduleId, withDerivedConsumers(manifest, derived))
     return executeModuleTestPlan(plan, { ...options, testArguments })
   }
   if (command !== 'affected') throw new Error(`Unknown module test-impact command: ${command}`)
@@ -530,9 +569,18 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
 // The plan `affected` executes for a revision range, including CodeGraph and host/package
 // refinement. Shadow reports compare against this, not the unrefined registered plan.
 export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...options } = {}) {
+  const derivedConsumers =
+    options.derivedConsumers ??
+    (await loadOrGenerateDerivedConsumers(
+      loadModuleImpactManifest(),
+      options.cwd ?? process.cwd(),
+      // Tests run against the checked-out commit (a merge commit in pull_request jobs), so the
+      // evidence is that commit's immutable snapshot, not --head and not the mutable worktree.
+      'HEAD'
+    ))
   const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
     changesFromGit(base, head, options),
-    { base, head, ...options }
+    { base, head, ...options, derivedConsumers }
   )
   const paths = sorted(
     changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))

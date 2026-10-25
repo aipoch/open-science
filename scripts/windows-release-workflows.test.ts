@@ -346,6 +346,17 @@ describe('post-merge Windows validation', () => {
       }
     })
     expect(findStep(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    const dependencySteps = dependencies.steps ?? []
+    const dependencyHost = findStep(dependencies, 'Build Windows sandbox native host')
+    expect(dependencyHost.run).toBe(
+      'node packages/notebook-network-sandbox/vendor/windows/build.mjs x64'
+    )
+    expect(dependencySteps.indexOf(dependencyHost)).toBeGreaterThan(
+      dependencySteps.indexOf(findStep(dependencies, 'Install dependencies'))
+    )
+    expect(dependencySteps.indexOf(dependencyHost)).toBeLessThan(
+      dependencySteps.indexOf(findStep(dependencies, 'Pack dependencies'))
+    )
     expect(findStep(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
     expect(findStep(dependencies, 'Pack dependencies').shell).toBe('bash')
     expect(findStep(job, 'Restore dependencies').run).toContain('restore-dependencies')

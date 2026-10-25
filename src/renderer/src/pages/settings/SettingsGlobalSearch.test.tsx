@@ -40,10 +40,10 @@ afterEach(() => {
   delete (window as unknown as { api?: unknown }).api
 })
 
-const renderSearch = (onNavigate = vi.fn()): void => {
+const renderSearch = (onNavigate = vi.fn(), onDialogKeyDown?: () => void): void => {
   act(() => {
     root.render(
-      <div role="dialog">
+      <div role="dialog" onKeyDown={onDialogKeyDown}>
         <SettingsGlobalSearch
           panels={PANELS}
           onNavigate={(panel, onNavigated) => {
@@ -285,7 +285,8 @@ describe('SettingsGlobalSearch', () => {
   })
 
   it('closes only the results list on the first Escape, even from a mouse-hovered option', () => {
-    renderSearch()
+    const onDialogKeyDown = vi.fn()
+    renderSearch(vi.fn(), onDialogKeyDown)
     typeQuery('proxy')
     expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
 
@@ -297,11 +298,56 @@ describe('SettingsGlobalSearch', () => {
     const event = pressKey('Escape')
     expect(event.defaultPrevented).toBe(false)
     expect(document.body.querySelector('[role="listbox"]')).toBeNull()
-    expect(document.activeElement).not.toBe(input())
+    expect(document.activeElement).toBe(input())
+    expect(input().getAttribute('aria-expanded')).toBe('false')
+    expect(onDialogKeyDown).not.toHaveBeenCalled()
 
     // With the list closed, a second Escape is left for the dialog to handle.
     const second = pressKey('Escape')
     expect(second.defaultPrevented).toBe(false)
+    expect(onDialogKeyDown).toHaveBeenCalledOnce()
+  })
+
+  it('keeps results closed when focus returns after Escape until explicit input', () => {
+    renderSearch()
+    typeQuery('proxy')
+    pressKey('Escape')
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+
+    act(() => {
+      input().blur()
+      input().focus()
+    })
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+    expect(input().getAttribute('aria-expanded')).toBe('false')
+
+    pressKey('ArrowDown')
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+  })
+
+  it('reopens the results when input changes after Escape', () => {
+    renderSearch()
+    typeQuery('proxy')
+    pressKey('Escape')
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+
+    typeQuery('network')
+
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    expect(document.activeElement).toBe(input())
+  })
+
+  it('reopens the results with ArrowDown after Escape', () => {
+    renderSearch()
+    typeQuery('proxy')
+    pressKey('Escape')
+    expect(document.body.querySelector('[role="listbox"]')).toBeNull()
+
+    const event = pressKey('ArrowDown')
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    expect(document.activeElement).toBe(input())
   })
 
   it('jumps to the anchored setting instead of the first block, ringing and focusing it', () => {

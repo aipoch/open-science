@@ -565,6 +565,57 @@ describe('ComposerEditor', () => {
     expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
   })
 
+  it('exposes complete input help semantically and through a dismissible popover', () => {
+    const placeholder = 'Ask anything — / skills · @ files · # sessions · ⌘K search · ↑↓ history'
+    renderEditor({ doc: emptyDoc })
+    act(() => {
+      root.render(
+        <ComposerEditor
+          doc={emptyDoc}
+          onDocChange={noop}
+          onSubmit={noop}
+          onPaste={noop}
+          placeholder={placeholder}
+          ariaLabel="Ask anything"
+        />
+      )
+    })
+    const describedBy = editor().getAttribute('aria-describedby')!.split(/\s+/)
+    const description = describedBy
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ')
+    expect(description).toContain(placeholder)
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      'button[aria-label="Input help"]'
+    )!
+    expect(trigger).not.toBeNull()
+    act(() => trigger.click())
+    const popover = document.body.querySelector('[role="dialog"]')!
+    expect(popover.textContent).toContain('Input help')
+    expect(popover.textContent).toContain(placeholder)
+    act(() => trigger.click())
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    act(() => trigger.click())
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+    dispatchKey(document, 'Escape')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    act(() => {
+      root.render(
+        <ComposerEditor
+          doc={{ nodes: [{ type: 'text', text: 'Draft' }] }}
+          onDocChange={noop}
+          onSubmit={noop}
+          onPaste={noop}
+          placeholder={placeholder}
+          ariaLabel="Ask anything"
+        />
+      )
+    })
+    expect(document.body.querySelector('button[aria-label="Input help"]')).toBeNull()
+  })
+
   it('hides the placeholder while an IME composition is active', () => {
     renderEditor({ doc: emptyDoc })
     const hasPlaceholder = (): boolean =>

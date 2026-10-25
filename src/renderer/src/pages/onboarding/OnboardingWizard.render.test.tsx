@@ -521,14 +521,22 @@ describe('OnboardingWizard flow', () => {
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
   })
 
-  it('allows non-Windows onboarding to continue while storage info is pending', async () => {
+  it('waits for storage info before allowing non-Windows onboarding to continue', async () => {
+    let resolveStorageInfo: ((info: ReturnType<typeof storageInfo>) => void) | undefined
     window.api.platform = 'darwin'
-    window.api.storage.getInfo = vi.fn().mockReturnValue(new Promise(() => undefined))
+    window.api.storage.getInfo = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStorageInfo = resolve
+        })
+    )
     readyClaudeState()
 
     await renderWizard()
     await goToLocationStep()
 
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    await act(async () => resolveStorageInfo?.(storageInfo()))
     expect(findButton(/^continue$/i)?.disabled).toBe(false)
     await clickButton(/^continue$/i)
     expect(currentSection('Set up the agent runtime')).not.toBeNull()
@@ -707,7 +715,7 @@ describe('OnboardingWizard flow', () => {
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
   })
 
-  it('keeps onboarding recoverable when loading storage information rejects', async () => {
+  it('blocks the default location after a storage failure and recovers on Retry', async () => {
     window.api.storage.getInfo = vi
       .fn()
       .mockRejectedValueOnce(new Error('Storage is unavailable.'))
@@ -720,11 +728,88 @@ describe('OnboardingWizard flow', () => {
     expect(currentSection('Choose data location')).not.toBeNull()
     expect(container.querySelector('[role="alert"]')).not.toBeNull()
     expect(container.textContent).toContain('Storage is unavailable.')
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    expect(findButton(/^retry$/i)?.disabled).toBe(false)
+    expect(findButton(/^back$/i)?.disabled).toBe(false)
+    expect(findButton(/browse/i)?.disabled).toBe(false)
 
     await clickButton(/^retry$/i)
     expect(container.querySelector('[role="alert"]')).toBeNull()
     expect(container.textContent).toContain(DEFAULT_DATA_ROOT)
     expect(window.api.storage.getInfo).toHaveBeenCalledTimes(2)
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
+
+    await clickButton(/^continue$/i)
+    expect(currentSection('Set up the agent runtime')).not.toBeNull()
+  })
+
+  it('keeps the default location gated throughout a deferred Retry that fails again', async () => {
+    let rejectRetry: ((error: Error) => void) | undefined
+    window.api.storage.getInfo = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Storage is unavailable.'))
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectRetry = reject
+          })
+      )
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+
+    await clickButton(/^retry$/i)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+
+    await act(async () => rejectRetry?.(new Error('Storage is still unavailable.')))
+    expect(container.textContent).toContain('Storage is still unavailable.')
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    expect(currentSection('Choose data location')).not.toBeNull()
+  })
+
+  it('does not advance through Keep default when the default location is unknown', async () => {
+    window.api.storage.getInfo = vi.fn().mockRejectedValue(new Error('Storage is unavailable.'))
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    await clickButton(/browse/i)
+    await clickButton(/continue/i)
+    await clickButton(/^keep default$/i)
+
+    expect(currentSection('Choose data location')).not.toBeNull()
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(container.textContent).not.toContain('/mnt/data/OpenScience')
+    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+  })
+
+  it('allows a custom location to reach restart confirmation after a storage failure', async () => {
+    window.api.storage.getInfo = vi.fn().mockRejectedValue(new Error('Storage is unavailable.'))
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+    await clickButton(/browse/i)
+
+    expect(container.textContent).toContain('/mnt/data/OpenScience')
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
+    await clickButton(/^continue$/i)
+
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Restart to set up your data?')
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
   })
 
   it('uses the startup storage loader supplied by App', async () => {

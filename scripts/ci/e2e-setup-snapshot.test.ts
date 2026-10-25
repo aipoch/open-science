@@ -49,6 +49,9 @@ async function fixture(): Promise<{ producer: string; consumer: string; archive:
     })
   git(['init'])
   await writeFile(join(producer, 'package.json'), '{}')
+  const host = join(producer, 'packages/native/vendor/windows/x64/host.exe')
+  await mkdir(dirname(host), { recursive: true })
+  await writeFile(host, 'checked-in host')
   await writeFile(
     join(producer, 'package-lock.json'),
     JSON.stringify({
@@ -80,6 +83,22 @@ async function fixture(): Promise<{ producer: string; consumer: string; archive:
 }
 
 describe('same-run E2E setup snapshots', { timeout: 30_000 }, () => {
+  it('replaces a checked-in native host with the rebuilt dependency snapshot output', async () => {
+    const { producer, consumer, archive } = await fixture()
+    const host = 'packages/native/vendor/windows/x64/host.exe'
+    expect(await readFile(join(consumer, host), 'utf8')).toBe('checked-in host')
+    await writeFile(join(producer, host), 'rebuilt host from candidate source')
+    await packDependencies(producer, archive, environment)
+    await restoreDependencies(consumer, archive, environment)
+    expect(await readFile(join(consumer, host), 'utf8')).toBe('rebuilt host from candidate source')
+    expect(
+      await readFile(
+        join(consumer, 'node_modules/@local/native/vendor/windows/x64/host.exe'),
+        'utf8'
+      )
+    ).toBe('rebuilt host from candidate source')
+  })
+
   it.each(['dependencies', 'setup'] as const)(
     'transfers ignored vendor runtime assets in the %s snapshot',
     async (kind) => {
