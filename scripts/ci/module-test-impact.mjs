@@ -574,7 +574,9 @@ export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...o
     (await loadOrGenerateDerivedConsumers(
       loadModuleImpactManifest(),
       options.cwd ?? process.cwd(),
-      head
+      // Tests run against the checked-out commit (a merge commit in pull_request jobs), so the
+      // evidence is that commit's immutable snapshot, not --head and not the mutable worktree.
+      'HEAD'
     ))
   const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
     changesFromGit(base, head, options),
