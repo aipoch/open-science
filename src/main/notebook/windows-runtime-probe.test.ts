@@ -69,21 +69,25 @@ it('includes the cleanup flags and notifies diagnostics when cleanup cannot be c
   expect(diagnostics.join('\n')).toContain('cleanup flags')
 })
 
-it('surfaces bounded probe output through diagnostics before incompatibility is thrown', async () => {
-  const diagnostics: string[] = []
-  const wrap = wrapWith({
-    confirm: async () => true,
-    cleanup: async () => ({
-      processesTerminated: true,
-      networkClosed: true,
-      temporaryResourcesRemoved: true
-    }),
-    args: ['-e', 'process.stderr.write("PROBE_BOOM"); process.exit(1)']
-  })
-  await expect(
-    probeWindowsRuntimeComponent(selection(), wrap, undefined, (message) =>
-      diagnostics.push(message)
-    )
-  ).rejects.toThrow('incompatible with protected execution')
-  expect(diagnostics.join('\n')).toContain('PROBE_BOOM')
-})
+it.each([0, 10_000])(
+  'keeps probe diagnostics below the logger limit with %i padding',
+  async (padding) => {
+    const diagnostics: string[] = []
+    const wrap = wrapWith({
+      confirm: async () => true,
+      cleanup: async () => ({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }),
+      args: ['-e', `process.stderr.write("x".repeat(${padding}) + "PROBE_BOOM"); process.exit(1)`]
+    })
+    await expect(
+      probeWindowsRuntimeComponent(selection(), wrap, undefined, (message) =>
+        diagnostics.push(message)
+      )
+    ).rejects.toThrow('incompatible with protected execution')
+    expect(diagnostics.join('\n')).toContain('PROBE_BOOM')
+    expect(diagnostics[0].length).toBeLessThanOrEqual(8192)
+  }
+)

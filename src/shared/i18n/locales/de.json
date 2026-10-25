@@ -7727,6 +7727,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "Krebsstudien sowie Omik-, Abhängigkeits- und Wirkstoffantwortdaten von Zellmodellen aus cBioPortal und DepMap/CCLE.",
     "Export screening results (CSV)": "Screening-Ergebnisse exportieren (CSV)",
     "Screening results could not be exported.": "Die Screening-Ergebnisse konnten nicht exportiert werden.",
-    "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut."
+    "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut.",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Die Befehlszeile wartet auf Netzwerkzugriff. Falls der Prozess beendet ist, geben Sie den Zugriff frei und führen Sie den Befehl ausdrücklich erneut aus. Er wird nicht automatisch wiederholt."
   }
 }

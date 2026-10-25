@@ -7565,6 +7565,7 @@
     "Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.": "cBioPortal 및 DepMap/CCLE의 암 연구와 세포 모델 오믹스, 의존성 및 약물 반응 데이터.",
     "Export screening results (CSV)": "스크리닝 결과 내보내기(CSV)",
     "Screening results could not be exported.": "스크리닝 결과를 내보내지 못했습니다.",
-    "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요."
+    "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요.",
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다."
   }
 }

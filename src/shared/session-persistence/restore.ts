@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../sandbox-network-approval'
 import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
@@ -78,9 +79,10 @@ export const resolveRestorablePermissionToolAuthority = (
 
 const hasRestorablePermissionWait = (session: PersistedChatSession): boolean =>
   Boolean(
-    session.status === 'waiting-permission' &&
-    session.runtimeContext?.permission?.state === 'pending' &&
-    resolveRestorablePermissionToolAuthority(session)
+    (session.status === 'waiting-permission' &&
+      session.runtimeContext?.permission?.state === 'pending' &&
+      resolveRestorablePermissionToolAuthority(session)) ||
+    hasPendingSandboxNetworkApproval(session)
   )
 
 // Identifies UI states that cannot survive an app process shutdown. Permission waits are durable
@@ -292,11 +294,16 @@ export const normalizeSessionAfterRestore = (
     reconcileCompletedRecovery?: boolean
   } = {}
 ): PersistedChatSession => {
+  // A saved Global decision remains continuing. Main resumes that decision idempotently;
+  // re-presenting it as pending could offer Deny after Settings already persisted the grant.
   // Main releases unadmitted preparations; ordinary reads must retain their exact run witness.
   if (isPreparedSessionRun(session)) return session
   const persistedRuntimeContext = session.runtimeContext
   const continuingPermission = persistedRuntimeContext?.permission
-  if (options.deferPermissionValidation && continuingPermission) {
+  if (
+    options.deferPermissionValidation &&
+    (continuingPermission || persistedRuntimeContext?.networkApprovals?.length)
+  ) {
     return {
       ...session,
       messages: session.messages.map(normalizeMessageAfterRestore)
@@ -444,7 +451,8 @@ export const normalizeActivityAfterRestore = (
         activity.providerToolName === 'Open-Science' &&
         typeof activity.rawInput === 'object' &&
         activity.rawInput !== null &&
-        'notebookCodeRisk' in activity.rawInput))
+        ('notebookCodeRisk' in activity.rawInput ||
+          'notebookNetworkApproval' in activity.rawInput)))
   const normalized: PersistedToolActivity = {
     ...activity,
     ...(closesOpenActivity

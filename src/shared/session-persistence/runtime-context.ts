@@ -1,3 +1,5 @@
+import type { SandboxNetworkApproval } from '../sandbox-network-approval'
+import { sanitizeSandboxNetworkApprovals } from './network-approvals'
 import type { SessionDelegatedWorkRuntimeContext } from '../delegated-work-contract'
 import type { SessionPdfContext } from '../session-pdf-contract'
 import type { SessionPlanRuntimeContext } from '../session-plan/contract'
@@ -34,6 +36,7 @@ export const sanitizeSessionRuntimeContext = (
     revision: number
     plan?: SessionPlanRuntimeContext
     delegatedWork?: SessionDelegatedWorkRuntimeContext
+    networkApprovals?: readonly SandboxNetworkApproval[]
     permission?: SessionPermissionRuntimeContext
     sessionContext?: SessionReadingContext
     pdfContext?: SessionPdfContext
@@ -77,6 +80,12 @@ export const sanitizeSessionRuntimeContext = (
         if (!delegatedWork) return undefined
         result.delegatedWork = delegatedWork
       }
+      continue
+    }
+    if (owner === 'networkApprovals') {
+      const approvals = sanitizeSandboxNetworkApprovals(ownerValue)
+      if (!approvals) return undefined
+      result.networkApprovals = approvals
       continue
     }
     if (owner === 'sessionContext') {

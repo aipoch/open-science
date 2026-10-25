@@ -186,6 +186,7 @@ const useOwnedWorkspaceAgentRuntime = (
         const permission = session.runtimeContext?.permission
         return [
           session.id,
+          session.runtimeContext?.networkApprovals,
           permission?.state === 'pending'
             ? [session.runtimeContext?.revision, permission.request.requestId, session.status]
             : null

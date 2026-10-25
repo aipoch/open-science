@@ -136,11 +136,13 @@ describe('createProductionMicromambaRunner', () => {
 })
 
 it.each([
-  { packaged: false, suffix: 'override' },
-  { packaged: true, suffix: 'local/Open-Science' }
+  { packaged: false, suffix: 'override', key: 'OPEN_SCIENCE_STORAGE_ROOT' },
+  { packaged: true, suffix: 'local/Open-Science', key: 'OPEN_SCIENCE_STORAGE_ROOT' },
+  { packaged: true, suffix: 'override', key: 'OPEN_SCIENCE_CONFIG_ROOT' },
+  { packaged: true, suffix: 'override', key: 'OPEN_SCIENCE_E2E_STORAGE_ROOT' }
 ])(
-  'uses the same brand config rules for actual tool writes ($packaged)',
-  async ({ packaged, suffix }) => {
+  'uses the same brand config rules for actual tool writes ($packaged, $key)',
+  async ({ packaged, suffix, key }) => {
     const root = mkdtempSync(join(tmpdir(), 'brand-tools-call-'))
     try {
       const binary = fixture(root, 'explicit', 'isolated-executable')
@@ -151,7 +153,7 @@ it.each([
         resourcesPath: join(root, 'absent'),
         env: {
           LOCALAPPDATA: join(root, 'local'),
-          OPEN_SCIENCE_STORAGE_ROOT: `  ${root}/ignored/../override  `,
+          [key]: `  ${root}/ignored/../override  `,
           OPEN_SCIENCE_MICROMAMBA_BIN: binary.path
         },
         preflight: async () => undefined

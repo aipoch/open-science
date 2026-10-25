@@ -5,11 +5,12 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildSync } from 'esbuild'
 import { describe, expect, it } from 'vitest'
@@ -67,6 +68,88 @@ describe('Notebook filesystem policy', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('resolves symlinks before parent traversal, including missing leaves', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'os-physical-path-')))
+    try {
+      mkdirSync(join(root, 'real', 'deep'), { recursive: true })
+      symlinkSync(join(root, 'real', 'deep'), join(root, 'alias'), 'junction')
+      writeFileSync(join(root, 'real', 'secret'), 'physical')
+      writeFileSync(join(root, 'secret'), 'lexical')
+      const spelling = `${root}${sep}alias${sep}..${sep}secret`
+      expect(absolutePhysicalPath(spelling)).toBe(realpathSync.native(spelling))
+      const missing = `${root}${sep}alias${sep}..${sep}new${sep}leaf`
+      expect(absolutePhysicalPath(missing)).toBe(
+        join(realpathSync.native(`${root}${sep}alias${sep}..`), 'new', 'leaf')
+      )
+      const missingDot = `${root}${sep}missing${sep}.${sep}leaf`
+      expect(absolutePhysicalPath(missingDot)).toBe(join(root, 'missing', 'leaf'))
+      expect(absolutePhysicalPath(`${root}${sep}missing${sep}.`)).toBe(join(root, 'missing'))
+      expect(
+        normalizeFilesystemLayout({
+          readOnlyRoots: [],
+          readWriteRoots: [missingDot],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }).readWriteRoots
+      ).toEqual([join(root, 'missing', 'leaf')])
+      const missingTraversal = `${root}${sep}missing${sep}..${sep}leaf`
+      if (process.platform === 'win32')
+        expect(absolutePhysicalPath(missingTraversal)).toBe(join(root, 'leaf'))
+      else expect(() => absolutePhysicalPath(missingTraversal)).toThrow()
+      expect(() => absolutePhysicalPath(join(root, 'secret', 'leaf'))).toThrow()
+      symlinkSync(join(root, 'absent'), join(root, 'dangling'), 'junction')
+      expect(() => absolutePhysicalPath(join(root, 'dangling', 'leaf'))).toThrow()
+      expect(() => absolutePhysicalPath(`${root}${sep}dangling${sep}.${sep}leaf`)).toThrow()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.runIf(process.platform === 'darwin').each([true, false])(
+    'keeps protected ancestors in place with folder restrictions %s',
+    (restrictFolders) => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'os-deny-ancestor-')))
+      try {
+        mkdirSync(join(root, 'parent'))
+        writeFileSync(join(root, 'parent', 'secret'), 'fixture')
+        const wrapped = macosLaunch({
+          command: [
+            'touch ordinary && mv ordinary renamed || exit 10',
+            'if cat parent/secret >/dev/null 2>&1; then exit 11; fi',
+            'if mv parent moved; then exit 12; fi',
+            'if ln -s parent missing; then exit 13; fi',
+            'touch parent/sibling || exit 14',
+            'exit 0'
+          ].join('; '),
+          shell: '/bin/bash',
+          gatewayPort: 3128,
+          gatewayCredentials: { username: 'fixture', password: 'fixture' },
+          env: { PATH: '/usr/bin:/bin' },
+          filesystem: {
+            restrictFolders,
+            privateRoot: root,
+            readOnlyRoots: [],
+            readWriteRoots: [root],
+            deniedReadRoots: [join(root, 'parent', 'secret'), join(root, 'missing', 'secret')],
+            deniedWriteRoots: []
+          }
+        })
+        const result = spawnSync(wrapped.argv[0]!, wrapped.argv.slice(1), {
+          cwd: root,
+          env: wrapped.env,
+          encoding: 'utf8',
+          timeout: 5000
+        })
+        expect(result.error).toBeUndefined()
+        expect(result.status, result.stderr).toBe(0)
+        expect(existsSync(join(root, 'renamed'))).toBe(true)
+        expect(existsSync(join(root, 'parent', 'sibling'))).toBe(true)
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('deduplicates nested roots without widening them', () => {
     const root = mkdtempSync(join(tmpdir(), 'open-science-fs-'))
@@ -345,6 +428,38 @@ describe('Notebook filesystem policy', () => {
         hidden
       )
     ).not.toContain('OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED')
+  })
+
+  it('preserves diagnostics and recorded violations when a diagnostic path cannot resolve', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'os-diagnostic-path-')))
+    try {
+      writeFileSync(join(root, 'file'), 'fixture')
+      symlinkSync(join(root, 'absent'), join(root, 'dangling'), 'junction')
+      const layout = normalizeFilesystemLayout({
+        privateRoot: root,
+        readOnlyRoots: [],
+        readWriteRoots: [],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      })
+      const paths = [join(root, 'file', 'leaf'), join(root, 'dangling', 'leaf')]
+      if (process.platform !== 'win32') paths.push(`${root}${sep}missing${sep}..${sep}leaf`)
+      const hidden = (path: string): boolean => hiddenByFilesystemLayout(layout, path)
+      const log = new ViolationLog()
+      for (const path of paths) {
+        expect(() => absolutePhysicalPath(path)).toThrow()
+        expect(hidden(path)).toBe(false)
+        const stderr = `cat: '${path}': No such file or directory`
+        expect(log.attach('plain', stderr, hidden)).toBe(stderr)
+        log.record('recorded', 'deny network-outbound example.org:443 (not approved)')
+        const annotated = log.attach('recorded', stderr, hidden)
+        expect(annotated).toContain(stderr)
+        expect(annotated).toContain('deny network-outbound example.org:443 (not approved)')
+        expect(annotated).not.toContain('OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   linuxIt.each([true, false])(

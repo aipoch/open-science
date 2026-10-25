@@ -49,6 +49,37 @@ describe('claudeCodeFramework', () => {
     })
   })
 
+  it.each(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'])(
+    'keeps %s available unless this session explicitly denies it',
+    (tool) => {
+      const defaults = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
+      const defaultOptions = (defaults.meta?.claudeCode as { options: Record<string, unknown> })
+        .options
+      const deniedTools = Object.freeze([tool, tool, 'CustomDeniedTool', 'Bash'])
+      const restricted = claudeCodeFramework.buildSessionSetup({
+        systemPromptAppends: [],
+        sessionOptions: { disallowedTools: deniedTools }
+      })
+      const restrictedOptions = (
+        restricted.meta?.claudeCode as { options: Record<string, unknown> }
+      ).options
+
+      expect(defaultOptions.disallowedTools).not.toContain(tool)
+      expect(restrictedOptions.tools).toEqual(defaultOptions.tools)
+      expect(restrictedOptions.disallowedTools).toEqual([
+        ...new Set([
+          tool,
+          'CustomDeniedTool',
+          'Bash',
+          ...(defaultOptions.disallowedTools as string[])
+        ])
+      ])
+      expect(Object.isFrozen(restrictedOptions.disallowedTools)).toBe(true)
+      expect(deniedTools).toEqual([tool, tool, 'CustomDeniedTool', 'Bash'])
+      expect(claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })).toEqual(defaults)
+    }
+  )
+
   it('keeps ordinary background-task controls available', () => {
     const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
     const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
