@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { createConnection } from 'node:net'
 import { build } from 'esbuild'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createDevSession } from './dev-session.mjs'
@@ -44,6 +45,7 @@ async function fixture(): Promise<{ root: string; buildId: string; entry: string
         const configRoot = ${JSON.stringify(join(root, 'config'))};
         const generation = randomUUID();
         const lease = acquireRuntimeDirectorySync(configRoot);
+        process.send?.('LOCKED');
         const hold = setInterval(() => {}, 1000);
         let session;
         const stop = async () => {
@@ -202,6 +204,75 @@ it('tracks a spawned backend before it initializes ownership or its lifetime con
     await session.stop()
   }
 })
+
+it.each(['before registration', 'during identity inspection'])(
+  'drains an accepted spawn connection %s before shutdown finishes',
+  async (phase) => {
+    const { root, entry, buildId } = await fixture()
+    const inspecting = Promise.withResolvers<void>()
+    const resumeInspection = Promise.withResolvers<void>()
+    const session = await createDevSession({
+      root,
+      graceMs: 250,
+      settleMs: 2000,
+      log: () => {},
+      inspect: async (pid) => {
+        if (phase === 'during identity inspection') {
+          inspecting.resolve()
+          await resumeInspection.promise
+        }
+        return inspectDevProcess(pid)
+      }
+    })
+    const child = spawn(process.execPath, [entry], {
+      detached: true,
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      env: { ...process.env, FIXTURE_MODE: 'wait-registration' }
+    })
+    children.push(child)
+    const metadata = JSON.parse(session.environment)
+    const socket = createConnection({ host: '127.0.0.1', port: metadata.port })
+    socket.on('error', () => {})
+    try {
+      await Promise.all([once(child, 'message'), once(socket, 'connect')])
+      socket.write(
+        JSON.stringify({
+          ...metadata,
+          port: undefined,
+          kind: 'spawn',
+          pid: child.pid,
+          buildId,
+          configRoot: join(root, 'config')
+        })
+      )
+      if (phase === 'during identity inspection') {
+        socket.write('\n')
+        await inspecting.promise
+      } else {
+        // The server has accepted the socket, but the registration line is incomplete.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      let finished = false
+      const stopping = session.stop().then((result) => {
+        finished = true
+        return result
+      })
+      if (phase === 'during identity inspection') socket.destroy()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(finished).toBe(false)
+      socket.end('\n')
+      resumeInspection.resolve()
+      expect(await stopping).toEqual({ stopped: 1, clean: false })
+      expect(await inspectDevProcess(child.pid)).toBeUndefined()
+      const lease = acquireRuntimeDirectorySync(join(root, 'config'))
+      lease.release()
+    } finally {
+      socket.destroy()
+      resumeInspection.resolve()
+      await session.stop()
+    }
+  }
+)
 
 it('does not lose backend lifetime registration when the spawn notification arrives later', async () => {
   const { root, entry, buildId } = await fixture()

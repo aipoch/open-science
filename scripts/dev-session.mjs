@@ -63,6 +63,12 @@ export async function createDevSession({
     socket.on('error', () => {})
     socket.once('close', () => sockets.delete(socket))
     socket.setTimeout(10_000, () => socket.destroy())
+    // Include accepted connections before their registration line arrives. Once admission
+    // starts, only its completion can release the wait, even if the client disconnects.
+    const { promise: admission, resolve: finishAdmission } = Promise.withResolvers()
+    pending.add(admission)
+    void admission.finally(() => pending.delete(admission))
+    socket.once('close', finishAdmission)
     let buffer = ''
     const receive = (chunk) => {
       buffer += chunk.toString()
@@ -70,6 +76,7 @@ export async function createDevSession({
       const newline = buffer.indexOf('\n')
       if (newline < 0) return
       socket.off('data', receive)
+      socket.off('close', finishAdmission)
       // Spawn and backend notifications can arrive together. Serialize admission so neither
       // can merge against a stale member while OS identity/receipt inspection is awaiting.
       const accept = admissions
@@ -147,8 +154,7 @@ export async function createDevSession({
           socket.destroy()
         })
       admissions = accept
-      pending.add(accept)
-      void accept.finally(() => pending.delete(accept))
+      void accept.finally(finishAdmission)
     }
     socket.on('data', receive)
   })
@@ -170,7 +176,7 @@ export async function createDevSession({
       // Stop accepting before awaiting anything. An authenticated in-flight registration is
       // still added above and receives stop, so startup cannot escape the final sweep.
       server.close()
-      await Promise.all([...pending])
+      while (pending.size) await Promise.all([...pending])
       for (const desktop of desktops.values()) {
         if (!desktop.socket.destroyed) desktop.socket.write('stop\n')
         else await signalDevProcess(desktop.pid, desktop.birth, 'SIGTERM', inspect)
