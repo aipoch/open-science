@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **AIPOCH Open-Science v1.0.2** _（2026年10月更新）_。このパッチでは、5 つの新しい Scientific Connector に加えて GDC と Ensembl のサポートを強化し、回答カードに正直な単一/複数選択ラベルを表示し、セッションパッケージダイアログを固定し、セッション読み込みを高速化し、セッション・Notebook・認証情報リカバリー周りの一連の修正、さらに Node ランタイムのセキュリティパッチと CLI 初の npm リリースを含みます。詳細は [1.0.2 のリリースノート](../../release-notes/1.0.2/ja.md)をご覧ください。ダウンロードは引き続き[最新の公開済みリリース](https://github.com/aipoch/open-science/releases/latest)に対応します。
+> 💡 **AIPOCH Open-Science v1.0.3** _（2026年10月更新）_。このパッチでは、イメージング、パスウェイ、脂質、構造、がんモデルをカバーする 7 つの新しい Scientific Connector ツール、Semantic Scholar の引用発見、補足添付ファイル、Smart Screening の CSV エクスポートを含む Literature ライブラリの大幅な強化、ヘッドレス CLI およびローカル Web セッションからのセッションパッケージのエクスポート/インポート、オプトインの翻訳 PDF コンテンツ優先レイアウト、Notebook のフォルダーアクセス制限に加え、Kimi K3.1 Pro モデル、そして Windows、サンドボックス、セッションリカバリー、PDF を幅広く扱う一連の修正を含みます。詳細は [1.0.3 のリリースノート](../../release-notes/1.0.3/ja.md)をご覧ください。ダウンロードは引き続き[最新の公開済みリリース](https://github.com/aipoch/open-science/releases/latest)に対応します。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />
