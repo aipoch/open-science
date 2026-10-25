@@ -120,15 +120,19 @@ afterEach(async () => {
 
 describe('notebook run repository', () => {
   it.each([
-    { exitCode: -1, readable: true },
-    { exitCode: -2147483648, readable: true },
-    { exitCode: 4294967295, readable: true },
-    { exitCode: -1.5, readable: false },
-    { exitCode: '-1', readable: false },
-    { exitCode: Number.MAX_SAFE_INTEGER + 1, readable: false }
+    { kernelKind: 'bash', exitCode: -1, readable: true },
+    { kernelKind: 'bash', exitCode: -2147483648, readable: true },
+    { kernelKind: 'bash', exitCode: 4294967295, readable: true },
+    { kernelKind: 'bash', exitCode: -1.5, readable: false },
+    { kernelKind: 'bash', exitCode: '-1', readable: false },
+    { kernelKind: 'bash', exitCode: Number.MAX_SAFE_INTEGER + 1, readable: false },
+    { kernelKind: 'python', exitCode: -1, readable: false },
+    { kernelKind: 'r', exitCode: -1, readable: false },
+    { kernelKind: 'repl', exitCode: -1, readable: false },
+    { kernelKind: undefined, exitCode: -1, readable: false }
   ])(
-    'validates persisted Shell exit code $exitCode without rewriting history',
-    async ({ exitCode, readable }) => {
+    'validates persisted $kernelKind exit code $exitCode without rewriting history',
+    async ({ kernelKind, exitCode, readable }) => {
       const root = await createStorageRoot()
       const repository = new NotebookRunRepository(root)
       const projectId = 'default-project'
@@ -153,6 +157,7 @@ describe('notebook run repository', () => {
       })
       const path = join(document.notebookSessionRoot, 'run.json')
       const persisted = JSON.parse(await readFile(path, 'utf8'))
+      persisted.runs[0].kernelKind = kernelKind
       persisted.runs[0].exitCode = exitCode
       const before = JSON.stringify(persisted)
       await writeFile(path, before)
