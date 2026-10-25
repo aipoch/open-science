@@ -29,15 +29,17 @@ import {
 // (git-archived code without node_modules) never imports the typescript dependency.
 async function loadOrGenerateDerivedConsumers(
   manifest = loadModuleImpactManifest(),
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  revision
 ) {
   const loaded = loadDerivedConsumers()
   if (Object.keys(loaded.modules).length > 0) return loaded
   // Index absent: generate from the requested checkout. Failures propagate; an empty index
   // would silently narrow selection to explicit tests only.
-  const { consumerDependencyGraph, generateDerivedConsumers, workingTreeSource } =
+  const { consumerDependencyGraph, generateDerivedConsumers, sourceSnapshot, workingTreeSource } =
     await import('./module-graph/index.mjs')
-  const source = workingTreeSource(cwd)
+  // A revision range is planned from its immutable head, never a possibly dirty checkout.
+  const source = revision ? sourceSnapshot(revision, cwd) : workingTreeSource(cwd)
   const runtimeEdges = Object.entries(
     JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
   )
@@ -558,7 +560,11 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
 export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...options } = {}) {
   const derivedConsumers =
     options.derivedConsumers ??
-    (await loadOrGenerateDerivedConsumers(loadModuleImpactManifest(), options.cwd ?? process.cwd()))
+    (await loadOrGenerateDerivedConsumers(
+      loadModuleImpactManifest(),
+      options.cwd ?? process.cwd(),
+      head
+    ))
   const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
     changesFromGit(base, head, options),
     { base, head, ...options, derivedConsumers }
