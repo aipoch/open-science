@@ -65,24 +65,14 @@ export class DesktopRuntimeStoppingError extends Error {
 
 export type DesktopBackendLaunch = { endpoint: DesktopEndpoint; startedProcess?: ChildProcess }
 
+// State files are hints only. Verify the current authenticated generation before attaching; never
+// delete a lock, kill a recorded PID or restart a different generation on connection loss.
 export async function discoverDesktopBackend(
   configRoot: string,
   version: string,
   terminationDeps?: Partial<LegacyTerminationDeps>,
   devIdentity?: DevRuntimeIdentity
 ): Promise<DesktopEndpoint | undefined> {
-  return (await discoverVerifiedDesktopBackend(configRoot, version, terminationDeps, devIdentity))
-    ?.endpoint
-}
-
-// State files are hints only. Verify the current authenticated generation before attaching; never
-// delete a lock, kill a recorded PID or restart a different generation on connection loss.
-async function discoverVerifiedDesktopBackend(
-  configRoot: string,
-  version: string,
-  terminationDeps?: Partial<LegacyTerminationDeps>,
-  devIdentity?: DevRuntimeIdentity
-): Promise<{ endpoint: DesktopEndpoint; pid: number } | undefined> {
   let owner: z.infer<typeof ownerSchema>
   let token: string
   try {
@@ -331,7 +321,7 @@ async function discoverVerifiedDesktopBackend(
       startupOptions
     )
   }
-  return { endpoint: owner.desktop, pid: owner.pid }
+  return owner.desktop
 }
 
 export function desktopBackendPaths(options: {
@@ -396,9 +386,9 @@ async function discoverOrWaitForStop(
     terminationDeps?: Partial<LegacyTerminationDeps>
     devIdentity?: DevRuntimeIdentity
   }
-): Promise<{ endpoint: DesktopEndpoint; pid: number } | undefined> {
+): Promise<DesktopEndpoint | undefined> {
   try {
-    return await discoverVerifiedDesktopBackend(
+    return await discoverDesktopBackend(
       configRoot,
       version,
       options.terminationDeps,
@@ -417,12 +407,7 @@ async function discoverOrWaitForStop(
       })
       lease.release()
     } else await settleStoppingRuntime(configRoot, error, options)
-    return discoverVerifiedDesktopBackend(
-      configRoot,
-      version,
-      options.terminationDeps,
-      options.devIdentity
-    )
+    return discoverDesktopBackend(configRoot, version, options.terminationDeps, options.devIdentity)
   }
 }
 
@@ -449,24 +434,9 @@ export async function startOrAttachDesktopBackend(options: {
     terminationDeps: options.terminationDeps,
     devIdentity: devSession ? await expectedDevIdentity(devSession, options.entry) : undefined
   }
-  const registerDesktop = async (pid: number): Promise<{ close(): void } | undefined> => {
-    if (!devSession || !wait.devIdentity) return undefined
-    return joinDevSession({
-      session: devSession,
-      build: wait.devIdentity,
-      configRoot: options.configRoot,
-      backendPid: pid,
-      stop: async () => {
-        process.emit('SIGTERM')
-      }
-    })
-  }
   const existing = await discoverOrWaitForStop(options.configRoot, options.version, wait)
   if (existing) {
-    // Vite may replace Electron without ending this dev invocation. Register the current
-    // Desktop even when the backend's original parent has already exited.
-    await registerDesktop(existing.pid)
-    return { endpoint: existing.endpoint }
+    return { endpoint: existing }
   }
   await Promise.all([access(options.command), access(options.entry)])
   const logs = join(options.configRoot, 'logs')
@@ -556,12 +526,16 @@ export async function startOrAttachDesktopBackend(options: {
   await file.close()
   if (devSession && wait.devIdentity && child.pid) {
     try {
-      // Register the actual child before waiting for Node imports, credentials, or readiness.
-      // Keep this connection as Desktop's graceful shutdown route (including Windows, where
-      // sending SIGTERM externally would terminate Electron without running its save hooks).
-      const registration = await registerDesktop(child.pid)
-      child.once('exit', () => registration?.close())
-      if (child.exitCode !== null || child.signalCode !== null) registration?.close()
+      // Track a child that can hang before its own lifetime registration. Desktop already
+      // owns a separate lifetime connection, so this notification needs no shutdown route.
+      const registration = await joinDevSession({
+        session: devSession,
+        build: wait.devIdentity,
+        configRoot: options.configRoot,
+        backendPid: child.pid,
+        stop: async () => {}
+      })
+      registration.close()
     } catch (error) {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
       if (child.connected) child.disconnect()
@@ -583,8 +557,7 @@ export async function startOrAttachDesktopBackend(options: {
         while (Date.now() < releaseDeadline) {
           const endpoint = await discoverOrWaitForStop(options.configRoot, options.version, wait)
           if (endpoint) {
-            await registerDesktop(endpoint.pid)
-            return { endpoint: endpoint.endpoint }
+            return { endpoint }
           }
           if (!lockHeld(options.configRoot)) break
           await new Promise((resolve) => setTimeout(resolve, 100))
@@ -618,8 +591,7 @@ export async function startOrAttachDesktopBackend(options: {
         )
       const endpoint = await discoverOrWaitForStop(options.configRoot, options.version, wait)
       if (endpoint && status?.kind !== 'failed') {
-        if (endpoint.pid !== child.pid) await registerDesktop(endpoint.pid)
-        return { endpoint: endpoint.endpoint, startedProcess: child }
+        return { endpoint, startedProcess: child }
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }

@@ -16,6 +16,10 @@ on:
       - 'packages/process-tree-native/**'
       - 'src/main/notebook/*process*'
       - 'resources/notebook/kernel_process_host.js'
+      - 'scripts/dev*.mjs'
+      - 'scripts/dev*.test.ts'
+      - 'src/main/dev-runtime-session*'
+      - 'src/main/dev-build-identity.ts'
       - 'src/main/desktop-runtime*'
       - 'src/main/desktop-connection*'
       - 'src/main/desktop-startup-recovery*'
@@ -116,6 +120,9 @@ jobs:
       - name: Install source dependencies
         if: (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform) && inputs.mode != 'detector'
         run: node scripts/ci/npm-ci.mjs
+      - name: Test managed development lifetime
+        if: (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform) && inputs.mode != 'detector'
+        run: npm test -- scripts/dev-session.integration.test.ts src/main/dev-runtime-session.test.ts
       - name: Run lifecycle checks
         if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
         run: node scripts/ci/process-lifecycle/run.mjs ${{ env.LIFECYCLE_MODE }}

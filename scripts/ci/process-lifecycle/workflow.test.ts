@@ -87,6 +87,10 @@ it('validates lifecycle owners and runtime prerequisites at the exact PR head', 
     'src/main/desktop-runtime-transport.ts',
     'src/main/runtime-stop-confirmation.ts',
     'src/main/runtime-ownership.ts',
+    'scripts/dev-session.mjs',
+    'scripts/dev-process-identity.mjs',
+    'scripts/dev-session.integration.test.ts',
+    'src/main/dev-runtime-session.ts',
     'src/main/windows-powershell.ts',
     'package-lock.json',
     'vitest.config.ts',
@@ -123,4 +127,16 @@ it('retains evidence on failure and uses the existing reporter only for complete
     for (const step of job.steps) {
       if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/)
     }
+})
+
+it('executes managed dev subprocess tests on every native platform with package preparation', () => {
+  const steps = workflow.jobs.lifecycle.steps
+  const dev = steps.find((step) => step.name === 'Test managed development lifetime')!
+  expect(dev.run).toBe(
+    'npm test -- scripts/dev-session.integration.test.ts src/main/dev-runtime-session.test.ts'
+  )
+  expect(dev.if).toContain("inputs.mode != 'detector'")
+  expect(steps.indexOf(dev)).toBeGreaterThan(
+    steps.findIndex((step) => step.name === 'Install source dependencies')
+  )
 })

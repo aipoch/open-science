@@ -145,7 +145,7 @@ describe('desktop backend discovery', () => {
       owner.desktop
     )
   })
-  it('registers the replacement Desktop when attaching to the same dev backend', async () => {
+  it('attaches a replacement Desktop without duplicating its early lifetime registration', async () => {
     const { root, owner, fetcher } = await fixture()
     const identity = { sessionId: randomUUID(), buildId: randomUUID(), workspaceRoot: root }
     const session = {
@@ -172,15 +172,7 @@ describe('desktop backend discovery', () => {
         packaged: false
       })
     ).resolves.toEqual({ endpoint: owner.desktop })
-    expect(register).toHaveBeenCalledWith(
-      expect.objectContaining({
-        session,
-        build: identity,
-        backendPid: owner.pid,
-        configRoot: root,
-        stop: expect.any(Function)
-      })
-    )
+    expect(register).not.toHaveBeenCalled()
   })
   it('authenticates the recorded generation before returning its private attachment', async () => {
     const { root, owner, fetcher } = await fixture()

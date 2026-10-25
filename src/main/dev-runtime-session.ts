@@ -145,7 +145,6 @@ export async function joinDevSession(
           secret: session.secret,
           kind: options.desktopOnly ? 'desktop' : backend?.backendPid ? 'spawn' : 'backend',
           pid: backend?.backendPid ?? process.pid,
-          desktopPid: backend?.backendPid ? process.pid : undefined,
           configRoot: backend?.configRoot,
           generation: backend?.generation
         }) + '\n'

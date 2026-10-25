@@ -20,8 +20,7 @@ const registration = z.discriminatedUnion('kind', [
       kind: z.enum(['spawn', 'backend']),
       buildId: z.string().uuid(),
       configRoot: z.string(),
-      generation: z.string().uuid().optional(),
-      desktopPid: z.number().int().positive().optional()
+      generation: z.string().uuid().optional()
     })
     .strict()
 ])
@@ -108,12 +107,6 @@ export async function createDevSession({
               throw new Error('Development backend identity changed during registration.')
             if (item.kind === 'backend' && !item.generation)
               throw new Error('Missing development runtime generation.')
-            const desktopPid = item.desktopPid ?? identity.ppid
-            const parent = await inspect(desktopPid)
-            const desktop =
-              parent && hasDevEntry(parent, workspaceRoot)
-                ? { pid: desktopPid, birth: parent.birth }
-                : undefined
             // Backend registration can beat the desktop's post-spawn registration. Never replace
             // its lifetime connection with the short-lived spawn notification.
             if (!previous || item.kind === 'backend') {
@@ -121,9 +114,7 @@ export async function createDevSession({
                 ...item,
                 secret: undefined,
                 birth: identity.birth,
-                desktop: item.kind === 'backend' ? (previous?.desktop ?? desktop) : desktop,
-                socket,
-                desktopSocket: item.kind === 'spawn' ? socket : previous?.desktopSocket
+                socket
               }
               // The next generation still has not initialized its runtime. Capture the previous
               // generation's receipt before that shared path can be overwritten by its successor.
@@ -136,9 +127,6 @@ export async function createDevSession({
                   old.completedClean = await readCleanExit(old)
               }
               members.set(key, member)
-            } else {
-              previous.desktop = desktop
-              previous.desktopSocket = socket
             }
           }
           if (item.kind !== 'desktop') {
@@ -169,14 +157,6 @@ export async function createDevSession({
     server.listen(0, '127.0.0.1', resolve)
   })
   const alive = async (member) => (await inspect(member.pid))?.birth === member.birth
-  const currentDesktops = () => [
-    ...new Map(
-      [
-        ...[...members.values()].flatMap((member) => (member.desktop ? [member.desktop] : [])),
-        ...desktops.values()
-      ].map((desktop) => [desktop.pid, desktop])
-    ).values()
-  ]
   const waitForMembers = async (deadline) => {
     while (Date.now() < deadline) {
       await Promise.all([...pending])
@@ -195,22 +175,16 @@ export async function createDevSession({
         if (!desktop.socket.destroyed) desktop.socket.write('stop\n')
         else await signalDevProcess(desktop.pid, desktop.birth, 'SIGTERM', inspect)
       }
-      for (const member of members.values()) {
-        if (member.desktopSocket && !member.desktopSocket.destroyed)
-          member.desktopSocket.write('stop\n')
-        else if (member.desktop)
-          await signalDevProcess(member.desktop.pid, member.desktop.birth, 'SIGTERM', inspect)
-      }
       // Do not dispose the backend underneath Electron's renderer flush. If Electron exits
       // early after failed preparation, use the remaining shared budget for backend disposal.
       while (Date.now() < deadline) {
-        if (!(await Promise.all(currentDesktops().map(alive))).some(Boolean)) break
+        if (!(await Promise.all([...desktops.values()].map(alive))).some(Boolean)) break
         await delay(50)
       }
       for (const member of members.values()) member.socket.write('stop\n')
       await waitForMembers(deadline)
       let clean = true
-      for (const desktop of currentDesktops()) {
+      for (const desktop of desktops.values()) {
         if (await alive(desktop)) {
           clean = false
           log(
@@ -232,10 +206,10 @@ export async function createDevSession({
       await waitForMembers(settleDeadline)
       while (
         Date.now() < settleDeadline &&
-        (await Promise.all(currentDesktops().map(alive))).some(Boolean)
+        (await Promise.all([...desktops.values()].map(alive))).some(Boolean)
       )
         await delay(50)
-      if ((await Promise.all(currentDesktops().map(alive))).some(Boolean))
+      if ((await Promise.all([...desktops.values()].map(alive))).some(Boolean))
         throw new Error('Development desktop is still running.')
       for (const member of members.values()) {
         if (await alive(member))

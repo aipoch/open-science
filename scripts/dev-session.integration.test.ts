@@ -238,7 +238,7 @@ it('merges concurrent spawn and backend registrations without losing the lifetim
     graceMs: 1500,
     log: () => {},
     inspect: async (pid: number) => {
-      if (pid === process.pid && !blocked) {
+      if (pid !== process.pid && !blocked) {
         blocked = true
         inspecting()
         await gate
@@ -271,7 +271,7 @@ it('merges concurrent spawn and backend registrations without losing the lifetim
     })
     await inspected
     child.send('register')
-    // Without serialization the backend can be admitted while the Desktop inspection is
+    // Without serialization the backend can be admitted while the spawn inspection is
     // paused; releasing it then overwrites the already registered lifetime socket/generation.
     await Promise.race([ready, new Promise((resolve) => setTimeout(resolve, 1000))])
     release()
@@ -389,23 +389,32 @@ it.each([false, true])(
       import { spawn } from 'node:child_process';
       import { writeFileSync } from 'node:fs';
       import { joinDevSession, readDevSession } from './src/main/dev-runtime-session';
+      (async () => {
       const session = readDevSession(true);
       const replacementPid = Number(process.env.REPLACEMENT_BACKEND_PID);
-      const child = replacementPid ? undefined : spawn(process.execPath, [${JSON.stringify(entry)}], {
-        detached: true, stdio: ['ignore','pipe','inherit'],
-        env: { ...process.env, OPEN_SCIENCE_DEV_SESSION: JSON.stringify(session), FIXTURE_MODE: 'save-guard' }
-      });
-      child?.stdout.on('data', chunk => process.stdout.write(chunk));
-      if (child) writeFileSync(${JSON.stringify(join(root, 'backend-pid'))}, String(child.pid));
-      joinDevSession({ session, build: ${JSON.stringify({ buildId, workspaceRoot: root })},
-        configRoot: ${JSON.stringify(join(root, 'config'))}, backendPid: replacementPid || child.pid,
+      await joinDevSession({ session, desktopOnly: true,
         stop: async () => {
           await new Promise(resolve => setTimeout(resolve, 5200));
           writeFileSync(${JSON.stringify(join(root, 'config/saved'))}, 'saved');
           process.exit(0);
         }
-      }).then(() => { if (replacementPid) console.log('READY'); });
+      });
+      const child = replacementPid ? undefined : spawn(process.execPath, [${JSON.stringify(entry)}], {
+        detached: true, stdio: ['ignore','pipe','inherit'],
+        env: { ...process.env, OPEN_SCIENCE_DEV_SESSION: JSON.stringify(session), FIXTURE_MODE: 'save-guard' }
+      });
+      child?.stdout.on('data', chunk => process.stdout.write(chunk));
+      if (child) {
+        writeFileSync(${JSON.stringify(join(root, 'backend-pid'))}, String(child.pid));
+        const notification = await joinDevSession({ session,
+          build: ${JSON.stringify({ buildId, workspaceRoot: root })},
+          configRoot: ${JSON.stringify(join(root, 'config'))}, backendPid: child.pid,
+          stop: async () => { throw new Error('Spawn notification must not own Desktop shutdown'); }
+        });
+        notification.close();
+      } else console.log('READY');
       setInterval(() => {}, 1000);
+      })().catch(error => { console.error(error); process.exit(1); });
     `,
         resolveDir: process.cwd(),
         loader: 'ts'
