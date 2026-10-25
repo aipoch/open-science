@@ -1092,8 +1092,13 @@ describe('module test impact commands', () => {
     expect(packageJson.scripts['test:module:arguments']).toBe(
       'node scripts/ci/run-vitest-arguments.mjs'
     )
-    expect(packageJson.scripts['test:module']).toContain('module-test-impact.mjs module')
-    expect(packageJson.scripts['test:affected']).toContain('module-test-impact.mjs affected')
+    // Planning reads source snapshots; only the selected test execution prepares app outputs.
+    expect(packageJson.scripts['test:module']).toBe('node scripts/ci/module-test-impact.mjs module')
+    expect(packageJson.scripts['test:affected']).toBe(
+      'node scripts/ci/module-test-impact.mjs affected'
+    )
+    expect(packageJson.scripts['pretest:module']).toBeUndefined()
+    expect(packageJson.scripts['pretest:affected']).toBeUndefined()
   })
 })
 
