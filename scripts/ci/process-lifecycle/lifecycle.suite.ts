@@ -283,6 +283,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     () =>
       scenario('backend-startup-failure', async ({ root, observer }) => {
         const target = await fixture(root, 'process.exit(7)')
+        // Reach the spawned-process failure path after development build admission.
+        await writeFile(
+          target.entry,
+          `// open-science-backend-build:${'a'.repeat(64)}\n${await readFile(target.entry, 'utf8')}`
+        )
         const pending = startOrAttachDesktopBackend({
           configRoot: root,
           profilePath: join(root, 'profile'),
@@ -294,7 +299,9 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
         }).catch((error) => error)
         await target.observe(observer)
         await target.release()
-        expect(await pending).toBeInstanceOf(Error)
+        expect(await pending).toMatchObject({
+          message: expect.stringContaining('Node backend exited during startup (7)')
+        })
         await observer.checkpoint('failed-start-exited')
       }),
     30000

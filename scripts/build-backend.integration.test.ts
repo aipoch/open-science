@@ -9,80 +9,83 @@ import { createBackendBuilder } from './build-backend.mjs'
 import { desktopBackendDependencies } from './backend-dependencies.mjs'
 import { readBackendBuildId } from '../src/main/backend-build-identity'
 
-it('changes development identity for rebuilt inputs while a retained process keeps its loaded identity', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'backend-build-identity-'))
-  const put = async (file: string, content: string): Promise<void> => {
-    await mkdir(dirname(join(root, file)), { recursive: true })
-    await writeFile(join(root, file), content)
-  }
-  let builder: Awaited<ReturnType<typeof createBackendBuilder>> | undefined
-  let child: ReturnType<typeof fork> | undefined
-  try {
-    await put(
-      'packages/open-science/installation-startup.cjs',
-      await readFile('packages/open-science/installation-startup.cjs', 'utf8')
-    )
-    await put(
-      'package.json',
-      JSON.stringify({ dependencies: { '@aipoch/diagnostics': 'file:packages/diagnostics' } })
-    )
-    await put(
-      'packages/diagnostics/package.json',
-      JSON.stringify({ name: '@aipoch/diagnostics', main: 'dist/index.js' })
-    )
-    await put('packages/diagnostics/dist/index.js', 'module.exports = 1')
-    await mkdir(join(root, 'src/shared/i18n/locales'), { recursive: true })
-    await put(
-      'src/main/node-entry.ts',
-      `export { default as worker } from './fixture-worker?nodeWorker';
+it.each([false, true])(
+  'changes unpackaged backend identity for rebuilt inputs (development=%s) while a retained process keeps its loaded identity',
+  async (development) => {
+    const root = await mkdtemp(join(tmpdir(), 'backend-build-identity-'))
+    const put = async (file: string, content: string): Promise<void> => {
+      await mkdir(dirname(join(root, file)), { recursive: true })
+      await writeFile(join(root, file), content)
+    }
+    let builder: Awaited<ReturnType<typeof createBackendBuilder>> | undefined
+    let child: ReturnType<typeof fork> | undefined
+    try {
+      await put(
+        'packages/open-science/installation-startup.cjs',
+        await readFile('packages/open-science/installation-startup.cjs', 'utf8')
+      )
+      await put(
+        'package.json',
+        JSON.stringify({ dependencies: { '@aipoch/diagnostics': 'file:packages/diagnostics' } })
+      )
+      await put(
+        'packages/diagnostics/package.json',
+        JSON.stringify({ name: '@aipoch/diagnostics', main: 'dist/index.js' })
+      )
+      await put('packages/diagnostics/dist/index.js', 'module.exports = 1')
+      await mkdir(join(root, 'src/shared/i18n/locales'), { recursive: true })
+      await put(
+        'src/main/node-entry.ts',
+        `export { default as worker } from './fixture-worker?nodeWorker';
       process.on('message', () => process.send?.(globalThis[Symbol.for('open-science.backend-build-id')]));`
-    )
-    await put('src/main/fixture-worker.ts', 'export const value = 1')
-    builder = await createBackendBuilder({ root, development: true })
-    await builder.rebuild()
-    const entry = join(root, 'out/backend/index.cjs')
-    const original = await readBackendBuildId(entry)
-    child = fork(entry, [], {
-      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-      env: { ...process.env, OPEN_SCIENCE_INSTALLATION_STATE_ROOT: join(root, 'installations') }
-    })
-    const observed = async (): Promise<unknown> => {
-      const message = once(child!, 'message')
-      child!.send('identity')
-      return await Promise.race([
-        message.then(([value]) => value),
-        once(child!, 'exit').then(([code]) => {
-          throw new Error('Identity fixture exited: ' + code)
-        })
-      ])
-    }
-    expect(await observed()).toBe(original)
-    await builder.rebuild()
-    expect(await readBackendBuildId(entry)).toBe(original)
-    let previous = original
-    for (const [file, content] of [
-      ['packages/diagnostics/dist/index.js', 'module.exports = 2'],
-      ['src/main/fixture-worker.ts', 'export const value = 2'],
-      ['package-lock.json', '{"lockfileVersion":3}'],
-      ['src/main/node-entry.ts', 'export const changed = true']
-    ]) {
-      await put(file, content)
+      )
+      await put('src/main/fixture-worker.ts', 'export const value = 1')
+      builder = await createBackendBuilder({ root, development })
       await builder.rebuild()
-      const next = await readBackendBuildId(entry)
-      expect(next).not.toBe(previous)
+      const entry = join(root, 'out/backend/index.cjs')
+      const original = await readBackendBuildId(entry)
+      child = fork(entry, [], {
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+        env: { ...process.env, OPEN_SCIENCE_INSTALLATION_STATE_ROOT: join(root, 'installations') }
+      })
+      const observed = async (): Promise<unknown> => {
+        const message = once(child!, 'message')
+        child!.send('identity')
+        return await Promise.race([
+          message.then(([value]) => value),
+          once(child!, 'exit').then(([code]) => {
+            throw new Error('Identity fixture exited: ' + code)
+          })
+        ])
+      }
       expect(await observed()).toBe(original)
-      previous = next
+      await builder.rebuild()
+      expect(await readBackendBuildId(entry)).toBe(original)
+      let previous = original
+      for (const [file, content] of [
+        ['packages/diagnostics/dist/index.js', 'module.exports = 2'],
+        ['src/main/fixture-worker.ts', 'export const value = 2'],
+        ['package-lock.json', '{"lockfileVersion":3}'],
+        ['src/main/node-entry.ts', 'export const changed = true']
+      ]) {
+        await put(file, content)
+        await builder.rebuild()
+        const next = await readBackendBuildId(entry)
+        expect(next).not.toBe(previous)
+        expect(await observed()).toBe(original)
+        previous = next
+      }
+    } finally {
+      if (child && child.exitCode === null) {
+        const exited = once(child, 'exit')
+        child.kill()
+        await exited
+      }
+      await builder?.dispose()
+      await rm(root, { recursive: true, force: true })
     }
-  } finally {
-    if (child && child.exitCode === null) {
-      const exited = once(child, 'exit')
-      child.kill()
-      await exited
-    }
-    await builder?.dispose()
-    await rm(root, { recursive: true, force: true })
   }
-})
+)
 
 it('isolates desktop bundles from CLI output and runs all native locales and workers without external i18next', async () => {
   const root = await mkdtemp(join(tmpdir(), 'desktop-backend-build-'))

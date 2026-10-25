@@ -125,7 +125,9 @@ export async function createBackendBuilder({
       await writeFile(join(out, 'native-locales', file), JSON.stringify({ common, native }))
     }
     await writeFile(join(out, 'dependencies.json'), JSON.stringify(metadata, null, 2))
-    if (development) {
+    // Ordinary compiled output also runs behind unpackaged Desktop (build:e2e and build).
+    // It needs the same admission proof as dev output; packaged Desktop uses version/commands.
+    if (development || !desktop) {
       // Include rebuilt external first-party packages, workers and dependency versions. Git HEAD
       // cannot distinguish dirty builds, and hashing only index.cjs misses external package edits.
       const hash = createHash('sha256')
