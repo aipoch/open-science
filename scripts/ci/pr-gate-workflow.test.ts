@@ -1527,9 +1527,7 @@ describe('PR Gate workflow', () => {
         node_version: '${{ steps.node.outputs.node-version }}'
       })
       expect(producer.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
-      expect(producer.steps?.filter(({ run }) => run === 'npm run build:web')).toHaveLength(
-        platform === 'macos' ? 1 : 0
-      )
+      expect(producer.steps?.some(({ run }) => /npm run build:web\b/.test(run ?? ''))).toBe(false)
       const upload = producer.steps?.find(({ id }) => id === 'upload')
       expect(upload?.['continue-on-error']).not.toBe(true)
       expect(upload?.with).toMatchObject({

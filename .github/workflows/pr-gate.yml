@@ -1332,9 +1332,8 @@ jobs:
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
       - name: Build Electron application
+        # build:e2e includes the Web UI used by browser journeys.
         run: npm run build:e2e
-      - name: Build web application
-        run: npm run build:web
       - name: Test snapshot transport
         run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
       - name: Pack E2E setup

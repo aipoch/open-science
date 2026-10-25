@@ -616,8 +616,8 @@ jobs:
             npm version --no-git-tag-version "$nightly_version"
             eb_ver=(-c.extraMetadata.version="$nightly_version")
           fi
+          # build:e2e emits both the Electron application and out/web for packaging.
           npm run build:e2e
-          npm run build:web
           windows_signing_args=()
           if [ "${{ inputs.sign_windows }}" = "true" ] && [ "${{ matrix.platform }}" = "win" ]; then
             for name in AZURE_SIGNING_PUBLISHER AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT AZURE_SIGNING_PROFILE; do
