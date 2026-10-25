@@ -46,6 +46,10 @@ on:
         description: Sign the stable Windows package with Azure Artifact Signing.
         type: boolean
         default: false
+      compare_windows_extraction:
+        description: Diagnostic only; repackage the signed Windows payload with one extractor.
+        type: boolean
+        default: false
 
 # Builds only read the repo and upload run artifacts; every publish step lives in the caller.
 permissions:
@@ -671,6 +675,31 @@ jobs:
         env:
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
         run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked
+
+      - name: Build same-payload signed extraction control
+        if: ${{ github.event_name == 'workflow_dispatch' && matrix.platform == 'win' && inputs.sign_windows && inputs.compare_windows_extraction }}
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node build/windows-extraction-comparison.cjs
+
+      - name: Upload signed extraction control
+        if: ${{ github.event_name == 'workflow_dispatch' && matrix.platform == 'win' && inputs.sign_windows && inputs.compare_windows_extraction }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-x64-single-extractor
+          retention-days: 7
+          path: |
+            dist-single-extractor/*-win-x64-setup.exe
+            dist-single-extractor/comparison.json
+            dist-single-extractor/inventory.json
+          if-no-files-found: error
 
       # Keep each native feed unique even when notarization is skipped. The installed app still
       # polls latest-mac.yml; only the publication job combines the two architecture artifacts.

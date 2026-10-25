@@ -18,6 +18,10 @@ on:
         options:
           - signpath
           - azure
+      compare_extraction:
+        description: Build a same-payload single-extractor control for the Azure dry-run
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -38,6 +42,7 @@ jobs:
       platform_name: windows-x64
       skip_verify: true
       sign_windows: ${{ inputs.provider == 'azure' }}
+      compare_windows_extraction: ${{ inputs.provider == 'azure' && inputs.compare_extraction }}
 
   azure-package-smoke:
     name: Smoke signed Windows installer
