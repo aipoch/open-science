@@ -127,7 +127,10 @@
       "packages/notebook-network-sandbox/src/installed-package.test.ts",
       "packages/notebook-network-sandbox/src/local-service.test.ts"
     ],
-    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "scripts/windows-dev-notebook-host.integration.test.ts"
+    ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",

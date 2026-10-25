@@ -1,9 +1,10 @@
 import { homedir, tmpdir } from 'node:os'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import { findExecutable } from './executable.js'
 import {
   absolutePhysicalPath,
+  contains,
   normalizeFilesystemLayout,
   type FilesystemLayoutInput
 } from './filesystem-layout.js'
@@ -98,6 +99,24 @@ const seatbeltProfile = (request: MacLaunchRequest): string => {
     rules.push(outsideWritable ? `(deny file-write* ${outsideWritable})` : '(deny file-write*)')
   for (const root of new Set([...layout.deniedReadRoots, ...layout.deniedWriteRoots])) {
     rules.push(`(deny file-write* ${subtree(root)})`)
+  }
+  // A subtree deny must follow its object: prevent relocating or replacing its ancestors.
+  const ancestors = new Set<string>()
+  for (const root of [...layout.deniedReadRoots, ...layout.deniedWriteRoots]) {
+    for (
+      let ancestor = dirname(root);
+      ancestor !== dirname(ancestor);
+      ancestor = dirname(ancestor)
+    ) {
+      if (
+        layout.restrictFolders === false ||
+        layout.readWriteRoots.some((writable) => contains(writable, ancestor))
+      )
+        ancestors.add(ancestor)
+    }
+  }
+  for (const ancestor of ancestors) {
+    rules.push(`(deny file-write-unlink file-write-create (literal ${literal(ancestor)}))`)
   }
   return rules.join('\n')
 }

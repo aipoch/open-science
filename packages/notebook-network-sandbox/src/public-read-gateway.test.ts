@@ -35,6 +35,7 @@ const listen = async (server: Server): Promise<number> => {
 }
 const setup = async (
   options: {
+    rawReply?: string
     origin?: 'wrong-host' | 'local-ca'
     upgrade?: boolean
     source?: 'unknown' | 'explicit'
@@ -84,7 +85,12 @@ const setup = async (
   })
   const origin = createTlsServer(
     { SNICallback: (_host, callback) => callback(null, originContext) },
-    (socket) => http.emit('connection', socket)
+    (socket) => {
+      if (options.rawReply) {
+        const reply = options.rawReply
+        socket.once('data', () => socket.end(reply))
+      } else http.emit('connection', socket)
+    }
   )
   origin.on('tlsClientError', () => undefined)
   const originPort = await listen(origin)
@@ -483,4 +489,29 @@ describe('public read network contract and resource gates', () => {
     expect(seen).toHaveLength(size > 8192 ? 0 : 1)
     expect(blocked).not.toHaveBeenCalled()
   })
+})
+
+it.each([
+  [
+    'HTTP/1.1 099 Invalid\r\nContent-Length: 6\r\n\r\nsecret',
+    '502',
+    'OPEN_SCIENCE_NETWORK_UPSTREAM_FAILED'
+  ],
+  ['HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcdef', '200', 'abc']
+])('contains upstream response errors inside TLS: %s', async (rawReply, status, body) => {
+  const fixture = await setup({ rawReply })
+  const socket = await fixture.open()
+  const result = new Promise<string>((resolve) => {
+    let bytes = ''
+    socket.on('data', (chunk) => {
+      bytes += chunk.toString()
+    })
+    socket.once('close', () => resolve(bytes))
+  })
+  socket.write('GET /fixture HTTP/1.1\r\nHost: data.example\r\nConnection: close\r\n\r\n')
+  const received = await result
+  expect(received).toContain(`HTTP/1.1 ${status}`)
+  expect(received).toContain(body)
+  expect(received).not.toContain('secret')
+  expect(received).not.toContain('abcdef')
 })

@@ -71,6 +71,13 @@ HTTP(S) proxy          SOCKS5 proxy
   └─ Windows: AppContainer + a small native process host
 ```
 
+Filesystem rules resolve existing paths using native filesystem semantics, including symbolic links
+before parent traversal. Missing leaves are anchored to their existing physical parent; unresolved
+links and ambiguous missing-parent traversal fail closed. On macOS, ancestors of explicitly denied
+paths cannot be moved or replaced inside writable regions; ordinary sibling files remain writable.
+HTTP forwarding preserves the requested path and query. Invalid upstream response heads return 502,
+while an interrupted response is terminated without appending diagnostic text to its body.
+
 Callers provide a minimal environment, read/write roots, protected roots, packaged resources, and
 one network-decision callback per command. Proxy lifecycle, command attribution, platform
 enforcement, parent-proxy routing, filesystem projection, and denial annotation stay inside the

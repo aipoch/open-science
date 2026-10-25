@@ -1,20 +1,23 @@
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/settings-store'
+import type { SettingsEditorLeaveState } from './SettingsLayout'
 
 export const UnpaywallCredentialForm = ({
   disabled = false,
   onSaved,
   onCancel,
-  onBusyChange
+  onBusyChange,
+  onLeaveStateChange
 }: {
   disabled?: boolean
   onSaved: () => void
   onCancel: () => void
   onBusyChange?: (busy: boolean) => void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const id = useId()
@@ -28,6 +31,10 @@ export const UnpaywallCredentialForm = ({
     void load().catch(() => undefined)
   }, [load])
   const email = draft ?? storedEmail
+  useLayoutEffect(() => {
+    onLeaveStateChange?.({ dirty: draft !== undefined && draft !== storedEmail, busy })
+  }, [busy, draft, onLeaveStateChange, storedEmail])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
   const submit = async (value: string): Promise<void> => {
     if (busy || disabled) return
     setBusy(true)
@@ -37,6 +44,7 @@ export const UnpaywallCredentialForm = ({
       // Omitting apiKey preserves the NCBI key owned by the shared research credentials.
       await save({ contactEmail: value.trim() })
       setDraft(undefined)
+      onLeaveStateChange?.(null)
       onSaved()
     } catch {
       setError(true)

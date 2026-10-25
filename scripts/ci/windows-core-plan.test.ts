@@ -108,6 +108,8 @@ describe('Windows core impact and event selection', () => {
   })
 
   it.each([
+    ['scripts/build-notebook-host.mjs', ['windows_runtime']],
+    ['scripts/windows-dev-notebook-host.integration.test.ts', ['windows_runtime']],
     [
       'src/main/notebook/shell-runtime.ts',
       ['windows_shell', 'windows_service_timeout', 'windows_sandbox']

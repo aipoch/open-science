@@ -39,6 +39,11 @@ Module's curated owner, contract, and representative consumer tests; it is not c
 verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
 Interface or its consumers may have changed.
 
+Module and affected-test commands plan from source snapshots before preparing application outputs.
+When tests are selected, the delegated npm test command runs the Prisma check and package build
+once through `pretest`. Explain-only runs, empty unsharded selections and report merging do not prepare
+application outputs. Installed dependencies are still required for source analysis and report merging.
+
 Large `test:module` and `test:affected` selections use a temporary argument file to avoid operating
 system command-line limits, including Windows npm's shell limit. The internal
 `test:module:arguments` script runs the same `pretest` preparation and restores the complete argument

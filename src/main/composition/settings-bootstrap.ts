@@ -139,7 +139,12 @@ export async function composeSettingsBootstrap({
       },
       process.platform
     )
-    if (binding.kind !== 'powershell' || !(await notebookNetworkSandbox.windowsProtectionReady()))
+    // Session setup only needs the configured Shell contract. Runtime verification belongs to
+    // protected execution; awaiting it here stalls every conversation when a probe is slow or fails.
+    if (
+      binding.kind !== 'powershell' ||
+      !(await notebookNetworkSandbox.windowsProtectionConfigured())
+    )
       return binding
     return Object.freeze({ kind: 'powershell', version: '7.6' })
   }

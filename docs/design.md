@@ -719,6 +719,7 @@ The upper-right pin toggles the current Session through the shared Session contr
   approval, Ask-User elicitation, or Plan approval owns the composer lane, hide the Notebook, jobs,
   and Plan status chrome above it. Restore that status chrome only with the ordinary composer.
 - Textarea: `min-h-[36px] max-h-[200px] py-1.5 text-[15px] leading-relaxed text-text-000 placeholder:text-text-100`.
+- Empty composers show an **Input help** ghost icon action beside the placeholder. Its popover and the editor's `aria-describedby` expose the same complete platform-specific command list (`/` for Skills, `@` for files and Library, `#` for Sessions, global search, and history navigation). Hide the action once content exists; narrow and assistive-technology users must not depend on a truncated placeholder.
 - Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.
 - Drag-and-drop state: use `ring-ring/50`, `border-ring/50`, or a semantic success token. Do not hardcode a new green.
@@ -831,7 +832,7 @@ The upper-right pin toggles the current Session through the shared Session contr
   follow the same Session-number lookup as ASCII digits. This policy applies to the local Session
   title catalog, not the separate Artifact filename search.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
-- Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
+- Inline more actions use opacity reveal only in `(hover:hover) and (pointer:fine)`. Coarse pointers keep the action visible with a 44px target (`size-11`); desktop retains `size-7` and the hover/focus/open behavior.
 
 ### Onboarding
 
@@ -842,6 +843,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Work surface: one shadcn `Card`, `min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200`; do not nest visual cards inside it.
 - Current step uses `bg-primary text-primary-foreground`; completed and inactive labels remain neutral.
 - Commands use shadcn `Button`; primary commands inherit the shared deep-green `primary` variant.
+- If the default data location cannot be loaded and no custom location is selected, keep Continue disabled and preserve Retry, Back, and Browse. A confirmed custom location may still use the existing restart confirmation; never treat an unknown location as an implicit default.
 - ProviderForm field guidance uses the shared `FieldHelp` component next to the field label. It accepts only `content: ReactNode`; field types and copy mappings remain owned by the form.
 - `FieldHelp` uses a neutral shadcn `Button variant="ghost" size="icon-xs"`, overridden to `size-[18px] rounded-full bg-transparent text-muted-foreground/50`. Hover, keyboard focus, and open states use `bg-muted text-foreground`; it uses Lucide `CircleHelp` and never uses `primary`.
 - Provider type, Base URL, API key, and Supported models descriptions live only in the shared shadcn `Tooltip` (`max-w-[280px] px-3 py-2 text-xs leading-5 whitespace-normal`); do not render helper copy below those controls. Validation errors remain inline below their inputs.
@@ -870,6 +872,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Conversation panel shell: `bg-bg-10 p-2 pl-4`.
 - Composer area uses a top fade `bg-gradient-to-t from-bg-10 to-bg-10/0`.
 - Message scroller and preview panel both use `bg-bg-10`.
+- The **First message** shortcut reveals after upward scrolling and auto-hides after idle. Hover or focus-within pauses that timeout; pointer leave or focus exit resumes it. Never hide a focused control or move it to `tabIndex=-1` while it remains the active element.
 
 #### Composer skill selector
 
@@ -921,6 +924,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Network > Proxy is a breadcrumb-backed second-level form. It offers System (the historical default), Manual, and Direct modes; Manual uses a labeled proxy URL, optional bypass rules, blur/save validation, and explicit rejection of embedded credentials. System keeps per-request OS/PAC resolution inside Electron while new agent processes inherit only the proxy environment present when Open-Science started; Manual supplies a fixed proxy to both stacks, and Direct clears proxy variables. Saving reports inline loading, error, or quiet success and explains that only new requests and processes adopt the change; live agents, notebook kernels, and installers are not restarted.
 - Select fields use `Select`, with a `32px` trigger height.
 - A visible Settings search or filter field owns the platform search shortcut: `Cmd+K` on macOS and `Ctrl+K` on Windows/Linux focus it without selecting or clearing its value. The topmost nested Settings dialog wins over a search behind it; hidden or disabled searches do not intercept the shortcut. Persistent list-toolbars show the shortcut as right-aligned keycaps inside the field, while transient searches such as runtime-package and Specialist capability filters expose the same behavior through `aria-keyshortcuts` without repeating the visual hint.
+- The first Escape in Settings search closes the result list but preserves input focus and does not reopen it until typing or ArrowDown. A later Escape follows ordinary dialog dismissal; IME composition keeps priority.
 
 #### Resource identity and display names
 
@@ -1097,11 +1101,13 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 ## Recoverable operations
 
-- Connector and Compute drafts participate in the shared Settings leave guard, including section
-  changes, history navigation and closing Settings. Failed submissions retain editable input;
-  asynchronous completions from a closed or replaced editor cannot navigate the current editor.
-  Invalid SSH ports remain visible when advanced settings are collapsed. Loading SSH aliases,
-  failing to load them and finding no aliases have distinct presentations with retry on failure.
+- Connector, Compute, Skill, Provider, Network, Memory category, Tag, service credential, and device
+  credential drafts participate in the shared Settings leave guard, including section changes,
+  history navigation and closing Settings. Successful saves clear dirty/busy state before navigation;
+  failed submissions retain editable input. Asynchronous completions from a closed or replaced editor
+  cannot navigate the current editor. Invalid SSH ports remain visible when advanced settings are
+  collapsed. Loading SSH aliases, failing to load them and finding no aliases have distinct
+  presentations with retry on failure.
 - Notification bulk-read and storage migration cancellation display pending and failure feedback.
   Cancellation requests do not claim completion before the owning operation acknowledges it.
 - Desktop artifact downloads show processed-file progress and allow cancellation. Keep selections

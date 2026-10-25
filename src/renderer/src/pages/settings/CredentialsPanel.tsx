@@ -4,7 +4,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
 import * as AlertDialog from '@/components/ui/alert-dialog'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -34,7 +34,7 @@ import { MaskedPasswordField } from './MaskedPasswordField'
 import { DeviceCredentialEditor } from './DeviceCredentialEditor'
 import { DeviceCredentialLoadNotice } from './DeviceCredentialLoadNotice'
 import { localizeCredentialError } from './credential-error-message'
-import { SettingsSection } from './SettingsLayout'
+import { SettingsSection, type SettingsEditorLeaveState } from './SettingsLayout'
 import { UnpaywallCredentialForm } from './UnpaywallCredentialForm'
 
 export type { CredentialsServiceId } from '../../lib/settings-navigation'
@@ -46,6 +46,7 @@ type CredentialsPanelProps = {
   onNavigate(view: CredentialsView): void
   onOpenConnector(id: string): void
   onOpenProvider(provider: ProviderView): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }
 
 const statusLabel = (configured: boolean): React.JSX.Element | null =>
@@ -58,7 +59,8 @@ export function CredentialsPanel({
   view,
   onNavigate,
   onOpenConnector,
-  onOpenProvider
+  onOpenProvider,
+  onLeaveStateChange
 }: CredentialsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
@@ -113,6 +115,22 @@ export function CredentialsPanel({
     return t('OpenAlex validation is temporarily unavailable. Try again.')
   }
 
+  const dirty =
+    view.kind === 'service' &&
+    ((apiKeyDraft !== undefined &&
+      apiKeyDraft.serviceId === activeServiceId &&
+      apiKeyDraft.value.length > 0) ||
+      (emailDraft !== undefined &&
+        emailDraft.source === storedEmail &&
+        emailDraft.value !== storedEmail))
+
+  const delegatesLeaveState =
+    view.kind === 'service' && (view.serviceId === 'unpaywall' || view.serviceId === 'github')
+  useLayoutEffect(() => {
+    if (view.kind === 'service' && !delegatesLeaveState) onLeaveStateChange?.({ dirty, busy })
+  }, [busy, delegatesLeaveState, dirty, onLeaveStateChange, view.kind])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
+
   useEffect(() => {
     void loadConnectors().catch(() => undefined)
     void loadDeviceCredentials().catch(() => undefined)
@@ -155,6 +173,7 @@ export function CredentialsPanel({
       <DeviceCredentialEditor
         onDone={() => onNavigate({ kind: 'list' })}
         onCancel={() => onNavigate({ kind: 'list' })}
+        onLeaveStateChange={onLeaveStateChange}
       />
     )
   }
@@ -166,6 +185,7 @@ export function CredentialsPanel({
         credential={credential}
         onDone={() => onNavigate({ kind: 'list' })}
         onCancel={() => onNavigate({ kind: 'list' })}
+        onLeaveStateChange={onLeaveStateChange}
       />
     ) : !credentialsLoaded || credentialsError ? (
       <div className="p-5">
@@ -269,8 +289,12 @@ export function CredentialsPanel({
             </p>
           </div>
           <UnpaywallCredentialForm
-            onSaved={() => onNavigate({ kind: 'list' })}
+            onSaved={() => {
+              onLeaveStateChange?.(null)
+              onNavigate({ kind: 'list' })
+            }}
             onCancel={() => onNavigate({ kind: 'list' })}
+            onLeaveStateChange={onLeaveStateChange}
           />
         </div>
       )
@@ -308,7 +332,10 @@ export function CredentialsPanel({
     if (view.serviceId === 'github') {
       return (
         <div className="p-5">
-          <GitHubTokenControl onCancel={() => onNavigate({ kind: 'list' })} />
+          <GitHubTokenControl
+            onCancel={() => onNavigate({ kind: 'list' })}
+            onLeaveStateChange={onLeaveStateChange}
+          />
         </div>
       )
     }
@@ -328,6 +355,7 @@ export function CredentialsPanel({
       try {
         await setSemanticScholarCredential({ apiKey: value })
         setApiKeyDraft({ serviceId: view.serviceId, value: '' })
+        onLeaveStateChange?.(null)
         onNavigate({ kind: 'list' })
       } catch {
         setMessage(t('Could not save the Semantic Scholar API key.'))

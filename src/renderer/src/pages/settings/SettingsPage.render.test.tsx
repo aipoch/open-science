@@ -7132,3 +7132,195 @@ describe('Connection editor shared leave protection', () => {
     }
   )
 })
+
+describe('Resource editor leave protection', () => {
+  it('protects Memory category drafts through panel navigation', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Memory')!.click())
+    const newCategory = await waitFor(() =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (button) => button.textContent?.trim() === 'New category'
+      )
+    )
+    await act(async () => newCategory!.click())
+    const name = document.querySelector<HTMLInputElement>('input[name="memory-category-name"]')!
+    const guidance = document.querySelector<HTMLTextAreaElement>(
+      'textarea[name="memory-category-guidance"]'
+    )!
+    fireEvent.change(name, { target: { value: 'Unsaved category' } })
+    fireEvent.change(guidance, { target: { value: 'Unsaved guidance' } })
+
+    await act(async () => navButton('General')!.click())
+    expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Your changes have not been saved.')
+    expect(name.value).toBe('Unsaved category')
+
+    const keepEditing = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Keep editing'
+    )!
+    await act(async () => keepEditing.click())
+    expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).toBeNull()
+    expect(name.value).toBe('Unsaved category')
+    expect(guidance.value).toBe('Unsaved guidance')
+
+    await act(async () => navButton('General')!.click())
+    const discard = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Discard changes'
+    )!
+    await act(async () => discard.click())
+    await waitFor(() => expect(navButton('General')?.getAttribute('aria-current')).toBe('page'))
+    expect(document.querySelector('input[name="memory-category-name"]')).toBeNull()
+  })
+
+  it('resets discarded Memory drafts when Settings closes and reopens', async () => {
+    const onClose = vi.fn()
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await act(async () => navButton('Memory')!.click())
+    const newCategory = await waitFor(() =>
+      [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (button) => button.textContent?.trim() === 'New category'
+      )
+    )
+    await act(async () => newCategory!.click())
+    const name = document.querySelector<HTMLInputElement>('input[name="memory-category-name"]')!
+    const guidance = document.querySelector<HTMLTextAreaElement>(
+      'textarea[name="memory-category-guidance"]'
+    )!
+    fireEvent.change(name, { target: { value: 'Discard on close' } })
+    fireEvent.change(guidance, { target: { value: 'Discard this too' } })
+
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!.click()
+    )
+    const discard = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Discard changes'
+    )!
+    await act(async () => discard.click())
+    expect(onClose).toHaveBeenCalledOnce()
+
+    await act(async () => root.render(<SettingsPage open={false} onClose={onClose} />))
+    await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+    await waitFor(() =>
+      expect(document.querySelector('input[name="memory-category-name"]')).not.toBeNull()
+    )
+    expect(
+      document.querySelector<HTMLInputElement>('input[name="memory-category-name"]')?.value
+    ).toBe('')
+    expect(
+      document.querySelector<HTMLTextAreaElement>('textarea[name="memory-category-guidance"]')
+        ?.value
+    ).toBe('')
+  })
+
+  it.each(['back', 'forward', 'search', 'close'] as const)(
+    'protects Memory category drafts through %s navigation',
+    async (route) => {
+      const onClose = vi.fn()
+      await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+      await act(async () => navButton('Memory')!.click())
+      const newCategory = await waitFor(() =>
+        [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+          (button) => button.textContent?.trim() === 'New category'
+        )
+      )
+      await act(async () => newCategory!.click())
+      if (route === 'forward') {
+        await act(async () => navButton('General')!.click())
+        await act(async () =>
+          document.querySelector<HTMLButtonElement>('[aria-label="Back"]')!.click()
+        )
+      }
+      const name = document.querySelector<HTMLInputElement>('input[name="memory-category-name"]')!
+      fireEvent.change(name, { target: { value: `Draft through ${route}` } })
+
+      await act(async () => {
+        if (route === 'back' || route === 'forward') {
+          document
+            .querySelector<HTMLButtonElement>(
+              `[aria-label="${route === 'back' ? 'Back' : 'Forward'}"]`
+            )!
+            .click()
+        } else if (route === 'close') {
+          document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!.click()
+        } else {
+          fireEvent.change(
+            document.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!,
+            {
+              target: { value: 'language' }
+            }
+          )
+          fireEvent.keyDown(
+            document.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!,
+            {
+              key: 'Enter'
+            }
+          )
+        }
+      })
+      expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(name.value).toBe(`Draft through ${route}`)
+
+      const keepEditing = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+        (button) => button.textContent?.trim() === 'Keep editing'
+      )!
+      await act(async () => keepEditing.click())
+      expect(name.value).toBe(`Draft through ${route}`)
+    }
+  )
+
+  it.each(['resolve', 'reject'] as const)(
+    'settles a leave request made during a Memory save (%s)',
+    async (outcome) => {
+      let finish!: (value: string) => void
+      let fail!: (error: Error) => void
+      const createCategory = vi.fn(
+        () =>
+          new Promise<string>((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      useMemoryStore.setState({ createCategory })
+      const onClose = vi.fn()
+      await act(async () => root.render(<SettingsPage open onClose={onClose} />))
+      await act(async () => navButton('Memory')!.click())
+      const newCategory = await waitFor(() =>
+        [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+          (button) => button.textContent?.trim() === 'New category'
+        )
+      )
+      await act(async () => newCategory!.click())
+      const name = document.querySelector<HTMLInputElement>('input[name="memory-category-name"]')!
+      fireEvent.change(name, { target: { value: 'Save before leaving' } })
+      fireEvent.change(
+        document.querySelector<HTMLTextAreaElement>('textarea[name="memory-category-guidance"]')!,
+        { target: { value: 'Keep this guidance while saving' } }
+      )
+      await act(async () => name.closest('form')!.requestSubmit())
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>('[aria-label="Close settings"]')!.click()
+      )
+      expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+
+      await act(async () => {
+        if (outcome === 'resolve') finish('category-saved')
+        else fail(new Error('Memory save failed'))
+      })
+      if (outcome === 'resolve') {
+        expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).toBeNull()
+        expect(document.querySelector('input[name="memory-category-name"]')).toBeNull()
+      } else {
+        expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
+        const keepEditing = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+          (button) => button.textContent?.trim() === 'Keep editing'
+        )!
+        await act(async () => keepEditing.click())
+        expect(name.value).toBe('Save before leaving')
+        expect(document.body.textContent).toContain('Memory could not be updated.')
+      }
+      expect(onClose).not.toHaveBeenCalled()
+    }
+  )
+})

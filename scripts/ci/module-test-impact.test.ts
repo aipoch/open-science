@@ -446,6 +446,7 @@ describe('module test impact commands', () => {
           throw new Error('CodeGraph unavailable in CI')
         },
         spawn,
+        derivedConsumers: { schemaVersion: 1, modules: {} },
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       }
       const args = ['affected', '--base', 'base', '--head', 'head']
@@ -464,6 +465,7 @@ describe('module test impact commands', () => {
     expect(
       executeModuleTestPlan(createModuleTestPlan('artifact_storage', selectionModel()), {
         spawn,
+        derivedConsumers: { schemaVersion: 1, modules: {} },
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       })
     ).toBe(1)
@@ -529,6 +531,7 @@ describe('module test impact commands', () => {
               throw new Error('CodeGraph unavailable in CI')
             },
             spawn,
+            derivedConsumers: { schemaVersion: 1, modules: {} },
             environment: { npm_execpath: '/npm/bin/npm-cli.js' }
           }
         )
@@ -1284,6 +1287,7 @@ describe('module test impact commands', () => {
             throw new Error('CodeGraph unavailable in CI')
           },
           spawn,
+          derivedConsumers: { schemaVersion: 1, modules: {} },
           environment: { npm_execpath: '/npm/bin/npm-cli.js' }
         }
       )
@@ -1291,6 +1295,28 @@ describe('module test impact commands', () => {
       expect(invocation.mock.calls[0]?.[1]).not.toContain('--coverage.changed')
     } finally {
       write.mockRestore()
+    }
+  })
+
+  it('generates derived consumers from the requested head, not the dirty worktree', async () => {
+    const cwd = mkdtempSync(resolve(tmpdir(), 'module-head-snapshot-'))
+    try {
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      git('init', '-q')
+      mkdirSync(resolve(cwd, 'scripts/ci'), { recursive: true })
+      const edges = resolve(cwd, 'scripts/ci/module-runtime-consumers.json')
+      writeFileSync(edges, JSON.stringify({ 'missing.ts': ['consumer.ts'] }))
+      git('add', '.')
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'init')
+      const head = git('rev-parse', 'HEAD')
+      writeFileSync(edges, '{}')
+
+      await expect(
+        runModuleTestCli(['affected', '--base', head, '--head', head], { cwd })
+      ).rejects.toThrow('Invalid runtime consumer edge')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
     }
   })
 
@@ -1324,6 +1350,7 @@ describe('module test impact commands', () => {
         {
           cwd: '/repo',
           manifest: selectionModel(),
+          derivedConsumers: { schemaVersion: 1, modules: {} },
           execute,
           spawn,
           environment,
@@ -1411,8 +1438,13 @@ describe('module test impact commands', () => {
     expect(packageJson.scripts['test:module:arguments']).toBe(
       'node scripts/ci/run-vitest-arguments.mjs'
     )
-    expect(packageJson.scripts['test:module']).toContain('module-test-impact.mjs module')
-    expect(packageJson.scripts['test:affected']).toContain('module-test-impact.mjs affected')
+    // Planning reads source snapshots; only the selected test execution prepares app outputs.
+    expect(packageJson.scripts['test:module']).toBe('node scripts/ci/module-test-impact.mjs module')
+    expect(packageJson.scripts['test:affected']).toBe(
+      'node scripts/ci/module-test-impact.mjs affected'
+    )
+    expect(packageJson.scripts['pretest:module']).toBeUndefined()
+    expect(packageJson.scripts['pretest:affected']).toBeUndefined()
   })
 })
 

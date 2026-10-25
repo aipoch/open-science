@@ -6,7 +6,72 @@ import { connect as connectTls, TLSSocket, type SecureContext } from 'node:tls'
 import { domainToASCII } from 'node:url'
 import { inspectReadRequest, MAX_HEADER_BYTES, MAX_TARGET_BYTES } from './read-request.js'
 import { timingSafeEqual } from 'node:crypto'
-import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
+import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
+
+// Parse routing authority separately: URL normalization must not rewrite resource names.
+const proxyRequestTarget = (request: IncomingMessage): { target: URL; path: string } => {
+  const raw = request.url ?? ''
+  if (!raw || /[^\x21-\x7e]|[#\\]/.test(raw)) throw new Error('Invalid request target')
+  const absolute = /^(https?):\/\/([^/?]+)(.*)$/i.exec(raw)
+  const authority = absolute?.[2] ?? request.headers.host
+  const scheme = absolute?.[1]?.toLowerCase() ?? 'http'
+  let path = absolute ? absolute[3] || '/' : raw
+  if (absolute && path.startsWith('?')) path = `/${path}`
+  if (!path.startsWith('/') && !(path === '*' && request.method === 'OPTIONS'))
+    throw new Error('Invalid request target')
+  if (!authority || /[\s/@?#\\]/.test(authority)) throw new Error('Invalid authority')
+  const target = new URL(`${scheme}://${authority}`)
+  if (!target.hostname || target.username || target.password || target.pathname !== '/')
+    throw new Error('Invalid authority')
+  return { target, path }
+}
+
+const forwardResponse = (
+  upstream: ClientRequest,
+  request: IncomingMessage,
+  response: ServerResponse,
+  failureMessage: string,
+  onEnd?: () => void,
+  isCurrent: () => boolean = () => true
+): void => {
+  let incoming: IncomingMessage | undefined
+  const fail = (): void => {
+    upstream.destroy()
+    if (response.destroyed) return
+    if (response.headersSent) response.destroy()
+    else {
+      for (const name of response.getHeaderNames()) response.removeHeader(name)
+      response.writeHead(502, { connection: 'close', 'content-type': 'text/plain' })
+      response.end(failureMessage)
+    }
+  }
+  upstream.once('response', (message) => {
+    if (!isCurrent() || response.destroyed) {
+      upstream.destroy()
+      response.destroy()
+      return
+    }
+    incoming = message
+    message.once('error', () => response.destroy())
+    message.once('end', () => onEnd?.())
+    try {
+      response.writeHead(message.statusCode ?? 502, withoutConnectionHeaders(message.headers))
+    } catch {
+      fail()
+      return
+    }
+    message.pipe(response)
+  })
+  upstream.once('error', () => {
+    // The parser can reject excess bytes after a complete response, before its body drains.
+    if (!incoming?.complete) fail()
+  })
+  request.once('aborted', () => upstream.destroy())
+  request.once('error', () => upstream.destroy())
+  response.once('error', () => upstream.destroy())
+  response.once('close', () => upstream.destroy())
+  if (request.aborted || response.destroyed) upstream.destroy()
+}
 
 type GatewayDecision =
   | Readonly<{ allowed: true; address: string }>
@@ -786,17 +851,15 @@ class CommandGateway {
       return
     }
     let target: URL
+    let path: string
     try {
-      target =
-        request.url?.startsWith('http://') || request.url?.startsWith('https://')
-          ? new URL(request.url)
-          : new URL(request.url ?? '/', `http://${request.headers.host ?? ''}`)
+      ;({ target, path } = proxyRequestTarget(request))
     } catch {
       rejectHttp(response, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: malformed proxy request')
       return
     }
     if (target.hostname === LOCAL_RPC_BROKER_HOST) {
-      this.#forwardLocalRpc(request, response, target)
+      this.#forwardLocalRpc(request, response, target, path)
       return
     }
     const port = defaultPort(target)
@@ -845,26 +908,20 @@ class CommandGateway {
           return
         }
         const send = target.protocol === 'https:' ? httpsRequest : httpRequest
-        const upstream = send(
-          {
-            agent: false,
-            createConnection: () => connection,
-            method: request.method,
-            path: `${target.pathname}${target.search}`,
-            headers
-          },
-          (upstreamResponse) => {
-            response.writeHead(
-              upstreamResponse.statusCode ?? 502,
-              withoutConnectionHeaders(upstreamResponse.headers)
-            )
-            upstreamResponse.pipe(response)
-          }
-        )
-        upstream.once('error', (error) => {
-          if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
-          response.end(`Policy gateway could not reach the destination: ${error.message}`)
+        const upstream = send({
+          // Without an agent, Node uses this socket directly; agent:false creates an Agent
+          // that ignores this callback and opens a different connection.
+          createConnection: () => connection,
+          method: request.method,
+          path,
+          headers
         })
+        forwardResponse(
+          upstream,
+          request,
+          response,
+          'Policy gateway could not reach the destination.'
+        )
         request.pipe(upstream)
       } catch (error) {
         if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
@@ -881,7 +938,7 @@ class CommandGateway {
             hostname: proxyUrl.hostname,
             port: defaultPort(proxyUrl),
             method: request.method,
-            path: routedTarget.href,
+            path: `${routedTarget.origin}${path === '*' ? '' : path}`,
             headers,
             ca: this.#parent?.ca ? [...this.#parent.ca] : undefined
           }
@@ -889,26 +946,21 @@ class CommandGateway {
             hostname: decision.address,
             port,
             method: request.method,
-            path: `${target.pathname}${target.search}`,
+            path,
             headers,
             ...(target.protocol === 'https:' ? { servername: target.hostname } : {})
-          },
-      (upstreamResponse) => {
-        response.writeHead(
-          upstreamResponse.statusCode ?? 502,
-          withoutConnectionHeaders(upstreamResponse.headers)
-        )
-        upstreamResponse.pipe(response)
-      }
+          }
     )
-    upstream.once('error', (error) => {
-      if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
-      response.end(`Policy gateway could not reach the destination: ${error.message}`)
-    })
+    forwardResponse(upstream, request, response, 'Policy gateway could not reach the destination.')
     request.pipe(upstream)
   }
 
-  #forwardLocalRpc(request: IncomingMessage, response: ServerResponse, target: URL): void {
+  #forwardLocalRpc(
+    request: IncomingMessage,
+    response: ServerResponse,
+    target: URL,
+    path: string
+  ): void {
     const socketPath = this.#options.localRpcSocketPath
     if (!socketPath || target.protocol !== 'http:' || defaultPort(target) !== 80) {
       rejectHttp(response, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: local RPC route unavailable')
@@ -916,25 +968,13 @@ class CommandGateway {
     }
     const headers = withoutConnectionHeaders(request.headers)
     headers.host = 'localhost'
-    const upstream = httpRequest(
-      {
-        socketPath,
-        method: request.method,
-        path: `${target.pathname}${target.search}`,
-        headers
-      },
-      (upstreamResponse) => {
-        response.writeHead(
-          upstreamResponse.statusCode ?? 502,
-          withoutConnectionHeaders(upstreamResponse.headers)
-        )
-        upstreamResponse.pipe(response)
-      }
-    )
-    upstream.once('error', (error) => {
-      if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
-      response.end(`Policy gateway could not reach local RPC: ${error.message}`)
+    const upstream = httpRequest({
+      socketPath,
+      method: request.method,
+      path,
+      headers
     })
+    forwardResponse(upstream, request, response, 'Policy gateway could not reach the destination.')
     request.pipe(upstream)
   }
 
@@ -1266,45 +1306,34 @@ class CommandGateway {
             // We acknowledge the client's expectation below after approval. Do not start a
             // second continue handshake upstream while already streaming the accepted body.
             if (continueExpected) delete headers.expect
-            const outgoing = httpRequest(
-              {
+            const outgoing = httpRequest({
+              host,
+              port: 443,
+              method: request.method,
+              path: request.url,
+              headers: {
+                ...headers,
                 host,
-                port: 443,
-                method: request.method,
-                path: request.url,
-                headers: {
-                  ...headers,
-                  host,
-                  connection: 'close'
-                },
-                createConnection: () => upstream
+                connection: 'close'
               },
-              (incoming) => {
-                if (!this.#inspectionActive(generation, client)) {
-                  stop()
-                  return
-                }
-                response.writeHead(
-                  incoming.statusCode ?? 502,
-                  withoutConnectionHeaders(incoming.headers)
-                )
-                incoming.pipe(response)
-                incoming.once('error', () => response.destroy())
-                incoming.once('end', () => {
-                  tls!.removeListener('close', stop)
-                  stop()
-                })
-              }
+              createConnection: () => upstream
+            })
+            forwardResponse(
+              outgoing,
+              request,
+              response,
+              NETWORK_UPSTREAM_FAILED,
+              () => {
+                tls!.removeListener('close', stop)
+                stop()
+              },
+              () => this.#inspectionActive(generation, client)
             )
             outgoing.once('upgrade', (_res, socket) => {
               socket.destroy()
               response.destroy()
             })
-            outgoing.once('error', () => {
-              stop()
-              if (!response.headersSent) response.writeHead(502, { connection: 'close' })
-              response.end(NETWORK_UPSTREAM_FAILED)
-            })
+
             if (approvedBody) {
               if (continueExpected) response.writeContinue()
               request.once('error', () => outgoing.destroy())

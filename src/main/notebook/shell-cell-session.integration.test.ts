@@ -1,3 +1,4 @@
+import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import {
   access,
@@ -389,27 +390,49 @@ console.log(JSON.stringify(result))
       const controller = new AbortController()
       let waiting = true
       adapter = new NotebookShellProcessAdapter(process.platform, {
-        wrap: async (invocation) => ({
-          executable: invocation.executable,
-          args: [...invocation.args],
-          env: invocation.env,
-          annotateStderr: (stderr) => stderr,
-          beginExecution: (execution) => {
-            execution?.signal?.addEventListener('abort', () => pending.resolve(), { once: true })
-            queueMicrotask(() => {
-              execution?.onNetworkWaitChange?.(true)
-              entered.resolve()
+        wrap: async (invocation) => {
+          // Preserve the native control-pipe transport while simulating only approval timing.
+          const launch = windows
+            ? windowsSupervisedLaunch({
+                command: invocation.commandText,
+                executable: invocation.executable,
+                args: [...invocation.args],
+                cwd: invocation.cwd,
+                hostPath: join(
+                  process.cwd(),
+                  'packages/notebook-network-sandbox/vendor/windows',
+                  process.arch,
+                  'notebook-appcontainer-host.exe'
+                ),
+                gatewayPort: 49700,
+                gatewayCredentials: { username: 'unused', password: 'unused' },
+                env: invocation.env,
+                windowsShellControlPipe: invocation.windowsShellControlPipe
+              })
+            : { argv: [invocation.executable, ...invocation.args], env: invocation.env }
+          const { argv, ...spawnOptions } = launch
+          return {
+            ...spawnOptions,
+            executable: argv[0]!,
+            args: argv.slice(1),
+            annotateStderr: (stderr) => stderr,
+            beginExecution: (execution) => {
+              execution?.signal?.addEventListener('abort', () => pending.resolve(), { once: true })
+              queueMicrotask(() => {
+                execution?.onNetworkWaitChange?.(true)
+                entered.resolve()
+              })
+              return () => undefined
+            },
+            waitForNetworkApprovals: () => pending.promise,
+            networkApprovalRetryRequired: () => !waiting && !controller.signal.aborted,
+            cleanup: async () => ({
+              processesTerminated: true,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
             })
-            return () => undefined
-          },
-          waitForNetworkApprovals: () => pending.promise,
-          networkApprovalRetryRequired: () => !waiting && !controller.signal.aborted,
-          cleanup: async () => ({
-            processesTerminated: true,
-            networkClosed: true,
-            temporaryResourcesRemoved: true
-          })
-        })
+          }
+        }
       })
       let settled = false
       const run = adapter.execute({
