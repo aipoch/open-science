@@ -70,7 +70,7 @@ describe('Notebook filesystem policy', () => {
   })
 
   it('resolves symlinks before parent traversal, including missing leaves', () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'os-physical-path-')))
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'os-physical-path-')))
     try {
       mkdirSync(join(root, 'real', 'deep'), { recursive: true })
       symlinkSync(join(root, 'real', 'deep'), join(root, 'alias'), 'junction')
