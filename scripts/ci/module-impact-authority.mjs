@@ -18,7 +18,7 @@ import {
 } from './module-impact-shadow.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
-import { loadDerivedConsumers } from './module-graph/derived-index.mjs'
+import { loadDerivedConsumers } from './module-graph/policy.mjs'
 import { selectWindowsCoreChecks } from './windows-core-plan.mjs'
 
 const manifestOnlyGraph = Object.freeze({
