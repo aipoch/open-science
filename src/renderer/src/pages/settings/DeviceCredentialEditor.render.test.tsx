@@ -354,6 +354,40 @@ describe('DeviceCredentialEditor', () => {
     )
   })
 
+  it.each(['discovery', 'redirect'] as const)(
+    'keeps the leave guard pristine when only the %s disclosure opens',
+    (disclosure) => {
+      const onLeaveStateChange = vi.fn()
+      act(() =>
+        root.render(
+          <DeviceCredentialEditor
+            initialKind="oauth"
+            initialOAuth={disclosure === 'redirect' ? { clientId: 'registered-client' } : undefined}
+            onDone={vi.fn()}
+            onCancel={vi.fn()}
+            onLeaveStateChange={onLeaveStateChange}
+          />
+        )
+      )
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+      const advanced = document.body.querySelector<HTMLButtonElement>(
+        '[aria-controls="credential-oauth-advanced-settings"]'
+      )!
+      if (advanced.getAttribute('aria-expanded') === 'false') act(() => advanced.click())
+      const label =
+        disclosure === 'discovery'
+          ? 'Configure OAuth discovery'
+          : 'Already registered a different callback URI?'
+      act(() =>
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+          .find((button) => button.textContent === label)
+          ?.click()
+      )
+
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+    }
+  )
+
   it('reports credential edits and clears the leave state after saving', async () => {
     const onDone = vi.fn()
     const onLeaveStateChange = vi.fn()

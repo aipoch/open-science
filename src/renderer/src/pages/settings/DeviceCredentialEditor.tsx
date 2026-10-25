@@ -177,9 +177,7 @@ export function DeviceCredentialEditor({
     clientId !== initialDraft.clientId ||
     redirectUri !== initialDraft.redirectUri ||
     scopes !== initialDraft.scopes ||
-    usePreRegisteredOAuthClient !== initialDraft.usePreRegisteredOAuthClient ||
-    oauthDiscoveryOpen !== initialDraft.oauthDiscoveryOpen ||
-    customRedirectUriOpen !== initialDraft.customRedirectUriOpen
+    usePreRegisteredOAuthClient !== initialDraft.usePreRegisteredOAuthClient
 
   useLayoutEffect(() => {
     onLeaveStateChange?.({ dirty, busy })
