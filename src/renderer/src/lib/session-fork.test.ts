@@ -3,12 +3,20 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { forkSession } from './session-fork'
 import { flushSessionPersistence } from './session-persistence/session-persistence'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
-const { openSession, navigation } = vi.hoisted(() => ({
-  openSession: vi.fn(),
-  navigation: { explicitNavigationRevision: 0 }
-}))
+const { openSession, navigation, sessionState, loadOne, upsertPersistedSession } = vi.hoisted(
+  () => ({
+    openSession: vi.fn(() => true),
+    sessionState: { sessions: [] as { id: string; projectId: string }[] },
+    loadOne: vi.fn(async () => ({ id: 'child', projectId: 'project' })),
+    upsertPersistedSession: vi.fn(),
+    navigation: { explicitNavigationRevision: 0 }
+  })
+)
 vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: { getState: () => ({ openSession, ...navigation }) }
+}))
+vi.mock('@/stores/session-store', () => ({
+  useSessionStore: { getState: () => ({ ...sessionState, upsertPersistedSession }) }
 }))
 vi.mock('./acp/useWorkspaceAgentRuntime', () => ({
   drainWorkspaceRuntimeEventsForPersistence: vi.fn(async () => undefined)
@@ -19,6 +27,8 @@ vi.mock('./session-persistence/session-persistence', () => ({
 vi.mock('@/i18n', () => ({ i18next: { t: (key: string) => key } }))
 beforeEach(() => {
   navigation.explicitNavigationRevision = 0
+  sessionState.sessions = []
+  upsertPersistedSession.mockImplementation((session) => sessionState.sessions.push(session))
   usePackageOperationStore.setState({ operation: null, importError: undefined, open: false })
 })
 afterEach(() => {
@@ -34,13 +44,18 @@ it('flushes before copying an unopened Session and opens the published child', a
       })
   )
   const fork = vi.fn(async () => ({ projectId: 'project', sessionId: 'child' }))
-  vi.stubGlobal('api', { sessions: { fork } })
+  vi.stubGlobal('api', { sessions: { fork, loadOne } })
   const pending = forkSession({ projectId: 'project', id: 'source' })
   await vi.waitFor(() => expect(flushSessionPersistence).toHaveBeenCalled())
   expect(fork).not.toHaveBeenCalled()
   release()
   await pending
   expect(fork).toHaveBeenCalledWith({ projectId: 'project', sessionId: 'source' })
+  expect(loadOne).toHaveBeenCalledWith({ projectId: 'project', sessionId: 'child' })
+  expect(sessionState.sessions).toContainEqual({ id: 'child', projectId: 'project' })
+  expect(upsertPersistedSession.mock.invocationCallOrder[0]).toBeLessThan(
+    openSession.mock.invocationCallOrder[0]
+  )
   expect(openSession).toHaveBeenCalledWith('project', 'child', 'user')
 })
 it('preserves newer navigation and leaves the completed fork accessible', async () => {
@@ -51,7 +66,7 @@ it('preserves newer navigation and leaves the completed fork accessible', async 
         release = resolve
       })
   )
-  vi.stubGlobal('api', { sessions: { fork } })
+  vi.stubGlobal('api', { sessions: { fork, loadOne } })
   const pending = forkSession({ projectId: 'project', id: 'source' })
   await vi.waitFor(() => expect(fork).toHaveBeenCalled())
   navigation.explicitNavigationRevision += 1
@@ -72,6 +87,7 @@ it('preserves newer navigation and leaves the completed fork accessible', async 
 it('opens the fork while preserving progress when cleanup is pending', async () => {
   vi.stubGlobal('api', {
     sessions: {
+      loadOne,
       fork: vi.fn(async () => {
         usePackageOperationStore.setState({
           open: true,
@@ -119,6 +135,7 @@ it('uses the owned failure surface and preserves its recovery identity', async (
   }
   vi.stubGlobal('api', {
     sessions: {
+      loadOne,
       fork: vi.fn(async () => {
         throw new Error('Recovery required')
       }),
@@ -129,4 +146,34 @@ it('uses the owned failure surface and preserves its recovery identity', async (
   expect(usePackageOperationStore.getState().operation).toEqual(snapshot)
   expect(usePackageOperationStore.getState().open).toBe(true)
   expect(usePackageOperationStore.getState().importError).toBeUndefined()
+})
+
+it('preserves navigation made while the missing child projection is loading', async () => {
+  let release!: (value: { id: string; projectId: string }) => void
+  loadOne.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve
+      })
+  )
+  vi.stubGlobal('api', {
+    sessions: { fork: async () => ({ projectId: 'project', sessionId: 'child' }), loadOne }
+  })
+  const pending = forkSession({ projectId: 'project', id: 'source' })
+  await vi.waitFor(() => expect(loadOne).toHaveBeenCalled())
+  navigation.explicitNavigationRevision += 1
+  release({ id: 'child', projectId: 'project' })
+  await pending
+  expect(sessionState.sessions).toContainEqual({ id: 'child', projectId: 'project' })
+  expect(openSession).not.toHaveBeenCalled()
+})
+
+it('uses an already published child without reloading its projection', async () => {
+  sessionState.sessions = [{ id: 'child', projectId: 'project' }]
+  vi.stubGlobal('api', {
+    sessions: { fork: async () => ({ projectId: 'project', sessionId: 'child' }), loadOne }
+  })
+  await forkSession({ projectId: 'project', id: 'source' })
+  expect(loadOne).not.toHaveBeenCalled()
+  expect(openSession).toHaveBeenCalledWith('project', 'child', 'user')
 })

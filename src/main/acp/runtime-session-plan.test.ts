@@ -190,6 +190,8 @@ const createRuntimeHarness = (options: {
     sessionDeletion: {
       delete: vi.fn(async () => ({ status: 'closed' }))
     },
+    sandboxNetworkApprovalOwner: { cancel: vi.fn(async () => undefined) },
+    sessionEnvironment: { projectId: () => 'project-1' },
     permissionContext: { cancelForSession: vi.fn() },
     elicitationOwner: { cancelForSession: vi.fn() },
     publication: { emitState: vi.fn() },

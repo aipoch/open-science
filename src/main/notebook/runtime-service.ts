@@ -2753,7 +2753,10 @@ class NotebookRuntimeService {
   // Shuts down every live interpreter, used by app-level cleanup paths. Returns { reaped }: true only
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
-  async shutdownAll(options?: { legacyShellRecoveryToken?: string }): Promise<{
+  async shutdownAll(options?: {
+    legacyShellRecoveryToken?: string
+    afterShutdown?: () => Promise<void>
+  }): Promise<{
     reaped: boolean
     legacyShellRecovery?: { token: string; count: number }
   }> {
@@ -2763,7 +2766,19 @@ class NotebookRuntimeService {
         {},
         new Error('Notebook runtime is shutting down.')
       )
-      const sessions = await this.sessionLifecycle.shutdownAll()
+      const sessions = await this.sessionLifecycle.shutdownAll(
+        options?.afterShutdown
+          ? async () => {
+              if (!shell.reaped)
+                throw new Error(
+                  'Shell processes could not be stopped. Folder policy was not changed.'
+                )
+              if (this.shellProcessOwnership.hasReceipts())
+                await this.shellProcessOwnership.recover()
+              await options.afterShutdown!()
+            }
+          : undefined
+      )
       if (shell.reaped && sessions.reaped && options?.legacyShellRecoveryToken) {
         try {
           this.shellProcessOwnership.archiveLegacyLaunches(options.legacyShellRecoveryToken)

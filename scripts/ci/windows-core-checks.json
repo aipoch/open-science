@@ -15,6 +15,7 @@
   },
   "windows_runtime": {
     "tests": [
+      "scripts/windows-dev-notebook-host.integration.test.ts",
       "scripts/ci/run-windows-browser-diagnostics.test.ts",
       "scripts/windows-updater-certification.test.ts",
       "build/packaging.test.ts",
@@ -69,6 +70,7 @@
   "windows_shell": {
     "tests": [
       "src/main/notebook/windows-shell.integration.test.ts",
+      "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
       "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
       "src/main/notebook/shell-search-scope.test.ts"
     ],

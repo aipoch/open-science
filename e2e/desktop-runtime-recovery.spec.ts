@@ -961,9 +961,14 @@ for (const scenario of [
       })
       const desktopProcess = app.process()
       if (scenario === 'repeated notice quit')
-        await page.evaluate(() => {
-          void window.api.desktopRuntime!.quit()
-        })
+        await page
+          .evaluate(() => {
+            void window.api.desktopRuntime!.quit()
+          })
+          .catch((error: unknown) => {
+            // Successful quit can close the renderer before evaluate acknowledges the request.
+            if (!page.isClosed()) throw error
+          })
       else
         await app.evaluate(({ app }) => {
           app.quit()

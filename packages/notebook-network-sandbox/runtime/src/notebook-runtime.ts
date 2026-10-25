@@ -62,6 +62,7 @@ type NetworkAskCallback = (request: {
   port: number
   commandId?: string
   purpose?: 'probe' | 'block'
+  canResume?: () => boolean
 }) => Promise<boolean>
 
 type NotebookSandboxTarget =
@@ -181,7 +182,8 @@ const decide = async (
   commandId: string,
   host: string,
   port: number,
-  purpose: 'probe' | 'block' = 'block'
+  purpose: 'probe' | 'block' = 'block',
+  connectionAlive?: () => boolean
 ): Promise<GatewayDecision> => {
   const context = commandContexts.get(commandId)
   const epoch = context?.epoch
@@ -209,7 +211,14 @@ const decide = async (
   }
   let allowed = false
   try {
-    allowed = (await approval?.({ host: verdict.host, port, commandId, purpose })) === true
+    allowed =
+      (await approval?.({
+        host: verdict.host,
+        port,
+        commandId,
+        purpose,
+        canResume: () => current() && (connectionAlive?.() ?? true)
+      })) === true
   } catch {
     allowed = false
   }
@@ -230,30 +239,21 @@ const refreshWindowsProtection = async (): Promise<SandboxDependencyCheck> => {
     windowsProtectedGatewayPort = undefined
     return { warnings: [], errors: [] }
   }
+  // A rejected verification must not retain the previous successful gateway proof.
+  windowsProtectedGatewayPort = undefined
   const check = await checkWindowsAppContainer(
     config.windowsHostPath,
     config.installationId,
     config.windowsOwnershipRoot
   )
-  if (check.errors.length > 0) {
-    windowsProtectedGatewayPort = undefined
-    return check
-  }
-  try {
-    const status = await readAppContainerStatus(
-      config.windowsHostPath,
-      config.installationId,
-      config.windowsOwnershipRoot
-    )
-    windowsProtectedGatewayPort = status.gatewayPort ?? undefined
-    return check
-  } catch (error) {
-    windowsProtectedGatewayPort = undefined
-    return {
-      warnings: [],
-      errors: [error instanceof Error ? error.message : String(error)]
-    }
-  }
+  if (check.errors.length > 0) return check
+  const status = await readAppContainerStatus(
+    config.windowsHostPath,
+    config.installationId,
+    config.windowsOwnershipRoot
+  )
+  windowsProtectedGatewayPort = status.gatewayPort ?? undefined
+  return check
 }
 
 const initialize = async (config: NetworkRuntimeConfig, ask: NetworkAskCallback): Promise<void> => {
@@ -261,7 +261,9 @@ const initialize = async (config: NetworkRuntimeConfig, ask: NetworkAskCallback)
   runtimeConfig = config
   approval = ask
   destinationPolicy = buildPolicy(config)
-  await refreshWindowsProtection()
+  // Windows standard mode can initialize without verified protection. Status retains the error,
+  // and a protected launch must recheck successfully before it can use the protected gateway.
+  await refreshWindowsProtection().catch(() => undefined)
 }
 
 const wrap = async (
@@ -294,7 +296,8 @@ const wrap = async (
       throw new Error('Notebook WSL2 sandbox target requires a Windows host.')
     }
     const gateway = await CommandGateway.open({
-      decide: (host, port) => decide(request.commandId, host, port),
+      decide: (host, port, purpose, canResume) =>
+        decide(request.commandId, host, port, purpose, canResume),
       credentials,
       ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
       parentProxy: parentSettings(config)
@@ -434,7 +437,8 @@ const wrap = async (
       }
     }
     gateway = await CommandGateway.open({
-      decide: (host, port, purpose) => decide(request.commandId, host, port, purpose),
+      decide: (host, port, purpose, canResume) =>
+        decide(request.commandId, host, port, purpose, canResume),
       ...(certificateAuthority
         ? {
             inspection: {

@@ -251,7 +251,6 @@ describe('trusted additive module registrations', () => {
         'module-graph/derived-index.mjs',
         'module-graph/layers.mjs',
         'module-boundaries.json',
-        'module-derived-consumers.json',
         'module-ownership-paths.mjs',
         'module-impact-authority.mjs',
         'windows-core-plan.mjs',

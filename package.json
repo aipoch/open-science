@@ -104,7 +104,7 @@
     "build:notebook-analysis": "node scripts/build-dev-packages.mjs --packages=notebook-syntax,notebook-code-risk,notebook-analysis",
     "check:notebook-packages": "node scripts/check-notebook-packages.mjs",
     "build:packages:dev": "npm run build:packages",
-    "build:backend:dev": "npm run build:packages:dev && npm run build:backend-native && node scripts/build-backend.mjs --development",
+    "build:backend:dev": "node scripts/build-notebook-host.mjs && npm run build:packages:dev && npm run build:backend-native && node scripts/build-backend.mjs --development",
     "build:literature-packages": "node scripts/build-dev-packages.mjs --packages=literature-citations,journal-catalog,literature-discovery,literature-screening,literature-library,literature-reading",
     "check:literature-packages": "node scripts/check-package-isolation.mjs --packages=literature-citations,journal-catalog,literature-discovery,literature-screening,literature-library,literature-reading",
     "typecheck:compiled": "npm run typecheck:node:compiled && npm run typecheck:web:compiled",

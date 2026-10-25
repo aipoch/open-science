@@ -1,4 +1,8 @@
 import {
+  activeSandboxNetworkApprovals,
+  sandboxNetworkApprovalRequest
+} from '../../../../shared/sandbox-network-approval'
+import {
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
@@ -40,6 +44,10 @@ const pendingWorkspacePermissions = (
   const liveRequestIds = new Set(liveRequests.map((request) => request.requestId))
   const restoredRequests: AcpPermissionRequest[] = []
   for (const session of sessions) {
+    for (const approval of activeSandboxNetworkApprovals(session)) {
+      if (approval.state === 'pending' && !liveRequestIds.has(approval.requestId))
+        restoredRequests.push(sandboxNetworkApprovalRequest(approval, true))
+    }
     const permission = session.runtimeContext?.permission
     const request = permission?.request
     if (
@@ -167,7 +175,14 @@ const createPermissionResponseAttemptOwner = (): PermissionResponseAttemptOwner 
         const session = sessionsById.get(attempt.sessionId)
         if (session) {
           const currentRequestId = session.runtimeContext?.permission?.request.requestId
-          if (currentRequestId === requestId || !attempt.restored) continue
+          if (
+            currentRequestId === requestId ||
+            activeSandboxNetworkApprovals(session).some(
+              (item) => item.requestId === requestId && item.state === 'pending'
+            ) ||
+            !attempt.restored
+          )
+            continue
           attempt.authorityRemoved = true
           if (attempt.accepted) retire(requestId, attempt)
           continue
@@ -180,7 +195,13 @@ const createPermissionResponseAttemptOwner = (): PermissionResponseAttemptOwner 
         const session = sessionsById.get(observed.sessionId)
         if (session) {
           const currentRequestId = session.runtimeContext?.permission?.request.requestId
-          if (currentRequestId === requestId) continue
+          if (
+            currentRequestId === requestId ||
+            activeSandboxNetworkApprovals(session).some(
+              (item) => item.requestId === requestId && item.state === 'pending'
+            )
+          )
+            continue
           retire(requestId)
           continue
         }

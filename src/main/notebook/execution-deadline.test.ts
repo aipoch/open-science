@@ -1,0 +1,27 @@
+import { afterEach, expect, it, vi } from 'vitest'
+import { ExecutionDeadline } from './execution-deadline'
+afterEach(() => vi.useRealTimers())
+it('excludes human wait time without resetting the remaining execution budget', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  const expired = vi.fn()
+  const deadline = new ExecutionDeadline(1000, expired)
+  await vi.advanceTimersByTimeAsync(400)
+  deadline.setPaused(true)
+  deadline.setPaused(true)
+  await vi.advanceTimersByTimeAsync(60000)
+  expect(expired).not.toHaveBeenCalled()
+  deadline.setPaused(false)
+  await vi.advanceTimersByTimeAsync(599)
+  expect(expired).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(1)
+  expect(expired).toHaveBeenCalledOnce()
+})
+it('cannot restart a cancelled deadline when a late approval arrives', async () => {
+  vi.useFakeTimers()
+  const expired = vi.fn()
+  const deadline = new ExecutionDeadline(100, expired)
+  deadline.cancel()
+  deadline.setPaused(false)
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(expired).not.toHaveBeenCalled()
+})

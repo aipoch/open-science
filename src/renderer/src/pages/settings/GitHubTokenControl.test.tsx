@@ -154,6 +154,33 @@ describe('GitHubTokenControl', () => {
     expect(details?.textContent).toContain('GitHub rejected this token.')
   })
 
+  it('reports draft and save state and keeps a failed token draft protected', async () => {
+    let rejectSave: ((error: Error) => void) | undefined
+    const onLeaveStateChange = vi.fn()
+    settingsApi.saveGitHubToken.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectSave = reject
+        })
+    )
+    await act(async () =>
+      root.render(<GitHubTokenControl onLeaveStateChange={onLeaveStateChange} />)
+    )
+    await flush()
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+
+    enterToken('replacement-token')
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+    await click('Verify and save')
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: true })
+
+    await act(async () => rejectSave?.(new Error('Verification unavailable')))
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+    expect(document.body.querySelector<HTMLInputElement>('#github-token')?.value).toBe(
+      '•'.repeat('replacement-token'.length)
+    )
+  })
+
   it('removes a configured token and exposes the success state', async () => {
     settingsApi.getGitHubTokenStatus.mockResolvedValue({ configured: true, mask: 'old…oken' })
     settingsApi.removeGitHubToken.mockResolvedValue({ configured: false })

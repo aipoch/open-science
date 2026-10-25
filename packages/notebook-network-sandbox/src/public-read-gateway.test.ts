@@ -35,14 +35,17 @@ const listen = async (server: Server): Promise<number> => {
 }
 const setup = async (
   options: {
+    rawReply?: string
     origin?: 'wrong-host' | 'local-ca'
     upgrade?: boolean
     source?: 'unknown' | 'explicit'
     active?: boolean
+    readBody?: boolean
+    approve?: (canResume?: () => boolean) => Promise<boolean>
   } = {}
 ): Promise<{
   open: (servername?: string | false) => Promise<TLSSocket>
-  seen: Array<{ method: string; url: string; headers: unknown }>
+  seen: Array<{ method: string; url: string; headers: unknown; body?: string }>
   blocked: ReturnType<typeof vi.fn>
   gateway: CommandGateway
   authorities: string[]
@@ -56,19 +59,38 @@ const setup = async (
   const originContext = await (options.origin === 'local-ca' ? localCa : originCa).getSecureContext(
     options.origin === 'wrong-host' ? 'other.example' : 'data.example'
   )
-  const seen: Array<{ method: string; url: string; headers: unknown }> = []
+  const seen: Array<{ method: string; url: string; headers: unknown; body?: string }> = []
   const http = createHttpServer((req, res) => {
-    seen.push({ method: req.method!, url: req.url!, headers: req.headers })
+    const received: (typeof seen)[number] = {
+      method: req.method!,
+      url: req.url!,
+      headers: req.headers
+    }
+    seen.push(received)
     if (options.upgrade) {
       res.writeHead(101, { connection: 'upgrade', upgrade: 'websocket' })
       res.end()
+      return
+    }
+    if (options.readBody) {
+      received.body = ''
+      req.setEncoding('utf8')
+      req.on('data', (chunk: string) => {
+        received.body += chunk
+      })
+      req.on('end', () => res.end('fixture'))
       return
     }
     res.end('fixture')
   })
   const origin = createTlsServer(
     { SNICallback: (_host, callback) => callback(null, originContext) },
-    (socket) => http.emit('connection', socket)
+    (socket) => {
+      if (options.rawReply) {
+        const reply = options.rawReply
+        socket.once('data', () => socket.end(reply))
+      } else http.emit('connection', socket)
+    }
   )
   origin.on('tlsClientError', () => undefined)
   const originPort = await listen(origin)
@@ -90,8 +112,12 @@ const setup = async (
   const gateway = await CommandGateway.open({
     credentials: { username: 'test', password: 'secret' },
     parentProxy: { https: `http://127.0.0.1:${proxyPort}` },
-    decide: async (_host, _port, purpose) => {
-      if (purpose === 'block') blocked()
+    decide: async (_host, _port, purpose, canResume) => {
+      if (purpose === 'block') {
+        blocked()
+        if (options.approve)
+          return { allowed: await options.approve(canResume), address: '93.184.216.34' }
+      }
       return { allowed: false, source: options.source ?? 'unknown', address: '93.184.216.34' }
     },
     inspection: {
@@ -146,6 +172,127 @@ const response = (socket: Socket): Promise<string> =>
     socket.once('error', reject)
   })
 describe('inspected CONNECT over real sockets (injected public address via local parent)', () => {
+  it('reports client expiry while the command remains alive and never sends the approved stale body', async () => {
+    const approval = Promise.withResolvers<boolean>()
+    let canResume: (() => boolean) | undefined
+    const { open, seen, blocked } = await setup({
+      approve: (live) => {
+        canResume = live
+        return approval.promise
+      }
+    })
+    const socket = await open()
+    socket.write(
+      'POST /synthetic HTTP/1.1\r\nHost: data.example\r\nContent-Length: 6\r\n\r\nmarker'
+    )
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    expect(canResume?.()).toBe(true)
+    socket.destroy()
+    await vi.waitFor(() => expect(canResume?.()).toBe(false))
+    approval.resolve(true)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(seen).toEqual([])
+  })
+
+  it('holds an authenticated POST until approval and forwards it on the same connection', async () => {
+    const approval = Promise.withResolvers<boolean>()
+    const { open, seen, blocked } = await setup({ approve: () => approval.promise })
+    const socket = await open()
+    const reply = response(socket)
+    socket.write(
+      'POST /synthetic HTTP/1.1\r\nHost: data.example\r\nAuthorization: Bearer fixture-only\r\nContent-Length: 6\r\n\r\nmarker'
+    )
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    expect(seen).toEqual([])
+    approval.resolve(true)
+    expect(await reply).toContain('fixture')
+    expect(seen).toEqual([
+      expect.objectContaining({
+        method: 'POST',
+        url: '/synthetic',
+        headers: expect.objectContaining({ authorization: 'Bearer fixture-only' })
+      })
+    ])
+  })
+
+  it.each([true, false])('holds 100-continue until the user decision (allow=%s)', async (allow) => {
+    const approval = Promise.withResolvers<boolean>()
+    const { open, seen, blocked, authorities } = await setup({
+      approve: () => approval.promise,
+      readBody: true
+    })
+    const socket = await open()
+    let interim = ''
+    let sentBody = false
+    socket.on('data', (chunk: Buffer) => {
+      interim += chunk.toString()
+      if (!sentBody && interim.includes('100 Continue\r\n\r\n')) {
+        sentBody = true
+        socket.write('synthetic-upload')
+      }
+    })
+    const reply = response(socket)
+    socket.write(
+      'POST /synthetic HTTP/1.1\r\nHost: data.example\r\nExpect: 100-continue\r\nContent-Length: 16\r\n\r\n'
+    )
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    expect(interim).toBe('')
+    expect(authorities).toEqual([])
+    expect(seen).toEqual([])
+    approval.resolve(allow)
+    const result = await reply
+    if (allow) {
+      expect(result).toContain('100 Continue')
+      expect(result).toContain('fixture')
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({ method: 'POST', body: 'synthetic-upload' })
+      // The gateway acknowledged this expectation; the origin receives an ordinary upload.
+      expect(seen[0]!.headers).not.toHaveProperty('expect')
+    } else {
+      expect(result).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
+      expect(result).not.toContain('100 Continue')
+      expect(sentBody).toBe(false)
+      expect(authorities).toEqual([])
+      expect(seen).toEqual([])
+    }
+  })
+
+  it.each(['fixture-expectation', '100-continue, fixture-expectation'])(
+    'rejects unsupported Expect %s without asking or opening upstream',
+    async (expectation) => {
+      const { open, seen, blocked, authorities } = await setup({
+        approve: async () => true,
+        readBody: true
+      })
+      const socket = await open()
+      let reply = ''
+      socket.on('data', (chunk: Buffer) => {
+        reply += chunk.toString()
+      })
+      socket.write(
+        `POST /synthetic HTTP/1.1\r\nHost: data.example\r\nExpect: ${expectation}\r\nContent-Length: 16\r\n\r\n`
+      )
+      // A client waits for the expectation response before sending its body.
+      await vi.waitFor(() => expect(reply).toContain('417 Expectation Failed'))
+      expect(reply).not.toContain('100 Continue')
+      expect(blocked).not.toHaveBeenCalled()
+      expect(authorities).toEqual([])
+      expect(seen).toEqual([])
+    }
+  )
+
+  it('never forwards a pending approved request after the gateway has closed', async () => {
+    const approval = Promise.withResolvers<boolean>()
+    const { open, seen, blocked, gateway } = await setup({ approve: () => approval.promise })
+    const socket = await open()
+    socket.write('POST /synthetic HTTP/1.1\r\nHost: data.example\r\nContent-Length: 0\r\n\r\n')
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    await gateway.close()
+    approval.resolve(true)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(seen).toEqual([])
+  })
+
   it('GET then POST on the same TLS connection never sends POST upstream', async () => {
     const { open, seen, blocked, authorities } = await setup()
     const socket = await open()
@@ -342,4 +489,29 @@ describe('public read network contract and resource gates', () => {
     expect(seen).toHaveLength(size > 8192 ? 0 : 1)
     expect(blocked).not.toHaveBeenCalled()
   })
+})
+
+it.each([
+  [
+    'HTTP/1.1 099 Invalid\r\nContent-Length: 6\r\n\r\nsecret',
+    '502',
+    'OPEN_SCIENCE_NETWORK_UPSTREAM_FAILED'
+  ],
+  ['HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcdef', '200', 'abc']
+])('contains upstream response errors inside TLS: %s', async (rawReply, status, body) => {
+  const fixture = await setup({ rawReply })
+  const socket = await fixture.open()
+  const result = new Promise<string>((resolve) => {
+    let bytes = ''
+    socket.on('data', (chunk) => {
+      bytes += chunk.toString()
+    })
+    socket.once('close', () => resolve(bytes))
+  })
+  socket.write('GET /fixture HTTP/1.1\r\nHost: data.example\r\nConnection: close\r\n\r\n')
+  const received = await result
+  expect(received).toContain(`HTTP/1.1 ${status}`)
+  expect(received).toContain(body)
+  expect(received).not.toContain('secret')
+  expect(received).not.toContain('abcdef')
 })

@@ -20,6 +20,8 @@ export type NotebookTrustBundle = Readonly<{
 }>
 
 export type NotebookFilesystemPolicy = Readonly<{
+  /** Only an explicit false relaxes folder isolation; explicit deny rules remain enforced. */
+  restrictFolders?: boolean
   privateRoot?: string
   readOnlyRoots: readonly string[]
   /** Incidental Windows PATH directories; inability to grant them must not block the workload. */
@@ -64,6 +66,8 @@ export type NotebookNetworkAccessRequest = Readonly<{
   host: string
   port?: number
   purpose?: 'probe' | 'block'
+  /** Live connection/policy evidence; false means a decision can only authorize an explicit retry. */
+  canResume?: () => boolean
   signal: AbortSignal
 }>
 

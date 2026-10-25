@@ -8,6 +8,7 @@ import {
   buildNotebookNetworkPolicy,
   normalizeNotebookNetworkSettings,
   notebookNetworkSettingsAllowDomain,
+  parseCustomAllowedDomainInput,
   validateCustomAllowedDomain
 } from './notebook-network'
 
@@ -17,9 +18,8 @@ it('preserves the public domain group identity across the settings boundary', ()
   expect(OPEN_SCIENCE_DOMAIN_GROUP_IDS).toBe(settingDomainGroups)
 })
 
-vi.mock('node:dns/promises', () => ({
-  lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }])
-}))
+const lookup = vi.hoisted(() => vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]))
+vi.mock('node:dns/promises', () => ({ lookup }))
 
 describe('disabled automatic domain access', () => {
   it.each([
@@ -155,6 +155,137 @@ describe('notebook network policy', () => {
 
     expect(policy.deniedDomains).toEqual([])
     expect(policy.deniedDomainReasons).toEqual({})
+  })
+})
+
+describe('custom public domain input', () => {
+  it.each([
+    ['*.example.com', '*.example.com'],
+    ['  *.EXAMPLE.com.  ', '*.example.com'],
+    ['https://www.example.com:8443/path?q=1#part', 'www.example.com'],
+    ['http://data.example.com/path', 'data.example.com'],
+    ['data.example.com:8443/path?q=1#part', 'data.example.com'],
+    ['//data.example.com/path', 'data.example.com'],
+    ['https://*.example.com/path?q=1', '*.example.com'],
+    ['https://例子.测试/path', 'xn--fsqu00a.xn--0zwm56d'],
+    ['*.例子.测试', '*.xn--fsqu00a.xn--0zwm56d']
+  ])('extracts the domain rule from %s', (input, hostname) => {
+    expect(parseCustomAllowedDomainInput(input)).toEqual({ ok: true, hostname })
+  })
+
+  it.each([
+    '',
+    ' ',
+    '*',
+    '*.*.example.com',
+    'api.*.example.com',
+    '*example.com',
+    '*.com',
+    '*.localhost',
+    '*.127.0.0.1',
+    'https://127.1/path',
+    'https://[::1]/',
+    'ftp://example.com/path',
+    'https:///example.com',
+    'https://0x7f000001/path',
+    'https://user:password@example.com/path',
+    'https://@example.com',
+    'https://example.com:99999/path',
+    'https://example.com\\other.example',
+    'https://exa\nmple.com',
+    'https://-bad.example'
+  ])('rejects invalid or non-public-domain input %j', (input) => {
+    expect(parseCustomAllowedDomainInput(input).ok).toBe(false)
+  })
+
+  it('persists wildcard rules without reinterpreting historical URLs as grants', () => {
+    const settings = normalizeNotebookNetworkSettings({
+      allowedDomains: [
+        '*.EXAMPLE.com',
+        '*.example.com',
+        'data.example.com',
+        'https://other.example/path',
+        'api.*.example.com',
+        '*.localhost'
+      ]
+    })
+    expect(settings.allowedDomains).toEqual(['*.example.com', 'data.example.com'])
+    expect(normalizeNotebookNetworkSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings)
+  })
+
+  it('parses only exact hosts even when the browser URL parser encodes wildcard stars', () => {
+    const NativeURL = URL
+    class BrowserURL extends NativeURL {
+      get hostname(): string {
+        return super.hostname.replaceAll('*', '%2A')
+      }
+    }
+    vi.stubGlobal('URL', BrowserURL)
+    try {
+      expect(parseCustomAllowedDomainInput('https://*.example.com/path')).toEqual({
+        ok: true,
+        hostname: '*.example.com'
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('matches descendant subdomains consistently in the UI and sandbox', async () => {
+    const settings = normalizeNotebookNetworkSettings({ allowedDomains: ['*.example.com'] })
+    const policy = new DestinationPolicy(
+      createRuntimeConfig({
+        policy: buildNotebookNetworkPolicy(settings),
+        resources: { root: '/resources' }
+      })
+    )
+    for (const host of ['data.example.com', 'deep.data.example.com']) {
+      expect(notebookNetworkSettingsAllowDomain(settings, host)).toBe(true)
+      expect(await policy.inspect(host, 443)).toMatchObject({ kind: 'allow' })
+    }
+    for (const host of ['example.com', 'otherexample.com', 'example.com.other.example']) {
+      expect(notebookNetworkSettingsAllowDomain(settings, host)).toBe(false)
+      expect(await policy.inspect(host, 443)).toMatchObject({ kind: 'ask' })
+    }
+  })
+
+  it('preserves explicit ask rules under a custom wildcard', async () => {
+    const settings = normalizeNotebookNetworkSettings({
+      allowedDomains: ['*.uniprot.org'],
+      disabledOpenScienceDomains: ['rest.uniprot.org']
+    })
+    expect(notebookNetworkSettingsAllowDomain(settings, 'rest.uniprot.org')).toBe(false)
+    expect(
+      await new DestinationPolicy(buildNotebookNetworkPolicy(settings)).inspect(
+        'rest.uniprot.org',
+        443
+      )
+    ).toMatchObject({ kind: 'ask', source: 'explicit' })
+  })
+
+  it('keeps private service grants exact-only', () => {
+    expect(
+      normalizeNotebookNetworkSettings({
+        trustedPrivateDestinations: [
+          {
+            hostname: '*.example.com',
+            port: 443,
+            approvedAddresses: ['10.32.0.7']
+          }
+        ]
+      }).trustedPrivateDestinations
+    ).toEqual([])
+  })
+
+  it('never permits a private DNS destination through a custom wildcard', async () => {
+    lookup.mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }])
+    const settings = normalizeNotebookNetworkSettings({ allowedDomains: ['*.example.com'] })
+    expect(
+      await new DestinationPolicy(buildNotebookNetworkPolicy(settings)).inspect(
+        'data.example.com',
+        443
+      )
+    ).toMatchObject({ kind: 'deny', configurable: false })
   })
 })
 

@@ -1,3 +1,7 @@
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID } from '../../shared/lifecycle-events'
+import { SandboxNetworkApprovalOwner } from '../acp/sandbox-network-approval-owner'
+import { broadcastToRenderers } from '../renderer-broadcast'
 import type {
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -42,6 +46,10 @@ export function composeSessionProjection({
   permissionGrantRegistry: Awaited<ReturnType<typeof createPermissionGrantRegistry>>
   sessionPersistenceCoordinator: Pick<
     SessionPersistenceCommands,
+    | 'readSessionRuntimeContext'
+    | 'patchSessionRuntimeContext'
+    | 'loadSessionForContinuation'
+    | 'containsMessageOnActiveBranch'
     | 'deleteSession'
     | 'loadAll'
     | 'loadAllReadOnly'
@@ -60,6 +68,7 @@ export function composeSessionProjection({
   archiveCoordinator: ArchiveCoordinator
   sessionEnabledComputeHostsOwnerRef: { current?: SessionEnabledComputeHostsOwner }
 }): {
+  sandboxNetworkApprovalOwner: SandboxNetworkApprovalOwner
   pendingSpecialistBindings: PendingSessionSpecialistBindings
   loadAllSessions: () => Promise<LoadAllSessionsResult>
   startupSessionDetails: { current: LoadAllSessionsResult['sessions'] | undefined }
@@ -69,6 +78,23 @@ export function composeSessionProjection({
   }>
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
 } {
+  const log = createLogger('session-network-approval')
+  // One host owner is shared by hydration and every provider runtime. Recovery must not
+  // mistake another runtime's in-flight Settings transaction for an abandoned decision.
+  const sandboxNetworkApprovalOwner = new SandboxNetworkApprovalOwner(
+    sessionPersistenceCoordinator,
+    (session) => {
+      try {
+        broadcastToRenderers('session:updated', {
+          session,
+          originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+        })
+      } catch (error) {
+        log.warn('network approval Session publication failed', errorLogFields(error))
+      }
+    },
+    settingsService.allowNotebookNetworkDomain.bind(settingsService)
+  )
   // Stashed host.agents.switch bindings for sessions that are not yet durable (fresh unsent drafts),
   // flushed to disk on the session's first save so an approved switch survives an app restart before
   // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
@@ -98,6 +124,25 @@ export function composeSessionProjection({
   }
   const loadAllSessions = async (): Promise<LoadAllSessionsResult> => {
     const result = await sessionCatalogHydration.loadAll()
+    // Hydration has released the catalog scheduler before recovery patches individual Sessions.
+    if (canReconcileSessionAbsences(result)) {
+      for (let index = 0; index < result.sessions.length; index++) {
+        try {
+          result.sessions[index] = await sandboxNetworkApprovalOwner.recoverSession(
+            result.sessions[index]
+          )
+        } catch (error) {
+          // Keep healthy transcripts navigable and the saved decision available for a later retry.
+          log.warn('saved network approval recovery failed', errorLogFields(error))
+          result.diagnostics = {
+            ...result.diagnostics,
+            warnings: result.diagnostics?.warnings ?? [],
+            isComplete: false,
+            failure: 'startup-reconciliation-failed'
+          }
+        }
+      }
+    }
     recordSizeProblems(result.diagnostics?.warnings)
     // Startup and non-renderer readers can recover historical files before the first list call.
     // Retain their warnings in the same cache used by subsequent projection-only reads.
@@ -191,7 +236,12 @@ export function composeSessionProjection({
         session && sessionEnabledComputeHostsOwnerRef.current
           ? await sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
           : session
-      return reconciled && sessionPersistenceCoordinator.projectRuntimeSession(reconciled)
+      return (
+        reconciled &&
+        sessionPersistenceCoordinator.projectRuntimeSession(
+          await sandboxNetworkApprovalOwner.recoverSession(reconciled)
+        )
+      )
     },
     saveSession: async (session, options, authority) => {
       const created =
@@ -243,6 +293,7 @@ export function composeSessionProjection({
     projectDeletionCoordinator
   )
   return {
+    sandboxNetworkApprovalOwner,
     pendingSpecialistBindings,
     loadAllSessions,
     startupSessionDetails,

@@ -352,6 +352,8 @@ test('replaces the discussion Session without replacing the draft or changing so
         path: testInfo.outputPath(`discuss-source-${source.id}-${width}.png`)
       })
     }
+    // Leave the hit-tested remove control before restoring geometry beneath the pointer.
+    await editor.hover()
     await discussion.evaluate((node) => {
       ;(node as HTMLElement).style.width = ''
     })

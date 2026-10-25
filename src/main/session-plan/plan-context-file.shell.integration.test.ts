@@ -79,6 +79,7 @@ describe.runIf(process.platform !== 'win32')('Plan context Shell reference', () 
       const result = await runShellCommand({
         command: `sed -n '1,8p; /"title": "Read reference"/p' "$OPEN_SCIENCE_INPUT_DIR/session-plan/current.json"`,
         cwd: workspace,
+        notebookSessionRoot: workspace,
         handoffDir,
         runtimeRoot,
         inputRoot,
@@ -146,6 +147,7 @@ describe.runIf(process.platform !== 'win32')('Plan context Shell reference', () 
           'printf verified'
         ].join(' && '),
         cwd: workspace,
+        notebookSessionRoot: workspace,
         handoffDir,
         runtimeRoot,
         inputRoot,
@@ -205,6 +207,7 @@ describe.runIf(process.platform !== 'win32')('Plan context Shell reference', () 
           'printf verified'
         ].join(' && '),
         cwd: storageRoot,
+        notebookSessionRoot: storageRoot,
         handoffDir,
         runtimeRoot,
         inputRoot,

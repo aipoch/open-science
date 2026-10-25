@@ -456,11 +456,8 @@ const launchEnvironment = (
       'outside-granted-roots.txt'
     )
   }
-  if (process.platform === 'win32' && environment.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
-    // The production runner caches resolved tools under LocalAppData. Keep the controlled process
-    // fixture isolated from any micromamba selected by an ordinary Open-Science session.
-    environment.LOCALAPPDATA = join(storageRoot, 'local-app-data')
-  }
+  // CONFIG_ROOT isolates the tool cache. Preserve LOCALAPPDATA: Windows derives the native
+  // AppContainer Temp drive from it, independently of the TEMP/TMP environment variables.
   if (sessionPerformanceTrace) environment.OPEN_SCIENCE_PERF_SESSION_TRACE = '1'
   if (fakeRemoteItRoot) {
     environment.OPEN_SCIENCE_FAKE_REMOTEIT_STATE = join(
@@ -807,6 +804,20 @@ class ElectronAppHarness implements ElectronApp {
       await appendFile(
         destination,
         `\n--- Node backend: ${file} ---\n${await readFile(join(backendLogDirectory, file), 'utf8')}`
+      )
+    }
+    const sandboxRoot = join(this.roots.storageRoot, 'notebook-sandbox')
+    for (const installation of await readdir(sandboxRoot).catch(() => [])) {
+      const state = await readFile(join(sandboxRoot, installation, 'acl-state.json'), 'utf8').catch(
+        () => undefined
+      )
+      if (!state) continue
+      const { leases } = JSON.parse(state) as {
+        leases: Array<{ grants: Array<{ path: string; access: string }> }>
+      }
+      await appendFile(
+        destination,
+        `\n--- Active Notebook ACL roots ---\n${JSON.stringify(leases.map(({ grants }) => grants.map(({ path, access }) => ({ path, access }))))}\n`
       )
     }
     if (this.flushTimeline) {

@@ -17,6 +17,24 @@ const captureLifecycleEvidence = async (
 const controlledWindowsFixtureAvailable =
   process.platform === 'win32' && Boolean(process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS)
 
+// Controlled mutations still run through the production protected Windows launcher.
+test.beforeEach(async ({ app }) => {
+  if (!controlledWindowsFixtureAvailable) return
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  expect(await page.evaluate(() => window.api.settings.installNotebookNetwork())).toMatchObject({
+    kind: 'ready'
+  })
+})
+
+test.afterEach(async ({ app }) => {
+  if (!controlledWindowsFixtureAvailable) return
+  expect(await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())).toMatchObject({
+    kind: 'setupRequired'
+  })
+})
+
 const sendReviewedPrompt = async (
   page: Parameters<typeof sendPrompt>[0],
   prompt: string,
@@ -167,8 +185,7 @@ test('cancels a timed-out environment mutation before allowing a retry', async (
     !controlledWindowsFixtureAvailable,
     'Requires the controlled Windows micromamba process fixture.'
   )
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  const page = app.page
   await createProject(page, 'Notebook mutation cancellation')
   await sendPrompt(
     page,
@@ -187,8 +204,7 @@ test('keeps a healthy environment mutation alive beyond the client idle timeout'
     !controlledWindowsFixtureAvailable,
     'Requires the controlled Windows micromamba process fixture.'
   )
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  const page = app.page
   await createProject(page, 'Long Notebook mutation')
   await sendPrompt(
     page,
@@ -227,8 +243,7 @@ test('cancels a timed-out package mutation before allowing a retry', async ({ ap
     !controlledWindowsFixtureAvailable,
     'Requires the controlled Windows micromamba process fixture.'
   )
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
+  const page = app.page
   await createProject(page, 'Notebook package cancellation')
   await sendPrompt(
     page,

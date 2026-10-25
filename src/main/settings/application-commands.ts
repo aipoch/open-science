@@ -65,6 +65,7 @@ import {
   readClosePreference,
   readDefaultPermissionProfile,
   readGitHubToken,
+  readNotebookFolderRestrictionEnabled,
   readNotificationsEnabled,
   readShowNotificationContent,
   readProjectFilesFilter,
@@ -133,6 +134,7 @@ type CoreSettingsCommandStore = Pick<
   | 'removeGitHubToken'
   | 'setClosePreference'
   | 'setDefaultPermissionProfile'
+  | 'setNotebookFolderRestrictionEnabled'
   | 'setNotificationsEnabled'
   | 'setShowNotificationContent'
   | 'setPackageMirror'
@@ -442,6 +444,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetDefaultPermissionProfileRequest],
     StoreResult<'setDefaultPermissionProfile'>
   >('settings:set-default-permission-profile'),
+  setNotebookFolderRestrictionEnabled: defineApplicationCommand<
+    'settings:set-notebook-folder-restriction-enabled',
+    readonly [request: { enabled: boolean }],
+    StoreResult<'setNotebookFolderRestrictionEnabled'>
+  >('settings:set-notebook-folder-restriction-enabled'),
   setNotificationsEnabled: defineApplicationCommand<
     'settings:set-notifications-enabled',
     readonly [request: SetNotificationsEnabledRequest],
@@ -585,6 +592,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setAppIconVariant,
   settingsCoreApplicationCommands.setClosePreference,
   settingsCoreApplicationCommands.setDefaultPermissionProfile,
+  settingsCoreApplicationCommands.setNotebookFolderRestrictionEnabled,
   settingsCoreApplicationCommands.setNotificationsEnabled,
   settingsCoreApplicationCommands.setShowNotificationContent,
   settingsCoreApplicationCommands.setPackageMirror,
@@ -804,6 +812,14 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:set-default-permission-profile')
         return dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.setDefaultPermissionProfile(readDefaultPermissionProfile(args[0]))
+        )
+      },
+      'settings:set-notebook-folder-restriction-enabled': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-notebook-folder-restriction-enabled')
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setNotebookFolderRestrictionEnabled(
+            readNotebookFolderRestrictionEnabled(args[0])
+          )
         )
       },
       'settings:set-notifications-enabled': ({ args, callerContext }) => {
