@@ -7767,7 +7767,6 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
       'src/renderer/src/lib/deep-link.ts',
       'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
-      'src/renderer/src/lib/replay/timeline.ts',
       'src/renderer/src/lib/research-project-entry.ts',
       'src/renderer/src/lib/session-fork.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',

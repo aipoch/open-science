@@ -1905,6 +1905,7 @@ it.each([
           throw new Error('CodeGraph unavailable in fixture')
         },
         spawn,
+        derivedConsumers: { schemaVersion: 1, modules: {} },
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       })
     ).rejects.toThrow('Selective test plan required; refusing full execution.')
