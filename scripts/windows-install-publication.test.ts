@@ -323,6 +323,10 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           timeout: 30_000
         })
         expect(pack.status, pack.stdout + pack.stderr).toBe(0)
+        // Inject corrupt runtime data while generating selectors from the valid fixture.
+        // Normal builds use the same archive and reject damaged headers at compile time.
+        const manifestArchive = join(f.root, 'manifest.7z')
+        writeFileSync(manifestArchive, readFileSync(archive))
         if (mode === 'truncated') writeFileSync(archive, readFileSync(archive).subarray(0, 40))
         if (mode === 'corrupt') {
           const bytes = readFileSync(archive)
@@ -373,6 +377,8 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         const resources = join(f.root, 'build')
         const hostLog = join(f.root, 'publication-host.txt')
         mkdirSync(resources)
+        for (const file of ['prepare-windows-extraction.cjs', 'windows-extract-payload.ps1'])
+          writeFileSync(join(resources, file), readFileSync(resolve('build', file)))
         writeFileSync(
           join(resources, 'windows-install-publication.ps1'),
           readFileSync(script, 'utf8').replace(
@@ -390,7 +396,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               `OutFile "${exe}"`,
               '!include LogicLib.nsh',
               `!define PROJECT_DIR "${f.root}"`,
-              `!define APP_64 "${archive}"`,
+              `!define APP_64 "${manifestArchive}"`,
               ...(mode === 'universal-x64' ? [`!define APP_ARM64 "${archive}"`] : []),
               `!define BUILD_RESOURCES_DIR "${resources}"`,
               '!macro quitFailedUpdate',

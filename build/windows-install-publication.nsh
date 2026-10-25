@@ -2,6 +2,12 @@
 !define OPEN_SCIENCE_INSTALL_PUBLICATION_INCLUDED
 !include x64.nsh
 
+!ifdef APP_64
+  # APP_64 is the final archive, including files added after afterSign (elevate.exe).
+  # Generate at compile time for normal and --prepackaged builds; fail closed on errors.
+  !system '"node" "${BUILD_RESOURCES_DIR}/prepare-windows-extraction.cjs" "${APP_64}" "${PROJECT_DIR}/out/windows-installer/x64/extraction"' = 0
+!endif
+
 Var publicationDirectory
 Var publicationState
 Var publicationResult
@@ -51,6 +57,11 @@ Var publicationPowerShell
     ${OrIf} ${IsNativeARM64}
       File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\x64\7za.exe"
       File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\x64\windows-install-publication.dll"
+      File /oname=$PLUGINSDIR\windows-extract-payload.ps1 "${BUILD_RESOURCES_DIR}\windows-extract-payload.ps1"
+      File /oname=$PLUGINSDIR\all-files.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-files.txt"
+      File /oname=$PLUGINSDIR\all-directories.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-directories.txt"
+      File /oname=$PLUGINSDIR\files-2-0.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\files-2-0.txt"
+      File /oname=$PLUGINSDIR\files-2-1.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\files-2-1.txt"
     ${Else}
   !endif
   !ifdef APP_32
@@ -76,7 +87,15 @@ Var publicationPowerShell
   # cancellation errors. Only exit 0 permits publication; a warning is not success.
   # nsExec hides the console and waits for exit. Its optional timeout is output inactivity,
   # not a work budget, so do not kill a valid large extraction merely because it is quiet.
-  nsExec::ExecToStack '"$PLUGINSDIR\7za.exe" x -y -bd -bso0 -bsp0 -bse1 "-o$publicationDirectory" "${FILE}"'
+  !ifdef APP_64
+    ${If} ${IsNativeAMD64}
+      nsExec::ExecToStack '"$publicationPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-extract-payload.ps1" -Extractor "$PLUGINSDIR\7za.exe" -Archive "${FILE}" -Target "$publicationDirectory" -ListDirectory "$PLUGINSDIR"'
+    ${Else}
+  !endif
+      nsExec::ExecToStack '"$PLUGINSDIR\7za.exe" x -y -bd -bso0 -bsp0 -bse1 "-o$publicationDirectory" "${FILE}"'
+  !ifdef APP_64
+    ${EndIf}
+  !endif
   Pop $publicationResult
   Pop $publicationOutput
   StrCmp $publicationResult "0" 0 publication_failed
