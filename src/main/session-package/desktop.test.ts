@@ -10,6 +10,8 @@ import {
 } from '../artifacts/provenance-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
 import { SessionProjectionRepository } from '../session-persistence/projection'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { NotebookRunRepository } from '../notebook/repository'
 import { englishNativeTranslator, translateNativeMessage } from '../locale/main-process-messages'
 import { PackageImportRecoveryRequiredError, SessionPackageService } from './service'
 import { SessionPackageDesktop } from './desktop'
@@ -79,6 +81,120 @@ const causeMessages = (error: unknown): string[] => {
   return messages
 }
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
+
+it.each([
+  { status: 'failed', exitCode: -1 },
+  { status: 'failed', exitCode: 1 },
+  { status: 'completed', exitCode: 0 },
+  { status: 'timeout', exitCode: null }
+] as const)(
+  'exports a settled Session after a $status Shell run with exit code $exitCode',
+  async ({ status, exitCode }) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    await fixture.client.project.create({ data: { id: request.projectId, name: 'Research' } })
+    const sessions = new SessionRepository(fixture.storageRoot)
+    await sessions.saveSession({
+      id: request.sessionId,
+      projectId: request.projectId,
+      title: 'Research',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const lane = createFrameNotebookLane(
+      request.projectId,
+      request.sessionId,
+      'root-frame-session-1'
+    )
+    await fixture.notebookRepository.loadOrCreate({
+      ...request,
+      lane,
+      workspaceCwd: fixture.storageRoot
+    })
+    // The supplied diagnostic contains this terminal Shell outcome. Persist it through the
+    // normal writer; exporting must read it through a fresh Notebook repository instance.
+    await fixture.notebookRepository.appendRun({
+      ...request,
+      lane,
+      run: {
+        runId: 'run-1',
+        cellId: 'cell-1',
+        source: 'agent',
+        kernelKind: 'bash',
+        status,
+        startedAt: 1,
+        endedAt: 2,
+        exitCode,
+        script: '',
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    })
+    const filePath = join(fixture.storageRoot, 'settled.science')
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath })
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const release = vi.fn()
+    const desktop = createDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined,
+      reserveExport: async () => release,
+      onOperationChanged: (snapshot) => {
+        if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
+          queueMicrotask(() =>
+            desktop.respond({ action: 'select', operationId: snapshot.id, excludedStorageKeys: [] })
+          )
+      }
+    })
+    const notebookPath = join(
+      fixture.storageRoot,
+      'notebooks',
+      request.projectId,
+      request.sessionId,
+      'run.json'
+    )
+    const before = await readFile(notebookPath)
+    try {
+      const outcomes: unknown[] = []
+      for (let attempt = 0; attempt < 4; attempt++) {
+        outcomes.push(
+          await desktop.export(request).catch((error: unknown) => ({
+            phase: desktop.operations.snapshot?.progress.phase,
+            reasons: causeMessages(error)
+          }))
+        )
+        expect(desktop.operations.active).toBe(false)
+      }
+      expect(release).toHaveBeenCalledTimes(4)
+      expect(await readFile(notebookPath)).toEqual(before)
+      expect(outcomes).toEqual(Array.from({ length: 4 }, () => ({ saved: true, filePath })))
+      expect((await readFile(filePath)).length).toBeGreaterThan(0)
+      const imported = await service.importFrom(filePath)
+      await expect(
+        new NotebookRunRepository(fixture.storageRoot).findExisting(
+          imported.projectId,
+          imported.sessionId
+        )
+      ).resolves.toMatchObject({ runs: [expect.objectContaining({ status, exitCode })] })
+    } finally {
+      await desktop.close()
+      await service.close()
+      initDataRoot(undefined)
+    }
+  }
+)
+
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.clearAllMocks()
