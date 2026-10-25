@@ -696,9 +696,9 @@ jobs:
           name: windows-x64-single-extractor
           retention-days: 7
           path: |
-            dist-single-extractor/*-win-x64-setup.exe
-            dist-single-extractor/comparison.json
-            dist-single-extractor/inventory.json
+            dist/single-extractor/*-win-x64-setup.exe
+            dist/single-extractor/comparison.json
+            dist/single-extractor/inventory.json
           if-no-files-found: error
 
       # Keep each native feed unique even when notarization is skipped. The installed app still

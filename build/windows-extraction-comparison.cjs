@@ -12,7 +12,7 @@ async function main() {
   const local = process.argv.includes('--unsigned-local')
   const qDir = path.resolve(process.env.COMPARISON_Q_DIR || path.join(root, 'dist'))
   const pDir = path.resolve(
-    process.env.COMPARISON_P_DIR || path.join(root, 'dist-single-extractor')
+    process.env.COMPARISON_P_DIR || path.join(root, 'dist/single-extractor')
   )
   const source = path.join(pDir, 'control-source')
   const evidence = path.join(pDir, 'evidence')
