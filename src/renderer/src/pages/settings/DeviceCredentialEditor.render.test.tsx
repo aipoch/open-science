@@ -388,6 +388,57 @@ describe('DeviceCredentialEditor', () => {
     }
   )
 
+  it.each([false, true])(
+    'returns to pristine after clearing a secret (existing credential: %s)',
+    (existing) => {
+      const onLeaveStateChange = vi.fn()
+      const credential = existing
+        ? {
+            id: 'credential-secret',
+            displayName: 'Lab credential',
+            kind: 'api_key' as const,
+            status: 'connected' as const,
+            needsSecret: false,
+            resourceUri: 'https://mcp.example.test/',
+            transport: 'streamable_http' as const,
+            consumerCount: 1,
+            consumerNames: ['Research'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        : undefined
+      act(() =>
+        root.render(
+          <DeviceCredentialEditor
+            credential={credential}
+            onDone={vi.fn()}
+            onCancel={vi.fn()}
+            onLeaveStateChange={onLeaveStateChange}
+          />
+        )
+      )
+      const field = container.querySelector<HTMLInputElement>('input[type="password"]')!
+      const paste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', {
+        value: { getData: vi.fn(() => 'replacement-secret'), setData: vi.fn() }
+      })
+      act(() => field.dispatchEvent(paste))
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+
+      act(() => {
+        field.setSelectionRange(0, field.value.length)
+        field.dispatchEvent(
+          new InputEvent('beforeinput', {
+            inputType: 'deleteContentBackward',
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+    }
+  )
+
   it('reports credential edits and clears the leave state after saving', async () => {
     const onDone = vi.fn()
     const onLeaveStateChange = vi.fn()

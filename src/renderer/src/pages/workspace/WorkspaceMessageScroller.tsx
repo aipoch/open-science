@@ -688,6 +688,7 @@ const WorkspaceMessageScrollerImpl = ({
   const scrollToFirstMessageButtonRef = useRef<HTMLButtonElement | null>(null)
   const scrollToFirstMessageHoveredRef = useRef(false)
   const scrollToFirstMessageFocusedRef = useRef(false)
+  const [scrollToFirstMessageFocused, setScrollToFirstMessageFocused] = useState(false)
   const previousMessageScrollerScrollTopRef = useRef(0)
   const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
@@ -697,8 +698,9 @@ const WorkspaceMessageScrollerImpl = ({
       if (node) return
       scrollToFirstMessageHoveredRef.current = false
       scrollToFirstMessageFocusedRef.current = false
+      setScrollToFirstMessageFocused(false)
     },
-    []
+    [setScrollToFirstMessageFocused]
   )
   const handleMessageScrollerViewportRef = useCallback((node: HTMLDivElement | null): void => {
     messageScrollerViewportRef.current = node
@@ -1164,7 +1166,11 @@ const WorkspaceMessageScrollerImpl = ({
     previousMessageScrollerScrollTopRef.current = viewport.scrollTop
     const eligible = updateScrollToFirstMessageEligibility()
     transcriptWindow.expandAtScrollEdge(previousScrollTop)
-    if (viewport.scrollTop < previousScrollTop && eligible) revealScrollToFirstMessage()
+    if (
+      viewport.scrollTop < previousScrollTop &&
+      (eligible || scrollToFirstMessageFocusedRef.current)
+    )
+      revealScrollToFirstMessage()
     else if (viewport.scrollTop > previousScrollTop) hideScrollToFirstMessage()
   }
   useLayoutEffect(() => {
@@ -1192,7 +1198,8 @@ const WorkspaceMessageScrollerImpl = ({
     }
   }, [currentSessionId, updateScrollToFirstMessageEligibility])
   const showScrollToFirstMessage =
-    statusAllowsScrollToFirstMessage && scrollThresholdAllowsFirstMessage
+    statusAllowsScrollToFirstMessage &&
+    (scrollThresholdAllowsFirstMessage || scrollToFirstMessageFocused)
   const handleVisibleMessageSnapshotCommit = useCallback(
     (scopeId: string | undefined, messageIds: Set<string>): void => {
       setVisibleMessageSnapshot({ scopeId, messageIds })
@@ -2227,11 +2234,13 @@ const WorkspaceMessageScrollerImpl = ({
               }}
               onFocusCapture={() => {
                 scrollToFirstMessageFocusedRef.current = true
+                setScrollToFirstMessageFocused(true)
                 clearScrollToFirstMessageHideTimeout()
               }}
               onBlurCapture={(event) => {
                 if (event.currentTarget.contains(event.relatedTarget)) return
                 scrollToFirstMessageFocusedRef.current = false
+                setScrollToFirstMessageFocused(false)
                 scheduleScrollToFirstMessageHide()
               }}
               aria-label={t('Scroll to first message')}

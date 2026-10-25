@@ -3873,6 +3873,54 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(button.dataset.revealed).toBe('false')
   })
 
+  it('keeps the focused first-message control mounted at the top until blur', async () => {
+    vi.useFakeTimers()
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            status: 'idle',
+            messages: [
+              createMessage({ id: 'prompt-1' }),
+              createMessage({ id: 'reply-1', role: 'agent' }),
+              createMessage({ id: 'prompt-2' }),
+              createMessage({ id: 'reply-2', role: 'agent' })
+            ]
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 1200 }
+    })
+    const scrollTo = async (scrollTop: number): Promise<void> => {
+      viewport.scrollTop = scrollTop
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    }
+    await scrollTo(1199)
+    const button = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Scroll to first message"]'
+    )!
+    await act(async () => button.focus())
+    expect(document.activeElement).toBe(button)
+
+    await scrollTo(0)
+    expect(button.isConnected).toBe(true)
+    expect(document.activeElement).toBe(button)
+    expect(button.dataset.revealed).toBe('true')
+
+    await act(async () => button.blur())
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+  })
+
   it('coalesces resize-driven scroll eligibility updates into one deferred frame', async () => {
     vi.useFakeTimers()
     const resizeCallbacks: ResizeObserverCallback[] = []
