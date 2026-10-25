@@ -20,6 +20,7 @@ import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 
 import {
+  derivedConsumersPath,
   loadDerivedConsumers,
   withDerivedConsumers,
   usesReviewedBoundary
@@ -32,9 +33,19 @@ async function loadOrGenerateDerivedConsumers(
   cwd = process.cwd(),
   revision
 ) {
-  const loaded = loadDerivedConsumers()
-  if (Object.keys(loaded.modules).length > 0) return loaded
-  // Index absent: generate from the requested checkout. Failures propagate; an empty index
+  // A generated local index describes the checkout, not the requested revision; only an index
+  // committed at that revision is authoritative for it.
+  const committedAtRevision =
+    revision &&
+    execFileSync('git', ['ls-tree', '--name-only', revision, '--', derivedConsumersPath], {
+      cwd,
+      encoding: 'utf8'
+    }).trim() === derivedConsumersPath
+  if (!revision || committedAtRevision) {
+    const loaded = loadDerivedConsumers()
+    if (Object.keys(loaded.modules).length > 0) return loaded
+  }
+  // Generate from the requested revision or checkout. Failures propagate; an empty index
   // would silently narrow selection to explicit tests only.
   const { consumerDependencyGraph, generateDerivedConsumers, sourceSnapshot, workingTreeSource } =
     await import('./module-graph/index.mjs')

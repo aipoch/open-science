@@ -954,6 +954,28 @@ describe('module test impact commands', () => {
     }
   })
 
+  it('generates derived consumers from the requested head, not the dirty worktree', async () => {
+    const cwd = mkdtempSync(resolve(tmpdir(), 'module-head-snapshot-'))
+    try {
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      git('init', '-q')
+      mkdirSync(resolve(cwd, 'scripts/ci'), { recursive: true })
+      const edges = resolve(cwd, 'scripts/ci/module-runtime-consumers.json')
+      writeFileSync(edges, JSON.stringify({ 'missing.ts': ['consumer.ts'] }))
+      git('add', '.')
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'init')
+      const head = git('rev-parse', 'HEAD')
+      writeFileSync(edges, '{}')
+
+      await expect(
+        runModuleTestCli(['affected', '--base', head, '--head', head], { cwd })
+      ).rejects.toThrow('Invalid runtime consumer edge')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it.each(['same', 'different'])('keeps coverage pinned with a %s baseline', async (baseline) => {
     const base = '1'.repeat(40)
     const head = '2'.repeat(40)
