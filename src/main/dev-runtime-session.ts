@@ -129,7 +129,7 @@ export async function joinDevSession(
     const timer = setTimeout(() => {
       socket.destroy()
       reject(new Error('Development runner registration timed out.'))
-    }, 5000)
+    }, 10_000)
     let received = ''
     const failed = (): void => {
       clearTimeout(timer)

@@ -62,7 +62,7 @@ export async function createDevSession({
     sockets.add(socket)
     socket.on('error', () => {})
     socket.once('close', () => sockets.delete(socket))
-    socket.setTimeout(5000, () => socket.destroy())
+    socket.setTimeout(10_000, () => socket.destroy())
     let buffer = ''
     const receive = (chunk) => {
       buffer += chunk.toString()

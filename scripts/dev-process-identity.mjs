@@ -41,7 +41,9 @@ export async function inspectDevProcess(pid) {
           '-Command',
           `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" | Select-Object ParentProcessId,CommandLine,@{n='Birth';e={$_.CreationDate.ToUniversalTime().Ticks.ToString()}} | ConvertTo-Json -Compress`
         ],
-        { timeout: 3000, windowsHide: true }
+        // Cold Windows CIM initialization can exceed three seconds. Match the existing
+        // legacy-service process inspection budget; registration allows additional IPC time.
+        { timeout: 5000, windowsHide: true }
       )
       if (!stdout.trim()) return undefined
       const info = JSON.parse(stdout)

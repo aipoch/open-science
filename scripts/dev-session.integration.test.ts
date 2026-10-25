@@ -62,7 +62,7 @@ async function fixture(): Promise<{ root: string; buildId: string; entry: string
           console.log('READY');
           if (process.env.FIXTURE_MODE === 'self-stop') setTimeout(stop, 100);
           if (process.env.FIXTURE_MODE === 'blocked') while (true) {}
-        }).catch(() => { lease.release(); clearInterval(hold); process.exitCode = 1; });
+        }).catch(error => { console.error(error); lease.release(); clearInterval(hold); process.exitCode = 1; });
       `,
       resolveDir: process.cwd(),
       loader: 'ts'
@@ -111,7 +111,7 @@ async function desktopFixture(root: string): Promise<void> {
             clearInterval(hold); connection?.close();
           }
         }).then(value => { connection = value; console.log('READY'); })
-          .catch(() => process.exit(1));
+          .catch(error => { console.error(error); process.exit(1); });
       `,
       resolveDir: process.cwd(),
       loader: 'ts'
