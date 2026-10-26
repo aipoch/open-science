@@ -228,12 +228,6 @@ export async function publishPackages(
   // Finish the complete batch preflight before starting any immutable registry write.
   const plan = await publishPlan(packages, lookup)
   const entry = plan.at(-1)
-  // Between preflight and publish, a concurrent rerun can land the same immutable
-  // version; that E403 race is success when the visible bytes match, not a failure.
-  const confirmConcurrentPublish = async (pkg) => {
-    const existing = await lookup(pkg.manifest.name).catch(() => null)
-    return existing?.versions?.[pkg.manifest.version]?.dist?.integrity === pkg.integrity
-  }
   const publishMissing = async (pkg) => {
     if (pkg.published) {
       console.log(`Already published with matching integrity: ${pkg.manifest.name}`)
@@ -242,11 +236,15 @@ export async function publishPackages(
     try {
       await publish(pkg)
     } catch (error) {
-      if (await confirmConcurrentPublish(pkg)) {
-        console.log(`Concurrent publication verified: ${pkg.manifest.name}@${pkg.manifest.version}`)
-        return
+      // Between preflight and publish, a concurrent rerun can land the same immutable
+      // version; npm then rejects with E403 while the registry still lags. Poll the
+      // same bounded visibility window before treating the race as fatal.
+      try {
+        await waitForPublished(pkg, lookup, delay)
+      } catch {
+        throw error
       }
-      throw error
+      console.log(`Concurrent publication verified: ${pkg.manifest.name}@${pkg.manifest.version}`)
     }
   }
   const results = await Promise.allSettled(

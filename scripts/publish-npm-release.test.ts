@@ -267,7 +267,12 @@ describe('parallel platform publication', () => {
       registry.set(pkg.manifest.name, published(pkg))
     })
     let settled = false
-    const result = publishPackages(packages, async (name: string) => registry.get(name), uploads)
+    const result = publishPackages(
+      packages,
+      async (name: string) => registry.get(name),
+      uploads,
+      async () => {}
+    )
       .catch((error: AggregateError) => error)
       .finally(() => {
         settled = true
@@ -368,6 +373,26 @@ describe('parallel platform publication', () => {
     const lookup = async (name: string): Promise<ReturnType<typeof published> | undefined> =>
       registry.get(name)
     await publishPackages(packages, lookup, uploads, async () => {})
+    expect(uploads).toHaveBeenCalledTimes(packages.length)
+  })
+
+  it('keeps polling when the concurrent publication is not visible yet', async () => {
+    const registry = new Map()
+    const uploads = vi.fn(async (pkg: (typeof packages)[number]) => {
+      if (pkg.manifest.name !== packages.at(-1)?.manifest.name)
+        throw new Error('npm publish failed (exit 1, signal null): E403')
+      registry.set(pkg.manifest.name, published(pkg))
+    })
+    // The concurrent bytes surface only after the E403, mid-verification window.
+    let probes = 0
+    const lookup = async (name: string): Promise<ReturnType<typeof published> | undefined> => {
+      if (name !== packages.at(-1)?.manifest.name && probes++ < 3) return undefined
+      return registry.get(name)
+    }
+    const delay = vi.fn(async () => {
+      for (const pkg of packages.slice(0, -1)) registry.set(pkg.manifest.name, published(pkg))
+    })
+    await publishPackages(packages, lookup, uploads, delay)
     expect(uploads).toHaveBeenCalledTimes(packages.length)
   })
 
