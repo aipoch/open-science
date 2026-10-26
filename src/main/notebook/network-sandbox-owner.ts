@@ -483,9 +483,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
-    const restrictFolders =
-      (this.platform === 'win32' && invocation.target?.kind !== 'wsl2') ||
-      (await this.options.getFolderRestrictionEnabled?.()) !== false
+    const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
+    // Pin the selected mode through launch. Explicit runtime admissions must not be
+    // replaced by a later mode read; unconfigured Windows retains standard execution.
+    const windowsProtectionRequired = nativeWindows
+      ? (invocation.windowsProtectionRequired ?? (await this.windowsProtectionConfigured()))
+      : undefined
+    const restrictFolders = nativeWindows
+      ? windowsProtectionRequired
+      : (await this.options.getFolderRestrictionEnabled?.()) !== false
     if (
       invocation.windowsProtectionRequired === true &&
       this.platform === 'win32' &&
@@ -550,7 +556,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { executable: invocation.executable, args: invocation.args }
           : {}),
         ...(invocation.electronAsNode ? { electronAsNode: true } : {}),
-        windowsProtectionRequired: invocation.windowsProtectionRequired,
+        windowsProtectionRequired,
         windowsRuntimeAccessRequired: invocation.windowsRuntimeAccessRequired,
         cwd: invocation.cwd,
         env,
@@ -903,7 +909,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ? { requestProcessTreeTermination: wrapped.requestProcessTreeTermination }
         : {}),
       ...(wrapped.confirmProcessState ? { confirmProcessState: wrapped.confirmProcessState } : {}),
-      ...(this.platform === 'win32' && invocation.windowsProtectionRequired !== undefined
+      ...(windowsProtectionRequired !== undefined
         ? {
             beginSpawn: () => {
               if (

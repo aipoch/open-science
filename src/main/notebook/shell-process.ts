@@ -403,7 +403,7 @@ const prepareShellLaunchOptions = async (
             ? { windowsShellControlPipe: options.windowsShellControlPipe }
             : {}),
           ...(platform === 'win32' && runtimeBinding.kind === 'powershell'
-            ? { superviseProcessTree: true, windowsProtectionRequired: true }
+            ? { superviseProcessTree: true }
             : {}),
           filesystem: {
             readOnlyRoots: [

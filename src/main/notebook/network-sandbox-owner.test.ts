@@ -319,7 +319,67 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   )
 
-  it('refuses native Windows execution without protection even when folder relaxation was saved', async () => {
+  it.each(
+    [false, true].flatMap((configured) =>
+      [false, true].flatMap((restrictFolders) =>
+        (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({
+          configured,
+          restrictFolders,
+          runtime
+        }))
+      )
+    )
+  )(
+    'pins $runtime launch mode (protected: $configured, folder preference: $restrictFolders)',
+    async ({ configured, restrictFolders, runtime }) => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
+      const root = await mkdtemp(join(tmpdir(), 'os-windows-mode-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => restrictFolders,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        const wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query public database',
+          sessionId: 's',
+          projectId: 'p',
+          runtime,
+          superviseProcessTree: true,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [root],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            windowsProtectionRequired: configured,
+            superviseProcessTree: true,
+            filesystem: expect.objectContaining({ restrictFolders: configured })
+          })
+        )
+        expect(wrapped.env.HTTPS_PROXY).toBe('http://127.0.0.1:4567')
+        expect(wrapped.beginSpawn).toBeTypeOf('function')
+        expect(backend.installWindows).not.toHaveBeenCalled()
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('refuses explicit protected admission when protection is no longer configured', async () => {
     backend.isWindowsProtectionConfigured.mockResolvedValue(false)
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/unused',
@@ -377,18 +437,14 @@ describe('NotebookNetworkSandboxOwner', () => {
           platform: 'win32'
         })
         await expect(spawn(process.execPath, ['-m', 'pip', '--version'], {})).rejects.toThrow(
-          configured ? 'installer reached backend' : 'require Windows protected mode'
+          'installer reached backend'
         )
-        if (configured) {
-          expect(backend.wrap).toHaveBeenCalledWith(
-            expect.objectContaining({
-              superviseProcessTree: true,
-              windowsProtectionRequired: true
-            })
-          )
-        } else {
-          expect(backend.wrap).not.toHaveBeenCalled()
-        }
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            superviseProcessTree: true,
+            windowsProtectionRequired: configured
+          })
+        )
       } finally {
         await owner.dispose()
       }
@@ -2402,7 +2458,7 @@ it('does not automatically grant durable permissions to an agent-created R envir
 })
 
 it.each(['managed', 'external'] as const)(
-  'blocks %s R in unconfigured Windows standard mode before process creation',
+  'runs %s R in unconfigured Windows standard mode without protection setup',
   async (selection) => {
     const root = await mkdtemp(join(tmpdir(), 'os-r-standard-'))
     fixtureDirectories.push(root)
@@ -2456,12 +2512,17 @@ it.each(['managed', 'external'] as const)(
         projectId: 'project',
         timeoutMs: 5000
       })
-      expect(result.status).toBe('failed')
-      expect(result.stderr).toContain('require Windows protected mode')
-      expect(beginSpawn).not.toHaveBeenCalled()
-      expect(started).not.toHaveBeenCalled()
+      expect(result.status, result.stderr).toBe('completed')
+      expect(result.stdout).toBe('15')
+      expect(beginSpawn).toHaveBeenCalledOnce()
+      expect(started).toHaveBeenCalledOnce()
       expect(notStarted).not.toHaveBeenCalled()
-      expect(backend.wrap).not.toHaveBeenCalled()
+      expect(backend.wrap).toHaveBeenCalledWith(
+        expect.objectContaining({
+          windowsProtectionRequired: false,
+          superviseProcessTree: true
+        })
+      )
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await executor.shutdown()
