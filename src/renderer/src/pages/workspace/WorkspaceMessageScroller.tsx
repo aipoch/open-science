@@ -1841,7 +1841,7 @@ const WorkspaceMessageScrollerImpl = ({
                 onCommit={handleVisibleMessageSnapshotCommit}
               />
               {/* Messages and tool activities share one sorted transcript timeline. */}
-              {transcriptEntries.map(({ item, itemIndex, processHeader }) => {
+              {transcriptEntries.map(({ item, itemIndex, processHeader }, entryIndex) => {
                 const process = turnProcesses.get(item.id)
                 const expanded = process ? isTurnExpanded(process.promptMessageId) : false
                 const disclosure =
@@ -1851,7 +1851,7 @@ const WorkspaceMessageScrollerImpl = ({
                       messageId={expanded ? `process-${process.promptMessageId}` : item.id}
                       className="min-w-0"
                     >
-                      <div className="mx-4 mb-3 border-b border-border-200 py-2 md:mx-6">
+                      <div className="mx-4 border-b border-border-200 py-2 md:mx-6">
                         <button
                           type="button"
                           aria-expanded={expanded}
@@ -1927,6 +1927,9 @@ const WorkspaceMessageScrollerImpl = ({
                   }
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
+                    contentPaddingClassName: transcriptEntries[entryIndex - 1]?.processHeader
+                      ? 'pt-2'
+                      : undefined,
                     projectId: currentProjectId,
                     isPackageSession: Boolean(activeSession?.packageOrigin),
                     onPreviewArtifact,
