@@ -45,6 +45,7 @@ import { extractProviderToolName } from './runtime-events'
 type PendingPermission = {
   request: AcpPermissionRequest
   appOwned?: true
+  beforeRespond?: (optionId: string | undefined) => Promise<void>
   decisionAuthority?: PermissionDiagnostic['authority']
   automaticRequest?: RequestPermissionRequest
   policyContext?: PermissionPolicyContext
@@ -65,6 +66,19 @@ type PendingPermission = {
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
 type AppPermissionRequest = Readonly<{
+  requestId?: string
+  durable?: true
+  networkApproval?: Readonly<{
+    projectId: string
+    executionId: string
+    commandFingerprint: string
+    hostname: string
+    port: number
+    runtime: 'bash'
+  }>
+  onAdmitted?: () => void
+  canResume?: () => boolean
+  beforeRespond?: (optionId: string | undefined) => Promise<void>
   sessionId: string
   title: string
   rawInput: unknown
@@ -1074,8 +1088,9 @@ class AcpPermissionBroker {
   // the broker's renderer projection, response validation, and Session cancellation lifecycle.
   requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
     if (input.signal?.aborted) return Promise.resolve(undefined)
-    const requestId = randomUUID()
+    const requestId = input.requestId ?? randomUUID()
     const request: AcpPermissionRequest = {
+      ...(input.durable ? { durable: true } : {}),
       requestId,
       sessionId: input.sessionId,
       toolCallId: `app-approval:${requestId}`,
@@ -1086,14 +1101,19 @@ class AcpPermissionBroker {
       options: input.options.map((option) => ({ ...option }))
     }
 
-    const response = this.enqueuePermissionRequest({
-      requestId,
-      request,
-      appOwned: true,
-      ...(input.permissionPrompts
-        ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
-        : {})
-    }).then((result) =>
+    const response = this.enqueuePermissionRequest(
+      {
+        requestId,
+        request,
+        appOwned: true,
+        durablePersisted: input.durable === true,
+        beforeRespond: input.beforeRespond,
+        ...(input.permissionPrompts
+          ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
+          : {})
+      },
+      input.onAdmitted
+    ).then((result) =>
       result.outcome.outcome === 'selected' ? result.outcome.optionId : undefined
     )
     const abort = (): void => {
@@ -1456,7 +1476,8 @@ class AcpPermissionBroker {
   }
 
   private enqueuePermissionRequest(
-    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string }
+    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string },
+    onAdmitted?: () => void
   ): Promise<RequestPermissionResponse> {
     if (pending.policyContext?.permissionPrompts === 'none') {
       this.trace(pending, {
@@ -1533,7 +1554,13 @@ class AcpPermissionBroker {
     if (stored.capability) void this.releaseGrantedRequests()
 
     if (!stored.durableCandidate || !this.permissionWaitHooks) {
-      this.emitPermissionRequest(entry.request)
+      try {
+        this.emitPermissionRequest(entry.request)
+        onAdmitted?.()
+      } catch (error) {
+        this.pendingRequests.delete(requestId)
+        this.rejectPending(stored, error, 'cancelled')
+      }
       return response
     }
 
@@ -1644,6 +1671,15 @@ class AcpPermissionBroker {
     // Keep the claimed request cancellable until its provider decision is released.
     this.respondingRequests.set(response.requestId, pending)
     try {
+      if (pending.beforeRespond) {
+        const optionId =
+          !response.cancelled &&
+          pending.request.options.some((option) => option.optionId === response.optionId)
+            ? response.optionId
+            : undefined
+        await pending.beforeRespond(optionId)
+        if (pending.settled) return true
+      }
       if (response.cancelled || !response.optionId) {
         const persistence = this.persistLiveSettlement(pending)
         if (persistence) await persistence
@@ -1759,6 +1795,12 @@ class AcpPermissionBroker {
 
       return true
     } catch (error) {
+      // A durable app decision that failed to commit still owns its live wait. Keep it actionable
+      // and do not release privileged work as if the human had denied the request.
+      if (pending.beforeRespond && !pending.settled) {
+        this.pendingRequests.set(response.requestId, pending)
+        throw error
+      }
       this.trace(pending, {
         stage: 'decision',
         authority: pending.decisionAuthority,

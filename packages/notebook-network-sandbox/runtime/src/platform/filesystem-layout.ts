@@ -1,7 +1,8 @@
-import { existsSync, realpathSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, resolve, sep } from 'node:path'
+import { lstatSync, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 
 type FilesystemLayoutInput = Readonly<{
+  restrictFolders?: boolean
   privateRoot?: string
   readOnlyRoots: readonly string[]
   optionalReadOnlyRoots?: readonly string[]
@@ -11,6 +12,7 @@ type FilesystemLayoutInput = Readonly<{
 }>
 
 type FilesystemLayout = Readonly<{
+  restrictFolders?: boolean
   privateRoot?: string
   readOnlyRoots: readonly string[]
   optionalReadOnlyRoots?: readonly string[]
@@ -21,16 +23,32 @@ type FilesystemLayout = Readonly<{
 
 const absolutePhysicalPath = (value: string): string => {
   if (!isAbsolute(value)) throw new Error(`Sandbox filesystem path must be absolute: ${value}`)
-  const absolute = resolve(value)
-  if (existsSync(absolute)) return realpathSync.native(absolute)
-  let ancestor = dirname(absolute)
-  while (ancestor !== dirname(ancestor) && !existsSync(ancestor)) ancestor = dirname(ancestor)
-  if (!existsSync(ancestor)) return absolute
-  const physicalAncestor = realpathSync.native(ancestor)
-  return resolve(
-    physicalAncestor,
-    absolute.slice(ancestor.length + (ancestor.endsWith(sep) ? 0 : 1))
-  )
+  try {
+    // Resolve links before folding .., which otherwise changes the policy's target.
+    return realpathSync.native(value)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    try {
+      lstatSync(value)
+      // A dangling link is not a missing leaf whose destination we can safely infer.
+      throw error
+    } catch (entryError) {
+      if (entryError === error || (entryError as NodeJS.ErrnoException).code !== 'ENOENT')
+        throw entryError
+    }
+    const parent = dirname(value)
+    const name = basename(value)
+    if (parent === value || name === '..') throw error
+    const physicalParent = absolutePhysicalPath(parent)
+    if (name === '.') return physicalParent
+    try {
+      if (!statSync(physicalParent).isDirectory())
+        throw new Error('Sandbox path ancestor is not a directory')
+    } catch (parentError) {
+      if ((parentError as NodeJS.ErrnoException).code !== 'ENOENT') throw parentError
+    }
+    return join(physicalParent, name)
+  }
 }
 
 const contains = (parent: string, child: string): boolean =>
@@ -51,6 +69,7 @@ const normalizeFilesystemLayout = (input: FilesystemLayoutInput): FilesystemLayo
   const deniedReadRoots = shallowRoots(input.deniedReadRoots)
   const deniedWriteRoots = shallowRoots(input.deniedWriteRoots)
   return {
+    ...(input.restrictFolders === false ? { restrictFolders: false } : {}),
     ...(input.privateRoot ? { privateRoot: absolutePhysicalPath(input.privateRoot) } : {}),
     readOnlyRoots,
     ...(input.optionalReadOnlyRoots
@@ -75,9 +94,20 @@ const pathIsDirectory = (path: string): boolean => {
 
 const hiddenByFilesystemLayout = (layout: FilesystemLayout, value: string): boolean => {
   if (!isAbsolute(value)) return false
-  const candidate = absolutePhysicalPath(value)
+  let candidate: string
+  try {
+    candidate = absolutePhysicalPath(value)
+  } catch {
+    // Diagnostics can contain invalid paths; resolution failure does not prove sandbox denial.
+    return false
+  }
   if (layout.deniedReadRoots.some((root) => contains(root, candidate))) return true
-  if (!layout.privateRoot || !contains(layout.privateRoot, candidate)) return false
+  if (
+    layout.restrictFolders === false ||
+    !layout.privateRoot ||
+    !contains(layout.privateRoot, candidate)
+  )
+    return false
   return [...layout.readOnlyRoots, ...layout.readWriteRoots].every(
     (root) => !contains(root, candidate)
   )

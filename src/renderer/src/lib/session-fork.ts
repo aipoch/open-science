@@ -2,6 +2,7 @@ import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspac
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useSessionStore } from '@/stores/session-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { i18next as i18n } from '@/i18n'
 
@@ -29,9 +30,20 @@ export const forkSession = async (session: { id: string; projectId: string }): P
       projectId: session.projectId,
       sessionId: session.id
     })
+    // The RPC response can arrive before the Session-created event reaches this renderer.
+    // Navigation only accepts known Sessions, so publish the durable child locally first.
+    if (
+      result &&
+      !useSessionStore.getState().sessions.some((item) => item.id === result.sessionId)
+    ) {
+      const child = await window.api.sessions.loadOne(result)
+      if (child) useSessionStore.getState().upsertPersistedSession(child)
+    }
     if (result && useNavigationStore.getState().explicitNavigationRevision === navigationRevision) {
-      useNavigationStore.getState().openSession(result.projectId, result.sessionId, 'user')
-      if (!usePackageOperationStore.getState().operation?.cleanupPending)
+      const opened = useNavigationStore
+        .getState()
+        .openSession(result.projectId, result.sessionId, 'user')
+      if (opened && !usePackageOperationStore.getState().operation?.cleanupPending)
         usePackageOperationStore.getState().setOpen(false)
     }
   } catch (caught) {

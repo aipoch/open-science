@@ -35,6 +35,9 @@ type NotificationOpenIntent = {
 
 const PENDING_NOTIFICATION_HANDLER_RETRY_MS = 100
 
+const isNotificationRuntimeClosing = (error: unknown): boolean =>
+  error instanceof Error && error.message.endsWith('Desktop runtime is shutting down.')
+
 const isPendingNotificationCommandUnavailable = (error: unknown): boolean =>
   error instanceof Error &&
   (/(?:No handler registered for|Unknown application command:|Unknown Web RPC channel:).*notifications:(?:peek|take)-pending-open-session/i.test(
@@ -390,6 +393,7 @@ const useApplicationEventBindings = ({
           clearTimeout(pendingNotificationRetryTimer.current)
           pendingNotificationRetryTimer.current = undefined
         }
+        if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') return
         try {
           const pending = await window.api.notifications.peekPendingOpenSession()
           if (pendingNotificationRetryEpoch.current !== retryEpoch) return
@@ -430,10 +434,12 @@ const useApplicationEventBindings = ({
           setUnavailableNotificationToken(undefined)
           useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
         } catch (error) {
+          if (isNotificationRuntimeClosing(error)) return
           // Startup/recovery can reject commands before submission. Retry the same intent;
           // generation, navigation revision and cleanup still govern whether it can open.
           if (!isPendingNotificationCommandUnavailable(error)) throw error
           if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+          if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') return
           pendingNotificationRetryTimer.current = setTimeout(() => {
             pendingNotificationRetryTimer.current = undefined
             if (pendingNotificationRetryEpoch.current !== retryEpoch) return
@@ -461,7 +467,11 @@ const useApplicationEventBindings = ({
         if (!deferred) return
         deferredNotification.current = undefined
         void window.api.notifications.takePendingOpenSession(deferred.token).catch((error) => {
-          if (!isPendingNotificationCommandUnavailable(error)) throw error
+          if (
+            !isNotificationRuntimeClosing(error) &&
+            !isPendingNotificationCommandUnavailable(error)
+          )
+            throw error
         })
       }),
     []
@@ -492,7 +502,7 @@ const useApplicationEventBindings = ({
   useEffect(() => {
     openPendingNotificationSessionRef.current = openPendingNotificationSession
     void openPendingNotificationSession()
-  }, [openPendingNotificationSession])
+  }, [openPendingNotificationSession, desktopRecoveryPhase])
 
   useEffect(() => {
     const removeRequest = window.api.compute.onApprovalRequest(enqueueComputeApproval)

@@ -54,6 +54,7 @@ for (const dark of [false, true]) {
   }, testInfo) => {
     await page.goto(`/message-clipboard.html?keyboard${dark ? '&dark' : ''}`)
     const editor = page.getByRole('textbox', { name: 'Ask anything' })
+    const inputHelp = page.getByRole('button', { name: 'Input help', exact: true })
     const after = page.getByRole('button', { name: 'After composer', exact: true })
     const reference = page.getByRole('link', { name: 'Reference link' })
     const file = page.getByRole('button', { name: 'Preview volcano-plot.csv', exact: true })
@@ -67,6 +68,8 @@ for (const dark of [false, true]) {
     expect((await focusAppearance(editor)).style).toBe('none')
     await after.click()
     await page.mouse.move(0, 0)
+    await page.keyboard.press('Shift+Tab')
+    await expect(inputHelp).toBeFocused()
     await page.keyboard.press('Shift+Tab')
     await expect(editor).toBeFocused()
     expect((await focusAppearance(editor)).style).toBe('none')
@@ -86,16 +89,17 @@ for (const dark of [false, true]) {
     await page.keyboard.press('Escape')
     await expect(page.getByRole('tooltip')).toHaveCount(0)
     await expect(copy).toBeFocused()
-    for (const target of [file, secondFile, sent, editor, after, reference]) {
+    for (const target of [file, secondFile, sent, editor, inputHelp, after, reference]) {
       await page.keyboard.press('Tab')
       expect((await focusAppearance(target)).focused).toBe(true)
     }
     expect((await focusAppearance(reference)).contrast).toBeGreaterThanOrEqual(3)
     await expect(editor).toHaveText('')
     await expect(page.getByTestId('preview')).toHaveCount(0)
-    await page.keyboard.press('Shift+Tab')
-    await page.keyboard.press('Shift+Tab')
-    await expect(editor).toBeFocused()
+    for (const target of [after, inputHelp, editor]) {
+      await page.keyboard.press('Shift+Tab')
+      await expect(target).toBeFocused()
+    }
     expect((await focusAppearance(editor)).style).toBe('none')
     await page.screenshot({ path: testInfo.outputPath('composer-focus.png') })
   })

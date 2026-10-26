@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../../../shared/sandbox-network-approval'
 import type { ChatSession } from './session-store-contract'
 import type { SessionInteractionState } from './session-interaction-contract'
 import {
@@ -70,7 +71,8 @@ export const projectLiveSessionInteractionState = (
       ? {
           permission:
             liveInteractionState.permission ||
-            session.runtimeContext?.permission?.state === 'pending'
+            session.runtimeContext?.permission?.state === 'pending' ||
+            hasPendingSandboxNetworkApproval(session)
         }
       : {}),
     ...(patch.elicitation !== undefined

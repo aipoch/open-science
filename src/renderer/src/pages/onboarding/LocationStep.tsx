@@ -126,7 +126,7 @@ const LocationStep = ({
 
     if (chosenDataRoot) {
       setConfirmRestart(true)
-    } else {
+    } else if (dataRootInfo) {
       onRelaunchErrorChange(undefined)
       onContinue()
     }
@@ -137,7 +137,7 @@ const LocationStep = ({
     onLocationDraftChange({ chosenDataRoot: '', chosenKind: null })
     onRelaunchErrorChange(undefined)
     setLocationError(undefined)
-    onContinue()
+    if (dataRootInfo) onContinue()
   }
 
   const handleRestart = async (): Promise<void> => {
@@ -280,7 +280,9 @@ const LocationStep = ({
         <Button
           type="button"
           onClick={handleContinueLocation}
-          disabled={requestInFlight || isLoadingDefaultLocation}
+          disabled={
+            requestInFlight || isLoadingDefaultLocation || (!dataRootInfo && !chosenDataRoot)
+          }
           className="px-4"
         >
           {t('Continue')}

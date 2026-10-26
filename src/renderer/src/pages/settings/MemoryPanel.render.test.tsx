@@ -937,4 +937,37 @@ describe('MemoryPanel', () => {
       content: 'Manually recorded project fact'
     })
   })
+
+  it('reports category draft and save state through the shared leave guard', async () => {
+    const pending = deferredCategorySave()
+    const createCategory = vi.fn(() => pending.promise)
+    const onNavigate = vi.fn()
+    const onLeaveStateChange = vi.fn()
+    useMemoryStore.setState({ createCategory })
+    await act(async () =>
+      root.render(
+        <MemoryPanel
+          view={{ kind: 'create' }}
+          onNavigate={onNavigate}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    )
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+
+    fireEvent.change(container.querySelector('input[name="memory-category-name"]')!, {
+      target: { value: 'Draft category' }
+    })
+    fireEvent.change(container.querySelector('textarea[name="memory-category-guidance"]')!, {
+      target: { value: 'Draft guidance' }
+    })
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+
+    fireEvent.submit(container.querySelector('form')!)
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: true })
+    await act(async () => pending.resolve('category-a'))
+
+    expect(onLeaveStateChange).toHaveBeenCalledWith(null)
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
+  })
 })

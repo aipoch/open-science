@@ -1,9 +1,19 @@
 import { expect, it } from 'vitest'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 
+const { tableTextToken } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+)
+const { collectTableRules } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+)
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
+)
+const { nativePageTextPacketInventory } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
 )
 const { resolveTableCellMerges } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-merges.mjs')).href
@@ -1421,3 +1431,1151 @@ it.each([false, true])(
     }
   }
 )
+
+// Complete anonymous native glyph packets, three independent header postfixes
+// and three scalar body rows; the shifted model cut crosses the first marker.
+function postfixNativeExample(): ReturnType<typeof JSON.parse> {
+  const width = 280,
+    height = 120,
+    entries: [string, number, number][] = []
+  for (let c = 0; c < 3; c++) {
+    const center = 50 + c * 75
+    entries.push(
+      ['Metric ' + String.fromCharCode(65 + c), center - 23.75, 15],
+      ['↓', center + 18.75, 15]
+    )
+  }
+  for (let row = 0; row < 3; row++)
+    for (let c = 0; c < 3; c++)
+      entries.push([`${row + 1}.${c + 1}${c + 1}`, 40 + c * 75, 35 + row * 20])
+  const items = entries.map(([str, x, y], index) => ({
+      str,
+      width: str.length * 5,
+      height: 10,
+      dir: 'ltr',
+      fontName: 'F',
+      transform: [10, 0, 0, 10, x, height - y],
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    content = { items, styles: { F: { ascent: 0, descent: 0, vertical: false } } },
+    viewport = {
+      width,
+      height,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, height],
+      convertToViewportPoint: (x: number, y: number) => [x, height - y]
+    },
+    workViewport = {
+      width: width * 1.5,
+      height: height * 1.5,
+      scale: 1.5,
+      rotation: 0,
+      transform: [1.5, 0, 0, -1.5, 0, height * 1.5],
+      convertToViewportPoint: (x: number, y: number) => [x * 1.5, (height - y) * 1.5]
+    },
+    operators = { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] }
+  for (const item of items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      null,
+      ['F', 10],
+      [new Float32Array([1, 0, 0, 1, item.transform[4], item.transform[5]])],
+      [Array.from(item.str, (c) => ({ unicode: c, fontChar: c, width: 500, isInFont: true }))],
+      null
+    )
+  }
+  operators.fnArray.push(OPS.setLineWidth, OPS.setLineCap)
+  operators.argsArray.push([0.4], [0])
+  const rules = [
+      [0, 2, 250, 2],
+      [0, 22, 250, 22],
+      [0, 90, 250, 90]
+    ],
+    graphicsBounds = rules.map((r) => {
+      const operationIndex = operators.fnArray.length
+      operators.fnArray.push(OPS.constructPath)
+      operators.argsArray.push([
+        OPS.stroke,
+        [new Float32Array([0, r[0], height - r[1], 1, r[2], height - r[3]])],
+        new Float32Array([r[0], height - r[3], r[2], height - r[1]])
+      ])
+      return {
+        kind: 'path',
+        operationIndex,
+        normalizedRect: r.map((n, i) => n / (i % 2 ? height : width))
+      }
+    }),
+    nativeGlyphContext = {
+      content,
+      viewport,
+      operators,
+      graphicsBounds,
+      pageNumber: 1,
+      sourceSha256: '0'.repeat(64),
+      glyphBounds: [
+        {
+          fontName: 'F',
+          glyphs: [...new Set(items.flatMap((i) => Array.from(i.str)))].map((c) => ({
+            fontChar: c,
+            bounds: c === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+          }))
+        }
+      ]
+    },
+    sourcePage = {
+      pageNumber: 1,
+      width,
+      height,
+      renderRotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds
+    },
+    tokens = items.map((i) => tableTextToken(i, workViewport, 0)),
+    context = {
+      sourcePage,
+      nativeGlyphContext,
+      viewport: workViewport,
+      operators,
+      sourceContent: content,
+      content,
+      rulePaintBounds: new Map()
+    },
+    table = {
+      id: 'anonymous-postfix-header',
+      cropRect: [0, 0, 375, 150],
+      structure: {
+        objects: [
+          ...[0, 71, 162.5].map((left, c) => ({
+            label: 'table column',
+            rect: [left * 1.5, 25 * 1.5, [71, 162.5, 250][c] * 1.5, 90 * 1.5]
+          })),
+          ...[25, 45, 65].map((top) => ({
+            label: 'table row',
+            rect: [0, top * 1.5, 375, (top + 20) * 1.5]
+          })),
+          { label: 'table column header', rect: [0, 37.5, 375, 67.5] }
+        ]
+      }
+    }
+  return { table, tokens, context, rules: collectTableRules(operators, workViewport) }
+}
+
+const refinePostfixExample = (
+  f: ReturnType<typeof postfixNativeExample>,
+  context = f.context
+): ReturnType<typeof JSON.parse> =>
+  refineTable(f.table, f.tokens, [], [], f.rules, [], undefined, context.rulePaintBounds, context)
+
+it('reassigns a whole postfix source only when repeated native header and body centers close uniquely', () => {
+  const f = postfixNativeExample(),
+    before = refinePostfixExample(f, { ...f.context, sourcePage: undefined }),
+    snapshot = { table: structuredClone(f.table), tokens: structuredClone(f.tokens) },
+    after = refinePostfixExample(f)
+  expect(before.grid[0]).toEqual(['Metric A', '↓ Metric B ↓', 'Metric C ↓'])
+  expect(after.grid[0]).toEqual(['Metric A ↓', 'Metric B ↓', 'Metric C ↓'])
+  expect(after.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)).toEqual(
+    before.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)
+  )
+  expect(after.rows).toEqual(before.rows)
+  expect(after.cropRect).toEqual(before.cropRect)
+  expect(after.issues).toEqual(before.issues)
+  expect(after.unassigned).toEqual(before.unassigned)
+  const headers = after.cells
+    .filter((c: ReturnType<typeof JSON.parse>) => c.row === 0)
+    .sort(
+      (a: ReturnType<typeof JSON.parse>, b: ReturnType<typeof JSON.parse>) => a.column - b.column
+    )
+  expect(
+    headers.every(
+      (c: ReturnType<typeof JSON.parse>, i: number) => !i || c.rect[0] >= headers[i - 1].rect[2]
+    )
+  ).toBe(true)
+  expect(headers[0].sourceItems).toEqual([f.tokens[0].sourceItem, f.tokens[1].sourceItem])
+  expect(headers[0].sourceRects).toEqual([f.tokens[0].rect, f.tokens[1].rect])
+  expect(headers[1].sourceItems).toEqual([f.tokens[2].sourceItem, f.tokens[3].sourceItem])
+  expect(headers[1].sourceRects).toEqual([f.tokens[2].rect, f.tokens[3].rect])
+  const keys = (t: ReturnType<typeof JSON.parse>): string[] =>
+    t.cells
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems ?? [])
+      .map((s: ReturnType<typeof JSON.parse>) => JSON.stringify(s))
+      .sort()
+  expect(keys(after)).toEqual(keys(before))
+  expect({ table: f.table, tokens: f.tokens }).toEqual(snapshot)
+  expect(after.repairs).toContain('native-calibrated-postfix-header-recovered')
+})
+
+function prependPostfixState(
+  f: ReturnType<typeof postfixNativeExample>,
+  op: number,
+  args: unknown[]
+): void {
+  f.context.operators.fnArray.unshift(op)
+  f.context.operators.argsArray.unshift(args)
+  for (const g of f.context.sourcePage.graphicsBounds) g.operationIndex++
+}
+function appendPostfixRule(f: ReturnType<typeof postfixNativeExample>, r: number[]): void {
+  const o = f.context.operators,
+    p = f.context.sourcePage,
+    h = p.height,
+    index = o.fnArray.length
+  o.fnArray.push(OPS.constructPath)
+  o.argsArray.push([
+    OPS.stroke,
+    [new Float32Array([0, r[0], h - r[1], 1, r[2], h - r[3]])],
+    new Float32Array([r[0], h - r[3], r[2], h - r[1]])
+  ])
+  p.graphicsBounds.push({
+    kind: 'path',
+    operationIndex: index,
+    normalizedRect: r.map((x, i) => x / (i % 2 ? p.height : p.width))
+  })
+  f.rules = collectTableRules(o, f.context.viewport)
+}
+function setPostfixClosingState(
+  f: ReturnType<typeof postfixNativeExample>,
+  op: number,
+  args: unknown[]
+): void {
+  const index = f.context.sourcePage.graphicsBounds.at(-1).operationIndex
+  f.context.operators.fnArray.splice(index, 0, op)
+  f.context.operators.argsArray.splice(index, 0, args)
+  for (const graphic of f.context.sourcePage.graphicsBounds)
+    if (graphic.operationIndex >= index) graphic.operationIndex++
+}
+const postfixEvidenceNegatives: [string, (f: ReturnType<typeof postfixNativeExample>) => void][] = [
+  ['transparent closing witness', (f) => setPostfixClosingState(f, OPS.setGState, [[['CA', 0]]])],
+  ['white closing witness', (f) => setPostfixClosingState(f, OPS.setStrokeRGBColor, ['#ffffff'])],
+  ['duplicate closing witness', (f) => appendPostfixRule(f, [0, 90, 250, 90])],
+  [
+    'already complete header ownership',
+    (f) => {
+      const columns = f.table.structure.objects.filter(
+        (o: ReturnType<typeof JSON.parse>) => o.label === 'table column'
+      )
+      columns[0].rect[2] = 115
+      columns[1].rect[0] = 115
+    }
+  ],
+  [
+    'missing original page',
+    (f) => {
+      delete f.context.sourcePage
+    }
+  ],
+  [
+    'unknown page graphics',
+    (f) => {
+      f.context.sourcePage.invalidGraphicsBounds = 1
+    }
+  ],
+  [
+    'mismatched source page',
+    (f) => {
+      f.context.sourcePage.pageNumber = 2
+    }
+  ],
+  [
+    'rotated source page',
+    (f) => {
+      f.context.sourcePage.renderRotation = 90
+    }
+  ],
+  [
+    'unbound work transform',
+    (f) => {
+      f.context.viewport.transform[4] = 1
+    }
+  ],
+  [
+    'missing arrow outline',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs =
+        f.context.nativeGlyphContext.glyphBounds[0].glyphs.filter(
+          (g: ReturnType<typeof JSON.parse>) => g.fontChar !== '↓'
+        )
+    }
+  ],
+  [
+    'empty visible letter outline',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'M'
+      ).bounds = [0, 0, 0, 0]
+    }
+  ],
+  [
+    'painted whitespace in a header source',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar === ' '
+      ).bounds = [0, 0, 0.5, 0.7]
+    }
+  ],
+  [
+    'missing complete source slot',
+    (f) => {
+      f.tokens.splice(1, 1)
+    }
+  ],
+  [
+    'duplicate source identity',
+    (f) => {
+      f.tokens[2].sourceItem.index = f.tokens[0].sourceItem.index
+    }
+  ],
+  [
+    'altered native source text',
+    (f) => {
+      f.context.nativeGlyphContext.content.items[1].str = '↑'
+    }
+  ],
+  ['transparent header text', (f) => prependPostfixState(f, OPS.setGState, [[['ca', 0]]])],
+  ['white header text', (f) => prependPostfixState(f, OPS.setFillRGBColor, ['#ffffff'])],
+  ['unknown blend mode', (f) => prependPostfixState(f, OPS.setGState, [[['BM', 'multiply']]])],
+  ['nonempty soft mask', (f) => prependPostfixState(f, OPS.setGState, [[['SMask', true]]])],
+  ['nonfill text rendering', (f) => prependPostfixState(f, OPS.setTextRenderingMode, [1])],
+  ['vertical rule splitting a label from its marker', (f) => appendPostfixRule(f, [68, 2, 68, 22])],
+  ['duplicate opening rule', (f) => appendPostfixRule(f, [0, 2, 250, 2])],
+  [
+    'missing native opening',
+    (f) => {
+      f.rules = f.rules.filter((r: number[]) => r[1] !== 3)
+    }
+  ],
+  [
+    'too few independent body rows',
+    (f) => {
+      f.tokens.splice(12, 3)
+      f.context.sourceContent.items.splice(12, 3)
+      f.context.operators.fnArray.splice(60, 15)
+      f.context.operators.argsArray.splice(60, 15)
+      for (const g of f.context.sourcePage.graphicsBounds) g.operationIndex -= 15
+      const rows = f.table.structure.objects.filter(
+        (o: ReturnType<typeof JSON.parse>) => o.label === 'table row'
+      )
+      f.table.structure.objects.splice(f.table.structure.objects.indexOf(rows[2]), 1)
+    }
+  ],
+  [
+    'spanning metric slot',
+    (f) => {
+      f.table.structure.objects.push({
+        label: 'table spanning cell',
+        rect: [0, 37.5, 243.75, 97.5]
+      })
+    }
+  ],
+  [
+    'body column cuts crossing a source',
+    (f) => {
+      f.table.structure.objects.find(
+        (o: ReturnType<typeof JSON.parse>) => o.label === 'table column'
+      ).rect[2] = 70
+    }
+  ],
+  [
+    'body center contradicting the complete postfix group',
+    (f) => {
+      for (let i = 6; i < f.tokens.length; i += 3) {
+        const item = f.context.sourceContent.items[i]
+        item.transform[4] += 1
+        f.context.operators.argsArray[i * 5 + 2] = [
+          new Float32Array([1, 0, 0, 1, item.transform[4], item.transform[5]])
+        ]
+        f.tokens[i] = tableTextToken(item, f.context.viewport, 0)
+      }
+    }
+  ],
+  [
+    'unclaimed complete native source inside a metric record',
+    (f) => {
+      const index = f.context.sourceContent.items.length,
+        item = {
+          str: 'X',
+          width: 5,
+          height: 10,
+          dir: 'ltr',
+          fontName: 'F',
+          transform: [10, 0, 0, 10, 60, 85],
+          sourceItem: { pageNumber: 1, index, text: 'X' }
+        }
+      f.context.sourceContent.items.push(item)
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.push({
+        fontChar: 'X',
+        bounds: [0, 0, 0.5, 0.7]
+      })
+      f.context.operators.fnArray.push(
+        OPS.beginText,
+        OPS.setFont,
+        OPS.setTextMatrix,
+        OPS.showText,
+        OPS.endText
+      )
+      f.context.operators.argsArray.push(
+        null,
+        ['F', 10],
+        [new Float32Array([1, 0, 0, 1, 60, 85])],
+        [[{ unicode: 'X', fontChar: 'X', width: 500, isInFont: true }]],
+        null
+      )
+    }
+  ]
+]
+for (const [label, mutate] of postfixEvidenceNegatives)
+  it('keeps the original header source ownership without ' + label, () => {
+    const f = postfixNativeExample()
+    mutate(f)
+    const before = refinePostfixExample(f, { ...f.context, sourcePage: undefined }),
+      after = refinePostfixExample(f)
+    expect(after).toEqual(before)
+    expect(after.repairs).not.toContain('native-calibrated-postfix-header-recovered')
+  })
+
+// The text extractor normalizes an outside micro sign to Greek mu; the loaded
+// operator glyph and every claimed table literal remain unchanged.
+function postfixModelHeaderExample(): ReturnType<typeof JSON.parse> {
+  const f = postfixNativeExample(),
+    n = f.context.nativeGlyphContext,
+    columns = f.table.structure.objects.filter(
+      (o: ReturnType<typeof JSON.parse>) => o.label === 'table column'
+    )
+  columns[0].rect[2] = 67 * 1.5
+  columns[1].rect[0] = 67 * 1.5
+  f.table.structure.objects = f.table.structure.objects.filter(
+    (o: ReturnType<typeof JSON.parse>) => o.label !== 'table column header'
+  )
+  f.table.structure.objects.push(
+    { label: 'table row', rect: [0, 9, 375, 30] },
+    { label: 'table column header', rect: [0, 9, 375, 30] }
+  )
+  const index = n.content.items.length,
+    item = {
+      str: 'μ',
+      width: 5,
+      height: 10,
+      dir: 'ltr',
+      fontName: 'F',
+      transform: [10, 0, 0, 10, 260, 10],
+      sourceItem: { pageNumber: 1, index, text: 'μ' }
+    }
+  n.content.items.push(item)
+  n.glyphBounds[0].glyphs.push({ fontChar: 'µ', bounds: [0, 0, 0.5, 0.7] })
+  n.operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+  n.operators.argsArray.push(
+    null,
+    ['F', 10],
+    [new Float32Array([1, 0, 0, 1, 260, 10])],
+    [[{ unicode: 'µ', fontChar: 'µ', width: 500, isInFont: true }]],
+    null
+  )
+  f.tokens.push(tableTextToken(item, f.context.viewport, 0))
+  return f
+}
+
+it('proves a model header from complete native fences while preserving foreign normalized source literals', () => {
+  const f = postfixModelHeaderExample(),
+    input = JSON.stringify(f),
+    before = refinePostfixExample(f, { ...f.context, sourcePage: undefined }),
+    after = refinePostfixExample(f)
+  expect(
+    before.cells.find((c: ReturnType<typeof JSON.parse>) =>
+      c.sourceItems?.some((s: ReturnType<typeof JSON.parse>) => s.index === 1)
+    )?.column
+  ).toBe(1)
+  expect(
+    after.cells.find((c: ReturnType<typeof JSON.parse>) =>
+      c.sourceItems?.some((s: ReturnType<typeof JSON.parse>) => s.index === 1)
+    )?.column
+  ).toBe(0)
+  expect(after.grid[0]).toEqual(['Metric A ↓', 'Metric B ↓', 'Metric C ↓'])
+  expect(after.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)).toEqual(
+    before.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row > 0)
+  )
+  expect(after.grid.slice(1)).toEqual(before.grid.slice(1))
+  expect(after.rows).toEqual(before.rows)
+  expect(after.cropRect).toEqual(before.cropRect)
+  expect(after.issues).toEqual(before.issues)
+  expect(
+    after.cells
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems ?? [])
+      .map((s: object) => JSON.stringify(s))
+      .sort()
+  ).toEqual(
+    before.cells
+      .flatMap((c: ReturnType<typeof JSON.parse>) => c.sourceItems ?? [])
+      .map((s: object) => JSON.stringify(s))
+      .sort()
+  )
+  expect(JSON.stringify(f)).toBe(input)
+})
+
+const modelHeaderRefusals: [string, (f: ReturnType<typeof postfixNativeExample>) => void][] = [
+  [
+    'missing model header',
+    (f) => {
+      f.table.structure.objects = f.table.structure.objects.filter(
+        (o: ReturnType<typeof JSON.parse>) => o.label !== 'table column header'
+      )
+    }
+  ],
+  [
+    'competing model headers',
+    (f) => {
+      f.table.structure.objects.push(
+        structuredClone(
+          f.table.structure.objects.find(
+            (o: ReturnType<typeof JSON.parse>) => o.label === 'table column header'
+          )
+        )
+      )
+    }
+  ],
+  [
+    'model header crosses native opening',
+    (f) => {
+      f.table.structure.objects.find(
+        (o: ReturnType<typeof JSON.parse>) => o.label === 'table column header'
+      ).rect[1] = 0
+    }
+  ],
+  [
+    'model row crosses native separator',
+    (f) => {
+      f.table.structure.objects.find(
+        (o: ReturnType<typeof JSON.parse>) => o.label === 'table row' && o.rect[1] === 9
+      ).rect[3] = 36
+    }
+  ],
+  [
+    'model header misses an independent column center',
+    (f) => {
+      f.table.structure.objects.find(
+        (o: ReturnType<typeof JSON.parse>) => o.label === 'table column header'
+      ).rect[2] = 200
+    }
+  ],
+  [
+    'missing original page',
+    (f) => {
+      delete f.context.sourcePage
+    }
+  ],
+  [
+    'unknown original graphics',
+    (f) => {
+      f.context.sourcePage.invalidGraphicsBounds = 1
+    }
+  ],
+  [
+    'foreign source comparison is not PDFjs normalization',
+    (f) => {
+      const r = f.context.sourceContent.items[15]
+      r.str = 'Q'
+      r.sourceItem.text = 'Q'
+      f.tokens[15] = tableTextToken(r, f.context.viewport, 0)
+    }
+  ],
+  [
+    'missing foreign outline',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs =
+        f.context.nativeGlyphContext.glyphBounds[0].glyphs.filter(
+          (g: ReturnType<typeof JSON.parse>) => g.fontChar !== 'µ'
+        )
+    }
+  ],
+  [
+    'foreign source geometry is unbound',
+    (f) => {
+      const r = f.context.sourceContent.items[15]
+      r.transform[4] -= 1
+      f.tokens[15] = tableTextToken(r, f.context.viewport, 0)
+    }
+  ],
+  [
+    'foreign outline enters the complete header',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'µ'
+      ).bounds = [-25, 9.5, -24.5, 10.2]
+    }
+  ],
+  [
+    'foreign outline enters a body record',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'µ'
+      ).bounds = [-21.5, 7.5, -21, 8.2]
+    }
+  ],
+  [
+    'claimed text would need normalization',
+    (f) => {
+      const n = f.context.nativeGlyphContext,
+        r = n.content.items[0]
+      r.str = 'μetric A'
+      r.sourceItem.text = r.str
+      n.operators.argsArray[3][0][0] = { unicode: 'µ', fontChar: 'µ', width: 500, isInFont: true }
+      f.tokens[0] = tableTextToken(r, f.context.viewport, 0)
+    }
+  ],
+  [
+    'extra body paint without source ownership',
+    (f) => {
+      const n = f.context.nativeGlyphContext,
+        operationIndex = n.operators.fnArray.length
+      n.operators.fnArray.push(OPS.constructPath)
+      n.operators.argsArray.push([
+        OPS.fill,
+        [new Float32Array([0, 5, 78, 1, 10, 78, 1, 10, 80, 1, 5, 80, 4])],
+        new Float32Array([5, 78, 10, 80])
+      ])
+      n.graphicsBounds.push({
+        kind: 'path',
+        operationIndex,
+        normalizedRect: [5 / 280, 40 / 120, 10 / 280, 42 / 120]
+      })
+    }
+  ],
+  ['transparent header paint', (f) => prependPostfixState(f, OPS.setGState, [[['ca', 0]]])],
+  ['unproved closing fence', (f) => setPostfixClosingState(f, OPS.setGState, [[['CA', 0]]])],
+  ['duplicate closing fence', (f) => appendPostfixRule(f, [0, 90, 250, 90])],
+  ['duplicate opening fence', (f) => appendPostfixRule(f, [0, 2, 250, 2])],
+  ['duplicate header separator', (f) => appendPostfixRule(f, [0, 22, 250, 22])],
+  [
+    'competing metric span slot',
+    (f) => {
+      f.table.structure.objects.push({
+        label: 'table spanning cell',
+        rect: [0, 37.5, 243.75, 97.5]
+      })
+    }
+  ],
+  [
+    'repeated native source slot',
+    (f) => {
+      f.tokens[2].sourceItem.index = f.tokens[0].sourceItem.index
+    }
+  ],
+  [
+    'unloaded complete metric source',
+    (f) => {
+      f.context.nativeGlyphContext.operators.argsArray[3][0][0].isInFont = false
+    }
+  ],
+  [
+    'contradicting body centroid',
+    (f) => {
+      const n = f.context.nativeGlyphContext
+      for (let i = 6; i < 15; i += 3) {
+        const r = n.content.items[i]
+        r.transform[4] += 1
+        n.operators.argsArray[i * 5 + 2] = [
+          new Float32Array([1, 0, 0, 1, r.transform[4], r.transform[5]])
+        ]
+        f.tokens[i] = tableTextToken(r, f.context.viewport, 0)
+      }
+    }
+  ]
+]
+
+it.each(modelHeaderRefusals)(
+  'retains a complete model-header mapping without %s',
+  (_label, mutate) => {
+    const f = postfixModelHeaderExample()
+    mutate(f)
+    const input = JSON.stringify(f),
+      before = refinePostfixExample(f, { ...f.context, sourcePage: undefined }),
+      after = refinePostfixExample(f)
+    expect(after).toEqual(before)
+    expect(JSON.stringify(f)).toBe(input)
+  }
+)
+
+it('keeps default packet literals strict and permits only unclaimed one-to-one PDFjs source comparison', () => {
+  const f = postfixModelHeaderExample(),
+    n = f.context.nativeGlyphContext,
+    tokens = n.content.items.map((r: ReturnType<typeof JSON.parse>) =>
+      tableTextToken(r, n.viewport, 0)
+    ),
+    claimed = new Set(Array.from({ length: 15 }, (_, i) => i)),
+    input = JSON.stringify(f)
+  expect(nativePageTextPacketInventory(f.context.sourcePage, tokens, n, true)).toBeUndefined()
+  expect(
+    nativePageTextPacketInventory(f.context.sourcePage, tokens, n, true, undefined, true)
+  ).toBeUndefined()
+  expect(
+    nativePageTextPacketInventory(
+      f.context.sourcePage,
+      tokens,
+      n,
+      true,
+      new Set([...claimed, 15]),
+      true
+    )
+  ).toBeUndefined()
+  const proof = nativePageTextPacketInventory(f.context.sourcePage, tokens, n, true, claimed, true),
+    foreign = proof?.records.find((r: ReturnType<typeof JSON.parse>) => r.index === 15)
+  expect(foreign?.r.str).toBe('μ')
+  expect(foreign?.part[0].g.text).toBe('µ')
+  expect(foreign?.foreignSourceNormalized).toBe(true)
+  expect(JSON.stringify(f)).toBe(input)
+})
+
+it('refuses a foreign normalization that expands one native character into multiple source characters', () => {
+  const f = postfixModelHeaderExample(),
+    n = f.context.nativeGlyphContext,
+    item = n.content.items[15]
+  item.str = 'fi'
+  item.sourceItem.text = 'fi'
+  n.operators.argsArray.at(-2)[0][0].unicode = 'ﬁ'
+  const tokens = n.content.items.map((r: ReturnType<typeof JSON.parse>) =>
+    tableTextToken(r, n.viewport, 0)
+  )
+  expect(
+    nativePageTextPacketInventory(
+      f.context.sourcePage,
+      tokens,
+      n,
+      true,
+      new Set(Array.from({ length: 15 }, (_, i) => i)),
+      true
+    )
+  ).toBeUndefined()
+})
+
+// Three anonymous native ruled blocks, complete original glyphs and two model
+// section peers; the middle whole label crosses the stub beside one marker.
+function fencedSectionNativeExample(
+  bodyRows = 3,
+  splitValues = false
+): ReturnType<typeof JSON.parse> {
+  const width = 320,
+    height = 360,
+    scale = 1.5,
+    cuts = [0, 70, 125, 180, 235, 300],
+    entries: [string, number, number][] = [
+      ['Setting', 8, 25],
+      ...['A', 'B', 'C', 'D'].map(
+        (n, c) => ['Metric ' + n, cuts[c + 1] + 5, 25] as [string, number, number]
+      )
+    ],
+    bands = [[13, 30]],
+    sectionRows: number[] = []
+  for (let section = 0; section < 3; section++) {
+    const baseline = 50 + section * 90
+    sectionRows.push(bands.length)
+    bands.push([baseline - 11, baseline + 3])
+    entries.push(
+      ['Grouped outcome measures', 8, baseline],
+      [String.fromCharCode(80 + section), 132, baseline]
+    )
+    for (let row = 0; row < bodyRows; row++) {
+      const y = baseline + 20 + row * 20
+      bands.push([y - 11, y + 3])
+      entries.push(['Row ' + String.fromCharCode(65 + row), 8, y])
+      for (let col = 1; col < 5; col++) {
+        const value = '' + (section + 1) + (row + 1) + col,
+          x = cuts[col] + 8
+        if (splitValues) entries.push(['.', x, y], [value, x + 5, y])
+        else entries.push(['.' + value, x, y])
+      }
+    }
+  }
+  const items = entries.map(([str, x, y], index) => ({
+      str,
+      width: str.length * 5,
+      height: 10,
+      fontName: 'F',
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, height - y],
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    content = { items, styles: { F: { ascent: 0, descent: 0, vertical: false } } },
+    viewport = {
+      width,
+      height,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, height],
+      convertToViewportPoint: (x, y) => [x, height - y]
+    },
+    workViewport = {
+      width: width * scale,
+      height: height * scale,
+      scale,
+      rotation: 0,
+      transform: [scale, 0, 0, -scale, 0, height * scale],
+      convertToViewportPoint: (x, y) => [x * scale, (height - y) * scale]
+    },
+    operators = { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] }
+  for (const item of items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      [],
+      ['F', 10],
+      [new Float32Array([1, 0, 0, 1, item.transform[4], item.transform[5]])],
+      [
+        Array.from(item.str, (c) => ({
+          unicode: c,
+          fontChar: c,
+          originalCharCode: c.codePointAt(0),
+          width: 500,
+          isSpace: c === ' ',
+          isInFont: true
+        }))
+      ],
+      []
+    )
+  }
+  operators.fnArray.push(OPS.setLineWidth, OPS.setLineCap)
+  operators.argsArray.push([0.4], [0])
+  const rules = [10, 35, 125, 215, 305].map((y) => [0, y, 300, y]),
+    graphicsBounds = rules.map((r) => {
+      const operationIndex = operators.fnArray.length
+      operators.fnArray.push(OPS.constructPath)
+      operators.argsArray.push([
+        OPS.stroke,
+        [new Float32Array([0, r[0], height - r[1], 1, r[2], height - r[3]])],
+        new Float32Array([r[0], height - r[3], r[2], height - r[1]])
+      ])
+      return {
+        kind: 'path',
+        operationIndex,
+        normalizedRect: r.map((n, i) => n / (i % 2 ? height : width))
+      }
+    }),
+    nativeGlyphContext = {
+      content,
+      viewport,
+      operators,
+      graphicsBounds,
+      pageNumber: 1,
+      sourceSha256: '0'.repeat(64),
+      glyphBounds: [
+        {
+          fontName: 'F',
+          glyphs: [...new Set(items.flatMap((i) => Array.from(i.str)))].map((fontChar) => ({
+            fontChar,
+            bounds: fontChar === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+          }))
+        }
+      ]
+    },
+    sourcePage = {
+      pageNumber: 1,
+      width,
+      height,
+      renderRotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds
+    },
+    context = {
+      sourcePage,
+      nativeGlyphContext,
+      viewport: workViewport,
+      operators,
+      sourceContent: content,
+      content,
+      rulePaintBounds: new Map()
+    },
+    tokens = items.map((i) => tableTextToken(i, workViewport, 0)),
+    table = {
+      id: 'anonymous-fenced-section',
+      cropRect: [0, 0, 450, 480],
+      structure: {
+        objects: [
+          ...cuts.slice(0, -1).map((x, c) => ({
+            label: 'table column',
+            rect: [x * scale, 13 * scale, cuts[c + 1] * scale, 305 * scale]
+          })),
+          ...bands.map((r) => ({ label: 'table row', rect: [0, r[0] * scale, 450, r[1] * scale] })),
+          { label: 'table column header', rect: [0, 13 * scale, 450, 30 * scale] },
+          ...sectionRows
+            .filter((_, i) => i !== 1)
+            .map((r) => ({
+              label: 'table projected row header',
+              rect: [0, bands[r][0] * scale, 450, bands[r][1] * scale]
+            }))
+        ]
+      }
+    }
+  return {
+    table,
+    tokens,
+    context,
+    rules: collectTableRules(operators, workViewport),
+    targetIndex: items.findIndex(
+      (i) => i.str === 'Grouped outcome measures' && i.transform[5] === height - 140
+    )
+  }
+}
+const refineFencedSectionExample = (
+  f: ReturnType<typeof JSON.parse>,
+  context = f.context
+): ReturnType<typeof JSON.parse> =>
+  refineTable(f.table, f.tokens, [], [], f.rules, [], undefined, context.rulePaintBounds, context)
+function insertFencedSectionOperation(
+  f: ReturnType<typeof JSON.parse>,
+  index: number,
+  op: number,
+  args: ReturnType<typeof JSON.parse>
+): void {
+  const o = f.context.operators
+  o.fnArray.splice(index, 0, op)
+  o.argsArray.splice(index, 0, args)
+  for (const g of f.context.sourcePage.graphicsBounds)
+    if (g.operationIndex >= index) g.operationIndex++
+}
+function appendFencedSectionForeign(f: ReturnType<typeof JSON.parse>, paint: boolean): void {
+  const c = f.context.nativeGlyphContext,
+    o = c.operators
+  if (paint) {
+    const index = o.fnArray.length
+    o.fnArray.push(OPS.constructPath)
+    o.argsArray.push([
+      OPS.fill,
+      [new Float32Array([0, 100, 215, 1, 120, 215, 1, 120, 225, 1, 100, 225, 4])],
+      new Float32Array([100, 215, 120, 225])
+    ])
+    c.graphicsBounds.push({
+      kind: 'path',
+      operationIndex: index,
+      normalizedRect: [100 / 320, 135 / 360, 120 / 320, 145 / 360]
+    })
+    return
+  }
+  const sourceItem = { pageNumber: 1, index: c.content.items.length, text: 'Z' },
+    item = {
+      str: 'Z',
+      width: 5,
+      height: 10,
+      fontName: 'F',
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, 310, 220],
+      sourceItem
+    }
+  c.content.items.push(item)
+  f.tokens.push(tableTextToken(item, f.context.viewport, 0))
+  c.glyphBounds[0].glyphs.push({ fontChar: 'Z', bounds: [-11, 0, 0.5, 0.7] })
+  o.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+  o.argsArray.push(
+    null,
+    ['F', 10],
+    [new Float32Array([1, 0, 0, 1, 310, 220])],
+    [
+      [
+        {
+          unicode: 'Z',
+          fontChar: 'Z',
+          originalCharCode: 90,
+          width: 500,
+          isSpace: false,
+          isInFont: true
+        }
+      ]
+    ],
+    null
+  )
+}
+it.each([false, true])(
+  'joins a fully fenced section source without changing records (split values: %s)',
+  (splitValues) => {
+    const f = fencedSectionNativeExample(3, splitValues),
+      snapshot = JSON.stringify({ table: f.table, tokens: f.tokens, context: f.context }),
+      before = refineFencedSectionExample(f, { ...f.context, sourcePage: undefined }),
+      after = refineFencedSectionExample(f),
+      owner = after.cells.find((c: ReturnType<typeof JSON.parse>) =>
+        c.sourceItems?.some((i: ReturnType<typeof JSON.parse>) => i.index === f.targetIndex)
+      )
+    expect(owner).toMatchObject({
+      row: 5,
+      column: 0,
+      colSpan: 5,
+      text: 'Grouped outcome measures Q'
+    })
+    expect(owner.sourceItems.map((i: ReturnType<typeof JSON.parse>) => i.index)).toEqual([
+      f.targetIndex,
+      f.targetIndex + 1
+    ])
+    expect(after.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row !== 5)).toEqual(
+      before.cells.filter((c: ReturnType<typeof JSON.parse>) => c.row !== 5)
+    )
+    expect(after.rows).toEqual(before.rows)
+    expect(after.grid.filter((_r: unknown, i: number) => i !== 5)).toEqual(
+      before.grid.filter((_r: unknown, i: number) => i !== 5)
+    )
+    expect(after.cropRect).toEqual(before.cropRect)
+    expect(after.issues).toEqual(before.issues)
+    expect(after.repairs).toContain('native-fenced-section-ownership-recovered')
+    expect(JSON.stringify({ table: f.table, tokens: f.tokens, context: f.context })).toBe(snapshot)
+  }
+)
+const fencedSectionRefusals: [string, (f: ReturnType<typeof JSON.parse>) => void][] = [
+  [
+    'missing original page',
+    (f) => {
+      delete f.context.sourcePage
+    }
+  ],
+  [
+    'invalid original graphics',
+    (f) => {
+      f.context.sourcePage.invalidGraphicsBounds = 1
+    }
+  ],
+  [
+    'partial fonts only',
+    (f) => {
+      f.context.nativeGlyphContext.partialFontGlyphBounds = f.context.nativeGlyphContext.glyphBounds
+      delete f.context.nativeGlyphContext.glyphBounds
+    }
+  ],
+  [
+    'missing marker outline',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs =
+        f.context.nativeGlyphContext.glyphBounds[0].glyphs.filter(
+          (g: ReturnType<typeof JSON.parse>) => g.fontChar !== 'Q'
+        )
+    }
+  ],
+  [
+    'marker ink outside the proved row',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'Q'
+      ).bounds = [0, 0, 0.5, 3]
+    }
+  ],
+  [
+    'empty nonblank marker outline',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar === 'Q'
+      ).bounds = [0, 0, 0, 0]
+    }
+  ],
+  [
+    'white claimed text',
+    (f) => {
+      insertFencedSectionOperation(f, 0, OPS.setFillRGBColor, ['#ffffff'])
+    }
+  ],
+  [
+    'unknown alpha state',
+    (f) => {
+      insertFencedSectionOperation(f, 0, OPS.setGState, [[['ca', 0.5]]])
+    }
+  ],
+  [
+    'white native fences',
+    (f) => {
+      insertFencedSectionOperation(f, 0, OPS.setStrokeRGBColor, ['#ffffff'])
+    }
+  ],
+  [
+    'duplicate native separator',
+    (f) => {
+      const c = f.context.nativeGlyphContext,
+        g = c.graphicsBounds[2],
+        id = c.operators.fnArray.length
+      c.operators.fnArray.push(OPS.constructPath)
+      c.operators.argsArray.push(structuredClone(c.operators.argsArray[g.operationIndex]))
+      c.graphicsBounds.push({ ...g, operationIndex: id })
+    }
+  ],
+  ['foreign body paint', (f) => appendFencedSectionForeign(f, true)],
+  ['foreign glyph ink with exterior advance', (f) => appendFencedSectionForeign(f, false)],
+  [
+    'painted whitespace',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g: ReturnType<typeof JSON.parse>) => g.fontChar === ' '
+      ).bounds = [0, 0, 0.5, 0.7]
+    }
+  ],
+  [
+    'incomplete source binding',
+    (f) => {
+      f.tokens.find(
+        (t: ReturnType<typeof JSON.parse>) => t.sourceItem.index === f.targetIndex
+      ).sourceItem = { pageNumber: 1, index: f.targetIndex, text: 'different literal' }
+    }
+  ],
+  [
+    'missing repeated model section witness',
+    (f) => {
+      let first = true
+      f.table.structure.objects = f.table.structure.objects.filter(
+        (o: ReturnType<typeof JSON.parse>) =>
+          o.label !== 'table projected row header' || !first || (first = false)
+      )
+    }
+  ],
+  [
+    'conflicting section span',
+    (f) => {
+      f.table.structure.objects.push({ label: 'table spanning cell', rect: [0, 193.5, 450, 244.5] })
+    }
+  ],
+  [
+    'ordinary prose in a native value lane',
+    (f) => {
+      const c = f.context.nativeGlyphContext,
+        index = c.content.items.findIndex((i: ReturnType<typeof JSON.parse>) => i.str === '.211'),
+        item = c.content.items[index]
+      item.str = 'word'
+      item.sourceItem.text = 'word'
+      f.tokens.find((t: ReturnType<typeof JSON.parse>) => t.sourceItem.index === index).text =
+        'word'
+      c.operators.argsArray[index * 5 + 3] = [
+        Array.from('word', (fontChar) => ({
+          unicode: fontChar,
+          fontChar,
+          originalCharCode: fontChar.codePointAt(0),
+          width: 500,
+          isSpace: false,
+          isInFont: true
+        }))
+      ]
+    }
+  ],
+  [
+    'unknown source checksum',
+    (f) => {
+      delete f.context.nativeGlyphContext.sourceSha256
+    }
+  ],
+  [
+    'source rotation mismatch',
+    (f) => {
+      f.context.sourcePage.renderRotation = 90
+    }
+  ],
+  [
+    'duplicate source slot',
+    (f) => {
+      f.tokens.push(
+        structuredClone(
+          f.tokens.find((t: ReturnType<typeof JSON.parse>) => t.sourceItem.index === f.targetIndex)
+        )
+      )
+    }
+  ]
+]
+it.each(fencedSectionRefusals)('preserves the full section table without %s', (_name, mutate) => {
+  const f = fencedSectionNativeExample()
+  mutate(f)
+  const before = refineFencedSectionExample(f, { ...f.context, sourcePage: undefined }),
+    after = refineFencedSectionExample(f)
+  expect(after).toEqual(before)
+  expect(after.repairs).not.toContain('native-fenced-section-ownership-recovered')
+})
+it('keeps two-record fenced sections on their original model spans', () => {
+  const f = fencedSectionNativeExample(2)
+  expect(refineFencedSectionExample(f)).toEqual(
+    refineFencedSectionExample(f, { ...f.context, sourcePage: undefined })
+  )
+})

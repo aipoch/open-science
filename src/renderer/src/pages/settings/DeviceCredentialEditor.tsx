@@ -3,7 +3,7 @@ import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: device credential editor · genre: modern-minimal · theme: existing Settings tokens · slop: pass */
 import { ChevronDown, Copy } from 'lucide-react'
-import { useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -26,6 +26,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { localizeCredentialError } from './credential-error-message'
 import { MaskedPasswordField } from './MaskedPasswordField'
 import { DeviceCredentialLoadNotice } from './DeviceCredentialLoadNotice'
+import type { SettingsEditorLeaveState } from './SettingsLayout'
 
 type DeviceCredentialEditorProps = {
   credential?: DeviceCredentialView
@@ -36,6 +37,7 @@ type DeviceCredentialEditorProps = {
   requiresOAuthClientSecret?: boolean
   onDone(credential?: DeviceCredentialView): void
   onCancel(): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
   previewState?:
     'default' | 'hover' | 'focus' | 'active' | 'disabled' | 'loading' | 'error' | 'success'
 }
@@ -61,6 +63,7 @@ export function DeviceCredentialEditor({
   requiresOAuthClientSecret = false,
   onDone,
   onCancel,
+  onLeaveStateChange,
   previewState
 }: DeviceCredentialEditorProps): React.JSX.Element {
   const { t } = useTranslation()
@@ -113,6 +116,23 @@ export function DeviceCredentialEditor({
   const [customRedirectUriOpen, setCustomRedirectUriOpen] = useState(
     Boolean(initialOAuth?.redirectUri)
   )
+  const [initialDraft] = useState(() => ({
+    displayName: credential?.displayName ?? '',
+    kind: credential?.kind ?? initialKind ?? 'api_key',
+    resourceUri: credential?.resourceUri ?? initialResourceUri ?? '',
+    oauthTransport: credential?.transport ?? initialOAuthTransport ?? 'streamable_http',
+    clientMetadataUrl: initialOAuth?.clientMetadataUrl ?? '',
+    authorizationServerUrl: initialOAuth?.authorizationServerUrl ?? '',
+    clientId: initialOAuth?.clientId ?? '',
+    redirectUri: initialOAuth?.redirectUri ?? '',
+    scopes: (initialOAuth?.scopes ?? []).join(' '),
+    usePreRegisteredOAuthClient:
+      requiresOAuthClientSecret || Boolean(initialOAuth?.clientId || initialOAuth?.redirectUri),
+    oauthDiscoveryOpen: Boolean(
+      initialOAuth?.clientMetadataUrl || initialOAuth?.authorizationServerUrl
+    ),
+    customRedirectUriOpen: Boolean(initialOAuth?.redirectUri)
+  }))
   const [callbackUriCopied, setCallbackUriCopied] = useState(false)
   const [busyAction, setBusyAction] = useState<BusyAction | undefined>(
     previewState === 'loading' ? 'saving' : undefined
@@ -146,6 +166,28 @@ export function DeviceCredentialEditor({
     (!secureStorageRequired || encryptionAvailable) &&
     !busy &&
     previewState !== 'disabled'
+  const dirty =
+    displayName !== initialDraft.displayName ||
+    kind !== initialDraft.kind ||
+    secret.length > 0 ||
+    resourceUri !== initialDraft.resourceUri ||
+    oauthTransport !== initialDraft.oauthTransport ||
+    clientMetadataUrl !== initialDraft.clientMetadataUrl ||
+    authorizationServerUrl !== initialDraft.authorizationServerUrl ||
+    clientId !== initialDraft.clientId ||
+    redirectUri !== initialDraft.redirectUri ||
+    scopes !== initialDraft.scopes ||
+    usePreRegisteredOAuthClient !== initialDraft.usePreRegisteredOAuthClient
+
+  useLayoutEffect(() => {
+    onLeaveStateChange?.({ dirty, busy })
+  }, [busy, dirty, onLeaveStateChange])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
+
+  const finish = (saved?: DeviceCredentialView): void => {
+    onLeaveStateChange?.(null)
+    onDone(saved)
+  }
 
   const save = async (): Promise<void> => {
     if (!canSave) return
@@ -194,7 +236,7 @@ export function DeviceCredentialEditor({
         setBusyAction('authenticating')
         try {
           await authenticateCredential({ id: created.id })
-          onDone(created)
+          finish(created)
         } catch (error) {
           setMessage({
             text: localizeCredentialError(error, t, 'Could not connect credential.'),
@@ -207,11 +249,11 @@ export function DeviceCredentialEditor({
         setCreatedCredential(created)
         setSecret('')
         if (useSettingsStore.getState().deviceCredentialsError) return
-        onDone(created)
+        finish(created)
         return
       }
       setSecret('')
-      onDone(createdCredential ? activeCredential : undefined)
+      finish(createdCredential ? activeCredential : undefined)
     } catch (error) {
       if (kind === 'oauth') setAdvancedOpen(true)
       setMessage({
@@ -230,7 +272,7 @@ export function DeviceCredentialEditor({
     try {
       await authenticateCredential({ id: activeCredential.id })
       if (createdCredential) {
-        onDone(activeCredential)
+        finish(activeCredential)
         return
       }
       setMessage({ text: t('Credential connected.'), tone: 'success' })

@@ -76,7 +76,11 @@ export function validateModuleImpactManifest(
     const interfacePaths = requireStringArray(module.interfacePaths, `${moduleId}.interfacePaths`, {
       nonEmpty: true
     })
-    const consumers = requireStringArray(module.consumerModules, `${moduleId}.consumerModules`)
+    // consumerModules is optional; absent means empty (no registered consumers).
+    const consumers =
+      module.consumerModules === undefined
+        ? []
+        : requireStringArray(module.consumerModules, `${moduleId}.consumerModules`)
     const overlays = requireStringArray(module.capabilityOverlays, `${moduleId}.capabilityOverlays`)
 
     for (const ownerPath of ownerPaths) {
@@ -126,6 +130,8 @@ export function validateModuleImpactManifest(
     const declaredTests = []
     const classifiedTests = new Set()
     for (const kind of moduleTestKinds) {
+      // consumer is optional; absent means no registered consumers (empty).
+      if (kind === 'consumer' && module.testFiles[kind] === undefined) continue
       const tests = requireStringArray(module.testFiles[kind], `${moduleId}.testFiles.${kind}`)
       for (const testFile of tests) {
         if (classifiedTests.has(testFile)) {
@@ -153,7 +159,7 @@ export function validateModuleImpactManifest(
 
     const nextVisiting = new Set(visiting).add(moduleId)
     const nextPath = [...path, moduleId]
-    for (const consumer of modules[moduleId].consumerModules) {
+    for (const consumer of modules[moduleId].consumerModules ?? []) {
       visitConsumers(consumer, nextPath, nextVisiting)
     }
     visited.add(moduleId)

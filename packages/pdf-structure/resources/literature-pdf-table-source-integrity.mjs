@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { nativeTableLayoutConflicts } from './literature-pdf-table-layout-conflicts.mjs'
+import { proveNativeFlattenedFraction } from './literature-pdf-native-table-boundary-ink.mjs'
+import { nativeFractionRowConflict } from './literature-pdf-native-fraction-row-conflict.mjs'
 // These checks establish contradictions, not a replacement grid. Preserve the
 // printed image and native owners when the available layout has two readings.
 const compact = (s) => s.replace(/\s/gu, '')
@@ -11,6 +13,77 @@ const box = (fonts) => [
   Math.max(...fonts.map((f) => f.rect[2])),
   Math.max(...fonts.map((f) => f.rect[3]))
 ]
+
+// A scientific value contributes a numeric record only with a complete normal
+// mantissa/base and one uniquely attached superscript exponent. This extends
+// the existing repeated-row contradiction without lowering its leaf count.
+function scientificRecordLines(fonts, inventory, h) {
+  const normal = fonts.filter((f) => f.height >= h * 0.8),
+    scripts = fonts.filter((f) => f.height < h * 0.8),
+    domain = box(fonts),
+    lines = []
+  if (
+    !scripts.length ||
+    fonts.some(
+      (f) =>
+        !Number.isFinite(f.height) ||
+        !Number.isFinite(f.baseline) ||
+        !rect(f.rect) ||
+        f.rect[2] <= f.rect[0] ||
+        f.rect[3] <= f.rect[1]
+    ) ||
+    normal.some((f) => Math.abs(f.height - h) > h * 0.02) ||
+    scripts.some((f) => f.height < h * 0.5) ||
+    inventory.some(
+      (f) =>
+        !fonts.includes(f) &&
+        f.text?.trim() &&
+        (!rect(f.rect) ||
+          f.rect[2] <= f.rect[0] ||
+          f.rect[3] <= f.rect[1] ||
+          (f.rect[0] < domain[2] &&
+            f.rect[2] > domain[0] &&
+            f.rect[1] < domain[3] &&
+            f.rect[3] > domain[1]))
+    )
+  )
+    return
+  for (const f of [...normal].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    const last = lines.at(-1)
+    if (last && Math.abs(last.baseline - f.baseline) < h * 0.02) last.fonts.push(f)
+    else lines.push({ baseline: f.baseline, fonts: [f], scripts: [], scientific: true })
+  }
+  if (lines.length < 2) return
+  for (const script of scripts) {
+    const owners = lines.filter(
+      (line) =>
+        line.baseline - script.baseline > h * 0.15 && line.baseline - script.baseline < h * 0.6
+    )
+    if (owners.length !== 1) return
+    owners[0].scripts.push(script)
+  }
+  for (const line of lines) {
+    const ordered = line.fonts.sort((a, b) => a.rect[0] - b.rect[0]),
+      exponent = line.scripts.sort((a, b) => a.rect[0] - b.rect[0])
+    if (
+      !/^[+−-]?\d+(?:[.,]\d+)?×10$/u.test(
+        ordered.map((f) => f.text.replace(/\s/gu, '')).join('')
+      ) ||
+      ordered.slice(1).some((f, i) => f.rect[0] - ordered[i].rect[2] > h * 0.5) ||
+      !exponent.length ||
+      !/^[+−-]?\d+$/u.test(exponent.map((f) => f.text.trim()).join('')) ||
+      Math.abs(exponent[0].rect[0] - ordered.at(-1).rect[2]) > h * 0.03 ||
+      exponent.some(
+        (f) =>
+          Math.abs(f.height - exponent[0].height) > h * 0.02 ||
+          Math.abs(f.baseline - exponent[0].baseline) > h * 0.02
+      ) ||
+      exponent.slice(1).some((f, i) => Math.abs(f.rect[0] - exponent[i].rect[2]) > h * 0.03)
+    )
+      return
+  }
+  return lines
+}
 
 export function nativeTableSourceConflicts(table, inventory, checkFinalCrop = false) {
   if (!table?.cells?.length || !table.grid?.length || !rect(table.cropRect)) return []
@@ -83,21 +156,24 @@ export function nativeTableSourceConflicts(table, inventory, checkFinalCrop = fa
       if (last && Math.abs(last.baseline - f.baseline) < h * 0.15) last.fonts.push(f)
       else lines.push({ baseline: f.baseline, fonts: [f] })
     }
+    const scientific = scientificRecordLines(fonts, inventory, h),
+      records = scientific ?? lines
     if (
-      lines.length < 2 ||
-      fonts.some((f) => f.height < h * 0.8) ||
-      lines.slice(1).some((line, i) => line.baseline - lines[i].baseline < h * 0.9) ||
-      lines.some((line) => {
-        const ordered = line.fonts.sort((a, b) => a.rect[0] - b.rect[0])
-        return (
-          !/^[+−-]?\d+(?:[.,]\d+)?%?[*∗]*$/u.test(ordered.map((f) => f.text.trim()).join('')) ||
-          ordered.slice(1).some((f, i) => f.rect[0] - ordered[i].rect[2] > h * 0.5)
-        )
-      })
+      records.length < 2 ||
+      (!scientific && fonts.some((f) => f.height < h * 0.8)) ||
+      records.slice(1).some((line, i) => line.baseline - records[i].baseline < h * 0.9) ||
+      (!scientific &&
+        records.some((line) => {
+          const ordered = line.fonts.sort((a, b) => a.rect[0] - b.rect[0])
+          return (
+            !/^[+−-]?\d+(?:[.,]\d+)?%?[*∗]*$/u.test(ordered.map((f) => f.text.trim()).join('')) ||
+            ordered.slice(1).some((f, i) => f.rect[0] - ordered[i].rect[2] > h * 0.5)
+          )
+        }))
     )
       continue
     const row = numericRows.get(cell.row) ?? []
-    row.push({ column: cell.column, baselines: lines.map((line) => line.baseline), h })
+    row.push({ column: cell.column, baselines: records.map((line) => line.baseline), h })
     numericRows.set(cell.row, row)
   }
   for (const row of numericRows.values())
@@ -425,7 +501,7 @@ export function reviewNativeTableSources(table, inventory) {
 
 // Run after measured source segments have been attached: a legitimate measured
 // split must not be mistaken for an unsupported partial native owner.
-export function reviewFinalNativeTableSources(table, inventory, rules) {
+export function reviewFinalNativeTableSources(table, inventory, rules, measuredRuns, context) {
   if (table.parts)
     return {
       ...table,
@@ -433,13 +509,17 @@ export function reviewFinalNativeTableSources(table, inventory, rules) {
         const checked = reviewFinalNativeTableSources(
           { ...part, cropRect: part.cropRect ?? table.cropRect },
           inventory,
-          rules
+          rules,
+          measuredRuns,
+          context
         )
         return checked.issues === part.issues ? part : { ...part, issues: checked.issues }
       })
     }
   return nativeTableSourceConflicts(table, inventory, true).length ||
-    nativeTableLayoutConflicts(table, inventory, rules).length
+    nativeTableLayoutConflicts(table, inventory, rules, measuredRuns, context).length ||
+    proveNativeFlattenedFraction(table, inventory, rules, context).length ||
+    nativeFractionRowConflict(table, inventory, rules, context)
     ? {
         ...table,
         issues: [...new Set([...(table.issues ?? []), 'native-table-structure-ambiguous'])],

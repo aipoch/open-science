@@ -139,7 +139,12 @@ export async function composeSettingsBootstrap({
       },
       process.platform
     )
-    if (binding.kind !== 'powershell' || !(await notebookNetworkSandbox.windowsProtectionReady()))
+    // Session setup only needs the configured Shell contract. Runtime verification belongs to
+    // protected execution; awaiting it here stalls every conversation when a probe is slow or fails.
+    if (
+      binding.kind !== 'powershell' ||
+      !(await notebookNetworkSandbox.windowsProtectionConfigured())
+    )
       return binding
     return Object.freeze({ kind: 'powershell', version: '7.6' })
   }
@@ -189,6 +194,11 @@ export async function composeSettingsBootstrap({
         if (!service) throw new Error('Settings are not ready.')
         return service.getNotebookNetwork()
       },
+      getFolderRestrictionEnabled: async () => {
+        const service = settingsServiceRef.current
+        if (!service) throw new Error('Settings are not ready.')
+        return service.getNotebookFolderRestrictionEnabled()
+      },
       getCaBundlePath: async () => {
         const service = settingsServiceRef.current
         if (!service) throw new Error('Settings are not ready.')
@@ -207,6 +217,10 @@ export async function composeSettingsBootstrap({
         runtime,
         reason,
         allowOnce,
+        projectId,
+        executionId,
+        commandFingerprint,
+        canResume,
         signal
       }) => {
         if (headless && !permissionApprovalPresence.isAvailable()) return 'unavailable'
@@ -216,6 +230,19 @@ export async function composeSettingsBootstrap({
           .requestAppPermission({
             sessionId,
             title: `Connect to ${hostname}?`,
+            ...(executionId && commandFingerprint && runtime === 'bash'
+              ? {
+                  networkApproval: {
+                    projectId,
+                    executionId,
+                    commandFingerprint,
+                    hostname,
+                    port: port ?? 443,
+                    runtime
+                  },
+                  canResume
+                }
+              : {}),
             rawInput: {
               notebookNetworkApproval: {
                 hostname,
@@ -293,6 +320,11 @@ export async function composeSettingsBootstrap({
       withMarketplaceImpactLock: (operation) => getSpecialistDomain().withReadLock(operation),
       withUserSkillRecoveryBarrier: (operation) =>
         specialistPackageRecovery.current?.(operation) ?? operation(),
+      withNotebookFolderPolicyChange: async (commit) => {
+        const lifecycle = notebookPolicyLifecycle.current
+        if (!lifecycle) throw new Error('Notebook policy lifecycle is not ready.')
+        await lifecycle.shutdownAll({ afterShutdown: commit })
+      },
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
       validatePackageMirror: async (settings) => {
         await resolveNotebookTrustBundle(settings.caBundle)

@@ -53,7 +53,7 @@ export function moduleRelationships(revision = 'HEAD', cwd = process.cwd()) {
     for (const consumer of consumers)
       add('dynamic-contract', owners.get(consumer), owners.get(target), consumer, target)
   for (const [id, module] of Object.entries(manifest.modules))
-    for (const consumer of module.consumerModules)
+    for (const consumer of module.consumerModules ?? [])
       add(usesReviewedBoundary(id, module) ? 'capability-routing' : 'test-routing', id, consumer)
   return {
     revision: sha,

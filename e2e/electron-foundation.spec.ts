@@ -1,8 +1,9 @@
+import { join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
-import { test } from './fixtures/electron-app'
+import { runWithCleanup, test } from './fixtures/electron-app'
 import { openRecentSession, sendPrompt } from './certification/helpers'
 import { homeNewProjectButton } from './fixtures/project'
 
@@ -11,7 +12,7 @@ const PROJECT_NAME = 'Electron E2E project'
 test('analyzes uploaded data in Python and reopens the saved research @pr-mainline-notebook', async ({
   app
 }, testInfo) => {
-  test.setTimeout(180_000)
+  test.setTimeout(process.platform === 'win32' ? 360_000 : 180_000)
   const prompt = 'Analyze the attached measurements and save a research report.'
   const pythonPath = execFileSync(
     process.platform === 'win32' ? 'python' : 'python3',
@@ -19,49 +20,98 @@ test('analyzes uploaded data in Python and reopens the saved research @pr-mainli
     { encoding: 'utf8' }
   ).trim()
   await app.completeOnboarding()
-  let page = await app.configureFakeAgent()
-  // Enable an existing interpreter; the journey never provisions environments or installs packages.
-  await page.evaluate(async (path) => {
-    await window.api.runtime.registerInterpreter('python', path)
-    const { python } = await window.api.runtime.listEnvironments()
-    const runtime = python.find((entry) => entry.envId === path || entry.interpreterPath === path)
-    if (!runtime) throw new Error('The research interpreter was not registered.')
-    await window.api.runtime.setEnvironmentEnabled('python', runtime.envId, true)
-  }, pythonPath)
-  await createProject(page, 'Measurements research')
-  await page.locator('input[type="file"][multiple]').setInputFiles({
-    name: 'measurements.csv',
-    mimeType: 'text/csv',
-    buffer: Buffer.from('sample,value\nA,2\nB,4\nC,6\n')
-  })
-  await expect(
-    page.getByRole('button', { name: 'Remove attachment measurements.csv' })
-  ).toBeVisible()
-  await sendPrompt(page, prompt, 'Research analysis complete.', 100_000)
-  await expect(page.getByRole('region', { name: 'Conversation' })).toContainText('Mean: 4.00')
-  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
-
-  const reviewResult = async (): Promise<void> => {
-    await page
-      .getByRole('region', { name: 'Conversation' })
-      .getByRole('button', { name: 'Preview generated file research-results.md', exact: true })
-      .click()
-    const preview = page.getByRole('tabpanel').filter({
-      has: page.getByRole('button', { name: 'Close preview of research-results.md' })
-    })
-    await expect(preview).toContainText('Samples: 3')
-    await expect(preview).toContainText('Mean: 4.00')
-    await page.screenshot({ path: testInfo.outputPath('research-results.png') })
-    await preview.getByRole('button', { name: 'Close preview of research-results.md' }).click()
+  const previousPath = process.env.PATH
+  // Interpreters and the fake agent use absolute executables; PATH only needs Windows tools.
+  // AppContainer grants inherited PATH roots recursively before the kernel can start.
+  if (process.platform === 'win32') {
+    process.env.PATH = [
+      join(process.env.SystemRoot!, 'System32'),
+      join(process.env.SystemRoot!, 'System32', 'Wbem'),
+      join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0')
+    ].join(';')
   }
-  await reviewResult()
-  page = await app.restart()
-  await openRecentSession(page, prompt)
-  await expect(page.getByRole('region', { name: 'Conversation' })).toContainText(
-    'Research analysis complete.'
+  let protectionAttempted = false
+  let page: Page
+  await runWithCleanup(
+    async () => {
+      page = await app.configureFakeAgent()
+      // Enable an existing interpreter; the journey never provisions environments or installs packages.
+      await page.evaluate(async (path) => {
+        await window.api.runtime.registerInterpreter('python', path)
+        const { python } = await window.api.runtime.listEnvironments()
+        const runtime = python.find(
+          (entry) => entry.envId === path || entry.interpreterPath === path
+        )
+        if (!runtime) throw new Error('The research interpreter was not registered.')
+        await window.api.runtime.setEnvironmentEnabled('python', runtime.envId, true)
+      }, pythonPath)
+      if (process.platform === 'win32') {
+        protectionAttempted = true
+        expect(
+          await page.evaluate(() => window.api.settings.installNotebookNetwork())
+        ).toMatchObject({
+          kind: 'ready'
+        })
+      }
+      await createProject(page, 'Measurements research')
+      await page.locator('input[type="file"][multiple]').setInputFiles({
+        name: 'measurements.csv',
+        mimeType: 'text/csv',
+        buffer: Buffer.from('sample,value\nA,2\nB,4\nC,6\n')
+      })
+      await expect(
+        page.getByRole('button', { name: 'Remove attachment measurements.csv' })
+      ).toBeVisible()
+      await sendPrompt(
+        page,
+        prompt,
+        'Research analysis complete.',
+        process.platform === 'win32' ? 180_000 : 100_000
+      )
+      await expect(page.getByRole('region', { name: 'Conversation' })).toContainText('Mean: 4.00')
+      await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
+
+      const reviewResult = async (): Promise<void> => {
+        await page
+          .getByRole('region', { name: 'Conversation' })
+          .getByRole('button', { name: 'Preview generated file research-results.md', exact: true })
+          .click()
+        const preview = page.getByRole('tabpanel').filter({
+          has: page.getByRole('button', { name: 'Close preview of research-results.md' })
+        })
+        await expect(preview).toContainText('Samples: 3')
+        await expect(preview).toContainText('Mean: 4.00')
+        await page.screenshot({ path: testInfo.outputPath('research-results.png') })
+        await preview.getByRole('button', { name: 'Close preview of research-results.md' }).click()
+      }
+      await reviewResult()
+      if (process.platform === 'win32') {
+        await testInfo.attach('research-before-restart', {
+          path: await app.captureMainLog('research-before-restart.log'),
+          contentType: 'text/plain'
+        })
+      }
+      page = await app.restart()
+      await openRecentSession(page, prompt)
+      await expect(page.getByRole('region', { name: 'Conversation' })).toContainText(
+        'Research analysis complete.'
+      )
+      await reviewResult()
+      await sendPrompt(page, 'Continue this research.', 'Deterministic reply:')
+    },
+    async () => {
+      try {
+        if (protectionAttempted) {
+          expect(
+            await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())
+          ).toMatchObject({ kind: 'setupRequired' })
+        }
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH
+        else process.env.PATH = previousPath
+      }
+    }
   )
-  await reviewResult()
-  await sendPrompt(page, 'Continue this research.', 'Deterministic reply:')
 })
 
 test('localizes CSL validation failures across the desktop bridge', async ({ app }, testInfo) => {

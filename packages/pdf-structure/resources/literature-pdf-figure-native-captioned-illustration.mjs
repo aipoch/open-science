@@ -7689,3 +7689,53 @@ export function nativeCaptionedOpenCycle(page, caption, captions, tables, tokens
     return
   }
 }
+// A failed upper caption may have borrowed a separately captioned lower raster.
+// Recover only an existing complete vector-chart proof above that caption, after
+// the lower crop has a distinct exact owner. Otherwise retain the no-crop veto.
+export function nativeUpperVectorAfterRasterConflict(
+  page,
+  figure,
+  lower,
+  figures,
+  captions,
+  tables,
+  rules,
+  context
+) {
+  if (
+    !Array.isArray(figure.rect) ||
+    figure.rect.length !== 4 ||
+    !Array.isArray(lower?.rect) ||
+    lower.rect.length !== 4 ||
+    !figure.rect.every((v, n) => Number.isFinite(v) && v === lower.rect[n]) ||
+    lower.caption === figure.caption ||
+    figure.rect[1] < figure.caption.rect[3] ||
+    lower.caption.rect[1] < figure.rect[3]
+  )
+    return
+  const upper = nativeCaptionedVectorBarChart(
+    page,
+    figure.caption,
+    captions.filter((c) => c.page === page.pageNumber),
+    tables,
+    rules,
+    context
+  )
+  if (
+    !upper?.rect ||
+    upper.rect[3] >= figure.caption.rect[1] ||
+    tables.some((table) => intersection(table, upper.rect) > 0) ||
+    captions.some(
+      (other) =>
+        other !== figure.caption &&
+        other.page === page.pageNumber &&
+        intersection(other.rect, upper.rect) > 0
+    ) ||
+    figures.some(
+      (other) =>
+        other.caption !== figure.caption && other.rect && intersection(other.rect, upper.rect) > 0
+    )
+  )
+    return
+  return upper
+}

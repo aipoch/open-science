@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream, type Stats } from 'node:fs'
+import { createReadStream, createWriteStream, type BigIntStats } from 'node:fs'
 import { open, rm, type FileHandle } from 'node:fs/promises'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
@@ -13,8 +13,8 @@ type FileDigest = {
 }
 
 type FileObservation = {
-  device: number
-  inode: number
+  device: string
+  inode: string
   sizeBytes: number
   modifiedAtMs: number
   changedAtMs: number
@@ -31,12 +31,13 @@ type FilePage = {
   truncated: boolean
 }
 
-const observeFile = (stats: Stats): FileObservation => ({
-  device: stats.dev,
-  inode: stats.ino,
-  sizeBytes: stats.size,
-  modifiedAtMs: stats.mtimeMs,
-  changedAtMs: stats.ctimeMs
+// Windows file identifiers can exceed the safe integer range; never round identity through Number.
+const observeFile = (stats: BigIntStats): FileObservation => ({
+  device: stats.dev.toString(),
+  inode: stats.ino.toString(),
+  sizeBytes: Number(stats.size),
+  modifiedAtMs: Number(stats.mtimeNs) / 1_000_000,
+  changedAtMs: Number(stats.ctimeNs) / 1_000_000
 })
 
 const sameFileObservation = (left: FileObservation, right: FileObservation): boolean =>
@@ -268,7 +269,7 @@ const readFilePageAndDigest = async (
 
   const sourceHandle = await open(path, 'r')
   try {
-    const observation = observeFile(await sourceHandle.stat())
+    const observation = observeFile(await sourceHandle.stat({ bigint: true }))
     for await (const chunk of readOpenFileChunks(sourceHandle, signal)) {
       const chunkStart = sizeBytes
       sizeBytes += chunk.byteLength
@@ -290,7 +291,7 @@ const readFilePageAndDigest = async (
       }
     }
 
-    const completedObservation = observeFile(await sourceHandle.stat())
+    const completedObservation = observeFile(await sourceHandle.stat({ bigint: true }))
     assertFileObservation(
       completedObservation,
       observation,
@@ -325,7 +326,7 @@ const readVerifiedFilePage = async (
   const sourceHandle = await open(path, 'r')
   try {
     assertFileObservation(
-      observeFile(await sourceHandle.stat()),
+      observeFile(await sourceHandle.stat({ bigint: true })),
       observation,
       'Artifact file changed since verification.'
     )
@@ -345,7 +346,7 @@ const readVerifiedFilePage = async (
       returnedBytes += read.bytesRead
     }
     assertFileObservation(
-      observeFile(await sourceHandle.stat()),
+      observeFile(await sourceHandle.stat({ bigint: true })),
       observation,
       'Artifact file changed while reading a verified page.'
     )
@@ -381,6 +382,8 @@ export {
   digestFileWithinBudget,
   FileObservationMismatchError,
   inlineDecodedSize,
+  observeFile,
+  sameFileObservation,
   readFilePageAndDigest,
   readVerifiedFilePage,
   writeInlineWithinBudget

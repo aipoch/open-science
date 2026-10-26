@@ -1,4 +1,5 @@
 import type { ToolContext, ToolDescriptor } from '@aipoch/connector-core'
+import { DEPMAP_TOOLS } from './cancer-models-depmap'
 
 const CBIOPORTAL = 'https://www.cbioportal.org/api'
 // cBioPortal exposes no total-count in the JSON body (only in a header we can't read), so collection
@@ -378,6 +379,7 @@ function keepSmallestById<T extends CBioCollectionRow>(
 // clinical-attribute lookups. Profile/sample-list ids are never assumed — always resolved from the
 // study's own /molecular-profiles and /sample-lists collections.
 export const CANCER_MODELS_TOOLS: ToolDescriptor[] = [
+  ...DEPMAP_TOOLS,
   {
     id: 'cbioportal_list_studies',
     connector: 'cancer-models',

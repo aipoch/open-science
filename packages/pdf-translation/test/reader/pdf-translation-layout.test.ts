@@ -10,6 +10,533 @@ import {
   type PdfLayoutTextItem
 } from '../../src/reader/layout.js'
 
+function extensibleFunctionPage(fault: string): PdfLayoutPage {
+  const native = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    font = 'Body',
+    size = 10
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height: size,
+    dir: 'ltr',
+    fontName: font,
+    fontAscent: font === 'Extension' ? 0.04 : 0.7,
+    fontDescent: font === 'Extension' ? -0.6 : -0.2,
+    fontVertical: false,
+    transform: [size, 0, 0, size, x, y],
+    hasEOL: false
+  })
+  const items = [
+    native('', 100, 180, 7, 'Extension'),
+    native('', 100, 162, 7, 'Extension'),
+    native('exp', 107, 160, 15),
+    native('', 122, 180, 9, 'Extension'),
+    native(' ', 122, 162, 14, 'Extension'),
+    native('X', 136, 170, 14, 'Extension'),
+    native('τ', 139, 147, 5, 'Body', 7),
+    native('∈', 144, 147, 7, 'Body', 7),
+    native('A', 151, 147, 5, 'Body', 7),
+    native('∥∆z∥', 160, 160, 30),
+    native('', 195, 180, 9, 'Extension'),
+    native('', 195, 162, 9, 'Extension'),
+    native('−1', 210, 160, 18),
+    native('', 232, 180, 7, 'Extension'),
+    native('', 232, 162, 7, 'Extension'),
+    native('This independent explanatory sentence remains translatable.', 60, 100, 280)
+  ]
+  if (fault === 'missing pair') items[14].str = ''
+  if (fault === 'different delimiter font') items[10].fontName = 'Other'
+  if (fault === 'foreign prose') items[9].str = 'ordinary explanation'
+  if (fault === 'missing font extent') delete items[6].fontAscent
+  if (fault === 'ordinary word') items[2].str = 'experience'
+  if (fault === 'detached function') items[2].transform[4] -= 12
+  return { page: 1, width: 600, height: 800, rotation: 0, items }
+}
+
+test.each([
+  'complete',
+  'missing pair',
+  'different delimiter font',
+  'foreign prose',
+  'missing font extent',
+  'ordinary word',
+  'detached function'
+])(
+  'protects a whole named function only inside a complete native extensible display frame: %s',
+  (fault) => {
+    const page = extensibleFunctionPage(fault),
+      saved = structuredClone(page),
+      result = extractDocument({ pages: [page] }),
+      owner = result.units.find((u) => u.items.includes('1:2'))
+    expect(owner?.sourceOnly).toBe(fault === 'complete' ? true : undefined)
+    expect(result.units.find((u) => u.items.includes('1:15'))?.sourceOnly).toBeUndefined()
+    expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+      page.items.flatMap((i, n) => (i.str.trim() ? ['1:' + n] : [])).sort()
+    )
+    expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+      page.items
+        .filter((i) => i.str.trim())
+        .map((i) => i.str)
+        .sort()
+    )
+    expect(page).toEqual(saved)
+  }
+)
+
+function nativeSupremumPage(shape: string): PdfLayoutPage {
+  const native = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    height = 11
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height,
+    dir: 'ltr',
+    fontName: height === 11 ? 'Math' : 'Limit',
+    fontAscent: 0.7,
+    fontDescent: -0.2,
+    transform: [height, 0, 0, height, x, y],
+    hasEOL: false
+  })
+  const limit =
+    shape === 'whole limit'
+      ? [native('τ∈A', 265, 589.6, 26, 8)]
+      : [
+          native('τ', 265, 589.6, 6, 8),
+          native('∈', 271, 589.6, 8, 8),
+          native('A', 279, 589.6, 12, 8)
+        ]
+  const items = [
+    native('=', 242, 600, 8),
+    native('sup', 270, 600, 16),
+    ...limit,
+    native('|x|', 305, 600, 16),
+    native('This independent explanation remains translatable.', 70, 550, 270)
+  ]
+  if (shape === 'ordinary prose') items[0].str = 'Note'
+  if (shape === 'figure label') items.at(-2)!.str = 'Panel'
+  if (shape === 'no limit') for (const item of limit) item.str = ''
+  if (shape === 'same baseline') for (const item of limit) item.transform[5] = 600
+  if (shape === 'off center') for (const item of limit) item.transform[4] += 8
+  if (shape === 'full size limit')
+    for (const item of limit) {
+      item.height = 11
+      item.transform[0] = item.transform[3] = 11
+    }
+  if (shape === 'operator font absent') delete items[1].fontName
+  if (shape === 'operator metrics absent') delete items[1].fontAscent
+  if (shape === 'limit metrics absent') delete limit[0].fontDescent
+  if (shape === 'operand metrics absent') delete items.at(-2)!.fontDescent
+  if (shape === 'prose limit') limit[0].str = 'ordinary words'
+  if (shape === 'missing relation') items[0].str = ''
+  if (shape === 'foreign text') items.push(native('note', 265, 592, 20, 8))
+  if (shape === 'intervening source') items.splice(2, 0, native('Other', 440, 600, 40))
+  if (shape.startsWith('outside '))
+    for (const part of items.slice(0, -1)) {
+      if (shape === 'outside top') part.transform[5] += 300
+      if (shape === 'outside bottom') part.transform[5] -= 700
+      if (shape === 'outside left') part.transform[4] -= 400
+      if (shape === 'outside right') part.transform[4] += 400
+    }
+  if (shape.startsWith('closed ')) {
+    items[0] = native(') =', 230, 600, 20)
+    items.unshift(native('A(τ', 210, 600, 20))
+    if (shape === 'closed unbalanced') items[0].str = 'A((τ'
+    if (shape === 'closed mismatched') items[0].str = 'A[τ'
+    if (shape === 'closed no prefix') items[0].str = ''
+    if (shape === 'closed prose prefix') items[0].str = 'This ordinary explanation ('
+    if (shape === 'closed nonterminal') items[1].str = ') = x'
+    if (shape === 'closed line break') items[1].hasEOL = true
+    if (shape === 'closed unknown font') delete items[0].fontAscent
+    if (shape === 'closed prefix outside') items[0].transform[4] = -10
+    if (shape === 'closed foreign source') items.splice(1, 0, native('Note', 450, 600, 30))
+    if (shape === 'closed cross-line prefix') items[0].hasEOL = true
+    if (shape === 'closed empty call') items[0].str = '('
+    if (shape === 'closed duplicate prefix') items.splice(1, 0, structuredClone(items[0]))
+    if (shape === 'closed gap whitespace' || shape === 'closed gap line break') {
+      const gap = native('', 260, 600, 0)
+      gap.hasEOL = shape === 'closed gap line break'
+      items.splice(2, 0, gap)
+    }
+    if (shape === 'closed whitespace' || shape === 'closed whitespace break') {
+      const gap = native('', 230, 600, 0)
+      gap.hasEOL = shape === 'closed whitespace break'
+      items.splice(1, 0, gap)
+    }
+  }
+  return { page: 1, width: 600, height: 800, rotation: 0, items }
+}
+
+test.each([
+  'split limit',
+  'whole limit',
+  'ordinary prose',
+  'figure label',
+  'no limit',
+  'same baseline',
+  'off center',
+  'full size limit',
+  'operator font absent',
+  'operator metrics absent',
+  'limit metrics absent',
+  'operand metrics absent',
+  'prose limit',
+  'missing relation',
+  'foreign text',
+  'intervening source',
+  'outside top',
+  'outside bottom',
+  'outside left',
+  'outside right',
+  'closed relation',
+  'closed unbalanced',
+  'closed mismatched',
+  'closed no prefix',
+  'closed prose prefix',
+  'closed nonterminal',
+  'closed line break',
+  'closed unknown font',
+  'closed prefix outside',
+  'closed foreign source',
+  'closed cross-line prefix',
+  'closed whitespace',
+  'closed whitespace break',
+  'closed empty call',
+  'closed duplicate prefix',
+  'closed gap whitespace',
+  'closed gap line break'
+])(
+  'protects an independent native supremum only with complete lower-limit evidence: %s',
+  (shape) => {
+    const input = nativeSupremumPage(shape),
+      before = structuredClone(input),
+      result = extractDocument({ pages: [input] }),
+      owner = result.units.find((u) =>
+        u.items.includes('1:' + input.items.findIndex((i) => i.str === 'sup'))
+      )!
+    expect(owner).toBeDefined()
+    expect(!!owner.sourceOnly).toBe(
+      [
+        'split limit',
+        'whole limit',
+        'closed relation',
+        'closed whitespace',
+        'closed gap whitespace'
+      ].includes(shape)
+    )
+    expect(result.units.find((u) => u.source.startsWith('This independent'))?.sourceOnly).not.toBe(
+      true
+    )
+    expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+      input.items.flatMap((item, i) => (item.str.trim() ? ['1:' + i] : [])).sort()
+    )
+    expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+      input.items
+        .filter((item) => item.str.trim())
+        .map((item) => item.str)
+        .sort()
+    )
+    expect(input).toEqual(before)
+  }
+)
+
+function nativeInfimumDefinitionPage(shape: string): PdfLayoutPage {
+  const page = nativeSupremumPage('closed relation'),
+    template = page.items[0]
+  const native = (
+    str: string,
+    x: number,
+    width: number,
+    height = 11,
+    y = 600
+  ): PdfLayoutTextItem => ({
+    ...template,
+    str,
+    width,
+    height,
+    transform: [height, 0, 0, height, x, y]
+  })
+  page.items.splice(
+    0,
+    2,
+    native('Q', 210, 6),
+    native('aux', 216, 10, 8, 598.2),
+    native('(', 227, 4),
+    native('τ', 231, 6),
+    native(') :=', 237, 20)
+  )
+  const items = page.items
+  items[5].str = 'inf'
+  items[9].str = 'F(τ).'
+  if (shape === 'ordinary operator') items[5].str = 'Note'
+  if (shape === 'ordinary prefix') items[0].str = 'Ordinary'
+  if (shape === 'full size label') {
+    items[1].height = 11
+    items[1].transform[0] = items[1].transform[3] = 11
+  }
+  if (shape === 'baseline label') items[1].transform[5] = 600
+  if (shape === 'detached label') items[1].transform[4] += 3
+  if (shape === 'long label') items[1].str = 'ordinary'
+  if (shape === 'nonterminal definition') items[4].str = ') := z'
+  if (shape === 'ordinary equality') items[4].str = ') ='
+  if (shape === 'unbalanced prefix') items[2].str = '['
+  if (shape === 'prefix break') items[3].hasEOL = true
+  if (shape === 'unknown prefix metrics') delete items[1].fontAscent
+  if (shape === 'unknown lower metrics') delete items[7].fontDescent
+  if (shape === 'unknown operand metrics') delete items[9].fontAscent
+  if (shape === 'operator shear') items[5].transform[1] = 0.1
+  if (shape === 'operand prose') items[9].str = 'Caption'
+  if (shape === 'unbalanced operand') items[9].str = 'F[τ).'
+  if (shape === 'lower prose') items[7].str = 'ordinary'
+  if (shape === 'closed lower call') items[8].str = 'A(σ)'
+  if (shape === 'unbalanced lower open') items[8].str = 'A[σ)'
+  if (shape === 'unbalanced lower close') items[8].str = 'A(σ;'
+  if (shape === 'off center lower') for (const item of items.slice(6, 9)) item.transform[4] += 5
+  if (shape === 'same baseline lower') for (const item of items.slice(6, 9)) item.transform[5] = 600
+  if (shape === 'foreign prefix') items.push(native('note', 225, 20))
+  if (shape === 'foreign operand') items.push(native('note', 310, 20))
+  if (shape === 'foreign lower') items.push(native('note', 270, 20, 8, 592))
+  if (shape === 'intervening source') items.splice(6, 0, native('Other', 450, 40))
+  if (shape === 'duplicate prefix') items.splice(1, 0, structuredClone(items[0]))
+  if (shape === 'outside page') items[0].transform[4] = -1
+  if (shape === 'native lower break')
+    items.splice(6, 0, { ...native('', 0, 0, 0, 0), transform: [0, 0, 0, 0, 0, 0], hasEOL: true })
+  if (shape === 'internal operand break') items[9].hasEOL = true
+  return page
+}
+
+test.each([
+  'complete definition',
+  'native lower break',
+  'ordinary operator',
+  'ordinary prefix',
+  'full size label',
+  'baseline label',
+  'detached label',
+  'long label',
+  'nonterminal definition',
+  'ordinary equality',
+  'unbalanced prefix',
+  'prefix break',
+  'unknown prefix metrics',
+  'unknown lower metrics',
+  'unknown operand metrics',
+  'operator shear',
+  'operand prose',
+  'unbalanced operand',
+  'lower prose',
+  'closed lower call',
+  'unbalanced lower open',
+  'unbalanced lower close',
+  'off center lower',
+  'same baseline lower',
+  'foreign prefix',
+  'foreign operand',
+  'foreign lower',
+  'intervening source',
+  'duplicate prefix',
+  'outside page',
+  'internal operand break'
+])('protects a native infimum definition only with a closed subscripted function: %s', (shape) => {
+  const page = nativeInfimumDefinitionPage(shape),
+    before = structuredClone(page),
+    result = extractDocument({ pages: [page] }),
+    key = '1:' + page.items.findIndex((i) => i.str === 'inf' || i.str === 'Note'),
+    target = result.units.find((u) => u.items.includes(key))!
+  expect(target).toBeDefined()
+  expect(!!target.sourceOnly).toBe(
+    ['complete definition', 'native lower break', 'closed lower call'].includes(shape)
+  )
+  const explanation = result.units.find(
+    (u) => u.source === 'This independent explanation remains translatable.'
+  )
+  expect(explanation).toBeDefined()
+  expect(explanation?.sourceOnly).toBeUndefined()
+  expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+    page.items.flatMap((i, at) => (i.str.trim() ? ['1:' + at] : [])).sort()
+  )
+  expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+    page.items
+      .filter((i) => i.str.trim())
+      .map((i) => i.str)
+      .sort()
+  )
+  expect(page).toEqual(before)
+})
+
+function nativeCompoundLimitPage(shape: string): PdfLayoutPage {
+  const native = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    height = 11
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height,
+    dir: 'ltr',
+    fontName: height === 11 ? 'Math' : 'Limit',
+    fontAscent: 0.7,
+    fontDescent: -0.2,
+    transform: [height, 0, 0, height, x, y],
+    hasEOL: false
+  })
+  const items = [
+    native('lim', 200, 600, 15.15),
+    native('ε', 199.27, 593.05, 3.91, 8),
+    native('→', 203.18, 593.05, 8.47, 8),
+    native('0', 211.65, 593.05, 4.23, 8),
+    native('sup', 228.02, 600, 16.42),
+    native('0', 217.7, 590.61, 4.23, 8),
+    native('≤', 221.93, 590.61, 6.59, 8),
+    native('τ', 228.52, 590.61, 3.06, 8),
+    native('≤', 231.58, 590.61, 6.59, 8),
+    native('A', 238.17, 590.61, 4.93, 8),
+    native('−', 244.27, 590.61, 6.59, 8),
+    native('ε', 250.86, 590.61, 3.91, 8),
+    native('|f(τ)| = 0.', 254.77, 600, 60),
+    native('This independent explanation remains translatable.', 70, 550, 270)
+  ]
+  for (const indexes of [
+    [1, 2, 3],
+    [5, 6, 7, 8, 9],
+    [10, 11]
+  ])
+    for (let at = 1; at < indexes.length; at++) {
+      const previous = items[indexes[at - 1]],
+        current = items[indexes[at]]
+      current.transform[4] = previous.transform[4] + previous.width
+    }
+  if (shape === 'ordinary first word') items[0].str = 'Note'
+  if (shape === 'ordinary second word') items[4].str = 'and'
+  if (shape === 'prose operand') items[12].str = 'Some normal explanation'
+  if (shape === 'unclosed operand') items[12].str = '|f(τ = 0.'
+  if (shape === 'missing operand relation') items[12].str = '|f(τ)|'
+  if (shape === 'missing lower arrow') items[2].str = '+'
+  if (shape === 'missing lower relation') items[6].str = items[8].str = '+'
+  if (shape === 'ordinary lower') items[7].str = 'ordinary'
+  if (shape === 'off center') items[1].transform[4] -= 10
+  if (shape === 'reversed lower sources')
+    [items[1].transform[4], items[3].transform[4]] = [211, 199]
+  if (shape === 'same baseline') for (const i of [1, 2, 3]) items[i].transform[5] = 600
+  if (shape === 'operator font mismatch') items[4].fontName = 'Other'
+  if (shape === 'operator metrics absent') delete items[0].fontAscent
+  if (shape === 'lower metrics absent') delete items[7].fontDescent
+  if (shape === 'operand metrics absent') delete items[12].fontDescent
+  if (shape === 'cross-line packet') items[2].hasEOL = true
+  if (shape === 'foreign source') items.push(native('note', 220, 596, 20, 8))
+  if (shape === 'far unknown source') {
+    const note = native('note', 450, 400, 20)
+    delete note.fontAscent
+    items.push(note)
+  }
+  if (shape === 'duplicate source') items.splice(3, 0, structuredClone(items[2]))
+  if (shape === 'unowned interleaved source') items.splice(3, 0, native('Other', 450, 400, 30))
+  if (shape === 'gap whitespace' || shape === 'gap empty break' || shape === 'gap space break') {
+    const gap = native(shape === 'gap space break' ? ' ' : '', 218, 593, 0)
+    gap.hasEOL = shape !== 'gap whitespace'
+    items.splice(2, 0, gap)
+  }
+  if (shape.startsWith('native baseline breaks') || shape.startsWith('invalid transition ')) {
+    for (const index of [12, 5, 1]) {
+      const gap: PdfLayoutTextItem = {
+        str: '',
+        width: 0,
+        height: 0,
+        dir: 'ltr',
+        transform: [0, 0, 0, 0, 0, 0],
+        hasEOL: true
+      }
+      if (shape === 'invalid transition width') gap.width = 1
+      if (shape === 'invalid transition height') gap.height = 1
+      if (shape === 'invalid transition transform') gap.transform[4] = 1
+      if (shape === 'invalid transition space') gap.str = ' '
+      items.splice(index, 0, gap)
+    }
+  }
+  if (shape.startsWith('outside '))
+    for (const part of items.slice(0, -1)) {
+      if (shape === 'outside top') part.transform[5] += 300
+      if (shape === 'outside bottom') part.transform[5] -= 700
+      if (shape === 'outside left') part.transform[4] -= 400
+      if (shape === 'outside right') part.transform[4] += 400
+    }
+  return { page: 1, width: 600, height: 800, rotation: 0, items }
+}
+
+test.each([
+  'complete compound',
+  'gap whitespace',
+  'native baseline breaks',
+  'ordinary first word',
+  'ordinary second word',
+  'prose operand',
+  'unclosed operand',
+  'missing operand relation',
+  'missing lower arrow',
+  'missing lower relation',
+  'ordinary lower',
+  'off center',
+  'reversed lower sources',
+  'same baseline',
+  'operator font mismatch',
+  'operator metrics absent',
+  'lower metrics absent',
+  'operand metrics absent',
+  'cross-line packet',
+  'foreign source',
+  'far unknown source',
+  'duplicate source',
+  'unowned interleaved source',
+  'gap empty break',
+  'gap space break',
+  'invalid transition width',
+  'invalid transition height',
+  'invalid transition transform',
+  'invalid transition space',
+  'outside top',
+  'outside bottom',
+  'outside left',
+  'outside right'
+])(
+  'protects a whole native compound limit without splitting the shared lower owner: %s',
+  (shape) => {
+    const input = nativeCompoundLimitPage(shape),
+      before = structuredClone(input),
+      result = extractDocument({ pages: [input] }),
+      positive = ['complete compound', 'gap whitespace', 'native baseline breaks'].includes(shape)
+    for (const word of ['lim', 'sup']) {
+      const index = input.items.findIndex((item) => item.str === word)
+      if (index >= 0) {
+        const owner = result.units.find((u) => u.items.includes('1:' + index))!
+        if (owner.source === word) expect(!!owner.sourceOnly).toBe(positive)
+        else expect(positive).toBe(false)
+      }
+    }
+    expect(result.units.find((u) => u.source.startsWith('This independent'))?.sourceOnly).not.toBe(
+      true
+    )
+    expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+      input.items.flatMap((item, i) => (item.str.trim() ? ['1:' + i] : [])).sort()
+    )
+    expect(result.units.flatMap((u) => u.originalStrings).sort()).toEqual(
+      input.items
+        .filter((item) => item.str.trim())
+        .map((item) => item.str)
+        .sort()
+    )
+    expect(input).toEqual(before)
+  }
+)
+
 test.each([2, 3])(
   'keeps body after %i native contents entries translatable until the actual bibliography',
   (entryCount) => {
@@ -79,10 +606,742 @@ const nativeProseItem = (...args: Parameters<typeof item>) => ({
   fontDescent: 0
 })
 
+test.each([
+  'complete',
+  'missing heading',
+  'unknown row metrics',
+  'unpaired source',
+  'wrong counter',
+  'counter near body',
+  'missing adjacent counter'
+])('requires a complete native contents continuation before releasing body: %s', (fault) => {
+  const native = (...args: Parameters<typeof item>) => ({
+      ...nativeProseItem(...args),
+      fontName: 'Contents',
+      fontVertical: false
+    }),
+    counter = (number: number) => ({
+      ...native(String(number), 550, 35, 10, 11),
+      fontName: 'Counter',
+      fontAscent: 0,
+      fontDescent: 0
+    }),
+    previous = [
+      native('CONTENTS', 220, 530, 100),
+      ...Array.from({ length: 8 }, (_, n) => [
+        native('Section Alpha', 60, 550 + 25 * n, 180),
+        native('3', 540, 550 + 25 * n, 20)
+      ]).flat()
+    ],
+    continued = [
+      counter(2),
+      ...Array.from({ length: 28 }, (_, n) => [
+        native(n === 27 ? 'References' : 'Section Beta', 60, 60 + 24.5 * n, 180),
+        native(n === 27 ? '4' : '3', 540, 60 + 24.5 * n, 20)
+      ]).flat()
+    ],
+    body = [
+      counter(3),
+      native('Introduction', 60, 90, 160, 12),
+      native(
+        'This independent explanatory paragraph remains available for translation after the complete contents list.',
+        60,
+        125,
+        450
+      ),
+      native('x = y + z', 100, 180, 80)
+    ],
+    pages = [
+      page(previous, 1),
+      page(continued, 2),
+      page(body, 3),
+      page(
+        [
+          native('References', 60, 90, 120, 12),
+          native('[1] A. Author. A complete synthetic journal study.', 60, 125, 400)
+        ],
+        4
+      )
+    ]
+  if (fault === 'missing heading') previous[0].str = 'Overview'
+  if (fault === 'unknown row metrics') delete continued[1].fontAscent
+  if (fault === 'unpaired source') continued.push(native('Independent source', 300, 400, 90))
+  if (fault === 'wrong counter') continued[0].str = '3'
+  if (fault === 'counter near body') continued[0].transform[5] = 750
+  if (fault === 'missing adjacent counter') body[0].str = ''
+  const before = structuredClone(pages),
+    result = extractDocument({ pages })
+  expect(
+    !!result.units.find((unit) => unit.source.startsWith('This independent explanatory'))
+      ?.sourceOnly
+  ).toBe(fault !== 'complete')
+  expect(result.units.find((unit) => unit.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+  expect(result.units.find((unit) => unit.source === 'x = y + z')?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages
+      .flatMap((p) => p.items.flatMap((entry, n) => (entry.str.trim() ? [`${p.page}:${n}`] : [])))
+      .sort()
+  )
+  expect(pages).toEqual(before)
+})
+
+test.each([
+  ['figure', 'complete'],
+  ['table', 'complete'],
+  ...['missing footer', 'unknown metrics', 'foreign ink', 'mathematical text', 'unclosed text'].map(
+    (fault) => ['figure', fault]
+  ),
+  ['table', 'caption continuation'],
+  ['table', 'missing second row']
+])('restores only a closed native plain supplementary caption: %s / %s', (kind, fault) => {
+  const native = (text: string, x: number, y: number, width: number, font = 'Caption') => ({
+      ...nativeProseItem(text, x, y, width, 10, false),
+      fontName: font
+    }),
+    footer = (n: number) => native(String(n), 297, 760, 6, 'Footer'),
+    table = kind === 'table',
+    parts = [
+      native(`Extended Data ${table ? 'Table' : 'Fig.'} 1`, 60, 620, 110, 'Bold'),
+      native('Independent views across groups.', table ? 176 : 184, 620, 200, 'Bold'),
+      native('These panels show', table ? 384 : 392, 620, table ? 136 : 128),
+      ...(!table
+        ? [
+            native('independent ordinary observations in separate panels.', 60, 632, 460),
+            native('All participants remain included.', 60, 644, 220)
+          ]
+        : [
+            ...['Number', 'Category', 'Measure', 'Count'].map((text, n) =>
+              native(text, 60 + n * 130, 645, 55, 'Header')
+            ),
+            ...[1, 2].flatMap((n) =>
+              [String(n), 'Group', 'Signal', '20'].map((text, column) =>
+                native(text, 60 + column * 130, 645 + n * 14, 40, 'Header')
+              )
+            )
+          ]),
+      footer(4)
+    ],
+    pages = [
+      page(
+        [
+          native('References', 60, 100, 120),
+          native('[1] A. Author. An independent synthetic study.', 60, 125, 350),
+          footer(1)
+        ],
+        1
+      ),
+      page([footer(2)], 2),
+      page([footer(3)], 3),
+      page(parts, 4)
+    ]
+  if (table) parts[2].str = 'These panels show ordinary results.'
+  if (fault === 'missing footer') parts.at(-1)!.str = ''
+  if (fault === 'unknown metrics') delete parts[0].fontAscent
+  if (fault === 'foreign ink') parts.splice(0, 0, native('Foreign', 80, 625, 30))
+  if (fault === 'mathematical text') parts[4].str += ' α'
+  if (fault === 'unclosed text') parts[4].str = parts[4].str.replace('.', '')
+  if (fault === 'caption continuation') parts[3].str = 'The caption continues with ordinary prose.'
+  if (fault === 'missing second row') parts[11].str = '3'
+  const result = extractDocument(document(pages)),
+    label = result.units.find((unit) => unit.source.startsWith('Extended Data '))
+  expect(label).toBeDefined()
+  expect(!!label!.sourceOnly).toBe(fault !== 'complete')
+  if (fault === 'complete') expect(label!.preserve).toBeUndefined()
+  if (fault === 'complete' && !table) {
+    expect(label!.source).toContain('Extended Data Fig. 1 Independent views across groups.')
+    expect(label!.source).toContain('These panels show independent ordinary observations')
+    expect(label!.items).toHaveLength(5)
+  }
+  expect(result.units.find((unit) => unit.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.flatMap((i, n) => (i.str.trim() ? [`${p.page}:${n}`] : []))).sort()
+  )
+})
+
+test.each([
+  'complete',
+  'unknown vertical style',
+  'unknown foreign metrics',
+  'foreign shear',
+  'foreign overlap',
+  'broken final word',
+  'unclosed caption'
+])('restores only an independent whole caption prefix with protected mathematics: %s', (fault) => {
+  const native = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      font = 'Caption',
+      size = 10
+    ) => ({
+      ...nativeProseItem(text, x, y, width, size, false),
+      fontName: font,
+      fontVertical: false
+    }),
+    footer = (number: number) => native(String(number), 297, 760, 6, 'Footer'),
+    foreign = {
+      ...native('Independent axis', 20, 100, 80, 'Axis'),
+      transform: [0, 10, -10, 0, 20, 700]
+    },
+    parts = [
+      foreign,
+      native('Extended Data Fig. 1', 60, 620, 110, 'Bold'),
+      native('Independent views. a', 184, 620, 120, 'Bold'),
+      native('Ordinary observations and', 312, 620, 190),
+      native('The protected relation', 60, 632, 140),
+      native('α = β + γ', 210, 634, 80, 'Math', 8),
+      native('All participants remain included.', 60, 644, 220),
+      footer(4)
+    ],
+    pages = [
+      page(
+        [
+          native('References', 60, 100, 120),
+          native('[1] A. Author. A synthetic journal study.', 60, 125, 350),
+          footer(1)
+        ],
+        1
+      ),
+      page([footer(2)], 2),
+      page([footer(3)], 3),
+      page(parts, 4)
+    ]
+  if (fault === 'unknown vertical style') delete parts[2].fontVertical
+  if (fault === 'unknown foreign metrics') delete foreign.fontAscent
+  if (fault === 'foreign shear') foreign.transform[3] = 0.1
+  if (fault === 'foreign overlap') {
+    foreign.transform[4] = 100
+    foreign.transform[5] = 170
+  }
+  if (fault === 'broken final word') parts[3].str += '-'
+  if (fault === 'unclosed caption') parts[6].str = parts[6].str.replace('.', '')
+  const before = structuredClone(pages),
+    result = extractDocument({ pages }),
+    prefix = result.units.find((unit) => unit.originalStrings.includes(parts[2].str))!
+  expect(prefix).toBeDefined()
+  expect(!!prefix.sourceOnly).toBe(fault !== 'complete')
+  expect(prefix.items).toEqual(['4:2', '4:3'])
+  expect(result.units.find((unit) => unit.items.includes('4:5'))?.sourceOnly).toBe(true)
+  expect(result.units.find((unit) => unit.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+  expect(pages).toEqual(before)
+})
+
+test.each([
+  'complete',
+  'no native row ending',
+  'unclosed continuation',
+  'continuation font differs',
+  'comma baseline differs',
+  'unknown foreign metrics'
+])('restores only a whole title row with a closed native continuation: %s', (fault) => {
+  const native = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      font = 'Caption',
+      size = 10
+    ) => ({
+      ...nativeProseItem(text, x, y, width, size, false),
+      fontName: font,
+      fontVertical: false
+    }),
+    footer = (number: number) => native(String(number), 297, 760, 6, 'Footer'),
+    foreign = {
+      ...native('Independent axis', 20, 100, 80, 'Axis'),
+      transform: [0, 10, -10, 0, 20, 700]
+    }
+  let x = 184
+  const words = ['Independent', 'geometry', 'across', 'several', 'new', 'groups'].map((word, i) => {
+      const width = [58, 45, 35, 40, 20, 30][i],
+        item = { ...native(word, x, 620, width, 'Bold'), hasEOL: i === 5 }
+      x += width + 3
+      return item
+    }),
+    parts = [
+      foreign,
+      native('Extended Data Fig. 1', 60, 620, 110, 'Bold'),
+      ...words,
+      native('shows common patterns. a', 60, 632, 150, 'Bold'),
+      native(',', 211, 632, 4),
+      native('These panels compare independent observations and', 220, 632, 290),
+      native('A protected relation', 60, 644, 140),
+      native('α = β + γ', 210, 646, 80, 'Math', 8),
+      native('Every source remains independently included.', 60, 656, 260),
+      footer(4)
+    ],
+    pages = [
+      page(
+        [
+          native('References', 60, 100, 120),
+          native('[1] A. Author. A synthetic journal study.', 60, 125, 350),
+          footer(1)
+        ],
+        1
+      ),
+      page([footer(2)], 2),
+      page([footer(3)], 3),
+      page(parts, 4)
+    ]
+  if (fault === 'no native row ending') words[5].hasEOL = false
+  if (fault === 'unclosed continuation') parts[8].str = 'shows common patterns a'
+  if (fault === 'continuation font differs') parts[8].fontName = 'Caption'
+  if (fault === 'comma baseline differs') parts[9].transform[5] -= 1
+  if (fault === 'unknown foreign metrics') delete foreign.fontAscent
+  const saved = structuredClone(pages),
+    result = extractDocument({ pages }),
+    title = result.units.find((unit) => unit.items.includes('4:2'))!
+  expect(title.items).toEqual(['4:2', '4:3', '4:4', '4:5', '4:6', '4:7'])
+  expect(!!title.sourceOnly).toBe(fault !== 'complete')
+  for (const key of ['4:8', '4:12'])
+    expect(result.units.find((unit) => unit.items.includes(key))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+  expect(pages).toEqual(saved)
+})
+
+test.each([
+  'complete',
+  'false page-number source',
+  'page-number outside margin',
+  'previous native metrics missing',
+  'previous entry unfinished',
+  'previous record number gap',
+  'previous native order reversed',
+  'duplicate previous native record',
+  'body metrics missing'
+])('closes a native Methods boundary only after complete publication records: %s', (fault) => {
+  const native = (text: string, x: number, y: number, width: number, font = 'Body', size = 12) => ({
+      ...nativeProseItem(text, x, y, width, size),
+      fontName: font,
+      fontVertical: false
+    }),
+    folio = (number: number) => native(String(number), 540, 20, 12, 'Heading'),
+    record = (number: number, y: number) => [
+      native(`${number}. A. Author, An independent complete study,`, 60, y, 240),
+      native('Journal of Science 2020.', 304, y, 200)
+    ],
+    previous = [
+      folio(2),
+      ...Array.from({ length: 4 }, (_, i) => record(i + 2, 100 + i * 50)).flat()
+    ],
+    body = [
+      folio(3),
+      native('Methods', 60, 72, 100, 'Title', 20),
+      native('Independent observations', 60, 98, 180, 'Heading', 14),
+      native(
+        'This complete independently verified section explains how the recorded observations were collected and checked across several distinct settings while preserving every source item. The ordinary descriptions identify the available materials and describe a repeatable procedure for evaluating',
+        60,
+        132,
+        470
+      ),
+      native('the observations under consistent conditions.', 60, 146, 260),
+      native(
+        'The following ordinary paragraph describes the independent controls used during collection and explains how each result can be examined by another reader. These complete sentences retain their original native source order and provide enough context to distinguish explanatory text from bibliographic publication records.',
+        60,
+        180,
+        470
+      ),
+      native('α = β + γ', 60, 240, 80, 'Math')
+    ],
+    pages = [
+      page([folio(1), native('References', 60, 60, 100, 'Heading', 14), ...record(1, 110)], 1),
+      page(previous, 2),
+      page(body, 3)
+    ]
+  if (fault === 'false page-number source') previous.push(native('2', 100, 400, 12, 'Heading'))
+  if (fault === 'page-number outside margin') previous[0].transform[4] = 100
+  if (fault === 'previous native metrics missing') delete previous[1].fontAscent
+  if (fault === 'previous entry unfinished') previous.at(-1)!.str = 'Journal of Science 2020'
+  if (fault === 'previous record number gap') previous[3].str = previous[3].str.replace('3.', '9.')
+  if (fault === 'previous native order reversed')
+    [previous[1], previous[2]] = [previous[2], previous[1]]
+  if (fault === 'duplicate previous native record')
+    previous.push(...structuredClone(previous.slice(1, 3)))
+  if (fault === 'body metrics missing') delete body[3].fontAscent
+  const saved = structuredClone(pages),
+    result = extractDocument({ pages })
+  for (const key of ['3:1', '3:2', '3:3', '3:5'])
+    expect(!!result.units.find((unit) => unit.items.includes(key))?.sourceOnly).toBe(
+      fault !== 'complete'
+    )
+  expect(result.units.find((unit) => unit.items.includes('3:6'))?.sourceOnly).toBe(true)
+  expect(result.units.find((unit) => unit.source.startsWith('2. A. Author'))?.sourceOnly).toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+  expect(pages).toEqual(saved)
+})
+
+test.each([
+  'supporting boundary',
+  'document EOF',
+  'missing ordinal',
+  'overlapping foreign column',
+  'unclosed boundary',
+  'missing title metrics',
+  'missing EOF page count',
+  'truncated EOF prefix'
+])('protects an explicit singular bibliography only with complete native records: %s', (fault) => {
+  const template = nativeSupremumPage('closed relation').items[0],
+    native = (str: string, x: number, y: number, width: number, font = 'Body', height = 10) => ({
+      ...template,
+      str,
+      width,
+      height,
+      fontName: font,
+      fontVertical: false,
+      transform: [height, 0, 0, height, x, y],
+      hasEOL: false
+    }),
+    eol = () => ({ ...native('', 0, 0, 0), hasEOL: true }),
+    items = [native('Reference', 60, 700, 52, 'Title', 12), eol()]
+  for (let n = 1; n <= 3; n++) {
+    const y = 680 - (n - 1) * 50
+    items.push(
+      native(`(${n})`, 60, y, 12),
+      native(`Example, A.; Sample, B. Complete study ${n}.`, 95, y, 300),
+      eol(),
+      native('Journal of Tests', 60, y - 12, 90, 'Publication'),
+      native('2021', 154, y - 12, 22, 'Title'),
+      native(`4, 11–19. https://doi.org/10.0000/example${n}`, 180, y - 12, 260),
+      eol()
+    )
+  }
+  const next = [
+      native('Supporting information', 220, 700, 160, 'Body', 16),
+      eol(),
+      native('S1. Independent experimental information', 60, 670, 300, 'Title'),
+      eol()
+    ],
+    pages: PdfLayoutPage[] = [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+  if (!['document EOF', 'missing EOF page count', 'truncated EOF prefix'].includes(fault))
+    pages.push({ page: 2, width: 600, height: 800, rotation: 0, items: next })
+  if (fault === 'missing ordinal') items[9].str = '(9)'
+  if (fault === 'overlapping foreign column')
+    items.push(native('Dataset', 250, 700, 80, 'Title', 12))
+  if (fault === 'unclosed boundary') next[0].str = 'Ordinary continuation'
+  if (fault === 'missing title metrics') delete items[0].fontAscent
+  const saved = structuredClone(pages),
+    result = extractDocument({
+      pages,
+      pageCount:
+        fault === 'missing EOF page count'
+          ? undefined
+          : pages.length + (fault === 'truncated EOF prefix' ? 1 : 0)
+    }),
+    closed = ['supporting boundary', 'document EOF'].includes(fault)
+  for (const key of ['1:2', '1:9', '1:16'])
+    expect(!!result.units.find((unit) => unit.items.includes(key))?.sourceOnly).toBe(closed)
+  expect(
+    result.units.find((unit) => unit.source === 'Supporting information')?.sourceOnly
+  ).not.toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.flatMap((r, i) => (r.str.trim() ? [`${p.page}:${i}`] : []))).sort()
+  )
+  expect(pages).toEqual(saved)
+})
+
+test.each([
+  'complete',
+  'wrong record number',
+  'unknown metrics',
+  'missing publication style',
+  'unclosed record',
+  'hanging row displaced',
+  'ordinary trailing source',
+  'preceding paragraph unclosed'
+])('protects only a completely bounded native headingless bibliography: %s', (fault) => {
+  const native = (text: string, x: number, y: number, width: number, font = 'Body', size = 12) => ({
+      ...nativeProseItem(text, x, y, width, size, false),
+      fontName: font,
+      fontVertical: false,
+      hasEOL: true
+    }),
+    parts = [
+      native(
+        'This complete ordinary paragraph introduces the document context and explains the independent observations.',
+        50,
+        100,
+        500
+      ),
+      native(
+        'The individual measurements remain distinct and every source item retains its original native order.',
+        50,
+        114,
+        500
+      ),
+      native(
+        'These sentences describe the work clearly before the final publication records below.',
+        50,
+        128,
+        500
+      ),
+      ...Array.from({ length: 8 }, (_, n) => {
+        const x = n < 4 ? 50 : 330,
+          y = 180 + (n % 4) * 24
+        return [
+          native(`[${n + 1}] A. Author, A complete independent study,`, x, y, 230, 'Reference', 10),
+          {
+            ...native('Journal of Testing', x + 20, y + 12, 140, 'Reference', 10),
+            hasEOL: false
+          },
+          { ...native('9', x + 166, y + 12, 10, 'Publication', 10), hasEOL: false },
+          native(', 10 (2020).', x + 180, y + 12, 50, 'Reference', 10)
+        ]
+      }).flat()
+    ],
+    input = {
+      pages: [
+        page(
+          Array.from({ length: 20 }, (_, n) =>
+            native(
+              'Independent ordinary descriptions explain the measurements and retain all original source items for translation.',
+              50,
+              60 + n * 20,
+              500
+            )
+          ),
+          1
+        ),
+        page(parts, 2)
+      ]
+    }
+  if (fault === 'wrong record number') parts[7].str = parts[7].str.replace('[2]', '[3]')
+  if (fault === 'unknown metrics') delete parts[3].fontAscent
+  if (fault === 'missing publication style') parts[5].fontName = 'Reference'
+  if (fault === 'unclosed record') parts.at(-1)!.str = parts.at(-1)!.str.slice(0, -1)
+  if (fault === 'hanging row displaced') parts[4].transform[4] += 8
+  if (fault === 'ordinary trailing source')
+    parts.push(native('An independent ordinary appendix follows these records.', 50, 400, 400))
+  if (fault === 'preceding paragraph unclosed') parts[2].str = parts[2].str.slice(0, -1)
+  const before = structuredClone(input),
+    result = extractDocument(input),
+    record = result.units.find((unit) => unit.originalStrings.includes(parts[7].str))!
+  expect(record).toBeDefined()
+  expect(!!record.sourceOnly).toBe(fault === 'complete')
+  expect(
+    result.units.find((unit) => unit.source.startsWith('This complete ordinary paragraph'))
+      ?.sourceOnly
+  ).not.toBe(true)
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    input.pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+  expect(input).toEqual(before)
+})
+
+test.each([
+  ['separate acronym', 'complete'],
+  ['split ampersand acronym', 'complete'],
+  ...[
+    'wrong expansion',
+    'missing previous row',
+    'missing following prose',
+    'unknown metrics',
+    'ascent differs',
+    'descent differs',
+    'different font',
+    'foreign ink'
+  ].map((fault) => ['separate acronym', fault])
+])('restores only a complete native wrapped acronym expansion: %s / %s', (shape, fault) => {
+  const ampersand = shape === 'split ampersand acronym',
+    parts: PdfLayoutTextItem[] = [
+      nativeProseItem(
+        `This independent ordinary discussion describes a practical method for collecting observations with ${ampersand ? 'Research &' : 'Portable'}`,
+        60,
+        120,
+        460
+      ),
+      ...(!ampersand
+        ? [
+            nativeProseItem('Adapters', 60, 132, 45, 10, false),
+            nativeProseItem('(PA)', 112, 132, 22, 10, false),
+            nativeProseItem('and', 142, 132, 16, 10, false)
+          ]
+        : [
+            nativeProseItem('Design (R&', 60, 132, 57, 10, false),
+            nativeProseItem('D', 117.1, 132, 7, 10, false),
+            nativeProseItem(')', 124.1, 132, 4, 10, false)
+          ]),
+      nativeProseItem(
+        'independent practical observations that improve the final measured result.',
+        ampersand ? 131 : 165,
+        132,
+        ampersand ? 389 : 355
+      ),
+      nativeProseItem(
+        'The following ordinary explanation supplies more context for this result.',
+        60,
+        144,
+        460
+      )
+    ].map((part) => ({ ...part, fontName: 'Body' }))
+  if (fault === 'wrong expansion') parts[0].str = parts[0].str.replace('Portable', 'Independent')
+  if (fault === 'missing previous row') parts[0].str = ''
+  if (fault === 'missing following prose') parts[4].str = 'x'
+  if (fault === 'unknown metrics') delete parts[1].fontAscent
+  if (fault === 'ascent differs') parts[1].fontAscent = 0.8
+  if (fault === 'descent differs') parts[1].fontDescent = -0.1
+  if (fault === 'different font') parts[1].fontName = 'Other'
+  if (fault === 'foreign ink')
+    parts.push({ ...parts[1], str: 'other', transform: [...parts[1].transform] })
+  const saved = structuredClone(parts),
+    result = extractDocument({ pages: [page(parts)] }),
+    owner = result.units.find((unit) => unit.items.includes('1:1'))
+  expect(owner).toBeDefined()
+  expect(!!owner!.sourceOnly).toBe(fault !== 'complete')
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    parts.flatMap((part, index) => (part.str.trim() ? ['1:' + index] : [])).sort()
+  )
+  expect(parts).toEqual(saved)
+})
+
+test.each([
+  'complete',
+  'missing caption',
+  'distant caption',
+  'missing column',
+  'missing row',
+  'missing font',
+  'missing ascent',
+  'ascent mismatch',
+  'descent mismatch',
+  'shear',
+  'outside page',
+  'foreign source'
+])('recognizes a References table column only with complete native context: %s', (fault) => {
+  const grid = (text: string, x: number, y: number, width: number, end = false) => ({
+    ...nativeProseItem(text, x, y, width, 8, end),
+    fontName: 'Grid'
+  })
+  const parts: PdfLayoutTextItem[] = [
+    grid('Setting', 110, 140, 40),
+    grid('Outcome', 260, 140, 42),
+    grid('References', 430, 140, 38, true),
+    ...['Small', 'Medium', 'Large'].flatMap((label, row) => [
+      grid(label, 115, 160 + row * 20, 35),
+      grid('Result ' + String.fromCharCode(65 + row), 255, 160 + row * 20, 50),
+      grid('[A0' + (row + 1) + ']', 440, 160 + row * 20, 28, true)
+    ]),
+    { ...nativeProseItem('Table 1: Independent results.', 110, 225, 230), fontName: 'Body' },
+    {
+      ...nativeProseItem(
+        'This ordinary explanation after the table remains available for translation.',
+        60,
+        260,
+        450
+      ),
+      fontName: 'Body'
+    },
+    { ...nativeProseItem('References', 60, 320, 100, 14), fontName: 'Heading' },
+    {
+      ...nativeProseItem('[1] A. Author. An independent research article.', 60, 350, 350),
+      fontName: 'Body'
+    }
+  ]
+  if (fault === 'missing caption') parts[12].str = 'Independent results'
+  if (fault === 'distant caption') parts[12].transform[5] -= 80
+  if (fault === 'missing column') parts[1].str = ''
+  if (fault === 'missing row') for (const part of parts.slice(6, 9)) part.str = ''
+  if (fault === 'missing font') delete parts[1].fontName
+  if (fault === 'missing ascent') delete parts[1].fontAscent
+  if (fault === 'ascent mismatch') parts[1].fontAscent = 0.8
+  if (fault === 'descent mismatch') parts[1].fontDescent = -0.2
+  if (fault === 'shear') parts[2].transform[2] = 1
+  if (fault === 'outside page') parts[2].transform[4] = -1
+  if (fault === 'foreign source') parts.splice(12, 0, grid('Foreign', 500, 205, 30, true))
+  const before = structuredClone(parts),
+    result = extractDocument(document([page(parts)]))
+  const explanation = result.units.find((unit) => unit.source.startsWith('This ordinary'))!
+  expect(!!explanation.sourceOnly).toBe(fault !== 'complete')
+  expect(result.units.find((unit) => unit.source.startsWith('[1] A. Author'))?.sourceOnly).toBe(
+    true
+  )
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+    parts.flatMap((part, index) => (part.str.trim() ? ['1:' + index] : [])).sort()
+  )
+  expect(parts).toEqual(before)
+})
+
 const closedReferenceItem = (...args: Parameters<typeof item>): PdfLayoutTextItem => ({
   ...nativeProseItem(...args),
   fontName: 'Body'
 })
+
+test.each([
+  'complete',
+  'no-witness',
+  'heading-font',
+  'boundary',
+  'foreign',
+  'metrics',
+  'unicode',
+  'citation',
+  'gap'
+])(
+  'restores only a closed ordinary preamble with an independent native section witness: %s',
+  (variation) => {
+    const prose = [
+      'The writers used ordinary editing tools to revise the wording',
+      'of this report while retaining responsibility for every claim.',
+      'All observations and experimental decisions were made by the',
+      'authors before the final language review was performed.',
+      'The tools did not design the study or collect any observations.',
+      'They were used only to improve grammar and sentence structure.'
+    ]
+    const part = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      size = 11,
+      fontName = 'Body'
+    ) => ({ ...nativeProseItem(str, x, y, width, size), fontName })
+    const paragraph = () =>
+      prose.map((s, i) => part(s, 60, 105 + i * 14, i === prose.length - 1 ? 215 : 220))
+    const before = [
+      part('1 Findings', 60, 80, 80, 12, 'Heading'),
+      ...paragraph(),
+      part('References', 60, 300, 80, 12, 'Heading'),
+      part('[1] A. Writer. A cited journal article. 2025.', 60, 325, 220)
+    ]
+    const target = [
+      part('Editorial Assistance', 60, 80, 120, 12, 'Heading'),
+      ...paragraph(),
+      part('Appendix Materials', 60, 220, 120, 12, 'Heading'),
+      part('A. Writer. Another cited journal article. 2025.', 330, 100, 220)
+    ]
+    if (variation === 'no-witness') before[0].fontName = 'Other'
+    if (variation === 'heading-font') target[0].fontName = 'Other'
+    if (variation === 'boundary') target[7].str = 'Unrelated Notes'
+    if (variation === 'foreign') target.push(part('foreign', 90, 130, 40))
+    if (variation === 'metrics') target[2].fontAscent = Number.NaN
+    if (variation === 'unicode') target[2].str += '\uFFFD'
+    if (variation === 'citation') target[1].str = '[2] ' + target[1].str
+    if (variation === 'gap') target[3].transform[5] -= 20
+    const pages = [page(before), page(target, 2)],
+      result = extractDocument(document(pages))
+    expect(!!result.units.find((u) => u.items.includes('2:0'))?.sourceOnly).toBe(
+      variation !== 'complete'
+    )
+    expect(!!result.units.find((u) => u.items.includes('2:1'))?.sourceOnly).toBe(
+      variation !== 'complete'
+    )
+    if (variation === 'complete') {
+      expect(result.units.find((u) => u.items.includes('2:0'))?.preserve).toBeUndefined()
+      expect(result.units.find((u) => u.items.includes('2:1'))?.preserve).toBeUndefined()
+    }
+    expect(result.units.find((u) => u.items.includes('1:8'))?.sourceOnly).toBe(true)
+    const keys = result.units.flatMap((u) => u.items)
+    expect(keys.length).toBe(new Set(keys).size)
+    expect(keys.length).toBe(before.length + target.length)
+  }
+)
 
 test.each([
   'complete',
@@ -380,6 +1639,103 @@ test.each([
   expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly).toBe(true)
   expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(parts.map((_, i) => '1:' + i))
 })
+
+test.each(['complete', 'missing-metric', 'shear', 'far-index', 'word-base', 'foreign-ink'])(
+  'protects a separately owned word subscript only with complete native attachment: %s',
+  (variation) => {
+    const parts = [
+      { ...nativeProseItem('μ', 150, 170, 6, 10, false), fontName: 'Math' },
+      { ...nativeProseItem('max', 156.005, 171.5, 15, 7, false), fontName: 'Script' },
+      { ...nativeProseItem('largest allowed rate', 231, 170, 90, 10), fontName: 'Body' }
+    ]
+    if (variation === 'missing-metric') parts[1].fontDescent = Number.NaN
+    if (variation === 'shear') parts[1].transform[2] = 2
+    if (variation === 'far-index') parts[1].transform[4] += 10
+    if (variation === 'word-base') parts[0].str = 'word'
+    if (variation === 'foreign-ink')
+      parts.push({ ...nativeProseItem('note', 160, 170, 20, 4), fontName: 'Other' })
+    const result = extractDocument(document([page(parts)]))
+    const script = result.units.find((unit) => unit.items.includes('1:1'))!
+    expect(script.sourceOnly === true).toBe(variation === 'complete')
+    expect(result.units.find((unit) => unit.items.includes('1:2'))?.sourceOnly).not.toBe(true)
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      parts.map((_, index) => `1:${index}`).sort()
+    )
+  }
+)
+
+test.each([
+  'complete',
+  'panel-caption',
+  'wrapped-caption',
+  'missing-metric',
+  'font',
+  'ordinary-prose',
+  'foreign-ink',
+  'no-witness'
+])(
+  'keeps a complete supplementary caption eligible after references with independent native proof: %s',
+  (variation) => {
+    const caption = (number: number) => [
+      { ...nativeProseItem(`Fig. S${number}.`, 60, 650, 30, 8, false), fontName: 'Caption' },
+      {
+        ...nativeProseItem(
+          'A complete drawing shows the dimensions of both independently measured components.',
+          95,
+          650,
+          400,
+          8,
+          false
+        ),
+        fontName: 'Caption'
+      }
+    ]
+    const target = [
+      { ...nativeProseItem('Bolt A', 150, 200, 40, 10), fontName: 'Diagram' },
+      ...caption(2)
+    ]
+    if (variation === 'panel-caption') target[2].str = '(a) ' + target[2].str
+    if (variation === 'wrapped-caption') {
+      target[2].str = 'A complete drawing shows the dimensions of both independently'
+      target[2].hasEOL = true
+      target.push({
+        ...nativeProseItem('measured components.', 60, 659, 110, 8, false),
+        fontName: 'Caption'
+      })
+    }
+    if (variation === 'missing-metric') target[1].fontDescent = Number.NaN
+    if (variation === 'font') target[2].fontName = 'Other'
+    if (variation === 'ordinary-prose')
+      target[0].str = 'This is an independent complete explanatory paragraph with ordinary prose.'
+    if (variation === 'foreign-ink')
+      target.push({ ...nativeProseItem('foreign', 200, 648, 30, 4), fontName: 'Other' })
+    const pages = [
+      page(caption(1)),
+      page(
+        [
+          { ...nativeProseItem('References', 60, 100, 100, 14), fontName: 'Heading' },
+          {
+            ...nativeProseItem('[1] A. Author. A complete journal entry.', 60, 130, 350),
+            fontName: 'Citation'
+          }
+        ],
+        2
+      ),
+      page(target, 3)
+    ]
+    if (variation === 'no-witness') pages[0].items[0].str = 'Unrelated label'
+    const result = extractDocument(document(pages))
+    const owner = result.units.find((unit) => unit.items.includes('3:1'))!
+    expect(owner.sourceOnly === true).toBe(
+      !['complete', 'panel-caption', 'wrapped-caption'].includes(variation)
+    )
+    expect(result.units.find((unit) => unit.items.includes('2:1'))?.sourceOnly).toBe(true)
+    expect(result.units.find((unit) => unit.items.includes('3:0'))?.sourceOnly).toBe(true)
+    const keys = result.units.flatMap((unit) => unit.items)
+    expect(keys.length).toBe(new Set(keys).size)
+    expect(keys.length).toBe(pages.reduce((count, p) => count + p.items.length, 0))
+  }
+)
 
 test.each([
   'complete',
@@ -14074,6 +15430,72 @@ function nativeCitationItem(
     hasEOL
   }
 }
+
+test.each(['shared source', 'mixed native owner', 'independent fraction'])(
+  'conflicting fractions retain each native source once: %s',
+  (shape) => {
+    const native = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 12,
+      fontName = 'Text',
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      ...nativeCitationItem(str, x, y, width, hasEOL),
+      height,
+      transform: [height, 0, 0, height, x, y],
+      fontName,
+      fontVertical: false
+    })
+    const items = [
+      native('value =', 43, 495.4, 30),
+      native('t', 186.1, 508.8, 5.9, 8.4, 'Math', true),
+      native('t', 180, 500, 5.9, 8.4, 'Math'),
+      native('−', 185.9, 500, 7.5, 8.4, 'Symbol'),
+      native('1', 193.4, 500, 4.8, 8.4, 'Digit'),
+      native('independent note', 257, 504.1, 40),
+      native('t', 192.2, 491.6, 5.9, 8.4, 'Math')
+    ]
+    if (shape === 'mixed native owner') items.push(native('we use it.', 200, 491.6, 50, 10))
+    if (shape === 'independent fraction') items[6].str = ''
+    const saved = structuredClone(items),
+      result = extractDocument({
+        pages: [{ page: 1, width: 560, height: 800, rotation: 0, items }]
+      })
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.flatMap((item, index) => (item.str.trim() ? ['1:' + index] : [])).sort()
+    )
+    expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+      items
+        .filter((item) => item.str.trim())
+        .map((item) => item.str)
+        .sort()
+    )
+    for (const index of [0, 5])
+      expect(
+        result.units.find((unit) => unit.items.includes('1:' + index))?.sourceOnly
+      ).toBeUndefined()
+    if (shape === 'independent fraction') {
+      const fraction = result.units.find((unit) => unit.source === 't/(t−1)')
+      expect(fraction?.sourceOnly).toBe(true)
+      expect(fraction?.risks).toEqual([])
+    } else {
+      for (const index of [1, 2, 3, 4, 6]) {
+        const owner = result.units.find((unit) => unit.items.includes('1:' + index))
+        expect(owner?.sourceOnly).toBe(true)
+        expect(owner?.risks).toContain('formula-extraction')
+      }
+      if (shape === 'mixed native owner')
+        expect(result.units.find((unit) => unit.items.includes('1:6'))?.items).toEqual([
+          '1:6',
+          '1:7'
+        ])
+    }
+    expect(items).toEqual(saved)
+  }
+)
 test.each([
   'positive',
   'missing target',
@@ -14279,5 +15701,255 @@ test.each([
         .sort()
     )
     expect(parts).toEqual(saved)
+  }
+)
+
+test('bounds repeated sorting work for a dense uniform native row', async () => {
+  const { vi } = await import('vitest')
+  const count = 192
+  const items: PdfLayoutTextItem[] = Array.from({ length: count }, (_, index) => ({
+    str: 'x',
+    width: 0.01,
+    height: 0.01,
+    dir: 'ltr',
+    fontName: 'Anonymous',
+    fontAscent: 0.7,
+    fontDescent: -0.2,
+    fontVertical: false,
+    transform: [0.01, 0, 0, 0.01, 60 + index * 0.001, 500],
+    hasEOL: false
+  }))
+  const saved = structuredClone(items)
+  const nativeSort = Array.prototype.sort
+  let sortedItems = 0
+  const spy = vi.spyOn(Array.prototype, 'sort').mockImplementation(function (compare) {
+    if (this.length >= count / 2) sortedItems += this.length
+    return nativeSort.call(this, compare)
+  })
+  let result: ReturnType<typeof extractDocument>
+  try {
+    result = extractDocument({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+  } finally {
+    spy.mockRestore()
+  }
+  // Count actual sorted input rather than imposing a machine-dependent timeout.
+  expect(sortedItems).toBeLessThan(count * 60)
+  expect(result.units.flatMap((unit) => unit.items)).toEqual(items.map((_, index) => '1:' + index))
+  expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+    items.map((item) => item.str)
+  )
+  expect(items).toEqual(saved)
+})
+
+test.each(['mixed script sizes', 'spacing accent', 'split caption'])(
+  'preserves native ordering when the pending-row shortcut is unsafe: %s',
+  (shape) => {
+    const part = (str: string, x: number, y = 200, width = 5, height = 10): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName: 'Anonymous',
+      fontAscent: 0.7,
+      fontDescent: -0.2,
+      fontVertical: false,
+      transform: [height, 0, 0, height, x, 800 - y],
+      hasEOL: false
+    })
+    const items =
+      shape === 'mixed script sizes'
+        ? [
+            part('a', 60),
+            part('1', 68, 197, 4, 7),
+            part('2', 68, 203, 4, 7),
+            part('+', 76),
+            part('x', 84)
+          ]
+        : shape === 'spacing accent'
+          ? [part('ˆ', 60.1, 198, 4), part('a', 60), part('+', 70), part('x', 80)]
+          : [
+              part('Ta', 60, 200, 10),
+              part('ble 2. A complete caption.', 70, 200, 130),
+              part('A separate complete sentence continues.', 60, 230, 220)
+            ]
+    const saved = structuredClone(items)
+    const result = extractDocument({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    expect(result.units.flatMap((unit) => unit.items)).toEqual(
+      items.map((_, index) => '1:' + index)
+    )
+    expect(result.units.flatMap((unit) => unit.originalStrings)).toEqual(
+      items.map((item) => item.str)
+    )
+    if (shape === 'split caption') {
+      expect(result.units.map((unit) => unit.source)).toEqual([
+        'Table 2. A complete caption.',
+        'A separate complete sentence continues.'
+      ])
+    } else {
+      expect(result.units).toHaveLength(1)
+      expect(result.units[0].sourceOnly).toBe(true)
+      expect(result.units[0].source).toBe(shape === 'spacing accent' ? 'ˆa + x' : 'a 12 + x')
+    }
+    expect(items).toEqual(saved)
+  }
+)
+
+test.each([
+  'complete',
+  'missing font',
+  'unraised letters',
+  'unexplained ordinary word',
+  'missing serial witness',
+  'reversed native order'
+])(
+  'protects a numbered mathematical chain only when native scripts explain every flattened word: %s',
+  (fault) => {
+    const part = (
+      str: string,
+      x: number,
+      y = 200,
+      width = 5,
+      height = 10,
+      fontName = 'Math'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName,
+      fontAscent: 0.7,
+      fontDescent: -0.2,
+      fontVertical: false,
+      transform: [height, 0, 0, height, x, 800 - y],
+      hasEOL: false
+    })
+    const items = [
+      { ...part('(1)', 160, 150, 15), hasEOL: true },
+      part('F', 60),
+      part('ab', 65, 202, 6, 7, 'Index'),
+      part('= d', 80),
+      part('G', 93),
+      part('ab', 98, 202, 6, 7, 'Index'),
+      part('=', 112),
+      part('H', 125),
+      part('ab', 130, 202, 6, 7, 'Index'),
+      { ...part('(2)', 160, 200, 15), hasEOL: true }
+    ]
+    if (fault === 'missing font') delete items[1].fontName
+    if (fault === 'unraised letters') {
+      for (const index of [2, 5, 8]) {
+        items[index].height = 10
+        items[index].transform = [10, 0, 0, 10, items[index].transform[4], 600]
+      }
+    }
+    if (fault === 'unexplained ordinary word') items[4].str = 'word'
+    if (fault === 'missing serial witness') items[0].str = '(4)'
+    if (fault === 'reversed native order') [items[1], items[2]] = [items[2], items[1]]
+    const saved = structuredClone(items)
+    const result = extractDocument({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const owner = result.units.find((unit) => unit.items.includes('1:4'))!
+    expect(owner.sourceOnly === true).toBe(fault === 'complete')
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.map((_, i) => '1:' + i).sort()
+    )
+    expect(result.units.flatMap((unit) => unit.originalStrings).sort()).toEqual(
+      items.map((item) => item.str).sort()
+    )
+    expect(items).toEqual(saved)
+  }
+)
+
+test.each(['complete', 'nonconsecutive captions', 'missing native metrics'])(
+  'restores independent legend prose after references without changing mathematical owners: %s',
+  (fault) => {
+    const text = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 10,
+      dir: 'ltr',
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      transform: [10, 0, 0, 10, x, 800 - y],
+      hasEOL: true
+    })
+    const references = [
+      text('References', 40, 70, 55, 'Section-Bold'),
+      text('[1] A. Writer. A complete published study. Journal 3, 15 (2001).', 40, 110, 400),
+      text('[2] B. Author. Another complete published study. Journal 4, 20 (2002).', 40, 140, 400)
+    ]
+    const legends = [
+      text('Figure legends', 40, 70, 75, 'Section-Bold'),
+      { ...text('Figure 1.', 40, 110, 45, 'Section-Bold'), hasEOL: false },
+      text(
+        'A measured comparison of two groups with their complete explanatory caption and independent native sources.',
+        90,
+        110,
+        430
+      ),
+      text(
+        '(A) The upper panel shows the first measurement and describes its complete original experimental context.',
+        40,
+        150,
+        480
+      ),
+      text('x = y', 40, 180, 30, 'Math'),
+      { ...text('Figure 2.', 40, 220, 45, 'Section-Bold'), hasEOL: false },
+      text(
+        'A second measured comparison with a complete explanatory sentence and independently ordered native sources.',
+        90,
+        220,
+        430
+      ),
+      text(
+        '(B) The lower panel describes a separate measurement while preserving the original mathematical content.',
+        40,
+        260,
+        480
+      )
+    ]
+    if (fault === 'nonconsecutive captions') legends[5].str = 'Figure 4.'
+    if (fault === 'missing native metrics') delete legends[2].fontAscent
+    const table = [
+      { ...text('Table 1', 40, 70, 35, 'Section-Bold'), hasEOL: false },
+      text(
+        '. An independent later comparison with complete measured values and explanatory text.',
+        75,
+        70,
+        445,
+        'Section-Bold'
+      )
+    ]
+    const pages = [references, legends, table].map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const saved = structuredClone(pages),
+      result = extractDocument({ pages })
+    const caption = result.units.find((unit) => unit.items.includes('2:1'))!
+    expect(caption.sourceOnly === true).toBe(fault !== 'complete')
+    expect(result.units.find((unit) => unit.items.includes('2:4'))?.sourceOnly).toBe(true)
+    expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly).toBe(true)
+    expect(result.units.find((unit) => unit.items.includes('3:0'))?.sourceOnly).toBe(true)
+    expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(
+      pages.flatMap((page) => page.items.map((_, index) => page.page + ':' + index)).sort()
+    )
+    expect(pages).toEqual(saved)
   }
 )

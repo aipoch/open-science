@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { SessionDetailsModelConfiguration } from '../../shared/settings'
+import {
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  CODEX_SHARED_PROVIDER_ID,
+  type SessionDetailsModelConfiguration
+} from '../../shared/settings'
 import { SessionDetailsModelOwner } from './session-details-model-owner'
 import type { SettingsRepository } from './repository'
 import type { ProviderAccountsModule } from './provider-accounts'
@@ -74,9 +78,99 @@ const session = (patch: Partial<PersistedChatSession> = {}): PersistedChatSessio
   }) as PersistedChatSession
 
 describe('SessionDetailsModelOwner', () => {
+  it.each(['codex-isolated', 'codex-shared'] as const)(
+    'admits the inherited %s subscription target',
+    async (type) => {
+      const providerId =
+        type === 'codex-shared' ? CODEX_SHARED_PROVIDER_ID : CODEX_SUBSCRIPTION_PROVIDER_ID
+      const { owner, providers } = createOwner(
+        { mode: 'inherit', reasoningEffort: 'high' },
+        { id: providerId, type }
+      )
+      await expect(
+        owner.admit(
+          session({
+            agentFrameworkId: 'codex',
+            agentModel: 'model-a',
+            agentConfiguration: { providerId, model: 'model-a', reasoningEffort: 'high' }
+          })
+        )
+      ).resolves.toEqual({
+        mode: 'target',
+        target: {
+          frameworkId: 'codex',
+          providerId,
+          model: { kind: 'required', id: 'model-a' },
+          reasoningEffort: 'high'
+        }
+      })
+      expect(providers.resolveRuntimeTarget).not.toHaveBeenCalled()
+    }
+  )
+
   it('admits disabled without requiring a Session model target', async () => {
     const { owner } = createOwner({ mode: 'disabled' })
     await expect(owner.admit(session())).resolves.toEqual({ mode: 'disabled' })
+  })
+
+  it.each(['claude-code', 'opencode'] as const)(
+    'rejects subscription inheritance through %s',
+    async (frameworkId) => {
+      const { owner } = createOwner(
+        { mode: 'inherit', reasoningEffort: 'high' },
+        { id: CODEX_SUBSCRIPTION_PROVIDER_ID, type: 'codex-isolated' }
+      )
+      await expect(
+        owner.admit(
+          session({
+            agentFrameworkId: frameworkId,
+            agentModel: 'model-a',
+            agentConfiguration: {
+              providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+              reasoningEffort: 'high'
+            }
+          })
+        )
+      ).rejects.toThrow('Codex subscription models cannot run')
+    }
+  )
+
+  it('keeps subscription models unavailable as a fixed selection', async () => {
+    const configuration = {
+      mode: 'fixed',
+      providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      model: 'model-a',
+      reasoningEffort: 'high'
+    } as const
+    const { owner } = createOwner(configuration, {
+      id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      type: 'codex-isolated'
+    })
+    await expect(owner.set(configuration)).rejects.toThrow('Codex subscription models cannot run')
+    await expect(owner.admit(session())).rejects.toThrow('Codex subscription models cannot run')
+  })
+
+  it('rejects an inherited subscription whose provider validation failed', async () => {
+    const { owner } = createOwner(
+      { mode: 'inherit', reasoningEffort: 'high' },
+      {
+        id: CODEX_SUBSCRIPTION_PROVIDER_ID,
+        type: 'codex-isolated',
+        lastValidationFailure: { at: 1, category: 'auth' }
+      }
+    )
+    await expect(
+      owner.admit(
+        session({
+          agentFrameworkId: 'codex',
+          agentModel: 'model-a',
+          agentConfiguration: {
+            providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+            reasoningEffort: 'high'
+          }
+        })
+      )
+    ).rejects.toThrow('provider is unavailable')
   })
 
   it('captures the durable Session target with the independent inherited effort', async () => {

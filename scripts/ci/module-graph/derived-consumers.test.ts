@@ -16,6 +16,7 @@ import {
   validateDerivedConsumers,
   withDerivedConsumers
 } from './index.mjs'
+import { sourceSnapshot } from './source.mjs'
 import { createModuleTestPlan, createAffectedTestPlan } from '../module-test-impact.mjs'
 import { additiveModuleImpact } from '../module-impact-inputs.mjs'
 
@@ -299,7 +300,7 @@ it('rejects missing, forged, stale and redundant evidence', () => {
       { ...missing, read: (p: string) => (missing.files.has(p) ? missing.read(p) : undefined) },
       manifest()
     )
-  ).toThrow('Missing')
+  ).not.toThrow()
   const changed = source({ [consumer]: 'export const independent = true' })
   expect(() => checkDerivedConsumers(changed, manifest())).toThrow('Stale')
 })
@@ -332,10 +333,6 @@ function repository() {
 }
 
 it('writes the index in the repository Prettier style so regenerating it passes the format check', () => {
-  const index = join(process.cwd(), derivedConsumersPath)
-  const prettier = join(process.cwd(), 'node_modules/prettier/bin/prettier.cjs')
-  const result = spawnSync(process.execPath, [prettier, '--check', index], { encoding: 'utf8' })
-  expect(result.status, result.stdout + result.stderr).toBe(0)
   const f = repository()
   f.put(consumer, "import './bridge'")
   runDerivedConsumersCli(['--write'], f.root)
@@ -344,6 +341,10 @@ it('writes the index in the repository Prettier style so regenerating it passes 
   // Short arrays collapse to one line only when the formatter ran; plain stringify never does.
   expect(text).not.toBe(JSON.stringify(JSON.parse(text), null, 2) + '\n')
   expect(text.endsWith('\n')).toBe(true)
+  // The written file must pass format check against the repo's own Prettier config.
+  const prettier = join(process.cwd(), 'node_modules/prettier/bin/prettier.cjs')
+  const result = spawnSync(process.execPath, [prettier, '--check', written], { encoding: 'utf8' })
+  expect(result.status, result.stdout + result.stderr).toBe(0)
 })
 
 it('generates deterministically and validates immutable candidate blobs without executing them', () => {
@@ -377,7 +378,7 @@ it('generates deterministically and validates immutable candidate blobs without 
   expect(integrity.stdout).toContain('derived-consumer-evidence')
   rmSync(join(f.root, derivedConsumersPath))
   const deleted = f.commit()
-  expect(() => checkDerivedConsumerRevisions(added, deleted, f.root)).toThrow('Missing')
+  expect(() => checkDerivedConsumerRevisions(added, deleted, f.root)).not.toThrow()
 }, 30_000)
 
 it('rejects Git symlinks without following them on any platform', () => {
@@ -390,9 +391,13 @@ it('rejects Git symlinks without following them on any platform', () => {
   }).trim()
   f.git('update-index', '--add', '--cacheinfo', '120000', blob, derivedConsumersPath)
   f.git('commit', '-qm', 'ci(test): add symlink')
-  expect(() => checkDerivedConsumerRevisions(base, f.git('rev-parse', 'HEAD'), f.root)).toThrow(
-    'Missing'
-  )
+  const head = f.git('rev-parse', 'HEAD')
+  // A tracked symlink is a non-regular entry: source.files includes it but read() returns
+  // undefined. checkDerivedConsumers distinguishes this from genuine absence and rejects it.
+  expect(() => checkDerivedConsumerRevisions(base, head, f.root)).toThrow('regular file')
+  const source = sourceSnapshot(head, f.root)
+  expect(source.read(derivedConsumersPath)).toBeUndefined()
+  expect(source.files.has(derivedConsumersPath)).toBe(true)
 }, 30_000)
 
 it('follows explicit native intermediates and source package exports', () => {

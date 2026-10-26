@@ -1,4 +1,5 @@
 import type { ToolContext, ToolDescriptor } from '@aipoch/connector-core'
+import { CHEMISTRY_UNICHEM_TOOLS } from './chemistry-unichem'
 import { CHEMISTRY_LIPIDMAPS_TOOLS } from './chemistry-lipidmaps'
 
 // PubChem PUG REST + PUG-View. Structure/name inputs go via GET query params so slashes and
@@ -183,6 +184,7 @@ const asStr = (v: unknown): string | undefined => {
 // small-molecule chemistry — compounds, similarity, bioassays, safety, ontology, reactions, affinities.
 export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
   ...CHEMISTRY_LIPIDMAPS_TOOLS,
+  ...CHEMISTRY_UNICHEM_TOOLS,
   {
     id: 'pubchem_search_compounds',
     connector: 'chemistry',

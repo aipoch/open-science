@@ -15,6 +15,24 @@ import {
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
 
+it('preserves the Windows profile paths for controlled Notebook mutations', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  try {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const storageRoot = resolve('fixture/storage')
+    const localAppData = resolve('fixture/user/AppData/Local')
+    const environment = launchEnvironment(storageRoot, undefined, {
+      LOCALAPPDATA: localAppData,
+      OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS: 'enabled'
+    })
+    expect(environment.LOCALAPPDATA).toBe(localAppData)
+    expect(environment.OPEN_SCIENCE_CONFIG_ROOT).toBe(storageRoot)
+    expect(environment.OPEN_SCIENCE_E2E_STORAGE_ROOT).toBe(storageRoot)
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
+})
+
 it('keeps the Linux test desktop session while isolating home and provider credentials', () => {
   const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
     OPEN_SCIENCE_E2E_ISOLATE_HOME: '1',
@@ -228,15 +246,20 @@ describe('Electron E2E cleanup', () => {
 describe('Electron E2E restart persistence recovery', () => {
   afterEach(() => vi.useRealTimers())
 
-  const setup = vi.fn(async () => {
+  const setup = vi.fn(async (collectedResponse = false) => {
     const app = new EventEmitter()
     const ipcMain = new EventEmitter()
     const send = vi.fn()
     const contents = { send }
     const electron = { app, ipcMain, BrowserWindow: { fromId: () => ({ webContents: contents }) } }
+    let evaluations = 0
     const application = {
-      evaluate: async (script: (electron: unknown, arg: unknown) => unknown, arg: unknown) =>
-        script(electron, arg)
+      evaluate: async (script: (electron: unknown, arg: unknown) => unknown, arg: unknown) => {
+        const result = script(electron, arg)
+        if (collectedResponse && evaluations++ === 0)
+          throw new Error('Resulting promise was garbage collected.')
+        return result
+      }
     } as unknown as Pick<ElectronApplication, 'evaluate'>
     await installRestartPersistenceRetry(application, 1, 100)
     const answers = vi.fn()
@@ -249,6 +272,15 @@ describe('Electron E2E restart persistence recovery', () => {
     const respond = (requestId: string, status: string, sender: unknown = contents): boolean =>
       ipcMain.emit('sessions:flush-response', { sender }, { requestId, status })
     return { app, ipcMain, contents, send, answers, prompt, respond }
+  })
+
+  it('retries a collected installation response without duplicating recovery hooks', async () => {
+    const h = await setup(true)
+    expect(h.ipcMain.listenerCount('sessions:flush-response')).toBe(1)
+    expect(h.app.listenerCount('will-quit')).toBe(1)
+    h.app.emit('will-quit')
+    expect(h.contents.send).toBe(h.send)
+    expect(h.ipcMain.listenerCount('sessions:flush-response')).toBe(0)
   })
 
   it('retries once only after the matching window and request finish saving', async () => {

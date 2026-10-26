@@ -3597,16 +3597,21 @@ describe('production delegated-work composition', () => {
     })
     continuationControl.accept()
     continuationControl.complete('Continuation evidence ready')
-    await expect
-      .poll(
-        () =>
-          harness
-            .durable()
-            .runtimeContext?.delegatedWork?.records[0].attempts.find(
-              ({ id }) => id === continued.continuation_attempt_id
-            )?.status
-      )
-      .toBe('completed')
+    // Completing the provider still leaves artifact publication and durable settlement pending.
+    await expect(
+      harness.composition.host.collect(harness.caller, [
+        { frameId: child.frameId, attemptId: continued.continuation_attempt_id }
+      ])
+    ).resolves.toMatchObject([
+      { attemptId: continued.continuation_attempt_id, status: 'completed' }
+    ])
+    expect(
+      harness
+        .durable()
+        .runtimeContext?.delegatedWork?.records[0].attempts.find(
+          ({ id }) => id === continued.continuation_attempt_id
+        )?.status
+    ).toBe('completed')
 
     const reloaded = normalizeSessionFile(harness.durable())!
     const childOwners = finalized.map((entry) => {

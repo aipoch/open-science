@@ -11,7 +11,7 @@ import {
 } from '../../../../shared/notebook-network-settings'
 import {
   OPEN_SCIENCE_DOMAIN_GROUPS,
-  validateCustomAllowedDomain,
+  parseCustomAllowedDomainInput,
   type NotebookNetworkStatus,
   type NotebookNetworkStatusReason
 } from '../../../../shared/notebook-network'
@@ -212,10 +212,12 @@ const NotebookNetworkDomainsForm = ({
 
   const addDomain = (): void => {
     setMessage(undefined)
-    const result = validateCustomAllowedDomain(newDomain)
+    const result = parseCustomAllowedDomainInput(newDomain)
     if (!result.ok) {
       setDomainError(
-        t('Enter an exact hostname without a scheme, path, port, wildcard, or IP address.')
+        t(
+          'Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.'
+        )
       )
       return
     }
@@ -478,7 +480,7 @@ const NotebookNetworkDomainsForm = ({
         <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Custom public domains')}</h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           {t(
-            'Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.'
+            'Add a hostname or paste an HTTP(S) URL; only the hostname is saved. Use *.example.com for all subdomains, and add example.com separately for the root domain. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.'
           )}
         </p>
         <div className="rounded-xl border border-border p-4">

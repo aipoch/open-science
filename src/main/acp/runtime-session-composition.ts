@@ -1,3 +1,4 @@
+import { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
@@ -159,6 +160,13 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     options.permissionWait?.sessions,
     options.permissionWait?.onContinuationSessionUpdated
   )
+  const sandboxNetworkApprovalOwner =
+    options.permissionWait?.networkApprovalOwner ??
+    new SandboxNetworkApprovalOwner(
+      options.permissionWait?.sessions,
+      options.permissionWait?.onSessionUpdated,
+      options.permissionWait?.allowNetworkDomain
+    )
   const permissionWaitOwner = new AcpPermissionWaitOwner(
     options.permissionWait?.sessions,
     options.permissionWait?.onSessionUpdated,
@@ -391,6 +399,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     elicitationOwner,
     durableContinuationContext,
     permissionWaitOwner,
+    sandboxNetworkApprovalOwner,
     permissionContext,
     clientInteractions,
     reviewerSessions,

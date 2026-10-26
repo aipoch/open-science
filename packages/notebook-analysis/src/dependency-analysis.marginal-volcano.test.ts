@@ -46,9 +46,11 @@ it.each(runsFor())('captures marginal volcano cell $runId and its prior values',
     const { facts } = await analyzeRNotebookSource(run.script, context)
     const access = await analyzeNotebookSourceFileAccess('r', run.script, context)
     expect(access, JSON.stringify({ facts, context })).toMatchObject({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete'
+      // A prior CSV-derived expr_mat does not prove apply's coercion safe.
+      // Keep literal file candidates while withdrawing a complete I/O claim.
+      readState: run.runId === '10' ? 'partial' : 'complete',
+      writeState: run.runId === '10' ? 'partial' : 'complete',
+      externalState: run.runId === '10' ? 'partial' : 'complete'
     })
     expect(access.reads).toEqual(
       run.runId === '9'

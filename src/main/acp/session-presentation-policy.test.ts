@@ -103,6 +103,34 @@ describe('ACP Session presentation policy', () => {
   )
 
   const policy = new AcpSessionPresentationPolicy()
+  it('isolates explicit Claude file-tool denials at the session metadata boundary', () => {
+    const tooling = { artifacts: true, notebook: true, skillImport: false }
+    const frameworks = [claudeCodeFramework, opencodeFramework, codexFramework, codeBuddyFramework]
+    const defaults = frameworks.map((framework) => policy.buildSessionSetup({ framework, tooling }))
+    const fileTools = ['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']
+    const restricted = policy.buildSessionSetup({
+      framework: claudeCodeFramework,
+      tooling,
+      sessionOptions: { disallowedTools: fileTools }
+    })
+    const meta = restricted.metaArg?._meta?.claudeCode as {
+      options: { disallowedTools: readonly string[] }
+    }
+
+    expect(meta.options.disallowedTools).toEqual(
+      expect.arrayContaining([...fileTools, 'Agent', 'Task', 'Bash', 'Glob', 'Grep'])
+    )
+    // The caller's array cannot change the immutable metadata after setup.
+    fileTools.push('WebSearch')
+    expect(meta.options.disallowedTools).not.toContain('WebSearch')
+    expect(Object.isFrozen(meta.options.disallowedTools)).toBe(true)
+    expect(restricted.persistentSystemPrompt).toBe(defaults[0].persistentSystemPrompt)
+    expect(restricted.promptPrefix).toBe(defaults[0].promptPrefix)
+    expect(frameworks.map((framework) => policy.buildSessionSetup({ framework, tooling }))).toEqual(
+      defaults
+    )
+  })
+
   it('keeps the Codex loader limited to the current primary Skill scope', () => {
     const input = {
       framework: codexFramework,
