@@ -626,16 +626,6 @@ const WorkspaceElicitationCard = ({
     setError(undefined)
   }
 
-  if (error && embedded && request?.durable && !readOnly) {
-    return (
-      <WorkspaceElicitationRecovery
-        elicitation={{ ...elicitation, continuationRecovery: { error } }}
-        request={request}
-        onRespond={onRespond}
-      />
-    )
-  }
-
   return (
     <div
       data-testid="elicitation-card"

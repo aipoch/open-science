@@ -154,7 +154,54 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
-  it('replaces a rejected Skip with recovery and can end the original wait', async () => {
+  it('keeps an uncommitted durable answer editable after validation rejects it', async () => {
+    const durableRequest = {
+      ...request,
+      durable: { kind: 'agent-user-choice' as const, requestId: request.requestId }
+    }
+    const onRespond = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Invalid structured input response'))
+      .mockResolvedValue(undefined)
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{ ...activity.elicitation!, durable: durableRequest.durable }}
+          request={durableRequest}
+          onRespond={onRespond}
+          embedded
+        />
+      )
+    )
+    const finish = (): HTMLButtonElement | undefined =>
+      [...container.querySelectorAll('button')].find((button) => button.textContent === 'Finish')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')!
+        .click()
+    )
+    await act(async () => finish()!.click())
+    expect(onRespond).toHaveBeenCalledOnce()
+    expect(container.querySelector('form')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Invalid structured input response'
+    )
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-screening"]')!
+        .click()
+    )
+    await act(async () => finish()!.click())
+    expect(onRespond).toHaveBeenLastCalledWith({
+      requestId: request.requestId,
+      request: durableRequest,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'screening' }]
+    })
+  })
+
+  it('does not infer committed recovery from a rejected Skip error message', async () => {
     const durableRequest = {
       ...request,
       durable: { kind: 'agent-user-choice' as const, requestId: request.requestId }
@@ -178,18 +225,22 @@ describe('WorkspaceElicitationCard choice question', () => {
         .find((button) => button.textContent === 'Skip')!
         .click()
     )
-    expect(container.querySelector('[data-testid="elicitation-recovery"]')).not.toBeNull()
-    expect(container.querySelector('form')).toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+    expect(container.querySelector('form')).not.toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The bound specialist is unavailable.'
+    )
     expect(container.textContent).not.toContain('Retry continuation')
     await act(async () =>
       [...container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'End this wait')!
+        .find((button) => button.textContent === 'Skip')!
         .click()
     )
     expect(onRespond).toHaveBeenLastCalledWith({
       requestId: request.requestId,
       request: durableRequest,
-      action: 'cancel'
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', status: 'skipped' }]
     })
   })
 
