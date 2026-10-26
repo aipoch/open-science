@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { parseGitHubRepo } from '@aipoch/skills/sources'
+import { parseSavedSkillRepository } from '../../shared/skill-sources'
 import {
   readDurableJsonFile,
   writeDurableJsonFile,
@@ -13,62 +13,12 @@ import type {
   RemoveSkillSourceRequest
 } from '../../shared/skill-sources'
 
-const invalidSource = (): Error => new Error('Enter a GitHub repository URL or owner/repo@ref.')
-const sourceId = (repository: string, ref?: string): string =>
-  createHash('sha256')
-    .update(JSON.stringify([repository, ref ?? null]))
-    .digest('hex')
-
 export function normalizeSkillSource(input: string): SavedSkillSource {
-  const value = input.trim()
-  if (value.includes('://')) {
-    let url: URL
-    try {
-      url = new URL(value)
-    } catch {
-      throw invalidSource()
-    }
-    const parts = url.pathname.replace(/\/$/, '').split('/').slice(1)
-    // A subtree URL is ambiguous with slash-containing refs. Use owner/repo@ref for those.
-    if (
-      url.protocol !== 'https:' ||
-      url.host !== 'github.com' ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      !(parts.length === 2 || (parts.length === 4 && parts[2] === 'tree'))
-    )
-      throw invalidSource()
-  }
-  const parsed = parseGitHubRepo(value)
-  if (
-    !parsed ||
-    !/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(parsed.owner) ||
-    !/^[a-zA-Z0-9_.-]+$/.test(parsed.repo) ||
-    ['.', '..'].includes(parsed.repo) ||
-    (parsed.ref !== undefined &&
-      (!parsed.ref ||
-        parsed.ref.length > 255 ||
-        // eslint-disable-next-line no-control-regex -- Git refs cannot contain ASCII controls.
-        /[\s\x00-\x1f\x7f~^:?*[\\]/.test(parsed.ref) ||
-        parsed.ref.includes('..') ||
-        parsed.ref.includes('@{') ||
-        parsed.ref.startsWith('/') ||
-        parsed.ref.endsWith('/') ||
-        parsed.ref
-          .split('/')
-          .some(
-            (part) => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')
-          )))
-  )
-    throw invalidSource()
-  const repository = `${parsed.owner}/${parsed.repo}`.toLowerCase()
-  return {
-    id: sourceId(repository, parsed.ref),
-    repository,
-    ...(parsed.ref ? { ref: parsed.ref } : {})
-  }
+  const source = parseSavedSkillRepository(input)
+  const id = createHash('sha256')
+    .update(JSON.stringify([source.repository, source.ref ?? null]))
+    .digest('hex')
+  return { id, ...source }
 }
 
 const sourceSchema = z

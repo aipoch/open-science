@@ -7569,19 +7569,14 @@
     "Screening results could not be exported.": "无法导出筛选结果。",
     "Screening data changed during export. Please try again.": "导出期间筛选数据发生了变化。请重试。",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令行正在等待网络访问批准。如果进程已结束，请批准后手动重试命令；系统不会自动重新执行。",
-    "Skill sources": "技能来源",
-    "Save GitHub repositories to browse and import their Skills.": "保存 GitHub 仓库，浏览并导入其中的技能。",
-    "Use a repository URL or owner/repo@ref to select a branch or tag.": "使用仓库 URL 或 owner/repo@ref 选择分支或标签。",
-    "Saved sources": "已保存的来源",
-    "No saved sources yet": "尚未保存来源",
-    "Add a repository above to keep its Skills within reach.": "在上方添加仓库，方便随时访问其中的技能。",
-    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "移除来源会保留已安装的技能。已保存的来源不会自动更新技能。",
-    "Could not load Skill sources.": "无法加载技能来源。",
-    "Could not remove this source. Your saved sources have been preserved.": "无法移除此来源。已保存的来源已保留。",
-    "Could not save this source. Check the repository address and try again.": "无法保存此来源。请检查仓库地址后重试。",
-    "Remove source {{name}}": "移除来源 {{name}}",
     "Default branch": "默认分支",
-    "Add source": "添加来源",
-    "Browse": "浏览"
+    "Saved repositories": "已保存的仓库",
+    "Save repository": "保存仓库",
+    "Could not load saved repositories.": "无法加载已保存的仓库。",
+    "Could not remove this bookmark. Your saved repositories have been preserved.": "无法移除此收藏，已保存的仓库已保留。",
+    "Could not save this repository. Try again.": "无法保存此仓库，请重试。",
+    "Remove saved repository {{name}}": "移除已保存的仓库 {{name}}",
+    "Scan a repository, then save it here for next time.": "扫描仓库后，可将其保存在这里，方便下次使用。",
+    "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "移除收藏不会删除已安装的技能。已保存的仓库不会自动更新技能。"
   }
 }

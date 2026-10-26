@@ -916,27 +916,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 : t('Marketplace')
         }
       }
-      if (
-        skillsView.kind === 'sources' ||
-        (skillsView.kind === 'import' && skillsView.repository)
-      ) {
-        return {
-          rootLabelKey: 'Skills',
-          rootTo: { panel: 'skills', view: { kind: 'list' } },
-          ...(skillsView.kind === 'import'
-            ? {
-                parents: [
-                  {
-                    label: t('Sources'),
-                    to: { panel: 'skills', view: { kind: 'sources' } },
-                    ariaLabel: t('Back to {{panel}}', { panel: t('Sources') })
-                  }
-                ]
-              }
-            : {}),
-          leaf: skillsView.kind === 'sources' ? t('Sources') : skillsView.repository!
-        }
-      }
       const leaf =
         skillsView.kind === 'create'
           ? t('New skill')

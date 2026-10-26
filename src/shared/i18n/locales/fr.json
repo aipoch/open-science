@@ -7897,19 +7897,14 @@
     "Screening results could not be exported.": "Impossible d’exporter les résultats du tri.",
     "Screening data changed during export. Please try again.": "Les données du tri ont changé pendant l’exportation. Réessayez.",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement.",
-    "Skill sources": "Sources de compétences",
-    "Save GitHub repositories to browse and import their Skills.": "Enregistrez des dépôts GitHub pour parcourir et importer leurs compétences.",
-    "Use a repository URL or owner/repo@ref to select a branch or tag.": "Utilisez une URL de dépôt ou owner/repo@ref pour sélectionner une branche ou un tag.",
-    "Saved sources": "Sources enregistrées",
-    "No saved sources yet": "Aucune source enregistrée",
-    "Add a repository above to keep its Skills within reach.": "Ajoutez un dépôt ci-dessus pour accéder facilement à ses compétences.",
-    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "Supprimer une source conserve les compétences installées. Les sources enregistrées ne mettent pas automatiquement les compétences à jour.",
-    "Could not load Skill sources.": "Impossible de charger les sources de compétences.",
-    "Could not remove this source. Your saved sources have been preserved.": "Impossible de supprimer cette source. Vos sources enregistrées ont été conservées.",
-    "Could not save this source. Check the repository address and try again.": "Impossible d’enregistrer cette source. Vérifiez l’adresse du dépôt et réessayez.",
-    "Remove source {{name}}": "Supprimer la source {{name}}",
     "Default branch": "Branche par défaut",
-    "Add source": "Ajouter une source",
-    "Browse": "Parcourir"
+    "Saved repositories": "Dépôts enregistrés",
+    "Save repository": "Enregistrer le dépôt",
+    "Could not load saved repositories.": "Impossible de charger les dépôts enregistrés.",
+    "Could not remove this bookmark. Your saved repositories have been preserved.": "Impossible de supprimer ce favori. Vos dépôts enregistrés ont été conservés.",
+    "Could not save this repository. Try again.": "Impossible d’enregistrer ce dépôt. Réessayez.",
+    "Remove saved repository {{name}}": "Supprimer le dépôt enregistré {{name}}",
+    "Scan a repository, then save it here for next time.": "Analysez un dépôt, puis enregistrez-le ici pour la prochaine fois.",
+    "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "La suppression d’un favori conserve ses compétences installées. Les dépôts enregistrés ne mettent pas les compétences à jour automatiquement."
   }
 }

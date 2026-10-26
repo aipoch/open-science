@@ -1,7 +1,8 @@
+import { SavedSkillRepositories } from './SavedSkillRepositories'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, LoaderCircle, ScrollText, SearchX, Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -16,7 +17,6 @@ import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportViewProps = {
-  initialRepository?: string
   onImported: () => void
   onOpenCredentials?: () => void
 }
@@ -28,7 +28,6 @@ type BusyOperation =
 // results reuse the commit-pinned scan and batch-import flow.
 const SkillImportView = ({
   onImported,
-  initialRepository,
   onOpenCredentials
 }: SkillImportViewProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -36,8 +35,8 @@ const SkillImportView = ({
   const importSkill = useSettingsStore((state) => state.importSkill)
   const scanRepoSkills = useSettingsStore((state) => state.scanRepoSkills)
   const previewGitHubSkill = useSettingsStore((state) => state.previewGitHubSkill)
-  const [input, setInput] = useState(initialRepository ?? '')
-  const inputRef = useRef(initialRepository ?? '')
+  const [input, setInput] = useState('')
+  const inputRef = useRef('')
   const [operation, setOperation] = useState<BusyOperation | null>(null)
   const [message, setMessage] = useState<{ kind: 'error' | 'status'; text: string } | null>(null)
   const [repositories, setRepositories] = useState<GitHubRepositorySearchView[] | null>(null)
@@ -109,23 +108,6 @@ const SkillImportView = ({
       setOperation(null)
     }
   }
-
-  const started = useRef(false)
-  useEffect(() => {
-    let active = true
-    // Defer the entry action so a disposed view cannot start a scan.
-    void Promise.resolve().then(() => {
-      if (active && initialRepository && !started.current) {
-        started.current = true
-        void runPreview(initialRepository)
-      }
-    })
-    return () => {
-      active = false
-    }
-    // A source change remounts this view; scanning is an entry action.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const updateInput = (value: string): void => {
     inputRef.current = value
@@ -261,6 +243,14 @@ const SkillImportView = ({
           </Button>
         </div>
       </div>
+      <SavedSkillRepositories
+        scannedRepository={scannedRepo}
+        busy={busy}
+        onScan={(repository) => {
+          updateInput(repository)
+          void runPreview(repository)
+        }}
+      />
       <div aria-busy={busy}>
         {message?.kind === 'error' ? (
           <ErrorNotice

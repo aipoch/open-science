@@ -7569,19 +7569,14 @@
     "Screening results could not be exported.": "スクリーニング結果をエクスポートできませんでした。",
     "Screening data changed during export. Please try again.": "エクスポート中にスクリーニングデータが変更されました。もう一度お試しください。",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。",
-    "Skill sources": "スキルのソース",
-    "Save GitHub repositories to browse and import their Skills.": "GitHub リポジトリを保存して、スキルを閲覧・インポートできます。",
-    "Use a repository URL or owner/repo@ref to select a branch or tag.": "リポジトリ URL または owner/repo@ref でブランチやタグを選択します。",
-    "Saved sources": "保存済みソース",
-    "No saved sources yet": "保存済みのソースはありません",
-    "Add a repository above to keep its Skills within reach.": "上でリポジトリを追加すると、スキルに簡単にアクセスできます。",
-    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "ソースを削除してもインストール済みのスキルは保持されます。保存したソースからスキルが自動更新されることはありません。",
-    "Could not load Skill sources.": "スキルのソースを読み込めませんでした。",
-    "Could not remove this source. Your saved sources have been preserved.": "このソースを削除できませんでした。保存済みのソースは保持されています。",
-    "Could not save this source. Check the repository address and try again.": "このソースを保存できませんでした。リポジトリのアドレスを確認して再試行してください。",
-    "Remove source {{name}}": "ソース {{name}} を削除",
     "Default branch": "デフォルトブランチ",
-    "Add source": "ソースを追加",
-    "Browse": "閲覧"
+    "Saved repositories": "保存済みリポジトリ",
+    "Save repository": "リポジトリを保存",
+    "Could not load saved repositories.": "保存済みリポジトリを読み込めませんでした。",
+    "Could not remove this bookmark. Your saved repositories have been preserved.": "このブックマークを削除できませんでした。保存済みリポジトリは保持されています。",
+    "Could not save this repository. Try again.": "このリポジトリを保存できませんでした。もう一度お試しください。",
+    "Remove saved repository {{name}}": "保存済みリポジトリ {{name}} を削除",
+    "Scan a repository, then save it here for next time.": "リポジトリをスキャンした後、次回のためにここに保存できます。",
+    "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "ブックマークを削除しても、インストール済みのスキルは保持されます。保存済みリポジトリはスキルを自動更新しません。"
   }
 }

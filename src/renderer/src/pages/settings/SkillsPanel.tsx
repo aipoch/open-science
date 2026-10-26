@@ -1,4 +1,3 @@
-import { SkillSources } from './SkillSources'
 import type { SkillsView } from '../../lib/settings-navigation'
 import type { TFunction } from 'i18next'
 import { useResourceSelection, useStickyResourceFilters } from './use-resource-selection'
@@ -359,7 +358,7 @@ const SkillsPanel = ({
       <SkillMarketplace
         view={view}
         onNavigate={onNavigate}
-        onManageSources={() => onNavigate({ kind: 'sources' })}
+        onImportFromGitHub={() => onNavigate({ kind: 'import' })}
         onManageLocal={(id) => {
           if (id) onNavigate({ kind: 'detail', id })
           else {
@@ -423,16 +422,9 @@ const SkillsPanel = ({
       </div>
     )
   }
-  if (view.kind === 'sources')
-    return <SkillSources onBrowse={(repository) => onNavigate({ kind: 'import', repository })} />
   if (view.kind === 'import') {
     return (
-      <SkillImportView
-        key={view.repository ?? 'search'}
-        initialRepository={view.repository}
-        onImported={() => undefined}
-        onOpenCredentials={onOpenGitHubCredential}
-      />
+      <SkillImportView onImported={() => undefined} onOpenCredentials={onOpenGitHubCredential} />
     )
   }
   if (view.kind === 'import-agent-home') {
@@ -480,9 +472,6 @@ const SkillsPanel = ({
           </Badge>
         </h3>
         <div data-slot="skills-action-bar" className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={() => onNavigate({ kind: 'sources' })}>
-            {t('Sources')}
-          </Button>
           <Button onClick={() => onNavigate({ kind: 'marketplace' })}>
             <Store data-icon="inline-start" aria-hidden="true" />
             {t('Browse Marketplace')}

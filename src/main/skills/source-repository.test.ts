@@ -23,6 +23,9 @@ describe('saved Skill sources', () => {
       normalizeSkillSource('owner/repo@Release')
     )
     expect(normalizeSkillSource('owner/repo@feature/new').ref).toBe('feature/new')
+    expect(normalizeSkillSource('https://github.com/Owner/Repo/tree/feature%2Fnew')).toEqual(
+      normalizeSkillSource('owner/repo@feature/new')
+    )
     expect(normalizeSkillSource('owner/repo@Release').id).not.toBe(
       normalizeSkillSource('owner/repo@release').id
     )
@@ -35,6 +38,8 @@ describe('saved Skill sources', () => {
     'https://github.com/o/r#readme',
     'https://github.com/o/r/tree/main/folder',
     'https://github.com/o/r/blob/main/SKILL.md',
+    'https://github.com/o%2Fr/r',
+    'https://github.com/o/r/tree/%',
     '../r',
     'o/r@../secret',
     'o/r@foo.lock',

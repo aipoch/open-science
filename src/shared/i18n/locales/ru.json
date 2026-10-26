@@ -8036,19 +8036,14 @@
     "Screening results could not be exported.": "Не удалось экспортировать результаты отбора.",
     "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку.",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится.",
-    "Skill sources": "Источники навыков",
-    "Save GitHub repositories to browse and import their Skills.": "Сохраняйте репозитории GitHub, чтобы просматривать и импортировать их навыки.",
-    "Use a repository URL or owner/repo@ref to select a branch or tag.": "Используйте URL репозитория или owner/repo@ref для выбора ветки или тега.",
-    "Saved sources": "Сохранённые источники",
-    "No saved sources yet": "Пока нет сохранённых источников",
-    "Add a repository above to keep its Skills within reach.": "Добавьте репозиторий выше для быстрого доступа к его навыкам.",
-    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "Удаление источника сохраняет установленные навыки. Сохранённые источники не обновляют навыки автоматически.",
-    "Could not load Skill sources.": "Не удалось загрузить источники навыков.",
-    "Could not remove this source. Your saved sources have been preserved.": "Не удалось удалить этот источник. Сохранённые источники не изменены.",
-    "Could not save this source. Check the repository address and try again.": "Не удалось сохранить этот источник. Проверьте адрес репозитория и повторите попытку.",
-    "Remove source {{name}}": "Удалить источник {{name}}",
     "Default branch": "Ветка по умолчанию",
-    "Add source": "Добавить источник",
-    "Browse": "Просмотреть"
+    "Saved repositories": "Сохранённые репозитории",
+    "Save repository": "Сохранить репозиторий",
+    "Could not load saved repositories.": "Не удалось загрузить сохранённые репозитории.",
+    "Could not remove this bookmark. Your saved repositories have been preserved.": "Не удалось удалить закладку. Сохранённые репозитории оставлены без изменений.",
+    "Could not save this repository. Try again.": "Не удалось сохранить репозиторий. Повторите попытку.",
+    "Remove saved repository {{name}}": "Удалить сохранённый репозиторий {{name}}",
+    "Scan a repository, then save it here for next time.": "Сканируйте репозиторий и сохраните его здесь для следующего раза.",
+    "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "Удаление закладки не удаляет установленные навыки. Сохранённые репозитории не обновляют навыки автоматически."
   }
 }

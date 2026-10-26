@@ -7897,19 +7897,14 @@
     "Screening results could not be exported.": "No se pudieron exportar los resultados del cribado.",
     "Screening data changed during export. Please try again.": "Los datos del cribado cambiaron durante la exportación. Inténtelo de nuevo.",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "La línea de comandos espera autorización para acceder a la red. Si el proceso ha finalizado, autorice el acceso y vuelva a ejecutar el comando explícitamente; no se ejecutará de nuevo automáticamente.",
-    "Skill sources": "Fuentes de habilidades",
-    "Save GitHub repositories to browse and import their Skills.": "Guarde repositorios de GitHub para explorar e importar sus habilidades.",
-    "Use a repository URL or owner/repo@ref to select a branch or tag.": "Use una URL de repositorio u owner/repo@ref para seleccionar una rama o etiqueta.",
-    "Saved sources": "Fuentes guardadas",
-    "No saved sources yet": "Todavía no hay fuentes guardadas",
-    "Add a repository above to keep its Skills within reach.": "Añada un repositorio arriba para acceder fácilmente a sus habilidades.",
-    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "Al eliminar una fuente se conservan sus habilidades instaladas. Las fuentes guardadas no actualizan las habilidades automáticamente.",
-    "Could not load Skill sources.": "No se pudieron cargar las fuentes de habilidades.",
-    "Could not remove this source. Your saved sources have been preserved.": "No se pudo eliminar esta fuente. Se han conservado las fuentes guardadas.",
-    "Could not save this source. Check the repository address and try again.": "No se pudo guardar esta fuente. Compruebe la dirección del repositorio e inténtelo de nuevo.",
-    "Remove source {{name}}": "Eliminar la fuente {{name}}",
     "Default branch": "Rama predeterminada",
-    "Add source": "Añadir fuente",
-    "Browse": "Explorar"
+    "Saved repositories": "Repositorios guardados",
+    "Save repository": "Guardar repositorio",
+    "Could not load saved repositories.": "No se pudieron cargar los repositorios guardados.",
+    "Could not remove this bookmark. Your saved repositories have been preserved.": "No se pudo eliminar este marcador. Se han conservado los repositorios guardados.",
+    "Could not save this repository. Try again.": "No se pudo guardar este repositorio. Inténtelo de nuevo.",
+    "Remove saved repository {{name}}": "Eliminar el repositorio guardado {{name}}",
+    "Scan a repository, then save it here for next time.": "Escanee un repositorio y guárdelo aquí para la próxima vez.",
+    "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "Al eliminar un marcador, se conservan sus habilidades instaladas. Los repositorios guardados no actualizan las habilidades automáticamente."
   }
 }
