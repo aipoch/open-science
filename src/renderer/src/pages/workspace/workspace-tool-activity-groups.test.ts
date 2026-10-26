@@ -432,6 +432,38 @@ describe('formatActivityGroupPresentationTitle', () => {
         new Map([['run-1', notebookRun]])
       )
     ).toBe(expected)
+    expect(
+      formatActivityGroupPresentationTitle(
+        [notebookActivity, createActivity({ id: 'ordinary', status: 'in_progress' })],
+        undefined,
+        undefined,
+        new Map([['run-1', notebookRun]])
+      )
+    ).toBe('Running')
+  })
+
+  it('shows ordinary running and approval states without inferring future steps', () => {
+    const activity = createActivity({
+      id: 'ordinary',
+      status: 'in_progress',
+      promptMessageId: 'prompt'
+    })
+    expect(formatActivityGroupPresentationTitle([activity], undefined, undefined)).toBe('Running')
+    expect(
+      formatActivityGroupPresentationTitle([activity], undefined, {
+        state: 'pending',
+        originatingPromptMessageId: 'prompt',
+        fingerprint: 'fingerprint',
+        createdAt: 1,
+        request: {
+          requestId: 'permission',
+          sessionId: 'session',
+          toolCallId: 'ordinary',
+          title: 'Read',
+          options: []
+        }
+      })
+    ).toBe('Waiting for your approval')
   })
 
   it('leaves non-Notebook group titles unchanged', () => {

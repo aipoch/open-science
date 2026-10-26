@@ -339,6 +339,9 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     }
 
     await render([])
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tool-group-header"]')?.click()
+    )
     const toolRows = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-testid="tool-chip"]')
     )
@@ -942,6 +945,9 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     }
 
     await render([])
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tool-group-header"]')?.click()
+    )
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')?.click()
     )

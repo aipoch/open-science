@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "{{count}} steps remaining_other": "残り{{count}}ステップ",
     "Input help": "入力ヘルプ",
     "Your changes have not been saved. Discard them and leave the editor?": "変更は保存されていません。破棄してエディターを離れますか？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "登録済みの鎖を使って、類似した3D構造を持つ実験由来のPDB鎖を検索します。",

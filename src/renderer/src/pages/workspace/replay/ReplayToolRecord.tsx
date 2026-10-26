@@ -51,7 +51,7 @@ export const ReplayActivityGroup = memo(function ReplayActivityGroup({
   runDetails: Readonly<Record<string, ReplayNotebookRunDetails>>
 }): React.JSX.Element {
   const { t } = useReplayTranslation()
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
   const activities = useMemo(
     () =>
       step.activities

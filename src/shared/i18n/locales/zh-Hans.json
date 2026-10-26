@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
+    "{{count}} steps remaining_other": "剩余 {{count}} 步",
     "Input help": "输入帮助",
     "Your changes have not been saved. Discard them and leave the editor?": "更改尚未保存。要放弃更改并离开编辑器吗？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收录的链查找具有相似三维结构的实验 PDB 链。",

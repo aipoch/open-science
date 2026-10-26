@@ -769,7 +769,7 @@ const WorkspaceMessageScrollerImpl = ({
   }, [currentProjectId, currentSessionId, loadReviewsForSession])
 
   // Group expansion is keyed by session so switching conversations never reuses stale UI state.
-  const [collapsedActivityGroupState, setCollapsedActivityGroupState] =
+  const [expandedActivityGroupState, setExpandedActivityGroupState] =
     useState<SessionScopedActivityGroupState>(() => ({
       sessionId: undefined,
       groupIds: new Set()
@@ -788,9 +788,9 @@ const WorkspaceMessageScrollerImpl = ({
       scopeId: undefined,
       messageIds: new Set()
     }))
-  const collapsedActivityGroups =
-    collapsedActivityGroupState.sessionId === currentSessionId
-      ? collapsedActivityGroupState.groupIds
+  const expandedActivityGroups =
+    expandedActivityGroupState.sessionId === currentSessionId
+      ? expandedActivityGroupState.groupIds
       : new Set<string>()
   const activityExpansionOverrides =
     activityExpansionOverrideState.sessionId === currentSessionId
@@ -989,10 +989,10 @@ const WorkspaceMessageScrollerImpl = ({
       setSessionItemRevealRequest(request)
       if (source.itemType !== 'tool-activity' || target.type !== 'activity-group') return
 
-      setCollapsedActivityGroupState((current) => {
+      setExpandedActivityGroupState((current) => {
         const groupIds =
           current.sessionId === currentSessionId ? new Set(current.groupIds) : new Set<string>()
-        groupIds.delete(target.id)
+        groupIds.add(target.id)
         return { sessionId: currentSessionId, groupIds }
       })
       setActivityExpansionOverrideState((current) => ({
@@ -1525,7 +1525,7 @@ const WorkspaceMessageScrollerImpl = ({
 
   // Toggles a whole adjacent tool-activity group without affecting other sessions.
   const toggleActivityGroup = (groupId: string): void => {
-    setCollapsedActivityGroupState((currentState) => {
+    setExpandedActivityGroupState((currentState) => {
       const currentGroupIds =
         currentState.sessionId === currentSessionId ? currentState.groupIds : new Set<string>()
       const nextGroupIds = new Set(currentGroupIds)
@@ -2130,7 +2130,7 @@ const WorkspaceMessageScrollerImpl = ({
                     )}
                     key={item.id}
                     group={item}
-                    isExpanded={!collapsedActivityGroups.has(item.id)}
+                    isExpanded={expandedActivityGroups.has(item.id)}
                     onToggleGroup={toggleActivityGroup}
                     expansionOverrides={activityExpansionOverrides}
                     onToggleRow={toggleActivityRow}

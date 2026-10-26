@@ -193,6 +193,9 @@
     "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
+    "{{count}} steps remaining_one": "Queda {{count}} paso",
+    "{{count}} steps remaining_many": "Quedan {{count}} pasos",
+    "{{count}} steps remaining_other": "Quedan {{count}} pasos",
     "Input help": "Ayuda de entrada",
     "Your changes have not been saved. Discard them and leave the editor?": "Los cambios no se han guardado. ¿Desea descartarlos y salir del editor?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Buscar cadenas experimentales de PDB con estructuras 3D similares a partir de una cadena depositada.",

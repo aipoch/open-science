@@ -338,12 +338,16 @@ const formatActivityGroupPresentationTitle = (
   t: TFunction = i18next.t.bind(i18next)
 ): string => {
   if (activities.some(isPendingNotebookCodeReview)) return t('Waiting for your approval')
-  const activityPhases = activities.map((activity) => ({
+  const activityPhases = getRenderableActivityEntries(activities).map(({ activity }) => ({
     isNotebook: isNotebookExecutionActivity(activity),
     phase: getToolExecutionPhase(activity, permission, notebookRunsById)
   }))
+  if (activityPhases.some(({ phase }) => phase === 'awaiting-approval'))
+    return t('Waiting for your approval')
   const phases = activityPhases.filter(({ isNotebook }) => isNotebook).map(({ phase }) => phase)
   const notebookCount = phases.length
+  if (!phases.includes('executing') && activityPhases.some(({ phase }) => phase === 'executing'))
+    return declaredTitle?.trim() || t('Running')
   if (notebookCount === 0) {
     if (activityPhases.length > 0 && activityPhases.every(({ phase }) => phase === 'closed')) {
       return activityPhases.length === 1 ? t('Tool request ended') : t('Tool requests ended')

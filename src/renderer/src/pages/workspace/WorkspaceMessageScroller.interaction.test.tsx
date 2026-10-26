@@ -523,6 +523,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
         )
       })
+      for (const header of container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="tool-group-header"][aria-expanded="false"]'
+      )) {
+        await act(async () => header.click())
+      }
     }
     await show(original)
     expect(getCandidateStates).toHaveBeenCalledWith({ candidateIds: ['candidate-1'] })
@@ -627,6 +632,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
             <WorkspaceMessageScroller activeSession={value} onSendEditedMessage={vi.fn()} />
           )
         })
+        for (const header of container.querySelectorAll<HTMLButtonElement>(
+          '[data-testid="tool-group-header"][aria-expanded="false"]'
+        )) {
+          await act(async () => header.click())
+        }
       }
       await show(session)
       expect(getCandidateStates).toHaveBeenCalledExactlyOnceWith({
@@ -850,6 +860,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     })
 
+    for (const header of container.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="tool-group-header"][aria-expanded="false"]'
+    )) {
+      await act(async () => header.click())
+    }
     await waitFor(() => {
       const targetedRunIds = loadNotebookState.mock.calls.flatMap(
         ([request]) => request.runIds ?? []
@@ -5104,7 +5119,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).toBeLessThanOrEqual(80)
   })
 
-  it('collapses only the selected contiguous segment of a named tool group', async () => {
+  it('expands only the selected contiguous segment of a named tool group', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const { projectActivityGroupStart, projectToolActivity } =
       await import('@/stores/session-store-run-activity-helpers')
@@ -5158,13 +5173,27 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       ).filter((button) => button.textContent?.includes('Inspect sources'))
       expect(headings).toHaveLength(2)
       expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
-        'true',
-        'true'
+        'false',
+        'false'
       ])
       await act(async () => headings[0].click())
       expect
         .soft(headings.map((button) => button.getAttribute('aria-expanded')))
-        .toEqual(['false', 'true'])
+        .toEqual(['true', 'false'])
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller activeSession={{ ...session }} onSendEditedMessage={vi.fn()} />
+        )
+      )
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'true',
+        'false'
+      ])
+      await act(async () => headings[0].click())
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'false',
+        'false'
+      ])
       expect.soft(new Set(segments.map((item) => item.id)).size).toBe(2)
       expect.soft(errors.mock.calls.some((call) => call.join(' ').includes('same key'))).toBe(false)
     } finally {
