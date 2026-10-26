@@ -34,6 +34,7 @@ export default defineConfig({
       'node --max-old-space-size=4096 node_modules/vite/bin/vite.js build --config e2e/vite.browser-test.config.ts && node node_modules/vite/bin/vite.js preview --config e2e/vite.browser-test.config.ts',
     url: 'http://127.0.0.1:4178',
     reuseExistingServer: false,
-    timeout: 120_000
+    // The readiness budget includes the production fixture bundle on hosted runners.
+    timeout: 300_000
   }
 })

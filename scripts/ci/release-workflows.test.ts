@@ -1043,6 +1043,10 @@ describe('build verification throughput', () => {
     expect(verify['runs-on']).toBe('ubuntu-latest')
     expect(verify.needs).toBeUndefined()
     expect(tests.needs).toBeUndefined()
+    expect(step(tests, 'Install dependencies').env).toEqual({ ONNXRUNTIME_NODE_INSTALL: 'skip' })
+    expect(step(tests, 'Verify ONNX native loading').run).toBe(
+      `node -e "require('onnxruntime-node')"`
+    )
     expect(tests['runs-on']).toBe('ubuntu-latest')
     expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3, 4, 5, 6])
     expect(tests['timeout-minutes']).toBe(60)

@@ -690,14 +690,15 @@ for (const launch of ['cold', 'warm'] as const) {
           return checkBrowserImportAvailability({ port })
         }, discoveryPort)
       ).toEqual({ status: 'available' })
-      const url = await website.evaluate(async () => {
+      const transferPort = await findBrowserImportPort()
+      const url = await website.evaluate(async (port) => {
         const sdkPath = '/browser-import.mjs'
         const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
         const blob = await (await fetch('/study.science')).blob()
-        const transfer = prepareBrowserImport(blob, { filename: 'study.science' })
+        const transfer = prepareBrowserImport(blob, { filename: 'study.science', port })
         Object.assign(window, { browserPackageTransfer: transfer, browserPackageBlob: blob })
         return transfer.url as string
-      })
+      }, transferPort)
       const page = launch === 'cold' ? await app.restartWithPackage(url) : app.page
       if (launch === 'warm') await app.emitBrowserImport(url)
       const result = await website.evaluate(async () => {
