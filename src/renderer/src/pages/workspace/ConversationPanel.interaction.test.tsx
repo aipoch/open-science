@@ -2901,7 +2901,11 @@ describe('ConversationPanel composer intake', () => {
     const scrollSurface = container.querySelector(
       '[data-testid="elicitation-composer-scroll"]'
     ) as HTMLDivElement
-    expect(scrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(scrollSurface.classList.contains('overflow-hidden')).toBe(true)
+    const optionsScroll = container.querySelector<HTMLElement>(
+      '[data-testid="elicitation-options"]'
+    )!
+    expect(optionsScroll.classList.contains('overflow-y-auto')).toBe(true)
     expect(scrollSurface.classList.contains('overscroll-contain')).toBe(true)
     expect(scrollSurface.classList.contains('border-border-200')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-sm')).toBe(true)
@@ -2914,7 +2918,11 @@ describe('ConversationPanel composer intake', () => {
     )
     expect(optionRows).toHaveLength(2)
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 480 }) as DOMRect
-    scrollSurface.getBoundingClientRect = () => ({ top: 32 }) as DOMRect
+    optionsScroll.getBoundingClientRect = () => ({ top: 80 }) as DOMRect
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 360 },
+      scrollHeight: { configurable: true, value: 360 }
+    })
     optionRows[1].getBoundingClientRect = () => ({ bottom: 180 }) as DOMRect
 
     act(() => {
@@ -2932,13 +2940,17 @@ describe('ConversationPanel composer intake', () => {
     expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
 
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 288 }) as DOMRect
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 168 },
+      scrollHeight: { configurable: true, value: 168 }
+    })
     act(() => {
       resizeHandle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' }))
     })
     expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
 
-    Object.defineProperties(scrollSurface, {
-      clientHeight: { configurable: true, value: 256 },
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 168 },
       scrollHeight: { configurable: true, value: 400 }
     })
     act(() => {
@@ -2949,8 +2961,8 @@ describe('ConversationPanel composer intake', () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 568 })
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 300 }) as DOMRect
-    Object.defineProperties(scrollSurface, {
-      clientHeight: { configurable: true, value: 250 },
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 180 },
       scrollHeight: { configurable: true, value: 500 }
     })
     act(() => {

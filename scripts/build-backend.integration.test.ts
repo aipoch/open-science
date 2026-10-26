@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { expect, it } from 'vitest'
-import { createBackendBuilder } from './build-backend.mjs'
+import { buildLocalTranslationWorker, createBackendBuilder } from './build-backend.mjs'
 import { desktopBackendDependencies } from './backend-dependencies.mjs'
 
 it('isolates desktop bundles from CLI output and runs all native locales and workers without external i18next', async () => {
@@ -243,3 +243,156 @@ it('rebuilds raw resources, worker edits and newly discovered workers without El
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('bundles the local worker without native ONNX and preserves real text generation', async () => {
+  await mkdir('node_modules/.cache', { recursive: true })
+  const root = await mkdtemp(join(process.cwd(), 'node_modules/.cache/local-translation-'))
+  try {
+    const model = join(root, '模型 # fixture')
+    await mkdir(model)
+    // ONNX opset 13 Gather maps prompt -> ok -> EOS. This exercises actual tokenization,
+    // model loading, WASM generation, output limits, repeated requests and disposal offline.
+    await writeFile(
+      join(model, 'model_quantized.onnx'),
+      Buffer.from(
+        'CAg63wEKIgoFdGFibGUKCWlucHV0X2lkcxIGbG9naXRzIgZHYXRoZXISE3BhY2thZ2luZy1jYXVzYWwtbG0qTwgECAQQAUIFdGFibGVKQAAAAAAAAAAAAAAgQQAAAAAAAAAAAAAAAAAAIEEAAAAAAAAAAAAAAAAAAAAAAAAgQQAAAAAAAAAAAAAAAAAAIEFaKAoJaW5wdXRfaWRzEhsKGQgHEhUKBxIFYmF0Y2gKChIIc2VxdWVuY2ViKQoGbG9naXRzEh8KHQgBEhkKBxIFYmF0Y2gKChIIc2VxdWVuY2UKAggEQgIQDQ==',
+        'base64'
+      )
+    )
+    await writeFile(
+      join(model, 'config.json'),
+      JSON.stringify({
+        model_type: 'gpt2',
+        n_layer: 0,
+        n_head: 1,
+        n_embd: 4,
+        vocab_size: 4,
+        bos_token_id: 1,
+        eos_token_id: 3,
+        pad_token_id: 3
+      })
+    )
+    await writeFile(
+      join(model, 'tokenizer.json'),
+      JSON.stringify({
+        version: '1.0',
+        added_tokens: [
+          {
+            id: 3,
+            content: '<eos>',
+            special: true,
+            single_word: false,
+            lstrip: false,
+            rstrip: false,
+            normalized: false
+          }
+        ],
+        pre_tokenizer: { type: 'Whitespace' },
+        model: {
+          type: 'WordLevel',
+          vocab: { '<unk>': 0, prompt: 1, ok: 2, '<eos>': 3 },
+          unk_token: '<unk>'
+        },
+        decoder: { type: 'WordPiece', prefix: '##', cleanup: true },
+        post_processor: null,
+        normalizer: null,
+        truncation: null,
+        padding: null
+      })
+    )
+    await writeFile(
+      join(model, 'tokenizer_config.json'),
+      JSON.stringify({
+        tokenizer_class: 'PreTrainedTokenizer',
+        eos_token: '<eos>',
+        unk_token: '<unk>',
+        model_max_length: 4096,
+        chat_template: "{{ 'prompt' }}"
+      })
+    )
+    const result = await buildLocalTranslationWorker(process.cwd(), root)
+    expect(result?.dependencies).toEqual(
+      expect.arrayContaining(['onnxruntime-web', 'onnxruntime-common', 'sharp'])
+    )
+    expect(result?.dependencies).not.toContain('onnxruntime-node')
+    expect(result?.dependencies).not.toContain('@huggingface/transformers')
+    await writeFile(
+      join(root, 'verify.mjs'),
+      `
+      import { registerHooks } from 'node:module';
+      registerHooks({resolve(name, context, next) {
+        if (name === 'onnxruntime-node' || name.startsWith('@huggingface/transformers') || name === 'onnxruntime-web/webgpu')
+          throw new Error('Forbidden inference dependency: ' + name);
+        return next(name, context);
+      }});
+      await import('./worker.mjs');
+    `
+    )
+    const request = {
+      id: 'normal',
+      directory: model,
+      systemPrompt: 'Translate',
+      prompt: 'Scientific text',
+      outputLimitBytes: 1024
+    }
+    const input =
+      [request, { ...request, id: 'repeat' }, { ...request, id: 'limit', outputLimitBytes: 1 }]
+        .map((item) => JSON.stringify(item))
+        .join('\n') + '\n'
+    const output = execFileSync(process.execPath, [join(root, 'verify.mjs')], {
+      input,
+      encoding: 'utf8',
+      timeout: 30_000
+    })
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line))
+    expect(output).toEqual([
+      {
+        id: 'normal',
+        text: 'ok',
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 2 }
+      },
+      {
+        id: 'repeat',
+        text: 'ok',
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 2 }
+      },
+      { id: 'limit', error: 'inference-failed' }
+    ])
+    expect(await readFile(join(root, 'transformers-LICENSE'), 'utf8')).toContain('Apache License')
+    expect(await readFile(join(root, 'jinja-LICENSE'), 'utf8')).toContain('MIT License')
+    expect(await readFile(join(root, 'tokenizers-LICENSE'), 'utf8')).toContain('Apache License')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 40_000)
+
+it.each([
+  ['99.0.0', '1.26.0-dev.20260416-b7804b056c'],
+  ['4.2.0', '99.0.0']
+])(
+  'retains the original inference closure for unaudited versions (%s, %s)',
+  async (transformers, wasm) => {
+    const root = await mkdtemp(join(tmpdir(), 'translation-version-'))
+    try {
+      for (const [name, version] of [
+        ['@huggingface/transformers', transformers],
+        ['onnxruntime-web', wasm]
+      ]) {
+        const directory = join(root, 'node_modules', name)
+        await mkdir(join(directory, 'dist'), { recursive: true })
+        await writeFile(
+          join(directory, 'package.json'),
+          JSON.stringify({ name, version, main: 'dist/index.js' })
+        )
+        await writeFile(join(directory, 'dist/index.js'), '')
+      }
+      expect(await buildLocalTranslationWorker(root, join(root, 'output'))).toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

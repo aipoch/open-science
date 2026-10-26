@@ -436,9 +436,20 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     if (
+      this.platform === 'win32' &&
+      invocation.target?.kind !== 'wsl2' &&
+      invocation.windowsProtectionRequired === undefined
+    ) {
+      // Capture mode before validating interpreter identity, and keep it through launch.
+      invocation = {
+        ...invocation,
+        windowsProtectionRequired: await this.windowsProtectionConfigured()
+      }
+    }
+    if (
       this.windowsRuntime &&
       invocation.target?.kind !== 'wsl2' &&
-      (await this.windowsProtectionConfigured())
+      invocation.windowsProtectionRequired
     ) {
       if (invocation.runtime === 'bash' || invocation.runtime === 'repl') {
         const runtime = this.windowsRuntime.get()
@@ -483,9 +494,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
-    const restrictFolders =
-      (this.platform === 'win32' && invocation.target?.kind !== 'wsl2') ||
-      (await this.options.getFolderRestrictionEnabled?.()) !== false
+    const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
+    const windowsProtectionRequired = nativeWindows
+      ? invocation.windowsProtectionRequired
+      : undefined
+    const restrictFolders = nativeWindows
+      ? windowsProtectionRequired
+      : (await this.options.getFolderRestrictionEnabled?.()) !== false
     if (
       invocation.windowsProtectionRequired === true &&
       this.platform === 'win32' &&
@@ -550,7 +565,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { executable: invocation.executable, args: invocation.args }
           : {}),
         ...(invocation.electronAsNode ? { electronAsNode: true } : {}),
-        windowsProtectionRequired: invocation.windowsProtectionRequired,
+        windowsProtectionRequired,
         windowsRuntimeAccessRequired: invocation.windowsRuntimeAccessRequired,
         cwd: invocation.cwd,
         env,
@@ -903,7 +918,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ? { requestProcessTreeTermination: wrapped.requestProcessTreeTermination }
         : {}),
       ...(wrapped.confirmProcessState ? { confirmProcessState: wrapped.confirmProcessState } : {}),
-      ...(this.platform === 'win32' && invocation.windowsProtectionRequired !== undefined
+      ...(windowsProtectionRequired !== undefined
         ? {
             beginSpawn: () => {
               if (

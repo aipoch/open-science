@@ -442,7 +442,7 @@ const PermissionsPanel = ({
           {window.api.platform === 'win32' ? (
             <InlineNotice className="mt-3">
               {t(
-                'Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.'
+                'Windows native runtimes can run in standard mode without folder restrictions. Protected mode enforces folder restrictions. This switch applies only to WSL2 Shell.'
               )}
             </InlineNotice>
           ) : null}

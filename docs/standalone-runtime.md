@@ -38,6 +38,12 @@ external. Resource-bearing and native dependencies retain their existing module 
 Desktop staging also excludes the audited type-only API SDK peer of Claude Agent SDK 0.3.232;
 the Agent SDK runtime remains included, and other versions or incoming edges remain intact.
 
+Release CLI and desktop packages omit audited unused dependency variants and duplicate
+Electron-side payloads while retaining runtime assets, licenses and diagnostic symbols.
+npm/SDK declarations and exports remain available. Local translation keeps its existing
+WASM runtime. Micromamba ships once under the backend's `resources` directory, including
+the Windows compatibility runner.
+
 Before unattended operation, review [intended use](usage-scope.md), the
 [security model](security.md), and [known limitations](known-limitations.md). A headless service
 retains the host's configured permissions and data recipients; absence of a desktop window does not

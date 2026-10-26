@@ -185,10 +185,12 @@ describe('module test impact commands', () => {
       const { spawn, invocation } = captureNpmInvocation()
       const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
       const source = 'src/main/notebook/mcp-server.ts'
-      const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
-        status: 'unavailable-manifest-only',
-        testFiles: []
-      })
+      const manifest = loadModuleImpactManifest()
+      const plan = createAffectedTestPlan(
+        [{ path: source, status: 'modified' }],
+        { status: 'unavailable-manifest-only', testFiles: [] },
+        manifest
+      )
       try {
         await runModuleTestCli(
           [
@@ -210,6 +212,7 @@ describe('module test impact commands', () => {
               throw new Error('CodeGraph unavailable in CI')
             },
             spawn,
+            manifest,
             derivedConsumers: { schemaVersion: 1, modules: {} },
             environment: { npm_execpath: '/npm/bin/npm-cli.js' }
           }
@@ -994,9 +997,11 @@ describe('module test impact commands', () => {
     const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     const environment = { npm_execpath: '/npm/bin/npm-cli.js' }
+    const manifest = loadModuleImpactManifest()
     const expectedPlan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
-      { status: 'current', testFiles: [] }
+      { status: 'current', testFiles: [] },
+      manifest
     )
 
     expect(
@@ -1004,6 +1009,7 @@ describe('module test impact commands', () => {
         ['affected', '--base', base, '--head', head, '--coverage-changed', coverageBase],
         {
           cwd: '/repo',
+          manifest,
           derivedConsumers: { schemaVersion: 1, modules: {} },
           execute,
           spawn,

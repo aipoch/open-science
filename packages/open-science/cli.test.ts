@@ -30,7 +30,7 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
 ]
 
 describe('CLI help', () => {
-  it.each([undefined, 'run', 'project', 'version', 'paths'])(
+  it.each([undefined, 'run', 'project', 'version', 'paths', 'mcp'])(
     'makes help %s equivalent to the help flag',
     async (command) => {
       const log = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -50,6 +50,9 @@ describe('CLI help', () => {
     ['--version', 'start'],
     ['version', '--port', '44100'],
     ['version', '--prompt', 'hello'],
+    ['mcp', '--json'],
+    ['mcp', '--port', '44100'],
+    ['mcp', 'extra'],
     ['paths', '--force'],
     ['paths', 'extra'],
     ['paths', '--jsonl'],

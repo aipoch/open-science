@@ -40,6 +40,7 @@ Commands:
   stop        Gracefully stop the backend
   status      Show backend status
   url         Print the authenticated web URL
+  mcp         Serve research tools over MCP stdio (--config-root <path> or --profile <path>)
   doctor --json  Inspect headless readiness
   runtime list          List detected Agent runtimes
   runtime install codex   Prepare the app-managed Codex runtime
@@ -203,6 +204,7 @@ const POSITIONAL_LIMITS = new Map([
   ['version', 0],
   ['help', 1],
   ['paths', 0],
+  ['mcp', 0],
   ['doctor', 0],
   ['runtime list', 0],
   ['runtime install', 1],
@@ -282,9 +284,11 @@ export const parseCliArgs = (argv) => {
       ? ['--json', '--help', '-h']
       : command === 'paths'
         ? ['--json', '--help', '-h', '--config-root', '--profile']
-        : command === 'help'
-          ? ['--help', '-h']
-          : undefined
+        : command === 'mcp'
+          ? ['--help', '-h', '--config-root', '--profile']
+          : command === 'help'
+            ? ['--help', '-h']
+            : undefined
   const subcommand =
     (GROUP_COMMANDS.has(command) && args[0] && !args[0].startsWith('-')) ||
     (command === 'run' && (args[0] === 'status' || args[0] === 'cancel'))
@@ -1878,7 +1882,11 @@ export const runCli = async (argv = process.argv.slice(2)) => {
     const { version } = await readCliMetadata()
     console.log(options.json ? JSON.stringify({ version }) : version)
   } else if (command === 'paths') await pathsCommand(options)
-  else if (command === 'init') await initCommand(options)
+  else if (command === 'mcp') {
+    const { runResearchMcpServer } = await import('./mcp.mjs')
+    const { version } = await readCliMetadata()
+    await runResearchMcpServer({ configRoot: options.configRoot, version })
+  } else if (command === 'init') await initCommand(options)
   else if (command === 'start') await startCommand(options)
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)

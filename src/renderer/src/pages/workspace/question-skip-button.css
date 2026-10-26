@@ -1,0 +1,95 @@
+.question-skip-control,
+.question-skip-menu {
+  --skip-duration: 160ms;
+  --skip-easing: cubic-bezier(0.4, 0, 1, 1);
+}
+
+.question-skip-control[data-open='true'],
+.question-skip-menu[data-state='open'] {
+  --skip-duration: 240ms;
+  --skip-easing: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.question-skip-control {
+  transition:
+    background-color 150ms,
+    border-radius var(--skip-duration) var(--skip-easing);
+}
+
+/* Keep the shared edge flat until the exit transition has actually unmounted the menu. */
+.question-skip-control[data-connected='true'][data-side='top'],
+.question-skip-menu[data-side='bottom'] {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.question-skip-control[data-connected='true'][data-side='bottom'],
+.question-skip-menu[data-side='top'] {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.question-skip-control > button:first-child {
+  border-top-left-radius: inherit;
+  border-bottom-left-radius: inherit;
+}
+
+.question-skip-control > button:last-child {
+  border-top-right-radius: inherit;
+  border-bottom-right-radius: inherit;
+}
+
+.question-skip-arrow {
+  transition: transform var(--skip-duration) var(--skip-easing);
+}
+
+.question-skip-control[data-open='true'] .question-skip-arrow {
+  transform: rotate(180deg);
+}
+
+/* Clip from the connecting edge without scaling text or changing Radix's measured geometry.
+   Transitions retain their current value when the user reverses direction mid-animation. */
+.question-skip-menu {
+  clip-path: var(--skip-collapsed-clip, inset(0 0 100%));
+  opacity: 0.65;
+  transition:
+    clip-path var(--skip-duration) var(--skip-easing),
+    opacity var(--skip-duration) var(--skip-easing);
+}
+
+.question-skip-menu[data-side='top'] {
+  --skip-collapsed-clip: inset(100% 0 0);
+}
+
+.question-skip-menu[data-state='open'][data-entered='true'] {
+  clip-path: inset(0%);
+  opacity: 1;
+}
+
+.question-skip-menu[data-state='closed'] {
+  pointer-events: none;
+  animation: question-skip-exit 160ms;
+}
+
+/* Radix Presence waits for CSS animations, so retain the node while the exit transition runs. */
+@keyframes question-skip-exit {
+  from {
+    --skip-presence: 0;
+  }
+  to {
+    --skip-presence: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .question-skip-control,
+  .question-skip-menu,
+  .question-skip-arrow {
+    transition: none;
+  }
+
+  /* Keep the completion event for Presence, including a preference change during exit. */
+  .question-skip-menu[data-state='closed'] {
+    animation-duration: 1ms;
+  }
+}

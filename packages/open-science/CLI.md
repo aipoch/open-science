@@ -849,3 +849,83 @@ older releases. To switch a file credential back to OS storage, restart in OS mo
 replace it with the key while the vault is available. Existing unreadable records remain intact.
 These commands do not migrate historical configuration or store diagnostic history. Older backends that
 lack the endpoints return an endpoint error; the CLI never falls back to editing Settings files directly.
+
+## External agents through MCP
+
+Start the selected profile normally, then let an MCP client launch the stdio adapter:
+
+```bash
+open-science start --no-open --config-root /absolute/path/to/profile
+open-science mcp --config-root /absolute/path/to/profile
+```
+
+Example client configuration (replace paths with your installation and profile paths):
+
+```json
+{
+  "mcpServers": {
+    "open-science": {
+      "command": "/absolute/path/to/open-science",
+      "args": ["mcp", "--config-root", "/absolute/path/to/profile"]
+    }
+  }
+}
+```
+
+`--profile` is an alias for `--config-root`; existing environment overrides and discovery order
+apply. For a source checkout, use `node` as the command and put the absolute path to
+`packages/open-science/cli.mjs` before `mcp` in `args`. The adapter connects to an already
+running authenticated local service; it does not start it, install anything or open a browser.
+`open-science mcp --help` works without a running service.
+
+Tool discovery works even when the service is stopped. Calls return an actionable error until
+it is available, and subsequent calls rediscover the service. Tool names consistently use
+lowercase `snake_case`; argument names retain the SDK's `camelCase`. Tools accept explicit IDs
+rather than resolving project names. Each tool publishes its description, input schema, output
+schema and behavior annotations through `tools/list`.
+
+| Tool                           | Purpose                                                  |
+| ------------------------------ | -------------------------------------------------------- |
+| `doctor`                       | Check research readiness                                 |
+| `list_runtimes`                | List detected Agent runtimes                             |
+| `list_projects`                | List projects and IDs                                    |
+| `create_project`               | Create a persistent project                              |
+| `update_project`               | Update project metadata and Agent Context                |
+| `list_sessions`                | List sessions, optionally by project                     |
+| `get_session`                  | Read session information/status, not a full transcript   |
+| `get_session_configuration`    | Read session configuration and revision                  |
+| `update_session_configuration` | Update settings with `expectedRevision`                  |
+| `start_run`                    | Submit a prompt and return a run ID                      |
+| `get_run`                      | Read progress, output and attention state                |
+| `cancel_run`                   | Explicitly cancel a run without undoing previous effects |
+| `get_plan`                     | Read the plan and its version/revision                   |
+| `respond_plan`                 | Approve/reject a reviewed version or request changes     |
+| `list_artifacts`               | List artifact metadata without downloading files         |
+
+A typical workflow calls `list_projects`, `start_run` with `{ "projectId": "…", "prompt": "…" }`,
+then polls `get_run` with the returned run ID and calls `list_artifacts` with the session ID.
+Successful calls return `structuredContent: { "result": ... }` plus the same JSON in text
+content. Tool execution failures set `isError: true`; exception bodies and credentials are not
+forwarded. After a timeout or transport failure, inspect current state before repeating a write:
+the original operation may already have succeeded. The adapter never retries mutations itself.
+
+Runs use the service's configured framework and authorization defaults. `start_run` accepts
+existing session, provider/model, permission, skill, specialist, compute-host, memory, review,
+delegation and plan-first options; it does not change the global framework. A run can require
+human action in Open-Science. Explicit `permissionPrompts: "none"` denies unresolved human
+interactions using the existing capability check; it does not expand permissions and cannot
+be combined with `turnIntent: "plan-first"`. Plan approval/rejection requires the version and
+revision from `get_plan`. Configuration updates require the revision from
+`get_session_configuration`.
+
+MCP access grants the listed operations for the selected profile under its existing permissions.
+The adapter is not a separate sandbox or a read-only view. Project/configuration changes, plan
+responses and research runs persist through existing business owners and may write files or
+incur model costs. No new database schema, historical-data migration, business status enum,
+credential store or background service is introduced. There is no arbitrary shell/RPC tool,
+credential-management tool, file import/export/download-to-path tool or remote HTTP MCP endpoint.
+
+Standard output carries only MCP protocol messages. Closing stdin or sending SIGINT/SIGTERM
+closes the adapter and its pending network requests; it neither stops the service nor cancels
+accepted runs. MCP request cancellation likewise stops waiting, not the persisted operation.
+Use `cancel_run` explicitly to cancel research.

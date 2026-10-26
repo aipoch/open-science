@@ -403,6 +403,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.journals',
       'literature.lookupMetadata',
       'literature.onChanged',
+      'literature.publicationCheck',
       'literature.related',
       'literature.search',
       'literature.sources',

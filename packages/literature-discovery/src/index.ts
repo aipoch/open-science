@@ -17,3 +17,5 @@ export type {
 export { LiteratureSupplementFinder } from './supplements.js'
 
 export { LiteratureRelatedFinder } from './related.js'
+
+export { LiteraturePublicationChecker } from './publication-check.js'

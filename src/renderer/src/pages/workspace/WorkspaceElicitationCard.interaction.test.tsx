@@ -33,6 +33,18 @@ const setTextControlValue = (
   control.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+const openSkipMenu = async (): Promise<HTMLElement> => {
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')
+  expect(trigger).not.toBeNull()
+  await act(async () => {
+    trigger!.focus()
+    trigger!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  })
+  const item = document.querySelector<HTMLElement>('[role="menuitem"]')
+  expect(item).not.toBeNull()
+  return item!
+}
+
 const fields = [
   {
     id: 'question_0',
@@ -142,6 +154,140 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it('records a skipped question in the draft and submits it alongside a selected answer', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    const onDraftChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: mixedChoiceFields,
+            state: 'pending'
+          }}
+          request={{ ...multiQuestionRequest, fields: mixedChoiceFields }}
+          onRespond={onRespond}
+          onDraftChange={onDraftChange}
+        />
+      )
+    })
+    const button = (name: string): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find(
+        (item) => item.textContent?.trim() === name
+      )
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
+        ?.click()
+    )
+    expect(button('Skip')).toBeDefined()
+    expect(button('Skip')?.getAttribute('data-variant')).toBe('secondary')
+    await act(async () => button('Skip')?.click())
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(onDraftChange).toHaveBeenLastCalledWith([{ fieldId: 'question_0', status: 'skipped' }])
+    expect(container.textContent).toContain('Which language should the skill use?')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-chinese"]')
+        ?.click()
+    )
+    await act(async () => button('Finish')?.click())
+    const response = onRespond.mock.calls[0]?.[0]
+    expect(response).toEqual({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', status: 'skipped' },
+        { fieldId: 'question_1', value: 'chinese' }
+      ]
+    })
+    expect(
+      validateElicitationAnswers(
+        { ...multiQuestionRequest, fields: mixedChoiceFields },
+        response.answers
+      )
+    ).toEqual(response.answers)
+  })
+
+  it('finishes a skipped last question and lets a restored skip be replaced with a choice', async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined)
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: multiQuestionFields,
+            state: 'pending',
+            draftAnswers: [{ fieldId: 'question_0_custom', value: 'User skipped' }]
+          }}
+          request={multiQuestionRequest}
+          onRespond={onRespond}
+        />
+      )
+    )
+    const button = (name: string): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find(
+        (item) => item.textContent?.trim() === name
+      )
+    await act(async () => button('Back')?.click())
+    expect(container.querySelector('textarea')?.value).toBe('')
+    expect(container.textContent).toContain('User skipped')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
+        ?.click()
+    )
+    await act(async () => button('Next')?.click())
+    expect(button('Skip')).toBeDefined()
+    await act(async () => button('Skip')?.click())
+    expect(onRespond).toHaveBeenCalledWith({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', value: 'clinical' },
+        { fieldId: 'question_1', status: 'skipped' }
+      ]
+    })
+  })
+
+  it.each(['legacy', 'structured'] as const)(
+    'translates %s skipped history without selecting an answer',
+    async (format) => {
+      await act(async () => {
+        await i18next.changeLanguage('zh-Hans')
+      })
+      try {
+        await act(async () =>
+          root.render(
+            <WorkspaceElicitationCard
+              elicitation={{
+                message: request.message,
+                fields,
+                state: 'answered',
+                answers: [
+                  format === 'legacy'
+                    ? { fieldId: 'question_0_custom', value: 'User skipped' }
+                    : { fieldId: 'question_0', status: 'skipped' }
+                ]
+              }}
+            />
+          )
+        )
+        const answer = container.querySelector<HTMLButtonElement>(
+          '[data-testid="elicitation-answer-row"]'
+        )!
+        expect(answer.textContent).toBe('用户跳过')
+        await act(async () => answer.click())
+        expect(container.querySelector('[data-selected="true"]')).toBeNull()
+        expect(container.textContent).not.toContain('User skipped')
+      } finally {
+        await act(async () => {
+          await i18next.changeLanguage('en')
+        })
+      }
+    }
+  )
+
   it.each(
     (['answered', 'pending'] as const).flatMap((state) =>
       [true, false].map((withRequest) => ({ state, withRequest }))
@@ -149,7 +295,9 @@ describe('WorkspaceElicitationCard choice question', () => {
   )(
     'localizes the system answer in $state records with request=$withRequest',
     async ({ state, withRequest }) => {
-      const answers = [{ fieldId: 'question_0_custom', value: 'Let the agent decide' }]
+      const answers = [
+        { fieldId: 'question_0_custom', status: 'answered' as const, value: 'Let the agent decide' }
+      ]
       await act(async () => i18next.changeLanguage('zh-Hans'))
       try {
         await act(async () =>
@@ -320,7 +468,7 @@ describe('WorkspaceElicitationCard choice question', () => {
             fields: mixedChoiceFields,
             state: 'answered',
             answers: [
-              { fieldId: 'question_0_custom', value: 'Let the agent decide' },
+              { fieldId: 'question_0_custom', status: 'answered', value: 'Let the agent decide' },
               { fieldId: 'question_1', value: 'english' }
             ]
           }}
@@ -454,16 +602,6 @@ describe('WorkspaceElicitationCard choice question', () => {
         .querySelector('[data-testid="elicitation-question-progress"]')
         ?.getAttribute('aria-label')
     ).toBe('Question 1 of 2')
-    expect(
-      container
-        .querySelector('[data-testid="elicitation-question-progress"]')
-        ?.parentElement?.classList.contains('sticky')
-    ).toBe(true)
-    expect(
-      container
-        .querySelector('[data-testid="elicitation-question-progress"]')
-        ?.parentElement?.classList.contains('top-3')
-    ).toBe(true)
     expect(
       Array.from(
         container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
@@ -904,65 +1042,57 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
   })
 
-  it('places a warning-colored Skip all button last in the footer row for multi-question cards', async () => {
-    const onRespond = vi.fn().mockResolvedValue(undefined)
-
-    await act(async () => {
-      root.render(
-        <WorkspaceElicitationCard
-          elicitation={{
-            message: multiQuestionRequest.message,
-            fields: multiQuestionFields,
-            state: 'pending'
-          }}
-          request={multiQuestionRequest}
-          onRespond={onRespond}
-        />
+  it.each(['all', 'current'] as const)(
+    'disables both skip buttons while submitting %s after opening the menu',
+    async (action) => {
+      let finish!: () => void
+      const onRespond = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
       )
-    })
-
-    const skip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip all'
-    )
-    expect(skip).toBeDefined()
-    expect(skip?.className).toContain('status-warning')
-    // Footer buttons match the compact card scale.
-    expect(skip?.className).not.toContain('h-11')
-    // Advance to the second question so Back renders, then check it shares the same pill
-    // geometry as the solid buttons (no borderless ghost).
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-multi-omics"]')
-        ?.click()
-    })
-    const next = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Next'
-    )
-    await act(async () => next?.click())
-    const back = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Back'
-    )
-    expect(back?.getAttribute('data-variant')).toBe('secondary')
-    expect(back?.className).toContain('px-3')
-    // Same row as the footer tally, last button in the action group.
-    const skipAfter = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip all'
-    )
-    expect(skipAfter?.parentElement?.lastElementChild).toBe(skipAfter)
-    expect(skipAfter?.parentElement?.parentElement?.textContent).toContain('selected')
-    // The full-width separator is gone; the input carries its own underline instead.
-    const customRow = container.querySelector('textarea')?.closest('div')
-    expect(customRow?.textContent).not.toContain('Skip')
-    expect(customRow?.classList.contains('border-t')).toBe(false)
-    expect(customRow?.classList.contains('border-b')).toBe(false)
-    expect(container.querySelector('textarea')?.className).toContain('border-b')
-
-    await act(async () => skip?.click())
-    expect(onRespond).toHaveBeenCalledWith({
-      requestId: multiQuestionRequest.requestId,
-      action: 'decline'
-    })
-  })
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            elicitation={{
+              message: request.message,
+              fields,
+              state: 'pending'
+            }}
+            request={request}
+            onRespond={onRespond}
+          />
+        )
+      )
+      const skip = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === 'Skip'
+      )!
+      expect(skip.getAttribute('data-variant')).toBe('secondary')
+      expect(document.querySelector('[role="menuitem"]')).toBeNull()
+      expect(container.textContent).not.toContain('Skip all')
+      const skipAll = await openSkipMenu()
+      expect(onRespond).not.toHaveBeenCalled()
+      expect(skipAll.textContent).toBe('Skip all')
+      expect(skipAll.className).toContain('status-warning')
+      await act(async () => (action === 'all' ? skipAll.click() : skip.click()))
+      expect(onRespond).toHaveBeenCalledExactlyOnceWith({
+        requestId: request.requestId,
+        ...(action === 'all'
+          ? { action: 'decline' }
+          : { action: 'accept', answers: [{ fieldId: 'question_0', status: 'skipped' }] })
+      })
+      expect(skip.disabled).toBe(true)
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
+      ).toBe(true)
+      await act(async () => finish())
+      expect(skip.disabled).toBe(false)
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
+      ).toBe(false)
+    }
+  )
 
   it('renders the answered summary as a compact checklist with a question-type chip', async () => {
     const mixedRequest = { ...multiQuestionRequest, fields: mixedChoiceFields }
@@ -1019,7 +1149,13 @@ describe('WorkspaceElicitationCard choice question', () => {
             message: activity.elicitation?.message ?? '',
             fields,
             state: 'answered',
-            answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+            answers: [
+              {
+                fieldId: 'question_0_custom',
+                status: 'answered',
+                value: 'A literature review skill'
+              }
+            ]
           }}
           request={request}
         />
@@ -1250,7 +1386,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(onRespond).toHaveBeenCalledWith({
       requestId: request.requestId,
       action: 'accept',
-      answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+      answers: [
+        { fieldId: 'question_0_custom', status: 'answered', value: 'A literature review skill' }
+      ]
     })
 
     onRespond.mockClear()
@@ -1275,13 +1413,11 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(onRespond).toHaveBeenCalledWith({
       requestId: request.requestId,
       action: 'accept',
-      answers: [{ fieldId: 'question_0_custom', value: 'Let the agent decide' }]
+      answers: [{ fieldId: 'question_0_custom', status: 'answered', value: 'Let the agent decide' }]
     })
 
     onRespond.mockClear()
-    const skip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip'
-    )
+    const skip = await openSkipMenu()
     await act(async () => skip?.click())
     expect(onRespond).toHaveBeenCalledWith({
       requestId: request.requestId,

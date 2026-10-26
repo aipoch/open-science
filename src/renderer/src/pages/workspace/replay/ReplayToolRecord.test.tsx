@@ -7,6 +7,8 @@ import type { PersistedToolActivity } from '../../../../../shared/session-persis
 import type { NotebookRunRecord } from '../../../../../shared/notebook'
 import type { ReplayStep } from '../../../../../shared/replay'
 import { ReplayActivityGroup, ReplayToolRecord } from './ReplayToolRecord'
+import { initI18n, prepareI18nLocale } from '@/i18n'
+import { createReplayPresentation, ReplayPresentationContext } from './replay-presentation'
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -52,6 +54,101 @@ const activity: PersistedToolActivity = {
   }
 }
 describe('read-only saved tool interactions', () => {
+  it.each([
+    {
+      answer: { fieldId: 'question_0', status: 'skipped' as const },
+      status: 'skipped',
+      value: 'User skipped',
+      field: 'Which output?'
+    },
+    {
+      answer: { fieldId: 'question_0_custom', value: 'User skipped' },
+      status: 'skipped',
+      value: 'User skipped',
+      field: 'Which output?'
+    },
+    {
+      answer: { fieldId: 'question_0_custom', status: 'answered' as const, value: 'User skipped' },
+      status: 'answered',
+      value: 'User skipped',
+      field: 'Other'
+    },
+    {
+      answer: { fieldId: 'question_0', value: ['Table'] },
+      status: 'answered',
+      value: ['Table'],
+      field: 'Which output?'
+    },
+    {
+      answer: { fieldId: 'question_0_custom', value: 'A written answer' },
+      status: 'answered',
+      value: 'A written answer',
+      field: 'Other'
+    }
+  ])('preserves raw replay answer semantics: $answer', ({ answer, status, value, field }) => {
+    const recorded: PersistedToolActivity = {
+      ...activity,
+      elicitation: {
+        message: 'Choose an output',
+        state: 'answered',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Which output?',
+            kind: 'multi-select',
+            options: [{ value: 'Table', label: 'Table' }]
+          },
+          { id: 'question_0_custom', label: 'Other', kind: 'text' }
+        ],
+        answers: [answer]
+      }
+    }
+    const { rerender } = render(<ReplayToolRecord activity={recorded} showResults={false} />)
+    expect(screen.queryByText('Recorded answers')).toBeNull()
+    rerender(<ReplayToolRecord activity={recorded} showResults />)
+    const section = screen.getByRole('heading', { name: 'Recorded answers' }).parentElement!
+    expect(JSON.parse(section.querySelector('pre')!.textContent!)).toEqual([
+      { field, status, value }
+    ])
+  })
+
+  it('translates a skipped draft in raw replay without translating an explicit literal answer', async () => {
+    await prepareI18nLocale('zh-Hans')
+    initI18n('en')
+    const recorded: PersistedToolActivity = {
+      ...activity,
+      elicitation: {
+        message: 'Choose outputs',
+        state: 'pending',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Which output?',
+            kind: 'single-select',
+            options: [{ value: 'Table', label: 'Table' }]
+          },
+          { id: 'question_0_custom', label: 'Other', kind: 'text' }
+        ],
+        draftAnswers: [
+          { fieldId: 'question_0', status: 'skipped' },
+          { fieldId: 'question_0_custom', status: 'answered', value: 'User skipped' }
+        ]
+      }
+    }
+    const { container } = render(
+      <ReplayPresentationContext.Provider value={createReplayPresentation('zh-Hans')}>
+        <ReplayToolRecord activity={recorded} showResults />
+      </ReplayPresentationContext.Provider>
+    )
+    const answers = [...container.querySelectorAll('pre')]
+      .map((node) => node.textContent)
+      .find((text) => text?.includes('"field"'))!
+    expect(JSON.parse(answers)).toEqual([
+      { field: 'Which output?', status: 'skipped', value: '用户跳过' },
+      { field: 'Other', status: 'answered', value: 'User skipped' }
+    ])
+  })
+
   it('shows each saved output channel, confirmation answer, decision and exit code after the result boundary', () => {
     const { container, rerender } = render(
       <ReplayToolRecord activity={activity} showResults={false} />
@@ -223,6 +320,9 @@ it('keeps prefetched Notebook figures behind the result boundary and shares grou
   )
   expect(screen.queryByTestId('notebook-tool-figure-outputs')).toBeNull()
   rerender(<ReplayActivityGroup step={step} showResults runDetails={runDetails} />)
+  expect(screen.getByTestId('tool-group-header').getAttribute('aria-expanded')).toBe('false')
+  expect(screen.queryByTestId('notebook-tool-figure-outputs')).toBeNull()
+  fireEvent.click(screen.getByTestId('tool-group-header'))
   expect(screen.getByTestId('notebook-tool-figure-outputs')).toBeTruthy()
   fireEvent.click(screen.getByTestId('tool-group-header'))
   await waitFor(() => expect(screen.queryByTestId('notebook-tool-figure-outputs')).toBeNull())

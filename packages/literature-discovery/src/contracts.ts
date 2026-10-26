@@ -284,3 +284,5 @@ export type LiteratureSourceInput = z.infer<typeof literatureSourceInputSchema>
 export * from './supplement-contracts.js'
 
 export * from './related-contracts.js'
+
+export * from './publication-check-contracts.js'

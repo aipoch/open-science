@@ -1,4 +1,6 @@
 import type {
+  LiteraturePublicationCheckRequest,
+  LiteraturePublicationCheckResult,
   LiteratureRelatedRequest,
   LiteratureRelatedResult,
   LiteratureSupplementRequest,
@@ -180,6 +182,9 @@ export const contracts = {
     undefined,
     RUNTIME_VALIDATED
   ]),
+  'literature.publicationCheck': callable<
+    (request: LiteraturePublicationCheckRequest) => Promise<LiteraturePublicationCheckResult>
+  >()('literature', ['literature:publication-check', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.related': callable<
     (request: LiteratureRelatedRequest) => Promise<LiteratureRelatedResult>
   >()('literature', ['literature:related', WEB, undefined, undefined, RUNTIME_VALIDATED]),

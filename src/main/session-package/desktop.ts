@@ -723,6 +723,7 @@ export class SessionPackageDesktop {
                               filePath: filePath!,
                               selection: excluded
                             }
+                            this.operations.report({ phase: 'preparing' })
                             return excluded
                           }
                         })

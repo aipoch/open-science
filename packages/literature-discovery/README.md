@@ -40,3 +40,20 @@ bounded in memory and expire after 15 minutes. Relationship pages contain at mos
 Scholar; upstream coverage and content rights still apply. See the official
 [Graph API documentation](https://api.semanticscholar.org/api-docs/graph) and
 [API license](https://www.semanticscholar.org/product/api/license).
+
+## Manual publication checks
+
+`LiteraturePublicationChecker` checks an existing reference's exact, unambiguous DOI.
+`get` restores a saved result without making a network request; `check` explicitly queries
+Crossref's fixed HTTPS `/works/{doi}` endpoint. The `updated-by` reverse edges identify
+notices about that work. `update-to` points in the opposite direction and is not used.
+See [Crossref's production API guidance](https://www.crossref.org/labs/retraction-watch/).
+
+Results preserve each notice's DOI, raw type, source and available full date, including self
+updates, unknown types and reinstatement notices. They are observations of source metadata,
+not an inferred integrity verdict: an empty result does not prove that a work is unaffected.
+Crossref/Retraction Watch coverage, especially for corrections, concerns and reinstatements,
+is incomplete. The host must atomically recheck active item identity, metadata revision and
+DOI when saving a snapshot. A failed check never replaces the previous successful snapshot.
+Network responses are limited to 2 MiB and 100 notices, with a 15-second deadline and capped
+429 cooldown. Checks do not modify bibliographic metadata or screening decisions.
