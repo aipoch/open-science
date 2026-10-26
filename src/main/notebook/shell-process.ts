@@ -305,13 +305,15 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
+  let windowsProtectionRequired: boolean | undefined
   if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
     try {
-      await options.processSandbox?.resolveWindowsRuntime?.({
+      const runtime = await options.processSandbox?.resolveWindowsRuntime?.({
         runtime: 'bash',
         binding: runtimeBinding,
         signal: options.signal
       })
+      if (runtime !== undefined) windowsProtectionRequired = runtime !== null
     } catch (error) {
       throw new ShellPreparationError({
         stdout: '',
@@ -399,6 +401,7 @@ const prepareShellLaunchOptions = async (
           sessionId: options.sessionId,
           projectId: options.projectId,
           runtime: 'bash',
+          ...(windowsProtectionRequired !== undefined ? { windowsProtectionRequired } : {}),
           ...(options.windowsShellControlPipe
             ? { windowsShellControlPipe: options.windowsShellControlPipe }
             : {}),

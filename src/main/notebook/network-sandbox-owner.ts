@@ -436,9 +436,20 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     if (
+      this.platform === 'win32' &&
+      invocation.target?.kind !== 'wsl2' &&
+      invocation.windowsProtectionRequired === undefined
+    ) {
+      // Capture mode before validating interpreter identity, and keep it through launch.
+      invocation = {
+        ...invocation,
+        windowsProtectionRequired: await this.windowsProtectionConfigured()
+      }
+    }
+    if (
       this.windowsRuntime &&
       invocation.target?.kind !== 'wsl2' &&
-      (await this.windowsProtectionConfigured())
+      invocation.windowsProtectionRequired
     ) {
       if (invocation.runtime === 'bash' || invocation.runtime === 'repl') {
         const runtime = this.windowsRuntime.get()
@@ -484,10 +495,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
     const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
-    // Pin the selected mode through launch. Explicit runtime admissions must not be
-    // replaced by a later mode read; unconfigured Windows retains standard execution.
     const windowsProtectionRequired = nativeWindows
-      ? (invocation.windowsProtectionRequired ?? (await this.windowsProtectionConfigured()))
+      ? invocation.windowsProtectionRequired
       : undefined
     const restrictFolders = nativeWindows
       ? windowsProtectionRequired

@@ -83,6 +83,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { NotebookKernelExecutor } from './kernel-executor'
+import { runShellCommand } from './shell-process'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
 import {
   beginMigration,
@@ -1331,6 +1332,108 @@ describe('NotebookNetworkSandboxOwner', () => {
     } finally {
       prepare.mockRestore()
       await owner.dispose()
+    }
+  })
+
+  it.each(['bash', 'repl'] as const)(
+    'rejects removed protection after selecting the protected %s interpreter',
+    async (runtimeKind) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-selected-runtime-mode-'))
+      fixtureDirectories.push(root)
+      const runtime = { root, node: process.execPath, powershell: process.execPath }
+      const prepare = vi
+        .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
+        .mockImplementation(async () => {
+          backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+          return runtime
+        })
+      const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockReturnValue(runtime)
+      backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: owner })
+      try {
+        const request = {
+          cwd: root,
+          runtimeRoot: root,
+          sessionId: 'selected-mode',
+          projectId: 'project'
+        }
+        const result =
+          runtimeKind === 'bash'
+            ? await runShellCommand({
+                ...request,
+                command: 'echo query',
+                handoffDir: root,
+                platform: 'win32',
+                runtimeBinding: { kind: 'powershell', version: '7.6' },
+                processSandbox: owner
+              })
+            : await executor.execute({
+                ...request,
+                kind: 'repl',
+                language: 'python',
+                code: 'console.log("query")',
+                dataRoot: root,
+                notebookSessionRoot: root
+              })
+        expect(result.stderr).toContain('require Windows protected mode')
+        expect(backend.wrap).not.toHaveBeenCalled()
+      } finally {
+        await executor.shutdown()
+        await owner.dispose()
+        prepare.mockRestore()
+        get.mockRestore()
+      }
+    }
+  )
+
+  it('pins protection before validating the prepared interpreter identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-mode-identity-race-'))
+    fixtureDirectories.push(root)
+    const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockImplementation(() => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+      return { root, node: process.execPath, powershell: process.execPath }
+    })
+    backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      windowsRuntimeRoot: join(root, 'protected-runtimes'),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(
+        owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query',
+          sessionId: 's',
+          projectId: 'p',
+          runtime: 'repl',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+      ).rejects.toThrow('require Windows protected mode')
+      expect(backend.wrap).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+      get.mockRestore()
     }
   })
 

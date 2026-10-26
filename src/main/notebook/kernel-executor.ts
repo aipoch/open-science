@@ -1186,6 +1186,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
           projectId: projectId!,
           runtime: kind,
           ...admission,
+          ...(windowsRuntime !== undefined
+            ? { windowsProtectionRequired: windowsRuntime !== null }
+            : {}),
           ...(this.platform === 'win32' ? { superviseProcessTree: true } : {}),
           ...(kind === 'repl' && request.mcpRpcSocketPath
             ? { localRpcSocketPath: request.mcpRpcSocketPath }
