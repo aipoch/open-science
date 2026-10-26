@@ -139,7 +139,7 @@ const importRootsError = (
       ? ` Write the file under one of these directories and pass that path, or use inline content instead: ${allowedImportRoots.join(', ')}`
       : ' No import roots are configured; use inline content instead.'
   return new Error(
-    `Artifact local source path is outside allowed artifact import roots (got "${filePath}").${guidance}`
+    `Artifact local source path is outside allowed artifact import roots (got "${filePath}").${guidance} For an external file, grant its folder access and pass an absolute path on this host.`
   )
 }
 
@@ -147,9 +147,12 @@ const resolveAllowedImportFilePath = async (
   filePath: string,
   allowedImportRoots: string[],
   relativeBaseDirs: string[] = [],
-  purpose: 'artifact' | 'literature' = 'artifact'
+  purpose: 'artifact' | 'literature' = 'artifact',
+  grantedImportRoots: string[] = []
 ): Promise<string> => {
-  if (allowedImportRoots.length === 0) throw importRootsError(filePath, allowedImportRoots, purpose)
+  const externalRoots = purpose === 'artifact' && isAbsolute(filePath) ? grantedImportRoots : []
+  if (allowedImportRoots.length === 0 && externalRoots.length === 0)
+    throw importRootsError(filePath, allowedImportRoots, purpose)
   if (relativeBaseDirs.length === 0 && !isAbsolute(filePath)) {
     throw new Error(
       `Artifact local source path does not exist: "${filePath}". A relative path resolves against the notebook session data dir or the session workspace, but this turn carries neither — pass an absolute path to the already-saved file instead.`
@@ -189,6 +192,17 @@ const resolveAllowedImportFilePath = async (
       })
     )
   ).filter((root): root is string => typeof root === 'string')
+  // Grants store the physical directory at grant time. Never rebind a grant whose directory
+  // entry (or parent) has since become a symlink/junction to a different location.
+  for (const root of externalRoots) {
+    if (!isPathInsideRoot(resolve(root), resolvedFilePath)) continue
+    try {
+      const canonicalRoot = await realpath(root)
+      if (relative(resolve(root), canonicalRoot) === '') resolvedRoots.push(canonicalRoot)
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
+  }
   if (!resolvedRoots.some((root) => isPathInsideRoot(root, resolvedFilePath))) {
     throw importRootsError(filePath, allowedImportRoots, purpose)
   }
