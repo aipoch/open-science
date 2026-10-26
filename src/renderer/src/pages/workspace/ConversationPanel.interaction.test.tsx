@@ -2888,7 +2888,11 @@ describe('ConversationPanel composer intake', () => {
     })
     const elicitationComposer = container.querySelector('[data-testid="elicitation-composer"]')
     expect(elicitationComposer).not.toBeNull()
-    expect(elicitationComposer?.classList.contains('max-h-[min(70dvh,44rem)]')).toBe(true)
+    expect(
+      elicitationComposer?.classList.contains(
+        'max-h-[min(max(70dvh,min(18rem,calc(100dvh-2rem))),44rem)]'
+      )
+    ).toBe(true)
     expect(elicitationComposer?.classList.contains('overflow-visible')).toBe(true)
     expect(elicitationComposer?.classList.contains('px-px')).toBe(true)
     expect(elicitationComposer?.classList.contains('pb-px')).toBe(true)
