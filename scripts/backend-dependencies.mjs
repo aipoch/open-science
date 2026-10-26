@@ -184,6 +184,24 @@ export function backendDependencyIncludes(
   const top = parts[0]
   if (!isShippableDependencyPath(relativePath)) return false
   const name = manifest.name
+  // These audited Node entry points never load the parallel browser distributions. The Web UI
+  // is built separately before staging; keep both Node import/require entries and their assets.
+  const path = parts.join('/')
+  // Keep traversing the directories so redistribution notices cannot be hidden by a parent rule.
+  if (name === 'pdf-lib' && manifest.version === '1.17.1' && /^dist\/[^/]+\.js$/.test(path))
+    return false
+  if (
+    name === 'fontkit' &&
+    manifest.version === '2.0.4' &&
+    /^dist\/browser(?:-module\.mjs|\.cjs)(?:\.map)?$/.test(path)
+  )
+    return false
+  if (
+    name === '@bokuweb/zstd-wasm' &&
+    manifest.version === '0.0.27' &&
+    /^dist\/(?:web|esm)\/.*\.(?:js|wasm|map)$/.test(path)
+  )
+    return false
   if (
     [
       'pdfjs-dist',

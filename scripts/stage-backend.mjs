@@ -24,9 +24,7 @@ const cliManifest = JSON.parse(
   await readFile(join(root, 'packages/open-science/package.json'), 'utf8')
 )
 const forbidden = isElectronPackage
-const metadata = values.desktop
-  ? JSON.parse(await readFile(join(backend, 'dependencies.json'), 'utf8'))
-  : []
+const metadata = JSON.parse(await readFile(join(backend, 'dependencies.json'), 'utf8'))
 const bundledDependencies = desktopBundledDependencies(metadata)
 const dependencyRoots = values.desktop
   ? desktopBackendDependencies(manifest.dependencies, metadata)
@@ -39,6 +37,23 @@ await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
   filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')
 })
+const localTranslation = manifest.dependencies['@huggingface/transformers']
+  ? await (
+      await import('./build-backend.mjs')
+    ).buildLocalTranslationWorker(root, join(stage, 'resources/pdf-translation-local'))
+  : undefined
+if (localTranslation) {
+  if (
+    metadata.some((meta) =>
+      Object.values(meta.outputs).some((output) =>
+        output.imports.some(
+          (item) => item.external && item.path.startsWith('@huggingface/transformers')
+        )
+      )
+    )
+  )
+    throw new Error('Transformers has a backend consumer outside the local translation worker.')
+}
 const platformDirectory = { darwin: 'mac', win32: 'win', linux: 'linux' }[process.platform]
 const micromamba = process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
 await cp(
@@ -88,6 +103,10 @@ async function packageDirectory(name, from) {
   }
 }
 async function copyDependency(name, from, destinationParent = stage) {
+  if (localTranslation && name === '@huggingface/transformers')
+    throw new Error(
+      'Transformers has another runtime consumer; retain its external dependency closure.'
+    )
   if (forbidden(name)) throw new Error(`Standalone dependency closure includes ${name}`)
   if (bundledDependencies.has(name))
     throw new Error(
@@ -149,9 +168,16 @@ async function copyDependency(name, from, destinationParent = stage) {
 }
 const dependencies = {}
 for (const name of dependencyRoots) {
+  if (localTranslation && name === '@huggingface/transformers') continue
   if (forbidden(name) || name === '@aipoch/notebook-network-sandbox') continue
   await copyDependency(name, root)
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
+}
+if (localTranslation) {
+  for (const name of localTranslation.dependencies) {
+    await copyDependency(name, localTranslation.directory)
+    dependencies[name] = installed.get(join(stage, 'node_modules', name))
+  }
 }
 // This HTTP implementation is a direct standalone dependency, independent of incidental hoisting.
 await copyDependency('undici', root)
@@ -205,7 +231,12 @@ await assertNoBuildIntermediates(join(stage, 'node_modules'))
 const nativeRequire = createRequire(join(stage, 'package.json'))
 // GPU providers are pruned only on Linux x64; its native binding must still load.
 // Do not add a gate on other targets: ONNX 1.24.3 ships no Darwin x64 binding.
-if (process.platform === 'linux' && process.arch === 'x64') nativeRequire('onnxruntime-node')
+if (
+  process.platform === 'linux' &&
+  process.arch === 'x64' &&
+  (!localTranslation || installed.has(join(stage, 'node_modules/onnxruntime-node')))
+)
+  nativeRequire('onnxruntime-node')
 for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native'])
   nativeRequire(name)
 for (const path of Object.values(nativeRequire('@aipoch/credential-identity-probe-native')))

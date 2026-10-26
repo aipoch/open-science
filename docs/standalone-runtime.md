@@ -32,6 +32,16 @@ The generated Prisma resource follows the same declaration policy: desktop and R
 archives omit its declarations, while npm/SDK staging retains them. Both omit the generated
 WASM query engine only after staging verifies that the client uses the native library engine;
 the target native engines and schema remain included.
+Backend staging also omits the audited browser-only distributions of PDF-lib 1.17.1,
+Fontkit 2.0.4 and zstd-wasm 0.0.27; their Node entry points and assets remain available.
+For Transformers 4.2.0 with ONNX Web 1.26.0-dev.20260416-b7804b056c, staging bundles the
+local translation worker against its existing WASM implementation. Its unused native ONNX
+and WebGPU imports resolve to that same WASM module, so the native inference dependency
+closure is no longer shipped. Remaining external dependencies come from the worker's build
+metadata, with the original Tensor dependency version and redistribution licenses retained.
+Other versions keep the original worker and dependency closure; additional external Transformers
+consumers fail staging until reviewed. The model recipe, local-only inference and storage are
+unchanged. These backend reductions apply to desktop installers and standalone CLI packages.
 Desktop staging also omits the audited renderer-only dependency roots already compiled into
 `out/web`. Backend and worker import metadata can retain any such root, and transitive runtime
 dependencies are still copied normally. Unknown dependencies remain included. The desktop

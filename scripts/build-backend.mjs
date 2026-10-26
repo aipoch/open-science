@@ -1,13 +1,88 @@
 import { windowsSigningBuildDefines } from './windows-signing-policy.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { assertBackendImports, desktopBundledDependencies } from './backend-dependencies.mjs'
-import { context } from 'esbuild'
+import { build, context } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { createRequire } from 'node:module'
+import { builtinModules, createRequire } from 'node:module'
 import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
+
+// The local text worker already injects this exact WASM implementation. Bundle only its
+// Transformers consumer so the unused native/WebGPU imports do not become installation roots.
+export async function buildLocalTranslationWorker(root, destination) {
+  const require = createRequire(join(root, 'package.json'))
+  const entry = require.resolve('@huggingface/transformers')
+  const directory = resolve(entry, '../..')
+  const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
+  if (manifest.version !== '4.2.0') return undefined
+  const fromTransformers = createRequire(join(directory, 'package.json'))
+  const wasmDirectory = resolve(fromTransformers.resolve('onnxruntime-web'), '../..')
+  const wasmManifest = JSON.parse(await readFile(join(wasmDirectory, 'package.json'), 'utf8'))
+  if (wasmManifest.version !== '1.26.0-dev.20260416-b7804b056c') return undefined
+  const result = await build({
+    absWorkingDir: root,
+    entryPoints: [join(root, 'resources/pdf-translation-local/worker.mjs')],
+    outfile: join(destination, 'worker.mjs'),
+    bundle: true,
+    platform: 'node',
+    target: 'node22',
+    format: 'esm',
+    packages: 'external',
+    metafile: true,
+    plugins: [
+      {
+        name: 'local-translation-wasm',
+        setup(plugin) {
+          plugin.onResolve({ filter: /^@huggingface\/transformers$/ }, () => ({
+            path: join(directory, 'dist/transformers.node.mjs')
+          }))
+          plugin.onResolve({ filter: /^(?:onnxruntime-node|onnxruntime-web\/webgpu)$/ }, () => ({
+            path: 'onnxruntime-web/wasm',
+            external: true
+          }))
+        }
+      }
+    ]
+  })
+  const dependencies = [
+    ...new Set(
+      Object.values(result.metafile.outputs).flatMap((output) =>
+        output.imports
+          .filter(
+            (item) =>
+              item.external && !item.path.startsWith('node:') && !builtinModules.includes(item.path)
+          )
+          .map((item) =>
+            item.path.startsWith('@')
+              ? item.path.split('/').slice(0, 2).join('/')
+              : item.path.split('/')[0]
+          )
+      )
+    )
+  ]
+  if (dependencies.some((name) => ['onnxruntime-node', '@huggingface/transformers'].includes(name)))
+    throw new Error('Local translation bundle retains an unpruned inference dependency.')
+  // Preserve the worker's direct Tensor version before ORT Web installs its own nested version.
+  dependencies.sort((a, b) =>
+    a === 'onnxruntime-common' ? -1 : b === 'onnxruntime-common' ? 1 : 0
+  )
+  await writeFile(
+    join(destination, 'transformers-LICENSE'),
+    await readFile(join(directory, 'LICENSE'))
+  )
+  // These libraries are already embedded in the upstream Node bundle; their now-unused
+  // package directories must not be the only place their redistribution notices survive.
+  for (const name of ['jinja', 'tokenizers']) {
+    const packageDirectory = resolve(fromTransformers.resolve(`@huggingface/${name}`), '../..')
+    await writeFile(
+      join(destination, `${name}-LICENSE`),
+      await readFile(join(packageDirectory, 'LICENSE'))
+    )
+  }
+  return { directory, dependencies, metafile: result.metafile }
+}
 
 export async function createBackendBuilder({
   root = resolve(import.meta.dirname, '..'),
