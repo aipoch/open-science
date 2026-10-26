@@ -1415,6 +1415,11 @@ class AcpRuntime {
     )
     const livePrompt = this.sessionInteractions.current(request.sessionId)
     const presented = await this.turnSkills.presentFollowUp({
+      diagnosticContext: {
+        sessionId: request.sessionId,
+        frameworkId: this.framework.id,
+        modelRoute: this.backendGeneration.current.modelRoute
+      },
       frameworkId: this.framework.id,
       text: request.text,
       selectedSkillIds: request.forcedSkillIds ?? [],

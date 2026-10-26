@@ -382,6 +382,23 @@ export function projectDiagnosticLog(
   }
   for (const key of diagnosticStringFields)
     if (typeof data[key] === 'string') diagnostic[key] = diagnosticText(data[key], options, 1_000)
+  if (
+    data.operation === 'specialist-resolution' ||
+    data.operation === 'acp-provider-session-adoption'
+  ) {
+    for (const key of ['specialistId', 'backendId'])
+      if (identifier(data[key])) diagnostic[key] = diagnosticText(data[key], options, 200)
+    if (['claude-code', 'opencode', 'codex', 'codebuddy'].includes(data.frameworkId as string))
+      diagnostic.frameworkId = data.frameworkId
+    if (permissionLogStates.modelRoute.includes(data.modelRoute as string))
+      diagnostic.modelRoute = data.modelRoute
+    if (['identity', 'skills'].includes(data.resolver as string))
+      diagnostic.resolver = data.resolver
+    if (['request', 'registry'].includes(data.bindingSource as string))
+      diagnostic.bindingSource = data.bindingSource
+    if (Number.isSafeInteger(data.bindingRevision) && Number(data.bindingRevision) >= 0)
+      diagnostic.bindingRevision = data.bindingRevision
+  }
   if (data.authorityStatus === 'missing' || data.authorityStatus === 'unreadable')
     diagnostic.authorityStatus = data.authorityStatus
   for (const key of ['hydrationAvailable', 'startupCleanupEligible', 'metadataComplete'])

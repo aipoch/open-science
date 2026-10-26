@@ -314,6 +314,11 @@ class AcpPromptTurnWorkflow {
       const skillRuntime = backend.session.options?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
         { nativeAllowedNames?: string[]; mainAllowedNames?: string[] } | undefined
       const authorization = this.options.skills.authorize({
+        diagnosticContext: {
+          sessionId: request.sessionId,
+          frameworkId: backend.framework.id,
+          modelRoute: backend.modelRoute
+        },
         frameworkId: backend.framework.id,
         nativeSkillScope: skillRuntime?.nativeAllowedNames,
         mainSkillScope: skillRuntime?.mainAllowedNames,

@@ -287,7 +287,10 @@ export type AcpRuntimeOptions = {
   // Re-resolves capabilities from the latest Specialist profile and installed catalog. This is
   // intentionally separate from Main Agent enablement: a Main-disabled installed Skill remains
   // eligible for a Specialist.
-  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  resolveSpecialistSkills?: (
+    specialistId: string,
+    context?: AcpSpecialistResolutionContext
+  ) => Promise<EffectiveSpecialistSkills>
   // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
   // projectId carries the Project id. Returns undefined when absent or on lookup failure.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
@@ -418,3 +421,10 @@ export type AcpRuntimePlanOptions = {
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }
+
+// Diagnostic metadata only: never grants authority or carries Specialist configuration.
+export type AcpSpecialistResolutionContext = Readonly<{
+  sessionId: string
+  frameworkId: string
+  modelRoute?: string
+}>

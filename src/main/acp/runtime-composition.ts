@@ -1,6 +1,6 @@
 import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { LiteratureLatexBundle } from '@aipoch/literature-citations/documents'
 import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
@@ -976,11 +976,29 @@ const createAcpRuntime = ({
               let profile
               try {
                 profile = await specialistService.resolveRunnableById(specialistId)
-              } catch {
-                // Profile not found or corrupt
+              } catch (error) {
+                log.warn('bound specialist profile resolution failed', {
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'identity',
+                  specialistId,
+                  frameworkId,
+                  reason: 'profile-read-failed',
+                  ...diagnosticErrorFields(error)
+                })
                 return undefined
               }
-              if (!profile.enabled) return undefined
+              if (!profile.enabled) {
+                log.warn('bound specialist profile resolution failed', {
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'identity',
+                  specialistId,
+                  frameworkId,
+                  reason: 'disabled'
+                })
+                return undefined
+              }
               const append = buildSpecialistIdentityAppend(profile)
               const prefix = buildSpecialistIdentityPrefix(profile)
               if (frameworkId === 'claude-code') return { append, prefix: '' }
@@ -988,18 +1006,35 @@ const createAcpRuntime = ({
             }
           : undefined,
         resolveSpecialistSkills: specialistService
-          ? async (specialistId) => {
+          ? async (specialistId, context) => {
               let profile
               try {
                 profile = await specialistService.resolveRunnableById(specialistId)
               } catch (error) {
                 log.warn('bound specialist profile resolution failed', {
+                  sessionId: context?.sessionId,
+                  frameworkId: context?.frameworkId,
+                  modelRoute: context?.modelRoute,
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'skills',
                   specialistId,
-                  ...errorLogFields(error)
+                  reason: 'profile-read-failed',
+                  ...diagnosticErrorFields(error)
                 })
                 return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
               }
               if (!profile.enabled) {
+                log.warn('bound specialist profile resolution failed', {
+                  sessionId: context?.sessionId,
+                  frameworkId: context?.frameworkId,
+                  modelRoute: context?.modelRoute,
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'skills',
+                  specialistId,
+                  reason: 'disabled'
+                })
                 return { kind: 'unavailable', reason: 'The bound specialist is disabled.' }
               }
               let stage = 'skills'
@@ -1043,9 +1078,14 @@ const createAcpRuntime = ({
                 return effective
               } catch (error) {
                 log.warn('bound specialist capability resolution failed', {
+                  sessionId: context?.sessionId,
+                  frameworkId: context?.frameworkId,
+                  modelRoute: context?.modelRoute,
+                  operation: 'specialist-resolution',
                   specialistId,
-                  stage,
-                  ...errorLogFields(error)
+                  phase: stage,
+                  reason: 'capability-read-failed',
+                  ...diagnosticErrorFields(error)
                 })
                 return { kind: 'unavailable', reason: SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE }
               }
