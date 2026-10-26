@@ -80,7 +80,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        env:
+          # Verification uses bundled ONNX CPU binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
 
       - name: Check generated database schema
         run: npm run db:schema:check
@@ -184,7 +189,12 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
+        env:
+          # Verification uses bundled ONNX CPU binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       - name: Download all test shards
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -227,7 +237,12 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
+        env:
+          # Verification uses bundled ONNX CPU binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       # Keep platform-gated cases that Ubuntu skips, plus regressions from the macOS release run.
       - name: Test macOS native behavior and release regressions
         run: |
