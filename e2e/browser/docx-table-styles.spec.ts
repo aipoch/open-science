@@ -44,8 +44,22 @@ test('maintained Pandoc report renders Chinese tables, headings and lists', asyn
   await expect(table.locator('tr')).toHaveCount(4)
   await expect(table.locator('tr').first().locator('td').first()).toHaveCSS(
     'background-color',
-    'rgb(242, 244, 247)'
+    'rgba(0, 0, 0, 0)'
   )
+  // Every cell needs four visible edges: this covers the frame and both internal grid directions.
+  for (const cell of await table.locator('td').all()) {
+    for (const edge of ['top', 'right', 'bottom', 'left']) {
+      await expect(cell).toHaveCSS(`border-${edge}-style`, 'solid')
+      await expect(cell).toHaveCSS(`border-${edge}-color`, 'rgb(128, 128, 128)')
+      expect(
+        await cell.evaluate(
+          (node, side) =>
+            parseFloat(getComputedStyle(node).getPropertyValue(`border-${side}-width`)),
+          edge
+        )
+      ).toBeGreaterThan(0)
+    }
+  }
   await expect(table.locator('tr').nth(1).locator('td').first()).toHaveCSS(
     'background-color',
     'rgba(0, 0, 0, 0)'

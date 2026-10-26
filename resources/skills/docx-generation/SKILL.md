@@ -37,7 +37,7 @@ Optional arguments:
 - `--from gfm` or `--from markdown+pipe_tables`: select the dialect that matches the source. The default is Pandoc Markdown.
 - `--pandoc "<absolute-executable-path>"`: select an existing executable.
 
-The bundled reference uses A4 and a restrained table header style. It preserves theme-based fonts; CJK font choice should come from the user's reference and fonts available on the intended viewing system. A reference document's body content is not copied into the output. Use another workflow when the task requires filling a template's existing content.
+The bundled reference uses A4, visible outer borders and internal row/column grid lines, and bold table headers without background shading. It preserves theme-based fonts; CJK font choice should come from the user's reference and fonts available on the intended viewing system. A reference document's body content is not copied into the output. Use another workflow when the task requires filling a template's existing content.
 
 Do not substitute the bundled template when the user supplied a template or requested a different design. For special page layouts or table widths, use an appropriate reference or targeted document editing; do not impose fixed page/column dimensions on every document.
 

@@ -18,13 +18,24 @@ def build_reference(output):
     root = ET.fromstring(parts['word/styles.xml'])
     table = root.find("w:style[@w:styleId='Table']", NS)
     # Whole-table text and header emphasis remain semantic styles, not per-cell flattening.
-    props = ET.SubElement(table, '{%s}rPr' % W)
+    table_props = table.find('w:tblPr', NS)
+    props = ET.Element('{%s}rPr' % W)
+    table.insert(list(table).index(table_props), props)
     ET.SubElement(props, '{%s}sz' % W, {'{%s}val' % W: '21'})
+    borders = ET.Element('{%s}tblBorders' % W)
+    table_props.insert(list(table_props).index(table_props.find('w:tblCellMar', NS)), borders)
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        ET.SubElement(borders, '{%s}%s' % (W, edge), {
+            '{%s}val' % W: 'single', '{%s}sz' % W: '4',
+            '{%s}color' % W: '808080', '{%s}space' % W: '0',
+        })
     first = table.find("w:tblStylePr[@w:type='firstRow']", NS)
-    run = ET.SubElement(first, '{%s}rPr' % W)
+    run = ET.Element('{%s}rPr' % W)
+    first.insert(0, run)
     ET.SubElement(run, '{%s}b' % W)
     cell = first.find('w:tcPr', NS)
-    ET.SubElement(cell, '{%s}shd' % W, {'{%s}fill' % W: 'F2F4F7', '{%s}val' % W: 'clear'})
+    # Use the complete grid for the header too; Pandoc's default header rule omits its width.
+    cell.remove(cell.find('w:tcBorders', NS))
     body = ET.SubElement(root, '{%s}style' % W, {'{%s}type' % W: 'paragraph', '{%s}styleId' % W: 'TableBody', '{%s}customStyle' % W: '1'})
     ET.SubElement(body, '{%s}name' % W, {'{%s}val' % W: 'Table Body'})
     ET.SubElement(body, '{%s}basedOn' % W, {'{%s}val' % W: 'Normal'})

@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from xml.dom import minidom
 import zipfile
 
-VERSION = '1'
+VERSION = '2'
 PANDOC_VERSION = '3.12.1'
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 NS = {'w': W}
@@ -85,7 +85,7 @@ def convert(source, output, reference=None, pandoc='pandoc', input_format='markd
     reference = Path(reference).resolve() if reference else Path(__file__).resolve().parents[1] / 'assets/reference.docx'
     template = reference.read_bytes()
     receipt = {'converter_version': VERSION, 'pandoc_version': PANDOC_VERSION,
-               'profile': 'open-science-report-v1' if bundled else 'user-template',
+               'profile': 'open-science-report-v2' if bundled else 'user-template',
                'reference_sha256': hashlib.sha256(template).hexdigest(),
                'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(), 'input_format': input_format}
     # All intermediates live beside the destination, under the caller's approved execution directory.

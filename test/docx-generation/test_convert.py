@@ -17,6 +17,24 @@ ET.register_namespace('w', NS['w'])
 
 
 class ConversionTests(unittest.TestCase):
+    def assert_grid_style(self, styles):
+        table = styles.find("w:style[@w:styleId='Table']", NS)
+        borders = table.find('w:tblPr/w:tblBorders', NS)
+        self.assertIsNotNone(borders, 'The default report needs actual table borders, not header shading')
+        self.assertEqual({node.tag.split('}')[-1] for node in borders},
+                         {'top', 'bottom', 'left', 'right', 'insideH', 'insideV'})
+        for border in borders:
+            self.assertEqual(border.get('{%s}val' % NS['w']), 'single')
+            self.assertEqual(border.get('{%s}sz' % NS['w']), '4')
+            self.assertEqual(border.get('{%s}color' % NS['w']), '808080')
+        self.assertIsNone(table.find('.//w:shd', NS))
+        header = table.find("w:tblStylePr[@w:type='firstRow']", NS)
+        self.assertIsNotNone(header.find('w:rPr/w:b', NS))
+
+    def test_default_profile_has_complete_grid_without_shading(self):
+        with zipfile.ZipFile(SCRIPT.parents[1] / 'assets/reference.docx') as package:
+            self.assert_grid_style(ET.fromstring(package.read('word/styles.xml')))
+
     def test_registered_bundle_matches_the_maintained_assets(self):
         spec = importlib.util.spec_from_file_location('build_kernel', SCRIPT.parent / 'build_kernel.py')
         module = importlib.util.module_from_spec(spec)
@@ -49,12 +67,10 @@ class ConversionTests(unittest.TestCase):
             result = subprocess.run(['/usr/bin/sandbox-exec', '-p', policy, sys.executable, '-'], input=code, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = json.loads(result.stdout)
-            self.assertEqual(receipt['profile'], 'open-science-report-v1')
+            self.assertEqual(receipt['profile'], 'open-science-report-v2')
             with zipfile.ZipFile(root / 'report.docx') as package:
                 styles = ET.fromstring(package.read('word/styles.xml'))
-                header = styles.find("w:style[@w:styleId='Table']/w:tblStylePr[@w:type='firstRow']", NS)
-                self.assertIsNotNone(header.find('w:rPr/w:b', NS))
-                self.assertEqual(header.find('w:tcPr/w:shd', NS).get('{%s}fill' % NS['w']), 'F2F4F7')
+                self.assert_grid_style(styles)
 
     def test_table_body_normalization_is_scoped_and_idempotent(self):
         spec = importlib.util.spec_from_file_location('docx_convert', SCRIPT)
@@ -83,15 +99,16 @@ class ConversionTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(SCRIPT), str(source), str(output)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = json.loads(result.stdout)
-            self.assertEqual(receipt['profile'], 'open-science-report-v1')
+            self.assertEqual(receipt['profile'], 'open-science-report-v2')
             with zipfile.ZipFile(output) as package:
+                self.assert_grid_style(ET.fromstring(package.read('word/styles.xml')))
                 doc = ET.fromstring(package.read('word/document.xml'))
                 self.assertEqual(len(doc.findall('.//w:tbl', NS)), 1)
                 self.assertEqual(len(doc.findall('.//w:tr', NS)), 2)
                 self.assertEqual(len(doc.findall('.//w:numPr', NS)), 2)
                 self.assertEqual(len(doc.findall('.//w:pStyle[@w:val="Heading1"]', NS)), 1)
                 self.assertEqual(len(doc.findall('.//w:tbl//w:pStyle[@w:val="TableBody"]', NS)), 4)
-                self.assertIn('open-science-report-v1', package.read('docProps/custom.xml').decode())
+                self.assertIn('open-science-report-v2', package.read('docProps/custom.xml').decode())
             before = output.read_bytes()
             again = subprocess.run([sys.executable, str(SCRIPT), str(source), str(output)], capture_output=True, text=True)
             self.assertNotEqual(again.returncode, 0)
@@ -105,12 +122,19 @@ class ConversionTests(unittest.TestCase):
                         tree = ET.fromstring(data)
                         tree.find('.//w:pgSz', NS).set('{%s}w' % NS['w'], '18000')
                         data = ET.tostring(tree)
+                    if entry.filename == 'word/styles.xml':
+                        tree = ET.fromstring(data)
+                        table_props = tree.find("w:style[@w:styleId='Table']/w:tblPr", NS)
+                        table_props.remove(table_props.find('w:tblBorders', NS))
+                        data = ET.tostring(tree)
                     dst.writestr(entry, data)
             custom = root / 'custom-output.docx'
             result = subprocess.run([sys.executable, str(SCRIPT), str(source), str(custom), '--reference-doc', str(template)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['profile'], 'user-template')
             with zipfile.ZipFile(custom) as package:
+                styles = ET.fromstring(package.read('word/styles.xml'))
+                self.assertIsNone(styles.find("w:style[@w:styleId='Table']/w:tblPr/w:tblBorders", NS))
                 doc = ET.fromstring(package.read('word/document.xml'))
                 self.assertEqual(doc.find('.//w:pgSz', NS).get('{%s}w' % NS['w']), '18000')
                 self.assertEqual(len(doc.findall('.//w:tbl//w:pStyle[@w:val="TableBody"]', NS)), 0)

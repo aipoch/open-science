@@ -19,9 +19,10 @@ original CLI remains available for environments with direct package access.
 ## Reproducibility
 
 - Supported generator: Pandoc **3.12.1**; Python **3.9+**, standard library only.
-- `assets/reference.docx`: profile `open-science-report-v1`, based on Pandoc's
-  default reference. A4, theme-based fonts, native heading/list styles, modest
-  header shading, and a separate 10.5 pt Table Body paragraph style.
+- `assets/reference.docx`: profile `open-science-report-v2`, based on Pandoc's
+  default reference. A4, theme-based fonts, native heading/list styles, a complete
+  0.5 pt gray table grid (outer frame and internal row/column lines), bold headers
+  without background shading, and a separate 10.5 pt Table Body paragraph style.
 - `scripts/build_reference.py`: maintainer-only reference builder. Run with the
   supported Pandoc version when deliberately changing this profile; ZIP entry
   timestamps are fixed. Review and test the new asset before publishing it.
