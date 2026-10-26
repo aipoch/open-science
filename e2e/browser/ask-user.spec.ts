@@ -71,7 +71,7 @@ test('split skip menu supports dismissal, focus return, and explicit skipping of
   await expect(page.getByRole('heading', { name: 'Which approach', exact: false })).toBeVisible()
   await trigger.click()
   await expect(menuItem).toBeVisible()
-  expect(await menuItem.locator('..').getAttribute('data-side')).toBe('top')
+  expect(await menuItem.locator('..').getAttribute('data-side')).toBe('bottom')
   await page.screenshot({ path: test.info().outputPath('split-skip-menu.png') })
   await menuItem.click()
   await expect(menuItem).toHaveCount(0)
@@ -284,3 +284,206 @@ test('Chinese agent-decide answers stay translated while the submitted value sta
     'Let the agent decide'
   )
 })
+
+for (const side of ['top', 'bottom'] as const) {
+  test(`skip menu connects to the control and fits a narrow window when opening ${side}`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 320, height: 500 })
+    await page.goto('/ask-user.html?single=1&locale=zh-Hans')
+    const skip = page.getByRole('button', { name: '跳过', exact: true, includeHidden: true })
+    const group = skip.locator('..')
+    // Put the real control at either viewport edge to exercise Radix collision placement.
+    await group.evaluate((element, openingSide) => {
+      Object.assign((element as HTMLElement).style, {
+        position: 'fixed',
+        right: '8px',
+        top: openingSide === 'bottom' ? '8px' : 'auto',
+        bottom: openingSide === 'top' ? '8px' : 'auto'
+      })
+    }, side)
+    await page.getByRole('button', { name: '更多跳过选项' }).click()
+    const menu = page.getByRole('menu')
+    await expect(menu).toHaveAttribute('data-side', side)
+    const groupBox = (await group.boundingBox())!
+    const menuBox = (await menu.boundingBox())!
+    expect(Math.abs(menuBox.width - groupBox.width)).toBeLessThan(1)
+    expect(
+      Math.abs(
+        side === 'top'
+          ? menuBox.y + menuBox.height - groupBox.y
+          : menuBox.y - groupBox.y - groupBox.height
+      )
+    ).toBeLessThan(1)
+    expect(menuBox.x).toBeGreaterThanOrEqual(0)
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(320)
+    await expect
+      .poll(() => menu.evaluate((element) => getComputedStyle(element).clipPath))
+      .toBe('inset(0%)')
+    const radii = await group.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        top: parseFloat(style.borderTopRightRadius),
+        bottom: parseFloat(style.borderBottomRightRadius)
+      }
+    })
+    expect(radii[side]).toBe(0)
+    expect(radii[side === 'top' ? 'bottom' : 'top']).toBeGreaterThan(0)
+    await page.screenshot({ path: test.info().outputPath(`connected-skip-${side}.png`) })
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect
+      .poll(() => group.evaluate((element) => getComputedStyle(element).borderRadius))
+      .toBe('8px')
+  })
+}
+
+test('skip menu reverses its edge animation smoothly and keeps the arrow in sync', async ({
+  page
+}) => {
+  await page.goto('/ask-user.html?single=1')
+  const trigger = page.getByRole('button', { name: 'More skip options' })
+  const menu = page.getByTestId('question-skip-menu')
+  await page.evaluate(() => {
+    document.addEventListener('transitionrun', (event) => {
+      const target = event.target as HTMLElement
+      if (target.dataset.testid === 'question-skip-menu' && event.propertyName === 'clip-path') {
+        target.dataset.clipTransition = 'started'
+      }
+    })
+  })
+  await trigger.click()
+  await expect(menu).toBeVisible()
+  await expect(menu).toHaveAttribute('data-entered', 'true')
+  expect(await menu.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
+    '0.24s, 0.24s'
+  )
+  expect(
+    await trigger.locator('svg').evaluate((element) => getComputedStyle(element).transitionDuration)
+  ).toBe('0.24s')
+  await expect
+    .poll(() => menu.evaluate((element) => getComputedStyle(element).clipPath))
+    .toBe('inset(0%)')
+  await expect(menu).toHaveAttribute('data-clip-transition', 'started')
+  await menu.evaluate((element) => {
+    ;(element as HTMLElement).dataset.instance = 'original'
+  })
+  await page.keyboard.press('Escape')
+  expect(await menu.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
+    '0.16s, 0.16s'
+  )
+  expect(
+    await trigger.locator('svg').evaluate((element) => getComputedStyle(element).transitionDuration)
+  ).toBe('0.16s')
+  // Reverse during the 160 ms exit, before Radix Presence removes the node.
+  await page.waitForTimeout(40)
+  const before = await menu.evaluate((element) => getComputedStyle(element).clipPath)
+  expect(before).not.toBe('inset(0%)')
+  await trigger.click()
+  await expect(menu).toHaveAttribute('data-instance', 'original')
+  const after = await menu.evaluate((element) => getComputedStyle(element).clipPath)
+  const clip = (value: string): number => Math.max(...(value.match(/[\d.]+/g) ?? []).map(Number))
+  expect(clip(after)).toBeLessThan(100)
+  expect(Math.abs(clip(after) - clip(before))).toBeLessThan(35)
+  await expect
+    .poll(() => menu.evaluate((element) => getComputedStyle(element).clipPath))
+    .toBe('inset(0%)')
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByRole('menuitem', { name: 'Skip all' })).toBeFocused()
+  await expect(menu).toHaveAttribute('data-instance', 'original')
+  await page.getByRole('heading', { name: 'Which outputs?' }).click()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(menu).toHaveCount(0)
+})
+
+test('skip control honors reduced motion without delaying Escape focus return', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/ask-user.html?single=1')
+  const trigger = page.getByRole('button', { name: 'More skip options' })
+  await trigger.press('ArrowDown')
+  const menu = page.getByTestId('question-skip-menu')
+  await expect(page.getByRole('menuitem', { name: 'Skip all' })).toBeFocused()
+  expect(await menu.evaluate((element) => element.getAnimations().length)).toBe(0)
+  expect(await trigger.locator('svg').evaluate((element) => element.getAnimations().length)).toBe(0)
+  await expect(menu).toHaveCSS('clip-path', 'inset(0%)')
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+})
+
+test('Escape restores focus immediately and a following Tab is not undone by exit motion', async ({
+  page
+}) => {
+  await page.goto('/ask-user.html?single=1')
+  const trigger = page.getByRole('button', { name: 'More skip options' })
+  await page.evaluate(() => {
+    const next = document.createElement('button')
+    next.textContent = 'Following control'
+    next.id = 'following-skip-control'
+    document.querySelector('[data-testid="question-skip-control"]')!.after(next)
+  })
+  await trigger.press('ArrowDown')
+  await page.keyboard.press('Escape')
+  // Observe focus before the 160 ms exit can finish.
+  expect(await trigger.evaluate((element) => element === document.activeElement)).toBe(true)
+  await page.keyboard.press('Tab')
+  const next = page.locator('#following-skip-control')
+  await expect(next).toBeFocused()
+  await expect(page.getByTestId('question-skip-menu')).toHaveCount(0)
+  await expect(next).toBeFocused()
+})
+
+for (const side of ['top', 'bottom'] as const) {
+  test(`skip menu visibly expands ${side} after placement without depending on starting-style`, async ({
+    page
+  }) => {
+    await page.goto('/ask-user.html?single=1')
+    await page.getByTestId('question-skip-control').evaluate((element, openingSide) => {
+      Object.assign((element as HTMLElement).style, {
+        position: 'fixed',
+        right: '16px',
+        top: openingSide === 'bottom' ? '16px' : 'auto',
+        bottom: openingSide === 'top' ? '16px' : 'auto'
+      })
+    }, side)
+    const clips = await page.evaluate(async () => {
+      // Portal measurement must not rely on a browser synthesizing @starting-style on mount.
+      const removeStartingStyle = (sheet: CSSStyleSheet | CSSGroupingRule): void => {
+        for (let index = sheet.cssRules.length - 1; index >= 0; index--) {
+          const rule = sheet.cssRules[index]
+          if (
+            rule.cssText.startsWith('@starting-style') &&
+            rule.cssText.includes('question-skip-menu')
+          ) {
+            sheet.deleteRule(index)
+          } else if ('cssRules' in rule) removeStartingStyle(rule as CSSGroupingRule)
+        }
+      }
+      for (const sheet of document.styleSheets) removeStartingStyle(sheet)
+      const trigger = document.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')!
+      trigger.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' })
+      )
+      const samples: number[] = []
+      const start = performance.now()
+      while (performance.now() - start < 500) {
+        await new Promise(requestAnimationFrame)
+        const menu = document.querySelector<HTMLElement>('[data-testid="question-skip-menu"]')
+        if (!menu) continue
+        const rect = menu.getBoundingClientRect()
+        if (rect.top < 0 || rect.bottom > innerHeight) continue
+        samples.push(
+          Math.max(...(getComputedStyle(menu).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+        )
+      }
+      return samples
+    })
+    expect(clips[0]).toBeGreaterThan(80)
+    expect(clips.some((clip) => clip > 1 && clip < 99)).toBe(true)
+    expect(clips.at(-1)).toBe(0)
+    await expect(page.getByRole('menu')).toHaveAttribute('data-side', side)
+  })
+}

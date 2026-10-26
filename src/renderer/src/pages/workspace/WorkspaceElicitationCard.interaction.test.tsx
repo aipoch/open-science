@@ -1042,52 +1042,57 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
   })
 
-  it('opens Skip all from the split menu without answering, and disables both buttons while submitting', async () => {
-    let finish!: () => void
-    const onRespond = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve
-        })
-    )
-    await act(async () =>
-      root.render(
-        <WorkspaceElicitationCard
-          elicitation={{
-            message: multiQuestionRequest.message,
-            fields: multiQuestionFields,
-            state: 'pending'
-          }}
-          request={multiQuestionRequest}
-          onRespond={onRespond}
-        />
+  it.each(['all', 'current'] as const)(
+    'disables both skip buttons while submitting %s after opening the menu',
+    async (action) => {
+      let finish!: () => void
+      const onRespond = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve
+          })
       )
-    )
-    const skip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip'
-    )!
-    expect(skip.getAttribute('data-variant')).toBe('secondary')
-    expect(document.querySelector('[role="menuitem"]')).toBeNull()
-    expect(container.textContent).not.toContain('Skip all')
-    const skipAll = await openSkipMenu()
-    expect(onRespond).not.toHaveBeenCalled()
-    expect(skipAll.textContent).toBe('Skip all')
-    expect(skipAll.className).toContain('status-warning')
-    await act(async () => skipAll.click())
-    expect(onRespond).toHaveBeenCalledExactlyOnceWith({
-      requestId: multiQuestionRequest.requestId,
-      action: 'decline'
-    })
-    expect(skip.disabled).toBe(true)
-    expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
-    ).toBe(true)
-    await act(async () => finish())
-    expect(skip.disabled).toBe(false)
-    expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
-    ).toBe(false)
-  })
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            elicitation={{
+              message: request.message,
+              fields,
+              state: 'pending'
+            }}
+            request={request}
+            onRespond={onRespond}
+          />
+        )
+      )
+      const skip = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === 'Skip'
+      )!
+      expect(skip.getAttribute('data-variant')).toBe('secondary')
+      expect(document.querySelector('[role="menuitem"]')).toBeNull()
+      expect(container.textContent).not.toContain('Skip all')
+      const skipAll = await openSkipMenu()
+      expect(onRespond).not.toHaveBeenCalled()
+      expect(skipAll.textContent).toBe('Skip all')
+      expect(skipAll.className).toContain('status-warning')
+      await act(async () => (action === 'all' ? skipAll.click() : skip.click()))
+      expect(onRespond).toHaveBeenCalledExactlyOnceWith({
+        requestId: request.requestId,
+        ...(action === 'all'
+          ? { action: 'decline' }
+          : { action: 'accept', answers: [{ fieldId: 'question_0', status: 'skipped' }] })
+      })
+      expect(skip.disabled).toBe(true)
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
+      ).toBe(true)
+      await act(async () => finish())
+      expect(skip.disabled).toBe(false)
+      expect(
+        container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
+      ).toBe(false)
+    }
+  )
 
   it('renders the answered summary as a compact checklist with a question-type chip', async () => {
     const mixedRequest = { ...multiQuestionRequest, fields: mixedChoiceFields }
