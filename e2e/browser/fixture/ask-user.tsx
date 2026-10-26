@@ -108,7 +108,7 @@ export const Fixture = (): React.JSX.Element => {
             embedded={search.has('embedded')}
             // Historical surfaces retain the projection after the pending request is gone.
             request={
-              response?.action === 'accept'
+              response
                 ? undefined
                 : {
                     requestId: 'question-1',
@@ -121,7 +121,11 @@ export const Fixture = (): React.JSX.Element => {
             elicitation={{
               message: 'Which outputs?',
               fields,
-              state: response?.action === 'accept' ? 'answered' : 'pending',
+              state: response
+                ? response.action === 'accept'
+                  ? 'answered'
+                  : 'declined'
+                : 'pending',
               answers: response?.answers
             }}
             onRespond={onRespond}

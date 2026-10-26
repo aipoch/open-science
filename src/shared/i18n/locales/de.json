@@ -4166,7 +4166,6 @@
     "Inspect variables": "Variablen untersuchen",
     "Variables are available when this kernel is idle": "Variablen sind verfügbar, sobald dieser Kernel inaktiv ist",
     "Variables are available only while this kernel is live": "Variablen sind nur verfügbar, solange dieser Kernel aktiv ist",
-    "User skipped": "Vom Benutzer übersprungen",
     "More skip options": "Weitere Optionen zum Überspringen",
     "Skip all": "Alle überspringen",
     "This source does not allow embedded previews.": "Diese Quelle lässt keine eingebetteten Vorschauen zu.",

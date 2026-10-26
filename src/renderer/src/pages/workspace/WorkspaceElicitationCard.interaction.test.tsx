@@ -233,7 +233,7 @@ describe('WorkspaceElicitationCard choice question', () => {
       )
     await act(async () => button('Back')?.click())
     expect(container.querySelector('textarea')?.value).toBe('')
-    expect(container.textContent).toContain('User skipped')
+    expect(container.textContent).toContain('Skipped')
     await act(async () =>
       container
         .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
@@ -272,7 +272,7 @@ describe('WorkspaceElicitationCard choice question', () => {
       const answer = container.querySelector<HTMLButtonElement>(
         '[data-testid="elicitation-answer-row"]'
       )!
-      expect(answer.textContent).toBe('用户跳过')
+      expect(answer.textContent).toBe('已跳过')
       await act(async () => answer.click())
       expect(container.querySelector('[data-selected="true"]')).toBeNull()
       expect(container.textContent).not.toContain('User skipped')

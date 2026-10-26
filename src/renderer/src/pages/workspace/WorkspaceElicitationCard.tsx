@@ -41,6 +41,7 @@ import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { ChoiceKindChip } from './ChoiceKindChip'
 
+// Keep the stored answer stable so existing drafts and history remain recognizable.
 const SKIPPED_ANSWER = 'User skipped'
 
 const displayValue = (
@@ -304,7 +305,7 @@ const WorkspaceElicitationCard = ({
   const displayAnswer = (answer: ElicitationAnswer): string => {
     if (choiceQuestions?.some((question) => question.customField.id === answer.fieldId)) {
       if (answer.value === 'Let the agent decide') return t('Let the agent decide')
-      if (answer.value === SKIPPED_ANSWER) return t('User skipped')
+      if (answer.value === SKIPPED_ANSWER) return t('Skipped')
     }
     return displayValue(answer.value, fieldsById.get(answer.fieldId), t)
   }
@@ -882,7 +883,7 @@ const WorkspaceElicitationCard = ({
             <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
               <span className="min-w-0 truncate text-sm text-text-300">
                 {currentQuestionSkipped
-                  ? t('User skipped')
+                  ? t('Skipped')
                   : t('{{count}} selected', { count: selectedChoiceCount })}
               </span>
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -1259,11 +1260,11 @@ const WorkspaceElicitationCard = ({
                     <span
                       className={cn(
                         'mt-px grid size-5 shrink-0 place-items-center rounded-md',
-                        skipped ? 'bg-bg-300 text-text-100' : 'bg-primary text-primary-foreground'
+                        skipped ? 'bg-bg-200 text-text-300' : 'bg-primary text-primary-foreground'
                       )}
                     >
                       {skipped ? (
-                        <Minus className="size-3" aria-hidden="true" />
+                        <Minus className="size-3" strokeWidth={2.5} aria-hidden="true" />
                       ) : (
                         <Check className="size-3" strokeWidth={3} aria-hidden="true" />
                       )}
@@ -1274,7 +1275,12 @@ const WorkspaceElicitationCard = ({
                           {field?.label ?? answer.fieldId}
                         </span>
                       ) : null}
-                      <span className="block whitespace-pre-wrap break-words text-[13px] font-medium leading-[18px]">
+                      <span
+                        className={cn(
+                          'block text-[13px] leading-[18px]',
+                          skipped ? 'text-text-300' : 'whitespace-pre-wrap break-words font-medium'
+                        )}
+                      >
                         {displayAnswer(answer)}
                       </span>
                     </span>
