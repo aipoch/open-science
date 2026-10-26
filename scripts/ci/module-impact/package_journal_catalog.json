@@ -33,9 +33,11 @@
       "packages/journal-catalog/test/catalog.test.ts",
       "packages/journal-catalog/test/journal-import-file.test.ts"
     ],
-    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
-    "consumer": [
+    "contract": [
       "scripts/backend-dependencies.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
+    ],
+    "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/acp/application-commands.test.ts",
