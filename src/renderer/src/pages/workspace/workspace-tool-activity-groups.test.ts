@@ -515,6 +515,41 @@ describe('formatActivityGroupPresentationTitle', () => {
     }
   )
 
+  it.each([
+    ['execute', 'Terminal'],
+    ['read', 'Read'],
+    ['edit', 'Edit'],
+    ['delete', 'Delete'],
+    ['move', 'Move'],
+    ['think', 'Task'],
+    ['switch_mode', 'Switch Mode'],
+    ['other', 'Tool']
+  ] as const)(
+    'translates the generic %s display name in running headers',
+    async (toolKind, name) => {
+      const korean = i18next.createInstance()
+      await korean.init({
+        lng: 'ko',
+        fallbackLng: 'en',
+        keySeparator: false,
+        nsSeparator: false,
+        interpolation: { escapeValue: false },
+        resources: { ko: { translation: ko } }
+      })
+      const t = korean.t.bind(korean)
+      const activity = createActivity({
+        status: 'in_progress',
+        toolKind,
+        rawInput: { command: 'echo ready' },
+        rawOutput: 'ready'
+      })
+      expect(t(name)).not.toBe(name)
+      expect(
+        formatActivityGroupPresentationTitle([activity], undefined, undefined, undefined, t)
+      ).toBe(t('Using tool: {{name}}', { name: t(name) }))
+    }
+  )
+
   it('shows ordinary running and approval states without inferring future steps', () => {
     const activity = createActivity({
       id: 'ordinary',

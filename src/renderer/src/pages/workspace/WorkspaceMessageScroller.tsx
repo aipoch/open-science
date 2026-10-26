@@ -1525,6 +1525,8 @@ const WorkspaceMessageScrollerImpl = ({
 
   // Toggles a whole adjacent tool-activity group without affecting other sessions.
   const toggleActivityGroup = (groupId: string): void => {
+    // Find temporarily reveals groups without changing the reader’s saved expansion choices.
+    if (windowFindOpen) return
     setExpandedActivityGroupState((currentState) => {
       const currentGroupIds =
         currentState.sessionId === currentSessionId ? currentState.groupIds : new Set<string>()
@@ -2130,7 +2132,7 @@ const WorkspaceMessageScrollerImpl = ({
                     )}
                     key={item.id}
                     group={item}
-                    isExpanded={expandedActivityGroups.has(item.id)}
+                    isExpanded={windowFindOpen || expandedActivityGroups.has(item.id)}
                     onToggleGroup={toggleActivityGroup}
                     expansionOverrides={activityExpansionOverrides}
                     onToggleRow={toggleActivityRow}

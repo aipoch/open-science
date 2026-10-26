@@ -7899,6 +7899,8 @@
     "Export screening results (CSV)": "Exporter les résultats du tri (CSV)",
     "Screening results could not be exported.": "Impossible d’exporter les résultats du tri.",
     "Screening data changed during export. Please try again.": "Les données du tri ont changé pendant l’exportation. Réessayez.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement.",
+    "Fetch": "Récupérer",
+    "Switch Mode": "Changer de mode"
   }
 }

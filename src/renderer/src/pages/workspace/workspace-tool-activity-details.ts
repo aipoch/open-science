@@ -99,6 +99,7 @@ const TOOL_KIND_LABELS: Record<ToolKind, string> = {
 }
 
 const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
+  ...Object.values(TOOL_KIND_LABELS),
   'Agent SDK',
   'Code',
   'Code risk review',

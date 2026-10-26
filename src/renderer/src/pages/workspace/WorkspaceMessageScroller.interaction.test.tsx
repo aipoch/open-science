@@ -5140,6 +5140,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         title: id,
         status: 'completed',
         toolKind: 'read',
+        rawOutput: 'Searchable file content',
         timestamp: 1710000000100 + index,
         ...(index === 1
           ? {
@@ -5185,6 +5186,21 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           <WorkspaceMessageScroller activeSession={{ ...session }} onSendEditedMessage={vi.fn()} />
         )
       )
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'true',
+        'false'
+      ])
+      expect(container.textContent).not.toContain('read-after')
+      await act(async () => showWindowFindListener?.())
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'true',
+        'true'
+      ])
+      expect(container.textContent).toContain('read-after')
+      expect(announceWindowFindContentReady).toHaveBeenCalled()
+      // Clicking a forced-open group must not overwrite the pre-search expansion choice.
+      await act(async () => headings[1].click())
+      await act(async () => hideWindowFindListener?.())
       expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
         'true',
         'false'
