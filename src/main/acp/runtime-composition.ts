@@ -1,3 +1,4 @@
+import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
@@ -15,6 +16,7 @@ import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import type { AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import { SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE } from '../../shared/run-error-classification'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import {
@@ -185,6 +187,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
+  sandboxNetworkApprovalOwner?: SandboxNetworkApprovalOwner
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands &
     SessionMutation &
     SessionCatalog &
@@ -286,6 +289,7 @@ const createAcpRuntime = ({
   afterSessionDelete,
   specialistService,
   sessionPersistenceCoordinator,
+  sandboxNetworkApprovalOwner,
   finalizeRuntimeArtifacts,
   literatureReader,
   pdfElementReader,
@@ -856,6 +860,9 @@ const createAcpRuntime = ({
         ...(!delegatedNotebookConnection && sessionPersistenceCoordinator
           ? {
               permissionWait: {
+                networkApprovalOwner: sandboxNetworkApprovalOwner,
+                allowNetworkDomain:
+                  settingsService.allowNotebookNetworkDomain?.bind(settingsService),
                 sessions: sessionPersistenceCoordinator,
                 onSessionUpdated: (session) => {
                   try {
@@ -982,16 +989,27 @@ const createAcpRuntime = ({
           : undefined,
         resolveSpecialistSkills: specialistService
           ? async (specialistId) => {
+              let profile
               try {
-                const profile = await specialistService.resolveRunnableById(specialistId)
-                if (!profile.enabled) {
-                  return { kind: 'unavailable', reason: 'The bound specialist is disabled.' }
-                }
+                profile = await specialistService.resolveRunnableById(specialistId)
+              } catch (error) {
+                log.warn('bound specialist profile resolution failed', {
+                  specialistId,
+                  ...errorLogFields(error)
+                })
+                return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+              }
+              if (!profile.enabled) {
+                return { kind: 'unavailable', reason: 'The bound specialist is disabled.' }
+              }
+              let stage = 'skills'
+              try {
                 const effective = resolveEffectiveSpecialistSkills(
                   profile,
                   await settingsService.listSpecialistSkillCatalog()
                 )
                 if (effective.kind === 'specialist') {
+                  stage = 'connectors'
                   const [provisioned, connectors] = await Promise.all([
                     settingsService.provisionedConnectorSkillNames(),
                     settingsService.getConnectors()
@@ -1023,8 +1041,13 @@ const createAcpRuntime = ({
                   }
                 }
                 return effective
-              } catch {
-                return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+              } catch (error) {
+                log.warn('bound specialist capability resolution failed', {
+                  specialistId,
+                  stage,
+                  ...errorLogFields(error)
+                })
+                return { kind: 'unavailable', reason: SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE }
               }
             }
           : undefined,

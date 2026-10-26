@@ -10,8 +10,81 @@ import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-st
 import { applyCachedPdfStructureSources } from '../../src/reader/structure-source.js'
 import { applyCachedPdfTableSources } from '../../src/reader/table-source.js'
 import { createPdfTranslationSource } from '../../src/reader/source.js'
-import { nativeLabelRegion } from '../../src/reader/native-source-geometry.js'
+import {
+  nativeLabelRegion,
+  nativePartialNavigation
+} from '../../src/reader/native-source-geometry.js'
+import { verifiedPdfStructureRegions } from '../../src/reader/structure-regions.js'
 import type { PdfTranslationExtraction } from '../../src/reader/extraction.js'
+
+it.each(['left', 'right', 'edge'] as const)(
+  'keeps explicit %s page clipping out of original crops without changing ordinary edge admission',
+  async (placement) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      text = 'Native edge label',
+      width = font.widthOfTextAtSize(text, 10),
+      x = placement === 'left' ? -0.0002 : placement === 'right' ? 400 - width + 0.0002 : 0
+    pdf.addPage([400, 500]).drawText(text, { x, y: 400, size: 10, font })
+    const loading = getDocument({
+      data: await pdf.save(),
+      standardFontDataUrl: `${path.join(path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')), 'standard_fonts')}/`
+    })
+    try {
+      const document = await loading.promise,
+        page = await document.getPage(1),
+        content = await page.getTextContent(),
+        viewport = page.getViewport({ scale: 1 }),
+        index = content.items.findIndex((item) => 'str' in item && item.str === text),
+        item = content.items[index] as TextItem,
+        style = content.styles[item.fontName],
+        partial = nativePartialNavigation(item, style, viewport),
+        native = nativeLabelRegion(item, style, viewport, 1)!,
+        rect = partial?.rect ?? {
+          x: native.x,
+          y: native.y,
+          width: native.width,
+          height: native.height
+        },
+        source = createPdfTranslationSource({
+          resourceRequestKey: 'native-edge',
+          fingerprint: document.fingerprints[0],
+          pages: [{ width: viewport.width, height: viewport.height }],
+          units: [
+            {
+              id: 'edge-label',
+              source: text,
+              sourceOnly: true,
+              fragments: [{ pageNumber: 1, rect, ...partial, items: [{ index, text: item.str }] }]
+            }
+          ]
+        })
+      expect(index).toBeGreaterThanOrEqual(0)
+      expect(Boolean(partial)).toBe(placement !== 'edge')
+      const regions = verifiedPdfStructureRegions(
+        source,
+        [
+          {
+            regions: [{ page: 1, x: 0, y: rect.y, width: 1, height: rect.height }],
+            owners: new Set([`1:${index}`])
+          }
+        ],
+        new Map([[1, { content, viewport }]]),
+        []
+      )
+      if (partial) expect(regions).toEqual([])
+      else
+        expect(regions).toEqual([
+          {
+            pageNumber: 1,
+            rect: { x: 0, y: rect.y, width: 1, height: expect.closeTo(rect.height) }
+          }
+        ])
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
 
 async function fixture(kind: 'table' | 'figure' = 'table', segmented = false) {
   const pdf = await PDFDocument.create(),

@@ -21,6 +21,7 @@ $playwrightCli = Join-Path $repoRoot 'node_modules\@playwright\test\cli.js'
 $previousMicromamba = $env:OPEN_SCIENCE_MICROMAMBA_BIN
 $previousEvents = $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS
 $previousReport = $env:PLAYWRIGHT_JSON_OUTPUT_NAME
+$previousPath = $env:PATH
 $reportPath = Join-Path $repoRoot 'test-results\notebook-mutations.json'
 
 New-Item -ItemType Directory -Force (Split-Path $fixtureBin) | Out-Null
@@ -34,11 +35,19 @@ try {
   $env:PLAYWRIGHT_JSON_OUTPUT_NAME = $reportPath
   $env:OPEN_SCIENCE_MICROMAMBA_BIN = $fixtureBin
   $env:OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS = 'enabled'
+  # All fixture executables use absolute paths. Avoid recursively granting the hosted runner's
+  # unrelated tool trees to AppContainer, matching the mainline Notebook journey.
+  $env:PATH = @(
+    (Join-Path $env:SystemRoot 'System32'),
+    (Join-Path $env:SystemRoot 'System32\Wbem'),
+    (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
+  ) -join ';'
   & $node $playwrightCli test e2e/certification/notebook-lifecycle.spec.ts --grep mutation --workers=1 --reporter=line,json --fail-on-flaky-tests --global-timeout=600000
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $node (Join-Path $repoRoot 'scripts\ci\verify-notebook-mutations.mjs') $reportPath
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
+  $env:PATH = $previousPath
   if ($null -eq $previousMicromamba) {
     Remove-Item Env:OPEN_SCIENCE_MICROMAMBA_BIN -ErrorAction SilentlyContinue
   } else {

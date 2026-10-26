@@ -96,6 +96,34 @@ const setPermissionApi = (api: Partial<Window['api']['permissions']>): void => {
 }
 
 describe('PermissionsPanel', () => {
+  it('requires confirmation before relaxing folders and reports a rejected settings write', async () => {
+    setPermissionApi({ list: vi.fn().mockResolvedValue(snapshot) })
+    const save = vi.fn().mockRejectedValue(new Error('shutdown failed'))
+    const previous = useSettingsStore.getState().setNotebookFolderRestrictionEnabled
+    useSettingsStore.setState({
+      notebookFolderRestrictionEnabled: true,
+      setNotebookFolderRestrictionEnabled: save
+    })
+    try {
+      await act(async () => root.render(<PermissionsPanel />))
+      const toggle = container.querySelector(
+        '[role="switch"][aria-label="Restrict Notebook and Shell folders"]'
+      ) as HTMLButtonElement
+      expect(toggle.getAttribute('aria-checked')).toBe('true')
+      await act(async () => toggle.click())
+      expect(save).not.toHaveBeenCalled()
+      const confirm = [...document.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Allow broader folder access'
+      )!
+      await act(async () => confirm.click())
+      expect(save).toHaveBeenCalledWith(false)
+      expect(toggle.getAttribute('aria-checked')).toBe('true')
+      expect(container.textContent).toContain('Could not confirm the folder restriction change')
+    } finally {
+      useSettingsStore.setState({ setNotebookFolderRestrictionEnabled: previous })
+    }
+  })
+
   it('PG01 distinguishes active same-name tools and opens each owning Connector', async () => {
     const servers = [
       { id: 'chemistry', name: 'chemistry-tools', displayName: 'Chemistry lab', enabled: true },

@@ -23,6 +23,7 @@ on:
           - windows-e2e-mainline
           - windows-process
           - windows-notebook-runtime
+          - linux-notebook-isolation
           - e2e
           - source-regressions
           - macos-smoke
@@ -245,6 +246,12 @@ jobs:
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:e2e"],"lanes":["policy","build","e2e_functional_macos","e2e_workspace_macos","e2e_accessibility_macos","e2e_visual_macos","e2e_functional_windows","e2e_workspace_windows","e2e_browser_windows"],"bundles":["policy","macos_e2e","windows_e2e"],"macosGroups":["journeys","presentation"],"reasonChains":["workflow_dispatch e2e -> real desktop jobs and renderer pilot"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
             echo "lanes=$(node -e 'console.log(JSON.stringify(JSON.parse(process.argv[1]).lanes))' "$plan")" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "linux-notebook-isolation" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:linux-notebook-isolation"],"lanes":["policy","linux_runtime"],"bundles":["policy","linux_runtime"],"reasonChains":["workflow_dispatch linux-notebook-isolation -> real Linux sandbox and WSL guest launch regressions"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","linux_runtime"]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-notebook-runtime" ]]; then
@@ -578,6 +585,9 @@ jobs:
           echo "node=$node_outcome" >> "$GITHUB_OUTPUT"
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
+      - name: Generate derived consumer index
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        run: npm run generate:module-consumers
       - name: Check complete module ownership and consumer evidence
         # Registration/full plans include these guards in the contract suite below.
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}
@@ -780,7 +790,14 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
+        env:
+          # Portable CPU tests use bundled ONNX binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Generate derived consumer index
+        run: npm run generate:module-consumers
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       - name: Select independent package tests from trusted policy
         uses: ./.github/actions/select-package-tests
         with:
@@ -870,6 +887,9 @@ jobs:
       - name: Install report merge dependencies
         if: ${{ needs.unit_shard.result != 'skipped' }}
         run: node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false
+      - name: Generate derived consumer index
+        if: ${{ needs.unit_shard.result == 'skipped' }}
+        run: npm run generate:module-consumers
       - name: Test affected Modules
         id: unit_macos_related
         if: ${{ needs.unit_shard.result == 'skipped' && fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -967,6 +987,8 @@ jobs:
           cache: npm
       - name: Install parser dependencies
         run: node scripts/ci/npm-ci.mjs --ignore-scripts --prefer-offline --no-audit --fund=false
+      - name: Generate derived consumer index
+        run: npm run generate:module-consumers
       - name: Compare file-level and module test selection
         id: file_test_impact
         continue-on-error: true
@@ -1032,8 +1054,15 @@ jobs:
           npx vitest run --project process
           packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+          packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts
           src/main/session-plan/plan-context-file.shell.integration.test.ts
           src/main/notebook/shell-cell-session.integration.test.ts
+      - name: Test WSL guest launch arguments
+        run: npx vitest run packages/notebook-network-sandbox/src/wsl2-isolation.test.ts
+      - name: Test Linux Folder authority across kernel restart
+        run: >-
+          npx vitest run --project process src/main/notebook/kernel-executor.test.ts
+          -t 'keeps folder authority'
 
   windows_notebook_runtime:
     needs: preflight
@@ -1109,6 +1138,7 @@ jobs:
         continue-on-error: true
         run: >-
           npx vitest run
+          scripts/windows-dev-notebook-host.integration.test.ts
           scripts/ci/run-windows-browser-diagnostics.test.ts
           scripts/windows-updater-certification.test.ts
           build/packaging.test.ts
@@ -1130,6 +1160,10 @@ jobs:
           src/main/delegation/production-framework-runtime.test.ts
           src/main/acp/specialist-switch-recovery.integration.test.ts
           src/main/file-save.test.ts
+          src/main/bounded-file-io.test.ts
+          src/main/managed-preview-resources.test.ts
+          src/main/managed-preview-ipc.test.ts
+          src/main/managed-preview-protocol.test.ts
           src/main/notebook/file-evidence-publication.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           packages/specialists/src/repository.test.ts
@@ -1179,6 +1213,7 @@ jobs:
         run: >-
           npx vitest run
           src/main/notebook/windows-shell.integration.test.ts
+          src/main/notebook/package-process-sandbox.windows.integration.test.ts
           src/main/notebook/powershell-search-parser.windows.integration.test.ts
           src/main/notebook/shell-search-scope.test.ts
       - name: Test Windows notebook shell service timeout
@@ -1301,9 +1336,8 @@ jobs:
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
       - name: Build Electron application
+        # build:e2e includes the Web UI used by browser journeys.
         run: npm run build:e2e
-      - name: Build web application
-        run: npm run build:web
       - name: Test snapshot transport
         run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
       - name: Pack E2E setup
@@ -1382,7 +1416,7 @@ jobs:
             src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts
           node scripts/ci/run-notebook-isolation.mjs
           npx vitest run src/main/notebook/kernel-executor.test.ts \
-            -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'
+            -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL|keeps folder authority'
       - name: Test short macOS platform checks
         id: unit_macos_smoke
         if: ${{ matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
@@ -1577,6 +1611,8 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
       - name: Build Electron application
         run: npm run build:e2e
+      - name: Build Windows sandbox native host
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
       - name: Download Windows Notebook runtime
         id: setup
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8

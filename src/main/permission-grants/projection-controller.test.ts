@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { PermissionCapability, PermissionGrantRecord } from '../../shared/permission-grants'
 import type { PermissionGrantRegistry } from './registry'
+import { DEFAULT_GLOBAL_PERMISSION_CAPABILITIES } from './defaults'
 import { createPermissionGrantProjectionController } from './projection-controller'
 
 describe('Permission Grant projection controller', () => {
@@ -275,11 +276,15 @@ describe('Permission Grant projection controller', () => {
       publishChanged: vi.fn()
     })
 
+    const defaultCount = DEFAULT_GLOBAL_PERMISSION_CAPABILITIES.length
     await expect(controller.restoreDefaults()).resolves.toMatchObject({
-      restoredCount: 20,
-      version: 20,
-      counts: { global: 20 }
+      restoredCount: defaultCount,
+      version: defaultCount,
+      counts: { global: defaultCount }
     })
-    expect(remember).toHaveBeenCalledTimes(20)
+    expect(remember).toHaveBeenCalledTimes(defaultCount)
+    expect(remember.mock.calls.map(([{ capability }]) => capability)).toEqual(
+      DEFAULT_GLOBAL_PERMISSION_CAPABILITIES
+    )
   })
 })

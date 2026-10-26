@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../../../shared/sandbox-network-approval'
 import {
   deriveSessionAttention,
   projectSessionAttention
@@ -55,6 +56,7 @@ export type SessionActionabilityProjection = Readonly<{
 }>
 
 type SessionInteractionSource = Readonly<{
+  id?: ChatSession['id']
   packageOrigin?: ChatSession['packageOrigin']
   status: SessionStatus
   interactionState?: SessionInteractionState
@@ -118,6 +120,7 @@ export const inferSessionInteractionState = (
     : {
         permission:
           session.runtimeContext?.permission?.state === 'pending' ||
+          hasPendingSandboxNetworkApproval(session) ||
           session.status === 'waiting-permission',
         elicitation: session.status === 'waiting-for-user' || hasPendingDurableElicitation(session),
         plan:
@@ -178,7 +181,9 @@ export const projectSessionActionability = (
       Boolean(session.activeRun) ||
       session.agentPromptInFlight === true ||
       facts.hasRunningWork === true)
-  const durableRootPermissionPending = session.runtimeContext?.permission?.state === 'pending'
+  const durableRootPermissionPending =
+    session.runtimeContext?.permission?.state === 'pending' ||
+    hasPendingSandboxNetworkApproval(session)
   const permissionPending =
     durableRootPermissionPending ||
     (facts.rootPermissionPending ??

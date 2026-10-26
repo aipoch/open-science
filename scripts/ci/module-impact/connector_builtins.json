@@ -9,6 +9,8 @@
     "packages/connector-builtins/src/biomart.ts",
     "packages/connector-builtins/src/biorxiv.test.ts",
     "packages/connector-builtins/src/biorxiv.ts",
+    "packages/connector-builtins/src/cancer-models-depmap.test.ts",
+    "packages/connector-builtins/src/cancer-models-depmap.ts",
     "packages/connector-builtins/src/cancer-models.test.ts",
     "packages/connector-builtins/src/cancer-models.ts",
     "packages/connector-builtins/src/catalog.ts",
@@ -140,6 +142,8 @@
     "packages/connector-builtins/src/structures-emdb.ts",
     "packages/connector-builtins/src/structures-intact.test.ts",
     "packages/connector-builtins/src/structures-intact.ts",
+    "packages/connector-builtins/src/structures-pdb-similarity.test.ts",
+    "packages/connector-builtins/src/structures-pdb-similarity.ts",
     "packages/connector-builtins/src/structures-pdb.test.ts",
     "packages/connector-builtins/src/structures-pdb.ts",
     "packages/connector-builtins/src/structures.test.ts",
@@ -172,7 +176,11 @@
     "packages/connector-builtins/src/kegg.ts",
     "packages/connector-builtins/src/kegg.test.ts",
     "packages/connector-builtins/src/structures-omnipath.ts",
-    "packages/connector-builtins/src/structures-omnipath.test.ts"
+    "packages/connector-builtins/src/structures-omnipath.test.ts",
+    "packages/connector-builtins/src/chemistry-unichem.ts",
+    "packages/connector-builtins/src/chemistry-unichem.test.ts",
+    "packages/connector-builtins/src/structures-pdbe.ts",
+    "packages/connector-builtins/src/structures-pdbe.test.ts"
   ],
   "interfacePaths": [
     "packages/connector-builtins/package.json",
@@ -262,6 +270,7 @@
       "packages/connector-builtins/src/alliance.test.ts",
       "packages/connector-builtins/src/biomart.test.ts",
       "packages/connector-builtins/src/biorxiv.test.ts",
+      "packages/connector-builtins/src/cancer-models-depmap.test.ts",
       "packages/connector-builtins/src/cancer-models.test.ts",
       "packages/connector-builtins/src/cellguide.test.ts",
       "packages/connector-builtins/src/cellosaurus.test.ts",
@@ -322,6 +331,7 @@
       "packages/connector-builtins/src/structures-complexportal.test.ts",
       "packages/connector-builtins/src/structures-emdb.test.ts",
       "packages/connector-builtins/src/structures-intact.test.ts",
+      "packages/connector-builtins/src/structures-pdb-similarity.test.ts",
       "packages/connector-builtins/src/structures-pdb.test.ts",
       "packages/connector-builtins/src/structures.test.ts",
       "packages/connector-builtins/src/variants-clinvar.test.ts",
@@ -335,7 +345,9 @@
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/tcia.test.ts",
       "packages/connector-builtins/src/kegg.test.ts",
-      "packages/connector-builtins/src/structures-omnipath.test.ts"
+      "packages/connector-builtins/src/structures-omnipath.test.ts",
+      "packages/connector-builtins/src/chemistry-unichem.test.ts",
+      "packages/connector-builtins/src/structures-pdbe.test.ts"
     ],
     "contract": [
       "src/main/connectors/boundaries.architecture.test.ts",

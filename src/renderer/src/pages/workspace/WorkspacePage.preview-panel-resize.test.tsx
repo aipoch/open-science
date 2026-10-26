@@ -1132,6 +1132,28 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(workspacePageHarness.previewPanelHandle.resize).toHaveBeenCalledWith('24%')
   })
 
+  it('ignores an old close animation after a new preview open request', async () => {
+    await renderPage()
+    await act(async () => getPreviewToggle()?.click())
+    const opening = motionHarness.animate.mock.calls.at(-1)![2]
+    await act(async () => opening.onComplete?.())
+    await act(async () => getPreviewToggle()?.click())
+    const closing = motionHarness.animate.mock.calls.at(-1)![2]
+    await act(async () => closing.onUpdate?.(20))
+    await act(async () => getPreviewToggle()?.click())
+    const reopened = motionHarness.animate.mock.calls.at(-1)![2]
+    vi.mocked(workspacePageHarness.previewPanelHandle.resize).mockClear()
+
+    await act(async () => {
+      closing.onUpdate?.(0)
+      closing.onComplete?.()
+    })
+    expect(workspacePageHarness.previewPanelHandle.resize).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+    await act(async () => reopened.onComplete?.())
+    expect(workspacePageHarness.previewSize).toBe(40)
+  })
+
   it('does not resize a detached preview panel during an in-flight animation', async () => {
     await renderPage()
 

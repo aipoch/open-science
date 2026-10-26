@@ -187,7 +187,7 @@ it.each([
       expect(resolve(project.outputDir)).toBe(resolve(outputDir))
     }
     if (config.includes('browser')) {
-      expect(report.config.webServer).toMatchObject({ cwd: process.cwd() })
+      expect(report.config.webServer).toMatchObject({ cwd: process.cwd(), timeout: 300_000 })
     }
   },
   30_000

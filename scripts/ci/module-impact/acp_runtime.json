@@ -144,6 +144,7 @@
     "src/main/acp/runtime-base-composition.test.ts",
     "src/main/acp/runtime-base-composition.ts",
     "src/main/acp/runtime-composition.test.ts",
+    "src/main/acp/specialist-capability-resolution.test.ts",
     "src/main/acp/runtime-composition.ts",
     "src/main/acp/runtime-coordinator.test.ts",
     "src/main/acp/runtime-coordinator.ts",
@@ -225,7 +226,9 @@
     "src/main/acp/auto-operation-policy.test.ts",
     "src/main/acp/auto-operation-policy.ts",
     "src/main/acp/runtime-activity-port.ts",
-    "src/main/acp/runtime-contract.ts"
+    "src/main/acp/runtime-contract.ts",
+    "src/main/acp/sandbox-network-approval-owner.test.ts",
+    "src/main/acp/sandbox-network-approval-owner.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -351,6 +354,7 @@
       "src/main/acp/runtime-activity.test.ts",
       "src/main/acp/runtime-base-composition.test.ts",
       "src/main/acp/runtime-composition.test.ts",
+      "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/runtime-coordinator.test.ts",
       "src/main/acp/runtime-event-broadcast-coalescer.test.ts",
       "src/main/acp/runtime-event-names.test.ts",
@@ -396,7 +400,8 @@
       "src/main/acp/auto-operation-adapter.test.ts",
       "src/main/acp/auto-operation-broker.test.ts",
       "src/main/acp/auto-operation-inventory.test.ts",
-      "src/main/acp/auto-operation-policy.test.ts"
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/acp/sandbox-network-approval-owner.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",

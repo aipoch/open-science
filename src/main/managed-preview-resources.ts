@@ -11,7 +11,12 @@ import type {
   ReadManagedPreviewRangeRequest,
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
-import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
+import {
+  FileObservationMismatchError,
+  observeFile,
+  sameFileObservation,
+  type FileObservation
+} from './bounded-file-io'
 import { waitForManagedFilePublication } from './managed-file-preview'
 import type { ManagedFileReadLease } from './managed-file-versions/read-port'
 import {
@@ -382,15 +387,9 @@ class ManagedPreviewResources {
     },
     maxBytes: number
   ): Promise<ManagedPreviewResource> {
-    const observedStat = await stat(request.path)
+    const observedStat = await stat(request.path, { bigint: true })
     const expected = request.verifiedObservation
-    if (
-      observedStat.dev !== expected.device ||
-      observedStat.ino !== expected.inode ||
-      observedStat.size !== expected.sizeBytes ||
-      observedStat.mtimeMs !== expected.modifiedAtMs ||
-      observedStat.ctimeMs !== expected.changedAtMs
-    ) {
+    if (!sameFileObservation(observeFile(observedStat), expected)) {
       throw new FileObservationMismatchError(
         `Verified Reviewer artifact changed before preview admission (${request.verifiedChecksum}).`
       )
@@ -548,15 +547,11 @@ class ManagedPreviewResources {
     try {
       const observation = resource.strictObservation
       if (observation) {
-        const fileStat = await fileHandle.stat()
+        const fileStat = await fileHandle.stat({ bigint: true })
         if (
           !fileStat.isFile() ||
-          fileStat.dev !== observation.device ||
-          fileStat.ino !== observation.inode ||
-          fileStat.size !== observation.sizeBytes ||
           fileStat.size > observation.maxBytes ||
-          fileStat.mtimeMs !== observation.modifiedAtMs ||
-          fileStat.ctimeMs !== observation.changedAtMs
+          !sameFileObservation(observeFile(fileStat), observation)
         ) {
           this.revokeResource(resourceId, resource.ownerId)
           throw new FileObservationMismatchError(
@@ -564,15 +559,11 @@ class ManagedPreviewResources {
           )
         }
         const verifyUnchanged = async (): Promise<void> => {
-          const finalStat = await fileHandle.stat()
+          const finalStat = await fileHandle.stat({ bigint: true })
           if (
             !finalStat.isFile() ||
-            finalStat.dev !== observation.device ||
-            finalStat.ino !== observation.inode ||
-            finalStat.size !== observation.sizeBytes ||
             finalStat.size > observation.maxBytes ||
-            finalStat.mtimeMs !== observation.modifiedAtMs ||
-            finalStat.ctimeMs !== observation.changedAtMs
+            !sameFileObservation(observeFile(finalStat), observation)
           ) {
             this.revokeResource(resourceId, resource.ownerId)
             throw new FileObservationMismatchError(

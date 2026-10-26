@@ -37,7 +37,14 @@ export function validateDerivedConsumers(index, manifest) {
 export function loadDerivedConsumers(
   path = new URL('../module-derived-consumers.json', import.meta.url)
 ) {
-  if (!lstatSync(path).isFile()) throw Error('Derived consumer index must be a regular file')
+  // The index is generated at runtime in CI; it may be absent during the transition or
+  // in environments that skip generation. Return an empty index rather than failing.
+  try {
+    if (!lstatSync(path).isFile()) throw Error('Derived consumer index must be a regular file')
+  } catch (error) {
+    if (error.code === 'ENOENT') return { schemaVersion: 1, modules: {} }
+    throw error
+  }
   return JSON.parse(readFileSync(path, 'utf8'))
 }
 
@@ -50,7 +57,7 @@ export function withDerivedConsumers(manifest, index) {
     const declared = new Set(Object.values(module.testFiles).flat())
     const additions = tests.filter((path) => !declared.has(path)).sort()
     if (!additions.length) continue
-    module.testFiles.consumer.push(...additions)
+    module.testFiles.consumer = [...(module.testFiles.consumer ?? []), ...additions]
     module.derivedConsumerTests = additions
   }
   return effective

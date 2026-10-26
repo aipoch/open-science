@@ -41,6 +41,7 @@ type PosixProcessIdentity = Readonly<{
   birthToken: string | undefined
   parentBirthToken: string | undefined
   birthOrder: string | undefined
+  coalitionId?: string
 }>
 
 type PosixProcessTable = Readonly<{
@@ -434,7 +435,8 @@ const normalizeDarwinProcess = (identity: DarwinProcessIdentity): PosixProcessId
   sid: identity.sid,
   birthToken: `darwin-proc-uniqueid:${identity.uniqueId}`,
   parentBirthToken: `darwin-proc-uniqueid:${identity.parentUniqueId}`,
-  birthOrder: identity.uniqueId
+  birthOrder: identity.uniqueId,
+  coalitionId: identity.coalitionId
 })
 
 const captureSpawnedDarwinLeader = (leaderPid: number): PosixProcessIdentity | null => {
@@ -704,6 +706,26 @@ const captureTrackedDescendants = (
       if (!binding) {
         tracker.ambiguousIdentities.set(birthToken, candidate)
         continue
+      }
+      // Ordinary descendants retain the leader's resource coalition across fork, exec and
+      // reparenting. Exclude a foreign service only before recording any evidence debt, and
+      // validate the same birth identity again so PID reuse cannot supply negative evidence.
+      // Never use a later observation to discharge an already ambiguous historical identity.
+      const leaderCoalition = tracker.leaderIdentity.coalitionId
+      if (
+        !tracker.ambiguousIdentities.has(birthToken) &&
+        leaderCoalition &&
+        candidate.coalitionId &&
+        candidate.coalitionId !== leaderCoalition
+      ) {
+        const current = binding.getDarwinProcess(candidate.pid)
+        if (
+          current &&
+          current.coalitionId === candidate.coalitionId &&
+          samePosixIdentity(candidate, normalizeDarwinProcess(current))
+        ) {
+          continue
+        }
       }
       const ownershipToken = binding.getDarwinEnvironmentValue(
         candidate.pid,

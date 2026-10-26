@@ -4,9 +4,14 @@ import { join } from 'node:path'
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { dialog, shell } from 'electron'
-import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
+import {
+  createArtifactVersionRequest,
+  createProvenanceTestFixture
+} from '../artifacts/provenance-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
 import { SessionProjectionRepository } from '../session-persistence/projection'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { NotebookRunRepository } from '../notebook/repository'
 import { englishNativeTranslator, translateNativeMessage } from '../locale/main-process-messages'
 import { PackageImportRecoveryRequiredError, SessionPackageService } from './service'
 import { SessionPackageDesktop } from './desktop'
@@ -76,6 +81,120 @@ const causeMessages = (error: unknown): string[] => {
   return messages
 }
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
+
+it.each([
+  { status: 'failed', exitCode: -1 },
+  { status: 'failed', exitCode: 1 },
+  { status: 'completed', exitCode: 0 },
+  { status: 'timeout', exitCode: null }
+] as const)(
+  'exports a settled Session after a $status Shell run with exit code $exitCode',
+  async ({ status, exitCode }) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    await fixture.client.project.create({ data: { id: request.projectId, name: 'Research' } })
+    const sessions = new SessionRepository(fixture.storageRoot)
+    await sessions.saveSession({
+      id: request.sessionId,
+      projectId: request.projectId,
+      title: 'Research',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const lane = createFrameNotebookLane(
+      request.projectId,
+      request.sessionId,
+      'root-frame-session-1'
+    )
+    await fixture.notebookRepository.loadOrCreate({
+      ...request,
+      lane,
+      workspaceCwd: fixture.storageRoot
+    })
+    // The supplied diagnostic contains this terminal Shell outcome. Persist it through the
+    // normal writer; exporting must read it through a fresh Notebook repository instance.
+    await fixture.notebookRepository.appendRun({
+      ...request,
+      lane,
+      run: {
+        runId: 'run-1',
+        cellId: 'cell-1',
+        source: 'agent',
+        kernelKind: 'bash',
+        status,
+        startedAt: 1,
+        endedAt: 2,
+        exitCode,
+        script: '',
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    })
+    const filePath = join(fixture.storageRoot, 'settled.science')
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath })
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const release = vi.fn()
+    const desktop = createDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined,
+      reserveExport: async () => release,
+      onOperationChanged: (snapshot) => {
+        if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
+          queueMicrotask(() =>
+            desktop.respond({ action: 'select', operationId: snapshot.id, excludedStorageKeys: [] })
+          )
+      }
+    })
+    const notebookPath = join(
+      fixture.storageRoot,
+      'notebooks',
+      request.projectId,
+      request.sessionId,
+      'run.json'
+    )
+    const before = await readFile(notebookPath)
+    try {
+      const outcomes: unknown[] = []
+      for (let attempt = 0; attempt < 4; attempt++) {
+        outcomes.push(
+          await desktop.export(request).catch((error: unknown) => ({
+            phase: desktop.operations.snapshot?.progress.phase,
+            reasons: causeMessages(error)
+          }))
+        )
+        expect(desktop.operations.active).toBe(false)
+      }
+      expect(release).toHaveBeenCalledTimes(4)
+      expect(await readFile(notebookPath)).toEqual(before)
+      expect(outcomes).toEqual(Array.from({ length: 4 }, () => ({ saved: true, filePath })))
+      expect((await readFile(filePath)).length).toBeGreaterThan(0)
+      const imported = await service.importFrom(filePath)
+      await expect(
+        new NotebookRunRepository(fixture.storageRoot).findExisting(
+          imported.projectId,
+          imported.sessionId
+        )
+      ).resolves.toMatchObject({ runs: [expect.objectContaining({ status, exitCode })] })
+    } finally {
+      await desktop.close()
+      await service.close()
+      initDataRoot(undefined)
+    }
+  }
+)
+
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.clearAllMocks()
@@ -2175,88 +2294,142 @@ it('reports a localized location and rule without exposing the matched value', a
   }
 })
 
-it('binds sensitive-content acknowledgement to one failed export and retains normal admission', async () => {
-  const fixture = await createProvenanceTestFixture()
-  fixtures.push(fixture)
-  initDataRoot(fixture.storageRoot)
-  await fixture.client.project.create({ data: { id: 'project', name: 'Private research' } })
-  const sessions = new SessionRepository(fixture.storageRoot)
-  await sessions.saveSession({
-    id: 'session',
-    projectId: 'project',
-    title: 'Private research',
-    cwd: '',
-    status: 'idle',
-    createdAt: 1,
-    updatedAt: 2,
-    messages: [
-      {
-        id: 'message',
-        role: 'agent',
-        content: 'Authorization: Bearer synthetic-private-value',
-        status: 'complete',
-        eventIds: [],
-        createdAt: 1,
-        updatedAt: 2
-      }
-    ]
-  })
-  const service = new SessionPackageService({
-    storageRoot: fixture.storageRoot,
-    getClient: async () => fixture.client
-  })
-  const exportTo = vi.spyOn(service, 'exportTo')
-  const release = vi.fn()
-  const reserveExport = vi.fn(async () => release)
-  const destination = join(fixture.storageRoot, 'private.science')
-  vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: destination })
-  const desktop = createDesktop({
-    service,
-    translate: englishNativeTranslator,
-    withDataRootWrite: (work) => work(),
-    afterImport: async () => undefined,
-    reserveExport,
-    onOperationChanged: (snapshot) => {
-      if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
-        queueMicrotask(() =>
-          desktop.respond({ action: 'select', operationId: snapshot.id, excludedStorageKeys: [] })
-        )
-    }
-  })
-  const request = { projectId: 'project', sessionId: 'session' }
-  try {
-    expect(() =>
-      desktop.respond({ action: 'export-with-sensitive-content', operationId: 'missing' })
-    ).toThrow()
-    await expect(desktop.export(request)).rejects.toThrow('Sensitive content detected')
-    const failed = desktop.operations.snapshot!
-    expect(failed.sensitiveContent).toHaveLength(1)
-    expect(() =>
-      desktop.respond({ action: 'export-with-sensitive-content', operationId: 'stale' })
-    ).toThrow()
-    await expect(
-      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
-    ).resolves.toMatchObject({ state: 'succeeded' })
-    expect(exportTo.mock.calls[1][2]).toMatchObject({ allowSensitiveContent: true })
-    expect(reserveExport).toHaveBeenCalledTimes(2)
-    expect(release).toHaveBeenCalledTimes(2)
-    const expanded = join(fixture.storageRoot, 'expanded')
-    await mkdir(expanded)
-    await extractTar({ file: destination, cwd: expanded })
-    const document = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8'))
-    expect(document.session.messages[0].content).toBe(
-      'Authorization: Bearer synthetic-private-value'
+it.each(['minimal', 'full', 'headless', 'forwarded'] as const)(
+  'resumes %s sensitive exports without repeating selection or destination',
+  async (mode) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    await fixture.client.project.create({ data: { id: 'project-1', name: 'Private research' } })
+    const sessions = new SessionRepository(fixture.storageRoot)
+    await sessions.saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Private research',
+      cwd: '',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: 'message',
+          role: 'agent',
+          content: 'Authorization: Bearer synthetic-private-value',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    await fixture.stagePng('Optional research data', 'optional.png')
+    const version = await fixture.repository.createVersion(
+      createArtifactVersionRequest({ filename: 'optional.png' })
     )
-    expect(() =>
-      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
-    ).toThrow()
-    await expect(desktop.export(request)).rejects.toThrow('Sensitive content detected')
-    expect(exportTo.mock.calls[2][2]).not.toHaveProperty('allowSensitiveContent')
-  } finally {
-    await desktop.close()
-    await service.close()
+    const versionRecord = await fixture.client.artifactVersion.findUniqueOrThrow({
+      where: { id: version.versionId }
+    })
+    let request = { projectId: 'project-1', sessionId: 'session-1' }
+    if (mode === 'forwarded') {
+      const source = join(fixture.storageRoot, 'source.science')
+      await service.exportTo(request, source, { allowSensitiveContent: true })
+      request = await service.importFrom(source, undefined, undefined, undefined, {
+        projectId: 'project-1'
+      })
+    }
+    const exportTo = vi.spyOn(service, 'exportTo')
+    const release = vi.fn()
+    const reserveExport = vi.fn(async () => release)
+    const destination = join(fixture.storageRoot, 'private.science')
+    vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: destination })
+    const desktop = createDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: (work) => work(),
+      afterImport: async () => undefined,
+      reserveExport,
+      onOperationChanged: (snapshot) => {
+        if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
+          queueMicrotask(() =>
+            desktop.respond({
+              action: 'select',
+              operationId: snapshot.id,
+              excludedStorageKeys:
+                mode === 'minimal' ? snapshot.files!.map((file) => file.storageKey) : [],
+              includePdfNotes: mode === 'full'
+            })
+          )
+      }
+    })
+    const selectFiles = vi.spyOn(desktop.operations, 'selectFiles')
+    try {
+      expect(() =>
+        desktop.respond({ action: 'export-with-sensitive-content', operationId: 'missing' })
+      ).toThrow()
+      await expect(
+        desktop.export(request, undefined, mode === 'headless' ? destination : undefined)
+      ).rejects.toThrow('Sensitive content detected')
+      const failed = desktop.operations.snapshot!
+      expect(failed.sensitiveContent).toHaveLength(1)
+      expect(selectFiles).toHaveBeenCalledTimes(mode === 'headless' || mode === 'forwarded' ? 0 : 1)
+      expect(dialog.showSaveDialog).toHaveBeenCalledTimes(
+        mode === 'headless' || mode === 'forwarded' ? 0 : 1
+      )
+      expect(() =>
+        desktop.respond({ action: 'export-with-sensitive-content', operationId: 'stale' })
+      ).toThrow()
+      await expect(
+        desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+      ).resolves.toMatchObject({ state: 'succeeded' })
+      expect(exportTo.mock.calls[1][2]).toMatchObject({ allowSensitiveContent: true })
+      expect(selectFiles).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
+      expect(dialog.showSaveDialog).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
+      if (mode === 'minimal' || mode === 'full') {
+        const selection = await exportTo.mock.calls[1][2]!.selectFiles!(
+          [],
+          new AbortController().signal,
+          { retainedFiles: [], metadataBytes: 0 },
+          ''
+        )
+        expect(selection).toEqual(await selectFiles.mock.results[0].value)
+      }
+      expect(reserveExport).toHaveBeenCalledTimes(2)
+      expect(release).toHaveBeenCalledTimes(2)
+      const expanded = join(fixture.storageRoot, 'expanded')
+      await mkdir(expanded)
+      await extractTar({ file: destination, cwd: expanded })
+      const manifest = JSON.parse(await readFile(join(expanded, 'manifest.json'), 'utf8'))
+      const optionalFile = manifest.inventory.find(
+        (entry: { storageKey?: string }) => entry.storageKey === versionRecord.contentStorageKey
+      )
+      if (mode === 'minimal') expect(optionalFile).toBeUndefined()
+      else {
+        expect(optionalFile).toBeDefined()
+        expect(await readFile(join(expanded, optionalFile.path))).toEqual(
+          await readFile(version.path)
+        )
+      }
+      const document = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8'))
+      expect(document.session.messages[0].content).toBe(
+        'Authorization: Bearer synthetic-private-value'
+      )
+      expect(() =>
+        desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+      ).toThrow()
+      await expect(
+        desktop.export(request, undefined, mode === 'headless' ? destination : undefined)
+      ).rejects.toThrow('Sensitive content detected')
+      expect(exportTo.mock.calls[2][2]).not.toHaveProperty('allowSensitiveContent')
+    } finally {
+      await desktop.close()
+      await service.close()
+    }
   }
-})
+)
 
 it.each(['import', 'fork', 'unrelated-failure', 'cleanup-pending', 'running'] as const)(
   'rejects acknowledgement for %s operations',
@@ -2384,7 +2557,9 @@ it.each(['valid', 'invalid'] as const)(
         expect(await fixture.client.session.count()).toBe(0)
         expect(desktop.operations.snapshot?.progress.overallPercent).toBe(46)
         desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
-        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'), {
+          timeout: 10000
+        })
         expect(await fixture.client.session.count()).toBe(1)
         expect(importProgress.length).toBeGreaterThan(3)
         expect(

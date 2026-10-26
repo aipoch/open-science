@@ -398,7 +398,11 @@ export async function applyCachedPdfFigureSources({
           !figure.caption ||
           // This code records the native recovery mechanism, not uncertainty.
           // It never substitutes for the complete source and geometry proof below.
-          figure.issues.some((issue) => issue.code !== 'native-raster-composite-grid')
+          figure.issues.some(
+            (issue) =>
+              issue.code !== 'native-raster-composite-grid' &&
+              issue.code !== 'native-disjoint-mixed-group'
+          )
         )
           continue
         for (const item of figure.sourceItems) {

@@ -142,7 +142,11 @@ type NotebookSourceFileAccessContext = {
   pythonMayHaveWritableMappings?: true
   // Derived from prior same-epoch facts for the live run only. The bounded sidecar serializer
   // deliberately omits this field, so dependency-analysis.json remains unchanged.
+  // After opaque/incomplete execution, names may be shadow barriers, never value/type proof.
   resolvedKernelNames?: string[]
+  // Negative lookup evidence rebuilt from same-epoch attach/detach dependencies;
+  // never serialized, and only a new kernel epoch discharges it.
+  rSearchPathUncertain?: true
   // Transient callable knowledge rebuilt from same-epoch dependency facts.
   rFunctions?: Array<{ name: string; summary: NotebookDependencyTypeSummary }>
   // Plain atomic values only; no R objects or vector contents are captured here.

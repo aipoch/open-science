@@ -152,7 +152,11 @@
     "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
     "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx",
     "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.tsx",
-    "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx"
+    "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
+    "src/renderer/src/pages/literature/workflows/screening-results-csv.ts",
+    "src/renderer/src/pages/literature/workflows/screening-results-csv.test.ts",
+    "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.ts",
+    "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -205,7 +209,9 @@
       "src/renderer/src/pages/literature/journals/JournalColumnHeader.render.test.tsx",
       "src/renderer/src/pages/literature/journals/JournalDatasetActions.render.test.tsx",
       "src/renderer/src/pages/literature/list/LiteratureFilters.render.test.tsx",
-      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx"
+      "src/renderer/src/pages/literature/detail/LiteratureRelatedLookup.render.test.tsx",
+      "src/renderer/src/pages/literature/workflows/screening-results-csv.test.ts",
+      "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",

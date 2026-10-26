@@ -12,6 +12,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return { ...actual, lstat: vi.fn(actual.lstat) }
 })
 
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 const roots: string[] = []
 const fixture = async (): Promise<{ source: string; alias: string; payload: Buffer }> => {
   const root = await mkdtemp(join(tmpdir(), 'package-verify-'))
@@ -24,12 +25,13 @@ const fixture = async (): Promise<{ source: string; alias: string; payload: Buff
   return { source, alias, payload }
 }
 afterEach(async () => {
+  Object.defineProperty(process, 'platform', originalPlatform)
   vi.mocked(fs.lstat).mockReset()
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
 
 it.each([false, true])(
-  'reads unchanged aliases once per invocation with large inode=%s while validating each caller budget',
+  'validates aliases and each caller budget with large inode=%s',
   async (largeInode) => {
     const { source, alias, payload } = await fixture()
     if (largeInode) {
@@ -55,13 +57,13 @@ it.each([false, true])(
         })
         expect(await verify(alias, payload.length)).toEqual(digest)
         expect(await verify(source, payload.length)).toEqual(digest)
-        expect(bytes).toBe(payload.length)
+        expect(bytes).toBe(payload.length * (process.platform === 'win32' ? 3 : 1))
         await expect(verify(alias, payload.length - 1)).rejects.toThrow()
         const controller = new AbortController()
         controller.abort(new Error('cancelled'))
         await expect(verify(alias, payload.length, controller.signal)).rejects.toThrow('cancelled')
         await createPackageContentVerifier()(alias, payload.length)
-        expect(bytes).toBe(payload.length * 2)
+        expect(bytes).toBe(payload.length * (process.platform === 'win32' ? 4 : 2))
       }
     )
   }
@@ -108,3 +110,34 @@ it('rehashes a same-size in-place edit and rejects edits made while hashing', as
     )
   ).rejects.toThrow('changed during validation')
 })
+
+it.each(['hardlink edit', 'replacement'])(
+  'verifies new Windows content after a %s when filesystem timestamps collide',
+  async (mutation) => {
+    const { source, alias, payload } = await fixture()
+    const { lstat } = await vi.importActual<typeof fs>('node:fs/promises')
+    const { mtimeNs, ctimeNs } = await lstat(source, { bigint: true })
+    // Real Windows failures reported identical timestamps even through an opened handle.
+    // Freeze only that OS observation; file identity, contents and hashing remain real.
+    vi.mocked(fs.lstat).mockImplementation(async (...args) =>
+      Object.assign(await lstat(...args), { mtimeNs, ctimeNs })
+    )
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const verify = createPackageContentVerifier()
+    const original = await verify(source, payload.length)
+    const changed = Buffer.alloc(payload.length, 1)
+    if (mutation === 'replacement') {
+      const replacement = `${source}.replacement`
+      await writeFile(replacement, payload)
+      expect(await verify(replacement, payload.length)).toEqual(original)
+      await writeFile(replacement, changed)
+      await rename(replacement, source)
+    } else {
+      await writeFile(alias, changed)
+    }
+    expect(await verify(source, payload.length)).toEqual({
+      sizeBytes: changed.length,
+      checksum: createHash('sha256').update(changed).digest('hex')
+    })
+  }
+)

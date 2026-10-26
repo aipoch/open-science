@@ -20,7 +20,12 @@ export type AcpSettingsCapabilities = Pick<
   | 'provisionedConnectorSkillNames'
   | 'rememberCodexAutoHttpsFallback'
 > &
-  Partial<Pick<SettingsService, 'resolveAdmittedSubagentBackend' | 'prepareDelegatedSkills'>>
+  Partial<
+    Pick<
+      SettingsService,
+      'resolveAdmittedSubagentBackend' | 'prepareDelegatedSkills' | 'allowNotebookNetworkDomain'
+    >
+  >
 
 export type WindowSettingsCapabilities = Pick<
   SettingsService,

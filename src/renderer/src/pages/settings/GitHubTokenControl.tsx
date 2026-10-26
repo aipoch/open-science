@@ -3,7 +3,7 @@ import { useFileCredentialNotice } from './use-file-credential-notice'
 /* Hallmark · component: credential disclosure · genre: modern-minimal · theme: existing Settings system */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import type { TFunction } from 'i18next'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, LoaderCircle } from 'lucide-react'
 
@@ -13,6 +13,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { errorDetail } from '@/lib/error-detail'
 import { MaskedPasswordField } from './MaskedPasswordField'
+import type { SettingsEditorLeaveState } from './SettingsLayout'
 
 type Feedback =
   | { kind: 'success'; action: 'saved' | 'removed' }
@@ -37,7 +38,13 @@ const feedbackCopy = (feedback: Feedback, t: TFunction): string => {
 const isLocalOnlyActionError = (error: unknown): boolean =>
   error instanceof Error && error.message.includes('only available in the local desktop app')
 
-const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX.Element | null => {
+const GitHubTokenControl = ({
+  onCancel,
+  onLeaveStateChange
+}: {
+  onCancel?(): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
+} = {}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
   const [token, setToken] = useState('')
@@ -45,6 +52,13 @@ const GitHubTokenControl = ({ onCancel }: { onCancel?(): void } = {}): React.JSX
   const [availability, setAvailability] = useState<Availability>('checking')
   const [busy, setBusy] = useState<'loading' | 'saving' | 'removing' | null>('loading')
   const [feedback, setFeedback] = useState<Feedback | null>(null)
+  useLayoutEffect(() => {
+    onLeaveStateChange?.({
+      dirty: token.length > 0,
+      busy: busy === 'saving' || busy === 'removing'
+    })
+  }, [busy, onLeaveStateChange, token])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
   const descriptionIds = [
     status?.configured ? 'github-token-status' : '',
     feedback ? 'github-token-feedback' : ''

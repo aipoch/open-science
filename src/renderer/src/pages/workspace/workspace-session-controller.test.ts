@@ -211,6 +211,23 @@ afterEach(() => {
 })
 
 describe('workspace session controller', () => {
+  it.each(['deleted', 'disabled'] as const)(
+    'blocks sending after the catalog reflects a %s bound Specialist',
+    (operation) => {
+      const active = session({ specialistId: 'literature' })
+      const profile = specialist('literature', 'LITERATURE_EXPERT')
+      const items = [profile]
+      const hook = renderController({ activeSession: active, specialistItems: items })
+      mounted.push(hook)
+      expect(hook.result.current.view.specialist.sendAvailable).toBe(true)
+      if (operation === 'deleted') items.splice(0)
+      else profile.enabled = false
+      hook.rerender(active)
+      expect(hook.result.current.view.specialist.unavailable).toBe(true)
+      expect(hook.result.current.view.specialist.sendAvailable).toBe(false)
+    }
+  )
+
   it('does not treat a newer saved binding as the applied target of an older handoff', async () => {
     const active = session({ specialistId: 'specialist-c', specialistBindingPending: true })
     const saved = specialist('specialist-c', 'Specialist C')

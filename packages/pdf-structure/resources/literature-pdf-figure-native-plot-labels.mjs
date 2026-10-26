@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, Util, normalizeUnicode } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { collectClosedFigureFrames, collectTableRules } from './literature-pdf-graphics.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
@@ -537,6 +537,40 @@ export function nativePlotPacketInventory(
   context,
   allowEmptyOutlineSpaces = false
 ) {
+  const scope = nativePlotPacketScope(page, figure, captions, tables, rules)
+  if (!scope) return
+  const inventory = nativePageTextPacketInventory(page, tokens, context, allowEmptyOutlineSpaces)
+  return inventory ? { ...inventory, ...scope } : undefined
+}
+
+// A clipped chart proof can bind opaque graphics-state resets inside BT/ET.
+// Ordinary page/plot callers retain the stricter operator vocabulary.
+export function nativeOpaqueTextPlotPacketInventory(
+  page,
+  figure,
+  captions,
+  tables,
+  rules,
+  tokens,
+  context
+) {
+  const scope = nativePlotPacketScope(page, figure, captions, tables, rules)
+  if (!scope) return
+  const inventory = nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    false,
+    undefined,
+    false,
+    false,
+    undefined,
+    true
+  )
+  return inventory ? { ...inventory, ...scope } : undefined
+}
+
+function nativePlotPacketScope(page, figure, captions, tables, rules) {
   const valid = (r) =>
     (Array.isArray(r) || ArrayBuffer.isView(r)) &&
     r.length === 4 &&
@@ -559,15 +593,39 @@ export function nativePlotPacketInventory(
     figure.rect[3] >= caption.rect[1]
   )
     return
-  const inventory = nativePageTextPacketInventory(page, tokens, context, allowEmptyOutlineSpaces)
-  return inventory ? { ...inventory, cap, caption } : undefined
+  return { cap, caption }
 }
 
 export function nativePageTextPacketInventory(
   page,
   tokens,
   context,
-  allowEmptyOutlineSpaces = false
+  allowEmptyOutlineSpaces = false,
+  scopedSources,
+  allowForeignSourceNormalization = false
+) {
+  return nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    allowEmptyOutlineSpaces,
+    scopedSources,
+    allowForeignSourceNormalization
+  )
+}
+
+// Keep the public page contract strict. A whole-cell ink caller may retain a
+// foreign coarse advance only after every source/glyph/font/clip is still bound.
+function nativePagePacketCore(
+  page,
+  tokens,
+  context,
+  allowEmptyOutlineSpaces = false,
+  scopedSources,
+  allowForeignSourceNormalization = false,
+  wholeClaimAdvanceOnly = false,
+  typedPrograms,
+  allowOpaqueTextState = false
 ) {
   const finite = (a, n) =>
       (Array.isArray(a) || ArrayBuffer.isView(a)) &&
@@ -593,7 +651,17 @@ export function nativePageTextPacketInventory(
   const o = context?.operators,
     v = context?.viewport,
     raw = context?.content?.items,
-    fonts = context?.glyphBounds
+    fonts = typedPrograms ? (context?.partialFontGlyphBounds ?? []) : context?.glyphBounds
+  if (
+    (allowForeignSourceNormalization !== false && allowForeignSourceNormalization !== true) ||
+    (allowForeignSourceNormalization && !(scopedSources instanceof Set)) ||
+    (scopedSources !== undefined &&
+      (!(scopedSources instanceof Set) ||
+        !scopedSources.size ||
+        scopedSources.size > 4096 ||
+        [...scopedSources].some((i) => !Number.isSafeInteger(i) || i < 0)))
+  )
+    return
   if (
     page.invalidGraphicsBounds !== 0 ||
     ![
@@ -620,6 +688,8 @@ export function nativePageTextPacketInventory(
     size,
     packet,
     miterLimit = 10,
+    typedFillColor = '#000000',
+    typedFillAlpha = 1,
     tm = [1, 0, 0, 1, 0, 0],
     x = 0,
     y = 0,
@@ -629,6 +699,29 @@ export function nativePageTextPacketInventory(
     stack = [],
     glyphs = [],
     strokeMargins = new Map()
+  const skipped = new Map(),
+    usedSkipped = new Set()
+  if (context.skippedSpaceGlyphs !== undefined) {
+    if (!Array.isArray(context.skippedSpaceGlyphs) || context.skippedSpaceGlyphs.length > 100000)
+      return
+    for (const p of context.skippedSpaceGlyphs) {
+      if (
+        !p ||
+        !Number.isSafeInteger(p.operationIndex) ||
+        p.operationIndex < 0 ||
+        !Number.isSafeInteger(p.glyphIndex) ||
+        p.glyphIndex < 0 ||
+        typeof p.fontName !== 'string' ||
+        typeof p.fontChar !== 'string' ||
+        !Number.isFinite(p.width) ||
+        p.width < 0
+      )
+        return
+      const key = p.operationIndex + ':' + p.glyphIndex
+      if (skipped.has(key)) return
+      skipped.set(key, p)
+    }
+  }
   const fontMap = new Map()
   for (const f of fonts) {
     if (!f || typeof f.fontName !== 'string' || fontMap.has(f.fontName) || !Array.isArray(f.glyphs))
@@ -652,10 +745,10 @@ export function nativePageTextPacketInventory(
     const op = o.fnArray[i],
       a = o.argsArray[i]
     if (op === OPS.save || op === OPS.paintFormXObjectBegin)
-      stack.push({ fontName, size, miterLimit })
+      stack.push({ fontName, size, miterLimit, typedFillColor, typedFillAlpha })
     else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
       if (!stack.length) return
-      ;({ fontName, size, miterLimit } = stack.pop())
+      ;({ fontName, size, miterLimit, typedFillColor, typedFillAlpha } = stack.pop())
     } else if (op === OPS.setFont) {
       if (typeof a?.[0] !== 'string' || !Number.isFinite(a[1]) || a[1] <= 0) return
       ;[fontName, size] = a
@@ -691,12 +784,42 @@ export function nativePageTextPacketInventory(
         const m = Util.transform(v.transform, Util.transform(state.transform, tm))
         if (!finite(m, 6) || Math.abs(m[0] * m[3] - m[1] * m[2]) < 1e-12) return
         const show = { i, fontName, size: size * m[0], glyphs: [] }
-        for (const g of a[0]) {
+        for (const [glyphIndex, g] of a[0].entries()) {
           if (typeof g === 'number') {
             if (!Number.isFinite(g)) return
             x -= (g * size) / 1000
             continue
           }
+          const key = i + ':' + glyphIndex,
+            proof = skipped.get(key),
+            type3 = typedPrograms?.occurrences.get(key),
+            type3Font = typedPrograms?.fonts.get(fontName)
+          if (
+            type3 &&
+            (type3.fontName !== fontName ||
+              g?.operatorListId !== type3.operatorListId ||
+              g?.fontChar !== '' ||
+              g?.unicode !== type3.unicode ||
+              g?.width !== type3.width ||
+              g?.isInFont !== true ||
+              g.isSpace !== (type3.kind === 'empty-space') ||
+              typedPrograms.used.has(key) ||
+              typedFillAlpha !== 1 ||
+              typeof typedFillColor !== 'string' ||
+              !/^#[a-f0-9]{6}$/iu.test(typedFillColor) ||
+              typedFillColor.toLowerCase() === '#ffffff')
+          )
+            return
+          const rendererSkipped =
+            allowEmptyOutlineSpaces &&
+            proof &&
+            proof.fontName === fontName &&
+            proof.fontChar === g?.fontChar &&
+            proof.width === g?.width &&
+            g?.isInFont === false &&
+            g.unicode === ' ' &&
+            g.isSpace === true
+          if (proof && !rendererSkipped) return
           if (
             typeof g?.unicode !== 'string' ||
             typeof g.fontChar !== 'string' ||
@@ -704,22 +827,33 @@ export function nativePageTextPacketInventory(
             g.width < 0 ||
             (g.isInFont !== true &&
               !(
-                allowEmptyOutlineSpaces &&
-                g.unicode === ' ' &&
-                fontMap
-                  .get(fontName)
-                  ?.get(g.fontChar)
-                  ?.every((n) => n === 0)
+                rendererSkipped ||
+                (allowEmptyOutlineSpaces &&
+                  g.unicode === ' ' &&
+                  fontMap
+                    .get(fontName)
+                    ?.get(g.fontChar)
+                    ?.every((n) => n === 0))
               )) ||
             g.accent != null ||
-            g.operatorListId != null ||
+            (g.operatorListId != null && !type3) ||
             g.vmetric != null
           )
             return
-          const b = fontMap.get(fontName)?.get(g.fontChar)
+          const b = type3
+            ? type3.bounds.map((n, axis) => n * type3Font.fontMatrix[axis % 2 ? 3 : 0])
+            : fontMap.get(fontName)?.get(g.fontChar)
           if (!b) return
-          const ink = box([x + b[0] * size, y + b[1] * size, x + b[2] * size, y + b[3] * size], m),
-            advance = box([x, y, x + (g.width * size) / 1000, y + size], m)
+          const advanceWidth = type3
+            ? g.width * size * type3Font.fontMatrix[0]
+            : (g.width * size) / 1000
+          const ink = box(
+              rendererSkipped
+                ? [x, y, x, y]
+                : [x + b[0] * size, y + b[1] * size, x + b[2] * size, y + b[3] * size],
+              m
+            ),
+            advance = box([x, y, x + advanceWidth, y + size], m)
           if (!finite(ink, 4) || !inside(state.clip, ink)) return
           const z = {
             i,
@@ -731,13 +865,30 @@ export function nativePageTextPacketInventory(
             packet,
             show
           }
+          if (typedPrograms) z.textPaint = { fillColor: typedFillColor, fillAlpha: typedFillAlpha }
+          if (rendererSkipped) {
+            z.rendererSkipped = true
+            usedSkipped.add(key)
+          }
+          if (type3) typedPrograms.used.add(key)
           packet.glyphs.push(z)
           show.glyphs.push(z)
           glyphs.push(z)
-          x += (g.width * size) / 1000
+          x += advanceWidth
         }
         packet.shows.push(show)
-      } else if (![OPS.dependency, OPS.setFillRGBColor, OPS.setStrokeRGBColor].includes(op)) return
+      } else if (op === OPS.setFillRGBColor) typedFillColor = a?.[0]
+      else if (op === OPS.setGState && allowOpaqueTextState) {
+        if (
+          !Array.isArray(a?.[0]) ||
+          !a[0].length ||
+          a[0].some(
+            (e) => !Array.isArray(e) || e.length !== 2 || !['CA', 'ca'].includes(e[0]) || e[1] !== 1
+          )
+        )
+          return
+        for (const e of a[0]) if (e[0] === 'ca') typedFillAlpha = e[1]
+      } else if (![OPS.dependency, OPS.setStrokeRGBColor].includes(op)) return
     } else if (op === OPS.setGState) {
       if (
         !Array.isArray(a?.[0]) ||
@@ -751,7 +902,9 @@ export function nativePageTextPacketInventory(
         )
       )
         return
-    } else if (op === OPS.setMiterLimit) {
+      for (const e of a[0]) if (e[0] === 'ca') typedFillAlpha = e[1]
+    } else if (op === OPS.setFillRGBColor) typedFillColor = a?.[0]
+    else if (op === OPS.setMiterLimit) {
       if (!Number.isFinite(a?.[0]) || a[0] < 1) return
       miterLimit = a[0]
     } else if (op === OPS.setLineJoin || op === OPS.setLineCap) {
@@ -772,6 +925,11 @@ export function nativePageTextPacketInventory(
       )
         return
       strokeMargins.set(i, miterLimit)
+      if (typedPrograms)
+        evidence.paths.get(i).fillPaint = {
+          fillColor: typedFillColor,
+          fillAlpha: typedFillAlpha
+        }
     } else if (
       ![
         OPS.dependency,
@@ -787,7 +945,13 @@ export function nativePageTextPacketInventory(
     )
       return
   }
-  if (packet || stack.length) return
+  if (
+    packet ||
+    stack.length ||
+    usedSkipped.size !== skipped.size ||
+    (typedPrograms && typedPrograms.used.size !== typedPrograms.occurrences.size)
+  )
+    return
   // Canonical decomposition is comparison-only: keep source and painted glyph
   // literals unchanged, and still bind every item to its font and advance.
   // Compatibility characters are not equivalent.
@@ -818,11 +982,26 @@ export function nativePageTextPacketInventory(
     if (typeof r.str !== 'string') return
     const cs = Array.from(r.str.normalize('NFD')).filter((c) => !/\s/u.test(c))
     if (!cs.length) continue
+    if (!Number.isFinite(r.width) || !Number.isFinite(r.height) || r.width < 0 || r.height <= 0)
+      return
     const part = visible.slice(offset, offset + cs.length)
     offset += cs.length
     const s = r.sourceItem,
       k = page.pageNumber + ':' + index,
-      match = tokens.filter((t) => t.sourceItem?.index === index)
+      match = tokens.filter((t) => t.sourceItem?.index === index),
+      paintedText = part.map((z) => z.c).join(''),
+      sourceText = cs.join(''),
+      // PDF.js normalizes text-content strings, but leaves operator glyphs
+      // unchanged. This optional geometry-only bridge is restricted to
+      // unclaimed, one-to-one foreign characters. Claimed literals stay exact;
+      // neither the original source nor the painted glyph is rewritten.
+      normalizedForeign =
+        allowForeignSourceNormalization &&
+        scopedSources &&
+        !scopedSources.has(index) &&
+        paintedText !== sourceText &&
+        Array.from(paintedText).length === cs.length &&
+        normalizeUnicode(paintedText).normalize('NFD') === sourceText
     if (
       s?.pageNumber !== page.pageNumber ||
       s.index !== index ||
@@ -830,15 +1009,29 @@ export function nativePageTextPacketInventory(
       rc.get(k) !== 1 ||
       (tc.get(k) ?? 0) !== match.length ||
       match.length > 1 ||
-      part.map((z) => z.c).join('') !== cs.join('') ||
+      (paintedText !== sourceText && !normalizedForeign) ||
       part.some((z) => z.g.fontName !== r.fontName) ||
       !finite(r.transform, 6)
     )
       return
     const rect = tableTextToken(r, v, 0).rect,
-      q = union(part.map((z) => z.g.advance))
+      q = union(part.map((z) => z.g.advance)),
+      advanceComplete = q.every((n, i) => Math.abs(n - rect[i]) <= 0.02)
+    if (!finite(rect, 4) || !finite(q, 4)) return
     if (
-      q.some((n, i) => Math.abs(n - rect[i]) > 0.02) ||
+      ((!wholeClaimAdvanceOnly || scopedSources.has(index)) &&
+        q.some(
+          (n, i) =>
+            Math.abs(n - rect[i]) > 0.02 &&
+            // A foreign item's trailing source space may be a positioning gap.
+            // Its actual glyph ink remains foreign and must be excluded by the
+            // scoped caller. Claimed sources retain exact whole advance proof.
+            (!scopedSources ||
+              scopedSources.has(index) ||
+              i !== 2 ||
+              !/\s$/u.test(r.str) ||
+              n > rect[i])
+        )) ||
       match.some(
         (t) =>
           t.text !== r.str ||
@@ -848,16 +1041,28 @@ export function nativePageTextPacketInventory(
       )
     )
       return
-    records.push({ r, part, rect, index })
+    records.push({
+      r,
+      part,
+      rect,
+      index,
+      ...(normalizedForeign ? { foreignSourceNormalized: true } : {}),
+      ...(scopedSources ? { ink: union(part.map((z) => z.g.ink)), advanceComplete } : {})
+    })
   }
   if (
     offset !== visible.length ||
-    tokens.some((t) => !records.some((r) => r.index === t.sourceItem?.index))
+    tokens.some((t) => !records.some((r) => r.index === t.sourceItem?.index)) ||
+    (scopedSources &&
+      [...scopedSources].some((i) => !records.some((r) => r.index === i && r.advanceComplete)))
   )
     return
   for (const p of packets) {
     p.rect = union(p.glyphs.map((g) => g.advance))
-    p.ink = union(p.glyphs.map((g) => g.ink))
+    const painted = p.glyphs.filter((g) => !g.rendererSkipped)
+    p.ink = painted.length
+      ? union(painted.map((g) => g.ink))
+      : [p.rect[0], p.rect[1], p.rect[0], p.rect[1]]
     p.text = p.glyphs.map((g) => g.text).join('')
     p.height = Math.max(...p.glyphs.map((g) => g.height))
   }
@@ -874,6 +1079,227 @@ export function nativePageTextPacketInventory(
     glyphs,
     strokeMargins
   }
+}
+
+// Fixed whole-cell contract, not a switch that drops foreign evidence. Every
+// exterior glyph remains literal/font/clip bound and available to the caller.
+export function nativeWholeCellInkPacket(page, tokens, context, cell) {
+  if (
+    !cell ||
+    cell.sourceSegments?.length ||
+    !Array.isArray(cell.sourceItems) ||
+    !cell.sourceItems.length ||
+    cell.sourceItems.length > 4096 ||
+    !Array.isArray(cell.sourceRects) ||
+    cell.sourceRects.length !== cell.sourceItems.length ||
+    typeof cell.text !== 'string' ||
+    !cell.text.trim() ||
+    cell.sourceItems
+      .map((o) => o?.text ?? '')
+      .join('')
+      .replace(/\s/gu, '') !== cell.text.replace(/\s/gu, '')
+  )
+    return
+  const claims = new Set()
+  for (const o of cell.sourceItems) {
+    const r = context?.content?.items?.[o?.index]
+    if (
+      !o ||
+      o.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(o.index) ||
+      o.index < 0 ||
+      typeof o.text !== 'string' ||
+      !o.text.trim() ||
+      claims.has(o.index) ||
+      r?.str !== o.text ||
+      r.sourceItem?.pageNumber !== o.pageNumber ||
+      r.sourceItem.index !== o.index ||
+      r.sourceItem.text !== o.text
+    )
+      return
+    claims.add(o.index)
+  }
+  return nativePagePacketCore(page, tokens, context, false, claims, false, true)
+}
+
+// A fraction relation may span several predicted cells. Retain every foreign
+// glyph and require exact whole advances for the explicitly bound native owners.
+export function nativeFractionInkPacket(page, tokens, context, sourceItems) {
+  if (!Array.isArray(sourceItems) || !sourceItems.length || sourceItems.length > 64) return
+  const claims = new Set()
+  for (const o of sourceItems) {
+    const r = context?.content?.items?.[o?.index]
+    if (
+      o?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(o.index) ||
+      o.index < 0 ||
+      typeof o.text !== 'string' ||
+      !o.text.trim() ||
+      claims.has(o.index) ||
+      r?.str !== o.text ||
+      r.sourceItem?.pageNumber !== o.pageNumber ||
+      r.sourceItem.index !== o.index ||
+      r.sourceItem.text !== o.text
+    )
+      return
+    claims.add(o.index)
+  }
+  return nativePagePacketCore(page, tokens, context, true, claims, false, true)
+}
+
+// Separate typed contract: partial ordinary fonts become usable only when every
+// used font and every Type3 source/program/paint occurrence is independently closed.
+export function nativeTypedPlotPacketInventory(
+  page,
+  figure,
+  captions,
+  tables,
+  rules,
+  tokens,
+  context
+) {
+  try {
+    const scope = nativePlotPacketScope(page, figure, captions, tables, rules)
+    const typed = completeType3PacketPrograms(context)
+    if (!scope || !typed) return
+    const inventory = nativePagePacketCore(
+      page,
+      tokens,
+      context,
+      true,
+      undefined,
+      false,
+      false,
+      typed
+    )
+    return inventory ? { ...inventory, ...scope } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function completeType3PacketPrograms(context) {
+  const finite = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite),
+    programs = context?.type3GlyphPrograms,
+    ordinary = context?.partialFontGlyphBounds ?? [],
+    raw = context?.content?.items,
+    ops = context?.operators,
+    fonts = new Map(),
+    occurrences = new Map(),
+    used = new Set(),
+    names = new Set()
+  if (
+    !Array.isArray(programs) ||
+    !programs.length ||
+    programs.length > 64 ||
+    context.glyphBounds !== undefined ||
+    !Array.isArray(ordinary) ||
+    !Array.isArray(raw) ||
+    raw.length > 32768 ||
+    !Array.isArray(ops?.fnArray) ||
+    !Array.isArray(ops.argsArray) ||
+    ops.fnArray.length !== ops.argsArray.length ||
+    ops.fnArray.length > 100000
+  )
+    return
+  for (const f of ordinary) {
+    if (typeof f?.fontName !== 'string' || names.has(f.fontName)) return
+    names.add(f.fontName)
+  }
+  let count = 0
+  for (const f of programs) {
+    const m = f?.fontMatrix,
+      indices = raw.flatMap((r, index) =>
+        r?.fontName === f?.fontName && typeof r.str === 'string' && r.str.length ? [index] : []
+      ),
+      style = context.content.styles?.[f?.fontName]
+    if (
+      typeof f?.fontName !== 'string' ||
+      names.has(f.fontName) ||
+      !style ||
+      (style.vertical !== undefined && style.vertical !== false) ||
+      !finite(m, 6) ||
+      m[0] <= 0 ||
+      m[3] <= 0 ||
+      [1, 2, 4, 5].some((i) => m[i] !== 0) ||
+      !indices.length ||
+      !Array.isArray(f.sourceIndices) ||
+      indices.length !== f.sourceIndices.length ||
+      indices.some((n, i) => n !== f.sourceIndices[i]) ||
+      !Array.isArray(f.glyphs) ||
+      !f.glyphs.length
+    )
+      return
+    names.add(f.fontName)
+    fonts.set(f.fontName, f)
+    const ids = new Set(),
+      literals = new Set()
+    for (const p of f.glyphs) {
+      if (
+        ++count > 4096 ||
+        typeof p?.operatorListId !== 'string' ||
+        !p.operatorListId.length ||
+        p.operatorListId.length > 256 ||
+        ids.has(p.operatorListId) ||
+        typeof p.unicode !== 'string' ||
+        [...p.unicode].length !== 1 ||
+        literals.has(p.unicode) ||
+        !Number.isFinite(p.width) ||
+        p.width <= 0 ||
+        !finite(p.bounds, 4) ||
+        ![OPS.fill, OPS.eoFill].includes(p.paint) ||
+        !Array.isArray(p.occurrences) ||
+        !p.occurrences.length
+      )
+        return
+      const empty = p.kind === 'empty-space'
+      if (
+        empty
+          ? p.unicode !== ' ' || p.clip !== null || p.bounds.some((n) => n !== 0)
+          : p.kind !== 'filled-path' ||
+            p.unicode === ' ' ||
+            !finite(p.clip, 4) ||
+            p.bounds[2] <= p.bounds[0] ||
+            p.bounds[3] <= p.bounds[1] ||
+            p.clip.some((n, i) => n !== p.bounds[i])
+      )
+        return
+      ids.add(p.operatorListId)
+      literals.add(p.unicode)
+      for (const o of p.occurrences) {
+        if (
+          !Number.isSafeInteger(o?.operationIndex) ||
+          o.operationIndex < 0 ||
+          !Number.isSafeInteger(o.glyphIndex) ||
+          o.glyphIndex < 0 ||
+          ops.fnArray[o.operationIndex] !== OPS.showText ||
+          !Array.isArray(ops.argsArray[o.operationIndex]?.[0])
+        )
+          return
+        const key = o.operationIndex + ':' + o.glyphIndex,
+          g = ops.argsArray[o.operationIndex][0][o.glyphIndex]
+        if (
+          occurrences.size >= 100000 ||
+          occurrences.has(key) ||
+          g?.operatorListId !== p.operatorListId ||
+          g?.fontChar !== '' ||
+          g.unicode !== p.unicode ||
+          g.width !== p.width ||
+          g.isInFont !== true ||
+          g.isSpace !== empty ||
+          g.accent != null ||
+          g.vmetric != null
+        )
+          return
+        occurrences.set(key, { ...p, fontName: f.fontName })
+      }
+    }
+  }
+  const sourceFonts = new Set(
+    raw.filter((r) => typeof r?.str === 'string' && r.str.length).map((r) => r.fontName)
+  )
+  if (names.size !== sourceFonts.size || [...sourceFonts].some((name) => !names.has(name))) return
+  return { fonts, occurrences, used }
 }
 
 // The single-axis proof intentionally retains its original font-membership contract.

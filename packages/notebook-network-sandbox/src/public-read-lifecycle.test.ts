@@ -244,6 +244,6 @@ it.each([80, 8443])('preserves explicit CONNECT port %s and never inspects it', 
   socket.resume()
   connectHead(socket, `data.example:${port}`)
   await done
-  expect(decide).toHaveBeenCalledWith('data.example', port, 'probe')
-  expect(decide).toHaveBeenCalledWith('data.example', port, 'block')
+  expect(decide).toHaveBeenCalledWith('data.example', port, 'probe', expect.any(Function))
+  expect(decide).toHaveBeenCalledWith('data.example', port, 'block', expect.any(Function))
 })

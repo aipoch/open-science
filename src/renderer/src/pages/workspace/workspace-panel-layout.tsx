@@ -76,6 +76,7 @@ const useAnimatedResizablePanel = ({
   const animationRef = useRef<{ stop: () => void } | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const animationDirectionRef = useRef<PanelAnimationDirection | null>(null)
+  const animationRevisionRef = useRef(0)
   const lastOpenSizeRef = useRef(defaultOpenSize)
   const hasSyncedInitialSizeRef = useRef(false)
   const [isMinSizeRelaxed, setIsMinSizeRelaxed] = useState(false)
@@ -89,6 +90,7 @@ const useAnimatedResizablePanel = ({
       const panel = panelRef.current
       if (!panel) return
 
+      const revision = ++animationRevisionRef.current
       animationRef.current?.stop()
       if (animationFrameRef.current !== null) {
         window.cancelAnimationFrame(animationFrameRef.current)
@@ -99,13 +101,14 @@ const useAnimatedResizablePanel = ({
         const currentPanel = panelRef.current
 
         // Ignore motion callbacks that outlive the panel handle they were created for.
-        if (currentPanel !== panel) return false
+        if (currentPanel !== panel || animationRevisionRef.current !== revision) return false
 
         currentPanel.resize(`${Number(size.toFixed(3))}%`)
         return true
       }
 
       const startFromSize = (currentSize: number): void => {
+        if (animationRevisionRef.current !== revision) return
         if (
           options?.animate === false ||
           Math.abs(currentSize - targetSize) <= PANEL_COLLAPSED_THRESHOLD ||
@@ -122,6 +125,7 @@ const useAnimatedResizablePanel = ({
         animationDirectionRef.current = direction
         setIsMinSizeRelaxed(true)
         animationFrameRef.current = window.requestAnimationFrame(() => {
+          if (animationRevisionRef.current !== revision) return
           animationFrameRef.current = null
           const nextPanel = panelRef.current
           if (!nextPanel) return
@@ -131,6 +135,7 @@ const useAnimatedResizablePanel = ({
             ...panelAnimation,
             onUpdate: resizePanel,
             onComplete: () => {
+              if (animationRevisionRef.current !== revision) return
               const didResize = resizePanel(targetSize)
               if (didResize && direction === 'opening') lastOpenSizeRef.current = targetSize
               animationDirectionRef.current = null
@@ -146,6 +151,7 @@ const useAnimatedResizablePanel = ({
       } catch {
         // react-resizable-panels can expose the handle before its layout is registered.
         animationFrameRef.current = window.requestAnimationFrame(() => {
+          if (animationRevisionRef.current !== revision) return
           animationFrameRef.current = null
           const nextPanel = panelRef.current
           if (nextPanel !== panel) return
@@ -198,6 +204,7 @@ const useAnimatedResizablePanel = ({
   // Synchronize restored state on first layout without introducing an entrance animation.
   useLayoutEffect(() => {
     if (!enabled) {
+      animationRevisionRef.current += 1
       animationRef.current?.stop()
       if (animationFrameRef.current !== null) window.cancelAnimationFrame(animationFrameRef.current)
       animationDirectionRef.current = null
@@ -218,6 +225,7 @@ const useAnimatedResizablePanel = ({
 
   useEffect(
     () => () => {
+      animationRevisionRef.current += 1
       animationRef.current?.stop()
       if (animationFrameRef.current !== null) {
         window.cancelAnimationFrame(animationFrameRef.current)

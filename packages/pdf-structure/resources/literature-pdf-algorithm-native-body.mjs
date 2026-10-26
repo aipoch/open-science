@@ -2,7 +2,12 @@
 import { findAlgorithmCandidates } from './literature-pdf-numbered-native-procedure.mjs'
 import { groupPageLines } from './literature-pdf-caption-group.mjs'
 import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
-import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { collectTableRules, collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
+import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
+import { completeNativeNodeGlyphState } from './literature-pdf-figure-native-plot-bands.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 
 const valid = (r) =>
   Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
@@ -266,6 +271,118 @@ function nativeInventory(page, context) {
   })
 }
 
+// Optional crop completion uses the native stroke envelope, not a fixed margin.
+// Unsupported Form/group state and any new foreign content keep the old crop.
+function nativeClosingFrameInk(page, context, rect, inventory, captionTokens, body) {
+  const o = context.operators
+  if (
+    !Array.isArray(o?.fnArray) ||
+    !Array.isArray(o.argsArray) ||
+    o.fnArray.length !== o.argsArray.length ||
+    o.fnArray.length > 100000 ||
+    !Array.isArray(context.rules) ||
+    context.rules.length > 4096 ||
+    context.rules.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite)) ||
+    page.invalidGraphicsBounds ||
+    o.fnArray.some((op) =>
+      [
+        OPS.paintFormXObjectBegin,
+        OPS.paintFormXObjectEnd,
+        OPS.beginGroup,
+        OPS.endGroup,
+        OPS.beginAnnotation,
+        OPS.endAnnotation
+      ].includes(op)
+    )
+  )
+    return
+  let depth = 0
+  for (const op of o.fnArray) {
+    if (op === OPS.save) depth++
+    else if (op === OPS.restore && --depth < 0) return
+  }
+  if (depth) return
+  const paint = new Map(),
+    rules = collectTableRules(o, context.viewport, paint),
+    equal = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 1e-6),
+    frame = rules
+      .filter(
+        (r) =>
+          r[1] === r[3] &&
+          Math.abs(r[0] - rect[0]) < 1e-6 &&
+          Math.abs(r[2] - rect[2]) < 1e-6 &&
+          r[1] >= rect[1] &&
+          r[1] <= rect[3]
+      )
+      .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length !== 3 ||
+    frame[0][1] >= frame[1][1] ||
+    frame[1][1] >= frame[2][1] ||
+    Math.abs(frame[2][1] - rect[3]) > 1e-6 ||
+    frame.some(
+      (r) => context.rules.filter((c) => equal(r, c)).length !== 1 || !paint.has(r.join(','))
+    )
+  )
+    return
+  const lower = paint.get(frame[2].join(','))
+  if (
+    !valid(lower) ||
+    lower[3] <= rect[3] ||
+    lower[0] < rect[0] ||
+    lower[2] > rect[2] ||
+    !inside([0, 0, page.width, page.height], lower)
+  )
+    return
+  const owners = page.graphicsBounds.filter((g) => {
+    if (
+      g.kind !== 'path' ||
+      !Number.isInteger(g.operationIndex) ||
+      o.fnArray[g.operationIndex] !== OPS.constructPath
+    )
+      return false
+    const bounds = g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+    return inside(bounds, frame[2])
+  })
+  if (owners.length !== 1) return
+  const operation = o.argsArray[owners[0].operationIndex],
+    path = operation?.[1]?.[0]
+  if (
+    operation?.[0] !== OPS.stroke ||
+    operation[1]?.length !== 1 ||
+    !(Array.isArray(path) || ArrayBuffer.isView(path)) ||
+    path.length !== 6 ||
+    path[0] !== 0 ||
+    path[3] !== 1 ||
+    !Array.from(path).every(Number.isFinite)
+  )
+    return
+  const without = { fnArray: [...o.fnArray], argsArray: [...o.argsArray] }
+  without.fnArray[owners[0].operationIndex] = OPS.dependency
+  without.argsArray[owners[0].operationIndex] = []
+  const remaining = collectTableRules(without, context.viewport)
+  if (
+    remaining.length !== rules.length - 1 ||
+    JSON.stringify(remaining) !== JSON.stringify(rules.filter((r) => !equal(r, frame[2])))
+  )
+    return
+  const extended = [rect[0], rect[1], rect[2], lower[3]],
+    added = [rect[0], rect[3], rect[2], lower[3]],
+    owned = new Set([...captionTokens, ...body])
+  if (
+    inventory.some(
+      (t) => !owned.has(t) && (overlap(t.rect, extended) || overlap(t.labelRect, extended))
+    ) ||
+    page.graphicsBounds.some((g) => {
+      if (g === owners[0]) return false
+      const bounds = g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+      return overlap(bounds, added)
+    })
+  )
+    return
+  return extended
+}
+
 // A detected image alone never proves ownership of native body text.
 export function proveNativeAlgorithmBody(page, candidate, context) {
   const inventory = nativeInventory(page, context)
@@ -330,7 +447,10 @@ export function proveNativeAlgorithmBody(page, candidate, context) {
   const inkRect = nativeRightInk(page, context, body, rect, captionRect, inventory)
   return {
     ...candidate,
-    rect: inkRect ?? rect,
+    rect:
+      nativeClosingFrameInk(page, context, inkRect ?? rect, inventory, captionTokens, body) ??
+      inkRect ??
+      rect,
     caption: { ...caption, rect: captionRect },
     nativeBody: {
       kind: 'algorithm',
@@ -339,6 +459,394 @@ export function proveNativeAlgorithmBody(page, candidate, context) {
         .sort((a, b) => a.pageNumber - b.pageNumber || a.index - b.index)
     }
   }
+}
+
+// A three-step computational routine has no explicit end-for/return. Its
+// numbered initialization, computation and update each need their own native
+// equation packet inside the same three-rule frame; prose lists stay out.
+function framedSteps(page, title, titles, rules, context) {
+  const inventory = nativeInventory(page, context),
+    operators = context.operators,
+    h = title.fontSize
+  if (
+    !inventory ||
+    inventory.length > 16384 ||
+    rules.length > 4096 ||
+    inventory.some((t) => t.invalid) ||
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators.argsArray) ||
+    operators.fnArray.length !== operators.argsArray.length ||
+    operators.fnArray.length > 100000
+  )
+    return []
+  const nativeRules = collectTableRules(operators, context.viewport),
+    matches = [],
+    horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] >= page.width * 0.5)
+  if (horizontal.length > 64) return []
+  for (const top of horizontal) {
+    if (Math.abs(top[1] - title.y) > h || title.x < top[0] - 1e-6 || title.right > top[2]) continue
+    const aligned = rules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+    const nativeAligned = nativeRules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+    if (aligned.length !== 3 || JSON.stringify(aligned) !== JSON.stringify(nativeAligned)) continue
+    const [, divider, bottom] = aligned,
+      rect = [top[0], Math.min(top[1], title.y), top[2], bottom[1]]
+    if (
+      divider[1] <= title.bottom ||
+      divider[1] - title.bottom > h ||
+      bottom[1] - divider[1] < h * 5 ||
+      titles.some((t) => t !== title && overlap(box(t), rect))
+    )
+      continue
+    const body = inventory.filter((t) => overlap(t.rect, rect) && !inside(box(title), t.rect))
+    if (
+      !body.length ||
+      body.length > 4096 ||
+      body.some(
+        (t) =>
+          !t.valid ||
+          !t.horizontal ||
+          !inside(rect, t.rect) ||
+          t.labelRect[1] <= divider[1] ||
+          t.labelRect[3] >= bottom[1]
+      )
+    )
+      continue
+    const steps = body
+      .filter((t) => /^Step\s+\d+\.(?:\s|$)/u.test(t.text))
+      .sort((a, b) => a.sourceItem.index - b.sourceItem.index)
+    if (
+      steps.length !== 3 ||
+      steps.some(
+        (t, i) =>
+          Number(t.text.match(/^Step\s+(\d+)\./u)[1]) !== i + 1 ||
+          Math.abs(t.height - h) > 1e-6 ||
+          Math.abs(t.rect[0] - top[0]) > h * 0.1 ||
+          (i && t.rect[1] <= steps[i - 1].labelRect[3])
+      )
+    )
+      continue
+    const rows = steps.map((step) =>
+        body
+          .filter(
+            (t) => Math.abs(t.baseline - step.baseline) < 1e-6 && Math.abs(t.height - h) < 1e-6
+          )
+          .sort((a, b) => a.sourceItem.index - b.sourceItem.index)
+      ),
+      text = rows.map((row) => row.map((t) => t.text.trim()).join(' ')),
+      headerItems = new Set(rows.flat())
+    if (
+      !/^Step\s+1\.\s+Initialize\b/u.test(text[0]) ||
+      !/^Step\s+2\.\s+(?:Compute\b|For\b.+\bcompute\b)/u.test(text[1]) ||
+      !/^Step\s+3\.\s+Update\b/u.test(text[2]) ||
+      body.some(
+        (t) => !headerItems.has(t) && /^(?:Step|for|while|if|then|else|end)\b/iu.test(t.text.trim())
+      ) ||
+      body.some((t) => t.sourceItem.index < steps[0].sourceItem.index)
+    )
+      continue
+    let complete = true
+    for (const [i, step] of steps.entries()) {
+      const packet = body.filter(
+          (t) =>
+            t.sourceItem.index >= step.sourceItem.index &&
+            (!steps[i + 1] || t.sourceItem.index < steps[i + 1].sourceItem.index)
+        ),
+        payload = packet.filter((t) => t.baseline > step.baseline + h * 0.5)
+      if (
+        rows[i][0] !== step ||
+        !payload.length ||
+        !payload.some((t) => /[=←]/u.test(t.text)) ||
+        payload.some(
+          (t) => t.sourceItem.index <= Math.max(...rows[i].map((r) => r.sourceItem.index))
+        ) ||
+        packet.some((t) => steps[i + 1] && t.labelRect[3] >= steps[i + 1].rect[1]) ||
+        /\p{L}{3,}\s+\p{L}{3,}\s+\p{L}{3,}/u.test(payload.map((t) => t.text).join(' '))
+      ) {
+        complete = false
+        break
+      }
+    }
+    if (complete)
+      matches.push({
+        rect,
+        caption: { page: page.pageNumber, lines: [title.text], rect: box(title) }
+      })
+  }
+  return matches.length === 1 ? matches : []
+}
+
+// Numbered column programs can wrap their expressions and close without Return.
+// The three native strokes and complete ordinal packets establish this boundary;
+// the legacy page-width heuristic and whole-item ownership proof remain unchanged.
+function framedNumberedInput(page, title, titles, rules, context) {
+  const inventory = nativeInventory(page, context),
+    o = context.operators,
+    h = title.fontSize
+  if (
+    !inventory ||
+    inventory.length > 16384 ||
+    inventory.some((t) => t.invalid) ||
+    rules.length > 4096 ||
+    !Array.isArray(o?.fnArray) ||
+    !Array.isArray(o.argsArray) ||
+    o.fnArray.length !== o.argsArray.length ||
+    o.fnArray.length > 100000 ||
+    o.fnArray.some((op) =>
+      [
+        OPS.paintFormXObjectBegin,
+        OPS.paintFormXObjectEnd,
+        OPS.beginGroup,
+        OPS.endGroup,
+        OPS.beginAnnotation,
+        OPS.endAnnotation
+      ].includes(op)
+    )
+  )
+    return []
+  let depth = 0
+  for (const op of o.fnArray) {
+    if (op === OPS.save) depth++
+    else if (op === OPS.restore && --depth < 0) return []
+  }
+  if (depth) return []
+  const paint = new Map(),
+    nativeRules = collectTableRules(o, context.viewport, paint),
+    tops = rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        Math.abs(r[1] - title.y) < h &&
+        r[2] - r[0] >= title.right - title.x &&
+        title.x >= r[0] - h * 0.1 &&
+        title.right <= r[2]
+    )
+  if (tops.length !== 1) return []
+  const top = tops[0],
+    frame = rules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1]),
+    actual = nativeRules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length !== 3 ||
+    JSON.stringify(frame) !== JSON.stringify(actual) ||
+    frame.some((r) => !paint.has(r.join(',')))
+  )
+    return []
+  const [, divider, bottom] = frame
+  if (divider[1] <= title.bottom || divider[1] - title.bottom > h || bottom[1] - divider[1] < h * 5)
+    return []
+  const caption = inventory.filter((t) => inside(box(title), t.rect)),
+    seed = inventory.filter((t) => overlap([top[0], divider[1], top[2], bottom[1]], t.rect))
+  if (
+    !caption.length ||
+    !seed.length ||
+    seed.length > 4096 ||
+    caption.some((t) => !t.valid || !t.horizontal || t.rect[2] <= top[0] || t.rect[0] >= top[2]) ||
+    seed.some(
+      (t) =>
+        !t.valid ||
+        !t.horizontal ||
+        t.labelRect[1] <= divider[1] ||
+        t.labelRect[3] >= bottom[1] ||
+        t.rect[0] < top[0] ||
+        (t.rect[2] > top[2] &&
+          (!/^[\p{P}\p{S}]$/u.test(t.text) || t.rect[2] - top[2] > (t.rect[2] - t.rect[0]) / 2))
+    )
+  )
+    return []
+  const rect = union([
+      [top[0], Math.min(top[1], title.y), top[2], bottom[1]],
+      ...caption.map((t) => t.labelRect),
+      ...seed.flatMap((t) => [t.rect, t.labelRect])
+    ]),
+    owned = new Set([...caption, ...seed]),
+    first = seed[0].sourceItem.index,
+    last = seed.at(-1).sourceItem.index
+  if (
+    caption.some((t) => t.sourceItem.index >= first) ||
+    inventory.some(
+      (t) =>
+        !owned.has(t) &&
+        (overlap(t.rect, rect) ||
+          overlap(t.labelRect, rect) ||
+          (t.sourceItem.index >= first && t.sourceItem.index <= last))
+    ) ||
+    titles.some((t) => t !== title && overlap(box(t), rect)) ||
+    !closedNativeOrdinalPackets(seed, h)
+  )
+    return []
+  const owners = frame.map((rule) =>
+    page.graphicsBounds.filter(
+      (g) =>
+        g.kind === 'path' &&
+        Number.isInteger(g.operationIndex) &&
+        o.fnArray[g.operationIndex] === OPS.constructPath &&
+        inside(
+          g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)),
+          rule
+        )
+    )
+  )
+  if (
+    owners.some((a) => a.length !== 1) ||
+    new Set(owners.map((a) => a[0].operationIndex)).size !== 3
+  )
+    return []
+  const indices = owners.map((a) => a[0].operationIndex)
+  for (const i of indices) {
+    const a = o.argsArray[i],
+      p = a?.[1]?.[0]
+    if (
+      a?.[0] !== OPS.stroke ||
+      a[1]?.length !== 1 ||
+      !(Array.isArray(p) || ArrayBuffer.isView(p)) ||
+      p.length !== 6 ||
+      p[0] !== 0 ||
+      p[3] !== 1 ||
+      !Array.from(p).every(Number.isFinite)
+    )
+      return []
+  }
+  const removed = { fnArray: [...o.fnArray], argsArray: [...o.argsArray] }
+  for (const i of indices) {
+    removed.fnArray[i] = OPS.dependency
+    removed.argsArray[i] = []
+  }
+  if (
+    JSON.stringify(collectTableRules(removed, context.viewport)) !==
+    JSON.stringify(nativeRules.filter((r) => !frame.some((f) => f.every((v, i) => v === r[i]))))
+  )
+    return []
+  // Complete the actual stroke paint, including the lower half of the closing
+  // line. Only its three uniquely proved operations are exempt from sidebands.
+  const expanded = union([rect, ...frame.map((r) => paint.get(r.join(',')))]),
+    bands = [
+      [expanded[0], expanded[1], rect[0], expanded[3]],
+      [rect[2], expanded[1], expanded[2], expanded[3]],
+      [rect[0], expanded[1], rect[2], rect[1]],
+      [rect[0], rect[3], rect[2], expanded[3]]
+    ].filter(valid)
+  if (
+    !inside([0, 0, page.width, page.height], expanded) ||
+    inventory.some(
+      (t) => !owned.has(t) && (overlap(t.rect, expanded) || overlap(t.labelRect, expanded))
+    ) ||
+    page.graphicsBounds.some(
+      (g) =>
+        !indices.includes(g.operationIndex) &&
+        bands.some((b) =>
+          overlap(
+            g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)),
+            b
+          )
+        )
+    ) ||
+    titles.some((t) => t !== title && overlap(box(t), expanded)) ||
+    page.lines.some(
+      (l) =>
+        /^(?:Figure|Fig\.|Table|Algorithm)\s+\d+\b/iu.test(l.text) &&
+        !inside(box(title), box(l)) &&
+        overlap(box(l), expanded)
+    )
+  )
+    return []
+  return [
+    { rect: expanded, caption: { page: page.pageNumber, lines: [title.text], rect: box(title) } }
+  ]
+}
+
+function closedNativeOrdinalPackets(body, h) {
+  const control = /^(?:for|while|if|then|else|end|Inputs?|Outputs?|Return|Algorithm)\b/iu,
+    ordinals = body.filter((t) => /^\d+:$/u.test(t.text))
+  if (
+    ordinals.length < 4 ||
+    ordinals.length > 128 ||
+    ordinals[0] !== body[0] ||
+    ordinals.some(
+      (t, i) =>
+        Number(t.text.slice(0, -1)) !== i + 1 ||
+        Math.abs(t.height - ordinals[0].height) > 1e-6 ||
+        Math.abs(t.rect[2] - ordinals[0].rect[2]) > h * 0.001 ||
+        (i && t.baseline <= ordinals[i - 1].baseline)
+    )
+  )
+    return false
+  const packets = []
+  for (const [i, n] of ordinals.entries()) {
+    const items = body.filter(
+        (t) =>
+          t.sourceItem.index > n.sourceItem.index &&
+          (!ordinals[i + 1] || t.sourceItem.index < ordinals[i + 1].sourceItem.index)
+      ),
+      first = items[0],
+      next = ordinals[i + 1]
+    if (
+      !first ||
+      Math.abs(first.height - h) > 1e-6 ||
+      Math.abs(first.baseline - n.baseline) > 1e-6 ||
+      first.rect[0] <= n.rect[2] ||
+      items.some((t) => t.labelRect[1] < first.rect[1] || (next && t.labelRect[3] >= next.rect[1]))
+    )
+      return false
+    const comment = items.findIndex((t) => t.text.trim() === '▷'),
+      program = comment < 0 ? items : items.slice(0, comment),
+      comments = comment < 0 ? [] : items.slice(comment + 1),
+      row = program.filter(
+        (t) => Math.abs(t.baseline - first.baseline) < 1e-6 && Math.abs(t.height - h) < 1e-6
+      ),
+      header = new Set(row)
+    if (
+      row[0] !== first ||
+      program.some((t) => !header.has(t) && control.test(t.text.trim())) ||
+      comments.some((t) => control.test(t.text.trim()))
+    )
+      return false
+    packets.push({ text: row.map((t) => t.text.trim()).join(' '), x: first.rect[0] })
+  }
+  if (
+    !/^Inputs?:\s+\S/iu.test(packets[0].text) ||
+    !/^Initialize\b.+(?:←|=)/u.test(packets[1].text) ||
+    Math.abs(packets[0].x - packets[1].x) > h * 0.1
+  )
+    return false
+  const stack = []
+  let loops = 0
+  for (const [i, p] of packets.slice(2).entries()) {
+    const open = /^(for)\b.+\bdo$/u.exec(p.text) ?? /^(if)\b.+\bthen$/u.exec(p.text),
+      close = /^end\s+(for|if)$/u.exec(p.text),
+      current = stack.at(-1)
+    if (open) {
+      if (current ? p.x < current.x + h * 0.5 : i !== 0 || Math.abs(p.x - packets[0].x) > h * 0.1)
+        return false
+      stack.push({ kind: open[1], x: p.x, body: false, alternate: false })
+    } else if (p.text === 'else') {
+      if (
+        current?.kind !== 'if' ||
+        !current.body ||
+        current.alternate ||
+        Math.abs(p.x - current.x) > h * 0.1
+      )
+        return false
+      current.body = false
+      current.alternate = true
+    } else if (close) {
+      if (!current?.body || current.kind !== close[1] || Math.abs(p.x - current.x) > h * 0.1)
+        return false
+      stack.pop()
+      if (current.kind === 'for') loops++
+      if (stack.length) stack.at(-1).body = true
+      else if (i !== packets.length - 3) return false
+    } else {
+      if (control.test(p.text) || !current || p.x < current.x + h * 0.5) return false
+      current.body = true
+    }
+  }
+  return !stack.length && loops === 1 && packets.at(-1).text === 'end for'
 }
 
 function framedLoop(page, title, titles, lines, rules, context) {
@@ -374,6 +882,17 @@ function framedLoop(page, title, titles, lines, rules, context) {
       returns = body.filter((l) => /^Return\s*:/i.test(l.text))
     const opens = body.filter((l) => /^(for|while)\b.+\bdo\s*$/i.test(l.text)),
       closes = body.filter((l) => /^end\s+(for|while)\s*$/i.test(l.text))
+    if (
+      inputs.length === 0 &&
+      returns.length === 0 &&
+      nativeSetLoop(page, context, rect, title, [top, divider, bottom])
+    ) {
+      matches.push({
+        rect,
+        caption: { page: page.pageNumber, lines: [title.text], rect: box(title) }
+      })
+      continue
+    }
     if (
       inputs.length === 1 &&
       returns.length === 0 &&
@@ -417,6 +936,98 @@ function framedLoop(page, title, titles, lines, rules, context) {
     })
   }
   return matches.length === 1 ? matches : []
+}
+
+// Some complete routines initialize state instead of declaring Input/Return.
+// This branch requires its three rules from the very same native operators and
+// exactly one closed, indented loop; it does not infer nested control flow.
+function nativeSetLoop(page, context, rect, title, frame) {
+  const inventory = nativeInventory(page, context),
+    operators = context.operators
+  if (
+    !inventory ||
+    inventory.some((t) => t.invalid) ||
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators.argsArray) ||
+    operators.fnArray.length !== operators.argsArray.length ||
+    operators.fnArray.length > 100000
+  )
+    return false
+  const nativeRules = collectTableRules(operators, context.viewport)
+  if (
+    frame.some((rule) => nativeRules.filter((r) => r.every((v, i) => v === rule[i])).length !== 1)
+  )
+    return false
+  const body = inventory.filter((t) => overlap(t.rect, rect) && !inside(box(title), t.rect))
+  if (
+    !body.length ||
+    body.length > 4096 ||
+    body.some((t) => !t.valid || !t.horizontal || !inside(rect, t.rect))
+  )
+    return false
+  const h = Math.max(...body.map((t) => t.height)),
+    rows = []
+  if (
+    body.some(
+      (t) =>
+        /^(?:Set|for|while|if|then|else|end|Inputs?|Data|Outputs?|Return)\b/iu.test(
+          t.text.trim()
+        ) && Math.abs(t.height - h) >= 1e-6
+    )
+  )
+    return false
+  for (const t of body
+    .filter((t) => Math.abs(t.height - h) < 1e-6)
+    .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])) {
+    let row = rows.at(-1)
+    if (!row || Math.abs(row.baseline - t.baseline) > 1e-6) {
+      row = { baseline: t.baseline, items: [] }
+      rows.push(row)
+    }
+    row.items.push(t)
+  }
+  if (rows.length < 5 || rows.length > 256) return false
+  const statements = rows.map((row) => ({
+    text: row.items
+      .map((t) => t.text.trim())
+      .join(' ')
+      .trim(),
+    x: row.items[0].rect[0],
+    y: Math.min(...row.items.map((t) => t.rect[1])),
+    bottom: row.baseline,
+    sources: row.items.map((t) => t.sourceItem.index)
+  }))
+  const [init, open] = statements,
+    close = statements.at(-1)
+  if (
+    !/^Set\s+.+(?:=|\bto\b)/u.test(init.text) ||
+    !/^for\s+.+\s+do$/u.test(open.text) ||
+    close.text !== 'end for' ||
+    Math.abs(init.x - open.x) > h * 0.1 ||
+    Math.abs(close.x - open.x) > h * 0.1 ||
+    init.y <= frame[1][1] ||
+    init.y - frame[1][1] > h ||
+    close.bottom >= frame[2][1] ||
+    frame[2][1] - close.bottom > h ||
+    body.some((t) => t.rect[3] > close.bottom + 1e-6) ||
+    statements.some(
+      (s, i) =>
+        i &&
+        (s.y <= statements[i - 1].bottom ||
+          Math.min(...s.sources) <= Math.max(...statements[i - 1].sources))
+    ) ||
+    statements
+      .slice(2, -1)
+      .some(
+        (s) =>
+          s.x < open.x + h * 0.5 ||
+          /^(?:Set|for|while|if|then|else|end|Inputs?|Data|Outputs?|Return|Algorithm)\b/iu.test(
+            s.text
+          )
+      )
+  )
+    return false
+  return true
 }
 
 // Input/Data routines can terminate at the closing loop instead of Return.
@@ -770,6 +1381,174 @@ function numberedScope(page, title, titles, lines, rules, context) {
 
 // Legacy crop recognition also accepts short numbered prose. Only this complete
 // native frame and closed numbered program can upgrade such a crop to ownership.
+function numberedDeclarationProgram(ordinals) {
+  const text = ordinals.map((l) => l.text.replace(/^\d+\s*:\s*/, '').trim())
+  let first = 0
+  while (/^Inputs?\s*:\s*\S/i.test(text[first] ?? '')) first++
+  if (!first || first > 8) return false
+  const inputs = first
+  while (/^Initial Values?\s*:\s*\S/i.test(text[first] ?? '')) first++
+  if (first - inputs > 4 || first >= text.length - 2) return false
+  const functionBody =
+    /^function\s+[A-Za-z][A-Za-z0-9_]*\s*\(\s*[A-Za-z][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z][A-Za-z0-9_]*)*\s*\)$/i.test(
+      text[first]
+    )
+  let end = text.length
+  if (functionBody) {
+    if (!/^end\s+function$/i.test(text.at(-1)) || !/^return\s+\S/i.test(text.at(-2))) return false
+    first++
+    end -= 2
+  } else {
+    while (/^Outputs?\s*:\s*\S/i.test(text[end - 1] ?? '')) end--
+    if (end === text.length || text.length - end > 8) return false
+  }
+  return (
+    end > first &&
+    text
+      .slice(first, end)
+      .every(
+        (s) => !/^(?:Inputs?|Outputs?|Initial Values?)\s*:|^function\b|^end\s+function\b/i.test(s)
+      )
+  )
+}
+
+// Grouping may leave an ordinal alone while the code on its baseline is a
+// separate line. Read every native ordinal packet before checking control flow;
+// a grouped line is not evidence that an inner control statement is absent.
+function nativeNumberedStatements(page, context, ordinals, rect) {
+  const inventory = nativeInventory(page, context)
+  if (!inventory || inventory.some((t) => t.invalid || !t.sourceItem)) return
+  const anchors = ordinals.map((line) =>
+    inventory.filter(
+      (t) =>
+        new RegExp('^' + line.text.match(/^\d+/)[0] + '\\s*:').test(t.text) &&
+        inside(box(line), t.rect)
+    )
+  )
+  if (
+    anchors.some(
+      (tokens, i) =>
+        tokens.length !== 1 ||
+        !tokens[0].valid ||
+        !tokens[0].horizontal ||
+        (i && tokens[0].sourceItem.index <= anchors[i - 1][0]?.sourceItem.index)
+    )
+  )
+    return
+  const declaration = inventory.filter(
+      (t) =>
+        t.sourceItem.index >= anchors[0][0].sourceItem.index &&
+        t.sourceItem.index < anchors[1][0].sourceItem.index &&
+        /^(?:1\s*:\s*)?Inputs?\s*:/i.test(t.text.trim()) &&
+        Math.abs(t.baseline - anchors[0][0].baseline) < 1e-6
+    ),
+    statements = [],
+    control = /\b(?:for|while|if|then|else|end|return|function)\b/i
+  if (declaration.length !== 1) return
+  const h = declaration[0].height
+  for (const [i, [anchor]] of anchors.entries()) {
+    const next = anchors[i + 1]?.[0],
+      packet = inventory.filter(
+        (t) =>
+          t.sourceItem.index >= anchor.sourceItem.index &&
+          (next ? t.sourceItem.index < next.sourceItem.index : inside(rect, t.rect))
+      ),
+      row = packet.filter(
+        (t) => Math.abs(t.baseline - anchor.baseline) < 1e-6 && Math.abs(t.height - h) < 1e-6
+      ),
+      header = new Set(row)
+    if (
+      !packet.length ||
+      !row.length ||
+      packet.some(
+        (t) =>
+          !t.valid ||
+          !t.horizontal ||
+          !inside(rect, t.rect) ||
+          (next && t.baseline >= next.baseline) ||
+          (!header.has(t) && control.test(t.text))
+      ) ||
+      row.some((t, j) => j && t.rect[0] < row[j - 1].rect[2] - h * 0.1)
+    )
+      return
+    const text = row.map((t) => t.text.trim()).join(' ')
+    statements.push({ text: row[0] === anchor ? text : `${i + 1}: ${text}` })
+  }
+  return numberedDeclarationProgram(statements) ? statements : undefined
+}
+
+// A declaration can finish a parenthetical note on its next native row. The
+// ordinal interval, closed delimiter, style and complete source packet must
+// all agree; this cannot admit an unnumbered program statement or paragraph.
+function nativeDeclarationNote(page, context, step, next, line) {
+  if (!next || !/^\d+\s*:\s*(?:Inputs?|Outputs?|Initial Values?)\s*:/i.test(step.text)) return false
+  const inventory = nativeInventory(page, context)
+  if (!inventory || inventory.some((t) => t.invalid)) return false
+  const anchor = (row) =>
+    inventory.filter(
+      (t) =>
+        new RegExp('^' + row.text.match(/^\d+/)[0] + '\\s*:').test(t.text) &&
+        inside(box(row), t.rect)
+    )
+  const first = anchor(step),
+    after = anchor(next)
+  if (
+    first.length !== 1 ||
+    after.length !== 1 ||
+    first[0].sourceItem.index >= after[0].sourceItem.index
+  )
+    return false
+  const packet = inventory.filter(
+      (t) =>
+        t.sourceItem.index > first[0].sourceItem.index &&
+        t.sourceItem.index < after[0].sourceItem.index
+    ),
+    tokens = packet.filter((t) => inside(box(line), t.rect))
+  if (
+    !tokens.length ||
+    packet.some((t) => !t.valid || !t.horizontal || t.sourceItem.pageNumber !== page.pageNumber) ||
+    tokens.at(-1) !== packet.at(-1) ||
+    tokens
+      .map((t) => t.text)
+      .join('')
+      .replace(/\s/gu, '') !== line.text.replace(/\s/gu, '')
+  )
+    return false
+  const prefix = packet.filter((t) => t.sourceItem.index < tokens[0].sourceItem.index),
+    opener = prefix.findLast((t) => t.text.includes('(')),
+    before = prefix.map((t) => t.text).join(' '),
+    tail = tokens.map((t) => t.text).join(' ')
+  if (
+    !opener ||
+    !prefix.length ||
+    !/^[A-Za-z][A-Za-z\d\s,.'’-]*\)$/u.test(
+      before.slice(before.lastIndexOf('(') + 1) + ' ' + tail
+    ) ||
+    packet.some((t) => /^(?:for|while|if|else|end|return|function)\b/i.test(t.text.trim()))
+  )
+    return false
+  let depth = 0
+  for (const char of before) {
+    if (char === '(') depth++
+    else if (char === ')' && --depth < 0) return false
+  }
+  if (depth !== 1 || [...tail].filter((c) => c === ')').length !== 1 || tail.includes('('))
+    return false
+  const font = context.content.items[opener.sourceItem.index]?.fontName
+  return (
+    !!font &&
+    tokens.every(
+      (t) =>
+        context.content.items[t.sourceItem.index]?.fontName === font &&
+        Math.abs(t.height - opener.height) < opener.height * 0.01
+    ) &&
+    line.y - opener.rect[1] > opener.height * 0.75 &&
+    line.y - opener.rect[1] < opener.height * 1.7 &&
+    Math.abs(line.x - packet[0].rect[0]) < opener.height * 0.1 &&
+    line.bottom < after[0].rect[1]
+  )
+}
+
 function closedNumberedFrame(page, candidate, lines, rules, context) {
   const title = candidate.caption,
     h = title.rect[3] - title.rect[1],
@@ -802,20 +1581,22 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
     ),
     ordinals = body.filter((l) => /^\d+\s*:/.test(l.text)),
     inputs = body.filter((l) => /^(?:Require|Inputs?)\s*:/i.test(l.text)),
-    outputs = body.filter((l) => /^(?:Ensure|Outputs?)\s*:/i.test(l.text))
+    outputs = body.filter((l) => /^(?:Ensure|Outputs?)\s*:/i.test(l.text)),
+    numberedDeclarations = !inputs.length && !outputs.length && numberedDeclarationProgram(ordinals)
   if (
     ordinals.length < 4 ||
     ordinals.length > 128 ||
-    inputs.length !== 1 ||
-    // An explicit terminal return supplies the output when Ensure is absent.
-    outputs.length > 1 ||
-    inputs[0].bottom <= divider[1] ||
-    inputs[0].y >= ordinals[0].y ||
-    (outputs.length &&
-      (outputs[0].y <= inputs[0].y ||
-        (outputs[0].bottom >= ordinals[0].y &&
-          !nativeOrdinalAfterOutput(page, context, ordinals[0], outputs[0])))) ||
-    !/^\d+\s*:\s*return\b/i.test(ordinals.at(-1).text) ||
+    (!numberedDeclarations &&
+      (inputs.length !== 1 ||
+        // An explicit terminal return supplies the output when Ensure is absent.
+        outputs.length > 1 ||
+        inputs[0].bottom <= divider[1] ||
+        inputs[0].y >= ordinals[0].y ||
+        (outputs.length &&
+          (outputs[0].y <= inputs[0].y ||
+            (outputs[0].bottom >= ordinals[0].y &&
+              !nativeOrdinalAfterOutput(page, context, ordinals[0], outputs[0])))) ||
+        !/^\d+\s*:\s*return\b/i.test(ordinals.at(-1).text))) ||
     ordinals.some(
       (l, i) => Number(l.text.match(/^\d+/)[0]) !== i + 1 || (i && l.y <= ordinals[i - 1].y)
     )
@@ -833,6 +1614,12 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
     if (ordinals.some((step) => l.y < step.bottom && l.bottom > step.y)) continue
     const index = ordinals.findLastIndex((step) => step.bottom <= l.y),
       step = ordinals[index]
+    if (
+      numberedDeclarations &&
+      step &&
+      nativeDeclarationNote(page, context, step, ordinals[index + 1], l)
+    )
+      continue
     if (!step || !/:\s*$/.test(step.text)) return false
     const continuation = body.filter(
       (other) => other.y >= step.bottom && other.bottom <= (ordinals[index + 1]?.y ?? bottom[1])
@@ -845,12 +1632,23 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
     )
       return false
   }
+  const statements = numberedDeclarations
+    ? nativeNumberedStatements(page, context, ordinals, candidate.rect)
+    : ordinals
+  if (!statements) return false
   const stack = []
   let loops = 0
-  for (const l of ordinals) {
+  for (const l of statements) {
     const text = l.text.replace(/^\d+\s*:\s*/, '').trim(),
-      open = /^(for|while)\b.+\bdo\s*$/i.exec(text) ?? /^(if)\b.+\bthen\s*$/i.exec(text),
-      close = /^end\s+(for|while|if)\s*$/i.exec(text)
+      open =
+        /^(for|while)\b.+\bdo\s*$/i.exec(text) ??
+        /^(if)\b.+\bthen\s*$/i.exec(text) ??
+        (numberedDeclarations
+          ? /^(function)\s+[A-Za-z][A-Za-z0-9_]*\s*\([^()]+\)\s*$/i.exec(text)
+          : null),
+      close = (
+        numberedDeclarations ? /^end\s+(for|while|if|function)\s*$/i : /^end\s+(for|while|if)\s*$/i
+      ).exec(text)
     if (open) {
       stack.push({ kind: open[1].toLowerCase(), body: false, alternate: false })
       continue
@@ -865,18 +1663,152 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
     if (close) {
       const current = stack.pop()
       if (!current?.body || current.kind !== close[1].toLowerCase()) return false
-      if (current.kind !== 'if') loops++
+      if (current.kind === 'for' || current.kind === 'while') loops++
       if (stack.length) stack.at(-1).body = true
       continue
     }
     if (
       /^(?:for|while|if|else|end)\b/i.test(text) ||
+      (numberedDeclarations && /^function\b/i.test(text)) ||
       (!text && !body.some((other) => other !== l && other.y < l.bottom && other.bottom > l.y))
     )
       return false
     if (stack.length) stack.at(-1).body = true
   }
   return loops > 0 && stack.length === 0
+}
+
+// A publisher may close one numbered while scope through native indentation
+// instead of printing end/return. Keep that shape separate from the established
+// explicit-control proof, and still require the complete body/source proof.
+// Only the outer level may contain a whole single-line conditional instruction;
+// an inner if or an outer then/colon block remains unproved.
+function nativeIndentedNumberedFrame(page, candidate, context) {
+  const inventory = nativeInventory(page, context),
+    o = context.operators,
+    caption = candidate.caption?.rect,
+    h = caption?.[3] - caption?.[1]
+  if (
+    !inventory?.length ||
+    inventory.length > 16384 ||
+    inventory.some((t) => !t.valid || !t.horizontal) ||
+    !valid(candidate.rect) ||
+    !valid(caption) ||
+    !Array.isArray(context.rules) ||
+    context.rules.length > 4096 ||
+    !Number.isFinite(h) ||
+    h <= 0 ||
+    !Array.isArray(o?.fnArray) ||
+    !Array.isArray(o.argsArray) ||
+    o.fnArray.length !== o.argsArray.length ||
+    o.fnArray.length > 100000
+  )
+    return false
+  const frame = context.rules
+      .filter((r) => r[1] === r[3] && inside(candidate.rect, r))
+      .sort((a, b) => a[1] - b[1]),
+    paint = new Map(),
+    native = collectTableRules(o, context.viewport, paint)
+      .filter((r) => r[1] === r[3] && inside(candidate.rect, r))
+      .sort((a, b) => a[1] - b[1])
+  if (
+    frame.length !== 3 ||
+    JSON.stringify(frame) !== JSON.stringify(native) ||
+    frame.some(
+      (r, i) =>
+        r[0] !== frame[0][0] ||
+        r[2] !== frame[0][2] ||
+        !paint.has(r.join(',')) ||
+        (i && r[1] <= frame[i - 1][1])
+    )
+  )
+    return false
+  const [top, divider, bottom] = frame
+  if (
+    top[2] - top[0] < page.width * 0.5 ||
+    Math.abs(top[1] - caption[1]) > h ||
+    divider[1] <= caption[3] ||
+    divider[1] - caption[3] > h ||
+    bottom[1] - divider[1] < h * 5
+  )
+    return false
+  const body = inventory.filter((t) => overlap(t.rect, candidate.rect) && !inside(caption, t.rect)),
+    markers = body.filter((t) => /^\d+:$/u.test(t.text))
+  if (
+    body.length > 4096 ||
+    body.some((t) => !inside(candidate.rect, t.rect) || t.labelRect[1] <= divider[1]) ||
+    markers.length < 4 ||
+    markers.length > 128 ||
+    markers.some(
+      (t, i) =>
+        t.text !== `${i + 1}:` ||
+        context.content.items[t.sourceItem.index].fontName !==
+          context.content.items[markers[0].sourceItem.index].fontName ||
+        Math.abs(t.height - markers[0].height) > 1e-6 ||
+        Math.abs(t.rect[0] - markers[0].rect[0]) > 0.02 ||
+        (i && t.baseline - markers[i - 1].baseline < h * 0.8)
+    )
+  )
+    return false
+  const prefix = body.filter((t) => t.sourceItem.index < markers[0].sourceItem.index),
+    rows = markers.map((marker, i) => {
+      const items = body.filter(
+        (t) =>
+          t.sourceItem.index > marker.sourceItem.index &&
+          t.sourceItem.index < (markers[i + 1]?.sourceItem.index ?? Infinity)
+      )
+      return {
+        marker,
+        items,
+        first: items[0],
+        text: items.map((t) => t.text.trim()).join(' ')
+      }
+    }),
+    em = prefix[0]?.height
+  if (
+    !em ||
+    prefix[0].text !== 'Require:' ||
+    prefix.some((t) => t.baseline >= markers[0].baseline) ||
+    rows.some(
+      ({ marker, items, first }) =>
+        !first ||
+        first.rect[0] <= marker.rect[2] ||
+        Math.abs(first.height - em) > 1e-6 ||
+        Math.abs(first.baseline - marker.baseline) > 1e-6 ||
+        items.some((t) => Math.abs(t.baseline - marker.baseline) > em * 0.3)
+    )
+  )
+    return false
+  const controls = rows.filter((r) => /^while\b.+\bdo$/u.test(r.text))
+  if (controls.length !== 1) return false
+  const control = controls[0],
+    at = rows.indexOf(control),
+    base = rows[0].first.rect[0],
+    out = rows.findIndex((r, i) => i > at && Math.abs(r.first.rect[0] - base) <= 0.02),
+    nested = rows.slice(at + 1, out),
+    indent = nested[0]?.first.rect[0] - base
+  return (
+    at >= 1 &&
+    out >= at + 3 &&
+    Math.abs(control.first.rect[0] - base) <= 0.02 &&
+    context.content.items[control.first.sourceItem.index].fontName ===
+      context.content.items[prefix[0].sourceItem.index].fontName &&
+    context.content.items[control.items.at(-1).sourceItem.index].fontName ===
+      context.content.items[prefix[0].sourceItem.index].fontName &&
+    indent >= em * 0.5 &&
+    indent <= em * 2 &&
+    nested.every((r) => Math.abs(r.first.rect[0] - base - indent) <= 0.02) &&
+    rows
+      .slice(0, at + 1)
+      .concat(rows.slice(out))
+      .every((r) => Math.abs(r.first.rect[0] - base) <= 0.02) &&
+    rows.every(
+      (r) =>
+        r === control ||
+        (!/^(?:for|while|repeat|until|else|end)\b/iu.test(r.text) &&
+          (!/^if\b/iu.test(r.text) || (!nested.includes(r) && !/(?:\bthen|:)\s*$/iu.test(r.text))))
+    )
+  )
 }
 
 // A raised script may lift the grouped first row above the preceding output.
@@ -914,6 +1846,317 @@ function nativeOrdinalAfterOutput(page, context, first, output) {
   )
 }
 
+// Vertical native scope strokes close these loops instead of printed end-for
+// tokens. This path proves actual source glyphs independently; the older whole
+// font-box proof and its refusal of caption overlap remain unchanged.
+function verticalScopedLoop(page, context, title, titles) {
+  const inventory = nativeInventory(page, context),
+    p = context.nativeGlyphContext,
+    raw = p?.content?.items,
+    current = context.content?.items,
+    equal = (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    h = title.fontSize
+  if (
+    titles.length !== 1 ||
+    !Number.isFinite(h) ||
+    h <= 0 ||
+    !inventory?.length ||
+    inventory.length > 16384 ||
+    inventory.some((t) => !t.valid || !t.horizontal) ||
+    !Array.isArray(raw) ||
+    raw.length > 32768 ||
+    raw.length !== current?.length ||
+    !Array.isArray(p.glyphBounds) ||
+    !Array.isArray(context.rules) ||
+    context.rules.length > 4096 ||
+    !equal(p.graphicsBounds, page.graphicsBounds) ||
+    !Array.isArray(page.graphicsBounds) ||
+    page.graphicsBounds.some(
+      (g) =>
+        g.kind !== 'path' ||
+        !valid(g.normalizedRect) ||
+        !Number.isSafeInteger(g.operationIndex) ||
+        g.operationIndex < 0
+    )
+  )
+    return
+  const aliases = new Map(),
+    reverse = new Map()
+  for (let i = 0; i < raw.length; i++) {
+    const a = raw[i],
+      b = current[i]
+    if (
+      ['str', 'width', 'height', 'dir', 'hasEOL'].some((k) => a[k] !== b[k]) ||
+      !equal(a.transform, b.transform) ||
+      !equal(a.sourceItem, b.sourceItem) ||
+      !p.content.styles?.[a.fontName] ||
+      !equal(p.content.styles[a.fontName], context.content.styles?.[b.fontName]) ||
+      (aliases.has(a.fontName) && aliases.get(a.fontName) !== b.fontName) ||
+      (reverse.has(b.fontName) && reverse.get(b.fontName) !== a.fontName)
+    )
+      return
+    aliases.set(a.fontName, b.fontName)
+    reverse.set(b.fontName, a.fontName)
+  }
+  const mapped = (v) =>
+    Array.isArray(v) ? v.map(mapped) : typeof v === 'string' ? (aliases.get(v) ?? v) : v
+  if (
+    !equal(p.operators?.fnArray, context.operators?.fnArray) ||
+    !equal(mapped(p.operators?.argsArray), context.operators?.argsArray)
+  )
+    return
+  const caption = inventory.filter((t) => inside(box(title), t.rect))
+  if (
+    !caption.length ||
+    !equal(
+      caption
+        .map((t) => t.text)
+        .join(' ')
+        .replace(/\s/gu, ''),
+      title.text.replace(/\s/gu, '')
+    )
+  )
+    return
+  const last = caption.at(-1),
+    tail = inventory[inventory.indexOf(last) + 1],
+    afterTail = inventory[inventory.indexOf(last) + 2]
+  // Only this complete wrapped caption shape is admitted: an explicit title,
+  // one aligned terminal word in its final text font, then a separate paragraph.
+  if (
+    /[.!?]$/u.test(title.text) ||
+    !tail ||
+    !/^[\p{L}]+\.$/u.test(tail.text) ||
+    Math.abs(tail.rect[0] - title.x) > 0.02 ||
+    Math.abs(tail.height - h) > 1e-6 ||
+    current[tail.sourceItem.index].fontName !== current[last.sourceItem.index].fontName ||
+    tail.baseline - last.baseline < h * 0.8 ||
+    tail.baseline - last.baseline > h * 1.6 ||
+    !afterTail ||
+    afterTail.baseline - tail.baseline < h * 2
+  )
+    return
+  caption.push(tail)
+  const firstCaption = caption[0].sourceItem.index,
+    inputs = inventory.filter(
+      (t) => /^Input:\s*/u.test(t.text) && t.sourceItem.index < firstCaption
+    )
+  if (inputs.length !== 1) return
+  const body = inventory.filter(
+      (t) => t.sourceItem.index >= inputs[0].sourceItem.index && t.sourceItem.index < firstCaption
+    ),
+    output = body.filter((t) => /^Output:\s*/u.test(t.text)),
+    controls = body.filter((t) => /^for\b/u.test(t.text)),
+    extent = union(body.map((t) => t.labelRect))
+  if (
+    body.length < 8 ||
+    body.length > 4096 ||
+    output.length !== 1 ||
+    controls.length !== 3 ||
+    body[0] !== inputs[0] ||
+    Math.abs(inputs[0].height - h) > 1e-6 ||
+    body.at(-1).baseline !== output[0].baseline ||
+    Math.abs(output[0].rect[0] - inputs[0].rect[0]) > 0.02 ||
+    title.x > inputs[0].rect[0] ||
+    inputs[0].rect[0] - title.x > h * 2 ||
+    title.width < (extent[2] - extent[0]) * 0.8 ||
+    body.some((t) => /^(?:while|if|repeat|until|end|Algorithm|Figure|Table)\b/iu.test(t.text)) ||
+    body.some((t) => /^(?:for|else|Input|Output)\b/iu.test(t.text) && Math.abs(t.height - h) > 1e-6)
+  )
+    return
+  const vertical = context.rules.filter(
+    (r) => r[0] === r[2] && r[1] < r[3] && r[1] > inputs[0].baseline && r[3] < output[0].baseline
+  )
+  if (vertical.length !== 3) return
+  const sourceSet = new Set([...body, ...caption].map((t) => t.sourceItem.index)),
+    v = { ...p.viewport, convertToViewportPoint: (x, y) => [x, page.height - y] },
+    sourceContext = { ...p, viewport: v },
+    sourceInventory = nativeInventory(page, sourceContext),
+    frames = collectClosedFigureFrames(p.operators, v)
+  if (
+    !sourceInventory ||
+    !completeNativeNodeGlyphState(page, sourceInventory, frames, sourceContext) ||
+    p.operators.fnArray.some(
+      (op, i) =>
+        [OPS.setFillRGBColor, OPS.setStrokeRGBColor].includes(op) &&
+        p.operators.argsArray[i]?.[0]?.toLowerCase() === '#ffffff'
+    )
+  )
+    return
+  const tokens = raw.map((r) => tableTextToken(r, v, 0)).filter((t) => t?.text?.trim()),
+    proof = nativePageTextPacketInventory(page, tokens, sourceContext, false, sourceSet)
+  if (!proof) return
+  const selected = proof.records.filter((r) => sourceSet.has(r.index)),
+    ownedGlyphs = new Set(selected.flatMap((r) => r.part.map((z) => z.g)))
+  if (
+    selected.length !== sourceSet.size ||
+    selected.some((r) => !r.advanceComplete || !valid(r.ink) || r.part.some((z) => !valid(z.g.ink)))
+  )
+    return
+  const bodyInk = union(selected.filter((r) => r.index < firstCaption).map((r) => r.ink)),
+    captionInk = union(selected.filter((r) => r.index >= firstCaption).map((r) => r.ink))
+  if (bodyInk[3] >= captionInk[1]) return
+  const paint = new Map(),
+    nativeRules = collectTableRules(context.operators, context.viewport, paint),
+    bindings = []
+  for (const c of controls) {
+    const row = body.filter(
+        (t) => Math.abs(t.height - h) < 1e-6 && Math.abs(t.baseline - c.baseline) < 1e-6
+      ),
+      matches = vertical.filter(
+        (r) =>
+          r[0] > c.rect[0] && r[0] - c.rect[0] < h && r[1] >= c.baseline && r[1] - c.baseline < h
+      )
+    if (
+      row[0] !== c ||
+      !/^for\b.+\bdo$/u.test(row.map((t) => t.text.trim()).join(' ')) ||
+      matches.length !== 1
+    )
+      return
+    const rule = matches[0],
+      owners = page.graphicsBounds.filter(
+        (g) =>
+          g.kind === 'path' &&
+          inside(
+            g.normalizedRect.map((n, i) => n * (i % 2 ? page.height : page.width)),
+            rule
+          )
+      )
+    if (
+      nativeRules.filter((r) => equal(r, rule)).length !== 1 ||
+      owners.length !== 1 ||
+      !paint.has(rule.join(','))
+    )
+      return
+    const id = owners[0].operationIndex,
+      a = context.operators.argsArray[id],
+      path = a?.[1]?.[0],
+      removed = {
+        fnArray: [...context.operators.fnArray],
+        argsArray: [...context.operators.argsArray]
+      }
+    if (
+      context.operators.fnArray[id] !== OPS.constructPath ||
+      a?.[0] !== OPS.stroke ||
+      a[1]?.length !== 1 ||
+      path?.length !== 6 ||
+      path[0] !== 0 ||
+      path[3] !== 1
+    )
+      return
+    removed.fnArray[id] = OPS.dependency
+    removed.argsArray[id] = ['removed-native-scope']
+    if (collectTableRules(removed, context.viewport).some((r) => equal(r, rule))) return
+    const enclosed = body.filter(
+        (t) => Math.abs(t.height - h) < 1e-6 && t.baseline > rule[1] && t.baseline < rule[3]
+      ),
+      end = enclosed.at(-1)
+    if (
+      !end ||
+      enclosed.some((t) => t.rect[0] <= rule[0]) ||
+      rule[3] - end.baseline <= 0 ||
+      rule[3] - end.baseline >= h
+    )
+      return
+    bindings.push({ rule, id, ink: paint.get(rule.join(',')), gap: rule[3] - end.baseline })
+  }
+  const [root, a, b] = bindings
+  if (
+    new Set(bindings.map((b) => b.id)).size !== 3 ||
+    [a, b].some(
+      (c) =>
+        c.rule[0] <= root.rule[0] ||
+        c.rule[1] <= root.rule[1] ||
+        c.rule[3] >= root.rule[3] ||
+        Math.abs(c.gap - root.gap) > 0.02
+    ) ||
+    a.rule[3] >= b.rule[1] ||
+    body.some(
+      (t) =>
+        t.sourceItem.index > controls[0].sourceItem.index &&
+        t.sourceItem.index < output[0].sourceItem.index &&
+        t.baseline > root.rule[3]
+    ) ||
+    !proveNativeUniqueWholeFonts([...body, ...caption], inventory)
+  )
+    return
+  const rect = union([
+      bodyInk,
+      captionInk,
+      ...bindings.map((b) => b.ink),
+      ...caption.map((t) => t.labelRect)
+    ]),
+    foreignGlyphs = proof.glyphs
+      .filter((g) => !ownedGlyphs.has(g) && valid(g.ink))
+      .map((g) => g.ink),
+    foreignPaint = [],
+    graphicsIds = new Set(page.graphicsBounds.map((g) => g.operationIndex))
+  if (
+    graphicsIds.size !== page.graphicsBounds.length ||
+    page.graphicsBounds.some((g) => g.kind !== 'path') ||
+    !inside([0, 0, page.width, page.height], rect)
+  )
+    return
+  for (const [id, state] of proof.evidence.paths) {
+    const a = p.operators.argsArray[id]
+    if (a?.[0] === OPS.endPath) continue
+    if (!graphicsIds.delete(id)) return
+    if (bindings.some((b) => b.id === id)) continue
+    const tr = Util.transform(v.transform, state.transform),
+      points = [],
+      path = a?.[1]?.[0]
+    if (!Array.isArray(path) && !ArrayBuffer.isView(path)) return
+    for (let n = 0; n < path.length;) {
+      const op = path[n++],
+        count = op === 0 || op === 1 ? 2 : op === 2 ? 6 : op === 4 ? 0 : -1
+      if (count < 0 || n + count > path.length) return
+      for (let j = 0; j < count; j += 2) points.push([path[n + j], path[n + j + 1]])
+      n += count
+    }
+    if (!points.length) return
+    const pad =
+        a[0] === OPS.fill
+          ? 0
+          : (state.lineWidth * Math.max(1, proof.strokeMargins.get(id) ?? 10)) / 2,
+      bounds = [
+        Math.min(...points.map((p) => p[0])) - pad,
+        Math.min(...points.map((p) => p[1])) - pad,
+        Math.max(...points.map((p) => p[0])) + pad,
+        Math.max(...points.map((p) => p[1])) + pad
+      ]
+    foreignPaint.push(proof.box(bounds, tr))
+  }
+  if (
+    graphicsIds.size ||
+    foreignPaint.some((r) => !valid(r)) ||
+    [...foreignGlyphs, ...foreignPaint].some((r) => overlap(r, rect))
+  )
+    return
+  return {
+    rect,
+    caption: {
+      page: page.pageNumber,
+      rect: union([captionInk, ...caption.map((t) => t.labelRect)]),
+      lines: [title.text, tail.text]
+    },
+    nativeBody: { kind: 'algorithm', sourceItems: body.map((t) => ({ ...t.sourceItem })) },
+    scopedGlyphProof: { foreignGlyphs, foreignPaint }
+  }
+}
+
+export function acceptsNativeScopedAlgorithmPng(page, candidate, png) {
+  const proof = candidate?.scopedGlyphProof,
+    raster = getPdfCropRasterProtectionFromPng(png, candidate?.rect, page)
+  return (
+    !!proof &&
+    !!raster &&
+    Array.isArray(proof.foreignGlyphs) &&
+    Array.isArray(proof.foreignPaint) &&
+    [...proof.foreignGlyphs, ...proof.foreignPaint].every(
+      (r) => valid(r) && !overlap(r, raster.protection)
+    )
+  )
+}
+
 export function findNativeAlgorithmCandidates(page, context = {}) {
   const { rules = [] } = context,
     old = findAlgorithmCandidates(page, rules)
@@ -927,12 +2170,15 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
   const lines = groupPageLines(page),
     titles = lines.filter((l) => titlePattern.test(l.text))
   const result = old.map((candidate) =>
-    closedNumberedFrame(page, candidate, lines, rules, context)
+    closedNumberedFrame(page, candidate, lines, rules, context) ||
+    nativeIndentedNumberedFrame(page, candidate, context)
       ? (proveNativeAlgorithmBody(page, candidate, context) ?? candidate)
       : candidate
   )
   for (const title of titles) {
     for (const c of [
+      ...framedSteps(page, title, titles, rules, context),
+      ...framedNumberedInput(page, title, titles, rules, context),
       ...framedLoop(page, title, titles, lines, rules, context),
       ...numberedScope(page, title, titles, lines, rules, context)
     ]) {
@@ -943,6 +2189,8 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
       if (same >= 0) result[same] = proved
       else result.push(proved)
     }
+    const scoped = verticalScopedLoop(page, context, title, titles)
+    if (scoped && !result.some((other) => overlap(other.rect, scoped.rect))) result.push(scoped)
   }
   return result
 }

@@ -7,7 +7,7 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
   page.on('pageerror', (error) => errors.push(error.message))
   await page.setViewportSize({ width: 1100, height: 850 })
   await page.goto('/uploaded-pdf.html')
-  await expect(page.locator('[data-pdf-original-view] canvas')).toBeVisible()
+  await expect(page.locator('[data-pdf-original-view] [data-page-number="1"] canvas')).toBeVisible()
   await page.getByRole('tab', { name: 'Figures & Tables' }).click()
   await expect(page.getByRole('button', { name: 'Analyze PDF', exact: true })).toBeEnabled()
   expect(
@@ -25,8 +25,8 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
     () =>
       (window as unknown as { uploadedPdfAudit: { requests: unknown[] } }).uploadedPdfAudit.requests
   )
-  expect(requests).toEqual([
-    {
+  expect(requests).toEqual(
+    [1, 2].map((page) => ({
       source: {
         kind: 'managed',
         projectId: 'project',
@@ -34,10 +34,10 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
         sourceFileId: 'file',
         sourceVersionId: 'version'
       },
-      page: 1,
+      page,
       requestId: expect.any(String)
-    }
-  ])
+    }))
+  )
   await page.screenshot({ path: testInfo.outputPath('uploaded-pdf-tables.png') })
   await page.getByRole('button', { name: 'Show in PDF' }).first().click()
   await expect(page.getByRole('tab', { name: 'Original PDF' })).toHaveAttribute(
@@ -54,7 +54,7 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
         (window as unknown as { uploadedPdfAudit: { requests: unknown[] } }).uploadedPdfAudit
           .requests.length
     )
-  ).toBe(1)
+  ).toBe(2)
   // Completed and restored results keep retry controls behind an explicit disclosure.
   await expect(page.locator('[data-pdf-figures-content] > header')).toHaveCount(0)
   for (const width of [1100, 420]) {
@@ -73,7 +73,7 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
           (window as unknown as { uploadedPdfAudit: { requests: unknown[] } }).uploadedPdfAudit
             .requests.length
       )
-    ).toBe(1)
+    ).toBe(2)
     await page.keyboard.press('Escape')
     await expect(options).toBeFocused()
   }
@@ -86,7 +86,7 @@ test('analyzes an uploaded PDF without Literature, message binding or note-write
         (window as unknown as { uploadedPdfAudit: { requests: unknown[] } }).uploadedPdfAudit
           .requests.length
     )
-  ).toBe(2)
+  ).toBe(4)
   expect(errors).toEqual([])
 })
 

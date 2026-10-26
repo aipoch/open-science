@@ -2241,6 +2241,102 @@ describe('App startup routing', () => {
     "Error invoking remote method 'notifications:peek-pending-open-session': Error: Desktop is recovering. This operation was not submitted."
   ]
 
+  it.each(['peek', 'take'] as const)(
+    'does not retry notification %s when the runtime starts shutting down',
+    async (operation) => {
+      vi.useFakeTimers()
+      try {
+        mocks.settings.isLoaded = true
+        mocks.sessions = [{ id: 's-late' }]
+        const target = { sessionId: 's-late', token: 5 }
+        mocks.notifications.peekPendingOpenSession.mockResolvedValue(target)
+        const command =
+          operation === 'peek'
+            ? mocks.notifications.peekPendingOpenSession
+            : mocks.notifications.takePendingOpenSession
+        command.mockRejectedValue(
+          new Error(
+            `Error invoking remote method 'notifications:${operation}-pending-open-session': ApplicationCommandError: Desktop runtime is shutting down.`
+          )
+        )
+        await render()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        expect(command).toHaveBeenCalledOnce()
+        expect(mocks.openSessionById).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => root.unmount())
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('does not poll rejected notification commands throughout a desktop disconnection', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.settings.isLoaded = true
+      mocks.notifications.peekPendingOpenSession.mockRejectedValue(
+        new Error('Desktop is recovering. This operation was not submitted.')
+      )
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1, closing: false })
+      await render()
+      const initialCalls = mocks.notifications.peekPendingOpenSession.mock.calls.length
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(mocks.notifications.peekPendingOpenSession.mock.calls.length).toBe(initialCalls)
+    } finally {
+      await act(async () => root.unmount())
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['peek', 'take'] as const)(
+    'resumes a suspended notification %s once desktop reconciliation finishes',
+    async (operation) => {
+      vi.useFakeTimers()
+      try {
+        mocks.settings.isLoaded = true
+        mocks.sessions = [{ id: 's-late' }]
+        const target = { sessionId: 's-late', token: 5 }
+        mocks.notifications.peekPendingOpenSession.mockResolvedValue(target)
+        mocks.notifications.takePendingOpenSession.mockResolvedValue(target)
+        const command =
+          operation === 'peek'
+            ? mocks.notifications.peekPendingOpenSession
+            : mocks.notifications.takePendingOpenSession
+        command.mockImplementationOnce(async () => {
+          useDesktopRuntimeRecoveryStore.setState({
+            phase: 'disconnected',
+            epoch: 1,
+            closing: false
+          })
+          throw new Error('Desktop is recovering. This operation was not submitted.')
+        })
+        await render()
+        const calls = mocks.notifications.peekPendingOpenSession.mock.calls.length
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledTimes(calls)
+        await act(async () => {
+          useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' })
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        expect(mocks.openSessionById).not.toHaveBeenCalled()
+        await act(async () => {
+          useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+        })
+        expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledTimes(calls + 1)
+        expect(mocks.openSessionById).toHaveBeenCalledExactlyOnceWith('s-late', 'notification')
+      } finally {
+        await act(async () => root.unmount())
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it.each([
     ...notificationUnavailableErrors.map((message) => ['peek', message]),
     ['take', 'Desktop is recovering. This operation was not submitted.']

@@ -506,10 +506,27 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const providerEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
   const [skillEditorBusy, setSkillEditorBusy] = useState(false)
   const [pendingSkillLeave, setPendingSkillLeave] = useState<(() => void) | null>(null)
+  const pendingSkillLeaveOwner = useRef<
+    'connection' | 'network' | 'provider' | 'skill' | 'resource' | null
+  >(null)
   const onSkillEditorLeaveStateChange = useCallback((state: SkillEditorLeaveState | null) => {
     skillEditorLeaveState.current = state
     setSkillEditorBusy(state?.busy ?? false)
   }, [])
+  const resourceEditorLeaveState = useRef<SettingsEditorLeaveState | null>(null)
+  const [resourceEditorBusy, setResourceEditorBusy] = useState(false)
+  const onResourceEditorLeaveStateChange = useCallback((state: SettingsEditorLeaveState | null) => {
+    resourceEditorLeaveState.current = state
+    setResourceEditorBusy(state?.busy ?? false)
+    if (
+      (!state || (!state.dirty && !state.busy)) &&
+      pendingSkillLeaveOwner.current === 'resource'
+    ) {
+      pendingSkillLeaveOwner.current = null
+      setPendingSkillLeave(null)
+    }
+  }, [])
+  const [resourceDraftGeneration, setResourceDraftGeneration] = useState(0)
   const [connectionDraftGeneration, setConnectionDraftGeneration] = useState(0)
   const connectionEditorLeaveState = useRef<SettingsEditorLeaveState | null>(null)
   const [connectionEditorBusy, setConnectionEditorBusy] = useState(false)
@@ -522,11 +539,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     []
   )
   const requestLeave = useCallback((leave: () => void) => {
+    const owner = connectionEditorLeaveState.current
+      ? 'connection'
+      : networkEditorLeaveState.current
+        ? 'network'
+        : providerEditorLeaveState.current
+          ? 'provider'
+          : skillEditorLeaveState.current
+            ? 'skill'
+            : resourceEditorLeaveState.current
+              ? 'resource'
+              : null
     const state =
       connectionEditorLeaveState.current ??
       networkEditorLeaveState.current ??
       providerEditorLeaveState.current ??
-      skillEditorLeaveState.current
+      skillEditorLeaveState.current ??
+      resourceEditorLeaveState.current
     if (state?.dirty || state?.busy) {
       const focused = document.activeElement
       if (
@@ -535,6 +564,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       ) {
         skillLeaveReturnFocus.current = focused
       }
+      pendingSkillLeaveOwner.current = owner
       setPendingSkillLeave(() => leave)
     } else leave()
   }, [])
@@ -1895,8 +1925,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           <ErrorNotice tone="amber" description={tagAnnotationError} />
                         ) : null}
                         <TagsPanel
+                          key={`tags-${resourceDraftGeneration}`}
                           view={tagsView}
                           onNavigate={navigateTags}
+                          onLeaveStateChange={onResourceEditorLeaveStateChange}
                           onSelectedTagChange={recordSelectedTag}
                           onOpenResource={(reference) => {
                             if (reference.resourceType === 'catalog.skill') {
@@ -1943,8 +1975,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </>
                     ) : activePanel === 'memory' ? (
                       <MemoryPanel
+                        key={`memory-${resourceDraftGeneration}`}
                         view={memoryView}
                         onNavigate={navigateMemory}
+                        onLeaveStateChange={onResourceEditorLeaveStateChange}
                         onOpenProject={(projectId) => {
                           useNavigationStore.getState().openProject(projectId, 'user', onClose)
                         }}
@@ -2096,8 +2130,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       )
                     ) : activePanel === 'credentials' ? (
                       <CredentialsPanel
+                        key={`credentials-${resourceDraftGeneration}`}
                         view={credentialsView}
                         onNavigate={navigateCredentials}
+                        onLeaveStateChange={onResourceEditorLeaveStateChange}
                         onOpenConnector={(id) =>
                           navigate({ panel: 'connectors', view: { kind: 'edit', id } })
                         }
@@ -2420,13 +2456,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               : t('Your changes have not been saved. Discard them and leave?')
             : networkEditorLeaveState.current
               ? t('Your network rules have not been saved. Discard them and leave?')
-              : isProviderFormOpen
-                ? isSaving
-                  ? t('Wait for the provider save to finish before leaving.')
-                  : t('Your provider edits have not been saved. Discard them and leave the editor?')
-                : skillEditorBusy
-                  ? t('Wait for the current skill operation to finish before leaving.')
-                  : t('Your skill edits have not been saved. Discard them and leave the editor?')
+              : resourceEditorLeaveState.current
+                ? resourceEditorBusy
+                  ? t('Wait for the current save to finish before leaving.')
+                  : t('Your changes have not been saved. Discard them and leave the editor?')
+                : isProviderFormOpen
+                  ? isSaving
+                    ? t('Wait for the provider save to finish before leaving.')
+                    : t(
+                        'Your provider edits have not been saved. Discard them and leave the editor?'
+                      )
+                  : skillEditorBusy
+                    ? t('Wait for the current skill operation to finish before leaving.')
+                    : t('Your skill edits have not been saved. Discard them and leave the editor?')
         }
         cancelLabel={t('Keep editing')}
         confirmLabel={t('Discard changes')}
@@ -2434,12 +2476,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           connectionEditorBusy ||
           networkEditorBusy ||
           skillEditorBusy ||
+          resourceEditorBusy ||
           (isProviderFormOpen && isSaving)
         }
         loadingLabel={t('Please wait…')}
         destructive
         testId="skill-discard-confirmation"
-        onCancel={() => setPendingSkillLeave(null)}
+        onCancel={() => {
+          pendingSkillLeaveOwner.current = null
+          setPendingSkillLeave(null)
+        }}
         onCloseAutoFocus={(event) => {
           const target = skillLeaveReturnFocus.current
           skillLeaveReturnFocus.current = null
@@ -2452,6 +2498,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             connectionEditorLeaveState.current?.busy ||
             networkEditorLeaveState.current?.busy ||
             skillEditorLeaveState.current?.busy ||
+            resourceEditorLeaveState.current?.busy ||
             providerEditorLeaveState.current?.busy
           )
             return
@@ -2466,7 +2513,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             providerEditorLeaveState.current = null
           }
           if (connectionEditorLeaveState.current) setConnectionDraftGeneration((value) => value + 1)
+          if (resourceEditorLeaveState.current) {
+            setResourceDraftGeneration((value) => value + 1)
+            resourceEditorLeaveState.current = null
+          }
           const leave = pendingSkillLeave
+          pendingSkillLeaveOwner.current = null
           skillLeaveReturnFocus.current = null
           setPendingSkillLeave(null)
           leave?.()

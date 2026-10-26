@@ -2,8 +2,15 @@ import { expect, it } from 'vitest'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
-const { refineNativeTableBoundaryInk: refine } = await import(
+const {
+  refineNativeTableBoundaryInk: refine,
+  proveNativeRuleFreeBodyCrop: proveBodyCrop,
+  validateNativeRuleFreeBodyCropPng: validateBodyPng
+} = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-table-boundary-ink.mjs')).href
+)
+const { refineNativeTableVisualCrop: refineVisual } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
 )
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function example() {
@@ -865,5 +872,1091 @@ it.each(['different reference', 'below caption', 'within table'])(
       ]
     }
     expect(refine(f.table, f.rules, f.context)).toBeUndefined()
+  }
+)
+
+// Full native text packets, with a cropped right lane and independent text on
+// both vertical sides. No detector grid repair or invented rule is involved.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function terminalPacketExample(rows = 3) {
+  const entries: [string, number, number][] = [
+    ['Table 1: Measurements', 50, 37],
+    ['Group', 50, 50],
+    ['A', 100, 50],
+    ['B', 150, 50]
+  ]
+  for (let row = 1; row < rows; row++)
+    entries.push(
+      [row === 1 ? 'X' : 'Y', 50, 50 + row * 25],
+      ['1.10', 100, 50 + row * 25],
+      ['2.20', 150, 50 + row * 25]
+    )
+  const last = 50 + (rows - 1) * 25
+  entries.push(['A separate note.', 50, last + 10])
+  const items = entries.map(([str, x, y], index) => ({
+      str,
+      width: str.length * 5,
+      height: 10,
+      dir: 'ltr',
+      fontName: 'F',
+      transform: [10, 0, 0, 10, x, 200 - y],
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    content = { items, styles: { F: { ascent: 0.9, descent: -0.2, vertical: false } } },
+    viewport = {
+      width: 300,
+      height: 200,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 200],
+      convertToViewportPoint: (x: number, y: number) => [x, 200 - y]
+    },
+    operators = { fnArray: [] as number[], argsArray: [] as unknown[] }
+  for (const item of items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      null,
+      ['F', 10],
+      [new Float32Array([1, 0, 0, 1, item.transform[4], item.transform[5]])],
+      [Array.from(item.str, (c) => ({ unicode: c, fontChar: c, width: 500, isInFont: true }))],
+      null
+    )
+  }
+  const tokens = items.map((item) => ({
+      text: item.str,
+      sourceItem: item.sourceItem,
+      rect: [
+        item.transform[4],
+        200 - item.transform[5] - 10,
+        item.transform[4] + item.width,
+        200 - item.transform[5]
+      ],
+      height: 10,
+      baseline: 200 - item.transform[5],
+      horizontal: true
+    })),
+    cells = tokens.slice(1, -1).map((t, n) => ({
+      row: Math.floor(n / 3),
+      column: n % 3,
+      rowSpan: 1,
+      colSpan: 1,
+      text: t.text,
+      sourceItems: [t.sourceItem],
+      sourceRects: [t.rect],
+      sourceSegments: [] as unknown[]
+    })),
+    table = {
+      page: 1,
+      cropRect: [45, 35, 155, last + 5],
+      grid: Array.from({ length: rows }, (_, row) =>
+        cells.slice(row * 3, row * 3 + 3).map((c) => c.text)
+      ),
+      cells,
+      clipped: [tokens[6], tokens.at(-2)!, tokens.at(-1)!].map((t) => ({
+        text: t.text,
+        rect: t.rect
+      })),
+      unassigned: ['A separate note.'],
+      issues: ['native-table-structure-ambiguous', 'text-crosses-crop-boundary'],
+      reviewCandidate: false,
+      sourceViewport: { width: 300, height: 200, scale: 1 }
+    },
+    context = {
+      sourceContent: content,
+      content,
+      viewport,
+      operators,
+      rulePaintBounds: new Map(),
+      nativeEvidenceGraphics: [] as { kind: string; rect: number[] }[],
+      nativePaintIdentityGraphics: [],
+      nativeGlyphContext: {
+        content: structuredClone(content),
+        viewport,
+        operators,
+        graphicsBounds: [],
+        glyphBounds: [
+          {
+            fontName: 'F',
+            glyphs: [...new Set(items.flatMap((i) => Array.from(i.str)))].map((c) => ({
+              fontChar: c,
+              bounds: c === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+            }))
+          }
+        ]
+      }
+    }
+  return { table, tokens, context, rules: [] as number[][] }
+}
+it('completes a terminal lane using whole native glyph packets while preserving all table metadata', () => {
+  const f = terminalPacketExample(),
+    before = structuredClone(f.table)
+  const result = refineVisual(f.table, f.tokens, f.rules, f.context)
+  expect(result).toEqual({
+    ...before,
+    cropRect: [45, 43, 170, 100],
+    cropRects: [[45, 43, 170, 100]]
+  })
+  expect(f.table).toEqual(before)
+})
+it('uses renderer outlines rather than inventing ink from zero ascent metrics', () => {
+  const f = terminalPacketExample()
+  for (const styles of [
+    f.context.sourceContent.styles,
+    f.context.nativeGlyphContext.content.styles
+  ])
+    styles.F.ascent = styles.F.descent = 0
+  expect(refineVisual(f.table, f.tokens, f.rules, f.context)?.cropRect).toEqual([45, 43, 170, 100])
+})
+const terminalPacketNegatives: [string, (f: ReturnType<typeof terminalPacketExample>) => void][] = [
+  [
+    'unbound source viewport',
+    (f) => {
+      f.table.sourceViewport.scale = 2
+    }
+  ],
+  [
+    'missing outline',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs = []
+    }
+  ],
+  [
+    'incomplete native packet',
+    (f) => {
+      f.context.nativeGlyphContext.operators.fnArray.pop()
+    }
+  ],
+  [
+    'unclaimed source ordinal between complete body packets',
+    (f) => {
+      const item = {
+        str: 'Z',
+        width: 5,
+        height: 10,
+        dir: 'ltr',
+        fontName: 'F',
+        transform: [10, 0, 0, 10, 250, 50],
+        sourceItem: { pageNumber: 1, index: 5, text: 'Z' }
+      }
+      for (const content of [f.context.sourceContent, f.context.nativeGlyphContext.content]) {
+        content.items.splice(5, 0, structuredClone(item))
+        content.items.forEach((i, index) => {
+          i.sourceItem.index = index
+        })
+      }
+      f.context.nativeGlyphContext.operators.fnArray.splice(
+        25,
+        0,
+        OPS.beginText,
+        OPS.setFont,
+        OPS.setTextMatrix,
+        OPS.showText,
+        OPS.endText
+      )
+      f.context.nativeGlyphContext.operators.argsArray.splice(
+        25,
+        0,
+        null,
+        ['F', 10],
+        [new Float32Array([1, 0, 0, 1, 250, 50])],
+        [[{ unicode: 'Z', fontChar: 'Z', width: 500, isInFont: true }]],
+        null
+      )
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.push({
+        fontChar: 'Z',
+        bounds: [0, 0, 0.5, 0.7]
+      })
+    }
+  ],
+  [
+    'duplicate source owner',
+    (f) => {
+      f.table.cells[1].sourceItems.push(f.table.cells[0].sourceItems[0])
+      f.table.cells[1].sourceRects.push(f.table.cells[0].sourceRects[0])
+    }
+  ],
+  [
+    'segmented owner',
+    (f) => {
+      f.table.cells[0].sourceSegments.push({ index: 1 })
+    }
+  ],
+  [
+    'malformed source segment carrier',
+    (f) => {
+      Object.assign(f.table.cells[0], { sourceSegments: { unknown: true } })
+    }
+  ],
+  [
+    'unknown paint',
+    (f) => {
+      f.context.nativeGlyphContext.operators.fnArray.push(OPS.fill)
+      f.context.nativeGlyphContext.operators.argsArray.push(null)
+    }
+  ],
+  [
+    'mixed graphics',
+    (f) => {
+      f.context.nativeEvidenceGraphics.push({ kind: 'path', rect: [50, 40, 60, 45] })
+    }
+  ],
+  [
+    'foreign visible glyph inside the proposed crop',
+    (f) => {
+      const index = f.context.sourceContent.items.length - 1
+      for (const content of [f.context.sourceContent, f.context.nativeGlyphContext.content])
+        content.items[index].transform[5] = 101
+      f.context.nativeGlyphContext.operators.argsArray[index * 5 + 2] = [
+        new Float32Array([1, 0, 0, 1, 50, 101])
+      ]
+    }
+  ],
+  [
+    'owned glyph crossing the retained left edge',
+    (f) => {
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+        (g) => g.fontChar === 'X'
+      )!.bounds[0] = -0.6
+    }
+  ],
+  [
+    'zero metrics without outlines',
+    (f) => {
+      for (const styles of [
+        f.context.sourceContent.styles,
+        f.context.nativeGlyphContext.content.styles
+      ])
+        styles.F.ascent = styles.F.descent = 0
+      f.context.nativeGlyphContext.glyphBounds[0].glyphs = []
+    }
+  ],
+  [
+    'zero native font size',
+    (f) => {
+      for (const content of [f.context.sourceContent, f.context.nativeGlyphContext.content]) {
+        content.items[1].height = 0
+        content.items[1].transform[0] = 0
+        content.items[1].transform[3] = 0
+      }
+    }
+  ],
+  [
+    'foreign glyph entering only the rounded pixel strip',
+    (f) => {
+      for (const glyph of f.context.nativeGlyphContext.glyphBounds[0].glyphs)
+        if (glyph.fontChar !== ' ') glyph.bounds[3] = 0.625
+      for (const content of [f.context.sourceContent, f.context.nativeGlyphContext.content])
+        content.items[0].transform[5] = 156.5
+      f.context.nativeGlyphContext.operators.argsArray[2] = [
+        new Float32Array([1, 0, 0, 1, 50, 156.5])
+      ]
+    }
+  ],
+  [
+    'invalid corroborating token metrics',
+    (f) => {
+      const cell = f.table.cells[0]
+      Object.assign(cell, {
+        sourceTokens: [{ text: cell.text, rect: cell.sourceRects[0], baseline: NaN, height: 10 }]
+      })
+    }
+  ],
+  [
+    'unknown corroborating source carrier',
+    (f) => {
+      const cell = f.table.cells[0]
+      Object.assign(cell, {
+        sourceTokens: [
+          {
+            text: cell.text,
+            rect: cell.sourceRects[0],
+            baseline: 50,
+            height: 10,
+            sourceItem: { pageNumber: 1, index: 999, text: cell.text }
+          }
+        ]
+      })
+    }
+  ]
+]
+it.each(terminalPacketNegatives)('rejects terminal glyph crop with %s', (_name, mutate) => {
+  const f = terminalPacketExample()
+  mutate(f)
+  const before = structuredClone(f.table)
+  expect(refineVisual(f.table, f.tokens, f.rules, f.context)).toBeUndefined()
+  expect(f.table).toEqual(before)
+})
+it('rejects a terminal glyph crop without at least three independently repeated native rows', () => {
+  const f = terminalPacketExample(2)
+  expect(refineVisual(f.table, f.tokens, f.rules, f.context)).toBeUndefined()
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function graphicalTableExample() {
+  const entries: [string, number, number][] = [
+      ['Kind', 20, 50],
+      ['Value', 80, 50],
+      ['Plot', 140, 50],
+      ['A', 20, 75],
+      ['1', 80, 75],
+      ['B', 20, 100],
+      ['2', 80, 100]
+    ],
+    items = entries.map(([str, x, y], index) => ({
+      str,
+      width: str.length * 5,
+      height: 10,
+      dir: 'ltr',
+      fontName: 'F',
+      transform: [10, 0, 0, 10, x, 150 - y],
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    content = { items, styles: { F: { ascent: 0.9, descent: -0.2, vertical: false } } },
+    viewport = {
+      width: 220,
+      height: 150,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 150],
+      convertToViewportPoint: (x, y) => [x, 150 - y]
+    },
+    operators = { fnArray: [] as number[], argsArray: [] as unknown[][] },
+    graphics = [] as { kind: string; operationIndex: number; rect: number[] }[],
+    rules = [] as number[][],
+    rulePaintBounds = new Map()
+  for (const i of items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      null,
+      ['F', 10],
+      [new Float32Array([1, 0, 0, 1, i.transform[4], i.transform[5]])],
+      [Array.from(i.str, (c) => ({ unicode: c, fontChar: c, width: 500, isInFont: true }))],
+      null
+    )
+  }
+  operators.fnArray.push(OPS.setLineWidth, OPS.setLineCap)
+  operators.argsArray.push([0.5], [0])
+  const add = (points: number[][]): number[] => {
+    const sequence = points.flatMap(([x, y], i) => [i ? 1 : 0, x, 150 - y]),
+      bounds = [
+        Math.min(...points.map((p) => p[0])) - 0.25,
+        Math.min(...points.map((p) => p[1])) - 0.25,
+        Math.max(...points.map((p) => p[0])) + 0.25,
+        Math.max(...points.map((p) => p[1])) + 0.25
+      ],
+      operationIndex = operators.fnArray.length
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [new Float32Array(sequence)],
+      new Float32Array([
+        bounds[0] + 0.25,
+        150 - bounds[3] + 0.25,
+        bounds[2] - 0.25,
+        150 - bounds[1] - 0.25
+      ])
+    ])
+    graphics.push({ kind: 'path', operationIndex, rect: bounds })
+    return bounds
+  }
+  for (const y of [35, 55, 80, 105]) {
+    const r = [10, y, 195, y]
+    rules.push(r)
+    rulePaintBounds.set(
+      r.join(','),
+      add([
+        [10, y],
+        [195, y]
+      ])
+    )
+  }
+  for (const x of [65, 125]) {
+    const r = [x, 35, x, 105]
+    rules.push(r)
+    rulePaintBounds.set(
+      r.join(','),
+      add([
+        [x, 35],
+        [x, 105]
+      ])
+    )
+  }
+  const polygons = [
+    [
+      [135, 60],
+      [185, 75],
+      [135, 75],
+      [135, 60]
+    ],
+    [
+      [135, 85],
+      [185, 100],
+      [135, 100],
+      [135, 85]
+    ]
+  ]
+  for (const p of polygons) add(p)
+  const rect = (i: (typeof items)[number]): number[] => [
+      i.transform[4],
+      150 - i.transform[5] - 10,
+      i.transform[4] + i.width,
+      150 - i.transform[5]
+    ],
+    tokens = items.map((i) => ({
+      text: i.str,
+      rect: rect(i),
+      sourceItem: i.sourceItem,
+      height: 10,
+      baseline: 150 - i.transform[5],
+      horizontal: true,
+      fontAscent: 0.9,
+      fontDescent: -0.2
+    })),
+    grid = [
+      ['Kind', 'Value', 'Plot'],
+      ['A', '1', ''],
+      ['B', '2', '']
+    ],
+    cells = grid.flatMap((r, row) =>
+      r.map((text, column) => {
+        const token = tokens.find((t) => t.text === text)
+        return {
+          row,
+          column,
+          rowSpan: 1,
+          colSpan: 1,
+          text,
+          sourceItems: token ? [token.sourceItem] : [],
+          sourceRects: token ? [token.rect] : []
+        }
+      })
+    ),
+    table = {
+      id: 'native-table',
+      page: 1,
+      cropRect: [5, 30, 160, 110],
+      grid,
+      cells,
+      clipped: [],
+      unassigned: [],
+      issues: ['native-table-structure-ambiguous'],
+      reviewCandidate: false,
+      sourceViewport: { width: 220, height: 150, scale: 1 }
+    },
+    context = {
+      sourceContent: content,
+      content,
+      viewport,
+      operators,
+      rulePaintBounds,
+      nativeEvidenceGraphics: graphics.map(({ kind, rect }) => ({ kind, rect })),
+      nativePaintIdentityGraphics: graphics,
+      nativeGlyphContext: {
+        content: structuredClone(content),
+        viewport,
+        operators,
+        graphicsBounds: graphics.map(({ kind, operationIndex, rect }) => ({
+          kind,
+          operationIndex,
+          normalizedRect: rect.map((v, i) => v / (i % 2 ? 150 : 220))
+        })),
+        glyphBounds: [
+          {
+            fontName: 'F',
+            glyphs: [...new Set(items.flatMap((i) => Array.from(i.str)))].map((c) => ({
+              fontChar: c,
+              bounds: c === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+            }))
+          }
+        ]
+      }
+    }
+  return { table, tokens, rules, context, polygons, graphics }
+}
+
+const {
+  proveNativeGraphicalTableCrop: proveGraphicalCrop,
+  validateNativeGraphicalTableCropPng: validateGraphicalPng
+} = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-graphical-table-crop.mjs')).href
+)
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function graphicalScope(f: ReturnType<typeof JSON.parse>) {
+  return {
+    page: {
+      pageNumber: 1,
+      width: 220,
+      height: 150,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: f.context.nativeGlyphContext.graphicsBounds
+    },
+    context: f.context,
+    competingRects: [] as number[][],
+    captions: [] as { rect: number[] }[]
+  }
+}
+it('completes the native graphical terminal column without changing table sources or reliability', () => {
+  const f = graphicalTableExample(),
+    before = structuredClone(f.table),
+    result = proveGraphicalCrop(f.table, graphicalScope(f))
+  expect(result?.nativeCrop).toEqual([5, 30, 195, 110])
+  expect(result?.cropRect).toEqual([5, 30, 195, 110])
+  expect(f.table).toEqual(before)
+})
+
+it('uses exact outlines with zero font metrics and restored opaque paint', () => {
+  const f: ReturnType<typeof JSON.parse> = graphicalTableExample()
+  for (const content of [f.context.sourceContent, f.context.nativeGlyphContext.content]) {
+    content.styles.F.ascent = 0
+    content.styles.F.descent = 0
+  }
+  prependGraphicalState(f, OPS.restore, [])
+  prependGraphicalState(f, OPS.setFillRGBColor, ['#ffffff'])
+  prependGraphicalState(f, OPS.save, [])
+  expect(proveGraphicalCrop(f.table, graphicalScope(f))?.nativeCrop).toEqual([5, 30, 195, 110])
+})
+
+function prependGraphicalState(
+  f: ReturnType<typeof JSON.parse>,
+  op: number,
+  args: unknown[]
+): void {
+  f.context.operators.fnArray.unshift(op)
+  f.context.operators.argsArray.unshift(args)
+  for (const graphic of f.graphics) graphic.operationIndex++
+  for (const graphic of f.context.nativeGlyphContext.graphicsBounds) graphic.operationIndex++
+}
+function addGraphicalStroke(f: ReturnType<typeof JSON.parse>, points: number[][]): void {
+  const operationIndex = f.context.operators.fnArray.length,
+    rect = [
+      Math.min(...points.map((p) => p[0])) - 0.25,
+      Math.min(...points.map((p) => p[1])) - 0.25,
+      Math.max(...points.map((p) => p[0])) + 0.25,
+      Math.max(...points.map((p) => p[1])) + 0.25
+    ]
+  f.context.operators.fnArray.push(OPS.constructPath)
+  f.context.operators.argsArray.push([
+    OPS.stroke,
+    [new Float32Array(points.flatMap(([x, y], i) => [i ? 1 : 0, x, 150 - y]))],
+    new Float32Array([rect[0] + 0.25, 150 - rect[3] + 0.25, rect[2] - 0.25, 150 - rect[1] - 0.25])
+  ])
+  f.graphics.push({ kind: 'path', operationIndex, rect })
+  f.context.nativeEvidenceGraphics.push({ kind: 'path', rect })
+  f.context.nativeGlyphContext.graphicsBounds.push({
+    kind: 'path',
+    operationIndex,
+    normalizedRect: rect.map((n, i) => n / (i % 2 ? 150 : 220))
+  })
+}
+
+it.each([
+  'outline',
+  'empty-letter',
+  'packet',
+  'source-id',
+  'source-rect',
+  'duplicate-source',
+  'span',
+  'segment',
+  'filled-graphical-cell',
+  'missing-row-paint',
+  'line-cap',
+  'translucent-text',
+  'white-text',
+  'white-rules',
+  'foreign-body-paint',
+  'invalid-graphics',
+  'caption',
+  'competing-object'
+])('requires complete native graphical crop evidence: %s', (guard) => {
+  const f: ReturnType<typeof JSON.parse> = graphicalTableExample()
+  if (guard === 'outline') f.context.nativeGlyphContext.glyphBounds[0].glyphs.pop()
+  if (guard === 'empty-letter')
+    f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+      (g: { fontChar: string }) => g.fontChar === 'A'
+    ).bounds = [0, 0, 0, 0]
+  if (guard === 'packet') f.context.operators.fnArray[3] = OPS.dependency
+  if (guard === 'source-id') f.context.sourceContent.items[0].sourceItem.index++
+  if (guard === 'source-rect') f.table.cells[0].sourceRects[0][2]++
+  if (guard === 'duplicate-source') {
+    f.table.cells[1].sourceItems = structuredClone(f.table.cells[0].sourceItems)
+    f.table.cells[1].sourceRects = structuredClone(f.table.cells[0].sourceRects)
+  }
+  if (guard === 'span') f.table.cells[0].colSpan = 2
+  if (guard === 'segment') f.table.cells[0].sourceSegments = [{ index: 0 }]
+  if (guard === 'filled-graphical-cell') {
+    f.table.cells[5].text = 'Unproved'
+    f.table.grid[1][2] = 'Unproved'
+  }
+  if (guard === 'missing-row-paint') {
+    f.context.operators.fnArray.pop()
+    f.context.operators.argsArray.pop()
+    f.graphics.pop()
+    f.context.nativeEvidenceGraphics.pop()
+    f.context.nativeGlyphContext.graphicsBounds.pop()
+  }
+  if (guard === 'line-cap')
+    f.context.operators.argsArray[f.context.operators.fnArray.indexOf(OPS.setLineCap)] = [1]
+  if (guard === 'translucent-text') prependGraphicalState(f, OPS.setGState, [[['ca', 0.5]]])
+  if (guard === 'white-text') prependGraphicalState(f, OPS.setFillRGBColor, ['#ffffff'])
+  if (guard === 'white-rules') prependGraphicalState(f, OPS.setStrokeRGBColor, ['#ffffff'])
+  if (guard === 'foreign-body-paint')
+    addGraphicalStroke(f, [
+      [20, 60],
+      [30, 75]
+    ])
+  const scope = graphicalScope(f)
+  if (guard === 'invalid-graphics') scope.page.invalidGraphicsBounds = 1
+  if (guard === 'caption') scope.captions = [{ rect: [170, 60, 190, 70] }]
+  if (guard === 'competing-object') scope.competingRects = [[170, 60, 190, 70]]
+  expect(proveGraphicalCrop(f.table, scope)).toBeUndefined()
+})
+
+it('checks exterior native paint against the actual PNG footprint, including reduced rasters', async () => {
+  const { createCanvas } = await import('@napi-rs/canvas'),
+    f: ReturnType<typeof JSON.parse> = graphicalTableExample(),
+    full = createCanvas(760, 320).toBuffer('image/png'),
+    reduced = createCanvas(152, 64).toBuffer('image/png')
+  let proof = proveGraphicalCrop(f.table, graphicalScope(f))
+  expect(proof).toBeDefined()
+  expect(validateGraphicalPng(full, proof)).toBe(true)
+  expect(validateGraphicalPng(reduced, proof)).toBe(true)
+  addGraphicalStroke(f, [
+    [195.3, 60],
+    [195.3, 75]
+  ])
+  proof = proveGraphicalCrop(f.table, graphicalScope(f))
+  expect(proof?.foreignPaints).toHaveLength(1)
+  expect(validateGraphicalPng(full, proof)).toBe(false)
+  expect(validateGraphicalPng(reduced, proof)).toBe(false)
+  expect(validateGraphicalPng(full.subarray(0, 20), proof)).toBe(false)
+  expect(validateGraphicalPng(full, undefined)).toBe(false)
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function verticalBodyExample(rows = 3) {
+  const f = terminalPacketExample(rows)
+  f.table.cropRect[2] = 180
+  return {
+    ...f,
+    scope: {
+      page: {
+        pageNumber: 1,
+        width: 300,
+        height: 200,
+        renderRotation: 0,
+        invalidGraphicsBounds: 0,
+        graphicsBounds: [] as unknown[]
+      },
+      competingRects: [] as number[][],
+      captions: [] as { rect: number[] }[]
+    }
+  }
+}
+
+it('removes exterior caption and note ink only after a complete vertical body proof', () => {
+  const f = verticalBodyExample(),
+    before = structuredClone(f.table),
+    proof = proveBodyCrop(f.table, f.rules, f.context, f.scope)
+  expect(proof?.cropRect).toEqual([45, 43, 180, 100])
+  expect(proof?.nativeCrop).toEqual([45, 43, 180, 100])
+  expect(proof?.foreignGlyphs.length).toBeGreaterThan(0)
+  expect(f.table).toEqual(before)
+  // The existing terminal path does not acquire a new admission condition.
+  expect(refineVisual(f.table, f.tokens, f.rules, f.context)).toBeUndefined()
+})
+
+it.each(terminalPacketNegatives)(
+  'requires the same complete vertical body evidence: %s',
+  (_name, mutate) => {
+    const f = verticalBodyExample()
+    mutate(f)
+    expect(proveBodyCrop(f.table, f.rules, f.context, f.scope)).toBeUndefined()
+  }
+)
+
+it.each([
+  'empty-letter',
+  'painted-space',
+  'white-fill',
+  'faded-text',
+  'stroke-text',
+  'unknown-spacing',
+  'invalid-page-graphics',
+  'renderer-rotation',
+  'missing-page-paint',
+  'explicit-note',
+  'foreign-caption',
+  'competing-object',
+  'missing-competition',
+  'missing-captions',
+  'existing-regions',
+  'horizontal-expansion',
+  'too-few-rows'
+])('rejects optional vertical body crop with %s', (guard) => {
+  const f: ReturnType<typeof JSON.parse> = verticalBodyExample(guard === 'too-few-rows' ? 2 : 3)
+  if (guard === 'empty-letter' || guard === 'painted-space')
+    f.context.nativeGlyphContext.glyphBounds[0].glyphs.find(
+      (g: { fontChar: string }) => g.fontChar === (guard === 'empty-letter' ? 'G' : ' ')
+    ).bounds = guard === 'empty-letter' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+  const state =
+    guard === 'white-fill'
+      ? [OPS.setFillRGBColor, ['#ffffff']]
+      : guard === 'faded-text'
+        ? [OPS.setGState, [[['ca', 0.5]]]]
+        : guard === 'stroke-text'
+          ? [OPS.setTextRenderingMode, [1]]
+          : guard === 'unknown-spacing'
+            ? [OPS.setCharSpacing, [0]]
+            : undefined
+  if (state) {
+    f.context.nativeGlyphContext.operators.fnArray.unshift(state[0])
+    f.context.nativeGlyphContext.operators.argsArray.unshift(state[1])
+  }
+  if (guard === 'invalid-page-graphics') f.scope.page.invalidGraphicsBounds = 1
+  if (guard === 'renderer-rotation') f.scope.page.renderRotation = 90
+  if (guard === 'missing-page-paint') f.scope.page.graphicsBounds.push({ kind: 'path' })
+  if (guard === 'explicit-note') f.table.notes = [{ text: 'A separate note.' }]
+  if (guard === 'foreign-caption') f.scope.captions = [{ rect: [50, 50, 60, 60] }]
+  if (guard === 'competing-object') f.scope.competingRects = [[50, 50, 60, 60]]
+  if (guard === 'missing-competition') delete f.scope.competingRects
+  if (guard === 'missing-captions') delete f.scope.captions
+  if (guard === 'existing-regions') f.table.cropRects = [f.table.cropRect]
+  if (guard === 'horizontal-expansion') f.table.cropRect[2] = 155
+  expect(proveBodyCrop(f.table, f.rules, f.context, f.scope)).toBeUndefined()
+})
+
+it('validates the actual vertical crop raster and abstains when a retry reaches exterior note ink', async () => {
+  const { createCanvas } = await import('@napi-rs/canvas'),
+    f = verticalBodyExample(),
+    before = structuredClone(f.table)
+  for (const styles of [
+    f.context.sourceContent.styles,
+    f.context.nativeGlyphContext.content.styles
+  ])
+    styles.F.ascent = styles.F.descent = 0
+  const proof = proveBodyCrop(f.table, f.rules, f.context, f.scope),
+    full = createCanvas(540, 228).toBuffer('image/png'),
+    reduced = createCanvas(270, 114).toBuffer('image/png'),
+    low = createCanvas(68, 29).toBuffer('image/png')
+  expect(proof).toBeDefined()
+  expect(validateBodyPng(full, proof)).toBe(true)
+  expect(validateBodyPng(reduced, proof)).toBe(true)
+  expect(validateBodyPng(low, proof)).toBe(false)
+  expect(validateBodyPng(full.subarray(0, 20), proof)).toBe(false)
+  expect(validateBodyPng(full, undefined)).toBe(false)
+  expect(f.table).toEqual(before)
+})
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function repeatedMissingStubs() {
+  type Any = ReturnType<typeof JSON.parse>
+  const entries: [string, number, number, number?, number?][] = [
+    ['Table 1. Results.', 50, 15],
+    ['Count', 160, 50],
+    ['Rate', 230, 50],
+    ['Group A', 50, 80],
+    ['Alpha', 110, 80],
+    ['1', 160, 80],
+    ['2', 230, 80],
+    ['Beta', 110, 100],
+    ['3', 160, 100],
+    ['4', 230, 100],
+    ['Group B', 50, 120],
+    ['Alpha', 110, 120],
+    ['5', 160, 120],
+    ['6', 230, 120],
+    ['Beta', 110, 140],
+    ['7', 160, 140],
+    ['8', 230, 140],
+    ['A separate explanation.', 40, 164]
+  ]
+  const items = entries.map(([str, x, y, height = 10], index) => ({
+    str,
+    dir: 'ltr',
+    width: str.length * 5,
+    height,
+    fontName: 'F',
+    transform: [height, 0, 0, height, x, 200 - y],
+    sourceItem: { pageNumber: 1, index, text: str }
+  }))
+  const box = (i: number): number[] => [
+    items[i].transform[4],
+    200 - items[i].transform[5] - items[i].height,
+    items[i].transform[4] + items[i].width,
+    200 - items[i].transform[5]
+  ]
+  const content = { items, styles: { F: { ascent: 0.8, descent: -0.2, vertical: false } } },
+    viewport = { width: 300, height: 200, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 200] },
+    operators = { fnArray: [] as number[], argsArray: [] as Any[] },
+    rules = [30, 60, 108, 150].map((y) => [40, y, 280, y]),
+    rulePaintBounds = new Map(
+      rules.map((r) => [r.join(','), [r[0], r[1] - 0.2, r[2], r[3] + 0.2]])
+    ),
+    graphics: Any[] = []
+  for (const item of items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      null,
+      ['F', item.height],
+      [new Float32Array([1, 0, 0, 1, item.transform[4], item.transform[5]])],
+      [Array.from(item.str, (c) => ({ unicode: c, fontChar: c, width: 500, isInFont: true }))],
+      null
+    )
+  }
+  operators.fnArray.push(OPS.setStrokeRGBColor, OPS.setLineWidth, OPS.setLineCap)
+  operators.argsArray.push(['#000000'], [0.4], [0])
+  for (const r of rules) {
+    const operationIndex = operators.fnArray.length,
+      rect = rulePaintBounds.get(r.join(','))!
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [[0, r[0], 200 - r[1], 1, r[2], 200 - r[3]]],
+      [r[0], 200 - r[1], r[2], 200 - r[3]]
+    ])
+    graphics.push({ kind: 'path', operationIndex, rect })
+  }
+  const cells: Any[] = [
+      { row: 0, column: 0, rowSpan: 1, colSpan: 1, text: '', sourceItems: [], sourceRects: [] }
+    ],
+    grid = [['', 'Count', 'Rate']]
+  const rowIndices = [
+    [1, 2],
+    [4, 5, 6],
+    [7, 8, 9],
+    [11, 12, 13],
+    [14, 15, 16]
+  ]
+  for (const [row, indices] of rowIndices.entries())
+    for (const [n, index] of indices.entries()) {
+      const column = row === 0 ? n + 1 : n
+      grid[row] ??= []
+      grid[row][column] = items[index].str
+      cells.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        text: items[index].str,
+        sourceItems: [items[index].sourceItem],
+        sourceRects: [box(index)]
+      })
+    }
+  const context: Any = {
+    content,
+    sourceContent: content,
+    viewport,
+    operators,
+    rulePaintBounds,
+    nativeEvidenceGraphics: graphics.map((g) => ({ kind: g.kind, rect: g.rect })),
+    nativePaintIdentityGraphics: graphics,
+    nativeGlyphContext: {
+      content: structuredClone(content),
+      viewport,
+      operators,
+      graphicsBounds: [],
+      glyphBounds: [
+        {
+          fontName: 'F',
+          glyphs: [...new Set(items.flatMap((i) => Array.from(i.str)))].map((c) => ({
+            fontChar: c,
+            bounds: c === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+          }))
+        }
+      ]
+    }
+  }
+  const table: Any = {
+    page: 1,
+    cropRect: [75, 25, 290, 155],
+    grid,
+    cells,
+    issues: ['text-crosses-crop-boundary'],
+    clipped: [3, 10, 17].map((i) => ({ text: items[i].str, rect: box(i) })),
+    caption: { page: 1, text: items[0].str, rect: box(0) },
+    reviewCandidate: true
+  }
+  return { table, context, rules }
+}
+
+it('restores repeated missing stub groups through the native closing stroke and keeps the grid unreliable', () => {
+  const f = repeatedMissingStubs(),
+    before = structuredClone(f.table),
+    next = refine(f.table, f.rules, f.context)
+  expect(next?.cropRect).toEqual([40, 25, 290, 150.2])
+  expect(next?.issues).toContain('native-table-structure-ambiguous')
+  expect(next?.reviewCandidate).toBe(false)
+  expect(next?.cells).toBe(f.table.cells)
+  expect(f.table).toEqual(before)
+})
+
+it.each(['missing group rule', 'foreign strip paint', 'missing glyph program'])(
+  'does not own missing native stubs without complete boundary evidence: %s',
+  (mode) => {
+    const f = repeatedMissingStubs()
+    if (mode === 'missing group rule') f.rules.splice(2, 1)
+    if (mode === 'foreign strip paint')
+      f.context.nativeEvidenceGraphics.push({ kind: 'path', rect: [60, 85, 70, 90] })
+    if (mode === 'missing glyph program') f.context.nativeGlyphContext.glyphBounds = []
+    expect(refine(f.table, f.rules, f.context)?.issues ?? []).not.toContain(
+      'native-table-structure-ambiguous'
+    )
+  }
+)
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function omittedGroupedHeader() {
+  const entries: [string, number, number][] = [
+    ['Table 1: A measured comparison.', 10, 20],
+    ['Kind', 20, 40],
+    ['Left', 85, 40],
+    ['Right', 165, 40],
+    ['Count', 65, 60],
+    ['Rate', 105, 60],
+    ['Count', 145, 60],
+    ['Rate', 185, 60],
+    ['Alpha', 20, 80],
+    ['1', 65, 80],
+    ['2', 105, 80],
+    ['3', 145, 80],
+    ['4', 185, 80],
+    ['Beta', 20, 100],
+    ['5', 65, 100],
+    ['6', 105, 100],
+    ['7', 145, 100],
+    ['8', 185, 100]
+  ]
+  const items = entries.map(([str, x, y], index) => ({
+      str,
+      dir: 'ltr',
+      width: str.length * 5,
+      height: 10,
+      fontName: 'F',
+      transform: [10, 0, 0, 10, x, 130 - y],
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    box = (i: number): number[] => [
+      items[i].transform[4],
+      120 - items[i].transform[5],
+      items[i].transform[4] + items[i].width,
+      130 - items[i].transform[5]
+    ],
+    content = { items, styles: { F: { ascent: 0.8, descent: -0.2, vertical: false } } },
+    viewport = { width: 220, height: 130, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 130] },
+    operators = { fnArray: [] as number[], argsArray: [] as Any[] },
+    rules = [65, 105].map((y) => [10, y, 210, y]),
+    rulePaintBounds = new Map(
+      rules.map((r) => [r.join(','), [r[0], r[1] - 0.2, r[2], r[3] + 0.2]])
+    ),
+    graphics: Any[] = []
+  for (const item of items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      null,
+      ['F', 10],
+      [new Float32Array([1, 0, 0, 1, item.transform[4], item.transform[5]])],
+      [Array.from(item.str, (c) => ({ unicode: c, fontChar: c, width: 500, isInFont: true }))],
+      null
+    )
+  }
+  operators.fnArray.push(OPS.setStrokeRGBColor, OPS.setLineWidth, OPS.setLineCap)
+  operators.argsArray.push(['#000000'], [0.4], [0])
+  for (const r of rules) {
+    const operationIndex = operators.fnArray.length,
+      rect = rulePaintBounds.get(r.join(','))!
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [[0, r[0], 130 - r[1], 1, r[2], 130 - r[3]]],
+      [r[0], 130 - r[1], r[2], 130 - r[3]]
+    ])
+    graphics.push({ kind: 'path', operationIndex, rect })
+  }
+  const edges = [10, 50, 95, 130, 175, 210],
+    cells: Any[] = [],
+    grid = [
+      ['', 'Count', 'Rate', 'Count', 'Rate'],
+      ['Alpha', '1', '2', '3', '4'],
+      ['Beta', '5', '6', '7', '8']
+    ]
+  for (let row = 0; row < 3; row++)
+    for (let column = 0; column < 5; column++) {
+      const index = row === 0 ? (column === 0 ? undefined : column + 3) : 8 + (row - 1) * 5 + column
+      cells.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        text: grid[row][column],
+        rect: [edges[column], 50 + row * 20, edges[column + 1], 60 + row * 20],
+        sourceItems: index === undefined ? [] : [items[index].sourceItem],
+        sourceRects: index === undefined ? [] : [box(index)]
+      })
+    }
+  const context: Any = {
+    content,
+    sourceContent: content,
+    viewport,
+    operators,
+    captions: [{ page: 1, lines: [items[0].str], rect: box(0) }],
+    rulePaintBounds,
+    nativeEvidenceGraphics: graphics.map((g) => ({ kind: g.kind, rect: g.rect })),
+    nativePaintIdentityGraphics: graphics,
+    nativeGlyphContext: {
+      content: structuredClone(content),
+      viewport,
+      operators,
+      graphicsBounds: [],
+      glyphBounds: [
+        {
+          fontName: 'F',
+          glyphs: [...new Set(items.flatMap((i) => Array.from(i.str)))].map((c) => ({
+            fontChar: c,
+            bounds: c === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+          }))
+        }
+      ]
+    }
+  }
+  return {
+    table: {
+      page: 1,
+      cropRect: [10, 50, 210, 110],
+      grid,
+      cells,
+      issues: [],
+      reviewCandidate: true,
+      caption: { page: 1, text: items[0].str, rect: box(0) }
+    } as Any,
+    context,
+    rules
+  }
+}
+
+it('keeps a table image and native cells while pausing mappings that omit a complete grouped header', () => {
+  const f = omittedGroupedHeader(),
+    before = structuredClone(f.table),
+    next = refine(f.table, f.rules, f.context)
+  expect(next?.issues).toContain('native-table-structure-ambiguous')
+  expect(next?.reviewCandidate).toBe(false)
+  expect(next?.cropRect).toBe(f.table.cropRect)
+  expect(next?.cells).toBe(f.table.cells)
+  expect(f.table).toEqual(before)
+})
+
+it.each(['broken repeated headers', 'unclosed native interval', 'missing native glyphs'])(
+  'does not reject grouped headers without their independent native proof: %s',
+  (fault) => {
+    const f = omittedGroupedHeader()
+    if (fault === 'broken repeated headers') f.table.cells[4].text = 'Other'
+    if (fault === 'unclosed native interval') {
+      f.table.cells[8].sourceItems = []
+      f.table.cells[8].sourceRects = []
+    }
+    if (fault === 'missing native glyphs') f.context.nativeGlyphContext.glyphBounds = []
+    expect(refine(f.table, f.rules, f.context)?.issues ?? []).not.toContain(
+      'native-table-structure-ambiguous'
+    )
   }
 )
