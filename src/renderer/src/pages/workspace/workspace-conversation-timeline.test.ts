@@ -1157,6 +1157,43 @@ describe('settled turn process disclosure', () => {
     expect(groups(input).get('progress')?.messageCount).toBe(2)
   })
 
+  it.each(['completed', 'failed'] as const)(
+    'keeps image-only and artifact-only final replies outside the %s process',
+    (kind) => {
+      for (const output of [
+        {
+          images: [{ id: 'image-1', mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 }]
+        },
+        { artifactIds: ['artifact-1'] }
+      ]) {
+        const input = fixture(kind)
+        input.messages[2] = { ...input.messages[2], content: '', ...output }
+        const result = groups(input)
+        expect(result.get('progress')).toMatchObject({ messageCount: 1 })
+        expect(result.has('answer')).toBe(false)
+      }
+    }
+  )
+
+  it('ignores an empty trailing fragment when selecting the final output', () => {
+    const input = fixture()
+    input.messages.push(
+      message({
+        id: 'empty-fragment',
+        role: 'agent',
+        content: ' ',
+        images: [],
+        artifactIds: [],
+        responseToMessageId: 'prompt-1',
+        sortIndex: 5
+      })
+    )
+    const result = groups(input)
+    expect(result.has('answer')).toBe(false)
+    expect(result.has('empty-fragment')).toBe(false)
+    expect(result.get('progress')?.messageCount).toBe(1)
+  })
+
   it('does not hide running, revealing, cancelled, interrupted or unknown outcomes', () => {
     const input = fixture()
     expect(groups(input, ['answer']).size).toBe(0)

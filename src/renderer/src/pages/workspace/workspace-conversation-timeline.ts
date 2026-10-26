@@ -355,14 +355,21 @@ const resolveCollapsibleTurnProcesses = (
     const rows = byPrompt.get(prompt.id) ?? []
     if (rows.some((row) => presentingMessageIds.has(row.id))) continue
     const replies = rows.filter((row) => row.type === 'message' && row.message.role === 'agent')
+    // The terminal fragment can own projected child artifacts and usage even with an empty body.
+    const terminalReply = replies.at(-1)
     const lastReply = replies.findLast(
-      (row) => row.type === 'message' && row.message.content.trim()
+      (row) =>
+        row.type === 'message' &&
+        (row.message.content.trim() ||
+          row.message.images?.length ||
+          row.message.artifactIds?.length)
     )
     // A successful tool-only turn has no final answer to leave outside the disclosure.
     if (outcome.kind === 'completed' && !lastReply) continue
     const process = rows.filter(
       (row) =>
         row !== lastReply &&
+        row !== terminalReply &&
         (row.type === 'message'
           ? row.message.role === 'agent'
           : row.type === 'activity-group' ||

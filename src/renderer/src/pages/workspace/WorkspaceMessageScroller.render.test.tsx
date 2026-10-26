@@ -2980,11 +2980,26 @@ it.each(['fork', 'branch'] as const)(
 )
 
 describe('settled process presentation', () => {
-  it.each(['completed', 'failed'] as const)(
-    'collapses %s intermediate output and retains the final reply',
-    async (kind) => {
+  it.each(
+    (['completed', 'failed'] as const).flatMap((kind) =>
+      (['text', 'image', 'artifact'] as const).map((output) => ({ kind, output }))
+    )
+  )(
+    'collapses $kind intermediate output and retains the final $output reply',
+    async ({ kind, output }) => {
       const input = createSession({
         status: kind === 'failed' ? 'error' : 'idle',
+        artifacts: [
+          {
+            id: 'artifact-final',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt',
+            mimeType: 'text/plain',
+            size: 100,
+            mtimeMs: 500
+          }
+        ],
         messages: [
           createMessage({
             id: 'prompt',
@@ -3002,7 +3017,12 @@ describe('settled process presentation', () => {
           createMessage({
             id: 'final',
             role: 'agent',
-            content: 'Final explanation',
+            content: output === 'text' ? 'Final explanation' : '',
+            images:
+              output === 'image'
+                ? [{ id: 'image-final', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+                : undefined,
+            artifactIds: output === 'artifact' ? ['artifact-final'] : undefined,
             responseToMessageId: 'prompt',
             sortIndex: 2,
             completedAt: 500
@@ -3012,7 +3032,10 @@ describe('settled process presentation', () => {
       const html = await renderScroller(input, { turnOutcomeActions })
       expect(html).toContain('aria-expanded="false"')
       expect(html).not.toContain('Intermediate explanation')
-      expect(html).toContain('Final explanation')
+      expect(html).toContain('data-message-id="final"')
+      if (output === 'text') expect(html).toContain('Final explanation')
+      if (output === 'image') expect(html).toContain('src="data:image/png;base64,AQID"')
+      if (output === 'artifact') expect(html).toContain('result.txt')
       if (kind === 'failed') expect(html).toContain('Failed')
       const isolated = await renderScroller(input)
       expect(isolated).toContain('Intermediate explanation')
