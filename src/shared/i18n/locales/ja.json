@@ -2769,6 +2769,7 @@
     "Skills you can also delete <muted>(optional)</muted>": "スキル <muted>（オプション）</muted> を削除することもできます",
     "Skip": "スキップ",
     "User skipped": "ユーザーがスキップ",
+    "More skip options": "その他のスキップオプション",
     "Skip all": "すべてスキップ",
     "Skip approvals": "承認をスキップする",
     "Skip approvals for {{name}}": "{{name}} の承認をスキップ",

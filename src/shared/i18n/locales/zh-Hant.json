@@ -2854,6 +2854,7 @@
     "Skills you can also delete <muted>(optional)</muted>": "你還可以刪除的技能 <muted>（選填）</muted>",
     "Skip": "略過",
     "User skipped": "使用者略過",
+    "More skip options": "更多略過選項",
     "Skip all": "全部略過",
     "Skip approvals": "跳過核准",
     "Skip approvals for {{name}}": "為 {{name}} 跳過核准",

@@ -2877,6 +2877,7 @@
     "Skills you can also delete <muted>(optional)</muted>": "Compétences que vous pouvez également supprimer <muted>(facultatif)</muted>",
     "Skip": "Sauter",
     "User skipped": "Ignoré par l’utilisateur",
+    "More skip options": "Autres options pour passer",
     "Skip all": "Tout sauter",
     "Skip approvals": "Ignorer les approbations",
     "Skip approvals for {{name}}": "Ignorer les approbations pour {{name}}",

@@ -33,6 +33,18 @@ const setTextControlValue = (
   control.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
+const openSkipMenu = async (): Promise<HTMLElement> => {
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')
+  expect(trigger).not.toBeNull()
+  await act(async () => {
+    trigger!.focus()
+    trigger!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  })
+  const item = document.querySelector<HTMLElement>('[role="menuitem"]')
+  expect(item).not.toBeNull()
+  return item!
+}
+
 const fields = [
   {
     id: 'question_0',
@@ -1023,10 +1035,15 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
   })
 
-  it('places a warning-colored Skip all button last in the footer row for multi-question cards', async () => {
-    const onRespond = vi.fn().mockResolvedValue(undefined)
-
-    await act(async () => {
+  it('opens Skip all from the split menu without answering, and disables both buttons while submitting', async () => {
+    let finish!: () => void
+    const onRespond = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    await act(async () =>
       root.render(
         <WorkspaceElicitationCard
           elicitation={{
@@ -1038,49 +1055,31 @@ describe('WorkspaceElicitationCard choice question', () => {
           onRespond={onRespond}
         />
       )
-    })
-
+    )
     const skip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip all'
-    )
-    expect(skip).toBeDefined()
-    expect(skip?.className).toContain('status-warning')
-    // Footer buttons match the compact card scale.
-    expect(skip?.className).not.toContain('h-11')
-    // Advance to the second question so Back renders, then check it shares the same pill
-    // geometry as the solid buttons (no borderless ghost).
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-multi-omics"]')
-        ?.click()
-    })
-    const next = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Next'
-    )
-    await act(async () => next?.click())
-    const back = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Back'
-    )
-    expect(back?.getAttribute('data-variant')).toBe('secondary')
-    expect(back?.className).toContain('px-3')
-    // Same row as the footer tally, last button in the action group.
-    const skipAfter = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip all'
-    )
-    expect(skipAfter?.parentElement?.lastElementChild).toBe(skipAfter)
-    expect(skipAfter?.parentElement?.parentElement?.textContent).toContain('selected')
-    // The full-width separator is gone; the input carries its own underline instead.
-    const customRow = container.querySelector('textarea')?.closest('div')
-    expect(customRow?.textContent).not.toContain('Skip')
-    expect(customRow?.classList.contains('border-t')).toBe(false)
-    expect(customRow?.classList.contains('border-b')).toBe(false)
-    expect(container.querySelector('textarea')?.className).toContain('border-b')
-
-    await act(async () => skip?.click())
-    expect(onRespond).toHaveBeenCalledWith({
+      (button) => button.textContent?.trim() === 'Skip'
+    )!
+    expect(skip.getAttribute('data-variant')).toBe('secondary')
+    expect(document.querySelector('[role="menuitem"]')).toBeNull()
+    expect(container.textContent).not.toContain('Skip all')
+    const skipAll = await openSkipMenu()
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(skipAll.textContent).toBe('Skip all')
+    expect(skipAll.className).toContain('status-warning')
+    await act(async () => skipAll.click())
+    expect(onRespond).toHaveBeenCalledExactlyOnceWith({
       requestId: multiQuestionRequest.requestId,
       action: 'decline'
     })
+    expect(skip.disabled).toBe(true)
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
+    ).toBe(true)
+    await act(async () => finish())
+    expect(skip.disabled).toBe(false)
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')?.disabled
+    ).toBe(false)
   })
 
   it('renders the answered summary as a compact checklist with a question-type chip', async () => {
@@ -1398,9 +1397,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     })
 
     onRespond.mockClear()
-    const skip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip all'
-    )
+    const skip = await openSkipMenu()
     await act(async () => skip?.click())
     expect(onRespond).toHaveBeenCalledWith({
       requestId: request.requestId,

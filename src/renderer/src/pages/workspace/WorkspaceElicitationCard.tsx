@@ -14,6 +14,12 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
@@ -910,28 +916,45 @@ const WorkspaceElicitationCard = ({
                     <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                   </Button>
                 ) : null}
-                <Button
-                  className="px-3"
-                  type="button"
-                  variant="secondary"
-                  disabled={isSubmitting}
-                  onClick={skipQuestion}
-                >
-                  {t('Skip')}
-                </Button>
-                <Button
-                  className="px-3 bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/70 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/70"
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() =>
-                    void respond({
-                      requestId: request.requestId,
-                      action: 'decline'
-                    })
-                  }
-                >
-                  {t('Skip all')}
-                </Button>
+                <div className="inline-flex shrink-0 rounded-lg">
+                  <Button
+                    className="rounded-r-none px-3 focus-visible:z-10"
+                    type="button"
+                    variant="secondary"
+                    disabled={isSubmitting}
+                    onClick={skipQuestion}
+                  >
+                    {t('Skip')}
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        className="rounded-l-none border-l-border-200 focus-visible:z-10"
+                        type="button"
+                        variant="secondary"
+                        size="icon"
+                        disabled={isSubmitting}
+                        aria-label={t('More skip options')}
+                      >
+                        <ChevronDown className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" align="end">
+                      <DropdownMenuItem
+                        className="text-status-warning-foreground data-[highlighted]:bg-status-warning-surface data-[highlighted]:text-status-warning-foreground dark:text-status-warning-dark-foreground dark:data-[highlighted]:bg-status-warning-dark-surface dark:data-[highlighted]:text-status-warning-dark-foreground"
+                        disabled={isSubmitting}
+                        onSelect={() =>
+                          void respond({
+                            requestId: request.requestId,
+                            action: 'decline'
+                          })
+                        }
+                      >
+                        {t('Skip all')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
             </div>
           ) : null}

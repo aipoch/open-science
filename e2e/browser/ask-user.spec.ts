@@ -6,7 +6,7 @@ test('embedded question keeps its title and actions fixed while scrolling and re
   await page.setViewportSize({ width: 390, height: 700 })
   await page.goto('/ask-user.html?mixed=1&embedded=1')
   const title = page.getByRole('heading', { name: 'Which outputs?', exact: true })
-  const skipAll = page.getByRole('button', { name: 'Skip all', exact: true })
+  const skipAll = page.getByRole('button', { name: 'More skip options', exact: true })
   const options = page.getByTestId('elicitation-option-Option 1').locator('..')
   await expect(skipAll).toBeInViewport({ ratio: 1 })
   const titleBefore = await title.boundingBox()
@@ -46,6 +46,37 @@ test('embedded question keeps its title and actions fixed while scrolling and re
       { fieldId: 'question_0_custom', value: 'User skipped' },
       { fieldId: 'question_1_custom', value: 'User skipped' }
     ]
+  })
+})
+
+test('split skip menu supports dismissal, focus return, and explicit skipping of all questions', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 700 })
+  await page.goto('/ask-user.html?mixed=1&embedded=1&dark=1')
+  const trigger = page.getByRole('button', { name: 'More skip options', exact: true })
+  const skip = page.getByRole('button', { name: 'Skip', exact: true })
+  await expect(page.getByRole('menuitem', { name: 'Skip all', exact: true })).toHaveCount(0)
+  await skip.focus()
+  await page.keyboard.press('Tab')
+  await expect(trigger).toBeFocused()
+  await trigger.press('ArrowDown')
+  const menuItem = page.getByRole('menuitem', { name: 'Skip all', exact: true })
+  await expect(menuItem).toBeFocused()
+  await expect(page.getByTestId('submitted-answer')).toHaveText('')
+  await page.keyboard.press('Escape')
+  await expect(menuItem).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+  await skip.click()
+  await expect(page.getByRole('heading', { name: 'Which approach', exact: false })).toBeVisible()
+  await trigger.click()
+  await expect(menuItem).toBeVisible()
+  expect(await menuItem.locator('..').getAttribute('data-side')).toBe('top')
+  await page.screenshot({ path: test.info().outputPath('split-skip-menu.png') })
+  await menuItem.click()
+  await expect(menuItem).toHaveCount(0)
+  expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+    action: 'decline'
   })
 })
 
