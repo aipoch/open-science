@@ -118,8 +118,7 @@ export function createDesktopDependencyFilter(manifest, { localTranslationWasm =
       /^dist\/xlsx\.(?:extendscript|(?:full|core|mini)\.min)\.(?:js(?:\.map)?|map)$/,
     '@embedpdf/pdfium@2.15.1': /^dist\/index\.browser\.js(?:\.map)?$/,
     'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
-    'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/,
-    'tiktoken@1.0.22': /^lite\/[^/]+\.(?:js|cjs|wasm)(?:\.map)?$/
+    'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/
   }[`${manifest.name}@${manifest.version}`]
   const runtimeEntries = []
   const collect = (value) => {

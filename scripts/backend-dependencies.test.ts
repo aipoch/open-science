@@ -60,8 +60,7 @@ describe('desktop-only dependency contents', () => {
         ['styled-exceljs', '0.21.6', 'dist/xlsx.extendscript.js', 'dist/xlsx.zahl.mjs'],
         ['@embedpdf/pdfium', '2.15.1', 'dist/index.browser.js', 'dist/pdfium.wasm'],
         ['pako', '1.0.11', 'dist/pako.js', 'lib/inflate.js'],
-        ['pako', '0.2.9', 'dist/pako.min.js', 'index.js'],
-        ['tiktoken', '1.0.22', 'lite/tiktoken_bg.wasm', 'tiktoken_bg.wasm']
+        ['pako', '0.2.9', 'dist/pako.min.js', 'index.js']
       ]) {
         const manifest = { name, version, exports: { './variant': `./${removed}` } }
         const filter = createDesktopDependencyFilter(manifest)
@@ -127,7 +126,8 @@ describe('desktop-only dependency contents', () => {
         'openchemlib',
         'web-tree-sitter',
         '@embedpdf/pdfium',
-        'tiktoken'
+        'tiktoken',
+        '@anthropic-ai/tokenizer'
       ]) {
         const source = join(process.cwd(), 'node_modules', name)
         const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
@@ -197,6 +197,17 @@ describe('desktop-only dependency contents', () => {
           const encoder = tokenizer.get_encoding('cl100k_base');
           assert.equal(new TextDecoder().decode(encoder.decode(encoder.encode('Scientific 科学'))), 'Scientific 科学');
           encoder.free();
+        }
+        // The backend's Anthropic tokenizer loads tiktoken/lite at startup, not the root entry.
+        for (const tokenizer of [require('@anthropic-ai/tokenizer'), await import('@anthropic-ai/tokenizer')]) {
+          const text = 'Scientific 科学';
+          const encoder = tokenizer.getTokenizer();
+          try {
+            assert.equal(new TextDecoder().decode(encoder.decode(encoder.encode(text))), text);
+            assert.equal(tokenizer.countTokens(text), encoder.encode(text).length);
+          } finally {
+            encoder.free();
+          }
         }
       `
       )
