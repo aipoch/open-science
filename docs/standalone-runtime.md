@@ -28,27 +28,6 @@ the existing dependency policies. README files are retained because they can con
 notices. This tree is not the npm SDK publication artifact. The default staging command still
 builds `out/standalone` with its CLI/SDK declarations intact; desktop packaging neither prunes
 that tree nor reads a stale copy of it. Installed CLI commands remain available.
-The generated Prisma resource follows the same declaration policy: desktop and Release CLI
-archives omit its declarations, while npm/SDK staging retains them. Both omit the generated
-WASM query engine only after staging verifies that the client uses the native library engine;
-the target native engines and schema remain included.
-Backend staging also omits the audited browser-only distributions of PDF-lib 1.17.1,
-Fontkit 2.0.4 and zstd-wasm 0.0.27; their Node entry points and assets remain available.
-For Transformers 4.2.0 with ONNX Web 1.26.0-dev.20260416-b7804b056c, staging bundles the
-local translation worker against its existing WASM implementation. Its unused native ONNX
-and WebGPU imports resolve to that same WASM module, so the native inference dependency
-closure is no longer shipped. Remaining external dependencies come from the worker's build
-metadata, with the original Tensor dependency version and redistribution licenses retained.
-Other versions keep the original worker and dependency closure; additional external Transformers
-consumers fail staging until reviewed. The model recipe, local-only inference and storage are
-unchanged. These backend reductions apply to desktop installers and standalone CLI packages.
-Desktop/Release CLI staging additionally omits unused debug and browser variants of audited
-OpenChemLib, Tree-sitter, styled-exceljs, PDFium, Pako and tiktoken releases. Active Node entries,
-codepage/Numbers helpers, inference/parser WASM, licenses and diagnostic maps remain. The ONNX
-browser JavaScript and TypeScript sources are pruned only with the specialized WASM worker;
-fallback versions keep them. npm/SDK staging retains these alternative exports. Node binaries
-and their native diagnostic symbols are unchanged. Desktop/Release CLI payloads also omit the
-build-only dependency-analysis JSON after staging has consumed it; build and npm/SDK copies remain.
 Desktop staging also omits the audited renderer-only dependency roots already compiled into
 `out/web`. Backend and worker import metadata can retain any such root, and transitive runtime
 dependencies are still copied normally. Unknown dependencies remain included. The desktop
@@ -58,6 +37,12 @@ staging rejects any external consumer that would require a second copy. Other ve
 external. Resource-bearing and native dependencies retain their existing module paths.
 Desktop staging also excludes the audited type-only API SDK peer of Claude Agent SDK 0.3.232;
 the Agent SDK runtime remains included, and other versions or incoming edges remain intact.
+
+Release CLI and desktop packages omit audited unused dependency variants and duplicate
+Electron-side payloads while retaining runtime assets, licenses and diagnostic symbols.
+npm/SDK declarations and exports remain available. Local translation keeps its existing
+WASM runtime. Micromamba ships once under the backend's `resources` directory, including
+the Windows compatibility runner.
 
 Before unattended operation, review [intended use](usage-scope.md), the
 [security model](security.md), and [known limitations](known-limitations.md). A headless service
@@ -603,16 +588,3 @@ The current manual distribution workflow supports standalone archive dry-runs an
 npm dry-run; stable releases publish the five standalone archives. The separate npm publication
 workflow verifies all five native packages before publishing them and the shared entry package.
 Do not publish one package name/version separately for multiple platform-specific tarballs.
-
-The Electron host excludes backend-only feature packages from its own `app.asar` dependency tree,
-including Notebook analysis, scientific connectors and spreadsheet processing. Their complete
-runtime copies remain in `resources/backend`; the renderer keeps its compiled feature chunks.
-Main/preload builds reject new direct or transitive dependency edges into the excluded packages,
-so a future desktop consumer must restore its dependency before packaging. Native desktop helpers,
-update dependencies and diagnostics remain in the Electron host.
-
-Micromamba is shipped once, in the backend's `resources` directory (including the independently
-pinned Windows compatibility runner). Desktop signature and package smoke checks use those same
-files; no additional copy is required in Electron's resource root. Windows previous/rollback
-installer certification retains explicit support for the old layout, while current installers
-must contain both backend runners. This does not change application data or runtime resolution.
