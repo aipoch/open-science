@@ -3,6 +3,19 @@
 This on-demand skill provides a reusable Markdown-to-DOCX path without changing
 Artifact storage or prescribing a generator for other formats and editing tasks.
 
+## Execution boundary
+
+Loading a framework Skill does not grant Notebook or shell access to its directory.
+The registered `prepare_docx_conversion` helper transports the fixed converter and
+reference through the existing `kernelSkillIds` mechanism and writes them into a
+fresh directory under the caller's authorized execution directory. No filesystem
+permission expansion is needed. The model receives paths, not base64 file contents.
+
+`kernel.py` is generated from `scripts/convert.py` and `assets/reference.docx` by
+`python3 resources/skills/docx-generation/scripts/build_kernel.py`. Rebuild it after
+changing either source asset; a regression rejects stale embedded assets. The
+original CLI remains available for environments with direct package access.
+
 ## Reproducibility
 
 - Supported generator: Pandoc **3.12.1**; Python **3.9+**, standard library only.
@@ -44,6 +57,11 @@ styles. Semantic/style assertions run on every OS; the reviewed pixel baseline
 uses macOS fonts and runs only on macOS. Other platforms capture screenshots
 without comparing them to the macOS font layout. Office-engine PDF preview is a
 separate optional future capability.
+
+The registered-helper test executes through the Notebook kernel. On macOS, a real
+`sandbox-exec` regression denies reads of the original skill directory while
+preparing and converting a report with the injected helper. This bounded profile
+reproduces resource denial; it is not a full desktop-session E2E run.
 
 Sources: [Pandoc reference documents](https://pandoc.org/MANUAL.html#option--reference-doc),
 [OOXML conditional table styles](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.tablestyleproperties).

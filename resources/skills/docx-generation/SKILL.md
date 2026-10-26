@@ -12,11 +12,24 @@ Choose a workflow that preserves the user's requested content, structure, and pr
 
 For ordinary reports, use the bundled converter with an existing Pandoc 3.12.1 executable and Python 3.9 or newer. It uses a versioned reference document, separates ordinary table paragraphs from the Compact style shared by lists, and records converter/template provenance inside the DOCX. It does not install software.
 
-Run through the session's approved Notebook or shell execution tools, using the actual directory of this loaded skill and an approved intermediate output directory:
+In Open Science, first prepare the workflow through the registered Notebook helper:
+
+```json
+{
+  "kernelSkillIds": ["docx-generation"],
+  "code": "docx_workflow = prepare_docx_conversion('.')\nprint(docx_workflow)"
+}
+```
+
+Call the function directly, without importing it. Repeat `kernelSkillIds` in every cell using this function. The helper writes the fixed converter and reference into a new directory inside the authorized Notebook working directory and returns `script_path`, `reference_path`, and `workflow_directory`. This uses the registered skill transport; the Notebook and shell cannot necessarily read the framework's skill directory.
+
+Then run the returned `script_path` through the session's approved shell tool:
 
 ```text
-python "<skill-directory>/scripts/convert.py" "<source.md>" "<output.docx>"
+python "<returned-script_path>" "<source.md>" "<output.docx>"
 ```
+
+Use the interpreter configured for the session. If the helper is unavailable, report that prerequisite through the normal execution recovery flow; do not probe or copy from the isolated framework skill directory. In environments outside Open Science that already allow reading this package, the original `scripts/convert.py` is also a standalone CLI.
 
 Optional arguments:
 

@@ -17,6 +17,45 @@ ET.register_namespace('w', NS['w'])
 
 
 class ConversionTests(unittest.TestCase):
+    def test_registered_bundle_matches_the_maintained_assets(self):
+        spec = importlib.util.spec_from_file_location('build_kernel', SCRIPT.parent / 'build_kernel.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual((SCRIPT.parents[1] / 'kernel.py').read_text(), module.kernel_source())
+
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('sandbox-exec') and shutil.which('pandoc'),
+                         'macOS sandbox-exec and Pandoc are required')
+    def test_conversion_when_skill_directory_is_denied_by_the_os_sandbox(self):
+        # The host injects registered helper source; the execution sandbox never reads the skill root.
+        skill = SCRIPT.parents[1].resolve()
+        helper = (skill / 'kernel.py').read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source = root / 'source.md'
+            source.write_text('| 类别 | 描述 |\n|---|---|\n| 测试 | 保留样式 |\n', encoding='utf-8')
+            code = helper + '\n' + '\n'.join([
+                'import json, pathlib, subprocess, sys',
+                'try:',
+                '    pathlib.Path(%r).read_bytes()' % str(skill / 'assets/reference.docx'),
+                'except PermissionError:',
+                '    pass',
+                'else:',
+                '    raise AssertionError("The original skill directory must be inaccessible")',
+                'prepared = prepare_docx_conversion(%r)' % str(root),
+                'result = subprocess.check_output([sys.executable, prepared["script_path"], %r, %r], text=True)' % (str(source), str(root / 'report.docx')),
+                'print(result)',
+            ])
+            policy = '(version 1)(allow default)(deny file-read* (subpath %s))' % json.dumps(str(skill))
+            result = subprocess.run(['/usr/bin/sandbox-exec', '-p', policy, sys.executable, '-'], input=code, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt['profile'], 'open-science-report-v1')
+            with zipfile.ZipFile(root / 'report.docx') as package:
+                styles = ET.fromstring(package.read('word/styles.xml'))
+                header = styles.find("w:style[@w:styleId='Table']/w:tblStylePr[@w:type='firstRow']", NS)
+                self.assertIsNotNone(header.find('w:rPr/w:b', NS))
+                self.assertEqual(header.find('w:tcPr/w:shd', NS).get('{%s}fill' % NS['w']), 'F2F4F7')
+
     def test_table_body_normalization_is_scoped_and_idempotent(self):
         spec = importlib.util.spec_from_file_location('docx_convert', SCRIPT)
         module = importlib.util.module_from_spec(spec)

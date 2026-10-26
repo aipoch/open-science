@@ -5,7 +5,10 @@
     "resources/skills/docx-generation/SKILL.md",
     "resources/skills/docx-generation/scripts/convert.py",
     "resources/skills/docx-generation/scripts/build_reference.py",
-    "resources/skills/docx-generation/assets/reference.docx"
+    "resources/skills/docx-generation/assets/reference.docx",
+    "resources/skills/docx-generation/open-science.json",
+    "resources/skills/docx-generation/kernel.py",
+    "resources/skills/docx-generation/scripts/build_kernel.py"
   ],
   "interfacePaths": [
     "resources/skills/docx-generation/SKILL.md",
