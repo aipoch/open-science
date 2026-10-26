@@ -1,12 +1,7 @@
 import { NotebookTextOutput } from '../NotebookRunOutputs'
 import { GeneratedFileCard, artifactGalleryClassName } from '../GeneratedFileCard'
 import { formatByteSize } from '@/lib/utils'
-import {
-  isAgentResultDeliveryAttribution,
-  isComputeJobCompletionAttribution,
-  isComputeJobCompletionPresentation,
-  isReviewerCorrectionAttribution
-} from '../../../../../shared/session-persistence'
+import { isReviewerCorrectionAttribution } from '../../../../../shared/session-persistence'
 import { ReplayReviewRecord } from './ReplayReviewRecord'
 import {
   lazy,
@@ -63,6 +58,7 @@ import {
   createReplayPresentation,
   replayPresentationStyle,
   useReplayTranslation,
+  replayAutomaticEvent,
   type ReplayPresentationConfig
 } from './replay-presentation'
 
@@ -381,15 +377,7 @@ const StepConversation = memo(function StepConversation({
     [artifactResources, step.resourceIds, interactive]
   )
   const message = step.message
-  const isAgentResultDelivery = isAgentResultDeliveryAttribution(message?.attribution)
-  const isComputeJobCompletion =
-    isComputeJobCompletionAttribution(message?.attribution) ||
-    (message && isComputeJobCompletionPresentation(message))
-  const automaticEvent = isAgentResultDelivery
-    ? { title: t('Background activity'), description: t('New task results are available') }
-    : isComputeJobCompletion
-      ? { title: t('Remote job completed'), description: t('Analysis started automatically') }
-      : undefined
+  const automaticEvent = replayAutomaticEvent(message, t)
   const content = message?.content ?? ''
   // Reconstruction is explicit. Reveal rate derives exclusively from logical scene time.
   const visible = active ? content.slice(0, messageCharacters) : content

@@ -1,3 +1,5 @@
+import { createLinearConversationGraph } from '../../../../../shared/conversation-graph'
+import { buildReplayDocument } from '@/lib/replay/timeline'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -262,6 +264,65 @@ describe('research replay interaction', () => {
         expect(JSON.stringify(document)).toBe(before)
       }
     )
+
+    if (interactive) {
+      it.each(cases)(
+        'keeps $name payload out of navigation after history projection',
+        async ({ metadata, title }) => {
+          const message = {
+            ...step('automatic', 0, payload).message!,
+            role: 'user' as const,
+            ...metadata
+          }
+          const source = {
+            session: {
+              id: 's',
+              projectId: 'p',
+              title: 'Research',
+              cwd: '/workspace',
+              status: 'idle' as const,
+              messages: [message],
+              createdAt: 1,
+              updatedAt: 1,
+              conversationGraph: createLinearConversationGraph({
+                sessionId: 's',
+                messages: [message],
+                createdAt: 1,
+                updatedAt: 1
+              })
+            },
+            runs: [],
+            resources: [],
+            issues: []
+          }
+          const before = JSON.stringify(source)
+          const document = buildReplayDocument(source)
+          render(<ReplayPanel document={document} {...callbacks()} />)
+          const browse = screen.getByRole('button', { name: 'Browse steps' })
+          expect(browse.textContent).toContain(title)
+          expect(browse.getAttribute('title')).toBe(title)
+          const slider = screen.getByRole('slider', { name: 'Replay progress' })
+          expect(slider.getAttribute('aria-valuetext')).toContain(title)
+          expect(slider.getAttribute('aria-valuetext')).not.toContain(
+            'Background execution outcomes'
+          )
+          const timeline = screen.getByTestId('replay-timeline')
+          vi.spyOn(timeline, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 32))
+          fireEvent.pointerMove(timeline, { clientX: 500 })
+          expect((await screen.findByTestId('replay-seek-preview')).textContent).toContain(title)
+          fireEvent.pointerLeave(timeline)
+          fireEvent.click(browse)
+          const directory = screen.getByRole('dialog', { name: 'Browse steps' })
+          const entry = within(directory).getByRole('button', { name: `Go to step 1: ${title}` })
+          expect(entry.getAttribute('title')).toBe(title)
+          expect(globalThis.document.body.textContent).not.toContain(
+            'Background execution outcomes'
+          )
+          expect(globalThis.document.body.textContent).not.toContain('private-run')
+          expect(JSON.stringify(source)).toBe(before)
+        }
+      )
+    }
 
     it('preserves identical human-authored text without attribution', () => {
       const document = makeDocument()
