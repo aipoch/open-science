@@ -1,4 +1,3 @@
-import type { AcpSpecialistResolutionContext } from './runtime-contract'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { join } from 'node:path'
@@ -17,6 +16,13 @@ import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()
+
+// Diagnostic metadata only: never grants authority or carries Specialist configuration.
+type AcpSpecialistResolutionContext = Readonly<{
+  sessionId: string
+  frameworkId: string
+  modelRoute?: string
+}>
 type AcpTurnSkillHooks = Readonly<{
   preparedSkillIds?: readonly string[]
   needForceLoad: (ids: string[]) => Promise<string[]>
@@ -514,4 +520,4 @@ const followUpPromptText = (presented: { text: string; skillScopeGuidance?: stri
     : presented.text
 
 export { AcpTurnSkillOwner, codeBuddySkillRuntimeRoot, followUpPromptText }
-export type { AcpTurnSkillHooks, TurnSkillHandle, TurnSkillOutcome }
+export type { AcpSpecialistResolutionContext, AcpTurnSkillHooks, TurnSkillHandle, TurnSkillOutcome }

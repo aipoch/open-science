@@ -51,7 +51,9 @@ import type { ImageInputCompatibilityPort } from './image-input-compatibility-po
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
-import type { AcpTurnSkillHooks } from './turn-skill-owner'
+import type { AcpSpecialistResolutionContext, AcpTurnSkillHooks } from './turn-skill-owner'
+
+export type { AcpSpecialistResolutionContext } from './turn-skill-owner'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateUpdate) => void
@@ -421,10 +423,3 @@ export type AcpRuntimePlanOptions = {
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }
-
-// Diagnostic metadata only: never grants authority or carries Specialist configuration.
-export type AcpSpecialistResolutionContext = Readonly<{
-  sessionId: string
-  frameworkId: string
-  modelRoute?: string
-}>
