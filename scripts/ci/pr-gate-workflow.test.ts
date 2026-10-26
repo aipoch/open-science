@@ -1673,6 +1673,21 @@ describe('PR Gate workflow', () => {
     )
   })
 
+  it('runs lossless file identity and preview transport regressions on Windows', () => {
+    const step = workflow.jobs.windows_core.steps?.find(
+      ({ name }) => name === 'Test Windows-specific behavior'
+    )
+    for (const file of [
+      'bounded-file-io',
+      'managed-preview-resources',
+      'managed-preview-ipc',
+      'managed-preview-protocol'
+    ]) {
+      expect(step?.run).toContain(`src/main/${file}.test.ts`)
+    }
+    expect(step?.run).not.toContain('--testNamePattern')
+  })
+
   it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
     expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(35)
   })

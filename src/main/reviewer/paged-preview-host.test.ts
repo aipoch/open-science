@@ -12,7 +12,7 @@ const request = {
   pages: [2],
   includePreview: true,
   maxBytes: 1000,
-  verifiedObservation: { device: 1, inode: 2, sizeBytes: 100, modifiedAtMs: 3, changedAtMs: 4 },
+  verifiedObservation: { device: '1', inode: '2', sizeBytes: 100, modifiedAtMs: 3, changedAtMs: 4 },
   verifiedChecksum: 'checked'
 }
 const resource = {

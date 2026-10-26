@@ -1160,6 +1160,10 @@ jobs:
           src/main/delegation/production-framework-runtime.test.ts
           src/main/acp/specialist-switch-recovery.integration.test.ts
           src/main/file-save.test.ts
+          src/main/bounded-file-io.test.ts
+          src/main/managed-preview-resources.test.ts
+          src/main/managed-preview-ipc.test.ts
+          src/main/managed-preview-protocol.test.ts
           src/main/notebook/file-evidence-publication.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           packages/specialists/src/repository.test.ts

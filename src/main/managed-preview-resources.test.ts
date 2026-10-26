@@ -11,7 +11,7 @@ import {
   ManagedPreviewResources,
   readExactRange
 } from './managed-preview-resources'
-import type { FileObservation } from './bounded-file-io'
+import { observeFile, type FileObservation } from './bounded-file-io'
 
 describe('ManagedPreviewResources', () => {
   let temporaryDirectory: string | undefined
@@ -31,16 +31,8 @@ describe('ManagedPreviewResources', () => {
     return filePath
   }
 
-  const observe = async (path: string): Promise<FileObservation> => {
-    const value = await stat(path)
-    return {
-      device: value.dev,
-      inode: value.ino,
-      sizeBytes: value.size,
-      modifiedAtMs: value.mtimeMs,
-      changedAtMs: value.ctimeMs
-    }
-  }
+  const observe = async (path: string): Promise<FileObservation> =>
+    observeFile(await stat(path, { bigint: true }))
 
   const crc32 = (bytes: Buffer): number => {
     let crc = 0xffffffff
