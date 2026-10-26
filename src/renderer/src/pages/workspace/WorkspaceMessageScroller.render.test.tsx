@@ -2978,3 +2978,44 @@ it.each(['fork', 'branch'] as const)(
     }
   }
 )
+
+describe('settled process presentation', () => {
+  it.each(['completed', 'failed'] as const)(
+    'collapses %s intermediate output and retains the final reply',
+    async (kind) => {
+      const input = createSession({
+        status: kind === 'failed' ? 'error' : 'idle',
+        messages: [
+          createMessage({
+            id: 'prompt',
+            role: 'user',
+            turnOutcome: { kind, settledAt: 500 },
+            sortIndex: 0
+          }),
+          createMessage({
+            id: 'progress',
+            role: 'agent',
+            content: 'Intermediate explanation',
+            responseToMessageId: 'prompt',
+            sortIndex: 1
+          }),
+          createMessage({
+            id: 'final',
+            role: 'agent',
+            content: 'Final explanation',
+            responseToMessageId: 'prompt',
+            sortIndex: 2,
+            completedAt: 500
+          })
+        ]
+      })
+      const html = await renderScroller(input, { turnOutcomeActions })
+      expect(html).toContain('aria-expanded="false"')
+      expect(html).not.toContain('Intermediate explanation')
+      expect(html).toContain('Final explanation')
+      if (kind === 'failed') expect(html).toContain('Failed')
+      const isolated = await renderScroller(input)
+      expect(isolated).toContain('Intermediate explanation')
+    }
+  )
+})

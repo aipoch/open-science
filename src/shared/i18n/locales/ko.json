@@ -7569,6 +7569,7 @@
     "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요.",
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다.",
     "Fetch": "가져오기",
-    "Switch Mode": "모드 전환"
+    "Switch Mode": "모드 전환",
+    "{{count}} previous steps_other": "이전 단계 {{count}}개"
   }
 }

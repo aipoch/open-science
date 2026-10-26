@@ -32,7 +32,7 @@ import {
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
-import { ArrowDownIcon } from 'lucide-react'
+import { ArrowDownIcon, ChevronRight } from 'lucide-react'
 import {
   Fragment,
   memo,
@@ -122,6 +122,7 @@ import {
 } from './workspace-conversation-items'
 import {
   createWorkspaceConversationTimeline,
+  resolveCollapsibleTurnProcesses,
   resolveForkBoundaryItemId
 } from './workspace-conversation-timeline'
 import type { SendEditedMessage } from './workspace-edited-message'
@@ -810,9 +811,66 @@ const WorkspaceMessageScrollerImpl = ({
     [activeSession, handoffEvents]
   )
   const showTurnOutcomes = turnOutcomeActions !== undefined
-  const conversationItems = useMemo(
+  const fullConversationItems = useMemo(
     () => createWorkspaceConversationTimeline(activeSession, handoffEvents, showTurnOutcomes),
     [activeSession, handoffEvents, showTurnOutcomes]
+  )
+  const [expandedTurnState, setExpandedTurnState] = useState<{
+    scopeId: string | undefined
+    ids: Set<string>
+  }>({ scopeId: undefined, ids: new Set() })
+  const [windowFindOpen, setWindowFindOpen] = useState(false)
+  const presentingMessageIds = useMemo(
+    () =>
+      messagePresentationState.scopeId === currentPresentationScopeId
+        ? messagePresentationState.messageIds
+        : new Set<string>(),
+    [messagePresentationState, currentPresentationScopeId]
+  )
+  const turnProcesses = useMemo(
+    () =>
+      resolveCollapsibleTurnProcesses(
+        showTurnOutcomes ? activeSession : undefined,
+        fullConversationItems,
+        presentingMessageIds
+      ),
+    [showTurnOutcomes, activeSession, fullConversationItems, presentingMessageIds]
+  )
+  const isTurnExpanded = (promptId: string): boolean =>
+    windowFindOpen ||
+    (expandedTurnState.scopeId === currentPresentationScopeId &&
+      expandedTurnState.ids.has(promptId))
+  const setTurnExpanded = useCallback(
+    (promptId: string, expanded: boolean): void => {
+      setExpandedTurnState((current) => {
+        const ids = new Set(current.scopeId === currentPresentationScopeId ? current.ids : [])
+        if (expanded === ids.has(promptId)) return current
+        if (expanded) ids.add(promptId)
+        else ids.delete(promptId)
+        return { scopeId: currentPresentationScopeId, ids }
+      })
+    },
+    [currentPresentationScopeId]
+  )
+  const conversationItems = useMemo(
+    () =>
+      fullConversationItems.filter((item) => {
+        const group = turnProcesses.get(item.id)
+        return (
+          !group ||
+          windowFindOpen ||
+          (expandedTurnState.scopeId === currentPresentationScopeId &&
+            expandedTurnState.ids.has(group.promptMessageId)) ||
+          group.itemIds[0] === item.id
+        )
+      }),
+    [
+      fullConversationItems,
+      turnProcesses,
+      windowFindOpen,
+      expandedTurnState,
+      currentPresentationScopeId
+    ]
   )
   const notebookRunIdByActivityId = useMemo(
     () =>
@@ -867,10 +925,6 @@ const WorkspaceMessageScrollerImpl = ({
   )
   const presentationScopeRemainedVisible =
     visibleMessageSnapshot.scopeId === currentPresentationScopeId
-  const presentingMessageIds =
-    messagePresentationState.scopeId === currentPresentationScopeId
-      ? messagePresentationState.messageIds
-      : new Set<string>()
   const presentationRevealing = presentingMessageIds.size > 0
   // Let the workspace message queue hold queued sends until this transcript's reveal finishes,
   // plus a short settle delay so the dispatched message's scroll anchor lands after the final
@@ -904,7 +958,39 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex,
     messageScrollerViewportRef
   )
-  const revealTranscriptItem = transcriptWindow.revealMessage
+  const pendingProcessReveal = useRef<{ scopeId: string | undefined; id: string }>(undefined)
+  const revealWindowMessage = transcriptWindow.revealMessage
+  const revealTranscriptItem = useCallback(
+    (id: string): void => {
+      const group = turnProcesses.get(id)
+      if (
+        group &&
+        !(
+          expandedTurnState.scopeId === currentPresentationScopeId &&
+          expandedTurnState.ids.has(group.promptMessageId)
+        )
+      ) {
+        pendingProcessReveal.current = { scopeId: currentPresentationScopeId, id }
+        setTurnExpanded(group.promptMessageId, true)
+      } else revealWindowMessage(id)
+    },
+    [
+      turnProcesses,
+      expandedTurnState,
+      currentPresentationScopeId,
+      setTurnExpanded,
+      revealWindowMessage
+    ]
+  )
+  useLayoutEffect(() => {
+    const pending = pendingProcessReveal.current
+    if (!pending) return
+    pendingProcessReveal.current = undefined
+    if (pending.scopeId === currentPresentationScopeId) revealWindowMessage(pending.id)
+  }, [currentPresentationScopeId, conversationItems, revealWindowMessage])
+  const fullPresentationBarrierIndex = fullConversationItems.findIndex(
+    (item) => item.type === 'message' && presentingMessageIds.has(item.message.id)
+  )
   const searchFocus = useSearchMessageFocusStore((state) => state.pending)
   const navigationRevision = useNavigationStore((state) => state.userNavigationRevision)
   useEffect(() => {
@@ -915,18 +1001,20 @@ const WorkspaceMessageScrollerImpl = ({
     }
     if (searchFocus.projectId !== currentProjectId || searchFocus.sessionId !== currentSessionId)
       return
-    const index = conversationItems.findIndex(
+    const index = fullConversationItems.findIndex(
       (item) => item.type === 'message' && item.message.id === searchFocus.messageId
     )
-    if (index < 0 || (presentationBarrierIndex >= 0 && index > presentationBarrierIndex)) return
-    revealTranscriptItem(searchFocus.messageId)
+    if (index < 0 || (fullPresentationBarrierIndex >= 0 && index > fullPresentationBarrierIndex))
+      return
+    const frame = requestAnimationFrame(() => revealTranscriptItem(searchFocus.messageId))
+    return () => cancelAnimationFrame(frame)
   }, [
     searchFocus,
     navigationRevision,
     currentProjectId,
     currentSessionId,
-    conversationItems,
-    presentationBarrierIndex,
+    fullConversationItems,
+    fullPresentationBarrierIndex,
     revealTranscriptItem
   ])
   const [annotationScrollTarget, setAnnotationScrollTarget] = useState<{
@@ -947,7 +1035,7 @@ const WorkspaceMessageScrollerImpl = ({
         return
       }
 
-      const targetIndex = conversationItems.findIndex((item) => {
+      const targetIndex = fullConversationItems.findIndex((item) => {
         if (source.kind === 'agent-message') {
           return item.type === 'message' && item.message.id === source.messageId
         }
@@ -970,12 +1058,12 @@ const WorkspaceMessageScrollerImpl = ({
       })
       if (
         targetIndex < 0 ||
-        (presentationBarrierIndex >= 0 && targetIndex > presentationBarrierIndex)
+        (fullPresentationBarrierIndex >= 0 && targetIndex > fullPresentationBarrierIndex)
       ) {
         return
       }
 
-      const target = conversationItems[targetIndex]!
+      const target = fullConversationItems[targetIndex]!
       revealTranscriptItem(target.id)
       setAnnotationScrollTarget({ sessionId: source.sessionId, messageId: target.id })
       if (source.kind !== 'session-item') return
@@ -1015,9 +1103,8 @@ const WorkspaceMessageScrollerImpl = ({
       stopAnnotation()
       stopBookmark()
     }
-  }, [conversationItems, currentSessionId, presentationBarrierIndex, revealTranscriptItem])
+  }, [fullConversationItems, currentSessionId, fullPresentationBarrierIndex, revealTranscriptItem])
   const revealFullTranscript = transcriptWindow.revealAll
-  const [windowFindOpen, setWindowFindOpen] = useState(false)
   const windowFindAcknowledgedScopeRef = useRef<{ scopeId: string | undefined } | undefined>(
     undefined
   )
@@ -1600,6 +1687,16 @@ const WorkspaceMessageScrollerImpl = ({
       </MessageScrollerItem>
     ) : null
 
+  const transcriptEntries = transcriptWindow.entries.flatMap((entry) => {
+    const process = turnProcesses.get(entry.item.id)
+    return process?.itemIds[0] === entry.item.id
+      ? [
+          { ...entry, processHeader: true },
+          ...(isTurnExpanded(process.promptMessageId) ? [{ ...entry, processHeader: false }] : [])
+        ]
+      : [{ ...entry, processHeader: false }]
+  })
+
   return (
     <TooltipProvider
       key={activeSession?.id ?? 'empty-conversation'}
@@ -1631,6 +1728,8 @@ const WorkspaceMessageScrollerImpl = ({
               searchFocus?.navigationRevision === navigationRevision &&
               searchFocus.projectId === currentProjectId &&
               searchFocus.sessionId === currentSessionId &&
+              (!turnProcesses.has(searchFocus.messageId) ||
+                isTurnExpanded(turnProcesses.get(searchFocus.messageId)!.promptMessageId)) &&
               transcriptWindow.entries.some(
                 ({ item }) => item.type === 'message' && item.message.id === searchFocus.messageId
               )
@@ -1644,9 +1743,7 @@ const WorkspaceMessageScrollerImpl = ({
             key={currentPresentationScopeId}
             items={presentedConversationItems}
             viewport={messageScrollerViewport}
-            onRevealMessage={
-              presentationBarrierIndex >= 0 ? undefined : transcriptWindow.revealMessage
-            }
+            onRevealMessage={presentationBarrierIndex >= 0 ? undefined : revealTranscriptItem}
           />
           <div
             aria-hidden="true"
@@ -1744,7 +1841,42 @@ const WorkspaceMessageScrollerImpl = ({
                 onCommit={handleVisibleMessageSnapshotCommit}
               />
               {/* Messages and tool activities share one sorted transcript timeline. */}
-              {transcriptWindow.entries.map(({ item, itemIndex }) => {
+              {transcriptEntries.map(({ item, itemIndex, processHeader }) => {
+                const process = turnProcesses.get(item.id)
+                const expanded = process ? isTurnExpanded(process.promptMessageId) : false
+                const disclosure =
+                  processHeader && process ? (
+                    <MessageScrollerItem
+                      key={`process-${process.promptMessageId}`}
+                      messageId={expanded ? `process-${process.promptMessageId}` : item.id}
+                      className="min-w-0"
+                    >
+                      <div className="mx-4 mb-3 border-b border-border-200 py-2 md:mx-6">
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          onClick={() => setTurnExpanded(process.promptMessageId, !expanded)}
+                          className="inline-flex items-center gap-2 rounded-sm py-1 text-sm text-text-300 hover:text-text-100 focus-visible:keyboard-focus"
+                        >
+                          <ChevronRight
+                            aria-hidden="true"
+                            className={cn(
+                              'size-4 transition-transform motion-reduce:transition-none',
+                              expanded && 'rotate-90'
+                            )}
+                          />
+                          {t('{{count}} previous steps', {
+                            count: process.count,
+                            defaultValue_one: '{{count}} previous step'
+                          })}
+                          {process.outcome === 'failed' ? (
+                            <span className="text-status-failure-foreground">{t('Failed')}</span>
+                          ) : null}
+                        </button>
+                      </div>
+                    </MessageScrollerItem>
+                  ) : null
+                if (processHeader) return disclosure
                 // Later text messages and their config-change dividers stay behind the
                 // presentation barrier. Tool, activity, and other non-message rows render
                 // in real time so their running state stays visible while the reply paces

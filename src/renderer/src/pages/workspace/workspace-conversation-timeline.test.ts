@@ -12,6 +12,7 @@ import {
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 import {
   createWorkspaceConversationTimeline,
+  resolveCollapsibleTurnProcesses,
   resolveCurrentTurnOutcomeItem,
   resolveForkBoundaryItemId
 } from './workspace-conversation-timeline'
@@ -1087,4 +1088,106 @@ it('anchors a branch with a hidden head to its last visible ancestor', () => {
   })
   const timeline = createWorkspaceConversationTimeline(input).filter((item) => item.id !== 'hidden')
   expect(resolveForkBoundaryItemId(input, timeline)).toBe('visible')
+})
+
+describe('settled turn process disclosure', () => {
+  const fixture = (kind: 'completed' | 'failed' = 'completed'): ChatSession =>
+    session({
+      messages: [
+        message({ turnOutcome: { kind, settledAt: 600 }, sortIndex: 0 }),
+        message({
+          id: 'progress',
+          role: 'agent',
+          content: 'Checking data',
+          responseToMessageId: 'prompt-1',
+          sortIndex: 1
+        }),
+        message({
+          id: 'answer',
+          role: 'agent',
+          content: 'Result',
+          responseToMessageId: 'prompt-1',
+          sortIndex: 4,
+          completedAt: 600
+        })
+      ],
+      activities: [activity({ sortIndex: 2 })]
+    })
+  const groups = (
+    input: ChatSession,
+    presenting: string[] = []
+  ): ReturnType<typeof resolveCollapsibleTurnProcesses> =>
+    resolveCollapsibleTurnProcesses(
+      input,
+      createWorkspaceConversationTimeline(input),
+      new Set(presenting)
+    )
+
+  it.each(['completed', 'failed'] as const)(
+    'keeps the final reply and completion outside %s process',
+    (kind) => {
+      const result = groups(fixture(kind))
+      expect(result.get('progress')).toMatchObject({ promptMessageId: 'prompt-1', outcome: kind })
+      expect(result.has('answer')).toBe(false)
+      expect(result.has('prompt-1')).toBe(false)
+      expect(result.has('turn-completion-answer')).toBe(false)
+    }
+  )
+
+  it('does not hide running, revealing, cancelled, interrupted or unknown outcomes', () => {
+    const input = fixture()
+    expect(groups(input, ['answer']).size).toBe(0)
+    expect(groups({ ...input, agentPromptInFlight: true }).size).toBe(0)
+    expect(groups({ ...input, status: 'waiting-for-user' }).size).toBe(0)
+    for (const outcome of [
+      undefined,
+      { kind: 'cancelled' as const, settledAt: 600, recovery: 'resume' as const },
+      {
+        kind: 'interrupted' as const,
+        settledAt: 600,
+        cause: 'app-restart' as const,
+        recovery: 'resume' as const
+      }
+    ]) {
+      expect(
+        groups({
+          ...input,
+          messages: input.messages.map((m, i) => (i ? m : { ...m, turnOutcome: outcome }))
+        }).size
+      ).toBe(0)
+    }
+  })
+
+  it('leaves successful turns without a final reply expanded, but can fold failed tool-only turns', () => {
+    for (const kind of ['completed', 'failed'] as const) {
+      const input = fixture(kind)
+      input.messages = input.messages.slice(0, 1)
+      expect(groups(input).size > 0).toBe(kind === 'failed')
+    }
+  })
+
+  it('retains routed user replies and unowned legacy messages', () => {
+    const input = fixture()
+    input.messages.splice(
+      2,
+      0,
+      message({ id: 'steering', role: 'user', responseToMessageId: 'prompt-1', sortIndex: 2 }),
+      message({ id: 'legacy', role: 'agent', sortIndex: 3 })
+    )
+    const result = groups(input)
+    expect(result.has('steering')).toBe(false)
+    expect(result.has('legacy')).toBe(false)
+    expect(result.has('progress')).toBe(true)
+  })
+
+  it('does not collapse a different branch or alter the authoritative timeline', () => {
+    const input = fixture()
+    const timeline = createWorkspaceConversationTimeline(input)
+    const before = JSON.stringify(timeline)
+    expect(
+      resolveCollapsibleTurnProcesses({ ...input, messages: [] }, timeline, new Set()).size
+    ).toBe(0)
+    resolveCollapsibleTurnProcesses(input, timeline, new Set())
+    expect(JSON.stringify(timeline)).toBe(before)
+  })
 })
