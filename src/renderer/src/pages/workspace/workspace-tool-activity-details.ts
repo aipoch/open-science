@@ -98,6 +98,41 @@ const TOOL_KIND_LABELS: Record<ToolKind, string> = {
   other: 'Tool'
 }
 
+const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
+  'Agent SDK',
+  'Code',
+  'Code risk review',
+  'Command',
+  'Content',
+  'Error',
+  'File',
+  'Input',
+  'Log',
+  'Literature library',
+  'Manage packages',
+  'Memory categories',
+  'Notebook run',
+  'Output',
+  'Packages',
+  'Prompt',
+  'Request',
+  'Result',
+  'Reading',
+  'Save memory',
+  'Search memory',
+  'Shell',
+  'Skill',
+  'Tool output image',
+  'Tool search',
+  'Tools found',
+  'Web Fetch',
+  'Write file'
+])
+
+// Shares the tool row's existing translations with compact group summaries.
+const translateToolDetailCopy = (value: string, t: TranslateClause): string =>
+  TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
+
 // Maps common file extensions to Shiki-friendly language ids for diff/read highlighting.
 const EXTENSION_LANGUAGES: Record<string, string> = {
   bash: 'bash',
@@ -1335,6 +1370,7 @@ const buildToolActivityDetails = (
 
 export {
   buildToolActivityDetails,
+  translateToolDetailCopy,
   getNotebookRunIdFromActivity,
   getNotebookRunStatusFromActivity,
   getSkillLoadDocument,

@@ -1,8 +1,14 @@
 import type { PersistedActivityGroup } from '../../../../shared/session-persistence'
 import type { ToolActivity } from '@/stores/session-store-contract'
 
-import { isActivityActive, type ConversationItem } from './workspace-conversation-items'
 import {
+  formatActivityTitle,
+  isActivityActive,
+  type ConversationItem
+} from './workspace-conversation-items'
+import {
+  buildToolActivityDetails,
+  translateToolDetailCopy,
   isEditActivity,
   isSkillActivity,
   getNotebookRunIdFromActivity
@@ -338,18 +344,28 @@ const formatActivityGroupPresentationTitle = (
   t: TFunction = i18next.t.bind(i18next)
 ): string => {
   if (activities.some(isPendingNotebookCodeReview)) return t('Waiting for your approval')
-  const activityPhases = getRenderableActivityEntries(activities).map(({ activity }) => ({
-    activity,
-    isNotebook: isNotebookExecutionActivity(activity),
-    phase: getToolExecutionPhase(activity, permission, notebookRunsById)
-  }))
+  const activityPhases = getRenderableActivityEntries(activities).map(
+    ({ activity, activityIndex }) => ({
+      activity,
+      activityIndex,
+      isNotebook: isNotebookExecutionActivity(activity),
+      phase: getToolExecutionPhase(activity, permission, notebookRunsById)
+    })
+  )
   if (activityPhases.some(({ phase }) => phase === 'awaiting-approval'))
     return t('Waiting for your approval')
   const executing = activityPhases.filter(({ phase }) => phase === 'executing')
   const current =
     executing.find(({ activity }) => activity.status === 'in_progress') ?? executing[0]
-  const toolName = current?.activity.providerToolName?.trim() || current?.activity.title.trim()
-  if (toolName) return t('Using tool: {{name}}', { name: toolName })
+  if (current) {
+    if (isSearchActivity(current.activity, activities, current.activityIndex))
+      return t('Using tool: {{name}}', { name: t('Web Search') })
+    const details = buildToolActivityDetails(current.activity, t)
+    if (details)
+      return t('Using tool: {{name}}', { name: translateToolDetailCopy(details.displayName, t) })
+    if (current.activity.providerToolName?.trim() || current.activity.title.trim())
+      return formatActivityTitle(current.activity, 'executing', t)
+  }
   const phases = activityPhases.filter(({ isNotebook }) => isNotebook).map(({ phase }) => phase)
   const notebookCount = phases.length
   if (!phases.includes('executing') && activityPhases.some(({ phase }) => phase === 'executing'))
