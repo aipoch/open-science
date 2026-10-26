@@ -434,10 +434,17 @@ const waitForShutdownExit = (
     )
   })
 
-const packagedResourcePaths = (installDirectory, { includeWslPreview = true } = {}) => [
+const packagedResourcePaths = (
+  installDirectory,
+  { includeWslPreview = true, legacyMicromamba = false } = {}
+) => [
   join(installDirectory, APP_EXECUTABLE),
   join(installDirectory, 'resources', 'app.asar'),
-  join(installDirectory, 'resources', 'micromamba.exe'),
+  ...(legacyMicromamba
+    ? [join(installDirectory, 'resources', 'micromamba.exe')]
+    : ['micromamba.exe', 'micromamba-compat.exe'].map((name) =>
+        join(installDirectory, 'resources', 'backend', 'resources', name)
+      )),
   ...(includeWslPreview
     ? [join(installDirectory, 'resources', 'notebook-network-sandbox', 'wsl2', 'manifest.json')]
     : []),
@@ -869,10 +876,21 @@ const removeWslCommandTempEvidence = async ({ root, receipt }) => {
   await rm(receipt, { force: true })
 }
 
-const assertPackagedResources = async (installDirectory, { certifyWslPreview = true } = {}) => {
-  for (const path of packagedResourcePaths(installDirectory, {
-    includeWslPreview: certifyWslPreview
-  })) {
+const assertPackagedResources = async (
+  installDirectory,
+  { certifyWslPreview = true, allowLegacyMicromamba = false } = {}
+) => {
+  // Only previous/rollback certification may inspect installers released before backend staging.
+  const legacyMicromamba =
+    allowLegacyMicromamba &&
+    !(await pathExists(
+      join(installDirectory, 'resources', 'backend', 'resources', 'micromamba.exe')
+    ))
+  const paths = packagedResourcePaths(installDirectory, {
+    includeWslPreview: certifyWslPreview,
+    legacyMicromamba
+  })
+  for (const path of paths) {
     if (!(await pathExists(path))) throw new Error(`Packaged Windows resource is missing: ${path}`)
   }
   const prismaRoot = join(installDirectory, 'resources', 'backend', 'resources', 'prisma-client')
@@ -883,7 +901,7 @@ const assertPackagedResources = async (installDirectory, { certifyWslPreview = t
   if (nativeEngines.length !== 1 || nativeEngines[0] !== 'query_engine-windows.dll.node') {
     throw new Error(`Packaged Windows must contain exactly one Prisma engine in ${prismaRoot}.`)
   }
-  if (!certifyWslPreview) return
+  if (!certifyWslPreview) return paths[2]
   const wslManifest = JSON.parse(
     await readFile(
       join(installDirectory, 'resources', 'notebook-network-sandbox', 'wsl2', 'manifest.json'),
@@ -906,6 +924,7 @@ const assertPackagedResources = async (installDirectory, { certifyWslPreview = t
   if (!isDeepStrictEqual(wslManifest, expectedWslManifest)) {
     throw new Error('Packaged Windows WSL2 sandbox assets are missing or version-mismatched.')
   }
+  return paths[2]
 }
 
 const upgradeSentinelPath = (configRoot, sentinelName) => join(configRoot, sentinelName)
@@ -1244,10 +1263,11 @@ const installAndProbe = async ({
   if (!reuseInstallation) {
     await installApplication(installer, installDirectory, env)
   }
-  await assertPackagedResources(installDirectory, {
-    certifyWslPreview: phase === 'current' || phase === 'restart'
+  const micromamba = await assertPackagedResources(installDirectory, {
+    certifyWslPreview: phase === 'current' || phase === 'restart',
+    allowLegacyMicromamba: phase === 'previous' || phase === 'rollback'
   })
-  await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
+  await runProcess(micromamba, ['--version'], { env })
   if (phase === 'current')
     await runPackagedLocalRpcSmoke({ installDirectory, env, artifactRpcContract })
   return launchAndProbe({
@@ -1288,10 +1308,11 @@ const installOverRunningApp = async ({
     throw error
   }
 
-  await assertPackagedResources(installDirectory, {
-    certifyWslPreview: phase === 'current' || phase === 'restart'
+  const micromamba = await assertPackagedResources(installDirectory, {
+    certifyWslPreview: phase === 'current' || phase === 'restart',
+    allowLegacyMicromamba: phase === 'previous' || phase === 'rollback'
   })
-  await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
+  await runProcess(micromamba, ['--version'], { env })
   if (phase === 'current')
     await runPackagedLocalRpcSmoke({ installDirectory, env, artifactRpcContract })
   if (!launchInstalledApp) return undefined

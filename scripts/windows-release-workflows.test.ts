@@ -632,8 +632,8 @@ describe('post-merge Windows validation', () => {
     const verification = readFileSync('scripts/ci/verify-windows-signature.ps1', 'utf8')
     expect(verification).toContain('Get-ChildItem -LiteralPath $unpacked -File -Recurse')
     expect(verification).toContain('Test-PortableExecutable $_.FullName')
-    expect(verification).toContain('resources/micromamba.exe')
-    expect(verification).toContain('resources/micromamba-compat.exe')
+    expect(verification).toContain('resources/backend/resources/micromamba.exe')
+    expect(verification).toContain('resources/backend/resources/micromamba-compat.exe')
     expect(verification).toContain('notebook-appcontainer-host.exe')
   })
 

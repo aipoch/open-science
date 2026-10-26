@@ -366,21 +366,17 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
     expect((load(yml) as { asarUnpack: string[] }).asarUnpack).toContain('resources/**')
   })
 
-  it('ships micromamba as a per-platform extraResource to Contents/Resources', () => {
-    const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    // Staged per-platform binaries copied to the resources root under the name micromamba(.exe).
-    expect(yml).toContain('resources/bin/mac/${arch}/micromamba')
-    expect(yml).toContain('resources/bin/win/${arch}/micromamba.exe')
-    expect(yml).toContain('resources/bin/linux/${arch}/micromamba')
-    expect(yml).toContain('to: micromamba')
-  })
-
-  it('ships the independently pinned compatibility runner only on Windows', () => {
-    const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toContain('resources/bin/win/${arch}/micromamba-compat.exe')
-    expect(yml).toContain('to: micromamba-compat.exe')
-    expect(yml).not.toContain('resources/bin/mac/${arch}/micromamba-compat')
-    expect(yml).not.toContain('resources/bin/linux/${arch}/micromamba-compat')
+  it('ships micromamba only through the backend resource tree on every platform', () => {
+    const config = load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
+      extraResources: Array<{ from: string; to: string }>
+      mac?: { extraResources?: Array<{ from: string; to: string }> }
+      win?: { extraResources?: Array<{ from: string; to: string }> }
+      linux?: { extraResources?: Array<{ from: string; to: string }> }
+    }
+    expect(config.extraResources).toContainEqual({ from: 'out/desktop-backend', to: 'backend' })
+    for (const platform of ['mac', 'win', 'linux'] as const)
+      for (const entry of [...config.extraResources, ...(config[platform]?.extraResources ?? [])])
+        expect(entry.to).not.toMatch(/micromamba/)
   })
 
   it('macOS entitlements disable library validation for conda dylibs', () => {

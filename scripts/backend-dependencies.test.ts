@@ -268,6 +268,12 @@ describe('desktop-only dependency contents', () => {
       expect(
         await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
       ).toContain('i18next')
+      for (const name of process.platform === 'win32'
+        ? ['micromamba.exe', 'micromamba-compat.exe']
+        : ['micromamba'])
+        expect(await readFile(join(root, 'out/desktop-backend/resources', name), 'utf8')).toBe(
+          'synthetic fixture'
+        )
     } finally {
       await rm(root, { recursive: true, force: true })
     }

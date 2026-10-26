@@ -56,9 +56,8 @@ files:
   # vendored source/native trees out of app.asar; the executable resources are copied explicitly per
   # platform below so path resolution and code signing remain deterministic.
   - '!node_modules/@aipoch/notebook-network-sandbox{,/**/*}'
-  # Micromamba is copied from this staging tree to the resources root by the platform-specific
-  # extraResources entries below. Keep the staging copies out of app.asar and avoid shipping a
-  # second, unused copy under app.asar.unpacked/resources/bin.
+  # stage-backend supplies the target's primary and Windows compatibility micromamba binaries.
+  # Keep the staging tree out of app.asar; the backend resource copy is the only runtime copy.
   - '!resources/bin{,/**/*}'
 asarUnpack:
   - node_modules/@aipoch/notebook-syntax/assets/**
@@ -69,8 +68,6 @@ asarUnpack:
   - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
-# The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
-# the two extraResources lists don't collide.
 extraResources:
   - from: out/desktop-backend
     to: backend
@@ -126,14 +123,6 @@ win:
   target:
     - nsis
   extraResources:
-    # Staged per-arch micromamba binary, copied to the resources root (Task 2's resolveMicromamba
-    # looks for it there via process.resourcesPath).
-    - from: resources/bin/win/${arch}/micromamba.exe
-      to: micromamba.exe
-    # A separately pinned final-1.x build gives the app an independently built runner when the
-    # primary executable cannot even pass `--version` on a particular Windows machine.
-    - from: resources/bin/win/${arch}/micromamba-compat.exe
-      to: micromamba-compat.exe
     - from: build/windows-update-handoff-uninstall.ps1
       to: windows-update-handoff-uninstall.ps1
     - from: build/windows-runtime-cache-uninstall.ps1
@@ -192,12 +181,6 @@ mac:
     NSRemovableVolumesUsageDescription: Open-Science needs access to removable volumes to browse, open, and save your research files.
     NSLocalNetworkUsageDescription: Open-Science needs local network access to connect to compute hosts and services you configure.
   notarize: false
-  extraResources:
-    # Ship the ad-hoc-signed micromamba mach-O at Contents/Resources/micromamba, where
-    # resolveMicromamba() finds it via process.resourcesPath. Envs materialize in ~/.open-science
-    # (never in the signed .app), so only this one binary needs signing (spec §10).
-    - from: resources/bin/mac/${arch}/micromamba
-      to: micromamba
 dmg:
   # Bzip2 reduces the full desktop payload without changing the installed application.
   format: UDBZ
@@ -245,10 +228,6 @@ linux:
   maintainer: aipoch
   category: Utility
   extraResources:
-    # Staged per-arch micromamba binary, copied to the resources root (Task 2's resolveMicromamba
-    # looks for it there via process.resourcesPath).
-    - from: resources/bin/linux/${arch}/micromamba
-      to: micromamba
     # Debian registers this CLI entry; AppImage retains its explicit user launcher workflow.
     - from: build/deb-cli-launcher
       to: open-science-cli

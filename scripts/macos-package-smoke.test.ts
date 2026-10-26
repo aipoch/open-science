@@ -191,7 +191,7 @@ describe('macOS package smoke', () => {
     await Promise.all([
       writeFile(join(executableDirectory, 'Open-Science'), ''),
       writeFile(join(resources, 'app.asar'), ''),
-      writeFile(join(resources, 'micromamba'), ''),
+      writeFile(join(resources, 'backend', 'resources', 'micromamba'), ''),
       writeFile(join(resources, 'Assets.car'), ''),
       writeFile(join(resources, 'icon.icns'), ''),
       writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), ''),
@@ -200,9 +200,14 @@ describe('macOS package smoke', () => {
 
     await expect(assertPackagedResources(appBundle)).resolves.toEqual({
       executable: join(executableDirectory, 'Open-Science'),
-      micromamba: join(resources, 'micromamba'),
+      micromamba: join(resources, 'backend', 'resources', 'micromamba'),
       processTreeNative
     })
+
+    await rm(join(resources, 'backend', 'resources', 'micromamba'))
+    await writeFile(join(resources, 'micromamba'), 'obsolete duplicate')
+    await expect(assertPackagedResources(appBundle)).rejects.toThrow()
+    await writeFile(join(resources, 'backend', 'resources', 'micromamba'), '')
 
     await rm(join(resources, 'Assets.car'))
     await expect(assertPackagedResources(appBundle)).rejects.toThrow()

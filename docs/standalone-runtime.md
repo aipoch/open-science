@@ -610,3 +610,9 @@ runtime copies remain in `resources/backend`; the renderer keeps its compiled fe
 Main/preload builds reject new direct or transitive dependency edges into the excluded packages,
 so a future desktop consumer must restore its dependency before packaging. Native desktop helpers,
 update dependencies and diagnostics remain in the Electron host.
+
+Micromamba is shipped once, in the backend's `resources` directory (including the independently
+pinned Windows compatibility runner). Desktop signature and package smoke checks use those same
+files; no additional copy is required in Electron's resource root. Windows previous/rollback
+installer certification retains explicit support for the old layout, while current installers
+must contain both backend runners. This does not change application data or runtime resolution.
