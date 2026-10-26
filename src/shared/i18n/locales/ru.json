@@ -8045,6 +8045,10 @@
     "{{count}} previous messages_one": "{{count}} предыдущее сообщение",
     "{{count}} previous messages_few": "{{count}} предыдущих сообщения",
     "{{count}} previous messages_many": "{{count}} предыдущих сообщений",
-    "{{count}} previous messages_other": "{{count}} предыдущего сообщения"
+    "{{count}} previous messages_other": "{{count}} предыдущего сообщения",
+    "Could not continue the task": "Не удалось продолжить задачу",
+    "Your conversation is preserved. End this wait to return to the conversation.": "Диалог сохранён. Завершите это ожидание, чтобы вернуться к диалогу.",
+    "End this wait": "Завершить ожидание",
+    "Retry continuation": "Повторить продолжение"
   }
 }

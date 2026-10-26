@@ -93,13 +93,20 @@ class AcpDurableContinuationContextOwner {
     action: 'accept' | 'decline' | 'cancel'
     answers?: ElicitationAnswer[]
     replacePreviousAnswer?: boolean
+    retryContinuation?: boolean
+    continuePrepared?: boolean
     replay?: DurableContinuationReplay
   }): Promise<DurableElicitationContinuationPreparation> {
     const session = await this.loadSession(input.projectId, input.sessionId)
     if (input.replacePreviousAnswer) {
       return this.prepareElicitationRevision(session, input)
     }
-    const authority = this.resolvePendingElicitation(session, input)
+    if (input.action === 'cancel' && session.runtimeTranscriptOwner === 'main') {
+      return this.endElicitation(session, input)
+    }
+    const saved = input.retryContinuation || input.continuePrepared
+    if (saved) this.assertRetry(session, input)
+    const authority = this.resolvePendingElicitation(session, input, saved)
     const continuation = this.prepareFromSession(session, authority.promptMessageId, input.replay)
     const request = this.canonicalRequest(session.id, authority)
     if (session.runtimeTranscriptOwner === 'main') {
@@ -109,13 +116,17 @@ class AcpDurableContinuationContextOwner {
       const answers =
         input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
       await this.sessions.mutateRuntimeSession(input, (latest) => {
-        const current = this.resolvePendingElicitation(latest, input)
+        if (saved) this.assertRetry(latest, input)
+        const current = this.resolvePendingElicitation(latest, input, saved)
         if (!isDeepStrictEqual(current, authority)) {
           throw new Error('Durable elicitation changed before its answer was committed.')
         }
+        const previous = latest.conversationGraph!.activities.find(
+          ({ id }) => id === input.toolCallId
+        )!.elicitation!
         const projection = {
-          ...latest.conversationGraph!.activities.find(({ id }) => id === input.toolCallId)!
-            .elicitation!,
+          ...previous,
+          continuationRecovery: undefined,
           state:
             input.action === 'accept'
               ? ('answered' as const)
@@ -123,7 +134,7 @@ class AcpDurableContinuationContextOwner {
                 ? ('declined' as const)
                 : ('cancelled' as const),
           ...(answers ? { answers } : {}),
-          respondedAt: Date.now(),
+          respondedAt: saved ? previous.respondedAt : Date.now(),
           ...(input.action !== 'cancel' ? { continuationPending: true as const } : {})
         }
         return {
@@ -152,12 +163,106 @@ class AcpDurableContinuationContextOwner {
     promptMessageId: string
     requestId: string
     toolCallId: string
+    recovery?: { error: string; retryable?: true }
   }): Promise<void> {
     if (!this.sessions?.mutateRuntimeSession) return
     const session = await this.sessions.mutateRuntimeSession(input, (latest) =>
-      rearmUnacceptedElicitationContinuations(latest, input.promptMessageId, input)
+      rearmUnacceptedElicitationContinuations(latest, input.promptMessageId, input, input.recovery)
     )
     await this.publishSessionUpdated?.(structuredClone(session))
+  }
+
+  private assertRetry(
+    session: PersistedChatSession,
+    input: Parameters<AcpDurableContinuationContextOwner['prepareElicitation']>[0]
+  ): void {
+    const projection = session.conversationGraph?.activities.find(
+      ({ id }) => id === input.toolCallId
+    )?.elicitation
+    if (
+      session.status !== 'waiting-for-user' ||
+      session.activeRun ||
+      !projection?.continuationPending ||
+      (!input.continuePrepared && !projection.continuationRecovery?.retryable) ||
+      (projection.state !== 'answered' && projection.state !== 'declined') ||
+      input.action !== (projection.state === 'answered' ? 'accept' : 'decline') ||
+      !isDeepStrictEqual(input.answers, projection.answers)
+    ) {
+      throw new Error('This question continuation cannot be retried safely.')
+    }
+  }
+
+  private async endElicitation(
+    session: PersistedChatSession,
+    input: Parameters<AcpDurableContinuationContextOwner['prepareElicitation']>[0]
+  ): Promise<DurableElicitationContinuationPreparation> {
+    if (!this.sessions?.mutateRuntimeSession) {
+      throw new Error('Durable elicitation response authority is not available.')
+    }
+    const authority = this.resolvePendingElicitation(session, input, true)
+    const ended = await this.sessions.mutateRuntimeSession(input, (latest) => {
+      const current = this.resolvePendingElicitation(latest, input, true)
+      if (!isDeepStrictEqual(current, authority)) {
+        throw new Error('Durable elicitation changed before its wait was ended.')
+      }
+      const activity = latest.conversationGraph!.activities.find(
+        ({ id }) => id === input.toolCallId
+      )!
+      const projection = activity.elicitation!
+      // Repeated cancellation is a no-op, including after the conversation has moved on.
+      if (
+        projection.state !== 'pending' &&
+        !projection.continuationPending &&
+        !projection.continuationRecovery
+      ) {
+        return latest
+      }
+      if (latest.activeRun || latest.status !== 'waiting-for-user') {
+        throw new Error('Wait for the current Agent run to finish before ending this wait.')
+      }
+      this.prepareFromSession(latest, current.promptMessageId)
+      const settle = <T extends NonNullable<PersistedChatSession['activities']>[number]>(
+        item: T
+      ): T => {
+        if (item.id !== input.toolCallId || !item.elicitation) return item
+        const {
+          continuationPending: _pending,
+          continuationRecovery: _recovery,
+          ...decision
+        } = item.elicitation
+        void _pending
+        void _recovery
+        return {
+          ...item,
+          status: 'completed',
+          elicitation: {
+            ...decision,
+            ...(decision.state === 'pending'
+              ? { state: 'cancelled' as const, respondedAt: Date.now() }
+              : {})
+          }
+        }
+      }
+      const graph = {
+        ...latest.conversationGraph!,
+        activities: latest.conversationGraph!.activities.map(settle)
+      }
+      const activities = resolveActiveConversationActivities(graph).activities
+      const stillWaiting = activities.some(
+        ({ elicitation }) => elicitation?.state === 'pending' || elicitation?.continuationRecovery
+      )
+      return {
+        ...latest,
+        conversationGraph: graph,
+        activities,
+        status: stillWaiting ? 'waiting-for-user' : 'idle',
+        error: undefined,
+        errorReportable: undefined,
+        resumeRecovery: undefined
+      }
+    })
+    await this.publishSessionUpdated?.(structuredClone(ended))
+    return { request: this.canonicalRequest(session.id, authority) }
   }
 
   private resolvePendingElicitation(
@@ -165,7 +270,8 @@ class AcpDurableContinuationContextOwner {
     input: Pick<
       Parameters<AcpDurableContinuationContextOwner['prepareElicitation']>[0],
       'requestId' | 'toolCallId'
-    >
+    >,
+    allowResolved = false
   ): {
     activityId: string
     message: string
@@ -174,13 +280,13 @@ class AcpDurableContinuationContextOwner {
     promptMessageId: string
   } {
     const graph = session.conversationGraph
-    if (!graph || session.status !== 'waiting-for-user') {
+    if (!graph || (!allowResolved && session.status !== 'waiting-for-user')) {
       throw new Error('Durable elicitation no longer matches the pending Session activity.')
     }
     const visible = resolveActiveConversationActivities(graph).activities.filter(
       (activity) =>
-        activity.elicitation?.state === 'pending' &&
-        activity.elicitation.durable?.kind === 'agent-user-choice' &&
+        (allowResolved || activity.elicitation?.state === 'pending') &&
+        activity.elicitation?.durable?.kind === 'agent-user-choice' &&
         activity.elicitation.durable.requestId === input.requestId
     )
     const activity =

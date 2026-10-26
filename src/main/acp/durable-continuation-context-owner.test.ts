@@ -389,6 +389,128 @@ describe('AcpDurableContinuationContextOwner', () => {
     ).rejects.toThrow('pending Session activity')
   })
 
+  it.each(['accept', 'decline'] as const)(
+    'retains the committed %s decision after restarting an unaccepted continuation',
+    async (action) => {
+      let session = createSession([message('prompt-active', 'Choose an approach.')])
+      session.runtimeTranscriptOwner = 'main'
+      setActivities(session, [pendingChoice()])
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(session),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          session = mutate(structuredClone(session))
+          return structuredClone(session)
+        }
+      })
+      const answers =
+        action === 'accept' ? [{ fieldId: 'question_0', value: 'Expanded' }] : undefined
+      await owner.prepareElicitation({
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action,
+        answers
+      })
+
+      // Restart crosses the normal persisted Session decoding boundary. A failed
+      // continuation must not turn a committed decision back into an unanswered question.
+      await owner.rearmElicitation({
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        promptMessageId: 'prompt-active',
+        recovery: { error: 'temporary admission failure', retryable: true }
+      })
+      const restarted = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+      expect(restarted.activities?.[0].elicitation?.continuationRecovery).toEqual({
+        error: 'temporary admission failure'
+      })
+      expect(restarted.activities?.[0].elicitation?.state).toBe(
+        action === 'accept' ? 'answered' : 'declined'
+      )
+      expect(restarted.activities?.[0].elicitation?.answers).toEqual(answers)
+      expect(restarted.activities?.[0].elicitation?.respondedAt).toBe(
+        session.activities?.[0].elicitation?.respondedAt
+      )
+      expect(restarted.conversationGraph?.activities[0].elicitation).toEqual(
+        restarted.activities?.[0].elicitation
+      )
+    }
+  )
+
+  it('keeps ambiguous legacy pending data unchanged and permits an explicit end', async () => {
+    let session = createSession([message('prompt-active', 'Choose an approach.')])
+    session.runtimeTranscriptOwner = 'main'
+    setActivities(session, [pendingChoice()])
+    for (const item of [...session.activities!, ...session.conversationGraph!.activities]) {
+      item.elicitation!.continuationPending = true
+    }
+    session = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+    expect(session.activities?.[0].elicitation?.state).toBe('pending')
+    expect(session.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+    const owner = new AcpDurableContinuationContextOwner({
+      loadSessionForContinuation: async () => structuredClone(session),
+      mutateRuntimeSession: async (_scope, mutate) => {
+        session = mutate(structuredClone(session))
+        return structuredClone(session)
+      }
+    })
+    await owner.prepareElicitation({
+      projectId: session.projectId,
+      sessionId: session.id,
+      requestId: 'choice-1',
+      toolCallId: 'tool-choice-1',
+      action: 'cancel'
+    })
+    expect(session.status).toBe('idle')
+    expect(session.activities?.[0].elicitation?.state).toBe('cancelled')
+    expect(session.activities?.[0].elicitation?.answers).toBeUndefined()
+  })
+
+  it.each(['accept', 'decline'] as const)(
+    'ends a failed %s continuation durably without changing the decision',
+    async (action) => {
+      let session = createSession([message('prompt-active', 'Choose an approach.')])
+      session.runtimeTranscriptOwner = 'main'
+      setActivities(session, [pendingChoice()])
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(session),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          session = mutate(structuredClone(session))
+          return structuredClone(session)
+        }
+      })
+      const input = {
+        projectId: session.projectId,
+        sessionId: session.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1'
+      }
+      const answers =
+        action === 'accept' ? [{ fieldId: 'question_0', value: 'Expanded' }] : undefined
+      await owner.prepareElicitation({ ...input, action, answers })
+      await owner.rearmElicitation({
+        ...input,
+        promptMessageId: 'prompt-active',
+        recovery: { error: 'The bound specialist is unavailable.' }
+      })
+      await owner.prepareElicitation({ ...input, action: 'cancel' })
+      await owner.prepareElicitation({ ...input, action: 'cancel' })
+      // A delayed finally callback and a restart must not resurrect an ended wait.
+      await owner.rearmElicitation({ ...input, promptMessageId: 'prompt-active' })
+      const restarted = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+      expect(restarted.status).toBe('idle')
+      expect(restarted.activities?.[0].elicitation).toMatchObject({
+        state: action === 'accept' ? 'answered' : 'declined'
+      })
+      expect(restarted.activities?.[0].elicitation?.answers).toEqual(answers)
+      expect(restarted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+      expect(restarted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+    }
+  )
+
   it('does not rearm a later question when an accepted continuation finishes', async () => {
     let session = createSession([message('prompt-active', 'Choose an approach.')])
     session.runtimeTranscriptOwner = 'main'
@@ -424,7 +546,7 @@ describe('AcpDurableContinuationContextOwner', () => {
   })
 
   it.each(['accept', 'decline'] as const)(
-    're-presents an unaccepted %s after failure and process restart without losing its answer',
+    'preserves an unaccepted %s after failure and rejects an unproven retry',
     async (action) => {
       let session = createSession([message('prompt-active', 'Choose an approach.')])
       session.runtimeTranscriptOwner = 'main'
@@ -449,18 +571,25 @@ describe('AcpDurableContinuationContextOwner', () => {
       const committed = structuredClone(session)
       await owner.rearmElicitation({ ...response, promptMessageId: 'prompt-active' })
       expect(session.status).toBe('waiting-for-user')
-      expect(session.activities?.[0].elicitation?.state).toBe('pending')
-      await expect(owner.prepareElicitation(response)).resolves.toBeDefined()
+      expect(session.activities?.[0].elicitation?.state).toBe(
+        action === 'accept' ? 'answered' : 'declined'
+      )
+      await expect(owner.prepareElicitation(response)).rejects.toThrow('pending Session activity')
+      await expect(
+        owner.prepareElicitation({ ...response, retryContinuation: true })
+      ).rejects.toThrow('cannot be retried safely')
 
       // No finally callback runs after process loss: the durable receipt alone restores the card.
       const restarted = normalizeSessionFile(committed)!
       expect(restarted.status).toBe('waiting-for-user')
-      expect(restarted.activities?.[0].elicitation).toMatchObject({ state: 'pending' })
+      expect(restarted.activities?.[0].elicitation).toMatchObject({
+        state: action === 'accept' ? 'answered' : 'declined'
+      })
       expect(restarted.conversationGraph?.activities[0].elicitation).toEqual(
         restarted.activities?.[0].elicitation
       )
       if (action === 'accept') {
-        expect(restarted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
+        expect(restarted.activities?.[0].elicitation?.answers).toEqual(response.answers)
       }
     }
   )

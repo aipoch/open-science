@@ -1539,7 +1539,8 @@ class AcpRuntime {
     promptAttemptId?: string,
     planDelivery?: Readonly<{ projectId: string; commandId: string }>,
     delegatedMessageId?: string,
-    permissionContinuation?: RestoredPermissionContinuation
+    permissionContinuation?: RestoredPermissionContinuation,
+    onProviderDispatched?: () => void
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
@@ -1548,6 +1549,7 @@ class AcpRuntime {
         request,
         {
           kind: 'app-continuation',
+          onProviderDispatched,
           ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
           ...(planDelivery ? { planDelivery } : {}),
           ...(delegatedMessageId ? { delegatedMessageId } : {})
@@ -1597,6 +1599,7 @@ class AcpRuntime {
           promptAttemptId?: string
           planDelivery?: Readonly<{ projectId: string; commandId: string }>
           delegatedMessageId?: string
+          onProviderDispatched?: () => void
         }>,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
@@ -2011,9 +2014,97 @@ class AcpRuntime {
     return this.getSnapshot()
   }
 
-  async respondToElicitation(response: ElicitationResponse): Promise<AcpStateSnapshot> {
+  async respondToElicitation(
+    response: ElicitationResponse,
+    continuePrepared = false
+  ): Promise<AcpStateSnapshot> {
     if (response.request && response.request.requestId !== response.requestId) {
       throw new Error('Restored structured input request id does not match the response')
+    }
+    if (
+      response.retryContinuation &&
+      (!response.request?.durable || response.replacePreviousAnswer)
+    ) {
+      throw new Error('Invalid question continuation retry.')
+    }
+    if (response.continuationFailure !== undefined || response.prepareContinuation) {
+      const request = response.request
+      if (
+        (!response.prepareContinuation &&
+          (typeof response.continuationFailure !== 'string' ||
+            !response.continuationFailure.trim())) ||
+        !request?.durable ||
+        response.action === 'cancel' ||
+        response.replacePreviousAnswer ||
+        this.sessionInteractions.current(request.sessionId)
+      ) {
+        throw new Error('Invalid failed question continuation.')
+      }
+      const projectId =
+        (await this.options.permissionWait?.sessions.sessionProjectId?.(request.sessionId)) ??
+        this.sessionEnvironment.projectId(request.sessionId)
+      if (!projectId) throw new Error('Durable continuation Session authority is not available.')
+      const prepared = await this.durableContinuationContext.prepareElicitation({
+        projectId,
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        toolCallId: request.toolCallId,
+        action: response.action,
+        answers: response.answers,
+        retryContinuation: response.retryContinuation,
+        continuePrepared: !response.prepareContinuation && continuePrepared
+      })
+      await this.durableContinuationContext.rearmElicitation({
+        projectId,
+        sessionId: request.sessionId,
+        requestId: prepared.request.requestId,
+        toolCallId: prepared.request.toolCallId,
+        promptMessageId: prepared.request.durable!.promptMessageId!,
+        recovery: {
+          error:
+            response.continuationFailure?.slice(0, 4_000) ??
+            'The task could not continue. Your response is saved.'
+        }
+      })
+      return this.getSnapshot()
+    }
+    if (
+      response.action === 'cancel' &&
+      response.request?.durable?.kind === 'agent-user-choice' &&
+      !response.replacePreviousAnswer
+    ) {
+      const request = response.request
+      if (this.sessionInteractions.current(request.sessionId)) {
+        throw new Error('Wait for the current Agent run to finish before ending this wait.')
+      }
+      const projectId =
+        (await this.options.permissionWait?.sessions.sessionProjectId?.(request.sessionId)) ??
+        this.sessionEnvironment.projectId(request.sessionId)
+      if (!projectId) throw new Error('Durable continuation Session authority is not available.')
+      if (request.durable?.promptMessageId) {
+        await this.options.runtimeSessions?.flush(
+          request.sessionId,
+          request.durable.promptMessageId
+        )
+      }
+      await this.durableContinuationContext.prepareElicitation({
+        projectId,
+        sessionId: request.sessionId,
+        requestId: response.requestId,
+        toolCallId: request.toolCallId,
+        action: 'cancel'
+      })
+      this.appContinuations.delete(request.sessionId)
+      if (
+        this.elicitationOwner
+          .getPendingRequests()
+          .some(({ requestId }) => requestId === response.requestId)
+      ) {
+        this.elicitationOwner.respond(response)
+      }
+      this.userChoiceProvenanceContexts.delete(response.requestId)
+      this.emitState()
+      return this.getSnapshot()
     }
     let restoredContinuation:
       | Awaited<
@@ -2021,9 +2112,11 @@ class AcpRuntime {
         >
       | undefined
     if (
-      !this.elicitationOwner
-        .getPendingRequests()
-        .some((request) => request.requestId === response.requestId) &&
+      (continuePrepared ||
+        response.retryContinuation ||
+        !this.elicitationOwner
+          .getPendingRequests()
+          .some((request) => request.requestId === response.requestId)) &&
       response.request
     ) {
       if (!this.activeSessionFor(response.request.sessionId)) {
@@ -2037,6 +2130,8 @@ class AcpRuntime {
         action: response.action,
         answers: response.answers,
         replacePreviousAnswer: response.replacePreviousAnswer,
+        retryContinuation: response.retryContinuation,
+        continuePrepared,
         ...(this.restoredContinuationContextResetSessionIds?.has(response.request.sessionId)
           ? {
               replay: {
@@ -2046,13 +2141,33 @@ class AcpRuntime {
             }
           : {})
       })
-      if (!this.elicitationOwner.restoreDetached(restoredContinuation.request)) {
+      if (
+        !continuePrepared &&
+        !response.retryContinuation &&
+        !this.elicitationOwner.restoreDetached(restoredContinuation.request)
+      ) {
         throw new Error('Invalid restored structured input request')
       }
     }
 
     const livePromptContext = this.userChoiceProvenanceContexts.get(response.requestId)
-    const resolution = this.elicitationOwner.respond(response)
+    const resolution =
+      (continuePrepared || response.retryContinuation) && restoredContinuation
+        ? {
+            request: restoredContinuation.request,
+            response: {
+              action: response.action,
+              ...(response.action === 'accept'
+                ? {
+                    content: Object.fromEntries(
+                      (response.answers ?? []).map(({ fieldId, value }) => [fieldId, value])
+                    )
+                  }
+                : {})
+            },
+            detached: true
+          }
+        : this.elicitationOwner.respond(response)
     this.userChoiceProvenanceContexts.delete(response.requestId)
     if (resolution.detached) {
       const continuation = this.userChoiceContinuation(
@@ -2067,7 +2182,7 @@ class AcpRuntime {
         this.appContinuations.set(resolution.request.sessionId, {
           request: continuation,
           condition: 'always',
-          onUnaccepted: async () => {
+          onUnaccepted: async (error, retryable) => {
             const promptMessageId = resolution.request.durable?.promptMessageId
             if (!promptMessageId) return
             await this.options.runtimeSessions?.flush(resolution.request.sessionId, promptMessageId)
@@ -2076,7 +2191,13 @@ class AcpRuntime {
               sessionId: resolution.request.sessionId,
               promptMessageId,
               requestId: resolution.request.requestId,
-              toolCallId: resolution.request.toolCallId
+              toolCallId: resolution.request.toolCallId,
+              recovery: {
+                error: error
+                  ? errorMessage(error)
+                  : 'The task could not continue. Your response is saved.',
+                ...(retryable && !response.retryContinuation ? { retryable: true as const } : {})
+              }
             })
           }
         })
@@ -2606,6 +2727,8 @@ class AcpRuntime {
     const durablePermission = this.durablePermissionContinuations?.get(sessionId)
     let completed = false
     let cancelled = false
+    let continuationError: unknown
+    let providerDispatched = false
     try {
       const request = continuation.beforeSend
         ? await continuation.beforeSend()
@@ -2617,11 +2740,15 @@ class AcpRuntime {
         planDelivery?.commandId,
         planDelivery,
         undefined,
-        durablePermission
+        durablePermission,
+        () => {
+          providerDispatched = true
+        }
       )
       cancelled = response.stopReason === 'cancelled'
       completed = !this.durablePlanDeliveries?.has(sessionId) || !cancelled
     } catch (error) {
+      continuationError = error
       this.pushEvent({
         kind: 'error',
         level: 'error',
@@ -2634,7 +2761,19 @@ class AcpRuntime {
     } finally {
       if (continuation.onUnaccepted) {
         try {
-          await continuation.onUnaccepted()
+          const code =
+            continuationError &&
+            typeof continuationError === 'object' &&
+            'code' in continuationError
+              ? continuationError.code
+              : undefined
+          // These structured system errors are transient only before provider dispatch. Text,
+          // unknown failures and timeouts never establish that it is safe to send work again.
+          const retryable =
+            !providerDispatched &&
+            typeof code === 'string' &&
+            ['EAGAIN', 'EBUSY', 'ECONNREFUSED', 'EAI_AGAIN'].includes(code)
+          await continuation.onUnaccepted(continuationError, retryable)
         } catch (error) {
           this.pushEvent({
             kind: 'error',

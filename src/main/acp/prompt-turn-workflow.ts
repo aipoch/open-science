@@ -67,6 +67,7 @@ type AcpPromptTurnMode =
       promptAttemptId?: string
       planDelivery?: Readonly<{ projectId: string; commandId: string }>
       delegatedMessageId?: string
+      onProviderDispatched?: () => void
     }>
 
 type AcpPromptTurnPlanContext = Readonly<{
@@ -634,7 +635,13 @@ class AcpPromptTurnWorkflow {
               await resumeDispatch()
               deliveryClaimed = true
             }
-            return this.checkpoint(interaction)
+            const dispatch = await this.checkpoint(interaction)
+            // Mark the boundary before calling the adapter: a synchronous throw from
+            // session.prompt cannot prove that no request left the process.
+            if (dispatch !== 'cancelled' && turn.mode.kind === 'app-continuation') {
+              turn.mode.onProviderDispatched?.()
+            }
+            return dispatch
           },
           onDispatched: () => {
             providerDispatched = true

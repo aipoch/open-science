@@ -100,7 +100,8 @@ function fields(value: unknown, options: DiagnosticTextOptions): ObjectValue {
     'specialistBindingPending',
     'errorReportable',
     'branchContextResetRequired',
-    'continuationPending'
+    'continuationPending',
+    'retryable'
   ])
     if (typeof source[key] === 'boolean') result[key] = source[key]
   for (const key of [
@@ -187,6 +188,7 @@ export function projectDiagnosticSession(
         'relayedFrom',
         'delegatedCallerSource',
         'elicitation',
+        'continuationRecovery',
         'durable',
         'provenanceContext',
         'runtimeTranscriptReviewOwner'

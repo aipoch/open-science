@@ -7904,6 +7904,10 @@
     "Switch Mode": "Changer de mode",
     "{{count}} previous messages_one": "{{count}} message précédent",
     "{{count}} previous messages_many": "{{count}} messages précédents",
-    "{{count}} previous messages_other": "{{count}} messages précédents"
+    "{{count}} previous messages_other": "{{count}} messages précédents",
+    "Could not continue the task": "Impossible de poursuivre la tâche",
+    "Your conversation is preserved. End this wait to return to the conversation.": "Votre conversation est conservée. Terminez cette attente pour revenir à la conversation.",
+    "End this wait": "Terminer cette attente",
+    "Retry continuation": "Réessayer de poursuivre"
   }
 }

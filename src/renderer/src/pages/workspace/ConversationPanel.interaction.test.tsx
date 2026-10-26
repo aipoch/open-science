@@ -3497,23 +3497,36 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it.each(
-    (['before-rearm', 'after-rearm'] as const).flatMap((order) =>
-      [false, true].flatMap((previousFailure) =>
+    (['before-rearm', 'after-rearm'] as const).flatMap((order) => [
+      ...[false, true].flatMap((previousFailure) =>
         [false, true].map((authenticationRequired) => ({
           order,
           previousFailure,
-          authenticationRequired
+          authenticationRequired,
+          decision: 'answered' as const,
+          failure: authenticationRequired
+            ? 'Authentication required'
+            : 'Runtime Session turn is already owned by another execution.'
         }))
-      )
-    )
+      ),
+      // The supplied recording shows both Finish and Skip returning the same question
+      // after this error. Verify the public error/recovery boundary for both decisions;
+      // this does not claim why the Specialist was unavailable in that installation.
+      ...(['answered', 'declined'] as const).map((decision) => ({
+        order,
+        previousFailure: false,
+        authenticationRequired: false,
+        decision,
+        failure: 'The bound specialist is unavailable.'
+      }))
+    ])
   )(
-    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure, authentication: $authenticationRequired)',
-    async ({ order, previousFailure, authenticationRequired }) => {
+    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure, authentication: $authenticationRequired, decision: $decision, error: $failure)',
+    async ({ order, previousFailure, authenticationRequired, decision, failure }) => {
       // This tests failure disclosure, not the still-unknown cause of the reported
       // admission rejection. Feed the public event contract emitted by AcpRuntime.
-      const failure = authenticationRequired
-        ? 'Authentication required'
-        : 'Runtime Session turn is already owned by another execution.'
+      const answers =
+        decision === 'answered' ? [{ fieldId: 'question_0', value: 'confirm' }] : undefined
       const answered = materializeSessionConversationGraph({
         id: `question-continuation-${order}-${previousFailure}`,
         projectId: 'project-a',
@@ -3563,8 +3576,8 @@ describe('ConversationPanel composer intake', () => {
                 },
                 { id: 'question_0_custom', label: 'Other', kind: 'text' }
               ],
-              state: 'answered',
-              answers: [{ fieldId: 'question_0', value: 'confirm' }],
+              state: decision,
+              answers,
               respondedAt: 3,
               continuationPending: true,
               durable: {
@@ -3624,10 +3637,10 @@ describe('ConversationPanel composer intake', () => {
         elicitation: { requests: [] }
       })
       expect(
-        current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
-      ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+        current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.answers
+      ).toEqual(answers)
       if (authenticationRequired) {
-        expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+        expect(container.querySelector('[data-testid="elicitation-recovery"]')).not.toBeNull()
         expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
         expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()
         expect(container.textContent).toContain('Sign in to continue this conversation')
@@ -3648,15 +3661,21 @@ describe('ConversationPanel composer intake', () => {
         expect(container.textContent).not.toContain('Sign in to continue this conversation')
         expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
         expect(
-          current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
-        ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+          current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.answers
+        ).toEqual(answers)
       } else {
         expect(
           container.textContent,
           'The retryable question must explain why confirmation did not continue the task'
         ).toContain(failure)
       }
-      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+      expect(
+        container.querySelector('[data-testid="elicitation-composer"]'),
+        'A failed continuation must not send the user back to the same blocking question'
+      ).toBeNull()
+      expect(container.querySelector('[data-testid="elicitation-recovery"]')).not.toBeNull()
+      expect(container.textContent).toContain('End this wait')
+      expect(container.textContent).not.toContain('Retry continuation')
     }
   )
 

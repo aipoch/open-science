@@ -168,6 +168,9 @@ class AcpRuntimeCoordinator {
   private readonly sessionRuntimes = new Map<string, AcpRuntime>()
   private readonly sessionConnectionStatuses = new Map<string, AcpStateSnapshot['status']>()
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
+  // A cold decision is committed before runtime restoration. This single-use claim survives a
+  // runtime-generation handoff, but never a process restart or an explicit end-wait response.
+  private readonly preparedElicitationContinuations = new Map<string, string>()
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
   private readonly runtimeTargetKeys = new WeakMap<AcpRuntime, string>()
@@ -1874,6 +1877,7 @@ class AcpRuntimeCoordinator {
   }
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpRuntimeState> {
+    this.preparedElicitationContinuations.delete(request.sessionId)
     const queuedResume = this.sessionResumeOperations.get(request.sessionId)
     if (queuedResume) queuedResume.invalidated = true
     this.invalidateSessionTurn(request.sessionId)
@@ -1932,6 +1936,12 @@ class AcpRuntimeCoordinator {
   }
 
   async respondToElicitation(response: ElicitationResponse): Promise<AcpRuntimeState> {
+    const sessionId = response.request?.sessionId
+    const continuePrepared =
+      !!sessionId &&
+      !response.prepareContinuation &&
+      this.preparedElicitationContinuations.get(sessionId) === response.requestId
+    if (continuePrepared) this.preparedElicitationContinuations.delete(sessionId!)
     const runtime =
       Array.from(this.runtimes).find((candidate) =>
         candidate
@@ -1940,7 +1950,10 @@ class AcpRuntimeCoordinator {
       ) ??
       (response.request ? this.findRuntimeForSession(response.request.sessionId) : undefined) ??
       this.getActiveRuntime()
-    await runtime.respondToElicitation(response)
+    await runtime.respondToElicitation(response, continuePrepared)
+    if (response.prepareContinuation && sessionId) {
+      this.preparedElicitationContinuations.set(sessionId, response.requestId)
+    }
     return this.getState()
   }
 
@@ -2866,6 +2879,7 @@ class AcpRuntimeCoordinator {
     this.pendingSessionDrains.clear()
     this.sessionConnectionStatuses.clear()
     this.permissionRuntimes.clear()
+    this.preparedElicitationContinuations.clear()
     this.pendingPromptStarts.clear()
     this.latestPromptRequests.clear()
     this.activePromptRequests.clear()

@@ -8728,90 +8728,339 @@ describe('ACP runtime session management', () => {
     )
   })
 
-  it('rearms a restored answer when continuation admission fails and accepts a retry', async () => {
-    const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
-    let persisted = addPendingRestoredChoice(
-      createRestoredContinuationSession('prompt-restored-1', 'restored-choice-session', 'project-1')
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      (['accept', 'decline'] as const).map((action) => ({
+        name,
+        framework,
+        modelRoute,
+        backendId,
+        action
+      }))
     )
-    persisted.runtimeTranscriptOwner = 'main'
-    const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
-      _scope,
-      mutate
-    ) => {
-      persisted = mutate(structuredClone(persisted))
-      return structuredClone(persisted)
-    }
-    const runtimeSessions = new RuntimeSessionOwner({
-      loadSession: async () => structuredClone(persisted),
-      mutateSession: mutateRuntimeSession,
-      finalizeArtifacts: async () => []
-    })
-    vi.spyOn(runtimeSessions, 'begin').mockRejectedValueOnce(
-      new Error('temporary admission failure')
-    )
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      runtimeSessions,
-      callbacks: { onEvent: (event) => runtimeSessions.accept(event) },
-      permissionWait: {
-        sessions: {
-          readSessionRuntimeContext: vi.fn(),
-          patchSessionRuntimeContext: vi.fn(),
-          containsMessageOnActiveBranch: vi.fn(),
-          loadSessionForContinuation: async () => structuredClone(persisted),
-          mutateRuntimeSession
+  )(
+    'saves and ends a failed $action without attaching the unavailable Specialist through $name',
+    async ({ framework, modelRoute, backendId, action }) => {
+      let persisted = addPendingRestoredChoice(
+        createRestoredContinuationSession(
+          'prompt-restored-1',
+          'restored-choice-session',
+          'project-1'
+        )
+      )
+      persisted.runtimeTranscriptOwner = 'main'
+      const spawnAgent = vi.fn(() => {
+        throw new Error('The bound specialist is unavailable.')
+      })
+      const runtime = new AcpRuntime({
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        spawnAgent,
+        resolveBackend: () => ({
+          framework,
+          modelRoute,
+          backendId,
+          executablePath: 'unused',
+          env: {}
+        }),
+        permissionWait: {
+          sessions: {
+            sessionProjectId: async () => 'project-1',
+            readSessionRuntimeContext: vi.fn(),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            loadSessionForContinuation: async () => structuredClone(persisted),
+            mutateRuntimeSession: async (_scope, mutate) => {
+              persisted = mutate(structuredClone(persisted))
+              return structuredClone(persisted)
+            }
+          }
+        }
+      })
+      const projection = persisted.activities![0].elicitation!
+      const response = {
+        action: 'cancel' as const,
+        requestId: projection.durable!.requestId,
+        request: {
+          sessionId: persisted.id,
+          toolCallId: persisted.activities![0].id,
+          requestId: projection.durable!.requestId,
+          message: projection.message,
+          fields: projection.fields,
+          durable: projection.durable
         }
       }
-    })
-    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
-    const request = {
-      requestId: 'choice-restored-1',
-      sessionId: 'restored-choice-session',
-      toolCallId: 'tool-choice-restored-1',
-      message: 'Choose an approach',
-      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
-      durable: {
-        kind: 'agent-user-choice' as const,
-        requestId: 'choice-restored-1',
-        promptMessageId: 'prompt-restored-1'
-      }
-    }
-    const response = {
-      requestId: request.requestId,
-      action: 'accept' as const,
-      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
-      request
-    }
-    await runtime.respondToElicitation(response)
-    await vi.waitFor(() => {
-      expect(persisted.status).toBe('waiting-for-user')
-      expect(persisted.activities?.[0].elicitation?.state).toBe('pending')
-    })
-    expect(fakeAgent.prompts).toHaveLength(0)
-    expect(persisted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
-    expect(runtime.getSnapshot().events).toContainEqual(
-      expect.objectContaining({
-        kind: 'error',
-        title: 'Could not continue the Agent task',
-        text: 'temporary admission failure',
-        promptMessageId: 'prompt-restored-1',
-        agentFrameId: persisted.conversationGraph!.activeFrameId,
-        messageBranchId: persisted.conversationGraph!.frames.find(
-          ({ id }) => id === persisted.conversationGraph!.activeFrameId
-        )!.activeBranchId
+      const answers =
+        action === 'accept' ? [{ fieldId: 'question_0', value: 'Expanded' }] : undefined
+      await runtime.respondToElicitation({
+        ...response,
+        action,
+        answers,
+        continuationFailure: 'The bound specialist is unavailable.'
       })
+      expect(persisted.activities?.[0].elicitation).toMatchObject({
+        state: action === 'accept' ? 'answered' : 'declined',
+        continuationRecovery: { error: 'The bound specialist is unavailable.' }
+      })
+      await expect(runtime.respondToElicitation(response)).resolves.toBeDefined()
+      await expect(runtime.respondToElicitation(response)).resolves.toBeDefined()
+      expect(spawnAgent).not.toHaveBeenCalled()
+      expect(normalizeSessionFile(persisted)).toMatchObject({
+        status: 'idle',
+        activities: [{ elicitation: { state: action === 'accept' ? 'answered' : 'declined' } }]
+      })
+      expect(persisted.activities?.[0].elicitation?.answers).toEqual(answers)
+    }
+  )
+
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap((route) =>
+      [
+        'retry',
+        'repeat-failure',
+        'end-while-running',
+        'timeout',
+        'unknown',
+        'post-dispatch',
+        'prepared',
+        'prepared-restart',
+        'prepared-end',
+        'prepared-rotation'
+      ].map((scenario) => [...route, scenario] as const)
     )
-    await runtime.respondToElicitation(response)
-    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
-    await vi.waitFor(() => {
-      expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
-      expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
-    })
-    expect(fakeAgent.prompts[0].text).toContain('Expanded')
-  })
+  )(
+    'keeps a restored answer in recovery through %s (%s, %s, %s, %s)',
+    async (_name, framework, modelRoute, backendId, scenario) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
+        ...(scenario === 'post-dispatch'
+          ? {
+              onPrompt: () => {
+                throw Object.assign(new Error('temporary provider failure'), { code: 'EAGAIN' })
+              }
+            }
+          : {}),
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      let persisted = addPendingRestoredChoice(
+        createRestoredContinuationSession(
+          'prompt-restored-1',
+          'restored-choice-session',
+          'project-1'
+        )
+      )
+      persisted.runtimeTranscriptOwner = 'main'
+      const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
+        _scope,
+        mutate
+      ) => {
+        persisted = mutate(structuredClone(persisted))
+        return structuredClone(persisted)
+      }
+      let failRead = scenario !== 'post-dispatch' && !scenario.startsWith('prepared')
+      const admission = Promise.withResolvers<void>()
+      let admissionEntered = false
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession: async () => {
+          if (failRead) {
+            failRead = false
+            if (scenario === 'end-while-running') {
+              admissionEntered = true
+              await admission.promise
+            } else {
+              throw Object.assign(new Error('temporary admission failure'), {
+                code:
+                  scenario === 'timeout'
+                    ? 'ETIMEDOUT'
+                    : scenario === 'unknown'
+                      ? undefined
+                      : 'EAGAIN'
+              })
+            }
+          }
+          return structuredClone(persisted)
+        },
+        mutateSession: mutateRuntimeSession,
+        finalizeArtifacts: async () => []
+      })
+      let runtime!: AcpRuntime
+      let generations = 0
+      const createRuntime = (
+        callbacks: Parameters<ConstructorParameters<typeof AcpRuntimeCoordinator>[0]>[0]
+      ): AcpRuntime => {
+        generations += 1
+        runtime = new AcpRuntime({
+          appVersion: '0.1.0',
+          defaultCwd: '/workspace',
+          resolveBackend: () => ({
+            framework: { ...framework, spawn: () => asAgentProcess(process) },
+            modelRoute,
+            backendId,
+            executablePath: '/bin/agent',
+            env: {},
+            ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
+          }),
+          runtimeSessions,
+          callbacks: {
+            ...callbacks,
+            onEvent: (event) => {
+              runtimeSessions.accept(event)
+              callbacks.onEvent?.(event)
+            }
+          },
+          permissionWait: {
+            sessions: {
+              readSessionRuntimeContext: vi.fn(),
+              patchSessionRuntimeContext: vi.fn(),
+              containsMessageOnActiveBranch: vi.fn(),
+              sessionProjectId: async () => 'project-1',
+              loadSessionForContinuation: async () => structuredClone(persisted),
+              mutateRuntimeSession
+            }
+          }
+        })
+        return runtime
+      }
+      let coordinator = new AcpRuntimeCoordinator(createRuntime)
+      const request = {
+        requestId: 'choice-restored-1',
+        sessionId: 'restored-choice-session',
+        toolCallId: 'tool-choice-restored-1',
+        message: 'Choose an approach',
+        fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+        durable: {
+          kind: 'agent-user-choice' as const,
+          requestId: 'choice-restored-1',
+          promptMessageId: 'prompt-restored-1'
+        }
+      }
+      const response = {
+        requestId: request.requestId,
+        action: 'accept' as const,
+        answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+        request
+      }
+      if (scenario.startsWith('prepared')) {
+        await coordinator.respondToElicitation({ ...response, prepareContinuation: true })
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        expect(
+          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+        ).toBeUndefined()
+      }
+      if (scenario === 'prepared-rotation') await coordinator.requestSkillsReload()
+      if (scenario === 'prepared-restart') {
+        persisted = normalizeSessionFile(JSON.parse(JSON.stringify(persisted)))!
+        coordinator = new AcpRuntimeCoordinator(createRuntime)
+      }
+      if (scenario === 'prepared-end')
+        await coordinator.respondToElicitation({
+          requestId: request.requestId,
+          request,
+          action: 'cancel'
+        })
+      await coordinator.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      if (scenario === 'prepared-restart' || scenario === 'prepared-end') {
+        await expect(coordinator.respondToElicitation(response)).rejects.toThrow()
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        return
+      }
+      await coordinator.respondToElicitation(response)
+      if (scenario === 'prepared' || scenario === 'prepared-rotation') {
+        if (scenario === 'prepared-rotation') expect(generations).toBe(2)
+        await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+        expect(fakeAgent.prompts[0].text).toContain('Expanded')
+        await expect(coordinator.respondToElicitation(response)).rejects.toThrow()
+        return
+      }
+      if (scenario === 'end-while-running') {
+        await vi.waitFor(() => expect(admissionEntered).toBe(true))
+        await expect(
+          coordinator.respondToElicitation({
+            requestId: request.requestId,
+            request,
+            action: 'cancel'
+          })
+        ).rejects.toThrow('Wait for the current Agent run')
+        admission.resolve()
+        await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+        return
+      }
+      if (scenario === 'post-dispatch') {
+        await vi.waitFor(() =>
+          expect(runtime.getSnapshot().events.some((event) => event.kind === 'error')).toBe(true)
+        )
+        expect(fakeAgent.prompts).toHaveLength(1)
+        expect(
+          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+        ).toBeUndefined()
+        await expect(
+          coordinator.respondToElicitation({ ...response, retryContinuation: true })
+        ).rejects.toThrow('cannot be retried safely')
+        return
+      }
+      await vi.waitFor(() => {
+        expect(persisted.status).toBe('waiting-for-user')
+        expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery?.retryable).toBe(
+          scenario === 'timeout' || scenario === 'unknown' ? undefined : true
+        )
+      })
+      if (scenario === 'timeout' || scenario === 'unknown') {
+        await expect(
+          coordinator.respondToElicitation({ ...response, retryContinuation: true })
+        ).rejects.toThrow('cannot be retried safely')
+        expect(fakeAgent.prompts).toHaveLength(0)
+        return
+      }
+      expect(fakeAgent.prompts).toHaveLength(0)
+      expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+      expect(runtime.getSnapshot().events).toContainEqual(
+        expect.objectContaining({
+          kind: 'error',
+          title: 'Could not continue the Agent task',
+          text: 'temporary admission failure',
+          promptMessageId: 'prompt-restored-1',
+          agentFrameId: persisted.conversationGraph!.activeFrameId,
+          messageBranchId: persisted.conversationGraph!.frames.find(
+            ({ id }) => id === persisted.conversationGraph!.activeFrameId
+          )!.activeBranchId
+        })
+      )
+      if (scenario === 'repeat-failure') failRead = true
+      const attempts = await Promise.allSettled([
+        coordinator.respondToElicitation({ ...response, retryContinuation: true }),
+        coordinator.respondToElicitation({ ...response, retryContinuation: true })
+      ])
+      expect(attempts.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+      if (scenario === 'repeat-failure') {
+        await vi.waitFor(() =>
+          expect(persisted.activities?.[0].elicitation?.continuationRecovery?.error).toBe(
+            'temporary admission failure'
+          )
+        )
+        expect(
+          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+        ).toBeUndefined()
+        expect(fakeAgent.prompts).toHaveLength(0)
+        await expect(
+          coordinator.respondToElicitation({ ...response, retryContinuation: true })
+        ).rejects.toThrow('cannot be retried safely')
+        return
+      }
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      await vi.waitFor(() => {
+        expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
+        expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+      })
+      expect(fakeAgent.prompts[0].text).toContain('Expanded')
+    }
+  )
 
   it('validates a revised choice against the durable fork before continuing', async () => {
     const process = new FakeAgentProcess()

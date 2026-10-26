@@ -7734,6 +7734,10 @@
     "Fetch": "Abrufen",
     "Switch Mode": "Modus wechseln",
     "{{count}} previous messages_one": "{{count}} vorherige Nachricht",
-    "{{count}} previous messages_other": "{{count}} vorherige Nachrichten"
+    "{{count}} previous messages_other": "{{count}} vorherige Nachrichten",
+    "Could not continue the task": "Die Aufgabe konnte nicht fortgesetzt werden",
+    "Your conversation is preserved. End this wait to return to the conversation.": "Ihre Konversation bleibt erhalten. Beenden Sie diese Wartephase, um zur Konversation zurückzukehren.",
+    "End this wait": "Wartephase beenden",
+    "Retry continuation": "Fortsetzung erneut versuchen"
   }
 }

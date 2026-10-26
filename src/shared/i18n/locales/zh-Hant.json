@@ -7572,6 +7572,10 @@
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令列正在等待網路存取核准。如果程序已結束，請核准後手動重試命令；系統不會自動重新執行。",
     "Fetch": "擷取",
     "Switch Mode": "切換模式",
-    "{{count}} previous messages_other": "先前的 {{count}} 則訊息"
+    "{{count}} previous messages_other": "先前的 {{count}} 則訊息",
+    "Could not continue the task": "無法繼續任務",
+    "Your conversation is preserved. End this wait to return to the conversation.": "對話內容已保留。結束本次等待即可返回對話。",
+    "End this wait": "結束本次等待",
+    "Retry continuation": "重試繼續"
   }
 }
