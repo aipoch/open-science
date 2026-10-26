@@ -2780,47 +2780,70 @@ describe('production delegated-work composition', () => {
     for (const control of harness.execution.controls()) control.complete('done')
   })
 
-  it('stops a live Attempt that cannot apply the Session Permission Profile', async () => {
-    root = await mkdtemp(join(tmpdir(), 'delegated-production-permission-profile-failure-'))
-    const harness = await createCompositionHarness(root, 'codex')
-    await harness.composition.host.delegate(
-      harness.caller,
-      [
-        { task: 'Healthy child', name: 'Healthy child' },
-        { task: 'Stale full-access child', name: 'Stale full-access child' }
-      ],
-      { wait: false }
-    )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
-    for (const control of harness.execution.controls()) control.accept()
-    harness.execution.controls()[1].rejectNextPermissionProfile()
-
-    await expect(
-      harness.composition.root.setPermissionProfile(harness.session.id, 'ask')
-    ).rejects.toThrow('permission profile update failed')
-
-    const healthy = harness.execution.controls()[0]
-    const stale = harness.execution.controls()[1]
-    expect(healthy.permissionProfiles()).toEqual(['ask'])
-    expect(stale.permissionProfiles()).toEqual([])
-    await expect
-      .poll(() => {
-        const records = harness.durable().runtimeContext?.delegatedWork?.records ?? []
-        return {
-          healthy: records
-            .find((record) => record.agentFrameId === healthy.input.frameId)
-            ?.attempts.at(-1),
-          stale: records
-            .find((record) => record.agentFrameId === stale.input.frameId)
-            ?.attempts.at(-1)
-        }
+  it.each([0, 1200])(
+    'stops a live Attempt that cannot apply the Session Permission Profile (startup delay: %i ms)',
+    async (startupDelayMs) => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-production-permission-profile-failure-'))
+      const harness = await createCompositionHarness(root, 'codex')
+      if (startupDelayMs > 0) {
+        const startAttemptRuntime = harness.commands.startAttemptRuntime.bind(harness.commands)
+        vi.spyOn(harness.commands, 'startAttemptRuntime').mockImplementation(async (...args) => {
+          await new Promise((resolve) => setTimeout(resolve, startupDelayMs))
+          return startAttemptRuntime(...args)
+        })
+      }
+      const executionsStarted = Promise.withResolvers<void>()
+      const startExecution = harness.execution.run.bind(harness.execution)
+      vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+        const handle = startExecution(...args)
+        if (harness.execution.controls().length === 2) executionsStarted.resolve()
+        return handle
       })
-      .toMatchObject({
-        healthy: { status: 'running' },
-        stale: { status: 'cancelled', cancellationReason: 'runtime_interrupted' }
-      })
-    healthy.complete('done')
-  })
+      try {
+        await harness.composition.host.delegate(
+          harness.caller,
+          [
+            { task: 'Healthy child', name: 'Healthy child' },
+            { task: 'Stale full-access child', name: 'Stale full-access child' }
+          ],
+          { wait: false }
+        )
+        // Readiness is bounded by the test timeout, not expect.poll's default 1 s budget.
+        await executionsStarted.promise
+        expect(harness.execution.controls()).toHaveLength(2)
+        for (const control of harness.execution.controls()) control.accept()
+        harness.execution.controls()[1].rejectNextPermissionProfile()
+
+        await expect(
+          harness.composition.root.setPermissionProfile(harness.session.id, 'ask')
+        ).rejects.toThrow('permission profile update failed')
+
+        const healthy = harness.execution.controls()[0]
+        const stale = harness.execution.controls()[1]
+        expect(healthy.permissionProfiles()).toEqual(['ask'])
+        expect(stale.permissionProfiles()).toEqual([])
+        await expect
+          .poll(() => {
+            const records = harness.durable().runtimeContext?.delegatedWork?.records ?? []
+            return {
+              healthy: records
+                .find((record) => record.agentFrameId === healthy.input.frameId)
+                ?.attempts.at(-1),
+              stale: records
+                .find((record) => record.agentFrameId === stale.input.frameId)
+                ?.attempts.at(-1)
+            }
+          })
+          .toMatchObject({
+            healthy: { status: 'running' },
+            stale: { status: 'cancelled', cancellationReason: 'runtime_interrupted' }
+          })
+        healthy.complete('done')
+      } finally {
+        await harness.composition.root.shutdown()
+      }
+    }
+  )
 
   it('publishes detached child terminal mutations after the running receipt', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-detached-events-'))

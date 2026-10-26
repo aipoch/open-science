@@ -548,7 +548,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toMatch(/import \{[^}]*\buseState\b[^}]*\} from 'react'/)
     expect(workspaceMessageScrollerSource).toContain('const currentSessionId = activeSession?.id')
     expect(workspaceMessageScrollerSource).toContain(
-      'collapsedActivityGroupState.sessionId === currentSessionId'
+      'expandedActivityGroupState.sessionId === currentSessionId'
     )
     expect(workspaceMessageScrollerSource).toContain(
       'activityExpansionOverrideState.sessionId === currentSessionId'

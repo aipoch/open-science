@@ -194,15 +194,10 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
-    "Scientific data APIs, official file links and access guidance.": "API научных данных, официальные ссылки на файлы и условия доступа.",
-    "Search Europe PMC records and available abstracts with cursor pagination.": "Поиск записей Europe PMC и доступных аннотаций с курсорной пагинацией.",
-    "Inspect HGNC fields, identifiers and official file metadata.": "Просмотр полей, идентификаторов и метаданных официальных файлов HGNC.",
-    "Query bioDBnet identifier mappings, orthology and pathways.": "Запрос соответствий идентификаторов, ортологии и путей в bioDBnet.",
-    "Rank transcription factors with ChEA3 or discover GMT libraries.": "Ранжирование факторов транскрипции в ChEA3 или поиск библиотек GMT.",
-    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Получение RDF, записей графа, сходства STR или ссылок на файлы Cellosaurus.",
-    "Check official dataset access requirements or discover public files.": "Просмотр официальных условий доступа к данным или поиск открытых файлов.",
-    "List official openFDA adverse-event bulk download links.": "Список официальных ссылок массовой загрузки данных openFDA о нежелательных явлениях.",
-    "List maintained CTD public report links and usage terms.": "Список поддерживаемых ссылок на открытые отчёты CTD и условий использования.",
+    "{{count}} steps remaining_one": "Остался {{count}} шаг",
+    "{{count}} steps remaining_few": "Осталось {{count}} шага",
+    "{{count}} steps remaining_many": "Осталось {{count}} шагов",
+    "{{count}} steps remaining_other": "Осталось {{count}} шага",
     "Input help": "Справка по вводу",
     "Your changes have not been saved. Discard them and leave the editor?": "Изменения не сохранены. Отменить их и выйти из редактора?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Найти экспериментальные цепи PDB с похожими 3D-структурами по депонированной цепи.",
@@ -6993,6 +6988,15 @@
     "Your reference edits have not been saved.": "Изменения библиографической записи не сохранены.",
     "Attach data or papers, then describe what you want to find out.": "Прикрепите данные или статьи и опишите, что хотите выяснить.",
     "Research data from {{sources}}.": "Исследовательские данные из {{sources}}.",
+    "Scientific data APIs, official file links and access guidance.": "API научных данных, официальные ссылки на файлы и условия доступа.",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "Поиск записей Europe PMC и доступных аннотаций с курсорной пагинацией.",
+    "Inspect HGNC fields, identifiers and official file metadata.": "Просмотр полей, идентификаторов и метаданных официальных файлов HGNC.",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "Запрос соответствий идентификаторов, ортологии и путей в bioDBnet.",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "Ранжирование факторов транскрипции в ChEA3 или поиск библиотек GMT.",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Получение RDF, записей графа, сходства STR или ссылок на файлы Cellosaurus.",
+    "Check official dataset access requirements or discover public files.": "Просмотр официальных условий доступа к данным или поиск открытых файлов.",
+    "List official openFDA adverse-event bulk download links.": "Список официальных ссылок массовой загрузки данных openFDA о нежелательных явлениях.",
+    "List maintained CTD public report links and usage terms.": "Список поддерживаемых ссылок на открытые отчёты CTD и условий использования.",
     "Create and improve reusable Skills.": "Создание и улучшение многоразовых навыков.",
     "Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.": "Используйте выбранную среду, если она готова. Выбирайте другую только ради нужной поддержки поставщиков. На следующем шаге вы подключите модель.",
     "Predict protein structures and complexes.": "Предсказание структур белков и комплексов.",
@@ -8044,6 +8048,8 @@
     "Export screening results (CSV)": "Экспортировать результаты отбора (CSV)",
     "Screening results could not be exported.": "Не удалось экспортировать результаты отбора.",
     "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится.",
+    "Fetch": "Получить",
+    "Switch Mode": "Переключить режим"
   }
 }

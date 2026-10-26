@@ -193,15 +193,9 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
-    "Scientific data APIs, official file links and access guidance.": "API de données scientifiques, liens officiels et modalités d’accès.",
-    "Search Europe PMC records and available abstracts with cursor pagination.": "Rechercher des notices Europe PMC et les résumés disponibles avec pagination par curseur.",
-    "Inspect HGNC fields, identifiers and official file metadata.": "Consulter les champs, identifiants et métadonnées des fichiers officiels HGNC.",
-    "Query bioDBnet identifier mappings, orthology and pathways.": "Interroger les correspondances d’identifiants, l’orthologie et les voies dans bioDBnet.",
-    "Rank transcription factors with ChEA3 or discover GMT libraries.": "Classer les facteurs de transcription avec ChEA3 ou trouver des bibliothèques GMT.",
-    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Obtenir le RDF, les données du graphe, la similarité STR ou les liens Cellosaurus.",
-    "Check official dataset access requirements or discover public files.": "Consulter les modalités officielles d’accès aux données ou trouver des fichiers publics.",
-    "List official openFDA adverse-event bulk download links.": "Lister les liens officiels de téléchargement groupé des événements indésirables openFDA.",
-    "List maintained CTD public report links and usage terms.": "Lister les liens maintenus des rapports publics CTD et leurs conditions d’utilisation.",
+    "{{count}} steps remaining_one": "{{count}} étape restante",
+    "{{count}} steps remaining_many": "{{count}} étapes restantes",
+    "{{count}} steps remaining_other": "{{count}} étapes restantes",
     "Input help": "Aide de saisie",
     "Your changes have not been saved. Discard them and leave the editor?": "Vos modifications n’ont pas été enregistrées. Voulez-vous les abandonner et quitter l’éditeur ?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Rechercher des chaînes expérimentales PDB aux structures 3D similaires à partir d’une chaîne déposée.",
@@ -6856,6 +6850,15 @@
     "Your reference edits have not been saved.": "Vos modifications de la référence n’ont pas été enregistrées.",
     "Attach data or papers, then describe what you want to find out.": "Joignez des données ou des articles, puis décrivez ce que vous souhaitez découvrir.",
     "Research data from {{sources}}.": "Données de recherche de {{sources}}.",
+    "Scientific data APIs, official file links and access guidance.": "API de données scientifiques, liens officiels et modalités d’accès.",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "Rechercher des notices Europe PMC et les résumés disponibles avec pagination par curseur.",
+    "Inspect HGNC fields, identifiers and official file metadata.": "Consulter les champs, identifiants et métadonnées des fichiers officiels HGNC.",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "Interroger les correspondances d’identifiants, l’orthologie et les voies dans bioDBnet.",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "Classer les facteurs de transcription avec ChEA3 ou trouver des bibliothèques GMT.",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Obtenir le RDF, les données du graphe, la similarité STR ou les liens Cellosaurus.",
+    "Check official dataset access requirements or discover public files.": "Consulter les modalités officielles d’accès aux données ou trouver des fichiers publics.",
+    "List official openFDA adverse-event bulk download links.": "Lister les liens officiels de téléchargement groupé des événements indésirables openFDA.",
+    "List maintained CTD public report links and usage terms.": "Lister les liens maintenus des rapports publics CTD et leurs conditions d’utilisation.",
     "Create and improve reusable Skills.": "Créer et améliorer des compétences réutilisables.",
     "Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.": "Utilisez l’environnement sélectionné s’il est prêt. Changez-en uniquement pour bénéficier de la prise en charge d’un autre fournisseur. Vous connecterez un modèle à l’étape suivante.",
     "Predict protein structures and complexes.": "Prédire les structures et complexes protéiques.",
@@ -7905,6 +7908,8 @@
     "Export screening results (CSV)": "Exporter les résultats du tri (CSV)",
     "Screening results could not be exported.": "Impossible d’exporter les résultats du tri.",
     "Screening data changed during export. Please try again.": "Les données du tri ont changé pendant l’exportation. Réessayez.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement.",
+    "Fetch": "Récupérer",
+    "Switch Mode": "Changer de mode"
   }
 }

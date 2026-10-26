@@ -191,15 +191,7 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
-    "Scientific data APIs, official file links and access guidance.": "과학 데이터 API, 공식 파일 링크 및 접근 안내입니다.",
-    "Search Europe PMC records and available abstracts with cursor pagination.": "커서 페이지 매김으로 Europe PMC 기록과 제공된 초록을 검색합니다.",
-    "Inspect HGNC fields, identifiers and official file metadata.": "HGNC 필드, 식별자 및 공식 파일 메타데이터를 확인합니다.",
-    "Query bioDBnet identifier mappings, orthology and pathways.": "bioDBnet 식별자 매핑, 상동 관계 및 경로를 조회합니다.",
-    "Rank transcription factors with ChEA3 or discover GMT libraries.": "ChEA3로 전사인자 순위를 계산하거나 GMT 라이브러리를 찾습니다.",
-    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Cellosaurus RDF, 그래프 기록, STR 유사도 또는 파일 링크를 가져옵니다.",
-    "Check official dataset access requirements or discover public files.": "공식 데이터 접근 요건을 확인하거나 공개 파일을 찾습니다.",
-    "List official openFDA adverse-event bulk download links.": "openFDA 이상사례 데이터의 공식 일괄 다운로드 링크를 나열합니다.",
-    "List maintained CTD public report links and usage terms.": "관리되는 CTD 공개 보고서 링크와 이용 약관을 나열합니다.",
+    "{{count}} steps remaining_other": "{{count}}단계 남음",
     "Input help": "입력 도움말",
     "Your changes have not been saved. Discard them and leave the editor?": "변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 편집기를 나가시겠습니까?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "등록된 사슬을 사용하여 유사한 3D 구조를 가진 실험 기반 PDB 사슬을 찾습니다.",
@@ -6530,6 +6522,15 @@
     "Your reference edits have not been saved.": "문헌 수정 내용이 아직 저장되지 않았습니다.",
     "Attach data or papers, then describe what you want to find out.": "데이터나 논문을 첨부한 다음 알아보고 싶은 내용을 설명하세요.",
     "Research data from {{sources}}.": "{{sources}}의 연구 데이터.",
+    "Scientific data APIs, official file links and access guidance.": "과학 데이터 API, 공식 파일 링크 및 접근 안내입니다.",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "커서 페이지 매김으로 Europe PMC 기록과 제공된 초록을 검색합니다.",
+    "Inspect HGNC fields, identifiers and official file metadata.": "HGNC 필드, 식별자 및 공식 파일 메타데이터를 확인합니다.",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "bioDBnet 식별자 매핑, 상동 관계 및 경로를 조회합니다.",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "ChEA3로 전사인자 순위를 계산하거나 GMT 라이브러리를 찾습니다.",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Cellosaurus RDF, 그래프 기록, STR 유사도 또는 파일 링크를 가져옵니다.",
+    "Check official dataset access requirements or discover public files.": "공식 데이터 접근 요건을 확인하거나 공개 파일을 찾습니다.",
+    "List official openFDA adverse-event bulk download links.": "openFDA 이상사례 데이터의 공식 일괄 다운로드 링크를 나열합니다.",
+    "List maintained CTD public report links and usage terms.": "관리되는 CTD 공개 보고서 링크와 이용 약관을 나열합니다.",
     "Create and improve reusable Skills.": "재사용 가능한 스킬을 만들고 개선합니다.",
     "Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.": "선택한 런타임이 준비되었으면 그대로 사용하세요. 다른 모델 제공업체 지원이 필요한 경우에만 변경하세요. 다음 단계에서 모델을 연결합니다.",
     "Predict protein structures and complexes.": "단백질 구조와 복합체를 예측합니다.",
@@ -7575,6 +7576,8 @@
     "Export screening results (CSV)": "스크리닝 결과 내보내기(CSV)",
     "Screening results could not be exported.": "스크리닝 결과를 내보내지 못했습니다.",
     "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다.",
+    "Fetch": "가져오기",
+    "Switch Mode": "모드 전환"
   }
 }

@@ -191,15 +191,7 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
-    "Scientific data APIs, official file links and access guidance.": "科学数据 API、官方文件链接与访问指引。",
-    "Search Europe PMC records and available abstracts with cursor pagination.": "通过游标分页检索 Europe PMC 记录及可用摘要。",
-    "Inspect HGNC fields, identifiers and official file metadata.": "查看 HGNC 字段、标识符和官方文件元数据。",
-    "Query bioDBnet identifier mappings, orthology and pathways.": "查询 bioDBnet 标识符映射、同源关系和通路。",
-    "Rank transcription factors with ChEA3 or discover GMT libraries.": "使用 ChEA3 对转录因子排名或查找 GMT 文库。",
-    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "获取 Cellosaurus RDF、图谱记录、STR 相似性或文件链接。",
-    "Check official dataset access requirements or discover public files.": "查看官方数据访问要求或查找公开文件。",
-    "List official openFDA adverse-event bulk download links.": "列出 openFDA 不良事件批量数据的官方下载链接。",
-    "List maintained CTD public report links and usage terms.": "列出维护的 CTD 公开报告链接与使用条款。",
+    "{{count}} steps remaining_other": "剩余 {{count}} 步",
     "Input help": "输入帮助",
     "Your changes have not been saved. Discard them and leave the editor?": "更改尚未保存。要放弃更改并离开编辑器吗？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收录的链查找具有相似三维结构的实验 PDB 链。",
@@ -6532,6 +6524,15 @@
     "Your reference edits have not been saved.": "您对文献的修改尚未保存。",
     "Attach data or papers, then describe what you want to find out.": "附上数据或论文，然后说明您想了解的问题。",
     "Research data from {{sources}}.": "来自 {{sources}} 的研究数据。",
+    "Scientific data APIs, official file links and access guidance.": "科学数据 API、官方文件链接与访问指引。",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "通过游标分页检索 Europe PMC 记录及可用摘要。",
+    "Inspect HGNC fields, identifiers and official file metadata.": "查看 HGNC 字段、标识符和官方文件元数据。",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "查询 bioDBnet 标识符映射、同源关系和通路。",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "使用 ChEA3 对转录因子排名或查找 GMT 文库。",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "获取 Cellosaurus RDF、图谱记录、STR 相似性或文件链接。",
+    "Check official dataset access requirements or discover public files.": "查看官方数据访问要求或查找公开文件。",
+    "List official openFDA adverse-event bulk download links.": "列出 openFDA 不良事件批量数据的官方下载链接。",
+    "List maintained CTD public report links and usage terms.": "列出维护的 CTD 公开报告链接与使用条款。",
     "Create and improve reusable Skills.": "创建并改进可复用技能。",
     "Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.": "所选运行时就绪后即可使用。仅在需要其他供应商支持时切换运行时。下一步将连接模型。",
     "Predict protein structures and complexes.": "预测蛋白质结构与复合物。",
@@ -7577,6 +7578,8 @@
     "Export screening results (CSV)": "导出筛选结果（CSV）",
     "Screening results could not be exported.": "无法导出筛选结果。",
     "Screening data changed during export. Please try again.": "导出期间筛选数据发生了变化。请重试。",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令行正在等待网络访问批准。如果进程已结束，请批准后手动重试命令；系统不会自动重新执行。"
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令行正在等待网络访问批准。如果进程已结束，请批准后手动重试命令；系统不会自动重新执行。",
+    "Fetch": "获取",
+    "Switch Mode": "切换模式"
   }
 }

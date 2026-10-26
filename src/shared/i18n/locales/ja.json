@@ -191,15 +191,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
-    "Scientific data APIs, official file links and access guidance.": "科学データ API、公式ファイルリンク、アクセス案内。",
-    "Search Europe PMC records and available abstracts with cursor pagination.": "カーソルページングで Europe PMC の記録と利用可能な抄録を検索します。",
-    "Inspect HGNC fields, identifiers and official file metadata.": "HGNC のフィールド、識別子、公式ファイルのメタデータを確認します。",
-    "Query bioDBnet identifier mappings, orthology and pathways.": "bioDBnet の識別子対応、オルソロジー、パスウェイを照会します。",
-    "Rank transcription factors with ChEA3 or discover GMT libraries.": "ChEA3 で転写因子を順位付けするか GMT ライブラリを探します。",
-    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Cellosaurus の RDF、グラフ記録、STR 類似性、ファイルリンクを取得します。",
-    "Check official dataset access requirements or discover public files.": "公式のデータ利用条件を確認するか公開ファイルを探します。",
-    "List official openFDA adverse-event bulk download links.": "openFDA 有害事象データの公式一括ダウンロードリンクを一覧表示します。",
-    "List maintained CTD public report links and usage terms.": "管理対象の CTD 公開レポートリンクと利用条件を一覧表示します。",
+    "{{count}} steps remaining_other": "残り{{count}}ステップ",
     "Input help": "入力ヘルプ",
     "Your changes have not been saved. Discard them and leave the editor?": "変更は保存されていません。破棄してエディターを離れますか？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "登録済みの鎖を使って、類似した3D構造を持つ実験由来のPDB鎖を検索します。",
@@ -6532,6 +6524,15 @@
     "Your reference edits have not been saved.": "文献の編集内容はまだ保存されていません。",
     "Attach data or papers, then describe what you want to find out.": "データや論文を添付し、調べたいことを説明してください。",
     "Research data from {{sources}}.": "{{sources}}の研究データ。",
+    "Scientific data APIs, official file links and access guidance.": "科学データ API、公式ファイルリンク、アクセス案内。",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "カーソルページングで Europe PMC の記録と利用可能な抄録を検索します。",
+    "Inspect HGNC fields, identifiers and official file metadata.": "HGNC のフィールド、識別子、公式ファイルのメタデータを確認します。",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "bioDBnet の識別子対応、オルソロジー、パスウェイを照会します。",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "ChEA3 で転写因子を順位付けするか GMT ライブラリを探します。",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Cellosaurus の RDF、グラフ記録、STR 類似性、ファイルリンクを取得します。",
+    "Check official dataset access requirements or discover public files.": "公式のデータ利用条件を確認するか公開ファイルを探します。",
+    "List official openFDA adverse-event bulk download links.": "openFDA 有害事象データの公式一括ダウンロードリンクを一覧表示します。",
+    "List maintained CTD public report links and usage terms.": "管理対象の CTD 公開レポートリンクと利用条件を一覧表示します。",
     "Create and improve reusable Skills.": "再利用可能なスキルを作成・改善します。",
     "Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.": "選択したランタイムが準備済みなら、そのまま使用できます。別のプロバイダー対応が必要な場合のみ変更してください。次の手順でモデルを接続します。",
     "Predict protein structures and complexes.": "タンパク質の構造と複合体を予測します。",
@@ -7577,6 +7578,8 @@
     "Export screening results (CSV)": "スクリーニング結果をエクスポート（CSV）",
     "Screening results could not be exported.": "スクリーニング結果をエクスポートできませんでした。",
     "Screening data changed during export. Please try again.": "エクスポート中にスクリーニングデータが変更されました。もう一度お試しください。",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。"
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。",
+    "Fetch": "取得",
+    "Switch Mode": "モードを切り替え"
   }
 }

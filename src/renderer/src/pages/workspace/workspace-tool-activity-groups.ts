@@ -1,8 +1,15 @@
 import type { PersistedActivityGroup } from '../../../../shared/session-persistence'
 import type { ToolActivity } from '@/stores/session-store-contract'
 
-import { isActivityActive, type ConversationItem } from './workspace-conversation-items'
 import {
+  formatActivityTitle,
+  isActivityActive,
+  type ConversationItem
+} from './workspace-conversation-items'
+import {
+  buildToolActivityDetails,
+  getToolDisplayName,
+  translateToolDetailCopy,
   isEditActivity,
   isSkillActivity,
   getNotebookRunIdFromActivity
@@ -18,7 +25,7 @@ import {
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { TFunction } from 'i18next'
-import { isAuthorizedDirectoryTool } from './notebook-tool-names'
+import { isAuthorizedDirectoryTool, matchNotebookControlTool } from './notebook-tool-names'
 import { notebookInput } from './notebook-tool-presentation'
 import { i18next } from '@/i18n'
 
@@ -338,12 +345,45 @@ const formatActivityGroupPresentationTitle = (
   t: TFunction = i18next.t.bind(i18next)
 ): string => {
   if (activities.some(isPendingNotebookCodeReview)) return t('Waiting for your approval')
-  const activityPhases = activities.map((activity) => ({
-    isNotebook: isNotebookExecutionActivity(activity),
-    phase: getToolExecutionPhase(activity, permission, notebookRunsById)
-  }))
+  const activityPhases = getRenderableActivityEntries(activities).map(
+    ({ activity, activityIndex }) => ({
+      activity,
+      activityIndex,
+      isNotebook: isNotebookExecutionActivity(activity),
+      phase: getToolExecutionPhase(activity, permission, notebookRunsById)
+    })
+  )
+  if (activityPhases.some(({ phase }) => phase === 'awaiting-approval'))
+    return t('Waiting for your approval')
+  const executing = activityPhases.filter(({ phase }) => phase === 'executing')
+  const current =
+    executing.find(({ activity }) => activity.status === 'in_progress') ?? executing[0]
+  if (current) {
+    if (isSearchActivity(current.activity, activities, current.activityIndex))
+      return t('Using tool: {{name}}', { name: t('Web Search') })
+    const details = buildToolActivityDetails(current.activity, t)
+    const notebookControlTool =
+      matchNotebookControlTool(current.activity.providerToolName) ??
+      matchNotebookControlTool(current.activity.title)
+    if (details?.displayName === getToolDisplayName(current.activity) && notebookControlTool)
+      // Canonicalize provider spellings before reusing the existing chip-name mapping.
+      return formatActivityTitle(
+        {
+          ...current.activity,
+          providerToolName: `mcp__open-science-notebook__${notebookControlTool}`
+        },
+        'executing',
+        t
+      )
+    if (details)
+      return t('Using tool: {{name}}', { name: translateToolDetailCopy(details.displayName, t) })
+    if (current.activity.providerToolName?.trim() || current.activity.title.trim())
+      return formatActivityTitle(current.activity, 'executing', t)
+  }
   const phases = activityPhases.filter(({ isNotebook }) => isNotebook).map(({ phase }) => phase)
   const notebookCount = phases.length
+  if (!phases.includes('executing') && activityPhases.some(({ phase }) => phase === 'executing'))
+    return declaredTitle?.trim() || t('Running')
   if (notebookCount === 0) {
     if (activityPhases.length > 0 && activityPhases.every(({ phase }) => phase === 'closed')) {
       return activityPhases.length === 1 ? t('Tool request ended') : t('Tool requests ended')
