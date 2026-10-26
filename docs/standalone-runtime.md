@@ -42,6 +42,13 @@ metadata, with the original Tensor dependency version and redistribution license
 Other versions keep the original worker and dependency closure; additional external Transformers
 consumers fail staging until reviewed. The model recipe, local-only inference and storage are
 unchanged. These backend reductions apply to desktop installers and standalone CLI packages.
+Desktop/Release CLI staging additionally omits unused debug and browser variants of audited
+OpenChemLib, Tree-sitter, styled-exceljs, PDFium, Pako and tiktoken releases. Active Node entries,
+codepage/Numbers helpers, inference/parser WASM, licenses and diagnostic maps remain. The ONNX
+browser JavaScript and TypeScript sources are pruned only with the specialized WASM worker;
+fallback versions keep them. npm/SDK staging retains these alternative exports. Node binaries
+and their native diagnostic symbols are unchanged. Desktop/Release CLI payloads also omit the
+build-only dependency-analysis JSON after staging has consumed it; build and npm/SDK copies remain.
 Desktop staging also omits the audited renderer-only dependency roots already compiled into
 `out/web`. Backend and worker import metadata can retain any such root, and transitive runtime
 dependencies are still copied normally. Unknown dependencies remain included. The desktop

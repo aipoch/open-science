@@ -31,7 +31,11 @@ const dependencyRoots = values.desktop
   : Object.keys(manifest.dependencies)
 await rm(stage, { recursive: true, force: true })
 await mkdir(stage, { recursive: true })
-await cp(backend, join(stage, 'out/backend'), { recursive: true })
+await cp(backend, join(stage, 'out/backend'), {
+  recursive: true,
+  // Dependency analysis is consumed above; it is not a runtime or diagnostic source map.
+  filter: (path) => !values.desktop || path !== join(backend, 'dependencies.json')
+})
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
@@ -120,7 +124,9 @@ async function copyDependency(name, from, destinationParent = stage) {
   if (!atRoot) destination = join(stage, 'node_modules', name)
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
-  const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
+  const desktopIncludes = values.desktop
+    ? createDesktopDependencyFilter(pkg, { localTranslationWasm: Boolean(localTranslation) })
+    : undefined
   await cp(source, destination, {
     recursive: true,
     dereference: true,

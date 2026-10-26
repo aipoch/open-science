@@ -108,7 +108,19 @@ export const isShippableDependencyPath = (relativePath) => {
 // extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
-export function createDesktopDependencyFilter(manifest) {
+export function createDesktopDependencyFilter(manifest, { localTranslationWasm = false } = {}) {
+  // These alternate distributions have no consumers in the packaged application. Keep the
+  // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
+  const unusedDistributions = {
+    'openchemlib@9.25.0': /^dist\/openchemlib\.debug\.js(?:\.map)?$/,
+    'web-tree-sitter@0.26.13': /^debug\/web-tree-sitter\.(?:js|cjs|wasm)(?:\.map)?$/,
+    'styled-exceljs@0.21.6':
+      /^dist\/xlsx\.(?:extendscript|(?:full|core|mini)\.min)\.(?:js(?:\.map)?|map)$/,
+    '@embedpdf/pdfium@2.15.1': /^dist\/index\.browser\.js(?:\.map)?$/,
+    'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
+    'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/,
+    'tiktoken@1.0.22': /^lite\/[^/]+\.(?:js|cjs|wasm)(?:\.map)?$/
+  }[`${manifest.name}@${manifest.version}`]
   const runtimeEntries = []
   const collect = (value) => {
     if (typeof value === 'string') runtimeEntries.push(value.replace(/^\.\//, ''))
@@ -135,6 +147,17 @@ export function createDesktopDependencyFilter(manifest) {
     const path = parts.join('/')
     if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
       return true
+    if (unusedDistributions?.test(path)) return false
+    // The fallback Transformers entry still imports WebGPU. Prune these only after the
+    // dedicated worker has replaced it with the existing WASM implementation.
+    if (
+      localTranslationWasm &&
+      manifest.name === 'onnxruntime-web' &&
+      manifest.version === '1.26.0-dev.20260416-b7804b056c' &&
+      (/^dist\/ort(?:\.(?:all|webgl|webgpu|jspi))?(?:\.bundle)?\.min\.(?:js|mjs)$/.test(path) ||
+        /^lib\/.*\.ts$/.test(path))
+    )
+      return false
     if (runtimeEntries.some((entry) => posix.matchesGlob(path, entry))) return true
     if (/\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(path)) return false
     return (

@@ -49,6 +49,163 @@ describe('generated native Prisma payload', () => {
 })
 
 describe('desktop-only dependency contents', () => {
+  it.each(['/', '\\'])(
+    'prunes audited unused distributions but preserves runtime assets (%s)',
+    (separator) => {
+      for (const [name, version, removed, retained] of [
+        ['openchemlib', '9.25.0', 'dist/openchemlib.debug.js', 'dist/openchemlib.js'],
+        ['web-tree-sitter', '0.26.13', 'debug/web-tree-sitter.wasm', 'web-tree-sitter.wasm'],
+        ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.js', 'dist/cpexcel.js'],
+        ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.map', 'xlsx.js'],
+        ['styled-exceljs', '0.21.6', 'dist/xlsx.extendscript.js', 'dist/xlsx.zahl.mjs'],
+        ['@embedpdf/pdfium', '2.15.1', 'dist/index.browser.js', 'dist/pdfium.wasm'],
+        ['pako', '1.0.11', 'dist/pako.js', 'lib/inflate.js'],
+        ['pako', '0.2.9', 'dist/pako.min.js', 'index.js'],
+        ['tiktoken', '1.0.22', 'lite/tiktoken_bg.wasm', 'tiktoken_bg.wasm']
+      ]) {
+        const manifest = { name, version, exports: { './variant': `./${removed}` } }
+        const filter = createDesktopDependencyFilter(manifest)
+        expect(filter(removed.replaceAll('/', separator), false)).toBe(false)
+        expect(filter(retained.replaceAll('/', separator), false)).toBe(true)
+        expect(backendDependencyIncludes(manifest, removed)).toBe(true)
+        expect(
+          createDesktopDependencyFilter({ ...manifest, version: 'future' })(removed, false)
+        ).toBe(true)
+        for (const file of [
+          'debug/LICENSE',
+          'dist/NOTICE.txt',
+          'lite/licenses/third-party.txt',
+          'unknown.js',
+          'index.js.map'
+        ])
+          expect(filter(file.replaceAll('/', separator), false)).toBe(true)
+        expect(filter('debug', true)).toBe(true)
+      }
+      const ort = { name: 'onnxruntime-web', version: '1.26.0-dev.20260416-b7804b056c' }
+      for (const file of [
+        'dist/ort.webgpu.bundle.min.mjs',
+        'dist/ort.min.js',
+        'lib/onnxjs/backend.ts'
+      ]) {
+        expect(createDesktopDependencyFilter(ort)(file, false)).toBe(true)
+        expect(
+          createDesktopDependencyFilter(ort, { localTranslationWasm: true })(
+            file.replaceAll('/', separator),
+            false
+          )
+        ).toBe(false)
+        expect(
+          createDesktopDependencyFilter(
+            { ...ort, version: 'future' },
+            { localTranslationWasm: true }
+          )(file, false)
+        ).toBe(true)
+      }
+      for (const file of [
+        'dist/ort.node.min.js',
+        'dist/ort.wasm.bundle.min.mjs',
+        'dist/ort.wasm.min.mjs',
+        'dist/ort-wasm-simd-threaded.mjs',
+        'dist/ort-wasm-simd-threaded.wasm',
+        'lib/LICENSE'
+      ])
+        expect(
+          createDesktopDependencyFilter(ort, { localTranslationWasm: true })(
+            file.replaceAll('/', separator),
+            false
+          )
+        ).toBe(true)
+    }
+  )
+
+  it('runs spreadsheet, molecule, parser, PDFium and tokenizer operations from filtered packages', async () => {
+    await mkdir('node_modules/.cache', { recursive: true })
+    const root = await mkdtemp(join(process.cwd(), 'node_modules/.cache/desktop-variants-'))
+    try {
+      for (const name of [
+        'styled-exceljs',
+        'openchemlib',
+        'web-tree-sitter',
+        '@embedpdf/pdfium',
+        'tiktoken'
+      ]) {
+        const source = join(process.cwd(), 'node_modules', name)
+        const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+        const filter = createDesktopDependencyFilter(manifest)
+        await cp(source, join(root, 'node_modules', name), {
+          recursive: true,
+          filter: async (path) => filter(relative(source, path), (await stat(path)).isDirectory())
+        })
+      }
+      for (const [parent, alias] of [
+        ['unicode-trie', 'pako-old'],
+        ['pdf-lib', 'pako-pdf']
+      ]) {
+        const source = join(process.cwd(), 'node_modules', parent, 'node_modules/pako')
+        const filter = createDesktopDependencyFilter(
+          JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+        )
+        await cp(source, join(root, 'node_modules', alias), {
+          recursive: true,
+          filter: async (path) => filter(relative(source, path), (await stat(path)).isDirectory())
+        })
+      }
+      await cp('packages/notebook-syntax/assets/tree-sitter-python.wasm', join(root, 'python.wasm'))
+      await writeFile(
+        join(root, 'verify.mjs'),
+        `
+        import assert from 'node:assert/strict';
+        import { createRequire } from 'node:module';
+        import { readFileSync } from 'node:fs';
+        const require = createRequire(import.meta.url);
+        for (const name of ['pako-old', 'pako-pdf']) {
+          const pako = require(name);
+          const bytes = new TextEncoder().encode('Scientific 科学');
+          assert.deepEqual(new Uint8Array(pako.inflate(pako.deflate(bytes))), bytes);
+        }
+        for (const xlsx of [require('styled-exceljs'), await import('styled-exceljs')]) {
+          const rows = [['Journal', 'Count'], ['科学', 42]];
+          for (const bookType of ['xlsx', 'xls', 'ods']) {
+            const book = xlsx.utils.book_new();
+            xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(rows), 'Data');
+            const loaded = xlsx.read(xlsx.write(book, {type: 'buffer', bookType}), {type: 'buffer'});
+            assert.deepEqual(xlsx.utils.sheet_to_json(loaded.Sheets.Data, {header: 1}), rows);
+          }
+        }
+        await import('styled-exceljs/dist/cpexcel.full.mjs');
+        await import('styled-exceljs/dist/xlsx.zahl.mjs');
+        const {Molecule} = await import('openchemlib');
+        const molecule = Molecule.fromSmiles('CCO');
+        assert.equal(molecule.getAllAtoms(), 3);
+        assert.match(molecule.toSVG(200, 100), /<svg/);
+        const {fileURLToPath} = await import('node:url');
+        const {Parser, Language} = await import('web-tree-sitter');
+        await Parser.init();
+        const language = await Language.load(fileURLToPath(new URL('./python.wasm', import.meta.url)));
+        const parser = new Parser(); parser.setLanguage(language);
+        const tree = parser.parse('answer = 42');
+        assert.equal(tree.rootNode.type, 'module');
+        assert.equal(tree.rootNode.hasError, false); tree.delete(); parser.delete();
+        const {init} = await import('@embedpdf/pdfium');
+        const pdf = await init({thisProgram: 'packaging-test', wasmBinary: readFileSync(require.resolve('@embedpdf/pdfium/pdfium.wasm'))});
+        pdf.PDFiumExt_Init();
+        const document = pdf.FPDF_CreateNewDocument();
+        const page = pdf.FPDFPage_New(document, 0, 200, 100);
+        assert.equal(pdf.FPDF_GetPageCount(document), 1);
+        pdf.FPDF_ClosePage(page); pdf.FPDF_CloseDocument(document);
+        for (const tokenizer of [require('tiktoken'), await import('tiktoken')]) {
+          const encoder = tokenizer.get_encoding('cl100k_base');
+          assert.equal(new TextDecoder().decode(encoder.decode(encoder.encode('Scientific 科学'))), 'Scientific 科学');
+          encoder.free();
+        }
+      `
+      )
+      await promisify(execFile)(process.execPath, [join(root, 'verify.mjs')], { timeout: 30_000 })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 40_000)
+
   it('rejects an external consumer of bundled i18next in the real staging command', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-bundle-consumer-'))
     const put = async (file: string, content: string): Promise<void> => {
@@ -105,6 +262,12 @@ describe('desktop-only dependency contents', () => {
         code: 1,
         stderr: expect.stringContaining('requires bundled i18next')
       })
+      await expect(
+        stat(join(root, 'out/desktop-backend/out/backend/dependencies.json'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(
+        await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
+      ).toContain('i18next')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
