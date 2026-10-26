@@ -15,6 +15,14 @@ const patchName = '@shadcn+react+0.3.0.patch'
 const patchPath = join(process.cwd(), 'patches', patchName)
 const patchSource = readFileSync(patchPath, 'utf8').replaceAll('\r\n', '\n')
 const patchLines = patchSource.split('\n')
+const declarations = readFileSync(
+  join(process.cwd(), 'node_modules/@shadcn/react/dist/message-scroller/index.d.ts'),
+  'utf8'
+)
+const originalDeclarations = declarations
+  .split('\n')
+  .filter((line) => !line.includes('stopAutoScroll') && !line.includes('Pause automatic following'))
+  .join('\n')
 const original = '"use client";\n' + patchLines.find((line) => line.startsWith('-import'))!.slice(1)
 const patched = '"use client";\n' + patchLines.find((line) => line.startsWith('+import'))!.slice(1)
 // Compact, byte-exact snapshots from the original Git patches; no Git history is needed in CI.
@@ -87,6 +95,10 @@ describe('dependency patch installation', () => {
       JSON.stringify({ version: scenario.version ?? '0.3.0' })
     )
     writeFileSync(entry, scenario.source)
+    writeFileSync(
+      join(packageDir, 'dist', 'message-scroller', 'index.d.ts'),
+      scenario.name === 'already patched' ? declarations : originalDeclarations
+    )
     writeFileSync(
       join(fixture, 'patches', patchName),
       scenario.corrupt

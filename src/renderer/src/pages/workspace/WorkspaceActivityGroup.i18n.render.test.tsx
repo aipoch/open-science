@@ -10,18 +10,18 @@ import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { scrollToMessage } = vi.hoisted(() => ({ scrollToMessage: vi.fn() }))
+const { stopAutoScroll } = vi.hoisted(() => ({ stopAutoScroll: vi.fn() }))
 
 vi.mock('@/components/ui/message-scroller', () => ({
   MessageScrollerItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  useMessageScroller: () => ({ scrollToMessage })
+  useMessageScroller: () => ({ stopAutoScroll })
 }))
 
 let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
-  scrollToMessage.mockReset()
+  stopAutoScroll.mockReset()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -687,7 +687,7 @@ describe('WorkspaceActivityGroup i18n', () => {
     )
   })
 
-  it('anchors the group in view before toggling its height', () => {
+  it('pauses following before toggling the group height', () => {
     const onToggleGroup = vi.fn()
     act(() => {
       root.render(
@@ -726,11 +726,8 @@ describe('WorkspaceActivityGroup i18n', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="tool-group-header"]')?.click()
     })
 
-    expect(scrollToMessage).toHaveBeenCalledWith('group-anchor-1', {
-      align: 'nearest',
-      behavior: 'auto'
-    })
-    expect(scrollToMessage.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(stopAutoScroll).toHaveBeenCalledWith()
+    expect(stopAutoScroll.mock.invocationCallOrder[0]).toBeLessThan(
       onToggleGroup.mock.invocationCallOrder[0]!
     )
   })

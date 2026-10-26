@@ -26,9 +26,14 @@ if (!knownPatchedHashes.has(digest(installed))) process.exit(0)
 
 // This patch contains the complete two-line file. Reuse its original instead of vendoring a copy.
 // The checksum fails closed if its format or upstream baseline ever changes.
-const lines = readFileSync(join('patches', '@shadcn+react+0.3.0.patch'), 'utf8')
-  .replaceAll('\r\n', '\n')
-  .split('\n')
+const lines =
+  readFileSync(join('patches', '@shadcn+react+0.3.0.patch'), 'utf8')
+    .replaceAll('\r\n', '\n')
+    .split('diff --git ')
+    .find((section) =>
+      section.startsWith('a/node_modules/@shadcn/react/dist/message-scroller/index.js ')
+    )
+    ?.split('\n') ?? []
 const side = (prefix) =>
   lines
     .filter(
