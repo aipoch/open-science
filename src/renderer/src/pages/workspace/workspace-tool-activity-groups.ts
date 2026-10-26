@@ -8,6 +8,7 @@ import {
 } from './workspace-conversation-items'
 import {
   buildToolActivityDetails,
+  getToolDisplayName,
   translateToolDetailCopy,
   isEditActivity,
   isSkillActivity,
@@ -24,7 +25,7 @@ import {
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { TFunction } from 'i18next'
-import { isAuthorizedDirectoryTool } from './notebook-tool-names'
+import { isAuthorizedDirectoryTool, matchNotebookControlTool } from './notebook-tool-names'
 import { notebookInput } from './notebook-tool-presentation'
 import { i18next } from '@/i18n'
 
@@ -361,6 +362,19 @@ const formatActivityGroupPresentationTitle = (
     if (isSearchActivity(current.activity, activities, current.activityIndex))
       return t('Using tool: {{name}}', { name: t('Web Search') })
     const details = buildToolActivityDetails(current.activity, t)
+    const notebookControlTool =
+      matchNotebookControlTool(current.activity.providerToolName) ??
+      matchNotebookControlTool(current.activity.title)
+    if (details?.displayName === getToolDisplayName(current.activity) && notebookControlTool)
+      // Canonicalize provider spellings before reusing the existing chip-name mapping.
+      return formatActivityTitle(
+        {
+          ...current.activity,
+          providerToolName: `mcp__open-science-notebook__${notebookControlTool}`
+        },
+        'executing',
+        t
+      )
     if (details)
       return t('Using tool: {{name}}', { name: translateToolDetailCopy(details.displayName, t) })
     if (current.activity.providerToolName?.trim() || current.activity.title.trim())

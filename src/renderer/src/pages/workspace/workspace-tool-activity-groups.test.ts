@@ -550,6 +550,46 @@ describe('formatActivityGroupPresentationTitle', () => {
     }
   )
 
+  it.each([
+    ['notebook_shutdown', 'Notebook shutdown'],
+    ['inspect_packages', 'Notebook'],
+    ['manage_environments', 'Notebook']
+  ])('keeps the existing %s mapping when generic details exist', async (tool, name) => {
+    const korean = i18next.createInstance()
+    await korean.init({
+      lng: 'ko',
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { ko: { translation: ko } }
+    })
+    for (const identity of [
+      `mcp__open-science-notebook__${tool}`,
+      `mcp__open_science_notebook__${tool}`,
+      `mcp.open-science-notebook.${tool}`,
+      `open-science-notebook_${tool}`
+    ]) {
+      for (const source of ['providerToolName', 'title'] as const) {
+        const activity = createActivity({
+          status: 'in_progress',
+          toolKind: 'other',
+          [source]: identity,
+          rawInput: { runtimeId: 'python' },
+          rawOutput: 'pending'
+        })
+        expect(buildToolActivityDetails(activity)).toBeDefined()
+        expect(formatActivityGroupPresentationTitle([activity], undefined, undefined)).toBe(
+          `Using tool: ${name}`
+        )
+        const t = korean.t.bind(korean)
+        expect(
+          formatActivityGroupPresentationTitle([activity], undefined, undefined, undefined, t)
+        ).toBe(t('Using tool: {{name}}', { name: t(name) }))
+      }
+    }
+  })
+
   it('shows ordinary running and approval states without inferring future steps', () => {
     const activity = createActivity({
       id: 'ordinary',
