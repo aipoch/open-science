@@ -48,7 +48,8 @@ export type SkillsView =
   | { kind: 'detail'; id: string }
   | { kind: 'create' }
   | { kind: 'edit'; id: string }
-  | { kind: 'import' }
+  | { kind: 'import'; repository?: string }
+  | { kind: 'sources' }
   | { kind: 'import-agent-home' }
   | { kind: 'upload' }
 

@@ -7896,6 +7896,20 @@
     "Export screening results (CSV)": "Exporter les résultats du tri (CSV)",
     "Screening results could not be exported.": "Impossible d’exporter les résultats du tri.",
     "Screening data changed during export. Please try again.": "Les données du tri ont changé pendant l’exportation. Réessayez.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement.",
+    "Skill sources": "Sources de compétences",
+    "Save GitHub repositories to browse and import their Skills.": "Enregistrez des dépôts GitHub pour parcourir et importer leurs compétences.",
+    "Use a repository URL or owner/repo@ref to select a branch or tag.": "Utilisez une URL de dépôt ou owner/repo@ref pour sélectionner une branche ou un tag.",
+    "Saved sources": "Sources enregistrées",
+    "No saved sources yet": "Aucune source enregistrée",
+    "Add a repository above to keep its Skills within reach.": "Ajoutez un dépôt ci-dessus pour accéder facilement à ses compétences.",
+    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "Supprimer une source conserve les compétences installées. Les sources enregistrées ne mettent pas automatiquement les compétences à jour.",
+    "Could not load Skill sources.": "Impossible de charger les sources de compétences.",
+    "Could not remove this source. Your saved sources have been preserved.": "Impossible de supprimer cette source. Vos sources enregistrées ont été conservées.",
+    "Could not save this source. Check the repository address and try again.": "Impossible d’enregistrer cette source. Vérifiez l’adresse du dépôt et réessayez.",
+    "Remove source {{name}}": "Supprimer la source {{name}}",
+    "Default branch": "Branche par défaut",
+    "Add source": "Ajouter une source",
+    "Browse": "Parcourir"
   }
 }

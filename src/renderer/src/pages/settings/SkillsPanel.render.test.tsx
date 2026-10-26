@@ -993,6 +993,21 @@ describe('SkillsPanel (list view)', () => {
 })
 
 describe('SkillsPanel (sub-views)', () => {
+  it('scans a saved repository on entry without an extra search action', async () => {
+    await act(async () =>
+      root.render(
+        <SkillsPanel
+          view={{ kind: 'import', repository: 'owner/repo@published' }}
+          onNavigate={vi.fn()}
+          onOpenSpecialist={vi.fn()}
+        />
+      )
+    )
+    expect(useSettingsStore.getState().scanRepoSkills).toHaveBeenCalledWith('owner/repo@published')
+    expect(container.querySelector('input')?.value).toBe('owner/repo@published')
+    expect(container.textContent).toContain('Foo')
+  })
+
   it('preserves imported frontmatter metadata when saving an edited skill', async () => {
     ;(window as unknown as { api: unknown }).api = {
       settings: {

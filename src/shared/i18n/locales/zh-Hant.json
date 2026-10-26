@@ -7568,6 +7568,20 @@
     "Export screening results (CSV)": "匯出篩選結果（CSV）",
     "Screening results could not be exported.": "無法匯出篩選結果。",
     "Screening data changed during export. Please try again.": "匯出期間篩選資料發生變更。請重試。",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令列正在等待網路存取核准。如果程序已結束，請核准後手動重試命令；系統不會自動重新執行。"
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令列正在等待網路存取核准。如果程序已結束，請核准後手動重試命令；系統不會自動重新執行。",
+    "Skill sources": "技能來源",
+    "Save GitHub repositories to browse and import their Skills.": "儲存 GitHub 儲存庫，瀏覽並匯入其中的技能。",
+    "Use a repository URL or owner/repo@ref to select a branch or tag.": "使用儲存庫 URL 或 owner/repo@ref 選擇分支或標籤。",
+    "Saved sources": "已儲存的來源",
+    "No saved sources yet": "尚未儲存來源",
+    "Add a repository above to keep its Skills within reach.": "在上方新增儲存庫，方便隨時存取其中的技能。",
+    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "移除來源會保留已安裝的技能。已儲存的來源不會自動更新技能。",
+    "Could not load Skill sources.": "無法載入技能來源。",
+    "Could not remove this source. Your saved sources have been preserved.": "無法移除此來源。已儲存的來源已保留。",
+    "Could not save this source. Check the repository address and try again.": "無法儲存此來源。請檢查儲存庫位址後重試。",
+    "Remove source {{name}}": "移除來源 {{name}}",
+    "Default branch": "預設分支",
+    "Add source": "新增來源",
+    "Browse": "瀏覽"
   }
 }

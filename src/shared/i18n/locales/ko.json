@@ -7566,6 +7566,20 @@
     "Export screening results (CSV)": "스크리닝 결과 내보내기(CSV)",
     "Screening results could not be exported.": "스크리닝 결과를 내보내지 못했습니다.",
     "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다.",
+    "Skill sources": "스킬 소스",
+    "Save GitHub repositories to browse and import their Skills.": "GitHub 저장소를 저장하여 스킬을 찾아보고 가져오세요.",
+    "Use a repository URL or owner/repo@ref to select a branch or tag.": "저장소 URL 또는 owner/repo@ref로 브랜치나 태그를 선택하세요.",
+    "Saved sources": "저장된 소스",
+    "No saved sources yet": "아직 저장된 소스가 없습니다",
+    "Add a repository above to keep its Skills within reach.": "위에서 저장소를 추가하면 스킬에 쉽게 접근할 수 있습니다.",
+    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "소스를 제거해도 설치된 스킬은 유지됩니다. 저장된 소스는 스킬을 자동으로 업데이트하지 않습니다.",
+    "Could not load Skill sources.": "스킬 소스를 불러올 수 없습니다.",
+    "Could not remove this source. Your saved sources have been preserved.": "이 소스를 제거할 수 없습니다. 저장된 소스는 유지되었습니다.",
+    "Could not save this source. Check the repository address and try again.": "이 소스를 저장할 수 없습니다. 저장소 주소를 확인하고 다시 시도하세요.",
+    "Remove source {{name}}": "소스 {{name}} 제거",
+    "Default branch": "기본 브랜치",
+    "Add source": "소스 추가",
+    "Browse": "둘러보기"
   }
 }

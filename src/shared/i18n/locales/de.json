@@ -7728,6 +7728,20 @@
     "Export screening results (CSV)": "Screening-Ergebnisse exportieren (CSV)",
     "Screening results could not be exported.": "Die Screening-Ergebnisse konnten nicht exportiert werden.",
     "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Die Befehlszeile wartet auf Netzwerkzugriff. Falls der Prozess beendet ist, geben Sie den Zugriff frei und führen Sie den Befehl ausdrücklich erneut aus. Er wird nicht automatisch wiederholt."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Die Befehlszeile wartet auf Netzwerkzugriff. Falls der Prozess beendet ist, geben Sie den Zugriff frei und führen Sie den Befehl ausdrücklich erneut aus. Er wird nicht automatisch wiederholt.",
+    "Skill sources": "Fähigkeitsquellen",
+    "Save GitHub repositories to browse and import their Skills.": "Speichern Sie GitHub-Repositories, um deren Fähigkeiten zu durchsuchen und zu importieren.",
+    "Use a repository URL or owner/repo@ref to select a branch or tag.": "Verwenden Sie eine Repository-URL oder owner/repo@ref, um einen Branch oder Tag auszuwählen.",
+    "Saved sources": "Gespeicherte Quellen",
+    "No saved sources yet": "Noch keine gespeicherten Quellen",
+    "Add a repository above to keep its Skills within reach.": "Fügen Sie oben ein Repository hinzu, um schnell auf dessen Fähigkeiten zuzugreifen.",
+    "Removing a source keeps its installed Skills. Saved sources do not update Skills automatically.": "Beim Entfernen einer Quelle bleiben installierte Fähigkeiten erhalten. Gespeicherte Quellen aktualisieren Fähigkeiten nicht automatisch.",
+    "Could not load Skill sources.": "Fähigkeitsquellen konnten nicht geladen werden.",
+    "Could not remove this source. Your saved sources have been preserved.": "Diese Quelle konnte nicht entfernt werden. Ihre gespeicherten Quellen bleiben erhalten.",
+    "Could not save this source. Check the repository address and try again.": "Diese Quelle konnte nicht gespeichert werden. Prüfen Sie die Repository-Adresse und versuchen Sie es erneut.",
+    "Remove source {{name}}": "Quelle {{name}} entfernen",
+    "Default branch": "Standardbranch",
+    "Add source": "Quelle hinzufügen",
+    "Browse": "Durchsuchen"
   }
 }
