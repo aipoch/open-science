@@ -2262,15 +2262,14 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).toContain('Running')
+    expect(html).toContain('Using tool: &quot;latest typhoon updates July 2026&quot;')
     expect(html).toContain('2 steps remaining')
     expect(html).not.toContain('Used tool: ToolSearch')
     expect(html).toContain('Web Search')
     expect(html).toContain('latest typhoon updates July 2026')
     expect(html).toContain('typhoon 2026 national weather bureau latest forecast')
-    expect(html).not.toContain('&quot;latest typhoon updates July 2026&quot;')
     expect(html).not.toContain('&quot;typhoon 2026 national weather bureau latest forecast&quot;')
-    expect(html).not.toContain('Using tool: &quot;latest typhoon updates July 2026&quot;')
+    expect(html.match(/Using tool: &quot;latest typhoon updates July 2026&quot;/g)).toHaveLength(1)
     expect(html).not.toContain(
       'Using tool: &quot;typhoon 2026 national weather bureau latest forecast&quot;'
     )
@@ -2516,7 +2515,7 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).toContain('Running')
+    expect(html).toContain('Using tool: WebFetch')
     expect(html).toContain('Using tool: WebFetch')
     expect(html).not.toContain('https://example.com/resource')
     expect(html).not.toContain('Ran 1 search')

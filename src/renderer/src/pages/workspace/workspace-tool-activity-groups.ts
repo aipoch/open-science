@@ -339,11 +339,17 @@ const formatActivityGroupPresentationTitle = (
 ): string => {
   if (activities.some(isPendingNotebookCodeReview)) return t('Waiting for your approval')
   const activityPhases = getRenderableActivityEntries(activities).map(({ activity }) => ({
+    activity,
     isNotebook: isNotebookExecutionActivity(activity),
     phase: getToolExecutionPhase(activity, permission, notebookRunsById)
   }))
   if (activityPhases.some(({ phase }) => phase === 'awaiting-approval'))
     return t('Waiting for your approval')
+  const executing = activityPhases.filter(({ phase }) => phase === 'executing')
+  const current =
+    executing.find(({ activity }) => activity.status === 'in_progress') ?? executing[0]
+  const toolName = current?.activity.providerToolName?.trim() || current?.activity.title.trim()
+  if (toolName) return t('Using tool: {{name}}', { name: toolName })
   const phases = activityPhases.filter(({ isNotebook }) => isNotebook).map(({ phase }) => phase)
   const notebookCount = phases.length
   if (!phases.includes('executing') && activityPhases.some(({ phase }) => phase === 'executing'))

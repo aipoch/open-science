@@ -442,6 +442,39 @@ describe('formatActivityGroupPresentationTitle', () => {
     ).toBe('Running')
   })
 
+  it('uses the current tool name verbatim and follows execution updates without a name map', () => {
+    const done = createActivity({ id: 'done', providerToolName: 'read_file' })
+    const queued = createActivity({
+      id: 'queued',
+      status: 'pending',
+      providerToolName: 'next_tool'
+    })
+    const running = createActivity({
+      id: 'running',
+      status: 'in_progress',
+      providerToolName: ' mcp__custom__analyze_data ',
+      title: 'Unrelated title'
+    })
+    const calls = [done, queued, running]
+    expect(formatActivityGroupPresentationTitle(calls, 'Group title', undefined)).toBe(
+      'Using tool: mcp__custom__analyze_data'
+    )
+    running.status = 'completed'
+    queued.status = 'in_progress'
+    expect(formatActivityGroupPresentationTitle(calls, 'Group title', undefined)).toBe(
+      'Using tool: next_tool'
+    )
+    queued.providerToolName = ' '
+    queued.title = ' Custom tool title '
+    expect(formatActivityGroupPresentationTitle(calls, undefined, undefined)).toBe(
+      'Using tool: Custom tool title'
+    )
+    queued.status = 'completed'
+    expect(formatActivityGroupPresentationTitle(calls, 'Group title', undefined)).toBe(
+      'Group title'
+    )
+  })
+
   it('shows ordinary running and approval states without inferring future steps', () => {
     const activity = createActivity({
       id: 'ordinary',
