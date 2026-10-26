@@ -6,6 +6,7 @@ import {
   LiteratureFullTextFinder,
   LiteratureRelatedFinder,
   LiteratureSupplementFinder,
+  LiteraturePublicationChecker,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
@@ -84,6 +85,7 @@ export async function composeResearchCatalog({
   literatureSupplementAttachments: LiteratureSupplementAttachments
   literatureRelatedFinder: LiteratureRelatedFinder
   literatureSupplementFinder: LiteratureSupplementFinder
+  literaturePublicationChecker: LiteraturePublicationChecker
   literatureFullTextFinder: LiteratureFullTextFinder<LiteratureItemView>
   literaturePdfImporter: LiteraturePdfImporter
   literaturePdfAcquisition: AgentPdfAcquisition
@@ -193,6 +195,10 @@ export async function composeResearchCatalog({
     apiKey: async () =>
       tryDecryptKey((await settingsService.getConnectors())?.semanticScholarApiKeyRef)
   })
+  const literaturePublicationChecker = new LiteraturePublicationChecker({
+    catalog: literatureCatalog,
+    fetch: netFetchStandard
+  })
   const literatureSupplementFinder = new LiteratureSupplementFinder({
     catalog: literatureCatalog,
     fetch: netFetchStandard
@@ -268,6 +274,7 @@ export async function composeResearchCatalog({
     literatureFullTextFinder,
     literatureRelatedFinder,
     literatureSupplementFinder,
+    literaturePublicationChecker,
     literatureSupplementAttachments,
     literaturePdfImporter,
     literaturePdfAcquisition,

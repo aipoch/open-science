@@ -44,7 +44,10 @@
     "packages/literature-discovery/vitest.config.ts",
     "packages/literature-discovery/src/related-contracts.ts",
     "packages/literature-discovery/src/related.ts",
-    "packages/literature-discovery/test/related.test.ts"
+    "packages/literature-discovery/test/related.test.ts",
+    "packages/literature-discovery/src/publication-check-contracts.ts",
+    "packages/literature-discovery/src/publication-check.ts",
+    "packages/literature-discovery/test/publication-check.test.ts"
   ],
   "interfacePaths": [
     "packages/literature-discovery/src/index.ts",
@@ -52,7 +55,8 @@
     "packages/literature-discovery/src/jobs.ts",
     "packages/literature-discovery/src/download.ts",
     "packages/literature-discovery/src/checkpoints.ts",
-    "packages/literature-discovery/src/ports.ts"
+    "packages/literature-discovery/src/ports.ts",
+    "packages/literature-discovery/src/publication-check-contracts.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -70,7 +74,8 @@
       "packages/literature-discovery/test/reference-resolver.test.ts",
       "packages/literature-discovery/test/scale.test.ts",
       "packages/literature-discovery/test/supplements.test.ts",
-      "packages/literature-discovery/test/related.test.ts"
+      "packages/literature-discovery/test/related.test.ts",
+      "packages/literature-discovery/test/publication-check.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

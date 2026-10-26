@@ -39,6 +39,7 @@ import {
   type ApplicationInvocation
 } from './application-command-router'
 import { createCallerContext } from './caller-context'
+import { waitForDataRootWriters } from './storage/migration-state'
 import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 import { createManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 import { ManagedPreviewResources } from './managed-preview-resources'
@@ -266,6 +267,7 @@ describe('application command composition', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:publication-check',
       'literature:related',
       'literature:search',
       'literature:sources',
@@ -851,6 +853,96 @@ it('validates bounded reference exports through the shared Web command boundary'
   ).resolves.toEqual(exported)
   expect(exportRecord).toHaveBeenCalledWith({ itemId: 'reference' })
   await composition.dispose()
+})
+
+it.each(['electron', 'localWeb', 'remoteWeb'] as const)(
+  'validates publication checks and cancellation through %s',
+  async (surface) => {
+    const result = { itemId: 'paper', metadataRevision: 1 }
+    const publicationCheck = vi.fn(async () => result)
+    const composition = createApplicationCommandComposition({
+      ...dependencies(),
+      literature: { publicationCheck } as never
+    })
+    const call = {
+      ...invocation(surface === 'remoteWeb' ? 'remote' : 'local'),
+      args: [{ mode: 'check', itemId: 'paper', expectedMetadataRevision: 1 }]
+    }
+    try {
+      await expect(
+        composition[surface].invoke('literature:publication-check', call)
+      ).resolves.toEqual(result)
+      expect(publicationCheck).toHaveBeenCalledWith(call.args[0], expect.any(AbortSignal))
+      for (const request of [
+        { ...call.args[0], url: 'http://127.0.0.1' },
+        { ...call.args[0], expectedMetadataRevision: 0 },
+        { ...call.args[0], mode: 'background' }
+      ]) {
+        await expect(
+          composition[surface].invoke('literature:publication-check', {
+            ...call,
+            args: [request]
+          })
+        ).rejects.toThrow()
+      }
+      expect(publicationCheck).toHaveBeenCalledTimes(1)
+    } finally {
+      await composition.dispose()
+    }
+  }
+)
+
+it('aborts publication checks and drains their cleanup before completing disposal', async () => {
+  let signal: AbortSignal | undefined
+  let entered!: () => void
+  let release!: () => void
+  let cleaned = false
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const cleanup = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const publicationCheck = vi.fn(async (_request, callerSignal: AbortSignal) => {
+    signal = callerSignal
+    entered()
+    await new Promise<void>((_resolve, reject) => {
+      callerSignal.addEventListener('abort', () => reject(callerSignal.reason), { once: true })
+    }).finally(async () => {
+      await cleanup
+      cleaned = true
+    })
+    return { itemId: 'paper', metadataRevision: 1 }
+  })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    literature: { publicationCheck } as never
+  })
+  const pending = composition.localWeb.invoke('literature:publication-check', {
+    ...invocation(),
+    args: [{ mode: 'check', itemId: 'paper', expectedMetadataRevision: 1 }]
+  })
+  const rejected = expect(pending).rejects.toThrow('uninstalled')
+  await started
+  // A pending network lookup must not keep the data migration writer gate occupied.
+  let writersDrained = false
+  void waitForDataRootWriters().then(() => {
+    writersDrained = true
+  })
+  await Promise.resolve()
+  expect(writersDrained).toBe(true)
+  let disposed = false
+  const shutdown = composition.dispose().then(() => {
+    disposed = true
+  })
+  await Promise.resolve()
+  expect(signal?.aborted).toBe(true)
+  expect(disposed).toBe(false)
+  expect(cleaned).toBe(false)
+  release()
+  await shutdown
+  await rejected
+  expect(cleaned).toBe(true)
 })
 
 it.each(['electron', 'localWeb', 'remoteWeb'] as const)(
