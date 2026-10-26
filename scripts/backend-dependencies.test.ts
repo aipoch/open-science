@@ -12,11 +12,41 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  generatedPrismaIncludes,
   isElectronPackage,
   isBackendRuntimeDependency,
   isShippableDependencyPath,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
+
+describe('generated native Prisma payload', () => {
+  it.each(['/', '\\'])('preserves native runtime and SDK types (%s)', (separator) => {
+    for (const platform of ['darwin', 'linux', 'win32']) {
+      for (const arch of platform === 'win32' ? ['x64'] : ['x64', 'arm64']) {
+        const target = { platform, arch }
+        for (const desktop of [false, true]) {
+          const options = { ...target, desktop }
+          expect(generatedPrismaIncludes('query_engine_bg.wasm', options)).toBe(false)
+          for (const file of ['index.d.ts', 'default.d.ts', 'nested/client.d.ts.map'])
+            expect(generatedPrismaIncludes(file.replaceAll('/', separator), options)).toBe(!desktop)
+          for (const file of [
+            'index.js',
+            'default.js',
+            'package.json',
+            'schema.prisma',
+            'LICENSE',
+            'query_engine_bg.js',
+            'unknown.wasm',
+            'nested/runtime.js',
+            ...prismaEngineFilenames(platform, arch)
+          ])
+            expect(generatedPrismaIncludes(file.replaceAll('/', separator), options)).toBe(true)
+          expect(generatedPrismaIncludes('libquery_engine-foreign.so.node', options)).toBe(false)
+        }
+      }
+    }
+  })
+})
 
 describe('desktop-only dependency contents', () => {
   it('rejects an external consumer of bundled i18next in the real staging command', async () => {

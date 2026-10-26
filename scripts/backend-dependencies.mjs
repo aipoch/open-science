@@ -30,6 +30,17 @@ export const prismaEngineFilenames = (platform = process.platform, arch = proces
 const packageName = (specifier) =>
   specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
 
+// Called only after staging verifies the generated client uses the native library engine.
+export function generatedPrismaIncludes(relativePath, { desktop = false, ...target } = {}) {
+  const file = relativePath.replaceAll('\\', '/')
+  if (file === 'query_engine_bg.wasm') return false
+  if (desktop && /\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(file)) return false
+  return (
+    !file.includes('query_engine-') ||
+    prismaEngineFilenames(target.platform, target.arch).includes(file)
+  )
+}
+
 // These renderer imports are already compiled into out/web. Only omit their direct backend
 // roots: the dependency walker must still retain them if another runtime package needs them.
 export function desktopBackendDependencies(dependencies, metafiles) {

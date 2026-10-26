@@ -5,6 +5,7 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  generatedPrismaIncludes,
   isBackendRuntimeDependency,
   isElectronPackage,
   prismaEngineFilenames
@@ -175,7 +176,7 @@ await cp(join(root, 'node_modules/.prisma/client'), join(stage, 'resources/prism
   dereference: true,
   filter: (path) => {
     const file = relative(join(root, 'node_modules/.prisma/client'), path)
-    return !file.includes('query_engine-') || prismaEngines.includes(file)
+    return generatedPrismaIncludes(file, { desktop: values.desktop })
   }
 })
 for (const entry of ['index.js', 'default.js']) {

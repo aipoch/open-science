@@ -28,6 +28,10 @@ the existing dependency policies. README files are retained because they can con
 notices. This tree is not the npm SDK publication artifact. The default staging command still
 builds `out/standalone` with its CLI/SDK declarations intact; desktop packaging neither prunes
 that tree nor reads a stale copy of it. Installed CLI commands remain available.
+The generated Prisma resource follows the same declaration policy: desktop and Release CLI
+archives omit its declarations, while npm/SDK staging retains them. Both omit the generated
+WASM query engine only after staging verifies that the client uses the native library engine;
+the target native engines and schema remain included.
 Desktop staging also omits the audited renderer-only dependency roots already compiled into
 `out/web`. Backend and worker import metadata can retain any such root, and transitive runtime
 dependencies are still copied normally. Unknown dependencies remain included. The desktop
