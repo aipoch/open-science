@@ -1,0 +1,22 @@
+{
+  "ownerPaths": [
+    "src/main/skills/docx-generation.test.ts",
+    "resources/skills/docx-generation/README.md",
+    "resources/skills/docx-generation/SKILL.md",
+    "resources/skills/docx-generation/scripts/convert.py",
+    "resources/skills/docx-generation/scripts/build_reference.py",
+    "resources/skills/docx-generation/assets/reference.docx"
+  ],
+  "interfacePaths": [
+    "resources/skills/docx-generation/SKILL.md",
+    "resources/skills/docx-generation/scripts/convert.py"
+  ],
+  "testFiles": {
+    "owner": ["src/main/skills/docx-generation.test.ts"],
+    "contract": ["src/main/skills/runtime-mcp-server.test.ts"],
+    "consumer": []
+  },
+  "consumerModules": [],
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

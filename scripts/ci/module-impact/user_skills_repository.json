@@ -30,13 +30,7 @@
     "src/main/skills/helper-validation.ts",
     "src/main/skills/package-boundary.architecture.test.ts",
     "src/main/skills/host-skills-service.test.ts",
-    "scripts/check-skill-package-boundary.mjs",
-    "src/main/skills/docx-generation.test.ts",
-    "resources/skills/docx-generation/README.md",
-    "resources/skills/docx-generation/SKILL.md",
-    "resources/skills/docx-generation/scripts/convert.py",
-    "resources/skills/docx-generation/scripts/build_reference.py",
-    "resources/skills/docx-generation/assets/reference.docx"
+    "scripts/check-skill-package-boundary.mjs"
   ],
   "interfacePaths": [
     "src/main/skills/user-skill-repository.ts",
@@ -74,8 +68,7 @@
       "src/main/skills/registry.test.ts",
       "src/main/skills/self-awareness-skill.test.ts",
       "src/main/skills/skill-nudge-identity.test.ts",
-      "src/main/skills/package-boundary.architecture.test.ts",
-      "src/main/skills/docx-generation.test.ts"
+      "src/main/skills/package-boundary.architecture.test.ts"
     ],
     "contract": [
       "src/main/skills/host-skills-service.test.ts",

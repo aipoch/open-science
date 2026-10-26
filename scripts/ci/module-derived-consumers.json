@@ -8924,6 +8924,7 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
+    "user_skills_repository": ["src/main/skills/docx-generation.test.ts"],
     "web_renderer_bridge": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
