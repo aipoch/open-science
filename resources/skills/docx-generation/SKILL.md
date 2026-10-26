@@ -28,6 +28,8 @@ The bundled reference uses A4 and a restrained table header style. It preserves 
 
 Do not substitute the bundled template when the user supplied a template or requested a different design. For special page layouts or table widths, use an appropriate reference or targeted document editing; do not impose fixed page/column dimensions on every document.
 
+For Pandoc Markdown pipe tables, retain intentional delimiter-row widths. Padding or reformatting a wide Markdown table can change the column proportions inferred by Pandoc.
+
 The converter emits one JSON receipt with the output path, MIME type, versions, and template hash. It requires a new output filename and leaves existing files intact. If the supported Pandoc version is unavailable, report the missing prerequisite or use another suitable document-generation workflow under the session's normal environment rules. This skill does not require Pandoc for every DOCX task.
 
 ## Editing existing DOCX files

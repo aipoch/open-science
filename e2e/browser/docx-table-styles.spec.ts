@@ -53,8 +53,11 @@ test('maintained Pandoc report renders Chinese tables, headings and lists', asyn
   await expect(table.getByText('肽/蛋白类', { exact: true })).toHaveCSS('font-weight', '400')
   await expect(preview.getByText('整理原始资料。', { exact: true })).toBeVisible()
   await expect(preview.getByText('保留项目列表的缩进。', { exact: true })).toBeVisible()
-  await expect(preview.locator('article').first()).toHaveScreenshot('docx-report.png', {
-    maxDiffPixelRatio: 0.02
-  })
+  // The reviewed pixel baseline uses macOS fonts; semantic/style assertions run on every OS.
+  if (process.platform === 'darwin') {
+    await expect(preview.locator('article').first()).toHaveScreenshot('docx-report.png', {
+      maxDiffPixelRatio: 0.02
+    })
+  }
   await page.screenshot({ path: testInfo.outputPath('report.png'), fullPage: true })
 })

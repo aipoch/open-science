@@ -40,7 +40,10 @@ npx playwright test --config e2e/playwright.browser.config.ts e2e/browser/docx-t
 Python tests cover real Pandoc conversion when the supported executable is
 available; absence is reported as skipped, not a successful integration run.
 Browser tests cover the production preview, including zoom/resize and nested
-styles. Office-engine PDF preview is a separate optional future capability.
+styles. Semantic/style assertions run on every OS; the reviewed pixel baseline
+uses macOS fonts and runs only on macOS. Other platforms capture screenshots
+without comparing them to the macOS font layout. Office-engine PDF preview is a
+separate optional future capability.
 
 Sources: [Pandoc reference documents](https://pandoc.org/MANUAL.html#option--reference-doc),
 [OOXML conditional table styles](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.tablestyleproperties).
