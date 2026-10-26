@@ -916,9 +916,15 @@ const WorkspaceElicitationCard = ({
                     <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                   </Button>
                 ) : null}
-                <div className="inline-flex shrink-0 rounded-lg">
+                <div
+                  className={cn(
+                    'inline-flex shrink-0 rounded-lg bg-secondary transition-colors duration-150 motion-reduce:transition-none',
+                    !isSubmitting &&
+                      'hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]'
+                  )}
+                >
                   <Button
-                    className="rounded-r-none px-3 focus-visible:z-10"
+                    className="rounded-r-none bg-transparent px-3 hover:bg-transparent focus-visible:z-10"
                     type="button"
                     variant="secondary"
                     disabled={isSubmitting}
@@ -929,7 +935,7 @@ const WorkspaceElicitationCard = ({
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
-                        className="rounded-l-none border-l-border-200 focus-visible:z-10"
+                        className="rounded-l-none border-l-border-200 bg-transparent hover:bg-transparent focus-visible:z-10 aria-expanded:bg-transparent"
                         type="button"
                         variant="secondary"
                         size="icon"
