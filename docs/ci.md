@@ -52,6 +52,21 @@ PR and queue business E2E rely on one Playwright retry to absorb single-attempt 
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
 
+### Static check groups
+
+The static bundle runs two parallel groups: **lint** executes the complete ESLint check,
+and **checks** runs workflow audits, changed-file formatting, typechecks, module/architecture
+contracts, interface checks and i18n in their existing order. Plans without lint allocate only
+the checks group. Each runner installs its own dependencies and builds its own generated outputs;
+consumer-index generation stays with its readers. Node and Web typechecks remain concurrent
+after package declarations are ready.
+
+The matrix disables fail-fast so both groups report diagnostics. The existing PR Gate consumes
+the aggregate static result; either group's failure blocks the gate. Zizmor remains advisory.
+This reduces elapsed time at the cost of one extra setup/install when lint is selected.
+Use PR Gate's manual `static` dry-run to exercise both groups and registration contracts without
+allocating runtime, portable-test or desktop jobs.
+
 ### Merge queue
 
 Merge queue keeps concurrency two and validates the combined revision with Linux/portable
