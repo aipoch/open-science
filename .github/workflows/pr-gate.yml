@@ -1182,6 +1182,7 @@ jobs:
           packages/specialists/src/repository.test.ts
           packages/environment/src/micromamba-cache-powershell.test.ts
           packages/environment/src/micromamba-cache-acl.integration.test.ts
+          --no-file-parallelism
       - name: Test scheduled Windows validation regressions
         id: windows_regressions
         continue-on-error: true
