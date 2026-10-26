@@ -132,6 +132,9 @@ describe.runIf(process.platform === 'win32')(
   () => {
     it('runs and retains a real PowerShell session through the supervised standard launcher', async () => {
       const root = await mkdtemp(join(tmpdir(), 'shell-standard-admission-'))
+      const denied = join(root, 'declared-denied')
+      await mkdir(denied)
+      await writeFile(join(denied, 'sentinel.txt'), 'HOST_ACCESS')
       vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
@@ -154,14 +157,27 @@ describe.runIf(process.platform === 'win32')(
         expect(await owner.windowsProtectionConfigured()).toBe(false)
         const first = await adapter.execute({
           ...shellRequest(root),
+          protectedDirs: [denied],
           command: '$standardValue = 42; [Console]::Write($standardValue)'
         })
         expect(first, JSON.stringify(first)).toMatchObject({ exitCode: 0, stdout: '42' })
         const second = await adapter.execute({
           ...shellRequest(root),
+          protectedDirs: [denied],
           command: '[Console]::Write($standardValue + 1)'
         })
         expect(second, JSON.stringify(second)).toMatchObject({ exitCode: 0, stdout: '43' })
+        // Standard supervision is not filesystem isolation, even when callers declare deny roots.
+        // Exercise only synthetic fixtures; protected-mode denial is covered separately below.
+        const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`
+        const access = await adapter.execute({
+          ...shellRequest(root),
+          protectedDirs: [denied],
+          command: `[Console]::Write([IO.File]::ReadAllText(${quote(join(denied, 'sentinel.txt'))}))`
+        })
+        expect(access, JSON.stringify(access)).toMatchObject({ exitCode: 0, stdout: 'HOST_ACCESS' })
+        expect(wrapping.mock.calls[0][0].filesystem.deniedReadRoots).toContain(denied)
+        expect(wrapping.mock.calls[0][0].filesystem.readOnlyRoots).toContain(root)
         expect(launches).toEqual(['supervise'])
         expect(await owner.windowsProtectionConfigured()).toBe(false)
       } finally {

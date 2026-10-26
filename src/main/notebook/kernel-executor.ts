@@ -1135,11 +1135,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ]
     }
 
-    // The semantic guard rejects known installers before dispatch. This native layer makes the
-    // app-owned runtime read-only to the complete persistent-kernel process tree as well, covering
-    // dynamically constructed R/Python/REPL calls. Only the disposable workload-cache subtree remains
-    // writable for data kernels. Windows REPL additionally shares the Shell owner's npm tool prefix;
-    // manage_packages remains the only managed Python/R package writer.
+    // The semantic guard rejects known installers before dispatch. On enforced platforms, the
+    // native layer also protects app-owned runtimes across the persistent-kernel process tree,
+    // including dynamically constructed calls. Windows standard mode has no such filesystem
+    // boundary: source/language guards cannot restrict arbitrary native children. Enforced data
+    // kernels can write only the disposable workload cache; Windows REPL also shares Shell's npm
+    // prefix, while manage_packages owns managed Python/R package writes.
     const nativeInvocation = { executable: command, args }
     const invocation = this.processSandbox
       ? nativeInvocation
