@@ -7485,6 +7485,7 @@ describe('ACP runtime session management', () => {
       [
         { nativeChoice: true, action: 'quit' },
         { nativeChoice: true, action: 'stop' },
+        { nativeChoice: true, action: 'cancel-response' },
         { nativeChoice: false, action: 'quit' }
       ].map((scenario) => ({ name, framework, modelRoute, backendId, ...scenario }))
     )
@@ -7550,6 +7551,12 @@ describe('ACP runtime session management', () => {
         ])
 
         if (action === 'quit') await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+        else if (action === 'cancel-response')
+          await coordinator.respondToElicitation({
+            requestId: request.requestId,
+            request,
+            action: 'cancel'
+          })
         else await coordinator.cancelPrompt({ sessionId: session.sessionId })
 
         const preserved = nativeChoice && action === 'quit'

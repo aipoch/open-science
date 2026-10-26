@@ -2076,7 +2076,11 @@ class AcpRuntime {
     if (
       response.action === 'cancel' &&
       response.request?.durable?.kind === 'agent-user-choice' &&
-      !response.replacePreviousAnswer
+      !response.replacePreviousAnswer &&
+      // A live request must receive its existing cancel response through the elicitation owner.
+      !this.elicitationOwner
+        .getPendingRequests()
+        .some(({ requestId }) => requestId === response.requestId)
     ) {
       const request = response.request
       if (this.sessionInteractions.current(request.sessionId)) {
