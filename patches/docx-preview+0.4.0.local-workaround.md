@@ -15,13 +15,21 @@ replacement for upstream table-border fixes unavailable in the pinned release.
   regardless of XML order. No upstream proposal is tracked for this part; it is
   not a confirmed roadmap item.
 - Preserves explicit cell overrides, including `nil` / `none`, and merged-cell borders.
-  Full OOXML border-conflict rules and conditional-style priority remain out of scope.
+  Full OOXML border-conflict rules remain out of scope.
+- **Conditional styles:** scopes default table rules to their actual cell/paragraph/run
+  targets; supports `wholeTable`, first/last rows and columns, bands, and corners.
+  Resolves conditional overrides in ISO/IEC 29500 order rather than XML order.
+  Explicit `tblLook` flags override the legacy bitmask, including false. Missing
+  region hints are derived from the grid; explicit `cnfStyle` flags are preserved.
+  Table-style band sizes inherit from base styles. Child paths isolate nested tables.
+  This is a local fix, not an upstream backport or a claim of complete Word layout parity.
 
 ## Retirement
 
 `TODO(upstream):` when a released version covers these fixes, test it **without**
 this patch: run `docx-table-borders.test.ts`, `office-renderers.test.ts`, and the
-browser specs `docx-table-borders.spec.ts` / `docx-numbering.spec.ts`. Verify both
+browser specs `docx-table-borders.spec.ts`, `docx-table-styles.spec.ts`, and
+`docx-numbering.spec.ts`, plus `docx-table-styles.test.ts`. Verify both
 exports, screenshots and a clean install under the task isolation rules in `AGENTS.md`.
 Remove the patch and this note only when those checks pass; retain the regressions.
 If upstream fixes only part, reduce the patch and update this note. Do not blindly

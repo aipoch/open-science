@@ -1012,6 +1012,21 @@
     {
       "paths": ["test/fixtures/pdf-figure-selections/*.json"],
       "tests": ["src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts"]
+    },
+    {
+      "paths": [
+        "test/fixtures/docx-table-styles.ts",
+        "test/fixtures/docx-report.md",
+        "test/fixtures/docx-report.docx"
+      ],
+      "tests": [
+        "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts",
+        "src/main/skills/docx-generation.test.ts"
+      ]
+    },
+    {
+      "paths": ["test/docx-generation/*.py"],
+      "tests": ["src/main/skills/docx-generation.test.ts"]
     }
   ]
 }

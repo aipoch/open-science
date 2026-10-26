@@ -1,177 +1,102 @@
-diff --git a/node_modules/docx-preview/dist/docx-preview.mjs b/node_modules/docx-preview/dist/docx-preview.mjs
-index 97fe1bace..6eb8a9adb 100644
---- a/node_modules/docx-preview/dist/docx-preview.mjs
-+++ b/node_modules/docx-preview/dist/docx-preview.mjs
-@@ -2415,6 +2415,9 @@ class DocumentParser {
-                     this.parseFont(c, style);
-                     break;
-                 case "tblBorders":
-+                    // UPSTREAM(docx-preview 0.4.0): retain insideH/insideV separately; see
-+                    // docxjs#221 / #235 and patches/docx-preview+0.4.0.local-workaround.md for removal criteria.
-+                    (childStyle || style).$tableBorders = this.parseTableBorders(c);
-                     this.parseBorderProperties(c, childStyle || style);
-                     break;
-                 case "tblCellSpacing":
-@@ -2428,6 +2431,7 @@ class DocumentParser {
-                     style["border"] = values.valueOfBorder(c);
-                     break;
-                 case "tcBorders":
-+                    style.$cellBorders = this.parseBorderProperties(c, {});
-                     this.parseBorderProperties(c, style);
-                     break;
-                 case "vanish":
-@@ -2609,6 +2613,15 @@ class DocumentParser {
-                 break;
-         }
-     }
-+    parseTableBorders(node) {
-+        const borders = {};
-+        for (const edge of globalXmlParser.elements(node)) {
-+            const name = edge.localName === "start" ? "left" : edge.localName === "end" ? "right" : edge.localName;
-+            if (["top", "right", "bottom", "left", "insideH", "insideV"].includes(name))
-+                borders[name] = values.valueOfBorder(edge);
-+        }
-+        return borders;
-+    }
-     parseBorderProperties(node, output) {
-         for (const c of globalXmlParser.elements(node)) {
-             switch (c.localName) {
-@@ -2628,6 +2641,7 @@ class DocumentParser {
-                     break;
-             }
-         }
-+        return output;
-     }
- }
- const knownColors = ['black', 'blue', 'cyan', 'darkBlue', 'darkCyan', 'darkGray', 'darkGreen', 'darkMagenta', 'darkRed', 'darkYellow', 'green', 'lightGray', 'magenta', 'none', 'red', 'white', 'yellow'];
-@@ -3021,23 +3035,44 @@ class HtmlRenderer {
-     }
-     processStyles(styles) {
-         const stylesMap = keyBy(styles.filter(x => x.id != null), x => x.id);
--        for (const style of styles.filter(x => x.basedOn)) {
--            var baseStyle = stylesMap[style.basedOn];
--            if (baseStyle) {
--                style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
--                style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
--                for (const baseValues of baseStyle.styles) {
--                    const styleValues = style.styles.find(x => x.target == baseValues.target);
--                    if (styleValues) {
--                        this.copyStyleProperties(baseValues.values, styleValues.values);
-+        // UPSTREAM: resolve bases before children, independent of styles.xml order.
-+        // An iterative walk also bounds stack use and terminates malformed cycles.
-+        const state = new Map();
-+        for (const root of styles) {
-+            const pending = [{ style: root, expanded: false }];
-+            while (pending.length) {
-+                const frame = pending[pending.length - 1];
-+                const style = frame.style;
-+                if (state.get(style) === 2) { pending.pop(); continue; }
-+                const baseStyle = stylesMap[style.basedOn];
-+                if (!frame.expanded) {
-+                    frame.expanded = true;
-+                    state.set(style, 1);
-+                    if (baseStyle && !state.has(baseStyle)) {
-+                        pending.push({ style: baseStyle, expanded: false });
-+                        continue;
-                     }
--                    else {
--                        style.styles.push({ ...baseValues, values: { ...baseValues.values } });
-+                }
-+                if (baseStyle && state.get(baseStyle) === 2) {
-+                    style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
-+                    style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
-+                    for (const baseValues of baseStyle.styles) {
-+                        const styleValues = style.styles.find(x => x.target === baseValues.target && x.mod === baseValues.mod);
-+                        if (styleValues) {
-+                            for (const key of ["$tableBorders", "$cellBorders"]) {
-+                                if (baseValues.values[key])
-+                                    styleValues.values[key] = { ...baseValues.values[key], ...styleValues.values[key] };
-+                            }
-+                            this.copyStyleProperties(baseValues.values, styleValues.values);
-+                        }
-+                        else {
-+                            style.styles.push({ ...baseValues, values: { ...baseValues.values } });
-+                        }
-                     }
-                 }
-+                state.set(style, 2);
-+                pending.pop();
-             }
--            else if (this.options.debug)
--                console.warn(`Can't find base style ${style.basedOn}`);
-         }
-         for (let style of styles) {
-             style.cssName = this.processStyleName(style.id);
-@@ -3069,7 +3104,7 @@ class HtmlRenderer {
-         for (var r of table.children) {
-             for (var c of r.children) {
-                 c.cssStyle = this.copyStyleProperties(table.cellStyle, c.cssStyle, [
--                    "border-left", "border-right", "border-top", "border-bottom",
-+                    ...(table.cellStyle?.$tableBorders ? [] : ["border-left", "border-right", "border-top", "border-bottom"]),
-                     "padding-left", "padding-right", "padding-top", "padding-bottom"
-                 ]);
-                 this.processElement(c);
-@@ -3686,7 +3721,45 @@ section.${c}>footer { z-index: 1; }
-         children.push(...this.renderElements(elem.children));
-         this.currentVerticalMerge = this.tableVerticalMerges.pop();
-         this.currentCellPosition = this.tableCellPositions.pop();
--        return this.toHTML(elem, ns.html, "table", children);
-+        const table = this.toHTML(elem, ns.html, "table", children);
-+        this.applyTableBorders(elem, table);
-+        return table;
-+    }
-+    applyTableBorders(model, table) {
-+        const styles = this.findStyle(model.styleName)?.styles ?? [];
-+        const direct = model.cellStyle?.$tableBorders;
-+        if (!direct && !styles.some(s => s.values.$tableBorders)) return;
-+        const rows = Array.from(table.rows);
-+        const columnCount = Math.max(model.columns?.length ?? 0,
-+            ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
-+        // Work on the detached table after rowspan/colspan are known. No layout reads,
-+        // document-global CSS, or mutation of the parsed cell borders is needed.
-+        rows.forEach((row, rowIndex) => {
-+            let column = 0;
-+            for (const cell of row.cells) {
-+                const start = column;
-+                column += cell.colSpan;
-+                if (cell.style.display === "none") continue;
-+                let borders = {}, cellBorders = {};
-+                for (const style of styles) {
-+                    if ((!style.mod || table.matches(style.mod)) && cell.matches(style.target)) {
-+                        Object.assign(borders, style.values.$tableBorders);
-+                        Object.assign(cellBorders, style.values.$cellBorders);
-+                    }
-+                }
-+                for (const side of ["top", "right", "bottom", "left"]) {
-+                    const property = "border-" + side;
-+                    // Use the longhand: Chromium can serialize explicit nil/none as an empty shorthand.
-+                    if (cell.style.getPropertyValue(property + "-style")) continue;
-+                    const outer = (side === "top" && rowIndex === 0)
-+                        || (side === "bottom" && rowIndex + cell.rowSpan === rows.length)
-+                        || (side === "left" && start === 0)
-+                        || (side === "right" && column === columnCount);
-+                    const key = outer ? side : (side === "top" || side === "bottom" ? "insideH" : "insideV");
-+                    cell.style.setProperty(property, direct?.[key] ?? cellBorders[property] ?? borders[key] ?? "none");
-+                }
-+            }
-+        });
-     }
-     renderTableColumns(columns) {
-         const children = columns.map(x => this.h({ tagName: "col", style: { width: x.width } }));
-@@ -3838,7 +3911,7 @@ section.${c}>footer { z-index: 1; }
-         return this.toHTML(elem, ns.mathML, "mtable", children);
-     }
-     toH(elem, ns, tagName, children = null) {
--        const { "$lang": lang, ...style } = elem.cssStyle ?? {};
-+        const { "$lang": lang, "$tableBorders": tableBorders, "$cellBorders": cellBorders, ...style } = elem.cssStyle ?? {};
-         const className = cx(elem.className, elem.styleName && this.processStyleName(elem.styleName));
-         return { ns, tagName, className, lang, style, children: children ?? this.renderElements(elem.children) };
-     }
 diff --git a/node_modules/docx-preview/dist/docx-preview.js b/node_modules/docx-preview/dist/docx-preview.js
-index 535ac9abc..3fef74985 100644
+index 9abd132..35765a3 100644
 --- a/node_modules/docx-preview/dist/docx-preview.js
 +++ b/node_modules/docx-preview/dist/docx-preview.js
-@@ -2419,6 +2419,9 @@
+@@ -1586,6 +1586,12 @@
+                         break;
+                     case "tblPr":
+                     case "tcPr":
++                        if (n.localName === "tblPr") {
++                            const rowBand = globalXmlParser.element(n, "tblStyleRowBandSize");
++                            const colBand = globalXmlParser.element(n, "tblStyleColBandSize");
++                            if (rowBand) result.rowBandSize = globalXmlParser.intAttr(rowBand, "val");
++                            if (colBand) result.colBandSize = globalXmlParser.intAttr(colBand, "val");
++                        }
+                         result.styles.push({
+                             target: "td",
+                             values: this.parseDefaultProperties(n, {})
+@@ -1615,13 +1621,24 @@
+             var selector = "";
+             var modificator = "";
+             switch (type) {
++                case "wholeTable":
++                    selector = "td";
++                    break;
++                case "nwCell":
++                case "neCell":
++                case "swCell":
++                case "seCell":
++                    modificator = type.startsWith("n") ? ".first-row" : ".last-row";
++                    modificator += type[1] === "w" ? ".first-col" : ".last-col";
++                    selector = "td." + type.slice(0, 2) + "-cell";
++                    break;
+                 case "firstRow":
+                     modificator = ".first-row";
+-                    selector = "tr.first-row td";
++                    selector = "td.first-row";
+                     break;
+                 case "lastRow":
+                     modificator = ".last-row";
+-                    selector = "tr.last-row td";
++                    selector = "td.last-row";
+                     break;
+                 case "firstCol":
+                     modificator = ".first-col";
+@@ -1641,11 +1658,11 @@
+                     break;
+                 case "band1Horz":
+                     modificator = ":not(.no-hband)";
+-                    selector = "tr.odd-row";
++                    selector = "td.odd-row";
+                     break;
+                 case "band2Horz":
+                     modificator = ":not(.no-hband)";
+-                    selector = "tr.even-row";
++                    selector = "td.even-row";
+                     break;
+                 default: return [];
+             }
+@@ -1655,6 +1672,7 @@
+                         result.push({
+                             target: `${selector} p`,
+                             mod: modificator,
++                            tableCondition: type,
+                             values: this.parseDefaultProperties(n, {})
+                         });
+                         break;
+@@ -1662,6 +1680,7 @@
+                         result.push({
+                             target: `${selector} span`,
+                             mod: modificator,
++                            tableCondition: type,
+                             values: this.parseDefaultProperties(n, {})
+                         });
+                         break;
+@@ -1670,6 +1689,7 @@
+                         result.push({
+                             target: selector,
+                             mod: modificator,
++                            tableCondition: type,
+                             values: this.parseDefaultProperties(n, {})
+                         });
+                         break;
+@@ -2279,6 +2299,7 @@
+                 switch (c.localName) {
+                     case "cnfStyle":
+                         row.className = values.classNameOfCnfStyle(c);
++                        row.cnfStyle = values.cnfStyleFlags(c);
+                         break;
+                     case "tblHeader":
+                         row.isHeader = globalXmlParser.boolAttr(c, "val");
+@@ -2323,6 +2344,7 @@
+                         break;
+                     case "cnfStyle":
+                         cell.className = values.classNameOfCnfStyle(c);
++                        cell.cnfStyle = values.cnfStyleFlags(c);
+                         break;
+                     default:
+                         return false;
+@@ -2419,6 +2441,9 @@
                          this.parseFont(c, style);
                          break;
                      case "tblBorders":
@@ -181,7 +106,7 @@ index 535ac9abc..3fef74985 100644
                          this.parseBorderProperties(c, childStyle || style);
                          break;
                      case "tblCellSpacing":
-@@ -2432,6 +2435,7 @@
+@@ -2432,6 +2457,7 @@
                          style["border"] = values.valueOfBorder(c);
                          break;
                      case "tcBorders":
@@ -189,7 +114,7 @@ index 535ac9abc..3fef74985 100644
                          this.parseBorderProperties(c, style);
                          break;
                      case "vanish":
-@@ -2613,6 +2617,15 @@
+@@ -2613,6 +2639,15 @@
                      break;
              }
          }
@@ -205,7 +130,7 @@ index 535ac9abc..3fef74985 100644
          parseBorderProperties(node, output) {
              for (const c of globalXmlParser.elements(node)) {
                  switch (c.localName) {
-@@ -2632,6 +2645,7 @@
+@@ -2632,6 +2667,7 @@
                          break;
                  }
              }
@@ -213,7 +138,72 @@ index 535ac9abc..3fef74985 100644
          }
      }
      const knownColors = ['black', 'blue', 'cyan', 'darkBlue', 'darkCyan', 'darkGray', 'darkGreen', 'darkMagenta', 'darkRed', 'darkYellow', 'green', 'lightGray', 'magenta', 'none', 'red', 'white', 'yellow'];
-@@ -3025,23 +3039,44 @@
+@@ -2714,21 +2750,25 @@
+             var type = globalXmlParser.attr(c, "val");
+             return type == "fixed" ? "fixed" : "auto";
+         }
+-        static classNameOfCnfStyle(c) {
+-            const val = globalXmlParser.attr(c, "val");
+-            const classes = [
+-                'first-row', 'last-row', 'first-col', 'last-col',
++        static cnfStyleFlags(c) {
++            const names = ['first-row', 'last-row', 'first-col', 'last-col',
+                 'odd-col', 'even-col', 'odd-row', 'even-row',
+-                'ne-cell', 'nw-cell', 'se-cell', 'sw-cell'
+-            ];
+-            if (val)
+-                return classes.filter((_, i) => val[i] == '1').join(' ');
+-            const attrs = [
+-                'firstRow', 'lastRow', 'firstColumn', 'lastColumn',
++                'ne-cell', 'nw-cell', 'se-cell', 'sw-cell'];
++            const attrs = ['firstRow', 'lastRow', 'firstColumn', 'lastColumn',
+                 'oddVBand', 'evenVBand', 'oddHBand', 'evenHBand',
+-                'firstRowLastColumn', 'firstRowFirstColumn', 'lastRowLastColumn', 'lastRowFirstColumn'
+-            ];
+-            return classes.filter((_, i) => globalXmlParser.boolAttr(c, attrs[i])).join(' ');
++                'firstRowLastColumn', 'firstRowFirstColumn', 'lastRowLastColumn', 'lastRowFirstColumn'];
++            const val = globalXmlParser.attr(c, "val");
++            const flags = {};
++            names.forEach((name, i) => {
++                if (globalXmlParser.attr(c, attrs[i]) != null)
++                    flags[name] = globalXmlParser.boolAttr(c, attrs[i]);
++                else if (val != null) flags[name] = val[i] === "1";
++            });
++            return flags;
++        }
++        static classNameOfCnfStyle(c) {
++            return Object.entries(this.cnfStyleFlags(c)).filter(([, enabled]) => enabled)
++                .map(([name]) => name).join(" ");
+         }
+         static valueOfJc(c) {
+             var type = globalXmlParser.attr(c, "val");
+@@ -2771,17 +2811,19 @@
+         static classNameOftblLook(c) {
+             const val = globalXmlParser.hexAttr(c, "val", 0);
+             let className = "";
+-            if (globalXmlParser.boolAttr(c, "firstRow") || (val & 0x0020))
++            const enabled = (name, mask) => globalXmlParser.attr(c, name) != null
++                ? globalXmlParser.boolAttr(c, name) : Boolean(val & mask);
++            if (enabled("firstRow", 0x0020))
+                 className += " first-row";
+-            if (globalXmlParser.boolAttr(c, "lastRow") || (val & 0x0040))
++            if (enabled("lastRow", 0x0040))
+                 className += " last-row";
+-            if (globalXmlParser.boolAttr(c, "firstColumn") || (val & 0x0080))
++            if (enabled("firstColumn", 0x0080))
+                 className += " first-col";
+-            if (globalXmlParser.boolAttr(c, "lastColumn") || (val & 0x0100))
++            if (enabled("lastColumn", 0x0100))
+                 className += " last-col";
+-            if (globalXmlParser.boolAttr(c, "noHBand") || (val & 0x0200))
++            if (enabled("noHBand", 0x0200))
+                 className += " no-hband";
+-            if (globalXmlParser.boolAttr(c, "noVBand") || (val & 0x0400))
++            if (enabled("noVBand", 0x0400))
+                 className += " no-vband";
+             return className.trim();
+         }
+@@ -3025,26 +3067,55 @@
          }
          processStyles(styles) {
              const stylesMap = keyBy(styles.filter(x => x.id != null), x => x.id);
@@ -247,10 +237,12 @@ index 535ac9abc..3fef74985 100644
 -                            style.styles.push({ ...baseValues, values: { ...baseValues.values } });
 +                    }
 +                    if (baseStyle && state.get(baseStyle) === 2) {
++                        style.rowBandSize ??= baseStyle.rowBandSize;
++                        style.colBandSize ??= baseStyle.colBandSize;
 +                        style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
 +                        style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
 +                        for (const baseValues of baseStyle.styles) {
-+                            const styleValues = style.styles.find(x => x.target === baseValues.target && x.mod === baseValues.mod);
++                            const styleValues = style.styles.find(x => x.target === baseValues.target && x.mod === baseValues.mod && x.tableCondition === baseValues.tableCondition);
 +                            if (styleValues) {
 +                                for (const key of ["$tableBorders", "$cellBorders"]) {
 +                                    if (baseValues.values[key])
@@ -271,7 +263,16 @@ index 535ac9abc..3fef74985 100644
              }
              for (let style of styles) {
                  style.cssName = this.processStyleName(style.id);
-@@ -3073,7 +3108,7 @@
++                // OOXML conditional precedence must not depend on styles.xml order.
++                const order = { wholeTable: 0, band1Vert: 1, band2Vert: 1,
++                    band1Horz: 2, band2Horz: 2, firstRow: 3, lastRow: 3,
++                    firstCol: 4, lastCol: 4, nwCell: 5, neCell: 5, swCell: 5, seCell: 5 };
++                if (style.target === "table")
++                    style.styles.sort((a, b) => (order[a.tableCondition] ?? -1) - (order[b.tableCondition] ?? -1));
+             }
+             return stylesMap;
+         }
+@@ -3073,7 +3144,7 @@
              for (var r of table.children) {
                  for (var c of r.children) {
                      c.cssStyle = this.copyStyleProperties(table.cellStyle, c.cssStyle, [
@@ -280,17 +281,85 @@ index 535ac9abc..3fef74985 100644
                          "padding-left", "padding-right", "padding-top", "padding-bottom"
                      ]);
                      this.processElement(c);
-@@ -3690,7 +3725,45 @@ section.${c}>footer { z-index: 1; }
+@@ -3377,10 +3448,23 @@ section.${c}>footer { z-index: 1; }
+                 }
+                 for (const subStyle of subStyles) {
+                     var selector = `${style.target ?? ''}.${style.cssName}`;
+-                    if (style.target != subStyle.target)
+-                        selector += ` ${subStyle.target}`;
+-                    if (defautStyles[style.target] == style)
+-                        selector = `.${this.className} ${style.target}, ` + selector;
++                    if (style.target === "table") {
++                        // Keep region constraints on default styles too. Direct-child paths
++                        // prevent an outer table's selectors reaching a nested table.
++                        let target = subStyle.target;
++                        if (!target.startsWith("tr") && !target.startsWith("td"))
++                            target = "td " + target;
++                        if (!target.startsWith("tr")) target = "tr > " + target;
++                        target = target.replace(/(td(?:\.[\w-]+)?) p/g, "$1 > p")
++                            .replace(/(td(?:\.[\w-]+)?) span/g, "$1 > p span");
++                        selector += `${subStyle.mod ?? ""} > ${target}`;
++                    }
++                    else {
++                        if (style.target != subStyle.target)
++                            selector += ` ${subStyle.target}`;
++                        if (defautStyles[style.target] == style)
++                            selector = `.${this.className} ${style.target}, ` + selector;
++                    }
+                     styleText += this.styleToString(selector, subStyle.values);
+                 }
+             }
+@@ -3690,7 +3774,85 @@ section.${c}>footer { z-index: 1; }
              children.push(...this.renderElements(elem.children));
              this.currentVerticalMerge = this.tableVerticalMerges.pop();
              this.currentCellPosition = this.tableCellPositions.pop();
 -            return this.toHTML(elem, ns.html, "table", children);
 +            const table = this.toHTML(elem, ns.html, "table", children);
++            // Default styles apply only when the table has no explicit style reference.
++            if (!elem.styleName) {
++                const style = Object.values(this.styleMap).find(s => s.target === "table" && s.isDefault);
++                if (style) table.classList.add(style.cssName);
++            }
++            this.markTableRegions(elem, table);
 +            this.applyTableBorders(elem, table);
 +            return table;
 +        }
++        markTableRegions(model, table) {
++            // Derive only missing cnfStyle hints. Explicit false flags are meaningful too.
++            const rows = Array.from(table.rows);
++            const style = model.styleName ? this.findStyle(model.styleName)
++                : Object.values(this.styleMap).find(s => s.target === "table" && s.isDefault);
++            const columns = Math.max(model.columns?.length ?? 0,
++                ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
++            const firstRow = table.classList.contains("first-row") ? 1 : 0;
++            const firstCol = table.classList.contains("first-col") ? 1 : 0;
++            const rowBandSize = Math.max(1, model.rowBandSize ?? style?.rowBandSize ?? 1);
++            const colBandSize = Math.max(1, model.colBandSize ?? style?.colBandSize ?? 1);
++            rows.forEach((row, r) => {
++                const rowModel = model.children[r];
++                const odd = Math.floor(Math.max(0, r - firstRow) / rowBandSize) % 2 === 0;
++                const rowFlags = { "first-row": r === 0, "last-row": r === rows.length - 1,
++                    "odd-row": odd, "even-row": !odd, ...rowModel?.cnfStyle };
++                for (const [name, value] of Object.entries(rowFlags)) row.classList.toggle(name, value);
++                let c = 0; // Placeholder cells already account for gridBefore.
++                Array.from(row.cells).forEach((cell, index) => {
++                    const cellModel = rowModel?.children[index - (rowModel.gridBefore ? 1 : 0)];
++                    const last = c + cell.colSpan === columns;
++                    const oddCol = Math.floor(Math.max(0, c - firstCol) / colBandSize) % 2 === 0;
++                    const flags = { ...rowFlags, "first-col": c === 0, "last-col": last,
++                        "odd-col": oddCol, "even-col": !oddCol,
++                        "nw-cell": r === 0 && c === 0, "ne-cell": r === 0 && last,
++                        "sw-cell": r + cell.rowSpan === rows.length && c === 0,
++                        "se-cell": r + cell.rowSpan === rows.length && last,
++                        ...cellModel?.cnfStyle };
++                    for (const [name, value] of Object.entries(flags)) cell.classList.toggle(name, value);
++                    c += cell.colSpan;
++                });
++            });
++        }
 +        applyTableBorders(model, table) {
-+            const styles = this.findStyle(model.styleName)?.styles ?? [];
++            const styles = (model.styleName ? this.findStyle(model.styleName)
++                : Object.values(this.styleMap).find(s => s.target === "table" && s.isDefault))?.styles ?? [];
 +            const direct = model.cellStyle?.$tableBorders;
 +            if (!direct && !styles.some(s => s.values.$tableBorders)) return;
 +            const rows = Array.from(table.rows);
@@ -327,7 +396,7 @@ index 535ac9abc..3fef74985 100644
          }
          renderTableColumns(columns) {
              const children = columns.map(x => this.h({ tagName: "col", style: { width: x.width } }));
-@@ -3842,7 +3915,7 @@ section.${c}>footer { z-index: 1; }
+@@ -3842,7 +4004,7 @@ section.${c}>footer { z-index: 1; }
              return this.toHTML(elem, ns.mathML, "mtable", children);
          }
          toH(elem, ns, tagName, children = null) {
@@ -336,3 +405,410 @@ index 535ac9abc..3fef74985 100644
              const className = cx(elem.className, elem.styleName && this.processStyleName(elem.styleName));
              return { ns, tagName, className, lang, style, children: children ?? this.renderElements(elem.children) };
          }
+diff --git a/node_modules/docx-preview/dist/docx-preview.mjs b/node_modules/docx-preview/dist/docx-preview.mjs
+index 68d59f2..2649bde 100644
+--- a/node_modules/docx-preview/dist/docx-preview.mjs
++++ b/node_modules/docx-preview/dist/docx-preview.mjs
+@@ -1582,6 +1582,12 @@ class DocumentParser {
+                     break;
+                 case "tblPr":
+                 case "tcPr":
++                    if (n.localName === "tblPr") {
++                        const rowBand = globalXmlParser.element(n, "tblStyleRowBandSize");
++                        const colBand = globalXmlParser.element(n, "tblStyleColBandSize");
++                        if (rowBand) result.rowBandSize = globalXmlParser.intAttr(rowBand, "val");
++                        if (colBand) result.colBandSize = globalXmlParser.intAttr(colBand, "val");
++                    }
+                     result.styles.push({
+                         target: "td",
+                         values: this.parseDefaultProperties(n, {})
+@@ -1611,13 +1617,24 @@ class DocumentParser {
+         var selector = "";
+         var modificator = "";
+         switch (type) {
++            case "wholeTable":
++                selector = "td";
++                break;
++            case "nwCell":
++            case "neCell":
++            case "swCell":
++            case "seCell":
++                modificator = type.startsWith("n") ? ".first-row" : ".last-row";
++                modificator += type[1] === "w" ? ".first-col" : ".last-col";
++                selector = "td." + type.slice(0, 2) + "-cell";
++                break;
+             case "firstRow":
+                 modificator = ".first-row";
+-                selector = "tr.first-row td";
++                selector = "td.first-row";
+                 break;
+             case "lastRow":
+                 modificator = ".last-row";
+-                selector = "tr.last-row td";
++                selector = "td.last-row";
+                 break;
+             case "firstCol":
+                 modificator = ".first-col";
+@@ -1637,11 +1654,11 @@ class DocumentParser {
+                 break;
+             case "band1Horz":
+                 modificator = ":not(.no-hband)";
+-                selector = "tr.odd-row";
++                selector = "td.odd-row";
+                 break;
+             case "band2Horz":
+                 modificator = ":not(.no-hband)";
+-                selector = "tr.even-row";
++                selector = "td.even-row";
+                 break;
+             default: return [];
+         }
+@@ -1651,6 +1668,7 @@ class DocumentParser {
+                     result.push({
+                         target: `${selector} p`,
+                         mod: modificator,
++                        tableCondition: type,
+                         values: this.parseDefaultProperties(n, {})
+                     });
+                     break;
+@@ -1658,6 +1676,7 @@ class DocumentParser {
+                     result.push({
+                         target: `${selector} span`,
+                         mod: modificator,
++                        tableCondition: type,
+                         values: this.parseDefaultProperties(n, {})
+                     });
+                     break;
+@@ -1666,6 +1685,7 @@ class DocumentParser {
+                     result.push({
+                         target: selector,
+                         mod: modificator,
++                        tableCondition: type,
+                         values: this.parseDefaultProperties(n, {})
+                     });
+                     break;
+@@ -2275,6 +2295,7 @@ class DocumentParser {
+             switch (c.localName) {
+                 case "cnfStyle":
+                     row.className = values.classNameOfCnfStyle(c);
++                    row.cnfStyle = values.cnfStyleFlags(c);
+                     break;
+                 case "tblHeader":
+                     row.isHeader = globalXmlParser.boolAttr(c, "val");
+@@ -2319,6 +2340,7 @@ class DocumentParser {
+                     break;
+                 case "cnfStyle":
+                     cell.className = values.classNameOfCnfStyle(c);
++                    cell.cnfStyle = values.cnfStyleFlags(c);
+                     break;
+                 default:
+                     return false;
+@@ -2415,6 +2437,9 @@ class DocumentParser {
+                     this.parseFont(c, style);
+                     break;
+                 case "tblBorders":
++                    // UPSTREAM(docx-preview 0.4.0): retain insideH/insideV separately; see
++                    // docxjs#221 / #235 and patches/docx-preview+0.4.0.local-workaround.md for removal criteria.
++                    (childStyle || style).$tableBorders = this.parseTableBorders(c);
+                     this.parseBorderProperties(c, childStyle || style);
+                     break;
+                 case "tblCellSpacing":
+@@ -2428,6 +2453,7 @@ class DocumentParser {
+                     style["border"] = values.valueOfBorder(c);
+                     break;
+                 case "tcBorders":
++                    style.$cellBorders = this.parseBorderProperties(c, {});
+                     this.parseBorderProperties(c, style);
+                     break;
+                 case "vanish":
+@@ -2609,6 +2635,15 @@ class DocumentParser {
+                 break;
+         }
+     }
++    parseTableBorders(node) {
++        const borders = {};
++        for (const edge of globalXmlParser.elements(node)) {
++            const name = edge.localName === "start" ? "left" : edge.localName === "end" ? "right" : edge.localName;
++            if (["top", "right", "bottom", "left", "insideH", "insideV"].includes(name))
++                borders[name] = values.valueOfBorder(edge);
++        }
++        return borders;
++    }
+     parseBorderProperties(node, output) {
+         for (const c of globalXmlParser.elements(node)) {
+             switch (c.localName) {
+@@ -2628,6 +2663,7 @@ class DocumentParser {
+                     break;
+             }
+         }
++        return output;
+     }
+ }
+ const knownColors = ['black', 'blue', 'cyan', 'darkBlue', 'darkCyan', 'darkGray', 'darkGreen', 'darkMagenta', 'darkRed', 'darkYellow', 'green', 'lightGray', 'magenta', 'none', 'red', 'white', 'yellow'];
+@@ -2710,21 +2746,25 @@ class values {
+         var type = globalXmlParser.attr(c, "val");
+         return type == "fixed" ? "fixed" : "auto";
+     }
+-    static classNameOfCnfStyle(c) {
+-        const val = globalXmlParser.attr(c, "val");
+-        const classes = [
+-            'first-row', 'last-row', 'first-col', 'last-col',
++    static cnfStyleFlags(c) {
++        const names = ['first-row', 'last-row', 'first-col', 'last-col',
+             'odd-col', 'even-col', 'odd-row', 'even-row',
+-            'ne-cell', 'nw-cell', 'se-cell', 'sw-cell'
+-        ];
+-        if (val)
+-            return classes.filter((_, i) => val[i] == '1').join(' ');
+-        const attrs = [
+-            'firstRow', 'lastRow', 'firstColumn', 'lastColumn',
++            'ne-cell', 'nw-cell', 'se-cell', 'sw-cell'];
++        const attrs = ['firstRow', 'lastRow', 'firstColumn', 'lastColumn',
+             'oddVBand', 'evenVBand', 'oddHBand', 'evenHBand',
+-            'firstRowLastColumn', 'firstRowFirstColumn', 'lastRowLastColumn', 'lastRowFirstColumn'
+-        ];
+-        return classes.filter((_, i) => globalXmlParser.boolAttr(c, attrs[i])).join(' ');
++            'firstRowLastColumn', 'firstRowFirstColumn', 'lastRowLastColumn', 'lastRowFirstColumn'];
++        const val = globalXmlParser.attr(c, "val");
++        const flags = {};
++        names.forEach((name, i) => {
++            if (globalXmlParser.attr(c, attrs[i]) != null)
++                flags[name] = globalXmlParser.boolAttr(c, attrs[i]);
++            else if (val != null) flags[name] = val[i] === "1";
++        });
++        return flags;
++    }
++    static classNameOfCnfStyle(c) {
++        return Object.entries(this.cnfStyleFlags(c)).filter(([, enabled]) => enabled)
++            .map(([name]) => name).join(" ");
+     }
+     static valueOfJc(c) {
+         var type = globalXmlParser.attr(c, "val");
+@@ -2767,17 +2807,19 @@ class values {
+     static classNameOftblLook(c) {
+         const val = globalXmlParser.hexAttr(c, "val", 0);
+         let className = "";
+-        if (globalXmlParser.boolAttr(c, "firstRow") || (val & 0x0020))
++        const enabled = (name, mask) => globalXmlParser.attr(c, name) != null
++            ? globalXmlParser.boolAttr(c, name) : Boolean(val & mask);
++        if (enabled("firstRow", 0x0020))
+             className += " first-row";
+-        if (globalXmlParser.boolAttr(c, "lastRow") || (val & 0x0040))
++        if (enabled("lastRow", 0x0040))
+             className += " last-row";
+-        if (globalXmlParser.boolAttr(c, "firstColumn") || (val & 0x0080))
++        if (enabled("firstColumn", 0x0080))
+             className += " first-col";
+-        if (globalXmlParser.boolAttr(c, "lastColumn") || (val & 0x0100))
++        if (enabled("lastColumn", 0x0100))
+             className += " last-col";
+-        if (globalXmlParser.boolAttr(c, "noHBand") || (val & 0x0200))
++        if (enabled("noHBand", 0x0200))
+             className += " no-hband";
+-        if (globalXmlParser.boolAttr(c, "noVBand") || (val & 0x0400))
++        if (enabled("noVBand", 0x0400))
+             className += " no-vband";
+         return className.trim();
+     }
+@@ -3021,26 +3063,55 @@ class HtmlRenderer {
+     }
+     processStyles(styles) {
+         const stylesMap = keyBy(styles.filter(x => x.id != null), x => x.id);
+-        for (const style of styles.filter(x => x.basedOn)) {
+-            var baseStyle = stylesMap[style.basedOn];
+-            if (baseStyle) {
+-                style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
+-                style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
+-                for (const baseValues of baseStyle.styles) {
+-                    const styleValues = style.styles.find(x => x.target == baseValues.target);
+-                    if (styleValues) {
+-                        this.copyStyleProperties(baseValues.values, styleValues.values);
++        // UPSTREAM: resolve bases before children, independent of styles.xml order.
++        // An iterative walk also bounds stack use and terminates malformed cycles.
++        const state = new Map();
++        for (const root of styles) {
++            const pending = [{ style: root, expanded: false }];
++            while (pending.length) {
++                const frame = pending[pending.length - 1];
++                const style = frame.style;
++                if (state.get(style) === 2) { pending.pop(); continue; }
++                const baseStyle = stylesMap[style.basedOn];
++                if (!frame.expanded) {
++                    frame.expanded = true;
++                    state.set(style, 1);
++                    if (baseStyle && !state.has(baseStyle)) {
++                        pending.push({ style: baseStyle, expanded: false });
++                        continue;
+                     }
+-                    else {
+-                        style.styles.push({ ...baseValues, values: { ...baseValues.values } });
++                }
++                if (baseStyle && state.get(baseStyle) === 2) {
++                    style.rowBandSize ??= baseStyle.rowBandSize;
++                    style.colBandSize ??= baseStyle.colBandSize;
++                    style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
++                    style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
++                    for (const baseValues of baseStyle.styles) {
++                        const styleValues = style.styles.find(x => x.target === baseValues.target && x.mod === baseValues.mod && x.tableCondition === baseValues.tableCondition);
++                        if (styleValues) {
++                            for (const key of ["$tableBorders", "$cellBorders"]) {
++                                if (baseValues.values[key])
++                                    styleValues.values[key] = { ...baseValues.values[key], ...styleValues.values[key] };
++                            }
++                            this.copyStyleProperties(baseValues.values, styleValues.values);
++                        }
++                        else {
++                            style.styles.push({ ...baseValues, values: { ...baseValues.values } });
++                        }
+                     }
+                 }
++                state.set(style, 2);
++                pending.pop();
+             }
+-            else if (this.options.debug)
+-                console.warn(`Can't find base style ${style.basedOn}`);
+         }
+         for (let style of styles) {
+             style.cssName = this.processStyleName(style.id);
++            // OOXML conditional precedence must not depend on styles.xml order.
++            const order = { wholeTable: 0, band1Vert: 1, band2Vert: 1,
++                band1Horz: 2, band2Horz: 2, firstRow: 3, lastRow: 3,
++                firstCol: 4, lastCol: 4, nwCell: 5, neCell: 5, swCell: 5, seCell: 5 };
++            if (style.target === "table")
++                style.styles.sort((a, b) => (order[a.tableCondition] ?? -1) - (order[b.tableCondition] ?? -1));
+         }
+         return stylesMap;
+     }
+@@ -3069,7 +3140,7 @@ class HtmlRenderer {
+         for (var r of table.children) {
+             for (var c of r.children) {
+                 c.cssStyle = this.copyStyleProperties(table.cellStyle, c.cssStyle, [
+-                    "border-left", "border-right", "border-top", "border-bottom",
++                    ...(table.cellStyle?.$tableBorders ? [] : ["border-left", "border-right", "border-top", "border-bottom"]),
+                     "padding-left", "padding-right", "padding-top", "padding-bottom"
+                 ]);
+                 this.processElement(c);
+@@ -3373,10 +3444,23 @@ section.${c}>footer { z-index: 1; }
+             }
+             for (const subStyle of subStyles) {
+                 var selector = `${style.target ?? ''}.${style.cssName}`;
+-                if (style.target != subStyle.target)
+-                    selector += ` ${subStyle.target}`;
+-                if (defautStyles[style.target] == style)
+-                    selector = `.${this.className} ${style.target}, ` + selector;
++                if (style.target === "table") {
++                    // Keep region constraints on default styles too. Direct-child paths
++                    // prevent an outer table's selectors reaching a nested table.
++                    let target = subStyle.target;
++                    if (!target.startsWith("tr") && !target.startsWith("td"))
++                        target = "td " + target;
++                    if (!target.startsWith("tr")) target = "tr > " + target;
++                    target = target.replace(/(td(?:\.[\w-]+)?) p/g, "$1 > p")
++                        .replace(/(td(?:\.[\w-]+)?) span/g, "$1 > p span");
++                    selector += `${subStyle.mod ?? ""} > ${target}`;
++                }
++                else {
++                    if (style.target != subStyle.target)
++                        selector += ` ${subStyle.target}`;
++                    if (defautStyles[style.target] == style)
++                        selector = `.${this.className} ${style.target}, ` + selector;
++                }
+                 styleText += this.styleToString(selector, subStyle.values);
+             }
+         }
+@@ -3686,7 +3770,85 @@ section.${c}>footer { z-index: 1; }
+         children.push(...this.renderElements(elem.children));
+         this.currentVerticalMerge = this.tableVerticalMerges.pop();
+         this.currentCellPosition = this.tableCellPositions.pop();
+-        return this.toHTML(elem, ns.html, "table", children);
++        const table = this.toHTML(elem, ns.html, "table", children);
++        // Default styles apply only when the table has no explicit style reference.
++        if (!elem.styleName) {
++            const style = Object.values(this.styleMap).find(s => s.target === "table" && s.isDefault);
++            if (style) table.classList.add(style.cssName);
++        }
++        this.markTableRegions(elem, table);
++        this.applyTableBorders(elem, table);
++        return table;
++    }
++    markTableRegions(model, table) {
++        // Derive only missing cnfStyle hints. Explicit false flags are meaningful too.
++        const rows = Array.from(table.rows);
++        const style = model.styleName ? this.findStyle(model.styleName)
++            : Object.values(this.styleMap).find(s => s.target === "table" && s.isDefault);
++        const columns = Math.max(model.columns?.length ?? 0,
++            ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
++        const firstRow = table.classList.contains("first-row") ? 1 : 0;
++        const firstCol = table.classList.contains("first-col") ? 1 : 0;
++        const rowBandSize = Math.max(1, model.rowBandSize ?? style?.rowBandSize ?? 1);
++        const colBandSize = Math.max(1, model.colBandSize ?? style?.colBandSize ?? 1);
++        rows.forEach((row, r) => {
++            const rowModel = model.children[r];
++            const odd = Math.floor(Math.max(0, r - firstRow) / rowBandSize) % 2 === 0;
++            const rowFlags = { "first-row": r === 0, "last-row": r === rows.length - 1,
++                "odd-row": odd, "even-row": !odd, ...rowModel?.cnfStyle };
++            for (const [name, value] of Object.entries(rowFlags)) row.classList.toggle(name, value);
++            let c = 0; // Placeholder cells already account for gridBefore.
++            Array.from(row.cells).forEach((cell, index) => {
++                const cellModel = rowModel?.children[index - (rowModel.gridBefore ? 1 : 0)];
++                const last = c + cell.colSpan === columns;
++                const oddCol = Math.floor(Math.max(0, c - firstCol) / colBandSize) % 2 === 0;
++                const flags = { ...rowFlags, "first-col": c === 0, "last-col": last,
++                    "odd-col": oddCol, "even-col": !oddCol,
++                    "nw-cell": r === 0 && c === 0, "ne-cell": r === 0 && last,
++                    "sw-cell": r + cell.rowSpan === rows.length && c === 0,
++                    "se-cell": r + cell.rowSpan === rows.length && last,
++                    ...cellModel?.cnfStyle };
++                for (const [name, value] of Object.entries(flags)) cell.classList.toggle(name, value);
++                c += cell.colSpan;
++            });
++        });
++    }
++    applyTableBorders(model, table) {
++        const styles = (model.styleName ? this.findStyle(model.styleName)
++            : Object.values(this.styleMap).find(s => s.target === "table" && s.isDefault))?.styles ?? [];
++        const direct = model.cellStyle?.$tableBorders;
++        if (!direct && !styles.some(s => s.values.$tableBorders)) return;
++        const rows = Array.from(table.rows);
++        const columnCount = Math.max(model.columns?.length ?? 0,
++            ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
++        // Work on the detached table after rowspan/colspan are known. No layout reads,
++        // document-global CSS, or mutation of the parsed cell borders is needed.
++        rows.forEach((row, rowIndex) => {
++            let column = 0;
++            for (const cell of row.cells) {
++                const start = column;
++                column += cell.colSpan;
++                if (cell.style.display === "none") continue;
++                let borders = {}, cellBorders = {};
++                for (const style of styles) {
++                    if ((!style.mod || table.matches(style.mod)) && cell.matches(style.target)) {
++                        Object.assign(borders, style.values.$tableBorders);
++                        Object.assign(cellBorders, style.values.$cellBorders);
++                    }
++                }
++                for (const side of ["top", "right", "bottom", "left"]) {
++                    const property = "border-" + side;
++                    // Use the longhand: Chromium can serialize explicit nil/none as an empty shorthand.
++                    if (cell.style.getPropertyValue(property + "-style")) continue;
++                    const outer = (side === "top" && rowIndex === 0)
++                        || (side === "bottom" && rowIndex + cell.rowSpan === rows.length)
++                        || (side === "left" && start === 0)
++                        || (side === "right" && column === columnCount);
++                    const key = outer ? side : (side === "top" || side === "bottom" ? "insideH" : "insideV");
++                    cell.style.setProperty(property, direct?.[key] ?? cellBorders[property] ?? borders[key] ?? "none");
++                }
++            }
++        });
+     }
+     renderTableColumns(columns) {
+         const children = columns.map(x => this.h({ tagName: "col", style: { width: x.width } }));
+@@ -3838,7 +4000,7 @@ section.${c}>footer { z-index: 1; }
+         return this.toHTML(elem, ns.mathML, "mtable", children);
+     }
+     toH(elem, ns, tagName, children = null) {
+-        const { "$lang": lang, ...style } = elem.cssStyle ?? {};
++        const { "$lang": lang, "$tableBorders": tableBorders, "$cellBorders": cellBorders, ...style } = elem.cssStyle ?? {};
+         const className = cx(elem.className, elem.styleName && this.processStyleName(elem.styleName));
+         return { ns, tagName, className, lang, style, children: children ?? this.renderElements(elem.children) };
+     }

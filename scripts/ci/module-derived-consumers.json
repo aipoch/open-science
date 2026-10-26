@@ -22,6 +22,7 @@
     ],
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "compute_domain_contracts": ["src/main/notebook/authorized-directories.integration.test.ts"],
+    "compute_skill_contract": ["src/main/skills/docx-generation.test.ts"],
     "connector_core": [
       "packages/connector-builtins/src/chemistry-lipidmaps.test.ts",
       "packages/connector-builtins/src/kegg.test.ts",
@@ -40,6 +41,7 @@
       "src/main/notebook/authorized-directories.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
+      "src/main/skills/docx-generation.test.ts",
       "src/main/update/create-strategy.test.ts",
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
@@ -8901,6 +8903,7 @@
       "src/shared/session-persistence/turn-outcome-codec.test.ts",
       "src/shared/session-persistence/turn-outcome.test.ts"
     ],
+    "skill_package": ["src/main/skills/docx-generation.test.ts"],
     "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "storage_location": [
       "src/main/notebook/authorized-directories.integration.test.ts",

@@ -219,7 +219,8 @@
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationActionHint.tsx",
-    "test/fixtures/pdf-translation/baseline-comma-definition.jsonl"
+    "test/fixtures/pdf-translation/baseline-comma-definition.jsonl",
+    "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
@@ -322,7 +323,8 @@
       "scripts/pdfjs-resource-scope.test.ts",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-checkpoint.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationEditions.test.tsx",
-      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
+      "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx",
+      "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
