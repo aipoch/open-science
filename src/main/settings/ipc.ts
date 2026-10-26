@@ -1,3 +1,4 @@
+import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
 import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
@@ -402,6 +403,13 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())
 
+  ipcMainHandle('settings:list-skill-sources', () => service.listSkillSources())
+  ipcMainHandle('settings:add-skill-source', (_event, request: AddSkillSourceRequest) =>
+    service.addSkillSource(request)
+  )
+  ipcMainHandle('settings:remove-skill-source', (_event, request: RemoveSkillSourceRequest) =>
+    service.removeSkillSource(request)
+  )
   ipcMainHandle('settings:list-skills', () => service.listSkills())
   ipcMainHandle(
     'settings:list-skill-marketplace',

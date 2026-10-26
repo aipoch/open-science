@@ -20,7 +20,11 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
-import { validateElicitationAnswers } from './elicitation-owner'
+import {
+  validateElicitationAnswers,
+  agentUserChoiceOutcomes,
+  USER_CHOICE_SKIP_GUIDANCE
+} from './elicitation-owner'
 
 type DurableContinuationSessions = Pick<SessionCatalog, 'loadSessionForContinuation'> &
   Partial<SessionMutation>
@@ -465,6 +469,14 @@ class AcpDurableContinuationContextOwner {
     action: 'accept' | 'decline',
     answers?: ElicitationAnswer[]
   ): string {
+    const outcomes = agentUserChoiceOutcomes(request, { action, answers })
+    if (outcomes.some((outcome) => outcome.status === 'skipped')) {
+      return [
+        'The user revised the previous structured answer:',
+        JSON.stringify(outcomes),
+        USER_CHOICE_SKIP_GUIDANCE
+      ].join('\n')
+    }
     if (action === 'decline')
       return 'The user revised the previous structured answer by declining it.'
     const fields = new Map(request.fields.map((field) => [field.id, field]))

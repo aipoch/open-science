@@ -15,9 +15,9 @@ const native = createRequire(import.meta.url)(
   '@aipoch/process-tree-native'
 ) as typeof import('@aipoch/process-tree-native')
 
-it.skipIf(process.platform !== 'darwin')(
-  'does not let an unreadable external launchd service permanently block an owned tree teardown',
-  async () => {
+it.skipIf(process.platform !== 'darwin').each(['running', 'exited'] as const)(
+  'does not let a %s external launchd service permanently block an owned tree teardown',
+  async (serviceState) => {
     const directory = await mkdtemp(join(tmpdir(), 'foreign-service-cleanup-'))
     const label = `com.aipoch.process-tree-test.${randomUUID()}`
     const pidFile = join(directory, 'pid')
@@ -26,6 +26,34 @@ it.skipIf(process.platform !== 'darwin')(
     let service: ReturnType<typeof native.getDarwinProcess> = null
     let submitted = false
     let unreadable = true
+    let exitedAfterSnapshot = false
+    const list = native.listDarwinProcesses.bind(native)
+    const snapshotObservation = vi.spyOn(native, 'listDarwinProcesses').mockImplementation(() => {
+      const snapshot = list()
+      const observedService = service
+      if (
+        serviceState === 'exited' &&
+        !exitedAfterSnapshot &&
+        observedService &&
+        snapshot?.processes.some(
+          (identity) =>
+            identity.pid === observedService.pid && identity.uniqueId === observedService.uniqueId
+        ) &&
+        native.getDarwinProcess(observedService.pid)?.uniqueId === observedService.uniqueId
+      ) {
+        process.kill(observedService.pid, 'SIGKILL')
+        const deadline = Date.now() + 1000
+        while (
+          native.getDarwinProcess(observedService.pid)?.uniqueId === observedService.uniqueId
+        ) {
+          if (Date.now() >= deadline)
+            throw new Error('Test service did not exit after its snapshot')
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+        }
+        exitedAfterSnapshot = true
+      }
+      return snapshot
+    })
     const read = native.getDarwinEnvironmentValue.bind(native)
     const observation = vi
       .spyOn(native, 'getDarwinEnvironmentValue')
@@ -70,13 +98,19 @@ it.skipIf(process.platform !== 'darwin')(
       const first = await terminateProcessTree(child)
       unreadable = false
       const retry = await terminateProcessTree(child)
-      expect(native.getDarwinProcess(service.pid)?.uniqueId).toBe(service.uniqueId)
+      if (serviceState === 'exited') {
+        expect(exitedAfterSnapshot).toBe(true)
+        expect(native.getDarwinProcess(service.pid)?.uniqueId).not.toBe(service.uniqueId)
+      } else {
+        expect(native.getDarwinProcess(service.pid)?.uniqueId).toBe(service.uniqueId)
+      }
       expect(first).toEqual({ reaped: true })
       expect(retry).toEqual({ reaped: true })
       expect(leader.coalitionId).toMatch(/^[1-9][0-9]*$/)
       expect(service.coalitionId).toMatch(/^[1-9][0-9]*$/)
       expect(service.coalitionId).not.toBe(leader.coalitionId)
     } finally {
+      snapshotObservation.mockRestore()
       observation.mockRestore()
       try {
         if (submitted) execFileSync('/bin/launchctl', ['remove', label], { timeout: 5000 })

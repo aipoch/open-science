@@ -9,10 +9,12 @@ import {
   MAX_ELICITATION_MULTI_SELECT_VALUES,
   isValidElicitationValue,
   resolveAgentUserChoiceQuestions,
+  normalizeAgentUserChoiceAnswers,
   sanitizeElicitationField,
   sanitizeElicitationProjection,
   sanitizePendingElicitationRequest,
   type ElicitationAnswer,
+  type ElicitationValue,
   type ElicitationField,
   type ElicitationProjection,
   type ElicitationResponse,
@@ -35,6 +37,7 @@ export type ResolvedElicitation = {
   request: PendingElicitationRequest
   response: CreateElicitationResponse
   detached: boolean
+  decision: Pick<ElicitationResponse, 'action' | 'answers'>
 }
 
 type AcpElicitationOwnerOptions = {
@@ -260,16 +263,24 @@ export const validateElicitationAnswers = (
   request: PendingElicitationRequest,
   answers: ElicitationAnswer[] | undefined
 ): ElicitationAnswer[] => {
-  const candidates = answers ?? []
+  const candidates = normalizeAgentUserChoiceAnswers(request.fields, answers ?? [])
   if (candidates.length > MAX_ELICITATION_ANSWERS) {
     throw new Error('Invalid structured input response')
   }
   const fields = new Map(request.fields.map((field) => [field.id, field]))
   const seen = new Set<string>()
+  const questions = resolveAgentUserChoiceQuestions(request.fields)
 
   for (const answer of candidates) {
     const field = fields.get(answer.fieldId)
-    if (!field || seen.has(answer.fieldId) || !isValidElicitationValue(field, answer.value)) {
+    const valid =
+      answer.status === 'skipped'
+        ? answer.value === undefined &&
+          questions?.some((question) => question.choiceField.id === answer.fieldId)
+        : (answer.status === undefined || answer.status === 'answered') &&
+          field &&
+          isValidElicitationValue(field, answer.value)
+    if (!field || seen.has(answer.fieldId) || !valid) {
       throw new Error('Invalid structured input response')
     }
     seen.add(answer.fieldId)
@@ -277,19 +288,23 @@ export const validateElicitationAnswers = (
   if (request.fields.some((field) => field.required && !seen.has(field.id))) {
     throw new Error('Required structured input is missing')
   }
-  const questions = resolveAgentUserChoiceQuestions(request.fields)
   if (questions) {
     for (const question of questions) {
       const choice = candidates.find((answer) => answer.fieldId === question.choiceField.id)
       const custom = candidates.find((answer) => answer.fieldId === question.customField.id)
-      if ((choice && custom) || (Array.isArray(choice?.value) && choice.value.length === 0)) {
+      if (
+        (!choice && !custom) ||
+        (choice && custom) ||
+        (Array.isArray(choice?.value) && choice.value.length === 0) ||
+        (custom && typeof custom.value === 'string' && !custom.value.trim())
+      ) {
         throw new Error('Invalid structured input response')
       }
     }
   }
   return candidates.map((answer) => {
     const field = fields.get(answer.fieldId)!
-    return questions && Array.isArray(answer.value)
+    return questions && answer.status !== 'skipped' && Array.isArray(answer.value)
       ? {
           ...answer,
           value: field
@@ -298,6 +313,37 @@ export const validateElicitationAnswers = (
         }
       : answer
   })
+}
+
+export const USER_CHOICE_SKIP_GUIDANCE =
+  'The user did not provide a selection for skipped questions; continue using the information already available and do not ask these questions again. Skipping does not imply consent or authorization.'
+
+type UserChoiceOutcome = {
+  question: string
+  status: 'answered' | 'skipped'
+  answer?: ElicitationValue
+}
+
+export const agentUserChoiceOutcomes = (
+  request: PendingElicitationRequest,
+  decision: Pick<ElicitationResponse, 'action' | 'answers'>
+): UserChoiceOutcome[] => {
+  if (decision.action === 'cancel') return []
+  const answers = normalizeAgentUserChoiceAnswers(request.fields, decision.answers ?? [])
+  // Earlier durable requests can contain only question_N, without the paired custom field.
+  return request.fields
+    .filter((field) => /^question_\d+$/u.test(field.id))
+    .map((choiceField) => {
+      const answer = answers.find(
+        (item) => item.fieldId === choiceField.id || item.fieldId === `${choiceField.id}_custom`
+      )
+      const question =
+        choiceField.description ||
+        (request.fields.length === 1 ? request.message : choiceField.label)
+      return decision.action === 'decline' || !answer || answer.status === 'skipped'
+        ? { question, status: 'skipped' }
+        : { question, status: 'answered', answer: answer?.value }
+    })
 }
 
 const isLosslessFieldProjection = (
@@ -473,7 +519,11 @@ export class AcpElicitationOwner {
       answers = validateElicitationAnswers(pending.request, response.answers)
       protocolResponse = {
         action: 'accept',
-        content: Object.fromEntries(answers.map((answer) => [answer.fieldId, answer.value]))
+        content: Object.fromEntries(
+          answers
+            .filter((answer) => answer.status !== 'skipped')
+            .map((answer) => [answer.fieldId, answer.value])
+        )
       }
       state = 'answered'
     } else {
@@ -492,11 +542,31 @@ export class AcpElicitationOwner {
         : {})
     }
     this.tryPublishProjection(pending.request, projection)
+    const decision = { action: response.action, ...(answers ? { answers } : {}) }
+    const outcomes = agentUserChoiceOutcomes(pending.request, decision)
+    const questions = resolveAgentUserChoiceQuestions(pending.request.fields)
+    if (pending.resolve && questions && outcomes.some((outcome) => outcome.status === 'skipped')) {
+      // ACP content accepts only scalars. Choice custom fields carry explicit outcomes;
+      // protocol acceptance delivers the record, while the saved decision remains declined.
+      protocolResponse = {
+        action: 'accept',
+        content: Object.fromEntries(
+          outcomes.map((outcome, index) => [
+            questions[index].customField.id,
+            JSON.stringify({
+              ...outcome,
+              ...(outcome.status === 'skipped' ? { guidance: USER_CHOICE_SKIP_GUIDANCE } : {})
+            })
+          ])
+        )
+      }
+    }
     pending.resolve?.(protocolResponse)
     return {
       request: structuredClone(pending.request),
       response: protocolResponse,
-      detached: pending.resolve === undefined
+      detached: pending.resolve === undefined,
+      decision
     }
   }
 

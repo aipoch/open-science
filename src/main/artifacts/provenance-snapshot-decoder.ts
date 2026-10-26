@@ -72,7 +72,10 @@ const elicitationAnswerRecordValue = (value: unknown): boolean => {
   return (
     answer !== undefined &&
     typeof answer.fieldId === 'string' &&
-    elicitationAnswerValue(answer.value)
+    (answer.status === 'skipped'
+      ? answer.value === undefined
+      : (answer.status === undefined || answer.status === 'answered') &&
+        elicitationAnswerValue(answer.value))
   )
 }
 

@@ -645,9 +645,11 @@ describe('AcpDurableContinuationContextOwner', () => {
     ).rejects.toThrow('pending Session activity')
   })
 
-  it.each([false, true])(
-    'validates an inherited revision fork and creates Main-owned identities (multiSelect: %s)',
-    async (multiSelect) => {
+  it.each(['single', 'multi', 'skipped', 'decline'] as const)(
+    'validates an inherited revision fork and creates Main-owned identities (%s)',
+    async (scenario) => {
+      const multiSelect = scenario === 'multi'
+      const skipped = scenario === 'skipped' || scenario === 'decline'
       const prompt = message('prompt-active', 'Choose an approach.')
       const preamble: PersistedChatMessage = {
         id: 'agent-question-preamble',
@@ -678,6 +680,21 @@ describe('AcpDurableContinuationContextOwner', () => {
         }
         answeredChoice.elicitation!.answers = [{ fieldId: 'question_0', value: [selected[0]] }]
       }
+      if (skipped) {
+        answeredChoice.elicitation!.fields = [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            description: 'Which approach?',
+            kind: 'single-select',
+            options: [
+              { label: 'Minimal', value: 'Minimal' },
+              { label: 'Expanded', value: 'Expanded' }
+            ]
+          },
+          { id: 'question_0_custom', label: 'Other', kind: 'text' }
+        ]
+      }
       setActivities(durable, [answeredChoice])
       const graph = durable.conversationGraph!
       const frame = graph.frames[0]
@@ -706,8 +723,10 @@ describe('AcpDurableContinuationContextOwner', () => {
         sessionId: 'session-1',
         requestId: 'choice-1',
         toolCallId: 'renderer-forged-revision-tool',
-        action: 'accept' as const,
-        answers: [{ fieldId: 'question_0', value: multiSelect ? selected : 'Expanded' }],
+        action: scenario === 'decline' ? ('decline' as const) : ('accept' as const),
+        answers: skipped
+          ? [{ fieldId: 'question_0', status: 'skipped' as const }]
+          : [{ fieldId: 'question_0', value: multiSelect ? selected : 'Expanded' }],
         replacePreviousAnswer: true
       }
       const invalidActivityOwner = structuredClone(durable)
@@ -769,11 +788,19 @@ describe('AcpDurableContinuationContextOwner', () => {
         messageBranchId: 'message-branch-revision',
         promptMessageId: 'prompt-revision'
       })
+      if (skipped) {
+        expect(durable.messages.at(-1)?.content).toContain('Which approach?')
+        expect(durable.messages.at(-1)?.content).toContain('"status":"skipped"')
+      }
       expect(durable.messages.at(-1)).toMatchObject({
         id: 'prompt-revision',
         responseToMessageId: 'agent-question-preamble',
         content: expect.stringContaining(
-          multiSelect ? `Approach: ${JSON.stringify(selected)}` : 'Approach: Expanded'
+          skipped
+            ? 'does not imply consent or authorization'
+            : multiSelect
+              ? `Approach: ${JSON.stringify(selected)}`
+              : 'Approach: Expanded'
         )
       })
     }

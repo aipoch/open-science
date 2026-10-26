@@ -1,7 +1,7 @@
+import { agentUserChoiceOutcomes, USER_CHOICE_SKIP_GUIDANCE } from './elicitation-owner'
 import type {
   ActiveSession,
   ClientConnection,
-  CreateElicitationResponse,
   PromptResponse,
   SessionConfigOption
 } from '@agentclientprotocol/sdk'
@@ -2160,15 +2160,9 @@ class AcpRuntime {
       (continuePrepared || response.retryContinuation) && restoredContinuation
         ? {
             request: restoredContinuation.request,
-            response: {
+            decision: {
               action: response.action,
-              ...(response.action === 'accept'
-                ? {
-                    content: Object.fromEntries(
-                      (response.answers ?? []).map(({ fieldId, value }) => [fieldId, value])
-                    )
-                  }
-                : {})
+              answers: response.answers
             },
             detached: true
           }
@@ -2177,7 +2171,7 @@ class AcpRuntime {
     if (resolution.detached) {
       const continuation = this.userChoiceContinuation(
         resolution.request,
-        resolution.response,
+        resolution.decision,
         restoredContinuation?.historyReplay,
         restoredContinuation?.provenanceContext ?? livePromptContext?.provenanceContext,
         restoredContinuation?.memoryEnabled ?? livePromptContext?.memoryEnabled,
@@ -2355,54 +2349,28 @@ class AcpRuntime {
 
   private userChoiceContinuation(
     request: PendingElicitationRequest,
-    response: CreateElicitationResponse,
+    response: Pick<ElicitationResponse, 'action' | 'answers'>,
     historyReplay?: ElicitationResponse['historyReplay'],
     provenanceContext?: AcpPromptRequest['provenanceContext'],
     memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions']
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
-    const content =
-      response.action === 'accept'
-        ? (response.content as Record<string, unknown> | undefined)
-        : undefined
-    const answeredQuestions = request.fields.flatMap((field) => {
-      if (!/^question_\d+$/u.test(field.id)) return []
-      const customAnswer = content?.[`${field.id}_custom`]
-      const selectedAnswer = content?.[field.id]
-      const answer =
-        typeof customAnswer === 'string' && customAnswer.trim()
-          ? customAnswer.trim()
-          : typeof selectedAnswer === 'string' && selectedAnswer.trim()
-            ? selectedAnswer.trim()
-            : Array.isArray(selectedAnswer) &&
-                selectedAnswer.every((value): value is string => typeof value === 'string')
-              ? JSON.stringify(selectedAnswer)
-              : undefined
-      return answer
-        ? [
-            {
-              question:
-                field.description ??
-                (request.fields.length === 1 ? request.message : (field.label ?? request.message)),
-              answer
-            }
-          ]
-        : []
-    })
-    const text = (() => {
-      if (response.action === 'decline' || answeredQuestions.length === 0) {
-        return `The user skipped the pending question: ${request.message}\nChoose the best reasonable option and continue the current task without asking the same question again.`
-      }
-      if (answeredQuestions.length === 1) {
-        const [{ question, answer }] = answeredQuestions
-        return `The user answered the pending question: ${question}\nAnswer: ${answer}\nContinue the current task using this answer without asking the same question again.`
-      }
-      const answers = answeredQuestions
-        .map(({ question, answer }, index) => `${index + 1}. ${question}\nAnswer: ${answer}`)
-        .join('\n\n')
-      return `The user answered the pending questions:\n${answers}\nContinue the current task using these answers without asking the same questions again.`
-    })()
+    const outcomes = agentUserChoiceOutcomes(request, response)
+    const results = outcomes
+      .map(({ question, status, answer }, index) => {
+        const value = Array.isArray(answer) ? JSON.stringify(answer) : String(answer ?? '')
+        return `${index + 1}. ${question}\nStatus: ${status}${status === 'answered' ? `\nAnswer: ${value}` : ''}`
+      })
+      .join('\n\n')
+    const text = [
+      'The user responded to the pending questions:',
+      results,
+      'Continue the current task using the provided answers without asking the same questions again.',
+      ...(outcomes.some((outcome) => outcome.status === 'skipped')
+        ? [USER_CHOICE_SKIP_GUIDANCE]
+        : [])
+    ].join('\n')
     const continuationProvenance =
       provenanceContext ??
       (request.durable?.promptMessageId

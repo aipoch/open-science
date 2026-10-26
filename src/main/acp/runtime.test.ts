@@ -8499,6 +8499,66 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it.each(['mixed', 'all', 'decline', 'legacy', 'literal'] as const)(
+    'delivers explicit per-question outcomes and skip guidance for %s choices',
+    async (scenario) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['skip-semantics-session'])
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process)
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.requestUserInput({
+        sessionId: session.sessionId,
+        questions: [
+          { question: 'Which stack?', options: [{ label: 'Python' }, { label: 'R' }] },
+          { question: 'Which output?', options: [{ label: 'Report' }, { label: 'Notebook' }] }
+        ]
+      })
+      const [request] = runtime.getSnapshot().pendingElicitations ?? []
+      await runtime.respondToElicitation({
+        requestId: request.requestId,
+        action: scenario === 'decline' ? 'decline' : 'accept',
+        answers:
+          scenario === 'decline'
+            ? undefined
+            : [
+                scenario === 'legacy'
+                  ? { fieldId: 'question_0_custom', value: 'User skipped' }
+                  : scenario === 'literal'
+                    ? { fieldId: 'question_0_custom', status: 'answered', value: 'User skipped' }
+                    : { fieldId: 'question_0', status: 'skipped' },
+                scenario === 'all'
+                  ? { fieldId: 'question_1', status: 'skipped' }
+                  : { fieldId: 'question_1', value: 'Report' }
+              ]
+      })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      const text = fakeAgent.prompts[0].text
+      expect(text).toContain('Which stack?')
+      expect(text).toContain('Which output?')
+      if (scenario === 'literal') {
+        expect(text).toContain('Answer: User skipped')
+        expect(text).not.toContain('Status: skipped')
+      } else {
+        expect(text.match(/Status: skipped/g)).toHaveLength(
+          scenario === 'all' || scenario === 'decline' ? 2 : 1
+        )
+        expect(text).toContain('The user did not provide a selection')
+        expect(text).toContain('continue using the information already available')
+        expect(text).toContain('do not ask these questions again')
+        expect(text).toContain('does not imply consent or authorization')
+        expect(text).not.toContain('Answer: User skipped')
+      }
+      if (scenario !== 'all' && scenario !== 'decline') expect(text).toContain('Answer: Report')
+      await vi.waitFor(() =>
+        expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
   it('publishes one multi-question choice and continues only after every answer', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['batched-user-choice-session'])
@@ -8826,11 +8886,15 @@ describe('ACP runtime session management', () => {
         'prepared-restart',
         'prepared-end',
         'prepared-rotation'
-      ].map((scenario) => [...route, scenario] as const)
+      ].flatMap((scenario) =>
+        (['prepared', 'retry', 'repeat-failure'].includes(scenario) ? [false, true] : [false]).map(
+          (mixedSkip) => [...route, scenario, mixedSkip] as const
+        )
+      )
     )
   )(
-    'keeps a restored answer in recovery through %s (%s, %s, %s, %s)',
-    async (_name, framework, modelRoute, backendId, scenario) => {
+    'keeps a restored answer in recovery through %s (%s, %s, %s, %s, mixed skip: %s)',
+    async (_name, framework, modelRoute, backendId, scenario, mixedSkip) => {
       const process = new FakeAgentProcess()
       const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
         ...(scenario === 'post-dispatch'
@@ -8931,17 +8995,39 @@ describe('ACP runtime session management', () => {
         sessionId: 'restored-choice-session',
         toolCallId: 'tool-choice-restored-1',
         message: 'Choose an approach',
-        fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+        fields: mixedSkip
+          ? [0, 1].flatMap((index) => [
+              {
+                id: `question_${index}`,
+                label: index === 0 ? 'Approach' : 'Optional detail',
+                kind: 'single-select' as const,
+                options: [
+                  { value: 'Expanded', label: 'Expanded' },
+                  { value: 'Brief', label: 'Brief' }
+                ]
+              },
+              { id: `question_${index}_custom`, label: 'Custom answer', kind: 'text' as const }
+            ])
+          : [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
         durable: {
           kind: 'agent-user-choice' as const,
           requestId: 'choice-restored-1',
           promptMessageId: 'prompt-restored-1'
         }
       }
+      persisted.activities![0].elicitation!.fields = request.fields
+      persisted.conversationGraph = synchronizeActiveConversationActivities(
+        persisted.conversationGraph!,
+        persisted.activities!,
+        []
+      )
       const response = {
         requestId: request.requestId,
         action: 'accept' as const,
-        answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+        answers: [
+          { fieldId: 'question_0', value: 'Expanded' },
+          ...(mixedSkip ? [{ fieldId: 'question_1', status: 'skipped' as const }] : [])
+        ],
         request
       }
       if (scenario.startsWith('prepared')) {
@@ -8974,6 +9060,12 @@ describe('ACP runtime session management', () => {
         if (scenario === 'prepared-rotation') expect(generations).toBe(2)
         await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
         expect(fakeAgent.prompts[0].text).toContain('Expanded')
+        if (mixedSkip) {
+          expect(fakeAgent.prompts[0].text).toContain(
+            'Approach\nStatus: answered\nAnswer: Expanded'
+          )
+          expect(fakeAgent.prompts[0].text).toContain('Optional detail\nStatus: skipped')
+        }
         await expect(coordinator.respondToElicitation(response)).rejects.toThrow()
         return
       }
@@ -9047,6 +9139,7 @@ describe('ACP runtime session management', () => {
           persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
         ).toBeUndefined()
         expect(fakeAgent.prompts).toHaveLength(0)
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
         await expect(
           coordinator.respondToElicitation({ ...response, retryContinuation: true })
         ).rejects.toThrow('cannot be retried safely')
@@ -9059,6 +9152,10 @@ describe('ACP runtime session management', () => {
         expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
       })
       expect(fakeAgent.prompts[0].text).toContain('Expanded')
+      if (mixedSkip) {
+        expect(fakeAgent.prompts[0].text).toContain('Approach\nStatus: answered\nAnswer: Expanded')
+        expect(fakeAgent.prompts[0].text).toContain('Optional detail\nStatus: skipped')
+      }
     }
   )
 

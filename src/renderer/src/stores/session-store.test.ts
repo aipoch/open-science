@@ -8573,6 +8573,20 @@ describe('truncateSessionFromMessage', () => {
     values: { question_0_custom: 'Unsubmitted text' }
   }
 
+  it('keeps a structured skip when switching away from an unfinished choice', () => {
+    seedEditableElicitation()
+    useSessionStore.getState().setElicitationEditDraft('session-1', 'choice-1', 'request-1', {
+      ...editSnapshot,
+      values: { question_0: { status: 'skipped' } }
+    })
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['choice-1'].values
+    ).toEqual({
+      question_0: { status: 'skipped' },
+      question_0_custom: undefined
+    })
+  })
+
   it('keeps bounded elicitation edits in memory across save acknowledgements', () => {
     seedEditableElicitation()
     const before = useSessionStore.getState().sessions[0]

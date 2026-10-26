@@ -92,6 +92,7 @@ import type {
   ElicitationResponse,
   PendingElicitationRequest
 } from '../../../../shared/acp'
+import { resolveAgentUserChoiceQuestions } from '../../../../shared/elicitation'
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest
@@ -265,7 +266,10 @@ const attachmentLimitsText = (t: TFunction): string =>
     size: formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)
   })
 
-const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+const ResizableElicitationComposer = ({
+  children,
+  choice
+}: React.PropsWithChildren<{ choice: boolean }>): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ResizableBottomPanel
@@ -275,6 +279,7 @@ const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): Re
       constrainGrowthToOverflow
       minimumContentSelector='[data-elicitation-option-row="true"]'
       minimumContentIndex={1}
+      contentScrollSelector={choice ? '[data-testid="elicitation-options"]' : undefined}
     >
       {children}
     </ResizableBottomPanel>
@@ -2166,6 +2171,11 @@ const ConversationPanel = ({
                         />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
+                          choice={Boolean(
+                            resolveAgentUserChoiceQuestions(
+                              pendingElicitationRequest?.fields ?? pendingElicitation.fields
+                            )
+                          )}
                           key={
                             pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
                           }

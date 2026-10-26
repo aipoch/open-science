@@ -101,6 +101,22 @@ describe('Literature command workflows', () => {
     expect(withDataRootWrite).not.toHaveBeenCalled()
     expect(broadcastToRenderers).not.toHaveBeenCalled()
   })
+  it('forwards publication checks with caller cancellation and leaves the write gate to persistence', async () => {
+    const result = { itemId: 'paper', metadataRevision: 1 }
+    const run = vi.fn().mockResolvedValue(result)
+    const owner = createLiteratureCommandOwner({
+      literaturePublicationChecker: { run }
+    } as unknown as Services)
+    const signal = new AbortController().signal
+    for (const mode of ['get', 'check'] as const) {
+      const request = { mode, itemId: 'paper', expectedMetadataRevision: 1 }
+      await expect(owner.publicationCheck(request, signal)).resolves.toBe(result)
+      expect(run).toHaveBeenLastCalledWith(request, signal)
+    }
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
+
   it('routes exact candidate reads through the catalog without publishing mutations', async () => {
     const result = {
       candidates: [{ candidateId: 'a', state: 'accepted', acceptedItemId: 'paper' }]

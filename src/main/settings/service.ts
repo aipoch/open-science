@@ -1,3 +1,9 @@
+import { SkillSourceRepository } from '../skills/source-repository'
+import type {
+  SavedSkillSource,
+  AddSkillSourceRequest,
+  RemoveSkillSourceRequest
+} from '../../shared/skill-sources'
 import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import { SkillReleaseInstallConflict as MarketplaceInstallConflict } from '@aipoch/skills'
 import { readFile, stat } from 'node:fs/promises'
@@ -455,6 +461,7 @@ class SettingsService {
   private readonly installCoordinator: SettingsInstallCoordinator
   private readonly backendResolver: AgentBackendResolver
   private readonly scenarioModels: ScenarioModelOwner
+  private readonly skillSources: SkillSourceRepository
   private readonly configRoot: string
   private readonly networkProxy: NetworkProxySettingsOwner
   private readonly notebookNetwork: NotebookNetworkSettingsOwner
@@ -509,6 +516,7 @@ class SettingsService {
 
   constructor(options: SettingsServiceOptions = {}) {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
+    this.skillSources = new SkillSourceRepository(this.configRoot)
     this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
     this.withNotebookFolderPolicyChange =
@@ -1107,6 +1115,16 @@ class SettingsService {
   async detectCodex(): Promise<SettingsSnapshot> {
     await this.runtimeManager.detectCodex()
     return this.getSettingsView()
+  }
+
+  listSkillSources(): Promise<SavedSkillSource[]> {
+    return this.skillSources.list()
+  }
+  addSkillSource(request: AddSkillSourceRequest): Promise<SavedSkillSource[]> {
+    return this.skillSources.add(request)
+  }
+  removeSkillSource(request: RemoveSkillSourceRequest): Promise<SavedSkillSource[]> {
+    return this.skillSources.remove(request)
   }
 
   async listSkills(): Promise<SkillView[]> {
