@@ -59,7 +59,10 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
+import type {
+  DelegatedQuestionRequest,
+  PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
@@ -3760,11 +3763,20 @@ describe('ConversationPanel composer intake', () => {
       const authority = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(activeSession)
       })
+      let waitingSession: PersistedChatSession = {
+        ...structuredClone(activeSession),
+        status: 'waiting-for-user',
+        activeRun: undefined
+      }
       const waitingAuthority = new AcpDurableContinuationContextOwner({
-        loadSessionForContinuation: async () => ({
-          ...structuredClone(activeSession),
-          status: 'waiting-for-user'
-        })
+        loadSessionForContinuation: async () => structuredClone(waitingSession),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          waitingSession = {
+            ...mutate(structuredClone(waitingSession)),
+            runtimeTranscriptOwner: 'main'
+          }
+          return structuredClone(waitingSession)
+        }
       })
       await expect(
         waitingAuthority.prepareElicitation({
@@ -3775,6 +3787,14 @@ describe('ConversationPanel composer intake', () => {
           action: 'decline'
         })
       ).resolves.toMatchObject({ request: { requestId: 'export-choice-request' } })
+      expect(waitingSession.activities![0].elicitation).toMatchObject({
+        state: 'declined',
+        continuationPending: true
+      })
+      expect(waitingSession.conversationGraph!.activities[0].elicitation).toEqual(
+        waitingSession.activities![0].elicitation
+      )
+      expect(activeSession.activities![0].elicitation?.state).toBe('pending')
       await expect(
         authority.prepareElicitation({
           projectId: activeSession.projectId,
