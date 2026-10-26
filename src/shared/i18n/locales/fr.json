@@ -193,6 +193,15 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
+    "Scientific data APIs, official file links and access guidance.": "API de données scientifiques, liens officiels et modalités d’accès.",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "Rechercher des notices Europe PMC et les résumés disponibles avec pagination par curseur.",
+    "Inspect HGNC fields, identifiers and official file metadata.": "Consulter les champs, identifiants et métadonnées des fichiers officiels HGNC.",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "Interroger les correspondances d’identifiants, l’orthologie et les voies dans bioDBnet.",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "Classer les facteurs de transcription avec ChEA3 ou trouver des bibliothèques GMT.",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "Obtenir le RDF, les données du graphe, la similarité STR ou les liens Cellosaurus.",
+    "Check official dataset access requirements or discover public files.": "Consulter les modalités officielles d’accès aux données ou trouver des fichiers publics.",
+    "List official openFDA adverse-event bulk download links.": "Lister les liens officiels de téléchargement groupé des événements indésirables openFDA.",
+    "List maintained CTD public report links and usage terms.": "Lister les liens maintenus des rapports publics CTD et leurs conditions d’utilisation.",
     "Input help": "Aide de saisie",
     "Your changes have not been saved. Discard them and leave the editor?": "Vos modifications n’ont pas été enregistrées. Voulez-vous les abandonner et quitter l’éditeur ?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Rechercher des chaînes expérimentales PDB aux structures 3D similaires à partir d’une chaîne déposée.",

@@ -191,6 +191,15 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
+    "Scientific data APIs, official file links and access guidance.": "科学数据 API、官方文件链接与访问指引。",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "通过游标分页检索 Europe PMC 记录及可用摘要。",
+    "Inspect HGNC fields, identifiers and official file metadata.": "查看 HGNC 字段、标识符和官方文件元数据。",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "查询 bioDBnet 标识符映射、同源关系和通路。",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "使用 ChEA3 对转录因子排名或查找 GMT 文库。",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "获取 Cellosaurus RDF、图谱记录、STR 相似性或文件链接。",
+    "Check official dataset access requirements or discover public files.": "查看官方数据访问要求或查找公开文件。",
+    "List official openFDA adverse-event bulk download links.": "列出 openFDA 不良事件批量数据的官方下载链接。",
+    "List maintained CTD public report links and usage terms.": "列出维护的 CTD 公开报告链接与使用条款。",
     "Input help": "输入帮助",
     "Your changes have not been saved. Discard them and leave the editor?": "更改尚未保存。要放弃更改并离开编辑器吗？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收录的链查找具有相似三维结构的实验 PDB 链。",

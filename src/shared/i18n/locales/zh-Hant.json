@@ -191,6 +191,15 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
+    "Scientific data APIs, official file links and access guidance.": "科學資料 API、官方檔案連結與存取指引。",
+    "Search Europe PMC records and available abstracts with cursor pagination.": "透過游標分頁檢索 Europe PMC 記錄及可用摘要。",
+    "Inspect HGNC fields, identifiers and official file metadata.": "查看 HGNC 欄位、識別碼和官方檔案中繼資料。",
+    "Query bioDBnet identifier mappings, orthology and pathways.": "查詢 bioDBnet 識別碼對應、同源關係和路徑。",
+    "Rank transcription factors with ChEA3 or discover GMT libraries.": "使用 ChEA3 對轉錄因子排名或尋找 GMT 文庫。",
+    "Retrieve Cellosaurus RDF, graph records, STR similarity or file links.": "取得 Cellosaurus RDF、圖譜記錄、STR 相似性或檔案連結。",
+    "Check official dataset access requirements or discover public files.": "查看官方資料存取要求或尋找公開檔案。",
+    "List official openFDA adverse-event bulk download links.": "列出 openFDA 不良事件批次資料的官方下載連結。",
+    "List maintained CTD public report links and usage terms.": "列出維護的 CTD 公開報告連結與使用條款。",
     "Input help": "輸入說明",
     "Your changes have not been saved. Discard them and leave the editor?": "變更尚未儲存。要捨棄變更並離開編輯器嗎？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收錄的鏈查找具有相似三維結構的實驗 PDB 鏈。",
