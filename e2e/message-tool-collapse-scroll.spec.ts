@@ -87,7 +87,9 @@ for (const scenario of scenarios) {
         })
       }
       const toEnd = page.getByRole('button', { name: 'Scroll to end', exact: true })
-      if ((await toEnd.getAttribute('data-active')) === 'true') await toEnd.click()
+      // Establish the starting position with native keyboard input, without an in-flight smooth jump.
+      await viewport.focus()
+      await page.keyboard.press('End')
       await expect
         .poll(() => viewport.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop))
         .toBeLessThanOrEqual(1)
@@ -98,8 +100,13 @@ for (const scenario of scenarios) {
         await page.mouse.move(box!.x + 10, box!.y + box!.height / 2)
         await page.mouse.wheel(0, -scenario.gap)
         await expect
-          .poll(() => viewport.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop))
-          .toBeGreaterThan(scenario.gap - 5)
+          .poll(async () =>
+            Math.abs(
+              (await viewport.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop)) -
+                scenario.gap
+            )
+          )
+          .toBeLessThanOrEqual(2)
         await expect(toEnd).toHaveAttribute('data-active', 'true')
       }
       // Let wheel momentum, streaming presentation and the expand tween settle before sampling.
