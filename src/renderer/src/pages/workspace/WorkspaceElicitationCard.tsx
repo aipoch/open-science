@@ -884,7 +884,7 @@ const WorkspaceElicitationCard = ({
                     variant="secondary"
                     aria-label={t('Previous question')}
                     disabled={isSubmitting}
-                    className="px-3"
+                    className="px-3 hover:bg-surface-control-hover hover:text-text-000"
                     onClick={() => setActiveChoiceIndex((index) => Math.max(index - 1, 0))}
                   >
                     <ChevronLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />

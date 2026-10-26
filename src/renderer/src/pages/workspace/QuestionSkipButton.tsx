@@ -9,7 +9,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { cn } from '@/lib/utils'
 import './question-skip-button.css'
 
 type QuestionSkipButtonProps = {
@@ -105,13 +104,10 @@ export const QuestionSkipButton = ({
         data-open={isOpen && content !== null && enteredContent === content}
         data-connected={content !== null}
         data-side={side}
-        className={cn(
-          'question-skip-control inline-flex shrink-0 rounded-lg bg-secondary',
-          !disabled && 'hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]'
-        )}
+        className="question-skip-control inline-flex shrink-0 rounded-lg bg-secondary"
       >
         <Button
-          className="rounded-r-none bg-transparent px-3 hover:bg-transparent focus-visible:z-10"
+          className="rounded-r-none bg-transparent px-3 hover:bg-surface-control-hover focus-visible:z-10"
           type="button"
           variant="secondary"
           disabled={disabled}
@@ -125,7 +121,7 @@ export const QuestionSkipButton = ({
         <DropdownMenuTrigger asChild>
           <Button
             ref={triggerRef}
-            className="rounded-l-none border-l-border-200 bg-transparent hover:bg-transparent focus-visible:z-10 aria-expanded:bg-transparent"
+            className="rounded-l-none border-l-border-200 bg-transparent hover:bg-surface-control-hover focus-visible:z-10 aria-expanded:bg-transparent aria-expanded:hover:bg-surface-control-hover"
             type="button"
             variant="secondary"
             size="icon"
