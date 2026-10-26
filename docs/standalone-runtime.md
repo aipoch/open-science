@@ -603,3 +603,10 @@ The current manual distribution workflow supports standalone archive dry-runs an
 npm dry-run; stable releases publish the five standalone archives. The separate npm publication
 workflow verifies all five native packages before publishing them and the shared entry package.
 Do not publish one package name/version separately for multiple platform-specific tarballs.
+
+The Electron host excludes backend-only feature packages from its own `app.asar` dependency tree,
+including Notebook analysis, scientific connectors and spreadsheet processing. Their complete
+runtime copies remain in `resources/backend`; the renderer keeps its compiled feature chunks.
+Main/preload builds reject new direct or transitive dependency edges into the excluded packages,
+so a future desktop consumer must restore its dependency before packaging. Native desktop helpers,
+update dependencies and diagnostics remain in the Electron host.

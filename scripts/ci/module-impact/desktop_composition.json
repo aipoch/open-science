@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "scripts/electron-host-dependencies.mjs",
+    "scripts/electron-host-dependencies.d.mts",
     "src/main/composition/agent-activation.ts",
     "src/main/composition/agent-completion.ts",
     "src/main/composition/agent-controls.ts",
