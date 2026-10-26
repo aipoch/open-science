@@ -72,6 +72,10 @@ for (const scenario of scenarios) {
       await button.click()
       await expect(button).toHaveAttribute('aria-expanded', 'true')
       await expect(group.getByTestId('tool-details')).toBeVisible()
+      // Wait for asynchronous highlighting as well as expansion before arranging geometry.
+      await expect(
+        group.getByTestId('tool-code-block').locator('code > span').first()
+      ).toBeAttached()
       await page.waitForTimeout(700)
       if ('cycle' in scenario) {
         await collapseButton.click()
@@ -87,26 +91,24 @@ for (const scenario of scenarios) {
         })
       }
       const toEnd = page.getByRole('button', { name: 'Scroll to end', exact: true })
-      // Establish the starting position with native keyboard input, without an in-flight smooth jump.
-      await viewport.focus()
-      await page.keyboard.press('End')
+      // Release following through real input, then arrange an exact starting geometry.
+      // Native End/wheel positioning can race the compositor; it is not the behavior under test.
+      const box = await viewport.boundingBox()
+      await page.mouse.move(box!.x + 10, box!.y + box!.height / 2)
+      await page.mouse.wheel(0, -100)
+      await page.waitForTimeout(300)
+      await viewport.evaluate((e, gap) => {
+        e.scrollTo({ top: e.scrollHeight - e.clientHeight - gap, behavior: 'instant' })
+      }, scenario.gap)
       await expect
-        .poll(() => viewport.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop))
-        .toBeLessThanOrEqual(1)
-      await page.waitForTimeout(500)
-      if (scenario.gap) {
-        const box = await viewport.boundingBox()
-        // Keep wheel input outside the nested tool-code scroller.
-        await page.mouse.move(box!.x + 10, box!.y + box!.height / 2)
-        await page.mouse.wheel(0, -scenario.gap)
-        await expect
-          .poll(async () =>
-            Math.abs(
-              (await viewport.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop)) -
-                scenario.gap
-            )
+        .poll(async () =>
+          Math.abs(
+            (await viewport.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop)) -
+              scenario.gap
           )
-          .toBeLessThanOrEqual(2)
+        )
+        .toBeLessThanOrEqual(2)
+      if (scenario.gap) {
         await expect(toEnd).toHaveAttribute('data-active', 'true')
       }
       // Let wheel momentum, streaming presentation and the expand tween settle before sampling.
