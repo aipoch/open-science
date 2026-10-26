@@ -457,8 +457,10 @@ const PermissionsPanel = ({
         <AlertDialog.Root open={confirmFolderAccess} onOpenChange={setConfirmFolderAccess}>
           <AlertDialog.Portal>
             <AlertDialog.Overlay className={dialogOverlayClassName} />
-            <AlertDialog.Content className={dialogPanelClassName()}>
-              <div className={dialogHeaderClassName}>
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+            >
+              <div className="px-5 py-4">
                 <AlertDialog.Title className={dialogTitleClassName}>
                   {t('Allow broader folder access?')}
                 </AlertDialog.Title>
