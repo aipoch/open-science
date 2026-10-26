@@ -2880,6 +2880,7 @@
     "Skip all": "Saltar todo",
     "Skip approvals": "Omitir aprobaciones",
     "Skip approvals for {{name}}": "Omitir aprobaciones para {{name}}",
+    "User skipped": "Omitido por el usuario",
     "Skipped": "Omitido",
     "Skipped {{count}} skills_one": "Se omitió {{count}} habilidad",
     "Skipped {{count}} skills_other": "Se omitió {{count}} habilidades",

@@ -2880,6 +2880,7 @@
     "Skip all": "Tout sauter",
     "Skip approvals": "Ignorer les approbations",
     "Skip approvals for {{name}}": "Ignorer les approbations pour {{name}}",
+    "User skipped": "Ignoré par l’utilisateur",
     "Skipped": "Sauté",
     "Skipped {{count}} skills_one": "{{count}} compétence ignorée",
     "Skipped {{count}} skills_other": "{{count}} compétences ignorées",

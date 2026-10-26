@@ -43,8 +43,8 @@ test('embedded question keeps its title and actions fixed while scrolling and re
   expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
     action: 'accept',
     answers: [
-      { fieldId: 'question_0_custom', value: 'User skipped' },
-      { fieldId: 'question_1_custom', value: 'User skipped' }
+      { fieldId: 'question_0', status: 'skipped' },
+      { fieldId: 'question_1', status: 'skipped' }
     ]
   })
 })
@@ -83,10 +83,10 @@ test('split skip menu supports dismissal, focus return, and explicit skipping of
 test('Chinese single-question skip is recorded and remains reviewable', async ({ page }) => {
   await page.goto('/ask-user.html?locale=zh-Hans')
   await page.getByRole('button', { name: '跳过', exact: true }).click()
-  await expect(page.getByTestId('elicitation-answer-row')).toHaveText('已跳过')
+  await expect(page.getByTestId('elicitation-answer-row')).toHaveText('用户跳过')
   expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
     action: 'accept',
-    answers: [{ fieldId: 'question_0_custom', value: 'User skipped' }]
+    answers: [{ fieldId: 'question_0', status: 'skipped' }]
   })
   const presentation = (): Promise<Record<string, string | null | undefined>> =>
     page.getByTestId('elicitation-answer-row').evaluate((row) => {
@@ -109,7 +109,7 @@ test('Chinese single-question skip is recorded and remains reviewable', async ({
   await page.reload()
   await page.getByRole('button', { name: '更多跳过选项', exact: true }).click()
   await page.getByRole('menuitem', { name: '跳过全部', exact: true }).click()
-  await expect(page.getByTestId('elicitation-answer-row')).toHaveText('已跳过')
+  await expect(page.getByTestId('elicitation-answer-row')).toHaveText('用户跳过')
   expect(await presentation()).toEqual(skippedPresentation)
 })
 
@@ -275,7 +275,7 @@ test('Chinese agent-decide answers stay translated while the submitted value sta
   const answer = page.getByTestId('elicitation-answer-row')
   await expect(answer).toHaveText('让智能体决定')
   expect(JSON.parse(await page.getByTestId('submitted-answer').innerText()).answers).toEqual([
-    { fieldId: 'question_0_custom', value: 'Let the agent decide' }
+    { fieldId: 'question_0_custom', status: 'answered', value: 'Let the agent decide' }
   ])
   await answer.click()
   const review = page.getByTestId('elicitation-choice-review')

@@ -346,6 +346,53 @@ describe('Artifact persistence decoders', () => {
     ).toEqual({ status: 'corrupt' })
   })
 
+  it.each([
+    [{ fieldId: 'question_0', status: 'skipped' }, 'valid'],
+    [{ fieldId: 'question_0_custom', value: 'User skipped' }, 'valid'],
+    [{ fieldId: 'question_0_custom', status: 'answered', value: 'User skipped' }, 'valid'],
+    [{ fieldId: 'question_0', status: 'skipped', value: 'A' }, 'corrupt'],
+    [{ fieldId: 'question_0', status: 'unknown', value: 'A' }, 'corrupt']
+  ])('validates a saved choice outcome %j as %s', (answer, status) => {
+    const snapshot = {
+      ...messageSnapshot(3),
+      activities: [
+        {
+          id: 'activity-1',
+          kind: 'tool',
+          title: 'Ask a question',
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          elicitation: {
+            message: 'Choose an approach',
+            state: 'answered',
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Approach',
+                kind: 'single-select',
+                options: [{ value: 'A', label: 'A' }]
+              },
+              { id: 'question_0_custom', label: 'Other', kind: 'text' }
+            ],
+            answers: [answer],
+            draftAnswers: [answer]
+          }
+        }
+      ]
+    }
+    const result = decodeArtifactMessageSnapshot(JSON.stringify(snapshot))
+    expect(result.status).toBe(status)
+    if (result.status === 'valid') {
+      expect(result.value).toMatchObject({
+        schemaVersion: 3,
+        activities: [{ elicitation: { answers: [answer], draftAnswers: [answer] } }]
+      })
+    }
+  })
+
   it('rejects an invalid nested Message elicitation projection', () => {
     expect(
       decodeArtifactMessageSnapshot(

@@ -184,9 +184,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(button('Skip')?.getAttribute('data-variant')).toBe('secondary')
     await act(async () => button('Skip')?.click())
     expect(onRespond).not.toHaveBeenCalled()
-    expect(onDraftChange).toHaveBeenLastCalledWith([
-      { fieldId: 'question_0_custom', value: 'User skipped' }
-    ])
+    expect(onDraftChange).toHaveBeenLastCalledWith([{ fieldId: 'question_0', status: 'skipped' }])
     expect(container.textContent).toContain('Which language should the skill use?')
     await act(async () =>
       container
@@ -199,7 +197,7 @@ describe('WorkspaceElicitationCard choice question', () => {
       requestId: request.requestId,
       action: 'accept',
       answers: [
-        { fieldId: 'question_0_custom', value: 'User skipped' },
+        { fieldId: 'question_0', status: 'skipped' },
         { fieldId: 'question_1', value: 'chinese' }
       ]
     })
@@ -233,7 +231,7 @@ describe('WorkspaceElicitationCard choice question', () => {
       )
     await act(async () => button('Back')?.click())
     expect(container.querySelector('textarea')?.value).toBe('')
-    expect(container.textContent).toContain('Skipped')
+    expect(container.textContent).toContain('User skipped')
     await act(async () =>
       container
         .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-clinical"]')
@@ -247,41 +245,48 @@ describe('WorkspaceElicitationCard choice question', () => {
       action: 'accept',
       answers: [
         { fieldId: 'question_0', value: 'clinical' },
-        { fieldId: 'question_1_custom', value: 'User skipped' }
+        { fieldId: 'question_1', status: 'skipped' }
       ]
     })
   })
 
-  it('translates skipped answers in history without marking any option or custom answer selected', async () => {
-    await act(async () => {
-      await i18next.changeLanguage('zh-Hans')
-    })
-    try {
-      await act(async () =>
-        root.render(
-          <WorkspaceElicitationCard
-            elicitation={{
-              message: request.message,
-              fields,
-              state: 'answered',
-              answers: [{ fieldId: 'question_0_custom', value: 'User skipped' }]
-            }}
-          />
-        )
-      )
-      const answer = container.querySelector<HTMLButtonElement>(
-        '[data-testid="elicitation-answer-row"]'
-      )!
-      expect(answer.textContent).toBe('已跳过')
-      await act(async () => answer.click())
-      expect(container.querySelector('[data-selected="true"]')).toBeNull()
-      expect(container.textContent).not.toContain('User skipped')
-    } finally {
+  it.each(['legacy', 'structured'] as const)(
+    'translates %s skipped history without selecting an answer',
+    async (format) => {
       await act(async () => {
-        await i18next.changeLanguage('en')
+        await i18next.changeLanguage('zh-Hans')
       })
+      try {
+        await act(async () =>
+          root.render(
+            <WorkspaceElicitationCard
+              elicitation={{
+                message: request.message,
+                fields,
+                state: 'answered',
+                answers: [
+                  format === 'legacy'
+                    ? { fieldId: 'question_0_custom', value: 'User skipped' }
+                    : { fieldId: 'question_0', status: 'skipped' }
+                ]
+              }}
+            />
+          )
+        )
+        const answer = container.querySelector<HTMLButtonElement>(
+          '[data-testid="elicitation-answer-row"]'
+        )!
+        expect(answer.textContent).toBe('用户跳过')
+        await act(async () => answer.click())
+        expect(container.querySelector('[data-selected="true"]')).toBeNull()
+        expect(container.textContent).not.toContain('User skipped')
+      } finally {
+        await act(async () => {
+          await i18next.changeLanguage('en')
+        })
+      }
     }
-  })
+  )
 
   it.each(
     (['answered', 'pending'] as const).flatMap((state) =>
@@ -290,7 +295,9 @@ describe('WorkspaceElicitationCard choice question', () => {
   )(
     'localizes the system answer in $state records with request=$withRequest',
     async ({ state, withRequest }) => {
-      const answers = [{ fieldId: 'question_0_custom', value: 'Let the agent decide' }]
+      const answers = [
+        { fieldId: 'question_0_custom', status: 'answered' as const, value: 'Let the agent decide' }
+      ]
       await act(async () => i18next.changeLanguage('zh-Hans'))
       try {
         await act(async () =>
@@ -461,7 +468,7 @@ describe('WorkspaceElicitationCard choice question', () => {
             fields: mixedChoiceFields,
             state: 'answered',
             answers: [
-              { fieldId: 'question_0_custom', value: 'Let the agent decide' },
+              { fieldId: 'question_0_custom', status: 'answered', value: 'Let the agent decide' },
               { fieldId: 'question_1', value: 'english' }
             ]
           }}
@@ -1137,7 +1144,13 @@ describe('WorkspaceElicitationCard choice question', () => {
             message: activity.elicitation?.message ?? '',
             fields,
             state: 'answered',
-            answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+            answers: [
+              {
+                fieldId: 'question_0_custom',
+                status: 'answered',
+                value: 'A literature review skill'
+              }
+            ]
           }}
           request={request}
         />
@@ -1368,7 +1381,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(onRespond).toHaveBeenCalledWith({
       requestId: request.requestId,
       action: 'accept',
-      answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+      answers: [
+        { fieldId: 'question_0_custom', status: 'answered', value: 'A literature review skill' }
+      ]
     })
 
     onRespond.mockClear()
@@ -1393,7 +1408,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(onRespond).toHaveBeenCalledWith({
       requestId: request.requestId,
       action: 'accept',
-      answers: [{ fieldId: 'question_0_custom', value: 'Let the agent decide' }]
+      answers: [{ fieldId: 'question_0_custom', status: 'answered', value: 'Let the agent decide' }]
     })
 
     onRespond.mockClear()

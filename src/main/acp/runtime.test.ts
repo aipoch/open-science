@@ -8391,6 +8391,66 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it.each(['mixed', 'all', 'decline', 'legacy', 'literal'] as const)(
+    'delivers explicit per-question outcomes and skip guidance for %s choices',
+    async (scenario) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['skip-semantics-session'])
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process)
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.requestUserInput({
+        sessionId: session.sessionId,
+        questions: [
+          { question: 'Which stack?', options: [{ label: 'Python' }, { label: 'R' }] },
+          { question: 'Which output?', options: [{ label: 'Report' }, { label: 'Notebook' }] }
+        ]
+      })
+      const [request] = runtime.getSnapshot().pendingElicitations ?? []
+      await runtime.respondToElicitation({
+        requestId: request.requestId,
+        action: scenario === 'decline' ? 'decline' : 'accept',
+        answers:
+          scenario === 'decline'
+            ? undefined
+            : [
+                scenario === 'legacy'
+                  ? { fieldId: 'question_0_custom', value: 'User skipped' }
+                  : scenario === 'literal'
+                    ? { fieldId: 'question_0_custom', status: 'answered', value: 'User skipped' }
+                    : { fieldId: 'question_0', status: 'skipped' },
+                scenario === 'all'
+                  ? { fieldId: 'question_1', status: 'skipped' }
+                  : { fieldId: 'question_1', value: 'Report' }
+              ]
+      })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      const text = fakeAgent.prompts[0].text
+      expect(text).toContain('Which stack?')
+      expect(text).toContain('Which output?')
+      if (scenario === 'literal') {
+        expect(text).toContain('Answer: User skipped')
+        expect(text).not.toContain('Status: skipped')
+      } else {
+        expect(text.match(/Status: skipped/g)).toHaveLength(
+          scenario === 'all' || scenario === 'decline' ? 2 : 1
+        )
+        expect(text).toContain('The user did not provide a selection')
+        expect(text).toContain('continue using the information already available')
+        expect(text).toContain('do not ask these questions again')
+        expect(text).toContain('does not imply consent or authorization')
+        expect(text).not.toContain('Answer: User skipped')
+      }
+      if (scenario !== 'all' && scenario !== 'decline') expect(text).toContain('Answer: Report')
+      await vi.waitFor(() =>
+        expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
   it('publishes one multi-question choice and continues only after every answer', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['batched-user-choice-session'])

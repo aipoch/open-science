@@ -28,6 +28,7 @@ import {
   MAX_ELICITATION_MESSAGE_CHARS,
   isValidElicitationValue,
   resolveAgentUserChoiceQuestions,
+  normalizeAgentUserChoiceAnswers,
   type AgentUserChoiceQuestion,
   type ElicitationAnswer,
   type ElicitationField,
@@ -41,8 +42,8 @@ import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { ChoiceKindChip } from './ChoiceKindChip'
 
-// Keep the stored answer stable so existing drafts and history remain recognizable.
-const SKIPPED_ANSWER = 'User skipped'
+type FormValues = ElicitationEditDraft['values']
+type FormValue = FormValues[string]
 
 const displayValue = (
   value: ElicitationValue,
@@ -60,8 +61,8 @@ const displayValue = (
 const initialValues = (
   fields: ElicitationField[],
   answers: ElicitationAnswer[] = []
-): Record<string, ElicitationValue | undefined> => {
-  const values = Object.fromEntries(
+): FormValues => {
+  const values: FormValues = Object.fromEntries(
     fields.map((field) => [
       field.id,
       field.defaultValue ??
@@ -73,8 +74,10 @@ const initialValues = (
     ])
   )
   const fieldIds = new Set(fields.map((field) => field.id))
-  for (const answer of answers) {
-    if (fieldIds.has(answer.fieldId)) values[answer.fieldId] = answer.value
+  for (const answer of normalizeAgentUserChoiceAnswers(fields, answers)) {
+    if (fieldIds.has(answer.fieldId)) {
+      values[answer.fieldId] = answer.status === 'skipped' ? { status: 'skipped' } : answer.value
+    }
   }
   return values
 }
@@ -105,8 +108,9 @@ const normalizeLocalDateTime = (value: string): string | undefined => {
 
 const valueForSubmission = (
   field: ElicitationField,
-  value: ElicitationValue | undefined
+  value: FormValue
 ): ElicitationValue | undefined => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return undefined
   if (value === '' || (Array.isArray(value) && value.length === 0)) return undefined
   if (field.format !== 'date-time' || typeof value !== 'string') return value
   const normalized = normalizeLocalDateTime(value)
@@ -115,10 +119,7 @@ const valueForSubmission = (
   return compact.length >= (field.minLength ?? 0) ? compact : normalized
 }
 
-const valueForTextInput = (
-  field: ElicitationField,
-  value: ElicitationValue | undefined
-): string => {
+const valueForTextInput = (field: ElicitationField, value: FormValue): string => {
   if (typeof value !== 'string' || field.format !== 'date-time') {
     return typeof value === 'string' ? value : ''
   }
@@ -132,17 +133,14 @@ const valueForTextInput = (
   return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${fraction}`
 }
 
-const hasValidValue = (field: ElicitationField, value: ElicitationValue | undefined): boolean => {
+const hasValidValue = (field: ElicitationField, value: FormValue): boolean => {
   value = valueForSubmission(field, value)
   if (value === undefined) return !field.required
   if (field.required && typeof value === 'string' && value.trim().length === 0) return false
   return isValidElicitationValue(field, value)
 }
 
-const submittedAnswers = (
-  fields: ElicitationField[],
-  values: Record<string, ElicitationValue | undefined>
-): ElicitationAnswer[] =>
+const submittedAnswers = (fields: ElicitationField[], values: FormValues): ElicitationAnswer[] =>
   fields.flatMap((field) => {
     const value = valueForSubmission(field, values[field.id])
     return value === undefined ? [] : [{ fieldId: field.id, value }]
@@ -165,13 +163,16 @@ type WorkspaceElicitationCardProps = {
 
 const answerForChoiceQuestion = (
   question: AgentUserChoiceQuestion,
-  values: Record<string, ElicitationValue | undefined>
+  values: FormValues
 ): ElicitationAnswer | undefined => {
   const customValue = values[question.customField.id]
   if (typeof customValue === 'string' && customValue.trim()) {
-    return { fieldId: question.customField.id, value: customValue.trim() }
+    return { fieldId: question.customField.id, status: 'answered', value: customValue.trim() }
   }
   const selectedValue = values[question.choiceField.id]
+  if (selectedValue && typeof selectedValue === 'object' && !Array.isArray(selectedValue)) {
+    return { fieldId: question.choiceField.id, status: 'skipped' }
+  }
   return selectedValue === undefined || (Array.isArray(selectedValue) && selectedValue.length === 0)
     ? undefined
     : { fieldId: question.choiceField.id, value: selectedValue }
@@ -179,7 +180,7 @@ const answerForChoiceQuestion = (
 
 const choiceAnswers = (
   questions: AgentUserChoiceQuestion[],
-  values: Record<string, ElicitationValue | undefined>
+  values: FormValues
 ): ElicitationAnswer[] =>
   questions.flatMap((question) => {
     const answer = answerForChoiceQuestion(question, values)
@@ -188,7 +189,7 @@ const choiceAnswers = (
 
 const firstUnansweredQuestionIndex = (
   questions: AgentUserChoiceQuestion[],
-  values: Record<string, ElicitationValue | undefined>
+  values: FormValues
 ): number => {
   const index = questions.findIndex((question) => !answerForChoiceQuestion(question, values))
   return index === -1 ? Math.max(questions.length - 1, 0) : index
@@ -196,7 +197,7 @@ const firstUnansweredQuestionIndex = (
 
 const isChoiceOptionSelected = (
   question: AgentUserChoiceQuestion,
-  values: Record<string, ElicitationValue | undefined>,
+  values: FormValues,
   optionValue: string
 ): boolean => {
   const value = values[question.choiceField.id]
@@ -229,9 +230,7 @@ const WorkspaceElicitationCard = ({
     elicitation.state === 'pending' && editDraft?.requestId === request?.requestId
       ? editDraft
       : undefined
-  const [values, setValues] = useState<Record<string, ElicitationValue | undefined>>(
-    () => restoredEdit?.values ?? restoredValues
-  )
+  const [values, setValues] = useState<FormValues>(() => restoredEdit?.values ?? restoredValues)
   const [confirmedValues, setConfirmedValues] = useState(() => restoredValues)
   const [activeChoiceIndex, setActiveChoiceIndex] = useState(
     () =>
@@ -251,7 +250,7 @@ const WorkspaceElicitationCard = ({
     [request, values]
   )
   const choiceQuestion = choiceQuestions?.[activeChoiceIndex]
-  const answers = elicitation.answers ?? []
+  const answers = normalizeAgentUserChoiceAnswers(questionFields, elicitation.answers ?? [])
   const fieldsById = new Map(elicitation.fields.map((field) => [field.id, field]))
   // Review selections come straight from the recorded answers — form state stays untouched.
   const reviewValues = useMemo(
@@ -270,17 +269,14 @@ const WorkspaceElicitationCard = ({
   )
   const terminalLabel =
     elicitation.state === 'declined'
-      ? t('Skipped')
+      ? t(choiceQuestions ? 'User skipped' : 'Skipped')
       : elicitation.state === 'cancelled'
         ? t('Cancelled')
         : undefined
   const currentChoiceAnswer = choiceQuestion
     ? answerForChoiceQuestion(choiceQuestion, values)
     : undefined
-  const currentQuestionSkipped = Boolean(
-    currentChoiceAnswer?.fieldId === choiceQuestion?.customField.id &&
-    currentChoiceAnswer?.value === SKIPPED_ANSWER
-  )
+  const currentQuestionSkipped = currentChoiceAnswer?.status === 'skipped'
   const completedChoiceAnswers = choiceQuestions ? choiceAnswers(choiceQuestions, values) : []
   // The footer tally sits under the current question's options, so it counts only what is
   // selected there — a multi-select answer is an array, other answers count as one.
@@ -303,9 +299,9 @@ const WorkspaceElicitationCard = ({
   )
   // Translate the app-owned sentinel only in a choice's custom field, not arbitrary answer text.
   const displayAnswer = (answer: ElicitationAnswer): string => {
+    if (answer.status === 'skipped') return t('User skipped')
     if (choiceQuestions?.some((question) => question.customField.id === answer.fieldId)) {
       if (answer.value === 'Let the agent decide') return t('Let the agent decide')
-      if (answer.value === SKIPPED_ANSWER) return t('Skipped')
     }
     return displayValue(answer.value, fieldsById.get(answer.fieldId), t)
   }
@@ -399,7 +395,7 @@ const WorkspaceElicitationCard = ({
     const questionCustomSelected = Boolean(
       questionAnswer?.fieldId === question.customField.id &&
       !questionAgentDecides &&
-      questionAnswer?.value !== SKIPPED_ANSWER
+      questionAnswer?.status !== 'skipped'
     )
     return (
       // Translucent white panel: a different material from the gray summary rows,
@@ -540,7 +536,7 @@ const WorkspaceElicitationCard = ({
     })
   }
 
-  const confirmChoice = (nextValues: Record<string, ElicitationValue | undefined>): void => {
+  const confirmChoice = (nextValues: FormValues): void => {
     if (
       !request ||
       !choiceQuestions ||
@@ -580,8 +576,8 @@ const WorkspaceElicitationCard = ({
     if (!choiceQuestion || isSubmitting) return
     const nextValues = {
       ...values,
-      [choiceQuestion.choiceField.id]: undefined,
-      [choiceQuestion.customField.id]: SKIPPED_ANSWER
+      [choiceQuestion.choiceField.id]: { status: 'skipped' as const },
+      [choiceQuestion.customField.id]: undefined
     }
     setValues(nextValues)
     confirmChoice(nextValues)
@@ -883,7 +879,7 @@ const WorkspaceElicitationCard = ({
             <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
               <span className="min-w-0 truncate text-sm text-text-300">
                 {currentQuestionSkipped
-                  ? t('Skipped')
+                  ? t('User skipped')
                   : t('{{count}} selected', { count: selectedChoiceCount })}
               </span>
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -1224,10 +1220,7 @@ const WorkspaceElicitationCard = ({
               const expandable = canReviewAnswer && questionIndex >= 0
               const expanded = expandable && expandedQuestions.has(questionIndex)
               const question = expandable ? choiceQuestions?.[questionIndex] : undefined
-              const skipped =
-                question &&
-                answer.fieldId === question.customField.id &&
-                answer.value === SKIPPED_ANSWER
+              const skipped = answer.status === 'skipped'
               return (
                 <div
                   key={answer.fieldId}

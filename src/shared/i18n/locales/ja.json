@@ -2772,6 +2772,7 @@
     "Skip all": "すべてスキップ",
     "Skip approvals": "承認をスキップする",
     "Skip approvals for {{name}}": "{{name}} の承認をスキップ",
+    "User skipped": "ユーザーがスキップしました",
     "Skipped": "スキップ済み",
     "Skipped {{count}} skills_other": "{{count}} スキルをスキップしました",
     "Some files could not be indexed yet.": "一部のファイルはまだインデックスを作成できませんでした。",

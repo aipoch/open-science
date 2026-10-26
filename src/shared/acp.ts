@@ -64,7 +64,8 @@ export {
   isDurableAgentUserChoiceRequest,
   isValidElicitationValue,
   MAX_ELICITATION_MESSAGE_CHARS,
-  resolveAgentUserChoiceQuestions
+  resolveAgentUserChoiceQuestions,
+  normalizeAgentUserChoiceAnswers
 } from './elicitation'
 export type {
   AgentTurnProvenanceContext,

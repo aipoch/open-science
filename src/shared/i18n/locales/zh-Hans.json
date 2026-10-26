@@ -2859,6 +2859,7 @@
     "Skip all": "跳过全部",
     "Skip approvals": "跳过批准",
     "Skip approvals for {{name}}": "为 {{name}} 跳过批准",
+    "User skipped": "用户跳过",
     "Skipped": "已跳过",
     "Skipped {{count}} skills_other": "已跳过 {{count}} 个技能",
     "Some files could not be indexed yet.": "部分文件尚未完成索引。",

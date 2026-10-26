@@ -2783,6 +2783,7 @@
     "Skip all": "모두 건너뛰기",
     "Skip approvals": "승인 건너뛰기",
     "Skip approvals for {{name}}": "{{name}}에 대한 승인 건너뛰기",
+    "User skipped": "사용자가 건너뜀",
     "Skipped": "건너뛰었습니다.",
     "Skipped {{count}} skills_other": "스킬 {{count}}개를 건너뜀",
     "Some files could not be indexed yet.": "일부 파일의 색인을 아직 생성할 수 없습니다.",

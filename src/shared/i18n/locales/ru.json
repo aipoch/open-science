@@ -2899,6 +2899,7 @@
     "Skip all": "Пропустить всё",
     "Skip approvals": "Не запрашивать разрешения",
     "Skip approvals for {{name}}": "Не запрашивать разрешения для {{name}}",
+    "User skipped": "Пропущено пользователем",
     "Skipped": "пропущено",
     "Skipped {{count}} skills_one": "Пропущен {{count}} навык",
     "Skipped {{count}} skills_few": "Пропущено {{count}} навыка",

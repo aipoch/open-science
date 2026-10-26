@@ -28,9 +28,22 @@ export type AgentUserChoiceQuestion = {
   customField: ElicitationField
 }
 
-export type ElicitationAnswer = {
-  fieldId: string
-  value: ElicitationValue
+export type ElicitationAnswer = { fieldId: string } & (
+  { status?: 'answered'; value: ElicitationValue } | { status: 'skipped'; value?: never }
+)
+
+// Only untagged legacy custom answers used this sentinel. Explicit answers retain literal text.
+export const normalizeAgentUserChoiceAnswers = (
+  fields: ElicitationField[],
+  answers: ElicitationAnswer[]
+): ElicitationAnswer[] => {
+  const questions = resolveAgentUserChoiceQuestions(fields)
+  return answers.map((answer) => {
+    const question = questions?.find((item) => item.customField.id === answer.fieldId)
+    return question && answer.status === undefined && answer.value === 'User skipped'
+      ? { fieldId: question.choiceField.id, status: 'skipped' }
+      : answer
+  })
 }
 
 export type AgentTurnProvenanceContext = {
@@ -569,8 +582,19 @@ const sanitizeAnswerValue = (value: unknown): ElicitationValue | undefined => {
 const sanitizeAnswer = (value: unknown): ElicitationAnswer | undefined => {
   if (!isRecord(value)) return undefined
   const fieldId = cappedDataString(value.fieldId, MAX_ELICITATION_LABEL_CHARS)
+  if (!fieldId) return undefined
+  if (value.status === 'skipped') {
+    return value.value === undefined ? { fieldId, status: 'skipped' } : undefined
+  }
+  if (value.status !== undefined && value.status !== 'answered') return undefined
   const answerValue = sanitizeAnswerValue(value.value)
-  return fieldId && answerValue !== undefined ? { fieldId, value: answerValue } : undefined
+  return answerValue !== undefined
+    ? {
+        fieldId,
+        value: answerValue,
+        ...(value.status === 'answered' ? { status: 'answered' } : {})
+      }
+    : undefined
 }
 
 const sanitizeProvenanceAncestry = (value: unknown): string[] | undefined => {
@@ -722,8 +746,12 @@ export const sanitizeElicitationProjection = (
     fields,
     state,
     ...(durable ? { durable } : {}),
-    ...(state === 'pending' && draftAnswers && draftAnswers.length > 0 ? { draftAnswers } : {}),
-    ...(answers && answers.length > 0 ? { answers } : {}),
+    ...(state === 'pending' && draftAnswers && draftAnswers.length > 0
+      ? { draftAnswers: normalizeAgentUserChoiceAnswers(fields, draftAnswers) }
+      : {}),
+    ...(answers && answers.length > 0
+      ? { answers: normalizeAgentUserChoiceAnswers(fields, answers) }
+      : {}),
     ...(respondedAt !== undefined ? { respondedAt } : {}),
     ...(durable &&
     value.continuationPending === true &&
