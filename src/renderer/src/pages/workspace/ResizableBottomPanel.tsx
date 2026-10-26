@@ -63,7 +63,14 @@ const ResizableBottomPanel = ({
 
   const resizeBounds = useCallback((): ResizeBounds => {
     const viewportMax = Math.round(
-      Math.min(window.innerHeight * PANEL_MAX_VIEWPORT_RATIO, PANEL_MAX_HEIGHT_PX)
+      Math.min(
+        PANEL_MAX_HEIGHT_PX,
+        Math.max(
+          window.innerHeight * PANEL_MAX_VIEWPORT_RATIO,
+          // Leave room for fixed question controls in short windows, with a viewport margin.
+          contentScrollSelector ? Math.min(PANEL_MIN_HEIGHT_PX, window.innerHeight - 32) : 0
+        )
+      )
     )
     const surfaceHeight = surfaceRef.current?.getBoundingClientRect().height ?? 0
     const outerScrollSurface = surfaceRef.current?.querySelector<HTMLElement>(
@@ -264,7 +271,11 @@ const ResizableBottomPanel = ({
   return (
     <div
       ref={surfaceRef}
-      className={`relative z-10 flex min-h-0 w-full min-w-0 max-h-[min(70dvh,44rem)] flex-col overflow-visible px-px pb-px ${
+      className={`relative z-10 flex min-h-0 w-full min-w-0 flex-col overflow-visible px-px pb-px ${
+        contentScrollSelector
+          ? 'max-h-[min(max(70dvh,min(18rem,calc(100dvh-2rem))),44rem)]'
+          : 'max-h-[min(70dvh,44rem)]'
+      } ${
         collapsed && !collapseControl
           ? 'pt-0'
           : variant === 'integrated'

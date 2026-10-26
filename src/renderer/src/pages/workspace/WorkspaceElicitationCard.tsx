@@ -214,6 +214,7 @@ const WorkspaceElicitationCard = ({
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const fieldStatusId = useId()
+  const questionTitleId = useId()
   // Historical surfaces have saved fields but no pending request.
   const questionFields = request?.fields ?? elicitation.fields
   const choiceQuestions = resolveAgentUserChoiceQuestions(questionFields)
@@ -675,7 +676,20 @@ const WorkspaceElicitationCard = ({
       ) : null}
 
       {isAnsweredSummary || isTerminalChoiceSummary ? null : (
-        <div className="flex items-start gap-2">
+        <div
+          data-testid="elicitation-question-title"
+          role={elicitation.state === 'pending' && choiceQuestion ? 'region' : undefined}
+          aria-labelledby={
+            elicitation.state === 'pending' && choiceQuestion ? questionTitleId : undefined
+          }
+          tabIndex={elicitation.state === 'pending' && choiceQuestion ? 0 : undefined}
+          className={cn(
+            'flex items-start gap-2',
+            elicitation.state === 'pending' &&
+              choiceQuestion &&
+              'scrollbar-auto-hide max-h-[min(9rem,12dvh)] overflow-y-auto overscroll-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40'
+          )}
+        >
           {choiceQuestion ? <ChoiceKindChip kind={choiceQuestion.choiceField.kind} /> : null}
           {annotationPort && annotationItemId ? (
             <div className="min-w-0 flex-1">
@@ -694,13 +708,19 @@ const WorkspaceElicitationCard = ({
                 onRemove={annotationPort.onRemove}
                 onError={annotationPort.onError}
               >
-                <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6">
+                <h3
+                  id={questionTitleId}
+                  className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6"
+                >
                   {choiceTitle ?? elicitation.message}
                 </h3>
               </TextAnnotationSurface>
             </div>
           ) : (
-            <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6">
+            <h3
+              id={questionTitleId}
+              className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6"
+            >
               {choiceTitle ?? elicitation.message}
             </h3>
           )}

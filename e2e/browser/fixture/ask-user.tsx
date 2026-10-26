@@ -32,7 +32,13 @@ const options = Array.from({ length: 16 }, (_, index) => ({
   description: `Research category ${index + 1}`
 }))
 const questions: AgentUserChoicePrompt[] = [
-  { question: 'Which outputs?', kind, options },
+  {
+    question: search.has('long')
+      ? Array.from({ length: 24 }, (_, index) => `Question line ${index + 1}`).join('\n')
+      : 'Which outputs?',
+    kind,
+    options
+  },
   ...(search.has('mixed') || search.has('review')
     ? [
         {

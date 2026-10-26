@@ -1,5 +1,43 @@
 import { expect, test } from '@playwright/test'
 
+for (const height of [700, 400, 300]) {
+  test(`long question remains readable and actionable at 390×${height}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height })
+    await page.goto('/ask-user.html?mixed=1&embedded=1&long=1')
+    const options = page.getByTestId('elicitation-options')
+    const skip = page.getByRole('button', { name: 'Skip', exact: true })
+    await expect
+      .poll(() => options.evaluate((node) => node.clientHeight))
+      .toBeGreaterThanOrEqual(40)
+    await expect(skip).toBeInViewport({ ratio: 1 })
+    const title = page.getByRole('heading', { name: /Question line 1/ })
+    await expect(title).toHaveText(
+      Array.from({ length: 24 }, (_, index) => `Question line ${index + 1}`).join('\n')
+    )
+    const titleScroll = page.getByTestId('elicitation-question-title')
+    await expect(titleScroll).toHaveAccessibleName(/Question line 24/)
+    const footerBefore = await skip.boundingBox()
+    await titleScroll.focus()
+    await page.keyboard.press('End')
+    await expect.poll(() => titleScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+    expect((await skip.boundingBox())!.y).toBeCloseTo(footerBefore!.y, 0)
+    await page.getByTestId('elicitation-option-Option 16').click()
+    await expect(page.getByRole('button', { name: 'Next question', exact: true })).toBeInViewport({
+      ratio: 1
+    })
+    await page.getByRole('button', { name: 'Next question', exact: true }).click()
+    await expect(page.getByRole('heading', { name: /Which approach/ })).toBeVisible()
+    await skip.click()
+    expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', value: ['Option 16'] },
+        { fieldId: 'question_1', status: 'skipped' }
+      ]
+    })
+  })
+}
+
 test('embedded question keeps its title and actions fixed while scrolling and resizing choices', async ({
   page
 }) => {

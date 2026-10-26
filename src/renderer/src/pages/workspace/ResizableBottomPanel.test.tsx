@@ -211,4 +211,28 @@ describe('ResizableBottomPanel pointer drag', () => {
     act(() => handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })))
     expect(panel.style.height).toBe('352px')
   })
+
+  it('allows choice panels to use the available short viewport instead of capping at 70 percent', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 300 })
+    act(() =>
+      root.render(
+        <ResizableBottomPanel
+          ariaLabel="Resize question panel"
+          testId="panel"
+          scrollTestId="scroll"
+          constrainGrowthToOverflow
+          contentScrollSelector="[data-options]"
+        >
+          <div data-options>Choices</div>
+        </ResizableBottomPanel>
+      )
+    )
+    const panel = container.querySelector<HTMLDivElement>('[data-testid="panel"]')!
+    const options = container.querySelector<HTMLElement>('[data-options]')!
+    panel.getBoundingClientRect = () => ({ height: 250 }) as DOMRect
+    Object.defineProperties(options, { clientHeight: { value: 40 }, scrollHeight: { value: 600 } })
+    const handle = container.querySelector('[role="separator"]')!
+    act(() => handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })))
+    expect(panel.style.height).toBe('268px')
+  })
 })
