@@ -1538,106 +1538,110 @@ describe('workspace durable elicitation', () => {
     vi.unstubAllGlobals()
   })
 
-  it('retains a cold response when Specialist attachment fails and ends the wait without attaching again', async () => {
-    const source = useSessionStore.getState().sessions[0]
-    const promptMessageId = source.messages[0].id
-    let stored: PersistedChatSession = materializeSessionConversationGraph({
-      ...toPersistedSession(source),
-      runtimeTranscriptOwner: 'main',
-      status: 'waiting-for-user',
-      activities: [
-        {
-          id: 'tool-choice-1',
-          kind: 'tool',
-          title: 'Continue?',
-          status: 'in_progress',
-          promptMessageId,
-          eventIds: [],
-          sortIndex: 0,
-          createdAt: 1,
-          updatedAt: 1,
-          elicitation: {
-            message: 'Continue?',
-            fields: [{ id: 'question_0', label: 'Response', kind: 'text' }],
-            state: 'pending',
-            durable: { kind: 'agent-user-choice', requestId: 'choice-1', promptMessageId }
-          }
-        }
-      ]
-    })
-    const publish = (): void =>
-      useSessionStore.getState().applyDurableSessionProjection({
-        source: useSessionStore.getState().sessions[0],
-        session: stored,
-        mode: 'runtime-transcript-authority'
-      })
-    publish()
-    const owner = new AcpDurableContinuationContextOwner(
-      {
-        loadSessionForContinuation: async () => structuredClone(stored),
-        mutateRuntimeSession: async (_scope, mutate) => {
-          stored = mutate(structuredClone(stored))
-          return structuredClone(stored)
-        }
-      },
-      publish
-    )
-    const request = pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])[0]
-    expect(request).toBeDefined()
-    const answers = [{ fieldId: 'question_0', value: 'Keep this answer' }]
-    let savedBeforeResume = false
-    const resumeSession = vi.fn(async () => {
-      savedBeforeResume = stored.activities?.[0].elicitation?.state === 'answered'
-      throw new Error('The bound specialist is unavailable.')
-    })
-    const runtime = {
-      state: createSnapshot([]),
-      resumeSession,
-      respondToElicitation: async (
-        response: Parameters<typeof respondToWorkspaceElicitation>[1]
-      ) => {
-        const input = {
-          ...response,
-          projectId: stored.projectId,
-          sessionId: stored.id,
-          toolCallId: request.toolCallId
-        }
-        await owner.prepareElicitation({
-          ...input,
-          continuePrepared: !!response.continuationFailure
-        })
-        if (response.continuationFailure || response.prepareContinuation)
-          await owner.rearmElicitation({
-            ...input,
+  it.each([true, false])(
+    'retains a cold response when Specialist attachment fails and ends the wait without attaching again (Main-owned: %s)',
+    async (mainOwned) => {
+      const source = useSessionStore.getState().sessions[0]
+      const promptMessageId = source.messages[0].id
+      let stored: PersistedChatSession = materializeSessionConversationGraph({
+        ...toPersistedSession(source),
+        runtimeTranscriptOwner: mainOwned ? 'main' : undefined,
+        status: 'waiting-for-user',
+        activities: [
+          {
+            id: 'tool-choice-1',
+            kind: 'tool',
+            title: 'Continue?',
+            status: 'in_progress',
             promptMessageId,
-            recovery: {
-              error:
-                response.continuationFailure ??
-                'The task could not continue. Your response is saved.'
+            eventIds: [],
+            sortIndex: 0,
+            createdAt: 1,
+            updatedAt: 1,
+            elicitation: {
+              message: 'Continue?',
+              fields: [{ id: 'question_0', label: 'Response', kind: 'text' }],
+              state: 'pending',
+              durable: { kind: 'agent-user-choice', requestId: 'choice-1', promptMessageId }
             }
+          }
+        ]
+      })
+      const publish = (): void =>
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: stored,
+          mode: 'runtime-transcript-authority'
+        })
+      publish()
+      const owner = new AcpDurableContinuationContextOwner(
+        {
+          loadSessionForContinuation: async () => structuredClone(stored),
+          mutateRuntimeSession: async (_scope, mutate) => {
+            // Match production state-owner: runtime mutation adopts Main ownership after the callback.
+            stored = { ...mutate(structuredClone(stored)), runtimeTranscriptOwner: 'main' }
+            return structuredClone(stored)
+          }
+        },
+        publish
+      )
+      const request = pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])[0]
+      expect(request).toBeDefined()
+      const answers = [{ fieldId: 'question_0', value: 'Keep this answer' }]
+      let savedBeforeResume = false
+      const resumeSession = vi.fn(async () => {
+        savedBeforeResume = stored.activities?.[0].elicitation?.state === 'answered'
+        throw new Error('The bound specialist is unavailable.')
+      })
+      const runtime = {
+        state: createSnapshot([]),
+        resumeSession,
+        respondToElicitation: async (
+          response: Parameters<typeof respondToWorkspaceElicitation>[1]
+        ) => {
+          const input = {
+            ...response,
+            projectId: stored.projectId,
+            sessionId: stored.id,
+            toolCallId: request.toolCallId
+          }
+          await owner.prepareElicitation({
+            ...input,
+            continuePrepared: !!response.continuationFailure
           })
-        return createSnapshot([])
+          if (response.continuationFailure || response.prepareContinuation)
+            await owner.rearmElicitation({
+              ...input,
+              promptMessageId,
+              recovery: {
+                error:
+                  response.continuationFailure ??
+                  'The task could not continue. Your response is saved.'
+              }
+            })
+          return createSnapshot([])
+        }
       }
+      await respondToWorkspaceElicitation(runtime, {
+        requestId: request.requestId,
+        action: 'accept',
+        answers,
+        request
+      })
+      expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
+      expect(savedBeforeResume).toBe(true)
+      expect(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])).toHaveLength(1)
+      await respondToWorkspaceElicitation(runtime, {
+        requestId: request.requestId,
+        action: 'cancel',
+        request
+      })
+      expect(resumeSession).toHaveBeenCalledTimes(1)
+      expect(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])).toEqual([])
+      expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+      expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
     }
-    await respondToWorkspaceElicitation(runtime, {
-      requestId: request.requestId,
-      action: 'accept',
-      answers,
-      request
-    })
-    expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
-    expect(savedBeforeResume).toBe(true)
-    expect(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])).toHaveLength(1)
-    await respondToWorkspaceElicitation(runtime, {
-      requestId: request.requestId,
-      action: 'cancel',
-      request
-    })
-    expect(resumeSession).toHaveBeenCalledTimes(1)
-    expect(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])).toEqual([])
-    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
-    expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
-  })
+  )
 
   it.each([false, true])(
     'clears the prior question error before retry (new failure: %s)',

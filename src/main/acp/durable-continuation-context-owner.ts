@@ -105,7 +105,7 @@ class AcpDurableContinuationContextOwner {
     if (input.replacePreviousAnswer) {
       return this.prepareElicitationRevision(session, input)
     }
-    if (input.action === 'cancel' && session.runtimeTranscriptOwner === 'main') {
+    if (input.action === 'cancel') {
       return this.endElicitation(session, input)
     }
     const saved = input.retryContinuation || input.continuePrepared
@@ -113,48 +113,43 @@ class AcpDurableContinuationContextOwner {
     const authority = this.resolvePendingElicitation(session, input, saved)
     const continuation = this.prepareFromSession(session, authority.promptMessageId, input.replay)
     const request = this.canonicalRequest(session.id, authority)
-    if (session.runtimeTranscriptOwner === 'main') {
-      if (!this.sessions?.mutateRuntimeSession) {
-        throw new Error('Durable elicitation response authority is not available.')
-      }
-      const answers =
-        input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
-      await this.sessions.mutateRuntimeSession(input, (latest) => {
-        if (saved) this.assertRetry(latest, input)
-        const current = this.resolvePendingElicitation(latest, input, saved)
-        if (!isDeepStrictEqual(current, authority)) {
-          throw new Error('Durable elicitation changed before its answer was committed.')
-        }
-        const previous = latest.conversationGraph!.activities.find(
-          ({ id }) => id === input.toolCallId
-        )!.elicitation!
-        const projection = {
-          ...previous,
-          continuationRecovery: undefined,
-          state:
-            input.action === 'accept'
-              ? ('answered' as const)
-              : input.action === 'decline'
-                ? ('declined' as const)
-                : ('cancelled' as const),
-          ...(answers ? { answers } : {}),
-          respondedAt: saved ? previous.respondedAt : Date.now(),
-          ...(input.action !== 'cancel' ? { continuationPending: true as const } : {})
-        }
-        return {
-          ...latest,
-          activities: latest.activities?.map((activity) =>
-            activity.id === input.toolCallId ? { ...activity, elicitation: projection } : activity
-          ),
-          conversationGraph: {
-            ...latest.conversationGraph!,
-            activities: latest.conversationGraph!.activities.map((activity) =>
-              activity.id === input.toolCallId ? { ...activity, elicitation: projection } : activity
-            )
-          }
-        }
-      })
+    // Commit the decision and adopt legacy transcript ownership in the same Main mutation.
+    if (!this.sessions?.mutateRuntimeSession) {
+      throw new Error('Durable elicitation response authority is not available.')
     }
+    const answers =
+      input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
+    await this.sessions.mutateRuntimeSession(input, (latest) => {
+      if (saved) this.assertRetry(latest, input)
+      const current = this.resolvePendingElicitation(latest, input, saved)
+      if (!isDeepStrictEqual(current, authority)) {
+        throw new Error('Durable elicitation changed before its answer was committed.')
+      }
+      const previous = latest.conversationGraph!.activities.find(
+        ({ id }) => id === input.toolCallId
+      )!.elicitation!
+      const projection = {
+        ...previous,
+        continuationRecovery: undefined,
+        state: input.action === 'accept' ? ('answered' as const) : ('declined' as const),
+        ...(answers ? { answers } : {}),
+        respondedAt: saved ? previous.respondedAt : Date.now(),
+        continuationPending: true as const
+      }
+      return {
+        ...latest,
+        activities: latest.activities?.map((activity) =>
+          activity.id === input.toolCallId ? { ...activity, elicitation: projection } : activity
+        ),
+        conversationGraph: {
+          ...latest.conversationGraph!,
+          activities: latest.conversationGraph!.activities.map((activity) =>
+            activity.id === input.toolCallId ? { ...activity, elicitation: projection } : activity
+          )
+        }
+      }
+    })
+
     return {
       ...continuation,
       request: this.canonicalRequest(session.id, authority)

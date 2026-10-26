@@ -14,6 +14,7 @@ import type {
   PersistedToolActivity
 } from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import { SessionPersistenceStateOwner } from '../session-persistence/state-owner'
 import { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 
 const message = (
@@ -77,7 +78,11 @@ const pendingChoice = (overrides: Partial<PersistedToolActivity> = {}): Persiste
 
 const createOwner = (session: PersistedChatSession): AcpDurableContinuationContextOwner =>
   new AcpDurableContinuationContextOwner({
-    loadSessionForContinuation: vi.fn(async () => structuredClone(session))
+    loadSessionForContinuation: vi.fn(async () => structuredClone(session)),
+    mutateRuntimeSession: async (_scope, mutate) => {
+      Object.assign(session, mutate(structuredClone(session)), { runtimeTranscriptOwner: 'main' })
+      return structuredClone(session)
+    }
   })
 
 const setActivities = (
@@ -91,6 +96,91 @@ const setActivities = (
 }
 
 describe('AcpDurableContinuationContextOwner', () => {
+  it.each(
+    (['accept', 'decline', 'cancel'] as const).flatMap((action) =>
+      [false, true].map((changed) => ({ action, changed }))
+    )
+  )(
+    'atomically saves a legacy $action decision with Main ownership (question changed: $changed)',
+    async ({ action, changed }) => {
+      let stored = createSession([message('prompt-active', 'Choose an approach.')])
+      setActivities(stored, [pendingChoice()])
+      const commits: PersistedChatSession[] = []
+      const persistence = new SessionPersistenceStateOwner({
+        repository: {
+          loadSessionWithDiagnostics: async () => ({
+            status: 'found',
+            session: structuredClone(stored)
+          }),
+          saveSession: async (candidate, expectedRevision) => {
+            expect(expectedRevision).toBe(stored.revision ?? 0)
+            stored = structuredClone({ ...candidate, revision: (stored.revision ?? 0) + 1 })
+            commits.push(structuredClone(stored))
+            return structuredClone(stored)
+          }
+        },
+        fileIndex: { syncSession: async () => [] },
+        assertMutable: vi.fn(),
+        notifyFilesChanged: vi.fn(),
+        notifyRuntimeContextSessionUpdated: vi.fn(),
+        log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(stored),
+        mutateRuntimeSession: (scope, mutate) => {
+          if (changed) {
+            // Another update wins after preparation reads the question but before its commit.
+            for (const activity of [...stored.activities!, ...stored.conversationGraph!.activities])
+              activity.elicitation!.message = 'A different question'
+          }
+          return persistence.mutateRuntimeSession(scope, mutate)
+        }
+      })
+      const input = {
+        projectId: stored.projectId,
+        sessionId: stored.id,
+        requestId: 'choice-1',
+        toolCallId: 'tool-choice-1',
+        action,
+        ...(action === 'accept' ? { answers: [{ fieldId: 'question_0', value: 'Expanded' }] } : {})
+      }
+      if (changed) {
+        await expect(owner.prepareElicitation(input)).rejects.toThrow('changed before')
+        expect(commits).toEqual([])
+        expect(stored.runtimeTranscriptOwner).toBeUndefined()
+        expect(stored.activities![0].elicitation!.state).toBe('pending')
+        expect(stored.activities![0].elicitation!.answers).toBeUndefined()
+        return
+      }
+      await owner.prepareElicitation(input)
+      expect(commits).toHaveLength(1)
+      expect(commits[0].runtimeTranscriptOwner).toBe('main')
+      const projection = commits[0].activities![0].elicitation!
+      expect(projection.state).toBe(
+        action === 'accept' ? 'answered' : action === 'decline' ? 'declined' : 'cancelled'
+      )
+      expect(projection.answers).toEqual(input.answers)
+      expect(projection.continuationPending).toBe(action === 'cancel' ? undefined : true)
+      expect(commits[0].conversationGraph!.activities[0].elicitation).toEqual(projection)
+      if (action === 'cancel') {
+        expect(commits[0].status).toBe('idle')
+      } else {
+        await owner.rearmElicitation({
+          ...input,
+          promptMessageId: 'prompt-active',
+          recovery: { error: 'The bound specialist is unavailable.' }
+        })
+        const restarted = normalizeSessionFile(JSON.parse(JSON.stringify(stored)))!
+        expect(restarted.activities![0].elicitation).toMatchObject({
+          state: projection.state,
+          continuationPending: true,
+          continuationRecovery: { error: 'The bound specialist is unavailable.' }
+        })
+        expect(restarted.activities![0].elicitation?.answers).toEqual(input.answers)
+      }
+    }
+  )
+
   it.each([
     { providerStopped: false, approvedPlan: false, previouslyRestored: false },
     { providerStopped: true, approvedPlan: false, previouslyRestored: false },

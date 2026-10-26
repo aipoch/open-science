@@ -8690,6 +8690,9 @@ describe('ACP runtime session management', () => {
   it('rehydrates a persisted app-owned choice before silently continuing', async () => {
     const root = await createTemporaryRoot()
     const process = new FakeAgentProcess()
+    let persisted = addPendingRestoredChoice(
+      createRestoredContinuationSession('prompt-restored-1', 'restored-choice-session', 'project-1')
+    )
     let artifactContext: Record<string, unknown> | undefined
     const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
       onPrompt: async () => {
@@ -8717,15 +8720,11 @@ describe('ACP runtime session management', () => {
           readSessionRuntimeContext: vi.fn(),
           patchSessionRuntimeContext: vi.fn(),
           containsMessageOnActiveBranch: vi.fn(),
-          loadSessionForContinuation: vi.fn(async () =>
-            addPendingRestoredChoice(
-              createRestoredContinuationSession(
-                'prompt-restored-1',
-                'restored-choice-session',
-                'project-1'
-              )
-            )
-          )
+          loadSessionForContinuation: vi.fn(async () => structuredClone(persisted)),
+          mutateRuntimeSession: async (_scope, mutate) => {
+            persisted = { ...mutate(structuredClone(persisted)), runtimeTranscriptOwner: 'main' }
+            return structuredClone(persisted)
+          }
         }
       }
     })
@@ -9376,7 +9375,7 @@ describe('ACP runtime session management', () => {
       if (status === 'running') {
         persistedSession.activeRun = { promptMessageId: 'prompt-restored-1', startedAt: 3 }
       }
-      const restored = normalizeSessionFile(JSON.parse(JSON.stringify(persistedSession)))!
+      let restored = normalizeSessionFile(JSON.parse(JSON.stringify(persistedSession)))!
       const loadSessionForContinuation = vi.fn(async () => structuredClone(restored))
       const runtime = new AcpRuntime({
         appVersion: '0.1.0',
@@ -9386,7 +9385,11 @@ describe('ACP runtime session management', () => {
             readSessionRuntimeContext: vi.fn(),
             patchSessionRuntimeContext: vi.fn(),
             containsMessageOnActiveBranch: vi.fn(),
-            loadSessionForContinuation
+            loadSessionForContinuation,
+            mutateRuntimeSession: async (_scope, mutate) => {
+              restored = { ...mutate(structuredClone(restored)), runtimeTranscriptOwner: 'main' }
+              return structuredClone(restored)
+            }
           }
         },
         resolveBackend: () => ({
