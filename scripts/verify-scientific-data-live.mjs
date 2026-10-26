@@ -94,6 +94,8 @@ const cases = [
   ['cellosaurus', 'list_cellosaurus_files', {}, (r) => assert.ok(r.files.length > 0)]
 ]
 
+// JavaScript entry point; return type annotations require TypeScript syntax.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export async function verifyScientificDataLive() {
   const results = []
   let next = 0

@@ -20,7 +20,7 @@ async function execute(
   id: string,
   body: unknown,
   args?: Record<string, unknown>
-) {
+): Promise<{ result: Record<string, unknown>; fetchImpl: ReturnType<typeof vi.fn<typeof fetch>> }> {
   const tool = descriptor(connector, id)
   const input = args ?? tool.exampleArgs!
   registry.validateToolArguments(tool, input)
@@ -139,7 +139,7 @@ describe('native scientific data contracts', () => {
   })
 
   it('paginates the public drug/event partition manifest and rejects unexpected file authorities', async () => {
-    const payload = (file: string) => ({
+    const payload = (file: string): unknown => ({
       results: {
         drug: {
           event: {
@@ -265,6 +265,78 @@ describe('native scientific data contracts', () => {
       await expect(execute('cellosaurus', 'query_knowledge_graph', {}, { query })).rejects.toThrow(
         'local-graph'
       )
+    }
+  })
+
+  it.each([
+    'SELECT ?s WHERE { ?s ?p "derived from liver" }',
+    "SELECT ?s WHERE { ?s ?p 'SERVICE FROM' }",
+    'SELECT ?s WHERE { ?s ?p """first line\nFROM liver # literal\nlast line""" }',
+    "SELECT ?s WHERE { ?s ?p '''first line\nSERVICE description''' }",
+    'SELECT ?s WHERE { ?s ?p "escaped \\" FROM" }',
+    'PREFIX x: <https://example.org/FROM#SERVICE> SELECT ?from WHERE { ?from x:from ?service } # FROM ignored'
+  ])('allows keywords in SPARQL data without rewriting it: %s', async (query) => {
+    const { fetchImpl } = await execute(
+      'cellosaurus',
+      'query_knowledge_graph',
+      { head: { vars: ['s'] }, results: { bindings: [] } },
+      { query }
+    )
+    const sent = new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('query')!
+    expect(sent).toContain(
+      query.replace(/^PREFIX\s+\w+:\s*<[^>]+>\s*/, '').split(' # FROM ignored')[0]
+    )
+    if (query.startsWith('PREFIX')) expect(sent).toContain('<https://example.org/FROM#SERVICE>')
+    expect(sent).toContain('LIMIT 21')
+  })
+
+  it.each([
+    'SELECT ?s WHERE { ?s ?p "SERVICE" . SERVICE <https://example.org/> { ?s ?p ?o } }',
+    'SELECT ?s FROM <https://example.org/FROM> WHERE { ?s ?p "FROM" }',
+    'SELECT ?s WHERE { # ignored\n SERVICE <https://example.org/> { ?s ?p ?o } }'
+  ])('still rejects actual SPARQL federation/datasets: %s', async (query) => {
+    await expect(execute('cellosaurus', 'query_knowledge_graph', {}, { query })).rejects.toThrow(
+      'local-graph'
+    )
+  })
+
+  it('rejects CLASTR responses with no accepted loci or partially ignored input', async () => {
+    await expect(
+      execute(
+        'cellosaurus',
+        'search_str_similarity',
+        {
+          parameters: { markers: [] },
+          results: []
+        },
+        { markers: { UNKNOWN: '12' } }
+      )
+    ).rejects.toThrow('did not recognize')
+    await expect(
+      execute(
+        'cellosaurus',
+        'search_str_similarity',
+        {
+          parameters: { markers: [{ name: 'D5S818' }] },
+          results: []
+        },
+        { markers: { D5S818: '12', UNKNOWN: '13' } }
+      )
+    ).rejects.toThrow('ignored submitted STR markers: UNKNOWN')
+    await expect(execute('cellosaurus', 'search_str_similarity', {})).rejects.toThrow()
+  })
+
+  it('preserves valid CLASTR matches and genuine zero-match results', async () => {
+    for (const results of [[], [{ accession: 'CVCL_6341', bestScore: 100 }]]) {
+      const payload = {
+        parameters: { markers: [{ name: 'D5S818', alleles: [{ value: '12' }] }] },
+        results
+      }
+      const { result } = await execute('cellosaurus', 'search_str_similarity', payload, {
+        markers: { D5S818: '12' },
+        min_markers: 1
+      })
+      expect(result.result).toEqual(payload)
     }
   })
 

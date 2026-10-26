@@ -104,47 +104,57 @@ const bioMethods: BioMethod[] = [
   }
 ]
 
+// Mask SPARQL literals, IRI references and comments before inspecting keywords. Keep
+// offsets intact so comments can be removed without changing quoted query content.
+function sparqlText(query: string): { text: string; syntax: string } {
+  const opaque =
+    /"""(?:\\[\s\S]|"(?!"")|[^"\\])*"""|'''(?:\\[\s\S]|'(?!'')|[^'\\])*'''|"(?:\\[\s\S]|[^"\\\r\n])*"|'(?:\\[\s\S]|[^'\\\r\n])*'|<[^ \p{Cc}<>"{}|^`\\]*>|#[^\r\n]*/gu
+  const syntax = query.replace(opaque, (token) => ' '.repeat(token.length))
+  const text = query.replace(opaque, (token) =>
+    token.startsWith('#') ? ' '.repeat(token.length) : token
+  )
+  return { text, syntax }
+}
+
 export const MOLECULAR_DATA_TOOLS: ToolDescriptor[] = [
-  ...bioMethods.map(
-    (method): ToolDescriptor => ({
-      id: method.id,
-      connector: 'biodbnet',
-      credentialKeys: [],
-      description: `Call the official bioDBnet ${method.method} REST operation. Discover supported node names before conversion. Preserve unmapped inputs and multiple outputs; absence is not proof that no biological mapping exists.`,
-      input: objectInput(method.properties, method.required),
-      required: method.required,
-      exampleArgs: method.example,
-      maxResponseBytes: 4_000_000,
-      returns:
-        '{ source, source_url, retrieved_at, operation, result }. Full upstream JSON is retained within the bounded response budget. Upstream errors are errors; no local database, mapping inference or implicit selection of one output is performed.',
-      run: async (ctx, args) => {
-        const url = new URL(BIO)
-        url.search = new URLSearchParams({
-          method: method.method,
-          ...method.params(args)
-        }).toString()
-        const result = await ctx.fetchJson(url.href)
-        if (!result || typeof result !== 'object') throw new Error('Invalid bioDBnet JSON response')
-        if (
-          (Array.isArray(result) ? result : [result]).some(
-            (item) =>
-              item &&
-              typeof item === 'object' &&
-              Object.keys(item).some((key) => /^(error|errors)$/i.test(key))
-          )
+  ...bioMethods.map((method): ToolDescriptor => ({
+    id: method.id,
+    connector: 'biodbnet',
+    credentialKeys: [],
+    description: `Call the official bioDBnet ${method.method} REST operation. Discover supported node names before conversion. Preserve unmapped inputs and multiple outputs; absence is not proof that no biological mapping exists.`,
+    input: objectInput(method.properties, method.required),
+    required: method.required,
+    exampleArgs: method.example,
+    maxResponseBytes: 4_000_000,
+    returns:
+      '{ source, source_url, retrieved_at, operation, result }. Full upstream JSON is retained within the bounded response budget. Upstream errors are errors; no local database, mapping inference or implicit selection of one output is performed.',
+    run: async (ctx, args) => {
+      const url = new URL(BIO)
+      url.search = new URLSearchParams({
+        method: method.method,
+        ...method.params(args)
+      }).toString()
+      const result = await ctx.fetchJson(url.href)
+      if (!result || typeof result !== 'object') throw new Error('Invalid bioDBnet JSON response')
+      if (
+        (Array.isArray(result) ? result : [result]).some(
+          (item) =>
+            item &&
+            typeof item === 'object' &&
+            Object.keys(item).some((key) => /^(error|errors)$/i.test(key))
         )
-          throw new Error('bioDBnet returned an error response')
-        if (
-          ['db2db', 'dbfind', 'dbortho'].includes(method.method) &&
-          (!Array.isArray(result) ||
-            result.some((row) => !row || typeof row !== 'object' || Array.isArray(row)))
-        ) {
-          throw new Error('Invalid bioDBnet mapping rows')
-        }
-        return { ...provenance('bioDBnet', url.href), operation: method.method, result }
+      )
+        throw new Error('bioDBnet returned an error response')
+      if (
+        ['db2db', 'dbfind', 'dbortho'].includes(method.method) &&
+        (!Array.isArray(result) ||
+          result.some((row) => !row || typeof row !== 'object' || Array.isArray(row)))
+      ) {
+        throw new Error('Invalid bioDBnet mapping rows')
       }
-    })
-  ),
+      return { ...provenance('bioDBnet', url.href), operation: method.method, result }
+    }
+  })),
   {
     id: 'rank_transcription_factors',
     connector: 'chea3',
@@ -248,8 +258,8 @@ export const MOLECULAR_DATA_TOOLS: ToolDescriptor[] = [
         format === 'ttl'
           ? 'text/turtle'
           : format === 'rdf'
-          ? 'application/rdf+xml'
-          : 'application/ld+json'
+            ? 'application/rdf+xml'
+            : 'application/ld+json'
       )
       if (!content.trim() || /^\s*(?:<!doctype html|<html\b)/i.test(content))
         throw new Error('Cellosaurus did not return RDF')
@@ -279,10 +289,14 @@ export const MOLECULAR_DATA_TOOLS: ToolDescriptor[] = [
     returns:
       '{ source, source_url, retrieved_at, variables, records: [SPARQL bindings], max_rows, truncated }. Binding types and language/datatype metadata are preserved; an empty result only describes this query.',
     run: async (ctx, args) => {
-      const text = String(args.query).replace(/^\s*#[^\n]*$/gm, '')
+      const { text, syntax } = sparqlText(String(args.query))
       if (
+        /["'\\]/.test(syntax) ||
         !/^\s*(?:PREFIX\s+\w*:\s*<[^>]+>\s*)*SELECT\b/i.test(text) ||
-        /\b(?:SERVICE|FROM|LOAD|INSERT|DELETE|CLEAR|DROP|CREATE|MOVE|COPY|ADD)\b/i.test(text)
+        // Variables and prefixed names are not operation keywords.
+        (syntax.match(/[?$]\w+|[\w-]*:[\w.-]*|[A-Za-z]+/g) ?? []).some((token) =>
+          /^(?:SERVICE|FROM|LOAD|INSERT|DELETE|CLEAR|DROP|CREATE|MOVE|COPY|ADD)$/i.test(token)
+        )
       )
         throw new Error(
           'Only a local-graph SELECT without external datasets or updates is supported'
@@ -357,7 +371,27 @@ export const MOLECULAR_DATA_TOOLS: ToolDescriptor[] = [
       const url = new URL('https://www.cellosaurus.org/str-search/api/query')
       url.search = new URLSearchParams({ ...markers, ...options }).toString()
       const result = await ctx.fetchJson(url.href)
-      if (!result || typeof result !== 'object') throw new Error('Invalid CLASTR response')
+      const response = z
+        .object({
+          parameters: z
+            .object({ markers: z.array(z.object({ name: z.string() }).passthrough()) })
+            .passthrough(),
+          results: z.array(z.record(z.string(), z.unknown()))
+        })
+        .passthrough()
+        .parse(result)
+      const accepted = new Set(
+        response.parameters.markers.map((marker) => marker.name.toLowerCase())
+      )
+      if (!accepted.size)
+        throw new Error(
+          'CLASTR did not recognize any submitted STR markers. Check the supported locus names.'
+        )
+      const ignored = Object.keys(markers).filter((name) => !accepted.has(name.toLowerCase()))
+      if (ignored.length)
+        throw new Error(
+          `CLASTR ignored submitted STR markers: ${ignored.join(', ')}. Check the supported locus names.`
+        )
       return {
         ...provenance('Cellosaurus CLASTR', url.href),
         species: options.species,
