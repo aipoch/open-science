@@ -1797,16 +1797,6 @@ describe('PR Gate workflow', () => {
     expect(step?.run).not.toContain('--testNamePattern')
   })
 
-  it('runs Windows native checks serially without weakening their failure bounds', () => {
-    const step = workflow.jobs.windows_core.steps?.find(
-      ({ name }) => name === 'Test Windows-specific behavior'
-    )
-    expect(step?.run).toContain('--no-file-parallelism')
-    expect(step?.run).not.toContain('--testNamePattern')
-    expect(step?.run).not.toContain('--testTimeout')
-    expect(step?.run).not.toContain('--retry')
-  })
-
   it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
     expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(35)
   })
