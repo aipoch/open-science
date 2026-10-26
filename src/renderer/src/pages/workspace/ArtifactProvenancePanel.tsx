@@ -543,7 +543,7 @@ const ProvenanceMessagesTimeline = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
 
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set())
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({})
   const projectedById = useMemo(
     () => new Map(snapshot.items.map((message) => [message.id, message])),
@@ -676,9 +676,9 @@ const ProvenanceMessagesTimeline = ({
                     <WorkspaceActivityGroup
                       key={conversationItem.id}
                       group={conversationItem}
-                      isExpanded={!collapsedGroups.has(conversationItem.id)}
+                      isExpanded={expandedGroups.has(conversationItem.id)}
                       onToggleGroup={(groupId) =>
-                        setCollapsedGroups((current) => {
+                        setExpandedGroups((current) => {
                           const next = new Set(current)
                           if (next.has(groupId)) next.delete(groupId)
                           else next.add(groupId)

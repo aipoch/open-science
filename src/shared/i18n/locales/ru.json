@@ -194,6 +194,10 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "{{count}} steps remaining_one": "Остался {{count}} шаг",
+    "{{count}} steps remaining_few": "Осталось {{count}} шага",
+    "{{count}} steps remaining_many": "Осталось {{count}} шагов",
+    "{{count}} steps remaining_other": "Осталось {{count}} шага",
     "Input help": "Справка по вводу",
     "Your changes have not been saved. Discard them and leave the editor?": "Изменения не сохранены. Отменить их и выйти из редактора?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Найти экспериментальные цепи PDB с похожими 3D-структурами по депонированной цепи.",
@@ -8061,6 +8065,12 @@
     "Publisher via Crossref": "Издатель через Crossref",
     "Retraction Watch via Crossref": "Retraction Watch через Crossref",
     "Crossref": "Crossref",
-    "No saved publication check. Run a check to look for related notices.": "Нет сохранённой проверки публикации. Запустите проверку, чтобы найти связанные уведомления."
+    "No saved publication check. Run a check to look for related notices.": "Нет сохранённой проверки публикации. Запустите проверку, чтобы найти связанные уведомления.",
+    "Fetch": "Получить",
+    "Switch Mode": "Переключить режим",
+    "{{count}} previous messages_one": "{{count}} предыдущее сообщение",
+    "{{count}} previous messages_few": "{{count}} предыдущих сообщения",
+    "{{count}} previous messages_many": "{{count}} предыдущих сообщений",
+    "{{count}} previous messages_other": "{{count}} предыдущего сообщения"
   }
 }

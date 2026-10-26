@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
+    "{{count}} steps remaining_other": "剩餘 {{count}} 步",
     "Input help": "輸入說明",
     "Your changes have not been saved. Discard them and leave the editor?": "變更尚未儲存。要捨棄變更並離開編輯器嗎？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收錄的鏈查找具有相似三維結構的實驗 PDB 鏈。",
@@ -7594,6 +7595,9 @@
     "Publisher via Crossref": "透過 Crossref 取得的出版者",
     "Retraction Watch via Crossref": "透過 Crossref 取得的 Retraction Watch",
     "Crossref": "Crossref",
-    "No saved publication check. Run a check to look for related notices.": "沒有已儲存的文獻檢查。執行檢查以尋找相關通知。"
+    "No saved publication check. Run a check to look for related notices.": "沒有已儲存的文獻檢查。執行檢查以尋找相關通知。",
+    "Fetch": "擷取",
+    "Switch Mode": "切換模式",
+    "{{count}} previous messages_other": "先前的 {{count}} 則訊息"
   }
 }

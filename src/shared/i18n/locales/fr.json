@@ -193,6 +193,9 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
+    "{{count}} steps remaining_one": "{{count}} étape restante",
+    "{{count}} steps remaining_many": "{{count}} étapes restantes",
+    "{{count}} steps remaining_other": "{{count}} étapes restantes",
     "Input help": "Aide de saisie",
     "Your changes have not been saved. Discard them and leave the editor?": "Vos modifications n’ont pas été enregistrées. Voulez-vous les abandonner et quitter l’éditeur ?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Rechercher des chaînes expérimentales PDB aux structures 3D similaires à partir d’une chaîne déposée.",
@@ -7922,6 +7925,11 @@
     "Publisher via Crossref": "Éditeur via Crossref",
     "Retraction Watch via Crossref": "Retraction Watch via Crossref",
     "Crossref": "Crossref",
-    "No saved publication check. Run a check to look for related notices.": "Aucune vérification de publication enregistrée. Lancez une vérification pour rechercher des avis associés."
+    "No saved publication check. Run a check to look for related notices.": "Aucune vérification de publication enregistrée. Lancez une vérification pour rechercher des avis associés.",
+    "Fetch": "Récupérer",
+    "Switch Mode": "Changer de mode",
+    "{{count}} previous messages_one": "{{count}} message précédent",
+    "{{count}} previous messages_many": "{{count}} messages précédents",
+    "{{count}} previous messages_other": "{{count}} messages précédents"
   }
 }
