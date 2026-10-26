@@ -4,7 +4,7 @@ test('completed turn can expand and collapse with keyboard while retaining the f
   page
 }) => {
   await page.goto('/turn-process.html')
-  const toggle = page.getByRole('button', { name: '2 previous steps', exact: true })
+  const toggle = page.getByRole('button', { name: '2 previous messages', exact: true })
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   await expect(
     page.getByText('I’ll check the data structure and missing values first.')
@@ -25,7 +25,7 @@ test('failed turn retains the error and last partial output outside its disclosu
 }) => {
   await page.goto('/turn-process.html?failed')
   await expect(
-    page.getByRole('button', { name: '2 previous steps Failed', exact: true })
+    page.getByRole('button', { name: '2 previous messages Failed', exact: true })
   ).toHaveAttribute('aria-expanded', 'false')
   await expect(page.getByRole('alert')).toContainText('The analysis service disconnected.')
   await expect(page.getByText('These results are partial. Reconnect and try again.')).toBeVisible()
@@ -33,9 +33,11 @@ test('failed turn retains the error and last partial output outside its disclosu
 
 test('running turn expands its process and removes the completed disclosure', async ({ page }) => {
   await page.goto('/turn-process.html')
-  await expect(page.getByRole('button', { name: '2 previous steps', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '2 previous messages', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Running', exact: true }).click()
-  await expect(page.getByRole('button', { name: '2 previous steps', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '2 previous messages', exact: true })).toHaveCount(
+    0
+  )
   await expect(
     page.getByText('I’ll check the data structure and missing values first.')
   ).toBeVisible()
@@ -45,10 +47,12 @@ test('search reveals a folded intermediate message across the transcript window'
   page
 }) => {
   await page.goto('/turn-process.html?long')
-  await expect(page.getByRole('button', { name: '120 previous steps', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '120 previous messages', exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: 'Find intermediate', exact: true }).click()
   await expect(page.getByText('Intermediate step 2', { exact: true })).toBeVisible()
   await expect(
-    page.getByRole('button', { name: '120 previous steps', exact: true })
+    page.getByRole('button', { name: '120 previous messages', exact: true })
   ).toHaveAttribute('aria-expanded', 'true')
 })

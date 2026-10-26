@@ -1127,12 +1127,35 @@ describe('settled turn process disclosure', () => {
     'keeps the final reply and completion outside %s process',
     (kind) => {
       const result = groups(fixture(kind))
-      expect(result.get('progress')).toMatchObject({ promptMessageId: 'prompt-1', outcome: kind })
+      expect(result.get('progress')).toMatchObject({
+        promptMessageId: 'prompt-1',
+        outcome: kind,
+        messageCount: 1
+      })
       expect(result.has('answer')).toBe(false)
       expect(result.has('prompt-1')).toBe(false)
       expect(result.has('turn-completion-answer')).toBe(false)
     }
   )
+
+  it('counts only hidden messages, regardless of tool activity count', () => {
+    const input = fixture()
+    input.activities = [
+      activity({ id: 'tool-1', sortIndex: 2 }),
+      activity({ id: 'tool-2', sortIndex: 3 })
+    ]
+    const result = groups(input)
+    const group = result.get('progress')!
+    expect(group.messageCount).toBe(1)
+    expect(group.itemIds.length).toBeGreaterThan(1)
+    expect(group.itemIds).not.toContain('answer')
+    input.messages.splice(
+      2,
+      0,
+      message({ id: 'progress-2', role: 'agent', responseToMessageId: 'prompt-1', sortIndex: 3.5 })
+    )
+    expect(groups(input).get('progress')?.messageCount).toBe(2)
+  })
 
   it('does not hide running, revealing, cancelled, interrupted or unknown outcomes', () => {
     const input = fixture()
@@ -1158,11 +1181,11 @@ describe('settled turn process disclosure', () => {
     }
   })
 
-  it('leaves successful turns without a final reply expanded, but can fold failed tool-only turns', () => {
+  it('keeps tool-only turns expanded because there are no previous messages', () => {
     for (const kind of ['completed', 'failed'] as const) {
       const input = fixture(kind)
       input.messages = input.messages.slice(0, 1)
-      expect(groups(input).size > 0).toBe(kind === 'failed')
+      expect(groups(input).size).toBe(0)
     }
   })
 

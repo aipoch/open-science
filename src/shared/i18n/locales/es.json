@@ -7902,8 +7902,8 @@
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "La línea de comandos espera autorización para acceder a la red. Si el proceso ha finalizado, autorice el acceso y vuelva a ejecutar el comando explícitamente; no se ejecutará de nuevo automáticamente.",
     "Fetch": "Obtener",
     "Switch Mode": "Cambiar modo",
-    "{{count}} previous steps_one": "{{count}} paso anterior",
-    "{{count}} previous steps_other": "{{count}} pasos anteriores",
-    "{{count}} previous steps_many": "{{count}} pasos anteriores"
+    "{{count}} previous messages_one": "{{count}} mensaje anterior",
+    "{{count}} previous messages_many": "{{count}} mensajes anteriores",
+    "{{count}} previous messages_other": "{{count}} mensajes anteriores"
   }
 }

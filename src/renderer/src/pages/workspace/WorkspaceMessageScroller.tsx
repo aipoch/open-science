@@ -1865,9 +1865,9 @@ const WorkspaceMessageScrollerImpl = ({
                               expanded && 'rotate-90'
                             )}
                           />
-                          {t('{{count}} previous steps', {
-                            count: process.count,
-                            defaultValue_one: '{{count}} previous step'
+                          {t('{{count}} previous messages', {
+                            count: process.messageCount,
+                            defaultValue_one: '{{count}} previous message'
                           })}
                           {process.outcome === 'failed' ? (
                             <span className="text-status-failure-foreground">{t('Failed')}</span>

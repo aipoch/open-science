@@ -8042,9 +8042,9 @@
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится.",
     "Fetch": "Получить",
     "Switch Mode": "Переключить режим",
-    "{{count}} previous steps_one": "{{count}} предыдущий шаг",
-    "{{count}} previous steps_few": "{{count}} предыдущих шага",
-    "{{count}} previous steps_many": "{{count}} предыдущих шагов",
-    "{{count}} previous steps_other": "{{count}} предыдущего шага"
+    "{{count}} previous messages_one": "{{count}} предыдущее сообщение",
+    "{{count}} previous messages_few": "{{count}} предыдущих сообщения",
+    "{{count}} previous messages_many": "{{count}} предыдущих сообщений",
+    "{{count}} previous messages_other": "{{count}} предыдущего сообщения"
   }
 }

@@ -314,7 +314,7 @@ type CollapsedTurnProcess = {
   promptMessageId: string
   outcome: 'completed' | 'failed'
   itemIds: string[]
-  count: number
+  messageCount: number
 }
 
 // Presentation only: keep the full timeline authoritative for replay, export and navigation.
@@ -369,15 +369,13 @@ const resolveCollapsibleTurnProcesses = (
             row.type === 'activity' ||
             row.type === 'compaction-activity')
     )
-    if (!process.length) continue
+    const messageCount = process.filter((row) => row.type === 'message').length
+    if (!messageCount) continue
     const group: CollapsedTurnProcess = {
       promptMessageId: prompt.id,
       outcome: outcome.kind,
       itemIds: process.map(({ id }) => id),
-      count: process.reduce(
-        (count, row) => count + (row.type === 'activity-group' ? row.activities.length : 1),
-        0
-      )
+      messageCount
     }
     for (const row of process) result.set(row.id, group)
   }
