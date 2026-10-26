@@ -99,6 +99,7 @@ class AcpDurableContinuationContextOwner {
     replacePreviousAnswer?: boolean
     retryContinuation?: boolean
     continuePrepared?: boolean
+    recovery?: { error: string }
     replay?: DurableContinuationReplay
   }): Promise<DurableElicitationContinuationPreparation> {
     const session = await this.loadSession(input.projectId, input.sessionId)
@@ -119,7 +120,7 @@ class AcpDurableContinuationContextOwner {
     }
     const answers =
       input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
-    await this.sessions.mutateRuntimeSession(input, (latest) => {
+    const committed = await this.sessions.mutateRuntimeSession(input, (latest) => {
       if (saved) this.assertRetry(latest, input)
       const current = this.resolvePendingElicitation(latest, input, saved)
       if (!isDeepStrictEqual(current, authority)) {
@@ -130,7 +131,7 @@ class AcpDurableContinuationContextOwner {
       )!.elicitation!
       const projection = {
         ...previous,
-        continuationRecovery: undefined,
+        continuationRecovery: input.recovery,
         state: input.action === 'accept' ? ('answered' as const) : ('declined' as const),
         ...(answers ? { answers } : {}),
         respondedAt: saved ? previous.respondedAt : Date.now(),
@@ -149,6 +150,7 @@ class AcpDurableContinuationContextOwner {
         }
       }
     })
+    if (input.recovery) await this.publishSessionUpdated?.(structuredClone(committed))
 
     return {
       ...continuation,

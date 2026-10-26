@@ -2049,7 +2049,7 @@ class AcpRuntime {
         (await this.options.permissionWait?.sessions.sessionProjectId?.(request.sessionId)) ??
         this.sessionEnvironment.projectId(request.sessionId)
       if (!projectId) throw new Error('Durable continuation Session authority is not available.')
-      const prepared = await this.durableContinuationContext.prepareElicitation({
+      await this.durableContinuationContext.prepareElicitation({
         projectId,
         sessionId: request.sessionId,
         requestId: request.requestId,
@@ -2057,14 +2057,7 @@ class AcpRuntime {
         action: response.action,
         answers: response.answers,
         retryContinuation: response.retryContinuation,
-        continuePrepared: !response.prepareContinuation && continuePrepared
-      })
-      await this.durableContinuationContext.rearmElicitation({
-        projectId,
-        sessionId: request.sessionId,
-        requestId: prepared.request.requestId,
-        toolCallId: prepared.request.toolCallId,
-        promptMessageId: prepared.request.durable!.promptMessageId!,
+        continuePrepared: !response.prepareContinuation && continuePrepared,
         recovery: {
           error:
             response.continuationFailure?.slice(0, 4_000) ??

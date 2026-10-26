@@ -8807,6 +8807,7 @@ describe('ACP runtime session management', () => {
   )(
     'saves and ends a failed $action without attaching the unavailable Specialist through $name',
     async ({ framework, modelRoute, backendId, action }) => {
+      const commits: PersistedChatSession[] = []
       let persisted = addPendingRestoredChoice(
         createRestoredContinuationSession(
           'prompt-restored-1',
@@ -8838,6 +8839,7 @@ describe('ACP runtime session management', () => {
             loadSessionForContinuation: async () => structuredClone(persisted),
             mutateRuntimeSession: async (_scope, mutate) => {
               persisted = mutate(structuredClone(persisted))
+              commits.push(structuredClone(persisted))
               return structuredClone(persisted)
             }
           }
@@ -8864,6 +8866,11 @@ describe('ACP runtime session management', () => {
         answers,
         continuationFailure: 'The bound specialist is unavailable.'
       })
+      expect(commits[0].activities?.[0].elicitation).toMatchObject({
+        state: action === 'accept' ? 'answered' : 'declined',
+        continuationRecovery: { error: 'The bound specialist is unavailable.' }
+      })
+      expect(commits).toHaveLength(1)
       expect(persisted.activities?.[0].elicitation).toMatchObject({
         state: action === 'accept' ? 'answered' : 'declined',
         continuationRecovery: { error: 'The bound specialist is unavailable.' }

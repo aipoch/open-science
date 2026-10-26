@@ -98,11 +98,11 @@ const setActivities = (
 describe('AcpDurableContinuationContextOwner', () => {
   it.each(
     (['accept', 'decline', 'cancel'] as const).flatMap((action) =>
-      [false, true].map((changed) => ({ action, changed }))
+      ['success', 'question-changed', 'write-failed'].map((scenario) => ({ action, scenario }))
     )
   )(
-    'atomically saves a legacy $action decision with Main ownership (question changed: $changed)',
-    async ({ action, changed }) => {
+    'atomically saves a legacy $action decision with Main ownership ($scenario)',
+    async ({ action, scenario }) => {
       let stored = createSession([message('prompt-active', 'Choose an approach.')])
       setActivities(stored, [pendingChoice()])
       const commits: PersistedChatSession[] = []
@@ -114,6 +114,7 @@ describe('AcpDurableContinuationContextOwner', () => {
           }),
           saveSession: async (candidate, expectedRevision) => {
             expect(expectedRevision).toBe(stored.revision ?? 0)
+            if (scenario === 'write-failed') throw new Error('Decision persistence failed')
             stored = structuredClone({ ...candidate, revision: (stored.revision ?? 0) + 1 })
             commits.push(structuredClone(stored))
             return structuredClone(stored)
@@ -128,7 +129,7 @@ describe('AcpDurableContinuationContextOwner', () => {
       const owner = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(stored),
         mutateRuntimeSession: (scope, mutate) => {
-          if (changed) {
+          if (scenario === 'question-changed') {
             // Another update wins after preparation reads the question but before its commit.
             for (const activity of [...stored.activities!, ...stored.conversationGraph!.activities])
               activity.elicitation!.message = 'A different question'
@@ -142,14 +143,18 @@ describe('AcpDurableContinuationContextOwner', () => {
         requestId: 'choice-1',
         toolCallId: 'tool-choice-1',
         action,
+        ...(action !== 'cancel' ? { recovery: { error: 'Awaiting continuation' } } : {}),
         ...(action === 'accept' ? { answers: [{ fieldId: 'question_0', value: 'Expanded' }] } : {})
       }
-      if (changed) {
-        await expect(owner.prepareElicitation(input)).rejects.toThrow('changed before')
+      if (scenario !== 'success') {
+        await expect(owner.prepareElicitation(input)).rejects.toThrow(
+          scenario === 'question-changed' ? 'changed before' : 'Decision persistence failed'
+        )
         expect(commits).toEqual([])
         expect(stored.runtimeTranscriptOwner).toBeUndefined()
         expect(stored.activities![0].elicitation!.state).toBe('pending')
         expect(stored.activities![0].elicitation!.answers).toBeUndefined()
+        expect(stored.activities![0].elicitation!.continuationRecovery).toBeUndefined()
         return
       }
       await owner.prepareElicitation(input)
@@ -161,6 +166,7 @@ describe('AcpDurableContinuationContextOwner', () => {
       )
       expect(projection.answers).toEqual(input.answers)
       expect(projection.continuationPending).toBe(action === 'cancel' ? undefined : true)
+      expect(projection.continuationRecovery).toEqual(input.recovery)
       expect(commits[0].conversationGraph!.activities[0].elicitation).toEqual(projection)
       if (action === 'cancel') {
         expect(commits[0].status).toBe('idle')

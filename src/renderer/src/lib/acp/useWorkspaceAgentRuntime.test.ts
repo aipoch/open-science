@@ -1538,9 +1538,13 @@ describe('workspace durable elicitation', () => {
     vi.unstubAllGlobals()
   })
 
-  it.each([true, false])(
-    'retains a cold response when Specialist attachment fails and ends the wait without attaching again (Main-owned: %s)',
-    async (mainOwned) => {
+  it.each(
+    [true, false].flatMap((mainOwned) =>
+      [false, true].map((failSecondMutation) => ({ mainOwned, failSecondMutation }))
+    )
+  )(
+    'retains a cold response and a usable exit after failure (Main-owned: $mainOwned, second mutation fails: $failSecondMutation)',
+    async ({ mainOwned, failSecondMutation }) => {
       const source = useSessionStore.getState().sessions[0]
       const promptMessageId = source.messages[0].id
       let stored: PersistedChatSession = materializeSessionConversationGraph({
@@ -1574,12 +1578,21 @@ describe('workspace durable elicitation', () => {
           mode: 'runtime-transcript-authority'
         })
       publish()
+      let mutationCount = 0
+      let recoveryWriteFailed = false
       const owner = new AcpDurableContinuationContextOwner(
         {
           loadSessionForContinuation: async () => structuredClone(stored),
           mutateRuntimeSession: async (_scope, mutate) => {
+            mutationCount += 1
+            if (failSecondMutation && mutationCount === 2) {
+              recoveryWriteFailed = true
+              throw new Error('Injected recovery persistence failure')
+            }
             // Match production state-owner: runtime mutation adopts Main ownership after the callback.
             stored = { ...mutate(structuredClone(stored)), runtimeTranscriptOwner: 'main' }
+            // Main publishes the first committed decision even if a later recovery write fails.
+            publish()
             return structuredClone(stored)
           }
         },
@@ -1607,18 +1620,17 @@ describe('workspace durable elicitation', () => {
           }
           await owner.prepareElicitation({
             ...input,
-            continuePrepared: !!response.continuationFailure
+            continuePrepared: !!response.continuationFailure,
+            ...(response.continuationFailure || response.prepareContinuation
+              ? {
+                  recovery: {
+                    error:
+                      response.continuationFailure ??
+                      'The task could not continue. Your response is saved.'
+                  }
+                }
+              : {})
           })
-          if (response.continuationFailure || response.prepareContinuation)
-            await owner.rearmElicitation({
-              ...input,
-              promptMessageId,
-              recovery: {
-                error:
-                  response.continuationFailure ??
-                  'The task could not continue. Your response is saved.'
-              }
-            })
           return createSnapshot([])
         }
       }
@@ -1627,16 +1639,29 @@ describe('workspace durable elicitation', () => {
         action: 'accept',
         answers,
         request
+      }).catch((error: unknown) => {
+        if (!failSecondMutation) throw error
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toBe('Injected recovery persistence failure')
       })
+      expect(recoveryWriteFailed).toBe(failSecondMutation)
+      expect(stored.activities?.[0].elicitation?.state).toBe('answered')
       expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
-      expect(savedBeforeResume).toBe(true)
-      expect(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])).toHaveLength(1)
+      if (!failSecondMutation) expect(resumeSession).toHaveBeenCalledTimes(1)
+      if (resumeSession.mock.calls.length > 0) expect(savedBeforeResume).toBe(true)
+      expect
+        .soft(stored.activities?.[0].elicitation?.continuationRecovery)
+        .toEqual(expect.objectContaining({ error: expect.any(String) }))
+      expect
+        .soft(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0]))
+        .toHaveLength(1)
+      const attachmentAttempts = resumeSession.mock.calls.length
       await respondToWorkspaceElicitation(runtime, {
         requestId: request.requestId,
         action: 'cancel',
         request
       })
-      expect(resumeSession).toHaveBeenCalledTimes(1)
+      expect(resumeSession).toHaveBeenCalledTimes(attachmentAttempts)
       expect(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])).toEqual([])
       expect(useSessionStore.getState().sessions[0].status).toBe('idle')
       expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
