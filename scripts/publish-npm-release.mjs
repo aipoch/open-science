@@ -10,6 +10,11 @@ import { runtimeTargets, runtimePackageName } from '../packages/open-science/run
 
 const registry = 'https://registry.npmjs.org'
 
+// npm registry visibility can lag minutes behind a successful publish; the run
+// must outlast that lag, and concurrent reruns must converge instead of E403-failing.
+export const VISIBILITY_ATTEMPTS = 30
+export const VISIBILITY_INTERVAL_MS = 10_000
+
 // A successful stable Release is the authority for historical and future npm publications.
 // The workflow revision and the package source revision are deliberately separate.
 export async function releaseSource(runId, api) {
@@ -153,7 +158,7 @@ async function registryPackage(name) {
 
 export async function waitForPublished(pkg, lookup, delay = setTimeout) {
   const { name, version } = pkg.manifest
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < VISIBILITY_ATTEMPTS; attempt++) {
     const published = (await lookup(name))?.versions?.[version]
     if (published) {
       assert.equal(
@@ -163,14 +168,17 @@ export async function waitForPublished(pkg, lookup, delay = setTimeout) {
       )
       return
     }
-    if (attempt < 5) await delay(5_000)
+    if (attempt < VISIBILITY_ATTEMPTS - 1) await delay(VISIBILITY_INTERVAL_MS)
   }
-  throw new Error(`Published version is not visible in the registry: ${name}@${version}`)
+  throw new Error(
+    `Published version is not visible in the registry after ${VISIBILITY_ATTEMPTS} checks: ${name}@${version}`
+  )
 }
 
 export function publishTarball(pkg, npmCli = process.env.npm_execpath) {
   console.log(`Publishing ${pkg.manifest.name}@${pkg.manifest.version}`)
   return new Promise((accept, reject) => {
+    let stderr = ''
     const child = spawn(
       process.execPath,
       [
@@ -185,15 +193,26 @@ export function publishTarball(pkg, npmCli = process.env.npm_execpath) {
         '--provenance',
         '--loglevel=error'
       ],
-      { stdio: 'inherit' }
+      { stdio: ['inherit', 'inherit', 'pipe'] }
     )
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
     child.once('error', reject)
     child.once('close', (code, signal) => {
-      if (code === 0) accept()
-      else
+      if (code === 0) {
+        const detail = stderr.trim()
+        if (detail) console.error(detail)
+        accept()
+      } else {
+        const detail = stderr.trim().slice(-500)
         reject(
-          new Error(`npm publish failed for ${pkg.manifest.name} (exit ${code}, signal ${signal})`)
+          new Error(
+            `npm publish failed for ${pkg.manifest.name} (exit ${code}, signal ${signal})` +
+              (detail ? `: ${detail}` : '')
+          )
         )
+      }
     })
   })
 }
@@ -209,10 +228,26 @@ export async function publishPackages(
   // Finish the complete batch preflight before starting any immutable registry write.
   const plan = await publishPlan(packages, lookup)
   const entry = plan.at(-1)
+  // Between preflight and publish, a concurrent rerun can land the same immutable
+  // version; that E403 race is success when the visible bytes match, not a failure.
+  const confirmConcurrentPublish = async (pkg) => {
+    const existing = await lookup(pkg.manifest.name).catch(() => null)
+    return existing?.versions?.[pkg.manifest.version]?.dist?.integrity === pkg.integrity
+  }
   const publishMissing = async (pkg) => {
-    if (pkg.published)
+    if (pkg.published) {
       console.log(`Already published with matching integrity: ${pkg.manifest.name}`)
-    else await publish(pkg)
+      return
+    }
+    try {
+      await publish(pkg)
+    } catch (error) {
+      if (await confirmConcurrentPublish(pkg)) {
+        console.log(`Concurrent publication verified: ${pkg.manifest.name}@${pkg.manifest.version}`)
+        return
+      }
+      throw error
+    }
   }
   const results = await Promise.allSettled(
     plan.slice(0, -1).map(async (pkg) => {
