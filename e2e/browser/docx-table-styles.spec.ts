@@ -41,6 +41,17 @@ test('maintained Pandoc report renders Chinese tables, headings and lists', asyn
   const preview = page.locator('[data-office-preview-ready="true"]')
   await expect(preview).toBeVisible()
   const table = preview.locator('table').first()
+  const paper = preview.locator('section.docx').first()
+  await expect(paper).toHaveCSS('padding-left', '75.6px')
+  await expect(preview.getByText('神经信号研究报告', { exact: true })).toHaveCSS(
+    'font-size',
+    '22.6667px'
+  )
+  await expect(preview.getByText('能耗比较', { exact: true })).toHaveCSS('font-size', '18.6667px')
+  await expect(preview.getByText('整理原始资料。', { exact: true })).toHaveCSS('font-size', '14px')
+  await expect(table.getByText('肽/蛋白类', { exact: true })).toHaveCSS('font-size', '12.6667px')
+  await expect(table.locator('td').first()).toHaveCSS('padding-top', '4px')
+  await expect(table.locator('td').first()).toHaveCSS('padding-left', '5.33333px')
   await expect(table.locator('tr')).toHaveCount(4)
   await expect(table.locator('tr').first().locator('td').first()).toHaveCSS(
     'background-color',
@@ -74,4 +85,9 @@ test('maintained Pandoc report renders Chinese tables, headings and lists', asyn
     })
   }
   await page.screenshot({ path: testInfo.outputPath('report.png'), fullPage: true })
+  await page.setViewportSize({ width: 360, height: 640 })
+  // The fixture starts at a fixed desktop width; resize the owning panel too.
+  await preview.evaluate((node) => (node.style.width = '300px'))
+  await expect(paper).toHaveCSS('width', '793.719px')
+  await expect.poll(async () => (await paper.boundingBox())!.width).toBeLessThanOrEqual(300)
 })

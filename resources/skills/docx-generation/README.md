@@ -19,17 +19,20 @@ original CLI remains available for environments with direct package access.
 ## Reproducibility
 
 - Supported generator: Pandoc **3.12.1**; Python **3.9+**, standard library only.
-- `assets/reference.docx`: profile `open-science-report-v2`, based on Pandoc's
-  default reference. A4, theme-based fonts, native heading/list styles, a complete
-  0.5 pt gray table grid (outer frame and internal row/column lines), bold headers
-  without background shading, and a separate 10.5 pt Table Body paragraph style.
+- `assets/reference.docx`: profile `open-science-report-v3`, based on Pandoc's
+  default reference. A4 with 2 cm margins, 10.5 pt body text at approximately 1.33
+  line spacing, coordinated paragraph/linked character heading styles (17/14/11.5 pt),
+  and compact lists. Tables have a complete 0.5 pt gray grid, bold headers without
+  shading, 9.5 pt Table Body text, and 3 pt vertical / 4 pt horizontal cell padding.
+  Arial and PingFang SC are font preferences, not embedded fonts; missing faces
+  are substituted by the viewer.
 - `scripts/build_reference.py`: maintainer-only reference builder. Run with the
   supported Pandoc version when deliberately changing this profile; ZIP entry
   timestamps are fixed. Review and test the new asset before publishing it.
 - `scripts/convert.py`: preserves custom reference page/style settings; only the
-  bundled profile remaps non-numbered Compact paragraphs directly within cells.
-  It does not force column widths, fixed table layouts, or a font unavailable on
-  the destination system. Custom reference bodies are not filled/copied.
+  bundled profile remaps non-numbered Compact paragraphs directly within cells
+  and expands top-level automatic-width tables to the text area. Explicit table
+  widths, nested tables, column proportions, and layout algorithms are retained. Custom reference bodies are not filled/copied.
 - The output contains an `OpenScienceConversion` custom property with converter
   version, Pandoc version, source/reference hashes, profile and Markdown dialect.
   stdout contains a compact receipt, not source text. Publication never overwrites
@@ -39,8 +42,7 @@ Reference documents must be valid DOCX packages supported by Pandoc. Malformed
 output XML is rejected before publication. Pandoc warnings (including missing
 images) also stop publication and are returned as actionable errors. This is not a visual-layout guarantee.
 For content-preserving edits to existing DOCX files use a suitable editing library;
-a Markdown round trip can lose information. Theme fonts still require appropriate
-fonts on the viewing host. No font installation or Office engine is bundled.
+a Markdown round trip can lose information. The reference still requires appropriate fonts on the viewing host. No font installation or Office engine is bundled.
 
 ## Validation
 

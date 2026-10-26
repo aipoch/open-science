@@ -71,6 +71,7 @@ const ARTIFACT_FILE_APPEND = [
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
   'Pass the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, Artifact run, and final message location.',
   "When creating, editing, converting, or saving files for delivery through `write_artifact_file`, ensure the file format, content structure, and presentation follow the user's requirements.",
+  "When an available document-generation skill matches the task, load it before choosing a generation or conversion command and use its maintained workflow unless the user's template or requested design requires another approach.",
   'When a source file or template is provided, preserve its table structure and styling (including borders, column widths, and cell formatting), list numbering and nesting, heading levels, and other applicable formatting, except where the user requests changes.',
   'Encode these structures and styles in the target file rather than carrying over only the text. User requirements take precedence over source or template styling.',
   'For small generated Markdown or plain-text files, pass the complete text inline to `write_artifact_file`; do not use Notebook, REPL, shell, or workspace file tools merely to create an intermediate file. Use a local source path for binary output or content another tool already saved to disk.',

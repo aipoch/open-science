@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from xml.dom import minidom
 import zipfile
 
-VERSION = '2'
+VERSION = '3'
 PANDOC_VERSION = '3.12.1'
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 NS = {'w': W}
@@ -20,11 +20,20 @@ ET.register_namespace('w', W)
 
 
 def normalize_table_paragraphs(data):
-    """Separate ordinary table text from Compact, leaving lists and custom styles intact."""
+    """Apply report defaults, leaving explicit widths, lists and custom styles intact."""
     document = minidom.parseString(data)
     def children(node, name):
         return [el for el in node.childNodes if el.nodeType == el.ELEMENT_NODE
                 and el.namespaceURI == W and el.localName == name]
+    for body in document.getElementsByTagNameNS(W, 'body'):
+        for table in children(body, 'tbl'):
+            for props in children(table, 'tblPr'):
+                for width in children(props, 'tblW'):
+                    if width.getAttributeNS(W, 'type') == 'auto':
+                        # Fit ordinary top-level tables without changing column proportions.
+                        for name, value in (('type', 'pct'), ('w', '5000')):
+                            attribute = width.getAttributeNodeNS(W, name)
+                            width.setAttributeNS(W, attribute.name if attribute else 'w:' + name, value)
     for cell in document.getElementsByTagNameNS(W, 'tc'):
         for paragraph in children(cell, 'p'):
             for props in children(paragraph, 'pPr'):
@@ -85,7 +94,7 @@ def convert(source, output, reference=None, pandoc='pandoc', input_format='markd
     reference = Path(reference).resolve() if reference else Path(__file__).resolve().parents[1] / 'assets/reference.docx'
     template = reference.read_bytes()
     receipt = {'converter_version': VERSION, 'pandoc_version': PANDOC_VERSION,
-               'profile': 'open-science-report-v2' if bundled else 'user-template',
+               'profile': 'open-science-report-v3' if bundled else 'user-template',
                'reference_sha256': hashlib.sha256(template).hexdigest(),
                'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(), 'input_format': input_format}
     # All intermediates live beside the destination, under the caller's approved execution directory.

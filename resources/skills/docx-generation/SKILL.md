@@ -1,6 +1,6 @@
 ---
 name: docx-generation
-description: Use when creating a Word DOCX report from Markdown, converting Markdown tables and lists to DOCX, or choosing a workflow for editing an existing DOCX while preserving its structure and styles. Includes a reusable Pandoc reference document and a Python conversion script.
+description: Use when creating a Word DOCX report from Markdown, converting Markdown tables and lists to DOCX, or choosing a workflow for editing an existing DOCX while preserving its structure and styles. Use this workflow before running Markdown-to-DOCX shell commands. Includes report typography, table layout, a reusable reference document, and a Python converter.
 license: Apache-2.0
 ---
 
@@ -10,7 +10,7 @@ Choose a workflow that preserves the user's requested content, structure, and pr
 
 ## Markdown to a new DOCX
 
-For ordinary reports, use the bundled converter with an existing Pandoc 3.12.1 executable and Python 3.9 or newer. It uses a versioned reference document, separates ordinary table paragraphs from the Compact style shared by lists, and records converter/template provenance inside the DOCX. It does not install software.
+For ordinary reports, use the bundled converter with an existing Pandoc 3.12.1 executable and Python 3.9 or newer. It uses a versioned reference document, separates ordinary table paragraphs from the Compact style shared by lists, and records converter/template provenance inside the DOCX. It does not install software. Run this converter rather than a bare `pandoc source.md -o output.docx` command: that command bypasses the report template and its typography, page geometry, table spacing, and provenance.
 
 In Open Science, first prepare the workflow through the registered Notebook helper:
 
@@ -37,7 +37,7 @@ Optional arguments:
 - `--from gfm` or `--from markdown+pipe_tables`: select the dialect that matches the source. The default is Pandoc Markdown.
 - `--pandoc "<absolute-executable-path>"`: select an existing executable.
 
-The bundled reference uses A4, visible outer borders and internal row/column grid lines, and bold table headers without background shading. It preserves theme-based fonts; CJK font choice should come from the user's reference and fonts available on the intended viewing system. A reference document's body content is not copied into the output. Use another workflow when the task requires filling a template's existing content.
+The bundled report profile uses A4 with 2 cm margins, 10.5 pt body text with approximately 1.33 line spacing, coordinated heading sizes (17/14/11.5 pt), and tighter list spacing. Tables use 9.5 pt text, 3 pt vertical and 4 pt horizontal cell padding, visible outer and internal grid lines, and bold headers without background shading. Top-level tables with automatic width fill the text area; explicit widths and column proportions remain intact. The default faces are Arial and PingFang SC for East Asian text; fonts are not embedded, and viewers substitute missing fonts. For a specific viewing platform or font requirement, use a reference with appropriate available fonts. A reference document's body content is not copied into the output. Use another workflow when the task requires filling a template's existing content.
 
 Do not substitute the bundled template when the user supplied a template or requested a different design. For special page layouts or table widths, use an appropriate reference or targeted document editing; do not impose fixed page/column dimensions on every document.
 

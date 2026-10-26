@@ -35,6 +35,39 @@ class ConversionTests(unittest.TestCase):
         with zipfile.ZipFile(SCRIPT.parents[1] / 'assets/reference.docx') as package:
             self.assert_grid_style(ET.fromstring(package.read('word/styles.xml')))
 
+    def test_report_page_and_linked_heading_styles_are_consistent(self):
+        with zipfile.ZipFile(SCRIPT.parents[1] / 'assets/reference.docx') as package:
+            doc = ET.fromstring(package.read('word/document.xml'))
+            styles = ET.fromstring(package.read('word/styles.xml'))
+        margins = doc.find('.//w:pgMar', NS)
+        self.assertIsNotNone(margins, 'Reports need explicit margins for stable page geometry')
+        for edge in ('top', 'right', 'bottom', 'left'):
+            self.assertEqual(margins.get('{%s}%s' % (NS['w'], edge)), '1134')
+        for name, size in [('Heading1', '34'), ('Heading2', '28'), ('Heading3', '23')]:
+            for suffix in ('', 'Char'):
+                style = styles.find("w:style[@w:styleId='%s']" % (name + suffix), NS)
+                self.assertEqual(style.find('w:rPr/w:sz', NS).get('{%s}val' % NS['w']), size)
+        table = styles.find("w:style[@w:styleId='Table']", NS)
+        self.assertEqual(table.find('w:tblPr/w:tblCellMar/w:top', NS).get('{%s}w' % NS['w']), '60')
+
+    def test_default_table_layout_preserves_explicit_widths_and_nested_tables(self):
+        spec = importlib.util.spec_from_file_location('docx_convert', SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        xml = b'''<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+        <w:tbl><w:tblPr><w:tblW w:type="auto" w:w="0"/></w:tblPr><w:tr><w:tc>
+        <w:tbl><w:tblPr><w:tblW w:type="auto" w:w="0"/></w:tblPr></w:tbl>
+        </w:tc></w:tr></w:tbl>
+        <w:tbl><w:tblPr><w:tblW w:type="dxa" w:w="4321"/></w:tblPr></w:tbl>
+        <w:tbl><w:tblPr><w:tblW w:type="pct" w:w="3000"/></w:tblPr></w:tbl>
+        </w:body></w:document>'''
+        normalized = module.normalize_table_paragraphs(xml)
+        self.assertEqual(module.normalize_table_paragraphs(normalized), normalized)
+        root = ET.fromstring(normalized)
+        self.assertEqual([(el.get('{%s}type' % NS['w']), el.get('{%s}w' % NS['w']))
+                          for el in root.findall('.//w:tblW', NS)],
+                         [('pct', '5000'), ('auto', '0'), ('dxa', '4321'), ('pct', '3000')])
+
     def test_registered_bundle_matches_the_maintained_assets(self):
         spec = importlib.util.spec_from_file_location('build_kernel', SCRIPT.parent / 'build_kernel.py')
         module = importlib.util.module_from_spec(spec)
@@ -67,7 +100,7 @@ class ConversionTests(unittest.TestCase):
             result = subprocess.run(['/usr/bin/sandbox-exec', '-p', policy, sys.executable, '-'], input=code, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = json.loads(result.stdout)
-            self.assertEqual(receipt['profile'], 'open-science-report-v2')
+            self.assertEqual(receipt['profile'], 'open-science-report-v3')
             with zipfile.ZipFile(root / 'report.docx') as package:
                 styles = ET.fromstring(package.read('word/styles.xml'))
                 self.assert_grid_style(styles)
@@ -99,7 +132,7 @@ class ConversionTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(SCRIPT), str(source), str(output)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = json.loads(result.stdout)
-            self.assertEqual(receipt['profile'], 'open-science-report-v2')
+            self.assertEqual(receipt['profile'], 'open-science-report-v3')
             with zipfile.ZipFile(output) as package:
                 self.assert_grid_style(ET.fromstring(package.read('word/styles.xml')))
                 doc = ET.fromstring(package.read('word/document.xml'))
@@ -108,7 +141,7 @@ class ConversionTests(unittest.TestCase):
                 self.assertEqual(len(doc.findall('.//w:numPr', NS)), 2)
                 self.assertEqual(len(doc.findall('.//w:pStyle[@w:val="Heading1"]', NS)), 1)
                 self.assertEqual(len(doc.findall('.//w:tbl//w:pStyle[@w:val="TableBody"]', NS)), 4)
-                self.assertIn('open-science-report-v2', package.read('docProps/custom.xml').decode())
+                self.assertIn('open-science-report-v3', package.read('docProps/custom.xml').decode())
             before = output.read_bytes()
             again = subprocess.run([sys.executable, str(SCRIPT), str(source), str(output)], capture_output=True, text=True)
             self.assertNotEqual(again.returncode, 0)
@@ -121,6 +154,7 @@ class ConversionTests(unittest.TestCase):
                     if entry.filename == 'word/document.xml':
                         tree = ET.fromstring(data)
                         tree.find('.//w:pgSz', NS).set('{%s}w' % NS['w'], '18000')
+                        tree.find('.//w:pgMar', NS).set('{%s}left' % NS['w'], '2000')
                         data = ET.tostring(tree)
                     if entry.filename == 'word/styles.xml':
                         tree = ET.fromstring(data)
@@ -137,6 +171,8 @@ class ConversionTests(unittest.TestCase):
                 self.assertIsNone(styles.find("w:style[@w:styleId='Table']/w:tblPr/w:tblBorders", NS))
                 doc = ET.fromstring(package.read('word/document.xml'))
                 self.assertEqual(doc.find('.//w:pgSz', NS).get('{%s}w' % NS['w']), '18000')
+                self.assertEqual(doc.find('.//w:pgMar', NS).get('{%s}left' % NS['w']), '2000')
+                self.assertEqual(doc.find('.//w:tblW', NS).get('{%s}type' % NS['w']), 'auto')
                 self.assertEqual(len(doc.findall('.//w:tbl//w:pStyle[@w:val="TableBody"]', NS)), 0)
 
     @unittest.skipUnless(shutil.which('pandoc'), 'Pandoc is required for converter integration')
