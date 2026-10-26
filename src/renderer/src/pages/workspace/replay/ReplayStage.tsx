@@ -1,7 +1,12 @@
 import { NotebookTextOutput } from '../NotebookRunOutputs'
 import { GeneratedFileCard, artifactGalleryClassName } from '../GeneratedFileCard'
 import { formatByteSize } from '@/lib/utils'
-import { isReviewerCorrectionAttribution } from '../../../../../shared/session-persistence'
+import {
+  isAgentResultDeliveryAttribution,
+  isComputeJobCompletionAttribution,
+  isComputeJobCompletionPresentation,
+  isReviewerCorrectionAttribution
+} from '../../../../../shared/session-persistence'
 import { ReplayReviewRecord } from './ReplayReviewRecord'
 import {
   lazy,
@@ -376,6 +381,15 @@ const StepConversation = memo(function StepConversation({
     [artifactResources, step.resourceIds, interactive]
   )
   const message = step.message
+  const isAgentResultDelivery = isAgentResultDeliveryAttribution(message?.attribution)
+  const isComputeJobCompletion =
+    isComputeJobCompletionAttribution(message?.attribution) ||
+    (message && isComputeJobCompletionPresentation(message))
+  const automaticEvent = isAgentResultDelivery
+    ? { title: t('Background activity'), description: t('New task results are available') }
+    : isComputeJobCompletion
+      ? { title: t('Remote job completed'), description: t('Analysis started automatically') }
+      : undefined
   const content = message?.content ?? ''
   // Reconstruction is explicit. Reveal rate derives exclusively from logical scene time.
   const visible = active ? content.slice(0, messageCharacters) : content
@@ -393,17 +407,19 @@ const StepConversation = memo(function StepConversation({
       {!interactive ? (
         <div className="mb-2 flex items-center justify-between text-xs text-text-300">
           <span>
-            {message
-              ? message.role === 'user'
-                ? t('User')
-                : t('Agent')
-              : step.kind === 'review'
-                ? t('Session Reviewer')
-                : step.kind === 'notebook'
-                  ? t('Notebook')
-                  : step.kind === 'artifact'
-                    ? t('Files')
-                    : t('Tool activity')}
+            {automaticEvent
+              ? automaticEvent.title
+              : message
+                ? message.role === 'user'
+                  ? t('User')
+                  : t('Agent')
+                : step.kind === 'review'
+                  ? t('Session Reviewer')
+                  : step.kind === 'notebook'
+                    ? t('Notebook')
+                    : step.kind === 'artifact'
+                      ? t('Files')
+                      : t('Tool activity')}
           </span>
           <span>{archivedTime(step.recordedAt) ?? t('Time not recorded')}</span>
         </div>
@@ -414,7 +430,15 @@ const StepConversation = memo(function StepConversation({
           {t('Reviewer requested corrections')}
         </p>
       ) : null}
-      {message ? (
+      {automaticEvent ? (
+        <div
+          className="flex max-w-[56rem] flex-col gap-0.5 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300 sm:flex-row sm:gap-2"
+          role="status"
+        >
+          <span className="font-medium text-text-200">{automaticEvent.title}</span>
+          <span>{automaticEvent.description}</span>
+        </div>
+      ) : message ? (
         interactive ? (
           message.role === 'user' ? (
             <div className="flex min-w-0 flex-col items-end">
