@@ -7734,6 +7734,11 @@
     "Fetch": "Abrufen",
     "Switch Mode": "Modus wechseln",
     "{{count}} previous messages_one": "{{count}} vorherige Nachricht",
-    "{{count}} previous messages_other": "{{count}} vorherige Nachrichten"
+    "{{count}} previous messages_other": "{{count}} vorherige Nachrichten",
+    "Granted at {{time}}": "Zugriff gewährt am {{time}}",
+    "{{count}} directories_one": "{{count}} Verzeichnis",
+    "{{count}} directories_other": "{{count}} Verzeichnisse",
+    "Show remaining {{count}} directories_one": "Verbleibendes {{count}} Verzeichnis anzeigen",
+    "Show remaining {{count}} directories_other": "Verbleibende {{count}} Verzeichnisse anzeigen"
   }
 }

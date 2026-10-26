@@ -7572,6 +7572,9 @@
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令行正在等待网络访问批准。如果进程已结束，请批准后手动重试命令；系统不会自动重新执行。",
     "Fetch": "获取",
     "Switch Mode": "切换模式",
-    "{{count}} previous messages_other": "之前的 {{count}} 条消息"
+    "{{count}} previous messages_other": "之前的 {{count}} 条消息",
+    "Granted at {{time}}": "授权于 {{time}}",
+    "{{count}} directories_other": "{{count}} 个目录",
+    "Show remaining {{count}} directories_other": "展示剩余 {{count}} 个"
   }
 }

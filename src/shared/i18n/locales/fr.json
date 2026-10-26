@@ -7904,6 +7904,13 @@
     "Switch Mode": "Changer de mode",
     "{{count}} previous messages_one": "{{count}} message précédent",
     "{{count}} previous messages_many": "{{count}} messages précédents",
-    "{{count}} previous messages_other": "{{count}} messages précédents"
+    "{{count}} previous messages_other": "{{count}} messages précédents",
+    "Granted at {{time}}": "Accès accordé le {{time}}",
+    "{{count}} directories_one": "{{count}} dossier",
+    "{{count}} directories_many": "{{count}} dossiers",
+    "{{count}} directories_other": "{{count}} dossiers",
+    "Show remaining {{count}} directories_one": "Afficher le {{count}} dossier restant",
+    "Show remaining {{count}} directories_many": "Afficher les {{count}} dossiers restants",
+    "Show remaining {{count}} directories_other": "Afficher les {{count}} dossiers restants"
   }
 }

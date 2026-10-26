@@ -7572,6 +7572,9 @@
     "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。",
     "Fetch": "取得",
     "Switch Mode": "モードを切り替え",
-    "{{count}} previous messages_other": "これまでの {{count}} 件のメッセージ"
+    "{{count}} previous messages_other": "これまでの {{count}} 件のメッセージ",
+    "Granted at {{time}}": "許可日時：{{time}}",
+    "{{count}} directories_other": "{{count}} 個のディレクトリ",
+    "Show remaining {{count}} directories_other": "残り {{count}} 個のディレクトリを表示"
   }
 }

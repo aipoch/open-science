@@ -8045,6 +8045,15 @@
     "{{count}} previous messages_one": "{{count}} предыдущее сообщение",
     "{{count}} previous messages_few": "{{count}} предыдущих сообщения",
     "{{count}} previous messages_many": "{{count}} предыдущих сообщений",
-    "{{count}} previous messages_other": "{{count}} предыдущего сообщения"
+    "{{count}} previous messages_other": "{{count}} предыдущего сообщения",
+    "Granted at {{time}}": "Доступ предоставлен {{time}}",
+    "{{count}} directories_one": "{{count}} каталог",
+    "{{count}} directories_few": "{{count}} каталога",
+    "{{count}} directories_many": "{{count}} каталогов",
+    "{{count}} directories_other": "{{count}} каталога",
+    "Show remaining {{count}} directories_one": "Показать оставшийся {{count}} каталог",
+    "Show remaining {{count}} directories_few": "Показать оставшиеся {{count}} каталога",
+    "Show remaining {{count}} directories_many": "Показать оставшиеся {{count}} каталогов",
+    "Show remaining {{count}} directories_other": "Показать оставшиеся {{count}} каталога"
   }
 }

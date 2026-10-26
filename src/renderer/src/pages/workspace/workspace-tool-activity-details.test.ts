@@ -42,8 +42,89 @@ describe('workspace tool activity details', () => {
       )
       expect(details?.displayName).toBe('List authorized directories')
       expect(details?.subtitle).toBeUndefined()
-      expect(details?.sections[0]).toMatchObject({ label: 'Output' })
+      expect(details?.sections).toEqual([
+        { kind: 'authorized-directories', snapshot: { revision: 'v1', directories: [] } }
+      ])
     }
+  })
+
+  const directorySnapshot = {
+    revision: 'directory-revision',
+    directories: [
+      {
+        name: 'Research',
+        path: '/Users/test/Research',
+        access: 'ro',
+        grantedAt: '2026-10-26T01:42:00.000Z'
+      }
+    ]
+  }
+
+  it.each([
+    directorySnapshot,
+    JSON.stringify(directorySnapshot),
+    { structuredContent: directorySnapshot },
+    { result: { content: [{ type: 'text', text: JSON.stringify(directorySnapshot) }] } }
+  ])('projects authorized directories from provider result envelopes', (rawOutput) => {
+    expect(
+      buildToolActivityDetails(
+        createActivity({
+          providerToolName: 'mcp__open-science-notebook__list_authorized_directories',
+          rawOutput
+        })
+      )?.sections
+    ).toEqual([{ kind: 'authorized-directories', snapshot: directorySnapshot }])
+  })
+
+  it('projects directory results from ACP content blocks in restored history', () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__list_authorized_directories',
+      toolContent: [
+        { type: 'content', content: { type: 'text', text: JSON.stringify(directorySnapshot) } }
+      ]
+    })
+    expect(buildToolActivityDetails(JSON.parse(JSON.stringify(activity)))?.sections).toEqual([
+      { kind: 'authorized-directories', snapshot: directorySnapshot }
+    ])
+  })
+
+  it.each([
+    { status: 'failed' as const, rawOutput: directorySnapshot },
+    { rawOutput: { isError: true, structuredContent: directorySnapshot } },
+    {
+      rawOutput: { isError: true, content: [{ type: 'text', text: 'record query failed' }] },
+      toolContent: [
+        {
+          type: 'content' as const,
+          content: { type: 'text' as const, text: JSON.stringify(directorySnapshot) }
+        }
+      ]
+    },
+    { rawOutput: { ...directorySnapshot, directories: [{}] } },
+    {
+      rawOutput: {
+        ...directorySnapshot,
+        directories: [{ ...directorySnapshot.directories[0], access: 'admin' }]
+      }
+    },
+    {
+      rawOutput: {
+        ...directorySnapshot,
+        directories: [{ ...directorySnapshot.directories[0], grantedAt: 'invalid' }]
+      }
+    },
+    { rawOutput: 'record query failed' }
+  ])('retains inspectable output for failed or malformed directory results', (overrides) => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName: 'mcp__open-science-notebook__list_authorized_directories',
+        ...overrides
+      })
+    )
+    expect(details?.sections.some((section) => section.kind === 'code')).toBe(true)
+    expect(details?.sections.some((section) => section.kind === 'authorized-directories')).toBe(
+      false
+    )
   })
 
   it('does not relabel an unrelated server with the same tool suffix', () => {

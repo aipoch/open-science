@@ -2,6 +2,7 @@
   "ownerPaths": [
     "src/renderer/src/pages/workspace/agent-loading-message.test.ts",
     "src/renderer/src/pages/workspace/agent-loading-message.ts",
+    "src/renderer/src/pages/workspace/authorized-directories-presentation.ts",
     "src/renderer/src/pages/workspace/handoff-lifecycle-projection.test.ts",
     "src/renderer/src/pages/workspace/handoff-lifecycle-projection.ts",
     "src/renderer/src/pages/workspace/session-notebook-projection.ts",
@@ -26,6 +27,7 @@
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/agent-loading-message.ts",
+    "src/renderer/src/pages/workspace/authorized-directories-presentation.ts",
     "src/renderer/src/pages/workspace/handoff-lifecycle-projection.ts",
     "src/renderer/src/pages/workspace/session-notebook-projection.ts",
     "src/renderer/src/pages/workspace/subagent-release-projection.ts",
