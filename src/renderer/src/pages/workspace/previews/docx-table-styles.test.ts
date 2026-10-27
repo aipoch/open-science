@@ -100,4 +100,69 @@ describe('DOCX table conditional formatting', () => {
     expect(cell('1-0').backgroundColor).toBe('rgb(0, 0, 255)')
     expect(cell('0-1').backgroundColor).toBe('rgb(242, 244, 247)')
   })
+  describe.each([false, true])('style cascade (CommonJS=%s)', (commonjs) => {
+    it('lets explicit paragraph and character styles override table defaults', async () => {
+      const { css, span } = await render({ styledContent: true, defaultStyle: true }, commonjs)
+      expect(css('Cell heading').fontSize).toBe('22pt')
+      expect(css('Cell heading').fontFamily).toBe('Georgia')
+      expect(getComputedStyle(span('Cell heading').closest('p')!).marginBottom).toBe('8pt')
+      for (const text of ['inline_code', 'heading_code']) {
+        expect(css(text).fontSize).toBe('9pt')
+        expect(css(text).fontFamily).toBe('"Courier New"')
+      }
+      expect(css('direct_code').fontSize).toBe('16pt')
+      expect(css('direct_code').fontFamily).toBe('Verdana')
+      expect(css('1-0').fontSize).toBe('10.5pt')
+    })
+    it('applies first-row formatting after first-column formatting without a corner style', async () => {
+      const { cell } = await render(
+        {
+          tableLook: 'w:firstColumn="1"',
+          extraStyles:
+            '<w:tblStylePr w:type="firstCol"><w:tcPr><w:shd w:fill="0000FF"/></w:tcPr></w:tblStylePr>'
+        },
+        commonjs
+      )
+      expect(cell('0-0').backgroundColor).toBe('rgb(242, 244, 247)')
+      expect(cell('1-0').backgroundColor).toBe('rgb(0, 0, 255)')
+    })
+    it('applies column bands after row bands', async () => {
+      const { cell } = await render(
+        { firstRow: false, banding: true, verticalBanding: true },
+        commonjs
+      )
+      expect(cell('0-0').backgroundColor).toBe('rgb(170, 187, 204)')
+      expect(cell('1-1').backgroundColor).toBe('rgb(204, 187, 170)')
+    })
+    it.each([
+      { rowBandSize: 0, colBandSize: undefined, expected: 'rgb(170, 187, 204)' },
+      { rowBandSize: undefined, colBandSize: 0, expected: 'rgb(221, 238, 255)' }
+    ])('disables only the zero-sized band direction ($rowBandSize/$colBandSize)', async (sizes) => {
+      const { cell } = await render(
+        { firstRow: false, banding: true, verticalBanding: true, ...sizes },
+        commonjs
+      )
+      expect(cell('0-0').backgroundColor).toBe(sizes.expected)
+    })
+    it.each(['style', 'table'] as const)(
+      'disables zero-sized row and column bands from %s properties',
+      async (source) => {
+        const { cell } = await render(
+          {
+            firstRow: false,
+            banding: true,
+            verticalBanding: true,
+            rowHints: ['000000100000'],
+            ...(source === 'style'
+              ? { styleBandSize: 0, styleColBandSize: 0 }
+              : { styleBandSize: 2, styleColBandSize: 2, rowBandSize: 0, colBandSize: 0 })
+          },
+          commonjs
+        )
+        for (const text of ['0-0', '0-1', '1-0', '1-1', '2-0', '2-1']) {
+          expect(cell(text).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+        }
+      }
+    )
+  })
 })

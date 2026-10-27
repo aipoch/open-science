@@ -18,10 +18,15 @@ replacement for upstream table-border fixes unavailable in the pinned release.
   Full OOXML border-conflict rules remain out of scope.
 - **Conditional styles:** scopes default table rules to their actual cell/paragraph/run
   targets; supports `wholeTable`, first/last rows and columns, bands, and corners.
-  Resolves conditional overrides in ISO/IEC 29500 order rather than XML order.
+  Resolves conditional overrides independently of XML order: whole table, row
+  bands, column bands, first/last columns, first/last rows, then corners. Region
+  selectors have equal specificity; explicit paragraph and character styles
+  override table defaults, and direct formatting retains precedence.
   Explicit `tblLook` flags override the legacy bitmask, including false. Missing
   region hints are derived from the grid; explicit `cnfStyle` flags are preserved.
-  Table-style band sizes inherit from base styles. Child paths isolate nested tables.
+  Table-style band sizes inherit from base styles. Missing sizes default to one;
+  an explicit zero disables only that band direction, including region hints.
+  Child paths isolate nested tables.
   This is a local fix, not an upstream backport or a claim of complete Word layout parity.
 
 ## Retirement

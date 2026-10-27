@@ -1,5 +1,5 @@
 diff --git a/node_modules/docx-preview/dist/docx-preview.js b/node_modules/docx-preview/dist/docx-preview.js
-index 9abd132..35765a3 100644
+index 9abd132..3411af5 100644
 --- a/node_modules/docx-preview/dist/docx-preview.js
 +++ b/node_modules/docx-preview/dist/docx-preview.js
 @@ -1586,6 +1586,12 @@
@@ -264,9 +264,9 @@ index 9abd132..35765a3 100644
              for (let style of styles) {
                  style.cssName = this.processStyleName(style.id);
 +                // OOXML conditional precedence must not depend on styles.xml order.
-+                const order = { wholeTable: 0, band1Vert: 1, band2Vert: 1,
-+                    band1Horz: 2, band2Horz: 2, firstRow: 3, lastRow: 3,
-+                    firstCol: 4, lastCol: 4, nwCell: 5, neCell: 5, swCell: 5, seCell: 5 };
++                const order = { wholeTable: 0, band1Horz: 1, band2Horz: 1,
++                    band1Vert: 2, band2Vert: 2, firstCol: 3, lastCol: 3,
++                    firstRow: 4, lastRow: 4, nwCell: 5, neCell: 5, swCell: 5, seCell: 5 };
 +                if (style.target === "table")
 +                    style.styles.sort((a, b) => (order[a.tableCondition] ?? -1) - (order[b.tableCondition] ?? -1));
              }
@@ -281,7 +281,18 @@ index 9abd132..35765a3 100644
                          "padding-left", "padding-right", "padding-top", "padding-bottom"
                      ]);
                      this.processElement(c);
-@@ -3377,10 +3448,23 @@ section.${c}>footer { z-index: 1; }
+@@ -3366,7 +3437,9 @@ section.${c}>footer { z-index: 1; }
+             var styleText = "";
+             const stylesMap = this.styleMap;
+             const defautStyles = keyBy(styles.filter(s => s.isDefault), s => s.target);
+-            for (const style of styles) {
++            // Equal-specificity named styles follow the Word formatting hierarchy.
++            const rank = { table: 1, p: 2, span: 3 };
++            for (const style of [...styles].sort((a, b) => (rank[a.target] ?? 0) - (rank[b.target] ?? 0))) {
+                 var subStyles = style.styles;
+                 if (style.linked) {
+                     var linkedStyle = style.linked && stylesMap[style.linked];
+@@ -3377,10 +3450,28 @@ section.${c}>footer { z-index: 1; }
                  }
                  for (const subStyle of subStyles) {
                      var selector = `${style.target ?? ''}.${style.cssName}`;
@@ -298,18 +309,23 @@ index 9abd132..35765a3 100644
 +                        if (!target.startsWith("tr")) target = "tr > " + target;
 +                        target = target.replace(/(td(?:\.[\w-]+)?) p/g, "$1 > p")
 +                            .replace(/(td(?:\.[\w-]+)?) span/g, "$1 > p span");
-+                        selector += `${subStyle.mod ?? ""} > ${target}`;
++                        // Region classes select cells without changing conditional precedence.
++                        target = target.replace(/td(?:\.[\w-]+)?/g, ":where($&)");
++                        selector += `${subStyle.mod ? `:where(${subStyle.mod})` : ""} > ${target}`;
 +                    }
 +                    else {
++                        // Explicit paragraph/character styles outrank table defaults; character
++                        // styles follow paragraph styles even when styles.xml lists them first.
++                        if (style.target) selector = `.${this.className} :where(${style.target}).${style.cssName}`;
 +                        if (style.target != subStyle.target)
-+                            selector += ` ${subStyle.target}`;
++                            selector += style.target ? ` :where(${subStyle.target})` : ` ${subStyle.target}`;
 +                        if (defautStyles[style.target] == style)
 +                            selector = `.${this.className} ${style.target}, ` + selector;
 +                    }
                      styleText += this.styleToString(selector, subStyle.values);
                  }
              }
-@@ -3690,7 +3774,85 @@ section.${c}>footer { z-index: 1; }
+@@ -3690,7 +3781,88 @@ section.${c}>footer { z-index: 1; }
              children.push(...this.renderElements(elem.children));
              this.currentVerticalMerge = this.tableVerticalMerges.pop();
              this.currentCellPosition = this.tableCellPositions.pop();
@@ -333,21 +349,24 @@ index 9abd132..35765a3 100644
 +                ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
 +            const firstRow = table.classList.contains("first-row") ? 1 : 0;
 +            const firstCol = table.classList.contains("first-col") ? 1 : 0;
-+            const rowBandSize = Math.max(1, model.rowBandSize ?? style?.rowBandSize ?? 1);
-+            const colBandSize = Math.max(1, model.colBandSize ?? style?.colBandSize ?? 1);
++            const rowBandSize = model.rowBandSize ?? style?.rowBandSize ?? 1;
++            const colBandSize = model.colBandSize ?? style?.colBandSize ?? 1;
++            // Zero disables banding, including explicit cnfStyle band hints.
++            if (rowBandSize === 0) table.classList.add("no-hband");
++            if (colBandSize === 0) table.classList.add("no-vband");
 +            rows.forEach((row, r) => {
 +                const rowModel = model.children[r];
-+                const odd = Math.floor(Math.max(0, r - firstRow) / rowBandSize) % 2 === 0;
++                const odd = rowBandSize > 0 && Math.floor(Math.max(0, r - firstRow) / rowBandSize) % 2 === 0;
 +                const rowFlags = { "first-row": r === 0, "last-row": r === rows.length - 1,
-+                    "odd-row": odd, "even-row": !odd, ...rowModel?.cnfStyle };
++                    "odd-row": odd, "even-row": rowBandSize > 0 && !odd, ...rowModel?.cnfStyle };
 +                for (const [name, value] of Object.entries(rowFlags)) row.classList.toggle(name, value);
 +                let c = 0; // Placeholder cells already account for gridBefore.
 +                Array.from(row.cells).forEach((cell, index) => {
 +                    const cellModel = rowModel?.children[index - (rowModel.gridBefore ? 1 : 0)];
 +                    const last = c + cell.colSpan === columns;
-+                    const oddCol = Math.floor(Math.max(0, c - firstCol) / colBandSize) % 2 === 0;
++                    const oddCol = colBandSize > 0 && Math.floor(Math.max(0, c - firstCol) / colBandSize) % 2 === 0;
 +                    const flags = { ...rowFlags, "first-col": c === 0, "last-col": last,
-+                        "odd-col": oddCol, "even-col": !oddCol,
++                        "odd-col": oddCol, "even-col": colBandSize > 0 && !oddCol,
 +                        "nw-cell": r === 0 && c === 0, "ne-cell": r === 0 && last,
 +                        "sw-cell": r + cell.rowSpan === rows.length && c === 0,
 +                        "se-cell": r + cell.rowSpan === rows.length && last,
@@ -396,7 +415,7 @@ index 9abd132..35765a3 100644
          }
          renderTableColumns(columns) {
              const children = columns.map(x => this.h({ tagName: "col", style: { width: x.width } }));
-@@ -3842,7 +4004,7 @@ section.${c}>footer { z-index: 1; }
+@@ -3842,7 +4014,7 @@ section.${c}>footer { z-index: 1; }
              return this.toHTML(elem, ns.mathML, "mtable", children);
          }
          toH(elem, ns, tagName, children = null) {
@@ -406,7 +425,7 @@ index 9abd132..35765a3 100644
              return { ns, tagName, className, lang, style, children: children ?? this.renderElements(elem.children) };
          }
 diff --git a/node_modules/docx-preview/dist/docx-preview.mjs b/node_modules/docx-preview/dist/docx-preview.mjs
-index 68d59f2..2649bde 100644
+index 68d59f2..67064ab 100644
 --- a/node_modules/docx-preview/dist/docx-preview.mjs
 +++ b/node_modules/docx-preview/dist/docx-preview.mjs
 @@ -1582,6 +1582,12 @@ class DocumentParser {
@@ -671,9 +690,9 @@ index 68d59f2..2649bde 100644
          for (let style of styles) {
              style.cssName = this.processStyleName(style.id);
 +            // OOXML conditional precedence must not depend on styles.xml order.
-+            const order = { wholeTable: 0, band1Vert: 1, band2Vert: 1,
-+                band1Horz: 2, band2Horz: 2, firstRow: 3, lastRow: 3,
-+                firstCol: 4, lastCol: 4, nwCell: 5, neCell: 5, swCell: 5, seCell: 5 };
++            const order = { wholeTable: 0, band1Horz: 1, band2Horz: 1,
++                band1Vert: 2, band2Vert: 2, firstCol: 3, lastCol: 3,
++                firstRow: 4, lastRow: 4, nwCell: 5, neCell: 5, swCell: 5, seCell: 5 };
 +            if (style.target === "table")
 +                style.styles.sort((a, b) => (order[a.tableCondition] ?? -1) - (order[b.tableCondition] ?? -1));
          }
@@ -688,7 +707,18 @@ index 68d59f2..2649bde 100644
                      "padding-left", "padding-right", "padding-top", "padding-bottom"
                  ]);
                  this.processElement(c);
-@@ -3373,10 +3444,23 @@ section.${c}>footer { z-index: 1; }
+@@ -3362,7 +3433,9 @@ section.${c}>footer { z-index: 1; }
+         var styleText = "";
+         const stylesMap = this.styleMap;
+         const defautStyles = keyBy(styles.filter(s => s.isDefault), s => s.target);
+-        for (const style of styles) {
++        // Equal-specificity named styles follow the Word formatting hierarchy.
++        const rank = { table: 1, p: 2, span: 3 };
++        for (const style of [...styles].sort((a, b) => (rank[a.target] ?? 0) - (rank[b.target] ?? 0))) {
+             var subStyles = style.styles;
+             if (style.linked) {
+                 var linkedStyle = style.linked && stylesMap[style.linked];
+@@ -3373,10 +3446,28 @@ section.${c}>footer { z-index: 1; }
              }
              for (const subStyle of subStyles) {
                  var selector = `${style.target ?? ''}.${style.cssName}`;
@@ -705,18 +735,23 @@ index 68d59f2..2649bde 100644
 +                    if (!target.startsWith("tr")) target = "tr > " + target;
 +                    target = target.replace(/(td(?:\.[\w-]+)?) p/g, "$1 > p")
 +                        .replace(/(td(?:\.[\w-]+)?) span/g, "$1 > p span");
-+                    selector += `${subStyle.mod ?? ""} > ${target}`;
++                    // Region classes select cells without changing conditional precedence.
++                    target = target.replace(/td(?:\.[\w-]+)?/g, ":where($&)");
++                    selector += `${subStyle.mod ? `:where(${subStyle.mod})` : ""} > ${target}`;
 +                }
 +                else {
++                    // Explicit paragraph/character styles outrank table defaults; character
++                    // styles follow paragraph styles even when styles.xml lists them first.
++                    if (style.target) selector = `.${this.className} :where(${style.target}).${style.cssName}`;
 +                    if (style.target != subStyle.target)
-+                        selector += ` ${subStyle.target}`;
++                        selector += style.target ? ` :where(${subStyle.target})` : ` ${subStyle.target}`;
 +                    if (defautStyles[style.target] == style)
 +                        selector = `.${this.className} ${style.target}, ` + selector;
 +                }
                  styleText += this.styleToString(selector, subStyle.values);
              }
          }
-@@ -3686,7 +3770,85 @@ section.${c}>footer { z-index: 1; }
+@@ -3686,7 +3777,88 @@ section.${c}>footer { z-index: 1; }
          children.push(...this.renderElements(elem.children));
          this.currentVerticalMerge = this.tableVerticalMerges.pop();
          this.currentCellPosition = this.tableCellPositions.pop();
@@ -740,21 +775,24 @@ index 68d59f2..2649bde 100644
 +            ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
 +        const firstRow = table.classList.contains("first-row") ? 1 : 0;
 +        const firstCol = table.classList.contains("first-col") ? 1 : 0;
-+        const rowBandSize = Math.max(1, model.rowBandSize ?? style?.rowBandSize ?? 1);
-+        const colBandSize = Math.max(1, model.colBandSize ?? style?.colBandSize ?? 1);
++        const rowBandSize = model.rowBandSize ?? style?.rowBandSize ?? 1;
++        const colBandSize = model.colBandSize ?? style?.colBandSize ?? 1;
++        // Zero disables banding, including explicit cnfStyle band hints.
++        if (rowBandSize === 0) table.classList.add("no-hband");
++        if (colBandSize === 0) table.classList.add("no-vband");
 +        rows.forEach((row, r) => {
 +            const rowModel = model.children[r];
-+            const odd = Math.floor(Math.max(0, r - firstRow) / rowBandSize) % 2 === 0;
++            const odd = rowBandSize > 0 && Math.floor(Math.max(0, r - firstRow) / rowBandSize) % 2 === 0;
 +            const rowFlags = { "first-row": r === 0, "last-row": r === rows.length - 1,
-+                "odd-row": odd, "even-row": !odd, ...rowModel?.cnfStyle };
++                "odd-row": odd, "even-row": rowBandSize > 0 && !odd, ...rowModel?.cnfStyle };
 +            for (const [name, value] of Object.entries(rowFlags)) row.classList.toggle(name, value);
 +            let c = 0; // Placeholder cells already account for gridBefore.
 +            Array.from(row.cells).forEach((cell, index) => {
 +                const cellModel = rowModel?.children[index - (rowModel.gridBefore ? 1 : 0)];
 +                const last = c + cell.colSpan === columns;
-+                const oddCol = Math.floor(Math.max(0, c - firstCol) / colBandSize) % 2 === 0;
++                const oddCol = colBandSize > 0 && Math.floor(Math.max(0, c - firstCol) / colBandSize) % 2 === 0;
 +                const flags = { ...rowFlags, "first-col": c === 0, "last-col": last,
-+                    "odd-col": oddCol, "even-col": !oddCol,
++                    "odd-col": oddCol, "even-col": colBandSize > 0 && !oddCol,
 +                    "nw-cell": r === 0 && c === 0, "ne-cell": r === 0 && last,
 +                    "sw-cell": r + cell.rowSpan === rows.length && c === 0,
 +                    "se-cell": r + cell.rowSpan === rows.length && last,
@@ -803,7 +841,7 @@ index 68d59f2..2649bde 100644
      }
      renderTableColumns(columns) {
          const children = columns.map(x => this.h({ tagName: "col", style: { width: x.width } }));
-@@ -3838,7 +4000,7 @@ section.${c}>footer { z-index: 1; }
+@@ -3838,7 +4010,7 @@ section.${c}>footer { z-index: 1; }
          return this.toHTML(elem, ns.mathML, "mtable", children);
      }
      toH(elem, ns, tagName, children = null) {
