@@ -951,6 +951,74 @@ describe('installPackages', () => {
     })
   })
 
+  it.each([
+    'unsupported request',
+    'bioconductor-gsva does not exist (perhaps a typo or a missing channel).'
+  ])('explains how to retry unavailable Windows Bioconductor packages: %s', async (problem) => {
+    // Replay the Windows GSVA dry-run response through the real bounded process
+    // capture used by production before invoking the public installer.
+    const solverFailure = await defaultSpawn(
+      process.execPath,
+      [
+        '-e',
+        `process.stdout.write(${JSON.stringify(JSON.stringify({ solver_problems: [problem], success: false }))}); process.exitCode = 1`
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+    const { spawn, calls } = scriptedSpawn([solverFailure, fail])
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr', 'bioconductor-gsva'] },
+      {
+        ...base,
+        spawn,
+        micromambaEnv: {
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows' },
+          selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+        }
+      }
+    )
+
+    expect(result.error).toContain('Bioconda does not support Windows')
+    expect(result.error).toContain('installer="biocmanager"')
+    expect(result.error).toContain('GSVA')
+    expect(result).toMatchObject({
+      ok: false,
+      needsRestart: false,
+      method: 'conda',
+      fallbackUsed: false,
+      attempts: [expect.objectContaining({ status: 'failed', mutationRisk: 'none' })]
+    })
+    expect(result.log).toContain(problem)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('keeps Windows Bioconductor permission failures separate from installer guidance', async () => {
+    const { spawn, calls } = scriptedSpawn([
+      { code: 1, stdout: JSON.stringify({ error: 'Access denied', success: false }), stderr: '' }
+    ])
+    const result = await installPackages(
+      { language: 'r', packages: ['bioconductor-gsva'] },
+      {
+        ...base,
+        spawn,
+        micromambaEnv: {
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows' },
+          selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+        }
+      }
+    )
+
+    expect(result).toMatchObject({ ok: false, error: 'conda install failed.', fallbackUsed: false })
+    expect(result.log).toContain('Access denied')
+    expect(result.attempts).toEqual([expect.objectContaining({ reason: 'permission' })])
+    expect(calls).toHaveLength(1)
+  })
+
   it.skipIf(!process.env.OPEN_SCIENCE_TEST_R_ENV).each([false, true])(
     'uses the configured CRAN mirror for mixed BiocManager installation (bootstrap: %s)',
     async (bootstrap) => {

@@ -2137,7 +2137,18 @@ export async function installPackages(
       ...classification,
       mutationRisk: 'none'
     })
-    if (!deps.requireConda && condaFallbackIsAuthorized(classification)) {
+    const solverProblems = parseStructuredCondaResult(preflight)?.solver_problems
+    // Bioconda IDs are not R package names. Do not pass a mixed request to CRAN or
+    // guess case-sensitive Bioconductor names when its Windows solve fails.
+    const bioconductorGuidance =
+      (deps.micromambaEnv?.platform ?? process.platform) === 'win32' &&
+      condaPkgs.some((pkg) => pkg.startsWith('bioconductor-')) &&
+      (condaFallbackIsAuthorized(classification) ||
+        (Array.isArray(solverProblems) && solverProblems.length > 0))
+        ? 'Bioconda does not support Windows. Retry the Bioconductor packages separately with ' +
+          'installer="biocmanager" and their case-sensitive R package names (for example, "GSVA").'
+        : undefined
+    if (!bioconductorGuidance && !deps.requireConda && condaFallbackIsAuthorized(classification)) {
       return cranFallback(preflight, condaAttempt)
     }
     return {
@@ -2149,7 +2160,7 @@ export async function installPackages(
       attempts: [condaAttempt],
       fallbackUsed: false,
       prefix,
-      error: condaFailureMessage('install', preflight)
+      error: bioconductorGuidance ?? condaFailureMessage('install', preflight)
     }
   }
 
