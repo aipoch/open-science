@@ -85,3 +85,34 @@ it('reports an unexpected service exit after readiness', async () => {
   expect(unexpected).toHaveBeenCalledOnce()
   await service.release()
 })
+
+it.each([true, false])(
+  'keeps the stdio lifetime lease open until tree termination settles (reaped: %s)',
+  async (reaped) => {
+    const child = createChild()
+    mocks.spawn.mockReturnValue(child)
+    let finish!: (result: { reaped: boolean }) => void
+    mocks.terminate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const pending = startOpenCodeService(backend, vi.fn())
+    await Promise.resolve()
+    child.stdout.write('{"url":"http://127.0.0.1:42876"}\n')
+    const service = await pending
+    const release = service.release()
+    try {
+      // An EOF can make serve exit before taskkill discovers its descendants.
+      expect(child.stdin.writableEnded).toBe(false)
+      expect(service.release()).toBe(release)
+      expect(mocks.terminate).toHaveBeenCalledExactlyOnceWith(child)
+    } finally {
+      finish({ reaped })
+      await release
+    }
+    expect(await release).toEqual({ reaped })
+    expect(child.stdin.writableEnded).toBe(true)
+  }
+)

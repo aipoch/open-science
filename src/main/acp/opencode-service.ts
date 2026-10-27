@@ -40,9 +40,9 @@ export const startOpenCodeService = async (
   const release = (): Promise<ProcessTreeKillResult> => {
     if (released) return released
     stopping = true
-    // stdin is a public lifetime lease. End it even on synchronous app shutdown.
-    child.stdin.end()
-    released ??= terminateProcessTree(child)
+    // Keep the leader alive until tree termination settles. Ending the stdio lifetime lease
+    // first lets serve exit before tree termination can discover and confirm its descendants.
+    released ??= terminateProcessTree(child).finally(() => child.stdin.end())
     return released
   }
   // Drain diagnostics without retaining config/provider secrets in a startup error.

@@ -316,9 +316,11 @@ it.runIf(executablePath)(
       )
     } finally {
       releaseModel?.()
+      const shutdown = owner.beginAwaitableShutdown(false)
       await owner.teardown(owner.epoch)
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))
+      expect(await shutdown.finish()).toEqual({ reaped: true })
       await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   },
