@@ -75,6 +75,80 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('worker result boundary', () => {
+  it('retains bounded unreliable mathematical origins on their own table', async () => {
+    const table = rawTable(),
+      origins = structuredClone(table.cells[0].sourceItems)
+    Object.assign(table, {
+      issues: ['native-table-structure-ambiguous'],
+      unreliableMathSourceItems: origins
+    })
+    await save({ ...raw(), figures: [], tables: [table] })
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].table).toMatchObject({ unreliableMathSourceItems: origins })
+    expect(result.elements[0].table!.cells[1].sourceItems).toEqual(table.cells[1].sourceItems)
+    expect(parsePdfStructureResult(result, identity)).toEqual(result)
+  })
+
+  it('keeps mathematical origins scoped to one grouped table part', async () => {
+    const first = rawTable(),
+      second = rawTable(),
+      origins = structuredClone(first.cells[0].sourceItems)
+    Object.assign(first, {
+      issues: ['native-table-structure-ambiguous'],
+      unreliableMathSourceItems: origins
+    })
+    for (const cell of second.cells) for (const item of cell.sourceItems) item.index += 100
+    const value = raw(),
+      candidate = (value.figures as Record<string, unknown>[])[0]
+    await save({
+      ...value,
+      figures: [],
+      tables: [
+        {
+          ...candidate,
+          parts: [
+            { ...first, title: 'First group' },
+            { ...second, title: 'Second group' }
+          ]
+        }
+      ]
+    })
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].table).toBeUndefined()
+    expect(result.elements[0].tableParts![0].table).toMatchObject({
+      unreliableMathSourceItems: origins
+    })
+    expect(result.elements[0].tableParts![1].table).not.toHaveProperty('unreliableMathSourceItems')
+  })
+
+  it.each([
+    'missing warning',
+    'foreign source',
+    'wrong literal',
+    'duplicate annotation',
+    'wrong page',
+    'shared cell owner',
+    'missing geometry',
+    'unordered annotation'
+  ])('rejects unreliable mathematical origins with %s', async (mode) => {
+    const table = rawTable(),
+      origins = structuredClone(table.cells[0].sourceItems)
+    Object.assign(table, {
+      issues: ['native-table-structure-ambiguous'],
+      unreliableMathSourceItems: origins
+    })
+    if (mode === 'missing warning') table.issues = []
+    if (mode === 'foreign source') origins[0].index = 99
+    if (mode === 'wrong literal') origins[0].text = 'different native text'
+    if (mode === 'duplicate annotation') origins.push({ ...origins[0] })
+    if (mode === 'wrong page') origins[0].pageNumber = 2
+    if (mode === 'shared cell owner') table.cells[1].sourceItems = structuredClone(origins)
+    if (mode === 'missing geometry') table.cells[0].sourceRects = []
+    if (mode === 'unordered annotation') origins.unshift(...table.cells[1].sourceItems)
+    await save({ ...raw(), figures: [], tables: [table] })
+    await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
+  })
+
   it.each(['math-table', 'algorithm'] as const)(
     'preserves independently proved %s body origins without inventing cells',
     async (kind) => {
@@ -350,6 +424,10 @@ describe('worker result boundary', () => {
   it('omits all origins before writing an oversized UTF-8 manifest', async () => {
     const table = rawTable()
     Object.assign(table.cells[0], { sourceTokens: [{ text: 'temporary token geometry' }] })
+    Object.assign(table, {
+      unreliableMathSourceItems: structuredClone(table.cells[0].sourceItems),
+      issues: ['native-table-structure-ambiguous']
+    })
     const value = { ...raw(), figures: [], tables: [table] }
     const small = serializeWorkerResult(value)
     expect(small).toContain('sourceItems')
@@ -363,6 +441,7 @@ describe('worker result boundary', () => {
     expect(Buffer.byteLength(text)).toBeLessThan(8 * 1024 ** 2)
     expect(text).not.toContain('sourceItems')
     expect(text).not.toContain('sourceTokens')
+    expect(text).not.toContain('unreliableMathSourceItems')
     await writeFile(join(root, 'structure.json'), text)
     expect(
       (await readWorkerResult(root, identity, new Map())).elements[0].table!.cells[0].text
