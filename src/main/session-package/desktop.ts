@@ -8,7 +8,7 @@ import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
@@ -64,6 +64,9 @@ export class SessionPackageDesktop {
     filePath: string
     selection?: PackageFileSelection
   }
+  // The sensitive-content retry in respond() never passes export options, so it inherits this
+  // remembered policy instead of falling back into the native save-dialog branch.
+  private stageDownloadForRetries = false
   private lastImportFile?: NativeImportFile
   private enqueueing: Promise<void> = Promise.resolve()
   private busy = false
@@ -428,6 +431,49 @@ export class SessionPackageDesktop {
     }
   }
 
+  // Local Web callers hand the returned path to the renderer for a browser download, so the
+  // archive lands in a shared temp directory instead of a native save dialog.
+  private async stageDownloadPath(title: string): Promise<string> {
+    const directory = join(tmpdir(), 'open-science-package-exports')
+    await mkdir(directory, { recursive: true })
+    await this.pruneStaleDownloads(directory)
+    const today = new Date()
+    const date = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0')
+    ].join('-')
+    const base = `${sanitizeExportFilename(title || 'Session', 220)}-${date}`
+    let candidate = join(directory, `${base}.science`)
+    // Concurrent downloads must not overwrite each other's staged file.
+    for (let suffix = 1; ; suffix++) {
+      const available = await stat(candidate).then(
+        () => false,
+        () => true
+      )
+      if (available) return candidate
+      candidate = join(directory, `${base}-${suffix}.science`)
+    }
+  }
+
+  // Staged downloads are ephemeral: drop anything a previous caller never claimed.
+  private async pruneStaleDownloads(directory: string): Promise<void> {
+    try {
+      const cutoff = Date.now() - 60 * 60 * 1000
+      for (const entry of await readdir(directory)) {
+        try {
+          const path = join(directory, entry)
+          const info = await stat(path)
+          if (info.isFile() && info.mtimeMs < cutoff) await rm(path, { force: true })
+        } catch {
+          // A racing download or unreadable entry must not block this export.
+        }
+      }
+    } catch {
+      // Best-effort cleanup: a missing or unreadable directory only delays pruning.
+    }
+  }
+
   private staged<T>(
     work: (directory: string) => Promise<T>,
     request?: SessionPackageRequest
@@ -649,9 +695,20 @@ export class SessionPackageDesktop {
   export(
     request: SessionPackageRequest,
     callerId?: string,
-    destinationPath?: string
+    destinationPath?: string,
+    options?: { stageDownload?: boolean }
   ): Promise<SessionPackageExportResult> {
-    return this.exportWithPolicy(request, callerId, false, destinationPath)
+    // Every top-level export resets the remembered policy; respond()'s sensitive-content retry
+    // passes no options and reuses this field instead of falling into the native dialog branch.
+    this.stageDownloadForRetries = options?.stageDownload ?? false
+    return this.exportWithPolicy(
+      request,
+      callerId,
+      false,
+      destinationPath,
+      undefined,
+      options?.stageDownload ?? false
+    )
   }
 
   private exportWithPolicy(
@@ -659,8 +716,10 @@ export class SessionPackageDesktop {
     callerId?: string,
     allowSensitiveContent = false,
     destinationPath?: string,
-    selection?: PackageFileSelection
+    selection?: PackageFileSelection,
+    stageDownload?: boolean
   ): Promise<SessionPackageExportResult> {
+    const stage = stageDownload ?? this.stageDownloadForRetries
     let operationSignal: AbortSignal | undefined
     return this.operations
       .run('export', request, async (signal) => {
@@ -696,6 +755,19 @@ export class SessionPackageDesktop {
                               budgetSignal,
                               summary
                             )
+                            if (stage) {
+                              // Local Web callers download the staged archive from the renderer;
+                              // a headless host has no native dialog to ask for a destination.
+                              signal.throwIfAborted()
+                              filePath = await this.stageDownloadPath(title)
+                              this.lastExport = {
+                                operationId: this.operations.snapshot!.id,
+                                filePath: filePath!,
+                                selection: excluded
+                              }
+                              this.operations.report({ phase: 'preparing' })
+                              return excluded
+                            }
                             this.operations.report({ phase: 'choosing-location' })
                             signal.throwIfAborted()
                             const today = new Date()

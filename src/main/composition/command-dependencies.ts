@@ -275,7 +275,12 @@ export function composeCommandDependencies({
           sessionPackageSurfaces.sessionPackageDesktop.export(
             invocation.args[0],
             invocation.callerContext.clientId,
-            invocation.args[1]
+            invocation.args[1],
+            // Local Web callers download the staged path from the renderer; CLI callers always
+            // pass an explicit destination and Electron keeps the native save dialog.
+            invocation.callerContext.surface === 'web' && invocation.args[1] === undefined
+              ? { stageDownload: true }
+              : undefined
           ),
         importSessionPackage: (invocation) =>
           sessionPackageSurfaces.sessionPackageDesktop.import(

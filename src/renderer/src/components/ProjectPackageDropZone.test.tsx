@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ProjectPackageDropZone } from './ProjectPackageDropZone'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { createPortal } from 'react-dom'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -29,6 +30,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+  document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
 })
 const drop = (target: Element, names: string[]): void => {
   fireEvent.drop(target, {
@@ -256,8 +258,9 @@ it('ignores portal drops outside the Project DOM', () => {
   drop(screen.getByTestId('modal'), ['study.science'])
   expect(importPackage).not.toHaveBeenCalled()
 })
-it('does not advertise desktop import in Web', () => {
+it('does not advertise desktop import on remote Web', () => {
   document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
   mount()
   fireEvent.dragEnter(screen.getByTestId('composer'), { dataTransfer: { types: ['Files'] } })
   expect(screen.getByText('Drop files to attach')).toBeTruthy()
@@ -376,8 +379,9 @@ it.each(['blur', 'dragend', 'drop'])('clears the destination-free overlay on %s'
   expect(screen.queryByText('Drop a .science file to import')).toBeNull()
 })
 
-it('does not enable destination-free desktop import on Web', () => {
+it('does not enable destination-free desktop import on remote Web', () => {
   document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
   render(<ProjectPackageDropZone canImport data-testid="home" />)
   const home = screen.getByTestId('home')
   const dataTransfer = { types: ['Files'], dropEffect: 'copy' }
@@ -387,6 +391,63 @@ it('does not enable destination-free desktop import on Web', () => {
   expect(screen.queryByText('Drop a .science file to import')).toBeNull()
   drop(home, ['research.science'])
   expect(importPackage).not.toHaveBeenCalled()
+})
+
+it('advertises and routes package import on local Web through chunk staging', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  const beginTransfer = vi.fn(async () => ({
+    transferId: 'transfer',
+    name: 'study.science',
+    receivedBytes: 0,
+    totalBytes: 7
+  }))
+  const appendTransfer = vi.fn(async (request: { offset: number; chunk: Uint8Array }) => ({
+    transferId: 'transfer',
+    name: 'study.science',
+    receivedBytes: request.offset + request.chunk.byteLength,
+    totalBytes: 7
+  }))
+  const deleteUpload = vi.fn(async () => {})
+  const webImportPackage = vi.fn(async () => ({
+    imported: { projectId: 'target', sessionId: 'imported' }
+  }))
+  vi.stubGlobal('api', {
+    sessions: { importPackage: webImportPackage, packageOperation: vi.fn(async () => null) },
+    uploads: {
+      beginTransfer,
+      appendTransfer,
+      getTransferStatus: vi.fn(async () => null),
+      finishTransfer: vi.fn(async () => ({ path: '/uploads/study.science' })),
+      abortTransfer: vi.fn(async () => {}),
+      deleteUpload
+    },
+    projects: { list: vi.fn(async () => []) }
+  })
+  mount()
+  fireEvent.dragEnter(screen.getByTestId('composer'), { dataTransfer: { types: ['Files'] } })
+  expect(screen.getByText('Drop files to attach or import a .science package')).toBeTruthy()
+  drop(screen.getByTestId('composer'), ['study.science'])
+  await vi.waitFor(() =>
+    expect(webImportPackage).toHaveBeenCalledExactlyOnceWith(
+      { projectId: 'target' },
+      '/uploads/study.science'
+    )
+  )
+  expect(beginTransfer).toHaveBeenCalledOnce()
+  expect(deleteUpload).toHaveBeenCalledWith({ path: '/uploads/study.science' })
+})
+
+it('enables destination-free import on local Web', () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  render(<ProjectPackageDropZone canImport data-testid="home" />)
+  const home = screen.getByTestId('home')
+  const dataTransfer = { types: ['Files'], dropEffect: 'copy' as const }
+  fireEvent.dragEnter(home, { dataTransfer })
+  fireEvent.dragOver(home, { dataTransfer })
+  expect(dataTransfer.dropEffect).toBe('copy')
+  expect(screen.getByText('Drop a .science file to import')).toBeTruthy()
 })
 
 it('keeps an explicitly empty Project target unavailable', () => {
