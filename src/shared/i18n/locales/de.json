@@ -186,6 +186,8 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
+    "Read the security policy and report vulnerabilities.": "Sicherheitsrichtlinie lesen und Schwachstellen melden.",
+    "Security": "Sicherheit",
     "{{count}} steps remaining_one": "Noch {{count}} Schritt",
     "{{count}} steps remaining_other": "Noch {{count}} Schritte",
     "Input help": "Eingabehilfe",

@@ -185,6 +185,8 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
+    "Read the security policy and report vulnerabilities.": "查看安全政策并报告漏洞。",
+    "Security": "安全",
     "{{count}} steps remaining_other": "剩余 {{count}} 步",
     "Input help": "输入帮助",
     "Your changes have not been saved. Discard them and leave the editor?": "更改尚未保存。要放弃更改并离开编辑器吗？",

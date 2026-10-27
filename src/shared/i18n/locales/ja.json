@@ -185,6 +185,8 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "Read the security policy and report vulnerabilities.": "セキュリティポリシーの確認と脆弱性の報告。",
+    "Security": "セキュリティ",
     "{{count}} steps remaining_other": "残り{{count}}ステップ",
     "Input help": "入力ヘルプ",
     "Your changes have not been saved. Discard them and leave the editor?": "変更は保存されていません。破棄してエディターを離れますか？",

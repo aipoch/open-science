@@ -187,6 +187,8 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
+    "Read the security policy and report vulnerabilities.": "Consulter la politique de sécurité et signaler des vulnérabilités.",
+    "Security": "Sécurité",
     "{{count}} steps remaining_one": "{{count}} étape restante",
     "{{count}} steps remaining_many": "{{count}} étapes restantes",
     "{{count}} steps remaining_other": "{{count}} étapes restantes",

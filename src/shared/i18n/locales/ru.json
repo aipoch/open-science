@@ -188,6 +188,8 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "Read the security policy and report vulnerabilities.": "Ознакомьтесь с политикой безопасности и сообщите об уязвимостях.",
+    "Security": "Безопасность",
     "{{count}} steps remaining_one": "Остался {{count}} шаг",
     "{{count}} steps remaining_few": "Осталось {{count}} шага",
     "{{count}} steps remaining_many": "Осталось {{count}} шагов",
