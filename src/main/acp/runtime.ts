@@ -1424,7 +1424,8 @@ class AcpRuntime {
         prepareBackend: (backend) => this.backendGeneration.prepare(identity, backend),
         isCurrent: () => identity.epoch === this.connectionGeneration,
         isShuttingDown: () => this.connectionResources.isShuttingDown,
-        ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {})
+        ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {}),
+        ...(this.options.spawnProcess ? { spawnProcess: this.options.spawnProcess } : {})
       },
       hooks
     )

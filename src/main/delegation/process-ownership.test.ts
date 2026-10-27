@@ -38,6 +38,68 @@ const setup = async (): Promise<DelegatedProcessOwnership> => {
 }
 
 describe('durable delegated process ownership', () => {
+  it('recovers a runtime process group without admitting another owner or stopping a sibling Attempt', async () => {
+    const owner = await setup()
+    const launch = owner.createProcessSpawner(scope)
+    const args = ['-e', 'process.stdin.resume();setInterval(()=>{},1000)']
+    const options = { stdio: 'pipe' as const, env: process.env }
+    const first = launch(process.execPath, args, options)
+    const second = launch(process.execPath, args, options)
+    const siblingScope = { ...scope, attemptId: 'sibling-attempt' }
+    const sibling = owner.spawn(siblingScope, process.execPath, args, options)
+    children.push(first, second, sibling)
+    expect(owner.receipts(scope)).toHaveLength(2)
+    expect(() => owner.spawn(scope, process.execPath, args, options)).toThrow(
+      'cleanup is unconfirmed'
+    )
+    expect(() => owner.createProcessSpawner(scope)(process.execPath, args, options)).toThrow(
+      'cleanup is unconfirmed'
+    )
+    expect(() =>
+      new DelegatedProcessOwnership(directory!).createProcessSpawner(scope)(
+        process.execPath,
+        args,
+        options
+      )
+    ).toThrow('cleanup is unconfirmed')
+    await owner.recover(scope, true)
+    await expect
+      .poll(() =>
+        [first, second].every((child) => child.exitCode !== null || child.signalCode !== null)
+      )
+      .toBe(true)
+    expect(owner.receipts(scope)).toEqual([])
+    expect(sibling.exitCode).toBeNull()
+    expect(sibling.signalCode).toBeNull()
+    expect(owner.receipts(siblingScope)).toHaveLength(1)
+  })
+
+  it('refuses another runtime process while recovery or cleanup debt is pending', async () => {
+    const owner = await setup()
+    const launch = owner.createProcessSpawner(scope)
+    const args = ['-e', 'process.stdin.resume();setInterval(()=>{},1000)']
+    const options = { stdio: 'pipe' as const, env: process.env }
+    children.push(launch(process.execPath, args, options))
+    const reap = Promise.withResolvers<{ reaped: boolean }>()
+    const terminate = vi
+      .spyOn(processTree, 'terminateProcessTree')
+      .mockReturnValueOnce(reap.promise)
+    const recovering = owner.recover(scope, true)
+    const rejection = expect(recovering).rejects.toThrow('recovery is incomplete')
+    try {
+      expect(() => launch(process.execPath, args, options)).toThrow('cleanup is unconfirmed')
+      reap.resolve({ reaped: false })
+      await rejection
+      owner.recordFailure(scope)
+      expect(() => launch(process.execPath, args, options)).toThrow('cleanup is unconfirmed')
+      expect(() => owner.assertClear(scope)).toThrow('cleanup is unconfirmed')
+    } finally {
+      reap.resolve({ reaped: false })
+      await recovering.catch(() => undefined)
+      terminate.mockRestore()
+    }
+  })
+
   it.each(['deleteSession', 'deleteProject', 'prepare'] as const)(
     'preserves real files after reconstruction before %s',
     async (operation) => {

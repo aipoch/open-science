@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
 import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
 import { spawnOpenCodeProcess } from '../agent-framework/opencode'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { AgentProcessSpawner, ResolvedAgentBackend } from '../agent-framework'
 import { spawnMainAgentProcess } from './main-agent-process-ownership'
 
 export class OpenCodeServiceCleanupError extends Error {}
@@ -15,12 +15,13 @@ export type OpenCodeServiceLease = Readonly<{
 // and reads context from the same isolated store; it must never become a second prompt runner.
 export const startOpenCodeService = async (
   backend: ResolvedAgentBackend,
-  onUnexpectedExit: () => void
+  onUnexpectedExit: () => void,
+  spawnProcess?: AgentProcessSpawner
 ): Promise<
   OpenCodeServiceLease & { api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']> }
 > => {
   const password = randomUUID()
-  const child = await spawnMainAgentProcess(backend.framework.id, (spawnProcess) =>
+  const start = (spawnProcess: AgentProcessSpawner | undefined) =>
     spawnOpenCodeProcess(
       {
         executablePath: backend.executablePath,
@@ -31,7 +32,9 @@ export const startOpenCodeService = async (
       },
       'serve'
     )
-  )
+  const child = spawnProcess
+    ? start(spawnProcess)
+    : await spawnMainAgentProcess(backend.framework.id, start)
   let stopping = false
   let released: Promise<ProcessTreeKillResult> | undefined
   const release = (): Promise<ProcessTreeKillResult> => {

@@ -17,7 +17,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 
-import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import type { AgentFramework, AgentProcessSpawner, ResolvedAgentBackend } from '../agent-framework'
 import {
   startOpenCodeService,
   OpenCodeServiceCleanupError,
@@ -96,6 +96,7 @@ type AcpAgentConnectionCandidateInput = Readonly<{
   isCurrent: () => boolean
   isShuttingDown: () => boolean
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  spawnProcess?: AgentProcessSpawner
 }>
 
 type AcpTransferredAgentConnection = Readonly<{
@@ -208,13 +209,17 @@ class AcpAgentConnectionAdapter {
       }
       let serviceExited = false
       if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 2) {
-        const service = await startOpenCodeService(backend, () => {
-          serviceExited = true
-          if (process && input.isCurrent()) {
-            process.emit('error', new Error('OpenCode HTTP service exited unexpectedly.'))
-            process.kill()
-          }
-        })
+        const service = await startOpenCodeService(
+          backend,
+          () => {
+            serviceExited = true
+            if (process && input.isCurrent()) {
+              process.emit('error', new Error('OpenCode HTTP service exited unexpectedly.'))
+              process.kill()
+            }
+          },
+          input.spawnProcess
+        )
         openCodeService = service
         backend = { ...backend, opencodeUsageApi: service.api }
       }
@@ -223,6 +228,7 @@ class AcpAgentConnectionAdapter {
       if (serviceExited) throw new Error('OpenCode HTTP service exited during preparation.')
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
+      if (serviceExited) throw new Error('OpenCode HTTP service exited during preparation.')
       process = input.spawnAgent
         ? input.spawnAgent()
         : await spawnMainAgentProcess(framework, (spawnProcess) =>
@@ -235,6 +241,7 @@ class AcpAgentConnectionAdapter {
             })
           )
       hooks.onProcessSpawned(framework)
+      if (serviceExited) throw new Error('OpenCode HTTP service exited during spawn.')
       if (input.isShuttingDown() || !input.isCurrent()) {
         throw new Error(
           input.isShuttingDown()

@@ -445,6 +445,13 @@ const createProductionDelegatedFrameworkRuntime = (
         if (!owned) throw new Error('Delegated runtime scope is unavailable.')
         let initialProcess = agentProcess
         const backend = withDelegatedChildContext(owned.backend)
+        const spawnProcess = ownership.createProcessSpawner({
+          projectId: scope.provenance.projectId,
+          sessionId: scope.provenance.sessionId,
+          frameId: scope.provenance.agentFrameId,
+          attemptId: scope.executionId,
+          frameworkId
+        })
         const spawnOwned = (): ChildProcessWithoutNullStreams => {
           if (initialProcess) {
             const process = initialProcess
@@ -458,19 +465,7 @@ const createProductionDelegatedFrameworkRuntime = (
               env: backend.env,
               proxyEnvironmentMode: backend.proxyEnvironmentMode
             }),
-            spawnProcess: (command, args, spawnOptions) =>
-              ownership.spawn(
-                {
-                  projectId: scope.provenance.projectId,
-                  sessionId: scope.provenance.sessionId,
-                  frameId: scope.provenance.agentFrameId,
-                  attemptId: scope.executionId,
-                  frameworkId
-                },
-                command,
-                args,
-                spawnOptions
-              )
+            spawnProcess
           })
         }
         return createAcpRuntime({
@@ -488,7 +483,8 @@ const createProductionDelegatedFrameworkRuntime = (
           ...(scope.artifactCurrentRunFile
             ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
             : {}),
-          spawnAgent: spawnOwned
+          spawnAgent: spawnOwned,
+          spawnProcess
         })
       }
 

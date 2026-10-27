@@ -456,23 +456,60 @@ export class DelegatedProcessOwnership {
     }
   }
 
+  // A runtime may own an ACP process plus companions. Only this capability's live children
+  // may coexist; historical, recovering or cleanup-pending evidence still blocks admission.
+  createProcessSpawner(scope: ProcessScope): AgentProcessSpawner {
+    const siblings = new Set<ChildProcessWithoutNullStreams>()
+    return (command, args, options) => {
+      const child = this.spawnOwned(scope, command, args, options, siblings)
+      siblings.add(child)
+      return child
+    }
+  }
+
   spawn(
     scope: ProcessScope,
     command: string,
     args: readonly string[],
     options: Parameters<AgentProcessSpawner>[2]
   ): ChildProcessWithoutNullStreams {
+    return this.spawnOwned(scope, command, args, options)
+  }
+
+  private spawnOwned(
+    scope: ProcessScope,
+    command: string,
+    args: readonly string[],
+    options: Parameters<AgentProcessSpawner>[2],
+    siblings?: ReadonlySet<ChildProcessWithoutNullStreams>
+  ): ChildProcessWithoutNullStreams {
     if ([...this.gates].some((gate) => matches({ ...scope } as Receipt, gate.scope))) {
       throw new DelegateExecutionCleanupError(
         'Delegated workspace lifecycle operation is in progress.'
       )
     }
-    this.assertClear({
+    const pending = this.receipts({
       projectId: scope.projectId,
       sessionId: scope.sessionId,
       frameId: scope.frameId,
       attemptId: scope.attemptId
     })
+    if (
+      pending.some((receipt) => {
+        const child = this.live.get(receipt.receiptId)
+        return (
+          receipt.phase !== 'owned' ||
+          this.reconciling.has(receipt.receiptId) ||
+          !child ||
+          !siblings?.has(child) ||
+          child.exitCode !== null ||
+          child.signalCode !== null
+        )
+      })
+    )
+      throw new DelegateExecutionCleanupError(
+        'Delegated process cleanup is unconfirmed; its workspace remains protected.'
+      )
     const receipt: Receipt = {
       ...scope,
       version: 1,

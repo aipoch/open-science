@@ -133,6 +133,65 @@ const openCandidate = async (
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it.each(['preparation', 'spawn'] as const)(
+    'does not publish when the companion exits during %s',
+    async (phase) => {
+      const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-exit-'))
+      let exitService!: () => void
+      const release = vi.fn(async () => ({ reaped: true }))
+      startService.mockImplementationOnce(async (_backend, onExit) => {
+        exitService = onExit
+        return {
+          api: { baseUrl: 'http://127.0.0.1:4242', authorization: 'Basic test', version: 2 },
+          release
+        }
+      })
+      const child = new FakeAgentProcess()
+      const connectionHooks = hooks()
+      const spawn = vi.fn(() => {
+        if (phase === 'spawn') queueMicrotask(() => exitService())
+        return asAgentProcess(child)
+      })
+      const backendOwner = new AcpBackendGenerationOwner(opencodeFramework)
+      let candidate: AcpAgentConnectionCandidate | undefined
+      const pending = new AcpAgentConnectionAdapter()
+        .open(
+          {
+            epoch: 1,
+            resolveBackend: async () => ({
+              framework: { ...opencodeFramework, spawn },
+              executablePath: '/opencode',
+              env: { XDG_DATA_HOME: root },
+              opencodeMajorVersion: 2
+            }),
+            prepareBackend: (backend) => {
+              if (phase === 'preparation') exitService()
+              return backendOwner.prepare({ epoch: 1, assertCurrent: vi.fn() }, backend)
+            },
+            isCurrent: () => true,
+            isShuttingDown: () => false
+          },
+          connectionHooks
+        )
+        .then((value) => {
+          candidate = value
+          return value
+        })
+      try {
+        await expect(pending).rejects.toThrow('OpenCode HTTP service exited')
+        expect(connectionHooks.onBackendPublished).not.toHaveBeenCalled()
+        expect(release).toHaveBeenCalledOnce()
+        if (phase === 'spawn') expect(child.killed).toBe(true)
+        else expect(spawn).not.toHaveBeenCalled()
+        const lock = acquireRuntimeDirectorySync(join(root, 'opencode'))
+        lock.release()
+      } finally {
+        await candidate?.dispose()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each(['shutdown', 'supersession'] as const)(
     'reaps a late companion before releasing storage after %s during startup',
     async (interruption) => {

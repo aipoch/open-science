@@ -221,6 +221,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedRuntimeHome?: string
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  spawnProcess?: AcpRuntimeOptions['spawnProcess']
   hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
@@ -304,6 +305,7 @@ const createAcpRuntime = ({
   delegatedRuntimeHome,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
+  spawnProcess,
   sideChatRelays,
   hasPendingCredentialRequest,
   imageInputCompatibility,
@@ -483,6 +485,7 @@ const createAcpRuntime = ({
               )
             : settingsService.resolveAgentBackend(await selection!, context)),
         ...(spawnAgent ? { spawnAgent } : {}),
+        ...(spawnProcess ? { spawnProcess } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
         wslSetupSessions,
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
