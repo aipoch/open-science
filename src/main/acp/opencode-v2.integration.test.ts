@@ -214,7 +214,9 @@ it.runIf(executablePath)(
               env: {
                 ...config.env,
                 OPENCODE_DISABLE_MODELS_FETCH: 'true',
-                OPENCODE_DISABLE_AUTOUPDATE: 'true'
+                OPENCODE_DISABLE_AUTOUPDATE: 'true',
+                OPENCODE_SERVER_USERNAME: 'legacy-user',
+                OPENCODE_SERVER_PASSWORD: 'legacy-password'
               },
               args: [],
               opencodeMajorVersion: 2
@@ -247,6 +249,23 @@ it.runIf(executablePath)(
           prompt: [{ type: 'text', text }]
         })
       const session = await start()
+      const contextUrl = `${api.baseUrl}/api/session/${session.sessionId}/context`
+      for (const authorization of [
+        undefined,
+        `Basic ${Buffer.from('opencode:wrong-password').toString('base64')}`,
+        `Basic ${Buffer.from('legacy-user:legacy-password').toString('base64')}`
+      ]) {
+        const response = await fetch(contextUrl, {
+          headers: authorization ? { authorization } : {}
+        })
+        expect(response.status).toBe(401)
+        await response.text()
+      }
+      const authenticated = await fetch(contextUrl, {
+        headers: { authorization: api.authorization }
+      })
+      expect(authenticated.status).toBe(200)
+      await authenticated.json()
       const adapter = new AcpOpenCodeTurnAdapter((id, cwd) =>
         fetchOpenCodeUsageSnapshot(api, id, cwd)
       )
