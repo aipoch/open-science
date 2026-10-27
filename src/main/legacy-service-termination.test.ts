@@ -33,7 +33,8 @@ function setup(overrides: Partial<LegacyTerminationDeps> = {}): {
     options: { configRoot, generation: 'g', pid: 424242 },
     signal,
     deps: {
-      inspect: async () => ({ commandLine: RUNTIME, parentPid: 1 }),
+      inspect: async () => ({ birthToken: 'test-birth', commandLine: RUNTIME, parentPid: 1 }),
+      proveOwner: async () => true,
       isAlive: () => alive,
       signal,
       selfPid: 99,
@@ -72,29 +73,44 @@ describe('verified legacy runtime termination', () => {
   describe('Electron-hosted service', () => {
     it('waits 15 seconds for the graceful close and then force-stops after re-verifying', async () => {
       const { options, deps, signal } = setup({
-        inspect: async () => ({ commandLine: DESKTOP, parentPid: 1 })
+        inspect: async () => ({ birthToken: 'test-birth', commandLine: DESKTOP, parentPid: 1 })
       })
       await terminateVerifiedLegacyRuntime({ ...options, kind: 'electron' }, deps)
       expect(signal.mock.calls.map(([, mode]) => mode)).toEqual(['terminate', 'kill'])
     })
     it.each<[string, Partial<LegacyTerminationDeps>]>([
-      ['a Node runtime', { inspect: async () => ({ commandLine: RUNTIME, parentPid: 1 }) }],
+      [
+        'a Node runtime',
+        { inspect: async () => ({ birthToken: 'test-birth', commandLine: RUNTIME, parentPid: 1 }) }
+      ],
       [
         'a helper process',
-        { inspect: async () => ({ commandLine: `${DESKTOP} --type=gpu-process`, parentPid: 1 }) }
+        {
+          inspect: async () => ({
+            birthToken: 'test-birth',
+            commandLine: `${DESKTOP} --type=gpu-process`,
+            parentPid: 1
+          })
+        }
       ],
       [
         'this Desktop under its own path',
-        { selfPid: 424242, inspect: async () => ({ commandLine: DESKTOP, parentPid: 1 }) }
+        {
+          selfPid: 424242,
+          inspect: async () => ({ birthToken: 'test-birth', commandLine: DESKTOP, parentPid: 1 })
+        }
       ],
       [
         'a child of this Desktop',
-        { selfPid: 7, inspect: async () => ({ commandLine: DESKTOP, parentPid: 7 }) }
+        {
+          selfPid: 7,
+          inspect: async () => ({ birthToken: 'test-birth', commandLine: DESKTOP, parentPid: 7 })
+        }
       ],
       [
         'an unlocked directory',
         {
-          inspect: async () => ({ commandLine: DESKTOP, parentPid: 1 }),
+          inspect: async () => ({ birthToken: 'test-birth', commandLine: DESKTOP, parentPid: 1 }),
           lockHeld: () => false,
           isAlive: () => true
         }
@@ -122,13 +138,19 @@ describe('verified legacy runtime termination', () => {
     expect(signal.mock.calls.map(([, mode]) => mode)).toEqual(['terminate'])
   })
   it.each<[string, Partial<LegacyTerminationDeps>]>([
-    ['another program', { inspect: async () => ({ commandLine: '/usr/bin/node other.js' }) }],
+    [
+      'another program',
+      { inspect: async () => ({ birthToken: 'test-birth', commandLine: '/usr/bin/node other.js' }) }
+    ],
     ['unreadable process', { inspect: async () => undefined }],
     ['no runtime lock held', { lockHeld: () => false, isAlive: () => true }],
     ['this Desktop', { selfPid: 424242 }],
     [
       'a child of this Desktop',
-      { selfPid: 7, inspect: async () => ({ commandLine: RUNTIME, parentPid: 7 }) }
+      {
+        selfPid: 7,
+        inspect: async () => ({ birthToken: 'test-birth', commandLine: RUNTIME, parentPid: 7 })
+      }
     ]
   ])('never signals %s', async (_name, override) => {
     const { options, deps, signal } = setup(override)

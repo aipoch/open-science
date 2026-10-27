@@ -37,7 +37,7 @@ export class RuntimeStopError extends Error {
   ) {
     super(
       code === 'runtime-stop-timeout'
-        ? 'Runtime shutdown could not be confirmed within 15 seconds.'
+        ? 'Runtime shutdown could not be confirmed within the stop deadline.'
         : 'Runtime did not leave a matching clean exit record.'
     )
   }
@@ -50,6 +50,20 @@ export async function writeRuntimeExit(
   const temp = `${path}.${randomUUID()}.tmp`
   await writeFile(temp, JSON.stringify(exitSchema.parse(record)), { mode: 0o600, flag: 'wx' })
   await rename(temp, path)
+}
+export async function readRuntimeExitOutcome(
+  configRoot: string,
+  generation: string,
+  pid: number
+): Promise<'clean' | 'failed' | 'unknown'> {
+  try {
+    const record = exitSchema.parse(
+      JSON.parse(await readFile(join(configRoot, 'runtime-exit.json'), 'utf8'))
+    )
+    return record.generation === generation && record.pid === pid ? record.outcome : 'unknown'
+  } catch {
+    return 'unknown'
+  }
 }
 export async function waitForRuntimeStopped(options: {
   configRoot: string

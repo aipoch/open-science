@@ -50,6 +50,7 @@ type CommandDeps = {
   now: Mock
   log: Mock
   warn: Mock
+  verifyServiceConfigRoot: Mock
 }
 
 // Builds an injectable deps bag over the command functions, with sensible "healthy running daemon"
@@ -64,7 +65,12 @@ const makeDeps = (overrides: Partial<CommandDeps> = {}): CommandDeps => {
     // delegates a persisted PID to the old external process-tree kill path.
     forceKill: vi.fn(),
     removeState: vi.fn().mockResolvedValue(undefined),
-    fetch: vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }),
+    fetch: vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ configRoot: RUNNING_STATE.configRoot }),
+      arrayBuffer: async () => new ArrayBuffer(0)
+    }),
+    verifyServiceConfigRoot: vi.fn().mockResolvedValue(undefined),
     // Advance a virtual clock instead of really waiting, so wait loops terminate immediately.
     sleep: vi.fn().mockImplementation(async (ms) => {
       clock += ms
@@ -120,7 +126,10 @@ describe('C01 automatic service discovery', () => {
           return {
             ok: healthy,
             status: healthy ? 200 : 503,
-            json: async () => ({ data: { appName: 'Open-Science' } }),
+            json: async () => ({
+              appName: 'Open-Science',
+              configRoot: url.port === '44102' ? prodRoot : devRoot
+            }),
             arrayBuffer: async () => new ArrayBuffer(0)
           }
         })
@@ -214,7 +223,15 @@ describe('C01 automatic service discovery', () => {
     async (preferred) => {
       await withCandidates(preferred, async ({ deps, devRoot }) => {
         await statusCommand({ json: true, configRoot: devRoot }, deps)
-        expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({ running: false })
+        if (preferred === 'dead')
+          expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({ running: false })
+        else
+          expect(JSON.parse(deps.log.mock.calls[0][0])).toMatchObject({
+            configRoot: devRoot,
+            running: null,
+            status: 'unreachable',
+            lifetime: 'unknown'
+          })
         expect(deps.fetch.mock.calls.some(([url]) => url.includes(':44102/'))).toBe(false)
       })
     }
@@ -237,7 +254,12 @@ describe('C01 automatic service discovery', () => {
       await withCandidates('unhealthy', async ({ deps, devRoot }) => {
         vi.stubEnv(name, devRoot)
         await statusCommand({ json: true }, deps)
-        expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({ running: false })
+        expect(JSON.parse(deps.log.mock.calls[0][0])).toMatchObject({
+          configRoot: devRoot,
+          running: null,
+          status: 'unreachable',
+          lifetime: 'unknown'
+        })
         expect(deps.fetch.mock.calls.some(([url]) => url.includes(':44102/'))).toBe(false)
         await expect(connectToOpenScience({ fetch: deps.fetch })).rejects.toThrow()
         expect(deps.fetch.mock.calls.some(([url]) => url.includes(':44102/'))).toBe(false)
@@ -273,7 +295,7 @@ describe('C01 automatic service discovery', () => {
   it('fails a bounded stop without deleting or signalling a live unhealthy candidate', async () => {
     await withCandidates('unhealthy', async ({ deps, devRoot }) => {
       await expect(stopCommand({ configRoot: devRoot }, deps)).rejects.toThrow(
-        'authenticated shutdown request was not accepted'
+        'could not prove its Config Root'
       )
       expect(deps.removeState).not.toHaveBeenCalled()
       expect(deps.forceKill).not.toHaveBeenCalled()
@@ -316,21 +338,22 @@ describe('C05 stop --json output', () => {
             stopped = true
             return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) }
           }
-          return { ok: !stopped }
+          return { ok: !stopped, json: async () => ({ configRoot: RUNNING_STATE.configRoot }) }
         })
       })
       await stopCommand(parseCliArgs(['stop', '--json']).options, deps)
       expect(deps.log).toHaveBeenCalledTimes(1)
       const stdout = deps.log.mock.calls.map((args) => args.join(' ')).join('\n')
-      expect(JSON.parse(stdout)).toEqual({
-        result:
-          kind === 'already stopped'
-            ? 'already-stopped'
-            : kind === 'daemon'
-              ? 'daemon-stopped'
-              : 'web-service-stopped'
-      })
-      expect(process.exitCode).toBeUndefined()
+      if (kind === 'already stopped') {
+        expect(JSON.parse(stdout)).toEqual({ result: 'already-stopped' })
+        expect(process.exitCode).toBeUndefined()
+      } else {
+        expect(JSON.parse(stdout)).toMatchObject({
+          result: 'shutdown-requested',
+          completionStatus: 'unconfirmed'
+        })
+        expect(process.exitCode).toBe(1)
+      }
     }
   )
 
@@ -346,7 +369,7 @@ describe('C05 stop --json output', () => {
     })
     expect(deps.log).not.toHaveBeenCalled()
     expect(JSON.parse(errorOutput.mock.calls.map(([line]) => line).join('\n'))).toMatchObject({
-      error: { code: 'command_failed' },
+      error: { code: 'service_identity_unverified' },
       exitCode: 1
     })
     expect(setExitCode).toHaveBeenCalledWith(1)
@@ -495,7 +518,7 @@ describe('stopCommand', () => {
     expect(deps.removeState).not.toHaveBeenCalled()
   })
 
-  it('gracefully shuts down, removes state, and prints stopped', async () => {
+  it('requests legacy shutdown but does not treat the old recorded PID disappearing as exact exit proof', async () => {
     // Alive at findCurrentState, then gone on the first graceful poll.
     const isAlive = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
     const deps = makeDeps({ isAlive })
@@ -507,13 +530,16 @@ describe('stopCommand', () => {
     )
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
-    expect(deps.log).toHaveBeenCalledWith('Open-Science stopped.')
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining('Shutdown requested; completion is unconfirmed')
+    )
+    expect(process.exitCode).toBe(1)
   })
 
-  it('does not signal or remove state when the process survives the graceful timeout', async () => {
-    // Always alive: findCurrentState passes and the authenticated graceful shutdown times out.
+  it('does not signal, remove state or claim completion when a legacy process remains live', async () => {
     const deps = makeDeps({ isAlive: vi.fn().mockReturnValue(true) })
-    await expect(stopCommand({}, deps)).rejects.toThrow(/still running/)
+    await stopCommand({}, deps)
+    expect(process.exitCode).toBe(1)
 
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
@@ -523,7 +549,11 @@ describe('stopCommand', () => {
   it('fails closed without signalling when the authenticated shutdown request fails', async () => {
     const deps = makeDeps({
       isAlive: vi.fn().mockReturnValue(true),
-      fetch: vi.fn().mockRejectedValue(new Error('connection refused'))
+      fetch: vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith('/api/bootstrap'))
+          return { ok: true, json: async () => ({ configRoot: RUNNING_STATE.configRoot }) }
+        throw new Error('connection refused')
+      })
     })
     await expect(stopCommand({}, deps)).rejects.toThrow(
       /authenticated shutdown request was not accepted/
@@ -558,7 +588,7 @@ describe('stopCommand', () => {
       })
 
       await expect(stopCommand({ configRoot }, deps)).rejects.toThrow(
-        /authenticated shutdown request was not accepted/
+        /could not prove its Config Root/
       )
 
       expect(isProcessAlive(process.pid)).toBe(true)
@@ -572,12 +602,16 @@ describe('stopCommand', () => {
   it('stops only the web service and never kills the pid when the state is attached', async () => {
     // Attached = the web service rides on the running desktop app. The /api/shutdown request succeeds,
     // then the health-check endpoint stops responding (service down) — the app process itself stays up.
+    let stopped = false
     const deps = makeDeps({
       findServiceState: vi.fn().mockResolvedValue({ ...RUNNING_STATE, attached: true }),
       fetch: vi.fn().mockImplementation(async (url: string) => {
         if (String(url).endsWith('/api/shutdown')) {
+          stopped = true
           return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) }
         }
+        if (!stopped)
+          return { ok: true, json: async () => ({ configRoot: RUNNING_STATE.configRoot }) }
         throw new Error('connection refused')
       })
     })
@@ -591,15 +625,18 @@ describe('stopCommand', () => {
     // The pid is the user's app — it must never be signalled.
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
-    expect(deps.log).toHaveBeenCalledWith(
-      'Open-Science web service stopped; the app is still running.'
-    )
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('older service protocol'))
+    expect(process.exitCode).toBe(1)
   })
 
   it('retains attached state when the authenticated shutdown request is not accepted', async () => {
     const deps = makeDeps({
       findServiceState: vi.fn().mockResolvedValue({ ...RUNNING_STATE, attached: true }),
-      fetch: vi.fn().mockRejectedValue(new Error('connection refused'))
+      fetch: vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith('/api/bootstrap'))
+          return { ok: true, json: async () => ({ configRoot: RUNNING_STATE.configRoot }) }
+        throw new Error('connection refused')
+      })
     })
 
     await expect(stopCommand({}, deps)).rejects.toThrow(
@@ -609,14 +646,16 @@ describe('stopCommand', () => {
     expect(deps.removeState).not.toHaveBeenCalled()
   })
 
-  it('fails loudly without killing the pid when an attached web service refuses to stop', async () => {
+  it('keeps an accepted attached legacy shutdown unconfirmed without killing its App', async () => {
     // Attached, but the service keeps answering health checks (never stops). We must fail rather than
     // escalate to a force-kill, because that pid is the desktop app, not a daemon we own.
     const deps = makeDeps({
       findServiceState: vi.fn().mockResolvedValue({ ...RUNNING_STATE, attached: true })
     })
 
-    await expect(stopCommand({}, deps)).rejects.toThrow(/still serving/)
+    await stopCommand({}, deps)
+    expect(process.exitCode).toBe(1)
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('completion is unconfirmed'))
     expect(deps.forceKill).not.toHaveBeenCalled()
     expect(deps.removeState).not.toHaveBeenCalled()
   })

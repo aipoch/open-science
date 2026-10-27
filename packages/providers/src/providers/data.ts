@@ -29,6 +29,13 @@ const definitions: readonly OfficialVendor[] = [
         contextWindow: 1_050_000,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
       },
+      // https://developers.openai.com/api/docs/models/gpt-6.1-terra
+      // Omit none to preserve max within the five-intent product preference.
+      {
+        id: 'gpt-6.1-terra',
+        contextWindow: 1_050_000,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'high', 'xhigh', 'max'] }
+      },
       {
         id: 'gpt-6-sol',
         contextWindow: 1_050_000,

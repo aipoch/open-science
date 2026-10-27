@@ -209,7 +209,21 @@
     "src/main/desktop-update-integration.test.ts",
     "src/main/desktop-update-integration.ts",
     "src/main/runtime-network-node.test.ts",
-    "src/main/composition/document-reading.architecture.test.ts"
+    "src/main/composition/document-reading.architecture.test.ts",
+    "src/main/local-service-lifetime.ts",
+    "src/main/local-service-lifetime.test.ts",
+    "src/main/node-fatal-errors.ts",
+    "src/main/node-fatal-errors.test.ts",
+    "src/main/process-birth-identity.ts",
+    "src/main/runtime-entry-identity.ts",
+    "src/main/service-command-admission.ts",
+    "src/main/verified-service-stop.ts",
+    "src/main/verified-service-stop.test.ts",
+    "scripts/local-service-cleanup.test.ts",
+    "src/main/service-process-recovery.ts",
+    "src/main/service-process-recovery.test.ts",
+    "src/main/service-process-recovery.integration.test.ts",
+    "src/main/local-service-stop-intent.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -388,7 +402,14 @@
       "src/main/runtime-network-node.test.ts",
       "src/main/legacy-service-termination.test.ts",
       "src/main/composition/document-reading.architecture.test.ts",
-      "src/main/composition/session-projection.test.ts"
+      "src/main/composition/session-projection.test.ts",
+      "src/main/local-service-lifetime.test.ts",
+      "src/main/node-fatal-errors.test.ts",
+      "src/main/verified-service-stop.test.ts",
+      "scripts/local-service-cleanup.test.ts",
+      "src/main/service-process-recovery.test.ts",
+      "src/main/service-process-recovery.integration.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

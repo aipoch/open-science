@@ -4,6 +4,7 @@ import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { PdfTranslationExtraction } from './extraction.js'
 import type { PdfTranslationSourceIdentity } from './table-source.js'
 import { createPdfTranslationSource } from './source.js'
+import { createAuxiliaryNativeInkReader } from './auxiliary-native-ink.js'
 import {
   nativeLabelRegion,
   nativeZeroAdvanceRegions,
@@ -11,6 +12,11 @@ import {
 } from './native-source-geometry.js'
 
 type Region = PdfStructureResult['elements'][number]['regions'][number]
+type CaptionlessBodyProof = Readonly<{
+  element: PdfStructureResult['elements'][number]
+  binding: string
+  originalRegion: { pageNumber: number; rect: Omit<Region, 'page'> }
+}>
 const inside = (r: Region, outer: Region): boolean =>
   r.page === outer.page &&
   r.x >= outer.x - 1e-6 &&
@@ -34,13 +40,16 @@ async function retainWholeRegionSources(
     signal
   }: {
     extraction: PdfTranslationExtraction
-    document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'>
+    document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'> &
+      Partial<Pick<PDFDocumentProxy, 'getData' | 'getMetadata'>>
     results: readonly PdfStructureResult[]
     sourceIdentity: PdfTranslationSourceIdentity
     signal: AbortSignal
+    nativeDocumentFactory?: typeof import('pdfjs-dist').getDocument
   },
   focus?: PdfStructureResult['elements'][number],
-  focusInk?: ReadonlyMap<number, Region>
+  focusInk?: ReadonlyMap<number, Region>,
+  captionlessProof?: CaptionlessBodyProof
 ): Promise<PdfTranslationExtraction> {
   signal.throwIfAborted()
   const source = extraction.source,
@@ -83,6 +92,7 @@ async function retainWholeRegionSources(
     >(),
     retained = new Set<string>(),
     proseCaptions = new Set<string>(),
+    bodyRegions: NonNullable<(typeof source)['originalRegions']>[number][] = [],
     mathWarnings = new Set<string>()
   // A successful body proof does not by itself release its title. Restore only
   // a complete, uniquely owned plain-text caption with its own native evidence.
@@ -184,15 +194,17 @@ async function retainWholeRegionSources(
     for (const element of result.elements) {
       if (focus && element !== focus) continue
       const body = element.nativeBody
-      if (!body || !element.caption || !body.sourceItems.length) continue
+      const captionless = captionlessProof?.element === element
+      if (!body || (!element.caption && !captionless) || !body.sourceItems.length) continue
       const math = body.kind === 'math-table'
       if (
         math
-          ? element.kind !== 'table' ||
-            !!element.table ||
-            !!element.tableParts ||
-            element.issues.length !== 1 ||
-            element.issues[0].code !== 'no-source-cell-grid'
+          ? !captionless &&
+            (element.kind !== 'table' ||
+              !!element.table ||
+              !!element.tableParts ||
+              element.issues.length !== 1 ||
+              element.issues[0].code !== 'no-source-cell-grid')
           : body.kind !== 'algorithm' || element.kind !== 'algorithm' || element.issues.length > 0
       )
         continue
@@ -312,9 +324,9 @@ async function retainWholeRegionSources(
               if (claim) valid = false
               continue
             }
-            const captionOverlap = element.caption.regions.some((r) => overlaps(region, r))
-            if (!claim && captionOverlap && element.caption.regions.some((r) => inside(region, r)))
-              continue
+            const captionRegions = element.caption?.regions ?? [],
+              captionOverlap = captionRegions.some((r) => overlaps(region, r))
+            if (!claim && captionOverlap && captionRegions.some((r) => inside(region, r))) continue
             if (
               !claim ||
               claim.text !== item.str ||
@@ -334,6 +346,7 @@ async function retainWholeRegionSources(
           if (!valid) break
         }
         if (!valid || seen.size !== wanted.size) continue
+        if (captionless && JSON.stringify(element) !== captionlessProof.binding) continue
         if (!math) {
           const caption = algorithmCaption(element)
           if (caption) proseCaptions.add(caption)
@@ -342,6 +355,7 @@ async function retainWholeRegionSources(
           retained.add(owner.id)
           if (math) mathWarnings.add(owner.id)
         }
+        if (captionless) bodyRegions.push(captionlessProof.originalRegion)
       } catch {
         signal.throwIfAborted()
         // A body without complete evidence cannot affect independently proved bodies.
@@ -367,7 +381,27 @@ async function retainWholeRegionSources(
   }
   return Object.freeze({
     ...extraction,
-    source: createPdfTranslationSource({ ...source, units }),
+    source: createPdfTranslationSource({
+      ...source,
+      units,
+      ...(bodyRegions.length
+        ? {
+            originalRegions: [
+              ...(source.originalRegions ?? []),
+              ...bodyRegions.filter(
+                (r) =>
+                  !source.originalRegions?.some(
+                    (old) =>
+                      old.pageNumber === r.pageNumber &&
+                      (['x', 'y', 'width', 'height'] as const).every(
+                        (k) => old.rect[k] === r.rect[k]
+                      )
+                  )
+              )
+            ]
+          }
+        : {})
+    }),
     coverage: mathWarnings.size
       ? Object.freeze({
           ...extraction.coverage,
@@ -381,9 +415,8 @@ async function retainWholeRegionSources(
   })
 }
 
-// A grouped paragraph can contain two already separate native fragments: the
-// algorithm caption followed by its first body row. Only split that existing
-// boundary; a mixed fragment or any unowned/external text remains untouched.
+// Split only a typed complete algorithm body. A mixed native fragment additionally
+// needs loaded glyph ink and an exact source prefix; never reconstruct its text.
 async function splitAlgorithmCaptionOwner(
   input: Parameters<typeof retainWholeRegionSources>[0],
   element: PdfStructureResult['elements'][number]
@@ -415,19 +448,26 @@ async function splitAlgorithmCaptionOwner(
     region = caption.regions[0]
   if (
     owner.sourceOnly ||
-    owner.fragments.length < 2 ||
+    owner.fragments.length < 1 ||
     owner.fragments.length > 16 ||
+    (owner.fragments.length === 1 && owner.fragments.some((f) => f.unclippedRect)) ||
     source.units.some((u) => u.id === id) ||
-    extraction.coverage.warnings.some((w) => w.unitId === owner.id) ||
+    extraction.coverage.warnings.some(
+      (w) =>
+        w.unitId === owner.id &&
+        (owner.fragments.length !== 1 || w.reasons.some((r) => r !== 'possible-continuation'))
+    ) ||
     extraction.coverage.pageDiagnostics?.some((d) => d.pageNumber === region.page)
   )
     return
+  const singleFragment = owner.fragments.length === 1
   const captionFragments: (typeof owner.fragments)[number][] = [],
     bodyFragments: (typeof owner.fragments)[number][] = [],
     bodyFirst = owner.fragments[0].items.every((i) => wanted.has(`${region.page}:${i.index}`))
-  const grammar = bodyFirst
-    ? /^Algorithm\s+(?:[A-Z]\.?)?\d+(?:\.\d+)*:?\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*(?:\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*)+[.]?$/u
-    : /^Algorithm\s+(?:[A-Z]\.?)?\d+(?:\.\d+)*\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*(?:\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*)+$/u
+  const grammar =
+    bodyFirst || singleFragment
+      ? /^Algorithm\s+(?:[A-Z]\.?)?\d+(?:\.\d+)*:?\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*(?:\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*)+[.]?$/u
+      : /^Algorithm\s+(?:[A-Z]\.?)?\d+(?:\.\d+)*\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*(?:\s+[\p{Script=Latin}]+(?:[’'–-][\p{Script=Latin}]+)*)+$/u
   if (!grammar.test(caption.text)) return
   for (const fragment of owner.fragments) {
     if (fragment.pageNumber !== region.page || !fragment.items.length) return
@@ -436,12 +476,25 @@ async function splitAlgorithmCaptionOwner(
       bodyFragments.push(fragment)
     else if (flags.every((f) => !f) && (bodyFirst || !bodyFragments.length))
       captionFragments.push(fragment)
-    else return
+    else if (singleFragment && !bodyFirst) {
+      const first = flags.indexOf(true)
+      if (
+        first <= 0 ||
+        flags.slice(first).some((f) => !f) ||
+        fragment.items.some((i, n) => n > 0 && fragment.items[n - 1].index >= i.index)
+      )
+        return
+      captionFragments.push({ ...fragment, items: fragment.items.slice(0, first) })
+      bodyFragments.push({ ...fragment, items: fragment.items.slice(first) })
+    } else return
   }
   if (!captionFragments.length || !bodyFragments.length) return
   const captionItems = captionFragments.flatMap((f) => f.items),
     bodyItems = bodyFragments.flatMap((f) => f.items),
-    bodyText = bodyItems.map((i) => i.text).join(' ')
+    bodyText =
+      singleFragment && owner.source.startsWith(caption.text + ' ')
+        ? owner.source.slice(caption.text.length + 1)
+        : bodyItems.map((i) => i.text).join(' ')
   if (
     captionItems.map((i) => i.text).join(' ') !== caption.text ||
     owner.source !== (bodyFirst ? bodyText + ' ' + caption.text : caption.text + ' ' + bodyText) ||
@@ -473,7 +526,7 @@ async function splitAlgorithmCaptionOwner(
   )
     return
   let ink: ReadonlyMap<number, Region> | undefined
-  if (bodyFirst) {
+  if (bodyFirst || singleFragment) {
     if (
       element.regions.length !== 1 ||
       element.regions[0].page !== region.page ||
@@ -533,13 +586,53 @@ async function splitAlgorithmCaptionOwner(
     seen.add(index)
   }
   if (seen.size !== captionItems.length) return
+  if (singleFragment) {
+    if (
+      !ink ||
+      !bodyText.trim() ||
+      bodyText.startsWith(' ') ||
+      owner.source !== caption.text + ' ' + bodyText
+    )
+      return
+    for (const fragments of [captionFragments, bodyFragments]) {
+      for (const [offset, fragment] of fragments.entries()) {
+        const rs = fragment.items.map((i) => ink!.get(i.index))
+        if (rs.some((r) => !r)) return
+        const left = Math.min(...rs.map((r) => r!.x)),
+          top = Math.min(...rs.map((r) => r!.y))
+        fragments[offset] = {
+          ...fragment,
+          rect: {
+            x: left,
+            y: top,
+            width: Math.max(...rs.map((r) => r!.x + r!.width)) - left,
+            height: Math.max(...rs.map((r) => r!.y + r!.height)) - top
+          }
+        }
+      }
+    }
+  }
   const captionUnit = { ...owner, source: caption.text, fragments: captionFragments },
     bodyUnit = { id, source: bodyText, fragments: bodyFragments }
   const units = source.units.flatMap((u) =>
     u !== owner ? [u] : bodyFirst ? [bodyUnit, captionUnit] : [captionUnit, bodyUnit]
   )
   return {
-    extraction: { ...extraction, source: createPdfTranslationSource({ ...source, units }) },
+    extraction: {
+      ...extraction,
+      source: createPdfTranslationSource({ ...source, units }),
+      ...(singleFragment && extraction.coverage.warnings.some((w) => w.unitId === owner.id)
+        ? {
+            coverage: {
+              ...extraction.coverage,
+              warnings: [
+                ...extraction.coverage.warnings,
+                { unitId: id, reasons: ['possible-continuation'] }
+              ]
+            }
+          }
+        : {})
+    },
     ink
   }
 }
@@ -754,11 +847,291 @@ async function retainNativeDiffCodeSources(
   })
 }
 
+async function captionlessBodyProof(
+  input: Parameters<typeof retainWholeRegionSources>[0],
+  result: PdfStructureResult,
+  element: PdfStructureResult['elements'][number],
+  auxiliary: ReturnType<typeof createAuxiliaryNativeInkReader>
+): Promise<{ proof: CaptionlessBodyProof; ink: ReadonlyMap<number, Region> } | undefined> {
+  const { document, sourceIdentity, signal } = input,
+    body = element.nativeBody,
+    boundary = body?.boundary,
+    region = element.regions[0],
+    before = JSON.stringify(element)
+  if (
+    !boundary ||
+    body.kind !== 'math-table' ||
+    element.kind !== 'table' ||
+    element.caption ||
+    !element.table ||
+    element.tableParts ||
+    element.tableNotes ||
+    element.table.notes?.length ||
+    element.regions.length !== 1 ||
+    region.page !== boundary.pageNumber ||
+    boundary.scale !== 1 ||
+    boundary.coordinateSystem !== 'pdfjs-upright-points' ||
+    !element.issues.some((i) => i.code === 'native-table-structure-ambiguous') ||
+    !element.table.issues.some((i) => i.code === 'native-table-structure-ambiguous') ||
+    result.sourceChecksum !== sourceIdentity.sourceChecksum ||
+    result.sourceSizeBytes !== sourceIdentity.sourceSizeBytes ||
+    result.pageCount !== document.numPages ||
+    !document.getData ||
+    !globalThis.crypto?.subtle
+  )
+    return
+  const thumbnail = result.thumbnails.find((t) => t.id === element.thumbnailId)
+  if (
+    !thumbnail ||
+    thumbnail.sha256 !== boundary.raster.sha256 ||
+    thumbnail.width !== boundary.raster.width ||
+    thumbnail.height !== boundary.raster.height
+  )
+    return
+  const bytes = await document.getData()
+  signal.throwIfAborted()
+  if (bytes.length !== sourceIdentity.sourceSizeBytes || bytes.length > 64 * 1024 ** 2) return
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes.slice().buffer),
+    checksum = Array.from(new Uint8Array(digest), (n) => n.toString(16).padStart(2, '0')).join('')
+  if (checksum !== sourceIdentity.sourceChecksum) return
+  const page = await document.getPage(boundary.pageNumber),
+    viewport = page.getViewport({ scale: 1 }),
+    content = await page.getTextContent(),
+    selected = new Set(body.sourceItems.map((i) => i.index))
+  signal.throwIfAborted()
+  if (
+    viewport.rotation !== 0 ||
+    viewport.scale !== 1 ||
+    JSON.stringify(viewport.transform) !== JSON.stringify([1, 0, 0, -1, 0, viewport.height]) ||
+    selected.size !== body.sourceItems.length ||
+    body.sourceItems.some(
+      (i) =>
+        i.pageNumber !== boundary.pageNumber ||
+        !('str' in (content.items[i.index] ?? {})) ||
+        (content.items[i.index] as TextItem).str !== i.text
+    )
+  )
+    return
+  const ink =
+    (await nativeAlgorithmInkRegions(page, content, viewport, boundary.pageNumber, selected)) ??
+    (await auxiliary.read({ page, content, viewport, pageNumber: boundary.pageNumber, selected }))
+  signal.throwIfAborted()
+  const nonempty = content.items.flatMap((item, index) =>
+    'str' in item && item.str.trim() ? [index] : []
+  )
+  if (!ink || ink.size !== nonempty.length || nonempty.some((i) => !ink.has(i))) return
+  for (const [index, r] of ink) {
+    if (selected.has(index)) {
+      if (
+        r.page !== region.page ||
+        r.x < region.x ||
+        r.y < region.y ||
+        r.x + r.width > region.x + region.width ||
+        r.y + r.height > region.y + region.height
+      )
+        return
+    } else if (overlaps(r, region)) return
+  }
+  const { OPS, Util } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+    operators = await page.getOperatorList(),
+    finite = (a: unknown, n: number): a is number[] =>
+      (Array.isArray(a) || ArrayBuffer.isView(a)) &&
+      (a as number[]).length === n &&
+      Array.from(a as number[]).every(Number.isFinite),
+    same = (a: number[], b: readonly number[]): boolean =>
+      a.length === b.length && a.every((n, i) => n === b[i]),
+    crop = [
+      region.x * viewport.width,
+      region.y * viewport.height,
+      (region.x + region.width) * viewport.width,
+      (region.y + region.height) * viewport.height
+    ],
+    scale = Math.min(4, 2400 / Math.max(crop[2] - crop[0], crop[3] - crop[1])),
+    protection = [
+      crop[0] - 1 / scale,
+      crop[1] - 1 / scale,
+      crop[0] + thumbnail.width / scale + 1 / scale,
+      crop[1] + thumbnail.height / scale + 1 / scale
+    ],
+    wanted = new Map(boundary.rules.map((r) => [r.operatorIndex, r])),
+    seen = new Set<number>(),
+    strokeModes = [
+      OPS.stroke,
+      OPS.closeStroke,
+      OPS.fillStroke,
+      OPS.eoFillStroke,
+      OPS.closeFillStroke,
+      OPS.closeEOFillStroke
+    ]
+  if (
+    operators.fnArray.length !== operators.argsArray.length ||
+    operators.fnArray.length > 100000 ||
+    Math.ceil((crop[2] - crop[0]) * scale) !== thumbnail.width ||
+    Math.ceil((crop[3] - crop[1]) * scale) !== thumbnail.height ||
+    boundary.rules.length !== 3 ||
+    boundary.rules.some(
+      (r, i) =>
+        i > 0 &&
+        (r.operatorIndex <= boundary.rules[i - 1].operatorIndex ||
+          r.segment[1] <= boundary.rules[i - 1].segment[1])
+    )
+  )
+    return
+  let state = {
+    matrix: [1, 0, 0, 1, 0, 0],
+    width: 1,
+    cap: 0,
+    solid: true,
+    color: '#000000',
+    miter: 10
+  }
+  const stack: (typeof state)[] = []
+  for (let i = 0; i < operators.fnArray.length; i++) {
+    const op = operators.fnArray[i],
+      a = operators.argsArray[i]
+    if (op === OPS.save) stack.push({ ...state, matrix: [...state.matrix] })
+    else if (op === OPS.restore) {
+      if (!stack.length) return
+      state = stack.pop()!
+    } else if (op === OPS.transform) {
+      if (!finite(a, 6)) return
+      state.matrix = Util.transform(state.matrix, a)
+    } else if (op === OPS.setLineWidth) {
+      if (!Number.isFinite(a?.[0]) || a[0] <= 0) return
+      state.width = a[0]
+    } else if (op === OPS.setLineCap) state.cap = a?.[0]
+    else if (op === OPS.setMiterLimit) {
+      if (!Number.isFinite(a?.[0]) || a[0] <= 0) return
+      state.miter = a[0]
+    } else if (op === OPS.setDash) state.solid = finite(a?.[0], 0) && a?.[1] === 0
+    else if (op === OPS.setStrokeRGBColor) state.color = a?.[0]
+    else if (op === OPS.setGState) {
+      if (
+        !Array.isArray(a?.[0]) ||
+        a[0].some((p: unknown[]) => !['CA', 'ca'].includes(String(p[0])) || p[1] !== 1)
+      )
+        return
+    } else if (
+      [
+        OPS.clip,
+        OPS.eoClip,
+        OPS.beginGroup,
+        OPS.endGroup,
+        OPS.paintFormXObjectBegin,
+        OPS.paintFormXObjectEnd,
+        OPS.setStrokeColorN,
+        OPS.setStrokeColorSpace,
+        OPS.setStrokeColor,
+        OPS.setStrokeGray,
+        OPS.setStrokeCMYKColor
+      ].includes(op)
+    )
+      return
+    else if (op === OPS.constructPath) {
+      if ([OPS.clip, OPS.eoClip].includes(a?.[0])) return
+      if (a?.[0] === OPS.endPath) continue
+      const m = Util.transform(viewport.transform, state.matrix),
+        witness = wanted.get(i),
+        cmd = a?.[1]?.[0]
+      if (witness) {
+        if (
+          a[0] !== OPS.stroke ||
+          !finite(cmd, 6) ||
+          cmd[0] !== 0 ||
+          cmd[3] !== 1 ||
+          cmd[2] !== cmd[5] ||
+          m[0] <= 0 ||
+          m[3] >= 0 ||
+          m[1] !== 0 ||
+          m[2] !== 0 ||
+          state.cap !== 0 ||
+          !state.solid ||
+          state.color !== '#000000'
+        )
+          return
+        const segment = [
+            cmd[1] * m[0] + m[4],
+            cmd[2] * m[3] + m[5],
+            cmd[4] * m[0] + m[4],
+            cmd[5] * m[3] + m[5]
+          ],
+          width = state.width * Math.max(Math.abs(m[0]), Math.abs(m[3]))
+        if (
+          !same(segment, witness.segment) ||
+          width !== witness.width ||
+          !same(witness.clip, [0, 0, viewport.width, viewport.height])
+        )
+          return
+        seen.add(i)
+      } else {
+        if (!finite(a?.[2], 4)) return
+        const pad = strokeModes.includes(a[0]) ? (state.width * Math.max(1, state.miter)) / 2 : 0,
+          points = [a[2][0] - pad, a[2][2] + pad].flatMap((x) =>
+            [a[2][1] - pad, a[2][3] + pad].map((y) => [
+              m[0] * x + m[2] * y + m[4],
+              m[1] * x + m[3] * y + m[5]
+            ])
+          ),
+          box = [
+            Math.min(...points.map((p) => p[0])),
+            Math.min(...points.map((p) => p[1])),
+            Math.max(...points.map((p) => p[0])),
+            Math.max(...points.map((p) => p[1]))
+          ]
+        if (
+          box[0] < protection[2] &&
+          protection[0] < box[2] &&
+          box[1] < protection[3] &&
+          protection[1] < box[3]
+        )
+          return
+      }
+    }
+  }
+  if (stack.length || seen.size !== 3 || JSON.stringify(element) !== before) return
+  const { page: pageNumber, ...rect } = region
+  return {
+    ink,
+    proof: { element, binding: before, originalRegion: { pageNumber, rect: { ...rect } } }
+  }
+}
+
 export async function retainPdfWholeRegionSources(
   input: Parameters<typeof retainWholeRegionSources>[0]
 ): Promise<PdfTranslationExtraction> {
   let extraction = input.extraction,
     attempts = 0
+  const auxiliary = createAuxiliaryNativeInkReader({
+    document: input.document,
+    nativeDocumentFactory: input.nativeDocumentFactory,
+    sourceIdentity: input.sourceIdentity,
+    signal: input.signal
+  })
+  try {
+    for (const result of input.results)
+      for (const element of result.elements) {
+        if (!element.nativeBody?.boundary || element.caption) continue
+        try {
+          const verified = await captionlessBodyProof(
+            { ...input, extraction },
+            result,
+            element,
+            auxiliary
+          )
+          if (verified)
+            extraction = await retainWholeRegionSources(
+              { ...input, extraction },
+              element,
+              verified.ink,
+              verified.proof
+            )
+        } catch {
+          input.signal.throwIfAborted()
+        }
+      }
+  } finally {
+    await auxiliary.dispose()
+  }
   for (const result of input.results)
     for (const element of result.elements) {
       if (element.kind !== 'algorithm' || !element.nativeBody || attempts++ >= 16) continue

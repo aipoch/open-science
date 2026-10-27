@@ -1,3 +1,5 @@
+import { processBirthIdentity } from './process-birth-identity'
+import type { LocalServiceLifetime } from './local-service-lifetime'
 import { z } from 'zod'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from './desktop-runtime-info'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
@@ -13,6 +15,7 @@ export type RuntimeOwnerRecord = Readonly<{
   schemaVersion: 1
   generation: string
   pid: number
+  birthToken?: string
   host: 'node' | 'electron'
   port: number
   desktop?: DesktopEndpoint
@@ -26,7 +29,8 @@ export async function startRuntimeControl(
   ensureWeb: (port: number) => Promise<unknown>,
   desktop?: DesktopEndpoint,
   startupOptions?: RuntimeStartupOptions,
-  isStopping?: () => boolean
+  isStopping?: () => boolean,
+  service?: { lifetime: LocalServiceLifetime; entryPath: string; launch: 'desktop' | 'cli' }
 ): Promise<{ close(): Promise<void> }> {
   const verifiedOptions = startupOptions
     ? runtimeStartupOptionsSchema.parse(startupOptions)
@@ -53,6 +57,13 @@ export async function startRuntimeControl(
         JSON.stringify({
           generation,
           pid: process.pid,
+          ...(service
+            ? {
+                entryPath: service.entryPath,
+                launch: service.launch,
+                lifetime: service.lifetime.snapshot()
+              }
+            : {}),
           ...(isStopping?.() ? { stopping: true } : {}),
           ...(verifiedOptions && desktop
             ? {
@@ -61,6 +72,37 @@ export async function startRuntimeControl(
               }
             : {})
         })
+      )
+      return
+    }
+    if (
+      service &&
+      request.method === 'POST' &&
+      ['/service/start', '/service/stop', '/service/force-stop', '/service/retire'].includes(
+        url.pathname
+      )
+    ) {
+      if (
+        (request.headers['content-length'] && request.headers['content-length'] !== '0') ||
+        request.headers['transfer-encoding']
+      ) {
+        response.writeHead(400).end()
+        return
+      }
+      const operation =
+        url.pathname === '/service/start'
+          ? service.lifetime.start()
+          : url.pathname === '/service/retire'
+            ? service.lifetime.retireIfUnused()
+            : service.lifetime.stop(url.pathname === '/service/force-stop')
+      void operation.then(
+        (lifetime) => {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ generation, pid: process.pid, lifetime }))
+        },
+        () => {
+          response.writeHead(409).end()
+        }
       )
       return
     }
@@ -120,6 +162,7 @@ export async function startRuntimeControl(
         schemaVersion: 1,
         generation,
         pid: process.pid,
+        birthToken: processBirthIdentity(process.pid),
         host,
         port: (server.address() as { port: number }).port,
         ...(desktop ? { desktop } : {})

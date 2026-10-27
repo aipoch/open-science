@@ -5,6 +5,8 @@ import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 
 const f = vi.hoisted(() => ({
   initLogs: vi.fn(),
+  stopIntent: vi.fn(),
+  lifetimeAdmission: undefined as (() => void) | undefined,
   startupFailure: false,
   healthyCredentials: false,
   inventoryFailure: undefined as Error | undefined,
@@ -14,6 +16,10 @@ const f = vi.hoisted(() => ({
   writeExit: vi.fn(async () => {}),
   closeOwnership: vi.fn(async () => {}),
   closeNetwork: vi.fn(async () => {}),
+  closeMainAgents: vi.fn(async () => {}),
+  configureMainAgents: vi.fn(async () => {}),
+  constructMainAgents: vi.fn(),
+  mainAgentOwnership: { recover: vi.fn(async () => {}), spawn: vi.fn() },
   disposeCipher: vi.fn(),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   spawn: vi.fn(() => ({ once: vi.fn(), unref: vi.fn() })),
@@ -47,6 +53,7 @@ const f = vi.hoisted(() => ({
     bindRemoteAccess: vi.fn(),
     permissionApprovalPresence: { acquire: vi.fn(() => () => {}) },
     applicationCommands: {
+      beginStopping: vi.fn(),
       desktop: {
         commandNames: vi.fn(() => ['sessions:list']),
         invoke: vi.fn<(...args: unknown[]) => Promise<string>>(async () => 'runtime-result')
@@ -63,6 +70,50 @@ const f = vi.hoisted(() => ({
   desktopLifecycle: { request: vi.fn(async () => 'accepted'), disconnect: vi.fn(async () => {}) }
 }))
 
+vi.mock('./acp/main-agent-process-ownership', () => ({
+  configureMainAgentProcessOwnership: f.configureMainAgents,
+  closeMainAgentProcessOwnership: f.closeMainAgents
+}))
+vi.mock('./delegation/process-ownership', () => ({
+  DelegatedProcessOwnership: class {
+    constructor(configRoot: string, directoryName: string) {
+      f.constructMainAgents(configRoot, directoryName)
+    }
+    recover = f.mainAgentOwnership.recover
+    spawn = f.mainAgentOwnership.spawn
+  }
+}))
+vi.mock('./node-fatal-errors', () => ({ installNodeFatalErrors: vi.fn() }))
+vi.mock('./local-service-lifetime', () => ({
+  LOCAL_SERVICE_STOP_BUDGET_MS: 20_000,
+  serviceStopDeadline: (deadlineAt?: number) =>
+    Math.min(deadlineAt ?? Infinity, Date.now() + 20_000),
+  createLocalServiceLifetime: async (options: {
+    generation: string
+    stop(reason: string): void
+    onStoppingAdmission?(): void
+  }) => {
+    f.lifetimeAdmission = options.onStoppingAdmission
+    let stopping = false
+    return {
+      snapshot: () => ({
+        version: 1,
+        generation: options.generation,
+        explicit: false,
+        stopping,
+        apps: 1
+      }),
+      close: vi.fn(),
+      stop: async (_force: boolean, reason = 'user-stop') => {
+        f.stopIntent(reason)
+        if (!stopping) {
+          stopping = true
+          options.stop(reason)
+        }
+      }
+    }
+  }
+}))
 vi.mock('./runtime-stop-confirmation', () => ({ writeRuntimeExit: f.writeExit }))
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
@@ -211,6 +262,10 @@ beforeEach(async () => {
   )
   f.createWeb.mockReturnValue(f.web as unknown as ReturnType<typeof f.createWeb>)
   process.exitCode = undefined
+  vi.spyOn(process, 'exit').mockImplementation((code) => {
+    process.exitCode = code ?? 0
+    return undefined as never
+  })
 })
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -347,6 +402,22 @@ it('publishes readiness only after the endpoint opens and drains services once o
   expect(f.initLogs.mock.invocationCallOrder[0]).toBeLessThan(
     f.createRuntime.mock.invocationCallOrder[0]
   )
+  expect(f.constructMainAgents).toHaveBeenCalledExactlyOnceWith(
+    expect.any(String),
+    'main-agent-process-ownership'
+  )
+  expect(f.configureMainAgents).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      recover: f.mainAgentOwnership.recover,
+      spawn: f.mainAgentOwnership.spawn
+    })
+  )
+  expect(f.initLogs.mock.invocationCallOrder[0]).toBeLessThan(
+    f.constructMainAgents.mock.invocationCallOrder[0]
+  )
+  expect(f.configureMainAgents.mock.invocationCallOrder[0]).toBeLessThan(
+    f.createRuntime.mock.invocationCallOrder[0]
+  )
   endpoint.resolve({ port: 44100 })
   await waitForReady(send)
   expect(f.remote.attachWebController).toHaveBeenCalledWith(f.web)
@@ -442,6 +513,8 @@ it('keeps startup commands bounded until database verification and hands off to 
   expect(f.desktopLifecycle.request).toHaveBeenCalledWith({ operation: 'inspect' })
   await lifecycle.disconnect()
   expect(f.desktopLifecycle.disconnect).toHaveBeenCalledOnce()
+  expect(f.runtime.abortDesktopUpdate).not.toHaveBeenCalled()
+  transport.onControllerDisconnect!()
   expect(f.runtime.abortDesktopUpdate).toHaveBeenCalledOnce()
   transport.requestShutdown!()
   await vi.waitFor(() => expect(process.exitCode).toBe(0))
@@ -507,6 +580,7 @@ it('waits for database verification to settle before honoring a startup shutdown
   database.resolve({})
   await vi.waitFor(() => expect(process.exitCode).toBe(0))
   expect(f.createRuntime).not.toHaveBeenCalled()
+  expect(f.stopIntent).toHaveBeenCalledWith('user-stop')
   expect(f.disconnectDatabase).toHaveBeenCalledOnce()
   expect(f.closeOwnership).toHaveBeenCalledOnce()
   expect(
@@ -515,4 +589,42 @@ it('waits for database verification to settle before honoring a startup shutdown
   expect(
     send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message).kind)
   ).not.toContain('failed')
+})
+
+it.each(['runtime', 'endpoint'] as const)(
+  'cleans a late %s resource without announcing ready after cancellation',
+  async (phase) => {
+    const pending = Promise.withResolvers<unknown>()
+    if (phase === 'runtime')
+      f.createRuntime.mockReturnValueOnce(pending.promise as ReturnType<typeof f.createRuntime>)
+    else f.web.ensureStarted.mockReturnValueOnce(pending.promise as Promise<{ port: number }>)
+    const send = await startHealthyRuntime()
+    await vi.waitFor(() =>
+      expect(phase === 'runtime' ? f.createRuntime : f.web.ensureStarted).toHaveBeenCalledOnce()
+    )
+    const terminate = process
+      .listeners('SIGTERM')
+      .find((listener) => !listeners.get('SIGTERM')!.has(listener))!
+    terminate('SIGTERM')
+    pending.resolve(phase === 'runtime' ? f.runtime : { port: 44100 })
+    await vi.waitFor(() => expect(process.exitCode).toBe(0))
+    expect(f.runtime.dispose).toHaveBeenCalledOnce()
+    if (phase === 'runtime') expect(f.createWeb).not.toHaveBeenCalled()
+    else expect(f.web.dispose).toHaveBeenCalledOnce()
+    expect(
+      send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message).kind)
+    ).not.toContain('ready')
+  }
+)
+
+it('closes business admission without starting cleanup when a stop grant may have published', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  f.lifetimeAdmission!()
+  expect(f.runtime.applicationCommands.beginStopping).toHaveBeenCalledOnce()
+  expect(f.runtime.prepareForQuit).not.toHaveBeenCalled()
+  expect(f.runtime.dispose).not.toHaveBeenCalled()
+  expect(process.exitCode).toBeUndefined()
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
 })

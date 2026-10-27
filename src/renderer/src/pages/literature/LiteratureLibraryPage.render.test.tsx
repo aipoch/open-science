@@ -9641,17 +9641,26 @@ describe('LiteratureLibraryPage', () => {
     expect(filePreviewRenderCount.value).toBe(0)
   })
 
-  it('loads only the saved publication check in the reference overview', async () => {
+  it('loads publication checks only in the secondary view and restores the overview without checking', async () => {
+    get.mockResolvedValue(libraryItem)
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
     )
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    expect(within(dialog).getByRole('region', { name: 'Retractions and corrections' })).toBeTruthy()
-    await within(dialog).findByText(
-      'No saved publication check. Run a check to look for related notices.'
-    )
+    expect(within(dialog).queryByRole('region', { name: 'Retractions and corrections' })).toBeNull()
+    await act(async () => {
+      vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+        listener({ revision: 2, itemIds: [libraryItem.id] })
+      )
+    })
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalled()
+
+    await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
+    expect(within(dialog).queryByText('Publication metadata')).toBeNull()
+    await within(dialog).findByText('Not checked')
     expect(window.api.literature.publicationCheck).toHaveBeenCalledWith({
       mode: 'get',
       itemId: libraryItem.id,
@@ -9660,6 +9669,66 @@ describe('LiteratureLibraryPage', () => {
     expect(window.api.literature.publicationCheck).not.toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'check' })
     )
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }))
+    expect(within(dialog).getByText('Publication metadata')).toBeTruthy()
+    expect(within(dialog).queryByRole('region', { name: 'Retractions and corrections' })).toBeNull()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(dialog).getByRole('button', { name: 'More actions' })
+      )
+    )
+    vi.mocked(window.api.literature.publicationCheck).mockClear()
+    await act(async () => {
+      vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+        listener({ revision: 3, itemIds: [libraryItem.id] })
+      )
+    })
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalled()
+
+    await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
+    await within(dialog).findByText('Not checked')
+    expect(window.api.literature.publicationCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'get' })
+    )
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    vi.mocked(window.api.literature.publicationCheck).mockClear()
+    const reopened = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    expect(within(reopened).getByText('Publication metadata')).toBeTruthy()
+    expect(
+      within(reopened).queryByRole('region', { name: 'Retractions and corrections' })
+    ).toBeNull()
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalled()
+  })
+
+  it('keeps manual publication checks and retry failures inside the secondary view', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
+    await within(dialog).findByText('Not checked')
+    const check = vi.mocked(window.api.literature.publicationCheck)
+    check.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check now' }))
+    await within(dialog).findByText('Could not load the publication check. Try again.')
+    expect(check).toHaveBeenLastCalledWith({
+      mode: 'check',
+      itemId: libraryItem.id,
+      expectedMetadataRevision: libraryItem.metadataRevision
+    })
+    check.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(check).toHaveBeenCalledTimes(3))
+    expect(check).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'check' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }))
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(within(dialog).getByText('Publication metadata')).toBeTruthy()
   })
 
   it('opens the Add menu only after an explicit click without rerendering the Literature page', async () => {

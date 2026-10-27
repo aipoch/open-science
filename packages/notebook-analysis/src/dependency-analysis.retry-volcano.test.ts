@@ -16,11 +16,11 @@ it('analyzes the self-contained retry independently', async () => {
       ? result.facts.reasons.filter((r) => r !== 'external-state')
       : [],
     JSON.stringify(result.facts)
-  ).toEqual([])
+  ).toEqual(['opaque-call'])
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     reads: ['inputs/differential-results-333333333333.xlsx'],
     writes: ['Synthetic volcano plot.png']
   })
@@ -70,7 +70,7 @@ it.each([false, true])(
                 )
               : [],
             run.runId
-          ).toEqual([])
+          ).toEqual(['4', '5', '6', '8'].includes(run.runId) ? ['opaque-call'] : [])
       }
       const projection = await analyzer.project({
         projectId: 'p',
@@ -80,11 +80,12 @@ it.each([false, true])(
       if (dynamicSource)
         expect(projection.stalenessByRunId['8']).toMatchObject({
           state: 'unknown',
-          reasons: expect.arrayContaining(['dynamic-namespace'])
+          reasons: expect.arrayContaining(['external-state', 'opaque-call'])
         })
       else {
         expect(projection.stalenessByRunId['8'], JSON.stringify(projection)).toEqual({
-          state: 'clear'
+          state: 'unknown',
+          reasons: ['external-state', 'opaque-call']
         })
         expect(projection.dependenciesByRunId?.['8'] ?? []).toEqual([])
       }

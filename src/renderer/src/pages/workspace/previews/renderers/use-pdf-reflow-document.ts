@@ -165,6 +165,7 @@ export function usePdfReflowDocument(
         // translations without rewriting the edition's source IDs or saved text.
         const structure = await preparePdfTranslationStructure({
           document: original,
+          nativeDocumentFactory: pdfjsLib.getDocument,
           extraction: { source: results.source, coverage },
           context: structureContext,
           preserveUnitIdentity: true,

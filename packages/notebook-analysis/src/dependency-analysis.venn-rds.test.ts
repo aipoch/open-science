@@ -28,16 +28,15 @@ it.each([0, 1, 3, 5, 6, 7])('captures reported Venn RDS cell %s', async (index) 
       facts: index === 0 ? undefined : (await analyzeRNotebookSource(cells[index], context)).facts
     })
   ).toMatchObject({
-    readState: index === 6 ? 'partial' : 'complete',
-    writeState: index === 6 ? 'partial' : 'complete',
-    externalState: index === 6 ? 'partial' : 'complete'
+    readState: [1, 6].includes(index) ? 'partial' : 'complete',
+    writeState: [1, 6].includes(index) ? 'partial' : 'complete',
+    externalState: [1, 6].includes(index) ? 'partial' : 'complete'
   })
 })
-it('records ordinary serialized sets at the producer', async () => {
+it('withholds distinct-result ownership but retains an independently owned RDS write', async () => {
   const { facts } = await analyzeRNotebookSource(cells[1])
   expect(facts.serializedValueWrites).toEqual([
-    { path: 'sets.rds', format: 'rds', valueType: 'r-value' },
-    { path: 'all_elements.rds', format: 'rds', valueType: 'r-value' }
+    { path: 'sets.rds', format: 'rds', valueType: 'r-value' }
   ])
 })
 it.each([

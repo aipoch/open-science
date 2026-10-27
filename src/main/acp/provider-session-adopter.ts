@@ -1,4 +1,5 @@
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
+import { recordMainAgentContext } from './main-agent-process-ownership'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import {
@@ -152,6 +153,7 @@ export class AcpProviderSessionAdopter {
         })
         .start()
       adoptedProviderSessionId = provisionalSession.sessionId
+      recordMainAgentContext(request.connection, adoptedProviderSessionId)
 
       const reserved = this.deps.reserveIdentity(identity, [
         stableAppSessionId,

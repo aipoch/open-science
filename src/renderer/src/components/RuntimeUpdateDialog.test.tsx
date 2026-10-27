@@ -51,7 +51,7 @@ describe('runtime update operation boundaries', () => {
       cancel = vi.fn(async () => {})
     useUpdateStore.setState({ apply, cancel })
     render()
-    act(() => buttons('Restart to update')[0].click())
+    act(() => buttons('Update')[0].click())
     expect(buttons('Cancel')[0].disabled).toBe(false)
     await act(async () => buttons('Cancel')[0].click())
     expect(cancel).toHaveBeenCalledOnce()
@@ -102,12 +102,11 @@ describe('runtime update operation boundaries', () => {
     expect(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).toHaveLength(1)
     expect(buttons('Cancel')).toHaveLength(1)
     expect(buttons('Update')).toHaveLength(1)
-    expect(buttons('Restart to update')).toHaveLength(0)
     expect(document.body.textContent).toContain('/isolated/service')
     expect(document.body.textContent).toContain('separate installation will not be updated')
     expect(apply).not.toHaveBeenCalled()
     await act(async () => buttons('Update')[0].click())
-    expect(apply).toHaveBeenCalledWith({ force: false, cliConsentToken: 'reviewed' })
+    expect(apply).toHaveBeenCalledWith({ force: true, cliConsentToken: 'reviewed' })
   })
   it('closes CLI cancellation without applying', async () => {
     const apply = vi.fn(async () => {}),
@@ -157,7 +156,7 @@ describe('runtime update operation boundaries', () => {
       }
     })
     render()
-    expect(buttons('Restart to update')).toHaveLength(0)
+    expect(buttons('Update')).toHaveLength(0)
     expect(buttons('Retry')).toHaveLength(1)
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -343,7 +342,7 @@ it('presents a second completed cancellation after reopening and starting anothe
   )
   await act(async () => useUpdateStore.getState().openDialog())
   expect(document.querySelector('[role="dialog"]')).not.toBeNull()
-  await act(async () => buttons('Restart to update')[0].click())
+  await act(async () => buttons('Update')[0].click())
   await act(async () => buttons('Cancel')[0].click())
   expect(useUpdateStore.getState().status.outcome).toBe('cancelled')
   expect(document.querySelector('[data-runtime-update-state="S15"]')).not.toBeNull()
@@ -380,7 +379,7 @@ it('reopens after a completed recovery without retaining a failed-recovery warni
   await act(async () => useUpdateStore.getState().openDialog())
   expect(document.querySelector('[role="dialog"]')).not.toBeNull()
   expect(document.body.textContent).not.toContain('Recovery has not been confirmed')
-  await act(async () => buttons('Restart to update')[0].click())
+  await act(async () => buttons('Update')[0].click())
   expect(document.querySelector('[data-runtime-update-state="S11"]')).not.toBeNull()
   expect(document.body.textContent).not.toContain('Recovery has not been confirmed')
 })
@@ -398,7 +397,7 @@ it.each([
       status: { state: 'ready', current: '1', reason, recovery: r() }
     })
     render()
-    expect(buttons('Restart to update')).toHaveLength(0)
+    expect(buttons('Update')).toHaveLength(0)
     expect(buttons('Retry')).toHaveLength(1)
     expect(buttons('Retry')[0].parentElement?.className).toContain('border-t')
     await act(async () => buttons('Retry')[0].click())
@@ -491,7 +490,7 @@ describe('continuous in-place update dialog', () => {
       expect(document.querySelector('[role="dialog"]')).toBe(dialog)
       expect(dialog?.textContent).toContain(base.notes)
       if (state === 'ready') {
-        expect(buttons('Restart to update')).toHaveLength(1)
+        expect(buttons('Update')).toHaveLength(1)
         expect(dialog?.textContent).not.toContain('Diagnostics')
       }
     }
@@ -535,7 +534,7 @@ describe('update check and download admission', () => {
       expect(buttons('Download update')).toHaveLength(1)
       act(() => useUpdateStore.setState({ status: { ...useUpdateStore.getState().status, state } }))
       expect(document.querySelector('[role="dialog"]')).toBeNull()
-      expect(buttons('Restart to update')).toHaveLength(0)
+      expect(buttons('Update')).toHaveLength(0)
       expect(buttons('Download update')).toHaveLength(0)
     }
   )
@@ -557,7 +556,7 @@ describe('update check and download admission', () => {
       expect(dialog?.textContent).toContain('Checking for updates…')
       expect(dialog?.textContent).not.toContain('Ready to install')
       expect(buttons('Download update')).toHaveLength(0)
-      expect(buttons('Restart to update')).toHaveLength(0)
+      expect(buttons('Update')).toHaveLength(0)
       expect(buttons('Cancel')[0].disabled).toBe(false)
       act(() =>
         useUpdateStore.setState({
@@ -594,7 +593,7 @@ describe('update check and download admission', () => {
     expect(document.body.textContent).toContain('Synthetic check failure')
     expect(document.body.textContent).not.toContain('Ready to install')
     expect(buttons('Download update')).toHaveLength(0)
-    expect(buttons('Restart to update')).toHaveLength(0)
+    expect(buttons('Update')).toHaveLength(0)
     expect(buttons('Retry')).toHaveLength(1)
     act(() => buttons('Retry')[0].click())
     expect(buttons('Checking…')[0].disabled).toBe(true)

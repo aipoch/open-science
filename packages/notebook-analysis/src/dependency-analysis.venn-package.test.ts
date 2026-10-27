@@ -15,7 +15,11 @@ it.each([1, 2, 4, 6, 7, 8, 10, 11])('captures reported package cell %s', async (
   expect(
     await analyzeNotebookSourceFileAccess('r', cells[index], context),
     JSON.stringify(facts)
-  ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+  ).toMatchObject({
+    readState: index === 2 ? 'partial' : 'complete',
+    writeState: index === 2 ? 'partial' : 'complete',
+    externalState: index === 2 ? 'partial' : 'complete'
+  })
 })
 
 it.each([

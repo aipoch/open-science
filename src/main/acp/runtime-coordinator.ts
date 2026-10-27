@@ -208,6 +208,7 @@ class AcpRuntimeCoordinator {
   ) => Promise<void>
   private quitPreparationEpoch = 0
   private promptAdmissionClosedForQuit = false
+  private updateAdmissionHolds = 0
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionCreations = new Set<{ runtime: AcpRuntime; projectId?: string }>()
   private readonly sessionResumeOperations = new Map<
@@ -563,11 +564,14 @@ class AcpRuntimeCoordinator {
     if (sessionIds.length === 0 && !this.delegatedWork) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {
-      const delegatedStop = this.delegatedWork?.stopAll() ?? Promise.resolve()
-      await Promise.allSettled(
-        sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
-      )
-      await delegatedStop
+      // Observe both branches immediately: delegated stop may reject while a root cancellation
+      // is still waiting for its terminal response. Keep that rejection as the final outcome.
+      await Promise.all([
+        this.delegatedWork?.stopAll() ?? Promise.resolve(),
+        Promise.allSettled(
+          sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
+        )
+      ])
       await Promise.all(
         sessionIds.map((sessionId) => this.waitForSessionInteractionRelease(sessionId))
       )
@@ -605,6 +609,16 @@ class AcpRuntimeCoordinator {
     // Bounded: a cancellation that never settles is abandoned, so a refused quit always reopens.
     if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(reopen)
     else reopen()
+  }
+
+  holdUpdateAdmission(): () => void {
+    this.updateAdmissionHolds++
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      this.updateAdmissionHolds--
+    }
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
@@ -2287,7 +2301,7 @@ class AcpRuntimeCoordinator {
 
   // A committed quit latches admission closed; a live (non-abandoned) teardown only pauses it.
   private admissionClosedReason(): 'quit' | 'settling' | undefined {
-    if (this.promptAdmissionClosedForQuit) return 'quit'
+    if (this.promptAdmissionClosedForQuit || this.updateAdmissionHolds > 0) return 'quit'
     return hasPendingLifecycleSettlement() ? 'settling' : undefined
   }
 

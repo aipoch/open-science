@@ -194,7 +194,7 @@ for (const borrowed of [false, true])
             .toMatchObject({ phase: 'connected' })
           // A mounted large Notebook must not veto the whole recovery barrier.
           await disconnect()
-          await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+          await page.getByRole('button', { name: 'Retry', exact: true }).click()
           await expect
             .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
             .toMatchObject({ phase: 'connected' })

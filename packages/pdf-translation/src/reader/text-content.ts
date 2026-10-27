@@ -309,9 +309,10 @@ async function hasUnownedUnicodeGlyph(
   }
 }
 
-// Flag a CID or nonblank simple-font control that fell back to its numeric code in a font whose
-// actual Unicode map is available. Character appearance or script mixing alone
-// is not evidence of a broken encoding. Missing metadata is not proof either.
+// Flag a CID, nonblank simple-font control, or embedded symbolic render slot
+// that fell back to its numeric code despite an available Unicode map. A private
+// render slot proves paint availability, never the intended Unicode character.
+// Preserve the literal source and eligibility; missing metadata is not proof.
 async function unreliableTextItems(
   page: PDFPageProxy,
   content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
@@ -363,7 +364,25 @@ async function unreliableTextItems(
           const text = glyph.unicode.replace(/\s/gu, '')
           const start = stream.text.length
           stream.text += text
-          const simpleControl =
+          const renderSlot = font?.toFontChar?.[glyph.originalCharCode]
+          const privateRenderSlot =
+            font?.toFontChar &&
+            Object.hasOwn(font.toFontChar, glyph.originalCharCode) &&
+            Number.isSafeInteger(renderSlot) &&
+            renderSlot >= 0xe000 &&
+            renderSlot <= 0xf8ff &&
+            glyph.fontChar === String.fromCharCode(renderSlot)
+          const symbolicRenderSlot =
+            font?.type === 'TrueType' && font.isSymbolicFont === true && privateRenderSlot
+          // Numeric glyph names identify an embedded outline, not a Unicode
+          // character. Do not treat their printable fallback as mapped text.
+          const numericType1RenderSlot =
+            font?.type === 'Type1' &&
+            privateRenderSlot &&
+            Array.isArray(font.differences) &&
+            Object.hasOwn(font.differences, glyph.originalCharCode) &&
+            /^gid\d+$/u.test(font.differences[glyph.originalCharCode])
+          const simpleFallback =
             font?.composite === false &&
             font.missingFile === false &&
             !font.vertical &&
@@ -371,11 +390,11 @@ async function unreliableTextItems(
             !glyph.accent &&
             !glyph.isSpace &&
             glyph.unicode.length === 1 &&
-            glyph.unicode.charCodeAt(0) <= 31 &&
+            (glyph.unicode.charCodeAt(0) <= 31 || symbolicRenderSlot || numericType1RenderSlot) &&
             map &&
             !Object.hasOwn(map, glyph.originalCharCode)
           if (
-            (font?.composite !== true && !simpleControl) ||
+            (font?.composite !== true && !simpleFallback) ||
             font.missingFile ||
             !map ||
             typeof map !== 'object' ||

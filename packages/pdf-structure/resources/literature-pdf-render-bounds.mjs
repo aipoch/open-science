@@ -1,9 +1,17 @@
+import { verifyNativeDualApiCertificate } from './literature-pdf-native-dual-api-certificate.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
+import { captureNativeIsolatedRasterScope } from './literature-pdf-isolated-raster-scope.mjs'
+import { nativeCompositingByteWindow } from './literature-pdf-native-compositing-profile.mjs'
+import { createHash } from 'node:crypto'
+import { isAbsolute } from 'node:path'
+import { types } from 'node:util'
+import { collectFilledGlyphEvidence } from './literature-pdf-filled-glyph-evidence.mjs'
 import { Path2D } from '@napi-rs/canvas'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 const nativeRenderPaths = new WeakMap()
+const nativeSnapshotRenderTasks = new WeakMap()
 
 // The extractor reads painted-operation boxes, not debugger dependency boxes.
 // PDF.js propagates each box to every preceding transform, which is quadratic
@@ -239,7 +247,102 @@ export function captureNativeFigureRenderContext(
       16 * 1024 * 1024 - size - glyphBytes - type3Bytes - skippedBytes
     )
     if (opaqueRasterImages?.length) snapshot.opaqueRasterImages = opaqueRasterImages
+    // Optional precision never replaces coarse all-paint evidence or reduces
+    // any existing evidence budget. Only a bounded overprint candidate is copied.
+    const precisionBudget = Math.min(
+      65536,
+      16 * 1024 * 1024 -
+        size -
+        glyphBytes -
+        type3Bytes -
+        skippedBytes -
+        (opaqueRasterImages ? nativeSnapshotSize(opaqueRasterImages, 16 * 1024 * 1024) : 0)
+    )
+    const filledGlyphEvidence =
+      glyphBounds &&
+      collectFilledGlyphEvidence(
+        content,
+        operators,
+        commonObjs,
+        glyphBounds,
+        { sourceSha256, pageNumber },
+        precisionBudget
+      )
+    if (filledGlyphEvidence) snapshot.filledGlyphEvidence = filledGlyphEvidence
+    // A compound accent is additional same-font paint, never a replacement
+    // for ordinary glyphBounds. Spend only space left after all old evidence.
+    const retainedBytes = nativeSnapshotSize(snapshot, 16 * 1024 * 1024)
+    const foreignCompoundGlyphs =
+      retainedBytes === undefined
+        ? undefined
+        : nativeForeignCompoundGlyphs(
+            operators,
+            commonObjs,
+            Math.min(65536, 16 * 1024 * 1024 - retainedBytes)
+          )
+    if (foreignCompoundGlyphs?.length) snapshot.foreignCompoundGlyphs = foreignCompoundGlyphs
+    const isolatedRasterScope = captureNativeIsolatedRasterScope(snapshot, renderTask, nativePaths)
+    if (
+      isolatedRasterScope &&
+      nativeSnapshotSize({ ...snapshot, isolatedRasterScope }, 16 * 1024 * 1024) !== undefined
+    )
+      snapshot.isolatedRasterScope = isolatedRasterScope
+    nativeSnapshotRenderTasks.set(snapshot, new WeakRef(renderTask))
     return snapshot
+  } catch {
+    return
+  }
+}
+
+// Optional raster evidence is last in the existing snapshot budget. Keep only
+// its identity here; the job owns the bounded temporary PNG until consumption.
+export function attachNativeCaptionLaneRaster(snapshot, renderTask, bytes, path) {
+  try {
+    const rendered = renderTask?._internalRenderTask?.params?.viewport
+    if (
+      nativeSnapshotRenderTasks.get(snapshot)?.deref() !== renderTask ||
+      !rendered ||
+      rendered.scale !== 1.5 ||
+      !isAbsolute(path) ||
+      path.length > 4096 ||
+      !(bytes instanceof Uint8Array) ||
+      !bytes.length ||
+      bytes.length > 4 * 1024 * 1024
+    )
+      return
+    const png = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    if (
+      png.length < 24 ||
+      !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+      png.toString('ascii', 12, 16) !== 'IHDR'
+    )
+      return
+    const width = png.readUInt32BE(16),
+      height = png.readUInt32BE(20)
+    if (
+      width !== Math.ceil(rendered.width) ||
+      height !== Math.ceil(rendered.height) ||
+      width !== Math.ceil(snapshot.viewport.width * 1.5) ||
+      height !== Math.ceil(snapshot.viewport.height * 1.5) ||
+      width * height > 4_000_000
+    )
+      return
+    const result = {
+      ...snapshot,
+      captionLaneRaster: {
+        page: snapshot.pageNumber,
+        sourceSha256: snapshot.sourceSha256,
+        scale: 1.5,
+        width,
+        height,
+        sha256: createHash('sha256').update(png).digest('hex'),
+        path
+      }
+    }
+    const remaining = 16 * 1024 * 1024 - png.byteLength - width * height * 4
+    if (!(remaining > 0) || nativeSnapshotSize(result, remaining) === undefined) return
+    nativeSnapshotRenderTasks.set(result, new WeakRef(renderTask))
+    return result
   } catch {
     return
   }
@@ -292,13 +395,25 @@ export function matchNativeFigureRenderContext(
     }
     return {
       operators: snapshot.operators,
+      ...(snapshot.isolatedRasterScope
+        ? { isolatedRasterScope: snapshot.isolatedRasterScope }
+        : {}),
+      ...(snapshot.dualApiEvidence ? { dualApiEvidence: snapshot.dualApiEvidence } : {}),
       ...(snapshot.glyphBounds ? { glyphBounds: snapshot.glyphBounds } : {}),
+      ...(snapshot.foreignCompoundGlyphs
+        ? { foreignCompoundGlyphs: snapshot.foreignCompoundGlyphs }
+        : {}),
+      ...(snapshot.captionLaneRaster ? { captionLaneRaster: snapshot.captionLaneRaster } : {}),
+      ...(snapshot.filledGlyphEvidence
+        ? { filledGlyphEvidence: snapshot.filledGlyphEvidence }
+        : {}),
       ...(snapshot.partialFontGlyphBounds
         ? { partialFontGlyphBounds: snapshot.partialFontGlyphBounds }
         : {}),
       ...(snapshot.type3GlyphPrograms ? { type3GlyphPrograms: snapshot.type3GlyphPrograms } : {}),
       ...(snapshot.skippedSpaceGlyphs ? { skippedSpaceGlyphs: snapshot.skippedSpaceGlyphs } : {}),
       ...(snapshot.opaqueRasterImages ? { opaqueRasterImages: snapshot.opaqueRasterImages } : {}),
+      ...(snapshot.compositingImages ? { compositingImages: snapshot.compositingImages } : {}),
       graphicsBounds: snapshot.graphicsBounds,
       viewport: {
         ...snapshot.viewport,
@@ -318,6 +433,80 @@ export function matchNativeFigureRenderContext(
     }
   } catch {
     return
+  }
+}
+
+// Preserve every earlier evidence allocation, including the caption raster's
+// encoded bytes and temporary decoded pixels. This optional family is last.
+export function attachNativeCompositingResources(snapshot, renderTask, encodedCaptionBytes = 0) {
+  try {
+    if (nativeSnapshotRenderTasks.get(snapshot)?.deref() !== renderTask) return snapshot
+    const retained = nativeSnapshotSize(snapshot, 16 * 1024 * 1024),
+      raster = snapshot.captionLaneRaster
+    if (
+      retained === undefined ||
+      (raster && (!Number.isSafeInteger(encodedCaptionBytes) || encodedCaptionBytes <= 0))
+    )
+      return snapshot
+    const reserved = raster ? encodedCaptionBytes + raster.width * raster.height * 4 : 0,
+      budget = 16 * 1024 * 1024 - retained - reserved,
+      task = renderTask._internalRenderTask,
+      o = snapshot.operators
+    if (
+      !(budget > 0) ||
+      !o.fnArray.some(
+        (op, i) => op === OPS.beginGroup && o.argsArray[i]?.[0]?.smask?.subtype === 'Alpha'
+      )
+    )
+      return snapshot
+    const images = []
+    let bytes = 0
+    for (let i = 0; i < o.fnArray.length; i++) {
+      if (o.fnArray[i] !== OPS.paintImageXObject) continue
+      const a = o.argsArray[i],
+        store = a[0].startsWith('g_') ? task.commonObjs : task.objs,
+        image = store.get(a[0])
+      if (!image || types.isProxy(image) || Object.getPrototypeOf(image) !== Object.prototype)
+        return snapshot
+      const descriptors = Object.getOwnPropertyDescriptors(image)
+      if (Reflect.ownKeys(descriptors).some((key) => !Object.hasOwn(descriptors[key], 'value')))
+        return snapshot
+      const kind = descriptors.kind?.value,
+        width = descriptors.width?.value,
+        height = descriptors.height?.value,
+        data = descriptors.data?.value,
+        view = nativeCompositingByteWindow(data)
+      if (
+        kind !== 3 ||
+        !Number.isSafeInteger(width) ||
+        width <= 0 ||
+        !Number.isSafeInteger(height) ||
+        height <= 0 ||
+        width !== a[1] ||
+        height !== a[2] ||
+        ![Uint8Array.prototype, Uint8ClampedArray.prototype].includes(view?.prototype) ||
+        view.length !== width * height * 4 ||
+        view.length > 16_000_000
+      )
+        return snapshot
+      bytes += view.byteLength + 1024
+      if (bytes > budget) return snapshot
+      images.push({
+        operationIndex: i,
+        imageId: a[0],
+        width,
+        height,
+        kind,
+        data: new Uint8Array(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)),
+        sourceSha256: snapshot.sourceSha256
+      })
+    }
+    if (!images.length || nativeSnapshotSize(images, budget) === undefined) return snapshot
+    const value = { ...snapshot, compositingImages: images }
+    nativeSnapshotRenderTasks.set(value, new WeakRef(renderTask))
+    return value
+  } catch {
+    return snapshot
   }
 }
 
@@ -417,6 +606,81 @@ function nativeGlyphBounds(operators, objects, budget) {
   }
 }
 
+function nativeForeignCompoundGlyphs(operators, objects, budget) {
+  if (typeof objects?.get !== 'function' || !(budget > 0)) return
+  try {
+    const fonts = new Map(),
+      stack = []
+    let active,
+      bytes = 0
+    for (let i = 0; i < operators.fnArray.length; i++) {
+      const op = operators.fnArray[i],
+        a = operators.argsArray[i]
+      if (op === OPS.setFont) active = a?.[0]
+      else if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op))
+        stack.push(active)
+      else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+        if (!stack.length) return
+        active = stack.pop()
+      } else if (op === OPS.showText)
+        for (const g of a?.[0] ?? []) {
+          if (typeof g !== 'object' || g?.accent == null) continue
+          const accent = g.accent,
+            character = accent?.fontChar
+          if (
+            g.isInFont !== true ||
+            g.isSpace === true ||
+            !/\S/u.test(g.unicode ?? '') ||
+            typeof active !== 'string' ||
+            typeof character !== 'string' ||
+            !character ||
+            !Number.isFinite(accent.offset?.x) ||
+            !Number.isFinite(accent.offset?.y)
+          )
+            return
+          let entry = fonts.get(active)
+          if (!entry) {
+            bytes += 512 + active.length * 2
+            if (bytes > budget || fonts.size >= 64) return
+            const font = objects.get(active)
+            if (
+              font?.loadedName !== active ||
+              font.missingFile ||
+              font.disableFontFace !== true ||
+              font.remeasure ||
+              font.isType3Font ||
+              typeof font.getPathGenerator !== 'function' ||
+              JSON.stringify(Array.from(font.fontMatrix ?? [])) !==
+                JSON.stringify([0.001, 0, 0, 0.001, 0, 0])
+            )
+              return
+            entry = { font, glyphs: new Map() }
+            fonts.set(active, entry)
+          }
+          if (entry.glyphs.has(character)) continue
+          bytes += 512 + character.length * 2
+          if (bytes > budget) return
+          const bounds = entry.font.getPathGenerator(objects, character)?.getBounds?.()
+          if (!finiteArray(bounds, 4) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) return
+          entry.glyphs.set(character, Array.from(bounds))
+        }
+    }
+    if (stack.length) return
+    const result = [...fonts].map(([fontName, entry]) => ({
+      fontName,
+      missingFile: false,
+      disableFontFace: true,
+      remeasure: false,
+      isType3Font: false,
+      fontMatrix: Array.from(entry.font.fontMatrix),
+      glyphs: [...entry.glyphs].map(([fontChar, bounds]) => ({ fontChar, bounds }))
+    }))
+    return nativeSnapshotSize(result, budget) === undefined ? undefined : result
+  } catch {
+    return
+  }
+}
+
 // CanvasGraphics.showText skips a glyph outside an ordinary loaded font, even
 // when its .notdef outline is nonempty. The invalid-font and Type3 branches
 // bypass that guard. Bind only spaces to their exact show/glyph occurrence;
@@ -441,7 +705,7 @@ function nativeSkippedSpaceGlyphs(operators, objects, budget) {
         for (const [glyphIndex, glyph] of args[0].entries()) {
           if (
             glyph?.unicode !== ' ' ||
-            glyph.isSpace !== true ||
+            (glyph.isSpace !== true && glyph.isSpace !== false) ||
             glyph.isInFont !== false ||
             typeof glyph.fontChar !== 'string' ||
             !glyph.fontChar ||
@@ -466,7 +730,11 @@ function nativeSkippedSpaceGlyphs(operators, objects, budget) {
             glyphIndex,
             fontName: active,
             fontChar: glyph.fontChar,
-            width: glyph.width
+            width: glyph.width,
+            // CanvasGraphics skips an absent glyph in a loaded ordinary font
+            // independently of word-spacing classification. Bind that flag;
+            // legacy ordinary-space certificates retain their exact shape.
+            ...(glyph.isSpace === false ? { isSpace: false } : {})
           })
           bytes += 256 + (active.length + glyph.fontChar.length) * 2
           if (bytes > budget) return
@@ -687,5 +955,43 @@ function nativeType3GlyphPrograms(operators, objects, content, budget) {
     return nativeSnapshotSize(result, budget) === undefined ? undefined : result
   } catch {
     return
+  }
+}
+
+// Both API values come from the exact page/render task. Clone API containers just
+// like captureNativeFigureRenderContext: PDF.js styles have a null prototype.
+// Keep a separate immutable-value render snapshot so later caller mutations cannot
+// silently alter their evidence. The existing combined 16 MiB budget remains fixed.
+export function attachNativeDualApiEvidence(snapshot, defaultContent, rawContent) {
+  try {
+    const budget = 16 * 1024 * 1024,
+      bytes = [snapshot, defaultContent, rawContent].map((v) => nativeSnapshotSize(v, budget))
+    if (bytes.some((n) => n === undefined) || bytes[0] * 2 + bytes[1] + bytes[2] + 1024 > budget)
+      return snapshot
+    const evidence = {
+      schema: 'same-pdfjs-page-dual-api-capture-v1',
+      apiDefaultOptions: {},
+      apiRawOptions: { disableNormalization: true },
+      defaultContent: structuredClone(defaultContent),
+      rawContent: structuredClone(rawContent),
+      renderContext: structuredClone(snapshot),
+      sourceSha256: snapshot.sourceSha256,
+      pageNumber: snapshot.pageNumber,
+      pdfjsVersion: version
+    }
+    if (
+      !verifyNativeDualApiCertificate(
+        { pageNumber: snapshot.pageNumber, graphicsBounds: snapshot.graphicsBounds },
+        snapshot,
+        evidence
+      )
+    )
+      return snapshot
+    const result = { ...snapshot, dualApiEvidence: evidence }
+    if (nativeSnapshotRenderTasks.has(snapshot))
+      nativeSnapshotRenderTasks.set(result, nativeSnapshotRenderTasks.get(snapshot))
+    return nativeSnapshotSize(result, budget) === undefined ? snapshot : result
+  } catch {
+    return snapshot
   }
 }

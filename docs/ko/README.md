@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v1.0.3 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 최종 업데이트)_. 이번 패치에는 이미징, 경로, 지질, 구조, 암 모델을 아우르는 일곱 개의 새로운 Scientific Connector 도구, Semantic Scholar 인용 발견, 보충 자료 첨부 파일, Smart Screening CSV 내보내기를 포함한 대규모 Literature 라이브러리 업그레이드, 헤드리스 CLI와 로컬 Web 세션에서의 `.science` 패키지 내보내기 및 가져오기, 번역 PDF의 선택적 콘텐츠 우선 레이아웃, Notebook 폴더 접근 제한이 포함됩니다. Kimi K3.1 Pro 모델과 Windows, 샌드박스, 세션 복구, PDF 전반에 걸친 광범위한 수정도 함께 제공됩니다. 자세한 내용은 [v1.0.3 릴리스 노트](../../release-notes/1.0.3/ko.md)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v1.0.4 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 최종 업데이트)_. 이번 패치에는 CLI와 데스크톱 다운로드 크기가 크게 줄고, 독립 실행형 CLI의 연구 도구가 로컬 MCP 서버를 통해 노출되며, 긴 대화는 턴이 정해진 후 중간 메시지와 도구 그룹이 접혀 읽기 쉬워지고, Literature 참고 문헌에 Crossref를 통한 수동 철회 및 정정 검사가 추가되며, 승인한 폴터에서의 아티팩트 가져오기가 지원되고, GitHub Skills 가져오기 워크플로에서의 리포지토리 저장이 추가되며, 질문 카드에 구조화된 걷은뛰기 동작이 제공됩니다. Notebook, 설정, 세션 패키지, Replay 전반에 걸친 수정도 함께 제공됩니다. 자세한 내용은 [v1.0.4 릴리스 노트](../../release-notes/1.0.4/ko.md)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

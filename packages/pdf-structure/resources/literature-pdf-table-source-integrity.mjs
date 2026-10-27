@@ -1,7 +1,11 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { nativeTableLayoutConflicts } from './literature-pdf-table-layout-conflicts.mjs'
+import {
+  nativeTableLayoutConflicts,
+  nativeTableUnreliableMathSourceItems
+} from './literature-pdf-table-layout-conflicts.mjs'
 import { proveNativeFlattenedFraction } from './literature-pdf-native-table-boundary-ink.mjs'
 import { nativeFractionRowConflict } from './literature-pdf-native-fraction-row-conflict.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
 // These checks establish contradictions, not a replacement grid. Preserve the
 // printed image and native owners when the available layout has two readings.
 const compact = (s) => s.replace(/\s/gu, '')
@@ -95,12 +99,40 @@ export function nativeTableSourceConflicts(table, inventory, checkFinalCrop = fa
     counts.set(k, (counts.get(k) ?? 0) + 1)
     native.set(k, font)
   }
-  const owners = new Map()
-  for (const cell of table.cells)
+  const owners = new Map(),
+    sourceClaims = new Map(),
+    wholeClaims = new Set()
+  for (const cell of table.cells) {
     for (const o of cell.sourceItems ?? []) {
       const k = key(o)
       owners.set(k, (owners.get(k) ?? 0) + 1)
     }
+    // A whole source is exclusive even when a cell rectangle shows only part
+    // of it. Only explicit source segments describe a character partition.
+    for (const o of [...(cell.sourceItems ?? []), ...(cell.sourceSegments ?? [])]) {
+      const k = key(o),
+        f = native.get(k)
+      if (
+        !f ||
+        counts.get(k) !== 1 ||
+        !Number.isSafeInteger(o.pageNumber) ||
+        o.pageNumber < 1 ||
+        !Number.isSafeInteger(o.index) ||
+        o.index < 0 ||
+        !Number.isFinite(f.height) ||
+        !Number.isFinite(f.baseline) ||
+        f.rect[0] >= f.rect[2] ||
+        f.rect[1] >= f.rect[3] ||
+        f.text !== o.text ||
+        f.sourceItem.text !== o.text
+      )
+        continue
+      const claims = sourceClaims.get(k) ?? new Set()
+      claims.add(cell)
+      sourceClaims.set(k, claims)
+      if (cell.sourceItems?.includes(o)) wholeClaims.add(k)
+    }
+  }
   const proved = []
   for (const cell of table.cells) {
     if (!cell.text?.trim() || cell.sourceSegments?.length || !cell.sourceItems?.length) continue
@@ -124,6 +156,8 @@ export function nativeTableSourceConflicts(table, inventory, checkFinalCrop = fa
     proved.push({ cell, fonts, box: box(fonts) })
   }
   const conflicts = new Set()
+  if ([...wholeClaims].some((k) => sourceClaims.get(k).size > 1))
+    conflicts.add('native-whole-source-claimed-by-multiple-cells')
   // Earlier recovery may still enlarge the crop. At final publication, a whole
   // uniquely bound source extending more than an em past a side contradicts the
   // image presented for reviewing that cell. Small glyph overhangs and measured
@@ -484,11 +518,118 @@ export function nativeTableSourceConflicts(table, inventory, checkFinalCrop = fa
   return [...conflicts]
 }
 
+// An encoded control is not faithful Unicode cell text. This proves only that
+// mapping must pause; it neither decodes the glyph nor proves a whole body crop.
+function nativeEncodedSourceConflict(table, inventory, context) {
+  // eslint-disable-next-line no-control-regex -- Deliberately excludes whitespace controls and C1.
+  const control = /[\u0000-\u0008\u000e-\u001f]/u
+  // eslint-disable-next-line no-control-regex -- A complete encoded source, never a borrowed text substring.
+  const controlOnly = /^[\u0000-\u0008\u000e-\u001f]+$/u
+  const content = context?.sourceContent,
+    viewport = context?.viewport,
+    transform = viewport?.transform
+  if (
+    !Number.isSafeInteger(table?.page) ||
+    table.page < 1 ||
+    !rect(table.cropRect) ||
+    !table.cells?.length ||
+    !Array.isArray(inventory) ||
+    !Array.isArray(content?.items) ||
+    !Array.isArray(transform) ||
+    transform.length !== 6 ||
+    !transform.every(Number.isFinite) ||
+    viewport.rotation !== 0 ||
+    !Number.isFinite(viewport.width) ||
+    !Number.isFinite(viewport.height) ||
+    !(viewport.width > 0 && viewport.height > 0) ||
+    !(transform[0] > 0) ||
+    transform[1] !== 0 ||
+    transform[2] !== 0 ||
+    transform[3] !== -transform[0]
+  )
+    return false
+  const same = (a, b) => rect(a) && rect(b) && a.every((v, i) => v === b[i]),
+    nativeViewport = {
+      ...viewport,
+      convertToViewportPoint: (x, y) => [
+        x * transform[0] + y * transform[2] + transform[4],
+        x * transform[1] + y * transform[3] + transform[5]
+      ]
+    }
+  for (const cell of table.cells) {
+    if (typeof cell.text !== 'string' || !control.test(cell.text)) continue
+    for (const origin of [...(cell.sourceItems ?? []), ...(cell.sourceSegments ?? [])]) {
+      if (
+        origin.pageNumber !== table.page ||
+        !Number.isSafeInteger(origin.index) ||
+        origin.index < 0 ||
+        typeof origin.text !== 'string' ||
+        !controlOnly.test(origin.text) ||
+        !cell.text.includes(origin.text) ||
+        (cell.sourceSegments?.includes(origin) &&
+          (origin.start !== 0 || origin.end !== origin.text.length))
+      )
+        continue
+      const fonts = inventory.filter((f) => f.sourceItem && key(f.sourceItem) === key(origin)),
+        raw = content.items.filter((r) => r.sourceItem && key(r.sourceItem) === key(origin))
+      if (fonts.length !== 1 || raw.length !== 1) continue
+      const f = fonts[0],
+        item = raw[0],
+        style = content.styles?.[item.fontName]
+      if (
+        f.text !== origin.text ||
+        f.sourceItem.pageNumber !== origin.pageNumber ||
+        f.sourceItem.index !== origin.index ||
+        f.sourceItem.text !== origin.text ||
+        item.str !== origin.text ||
+        item.sourceItem.pageNumber !== origin.pageNumber ||
+        item.sourceItem.index !== origin.index ||
+        item.sourceItem.text !== origin.text ||
+        !Number.isFinite(item.width) ||
+        !Number.isFinite(item.height) ||
+        !(item.width > 0 && item.height > 0) ||
+        !Array.isArray(item.transform) ||
+        item.transform.length !== 6 ||
+        !item.transform.every(Number.isFinite) ||
+        !Number.isFinite(style?.ascent) ||
+        !(style.ascent > 0) ||
+        !Number.isFinite(style.descent) ||
+        style.descent > 0 ||
+        style.vertical !== false ||
+        f.fontAscent !== style.ascent ||
+        f.fontDescent !== style.descent
+      )
+        continue
+      const token = tableTextToken(item, nativeViewport, 0)
+      if (
+        !f.horizontal ||
+        !token.horizontal ||
+        !Number.isFinite(f.baseline) ||
+        !Number.isFinite(f.height) ||
+        !(f.height > 0) ||
+        f.baseline !== token.baseline ||
+        f.height !== token.height ||
+        !same(f.rect, token.rect) ||
+        f.rect[2] <= f.rect[0] ||
+        f.rect[3] <= f.rect[1] ||
+        !cell.sourceRects?.some((r) => same(r, f.rect)) ||
+        (cell.sourceSegments?.includes(origin) && !same(origin.rect, f.rect))
+      )
+        continue
+      return true
+    }
+  }
+  return false
+}
+
 export function reviewNativeTableSources(table, inventory) {
   // Let later native record recovery use its complete paint/source proof first.
-  // Final review still rejects collapsed numeric records that remain unresolved.
+  // Final assembly also attaches measured ranges before deciding whether a
+  // candidate whole-source overlap remains. Do not persist a provisional warning.
   const conflicts = nativeTableSourceConflicts(table, inventory).filter(
-    (conflict) => conflict !== 'collapsed-numeric-records'
+    (conflict) =>
+      conflict !== 'collapsed-numeric-records' &&
+      conflict !== 'native-whole-source-claimed-by-multiple-cells'
   )
   return conflicts.length
     ? {
@@ -513,19 +654,41 @@ export function reviewFinalNativeTableSources(table, inventory, rules, measuredR
           measuredRuns,
           context
         )
-        return checked.issues === part.issues ? part : { ...part, issues: checked.issues }
+        if (
+          checked.issues === part.issues &&
+          checked.unreliableMathSourceItems === part.unreliableMathSourceItems
+        )
+          return part
+        const next = { ...part, issues: checked.issues }
+        if (checked.unreliableMathSourceItems)
+          next.unreliableMathSourceItems = checked.unreliableMathSourceItems
+        else delete next.unreliableMathSourceItems
+        return next
       })
     }
-  return nativeTableSourceConflicts(table, inventory, true).length ||
+  const ambiguous =
+    nativeTableSourceConflicts(table, inventory, true).length ||
     nativeTableLayoutConflicts(table, inventory, rules, measuredRuns, context).length ||
     proveNativeFlattenedFraction(table, inventory, rules, context).length ||
-    nativeFractionRowConflict(table, inventory, rules, context)
+    nativeFractionRowConflict(table, inventory, rules, context) ||
+    nativeEncodedSourceConflict(table, inventory, context)
+  // Preserve the original conflict short-circuit. Collect this additional,
+  // read-only evidence afterwards even if an earlier conflict already won.
+  const mathSources = ambiguous
+    ? nativeTableUnreliableMathSourceItems(table, inventory, rules, context)
+    : []
+  const result = ambiguous
     ? {
         ...table,
         issues: [...new Set([...(table.issues ?? []), 'native-table-structure-ambiguous'])],
         reviewCandidate: false
       }
     : table
+  if (mathSources.length) return { ...result, unreliableMathSourceItems: mathSources }
+  if (!table.unreliableMathSourceItems) return result
+  const withoutStaleMath = { ...result }
+  delete withoutStaleMath.unreliableMathSourceItems
+  return withoutStaleMath
 }
 
 export function trimNativeTablePageCounterCrop(table, inventory, rules, context) {

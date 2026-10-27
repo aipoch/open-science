@@ -1,7 +1,9 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import * as occupancy from './update/installation-occupancy'
+import * as runtimeStop from './runtime-stop-confirmation'
+import { acquireRuntimeDirectorySync } from './runtime-ownership'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -377,6 +379,107 @@ it('deduplicates pending stops and allows a rejected stop to be retried', async 
   expect(stop).toHaveBeenCalledTimes(2)
 })
 
+function interruptedInstallationFixture(pid = 2147483647): {
+  installationRoot: string
+  configRoot: string
+  location: { installationRoot: string; stateRoot: string }
+  record: ReturnType<typeof beginInstallationUpdate>
+} {
+  const root = mkdtempSync(join(tmpdir(), 'startup-exited-unclean-'))
+  roots.push(root)
+  const installationRoot = join(root, 'app')
+  const configRoot = join(root, 'config')
+  mkdirSync(installationRoot)
+  mkdirSync(configRoot)
+  writeFileSync(join(installationRoot, 'program'), 'original')
+  const location = { installationRoot, stateRoot: join(root, 'state') }
+  const record = beginInstallationUpdate({
+    ...location,
+    currentVersion: '1',
+    targetVersion: '2',
+    runtime: { pid, generation: randomUUID(), configRoot },
+    startupOptions: {
+      configRoot,
+      dataRoot: configRoot,
+      profilePath: configRoot,
+      host: '127.0.0.1',
+      port: 0,
+      credentialStore: 'file'
+    },
+    inspectProcesses: () => []
+  })
+  advanceInstallationUpdate(location, record.operationId, 'stopping')
+  return { installationRoot, configRoot, location, record }
+}
+
+it.each([
+  ['stopped', 'missing'],
+  ['stopping', 'missing'],
+  ['stopping', 'failed']
+] as const)(
+  'recovers unchanged %s installation with %s receipt after proven exit and directory release',
+  async (phase, receipt) => {
+    const { location, configRoot, record } = interruptedInstallationFixture()
+    if (phase === 'stopped')
+      advanceInstallationUpdate(location, record.operationId, 'stopped', false, true)
+    if (receipt === 'failed')
+      writeFileSync(
+        join(configRoot, 'runtime-exit.json'),
+        JSON.stringify({
+          generation: record.runtime.generation,
+          pid: record.runtime.pid,
+          outcome: 'failed'
+        })
+      )
+    vi.spyOn(occupancy, 'inspectInstallationProcessesAsync').mockResolvedValue([])
+    const error = await resolveDesktopInstallationStartup({ ...location, version: '1' }).catch(
+      (reason: unknown) => reason
+    )
+    expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
+    await (error as DesktopRuntimeStartupError).recover()
+    expect(inspectInstallationUpdate(location)).toBeUndefined()
+    expect(inspectInstallationStartup(location)?.intent).toBe('cancel')
+    expect(inspectInstallationStartup(location)).not.toHaveProperty('stoppedClean', true)
+    expect(
+      await runtimeStop.readRuntimeExitOutcome(
+        configRoot,
+        record.runtime.generation,
+        record.runtime.pid
+      )
+    ).toBe(receipt === 'failed' ? 'failed' : 'unknown')
+  }
+)
+
+it.each(['live-pid', 'held-lock', 'changed-installation', 'occupied-installation'] as const)(
+  'retains same-boot stopping protection for %s',
+  async (blocker) => {
+    const { location, configRoot, installationRoot } = interruptedInstallationFixture(
+      blocker === 'live-pid' ? process.pid : undefined
+    )
+    const held = blocker === 'held-lock' ? acquireRuntimeDirectorySync(configRoot) : undefined
+    if (blocker === 'changed-installation')
+      writeFileSync(join(installationRoot, 'program'), 'changed')
+    vi.spyOn(occupancy, 'inspectInstallationProcessesAsync').mockResolvedValue(
+      blocker === 'occupied-installation' ? [123456789] : []
+    )
+    const waitForStopped = runtimeStop.waitForRuntimeStopped
+    vi.spyOn(runtimeStop, 'waitForRuntimeStopped').mockImplementation((options) =>
+      waitForStopped({ ...options, timeoutMs: 50 })
+    )
+    try {
+      const error = await resolveDesktopInstallationStartup({ ...location, version: '1' }).catch(
+        (reason: unknown) => reason
+      )
+      expect(error).toBeInstanceOf(DesktopRuntimeStartupError)
+      await expect((error as DesktopRuntimeStartupError).recover()).rejects.toThrow()
+      expect(inspectInstallationUpdate(location)?.phase).toBe('stopping')
+      expect(inspectInstallationStartup(location)).toBeUndefined()
+    } finally {
+      held?.release()
+    }
+  }
+)
+
 const fakeClient = (controlReason?: string): DesktopRuntimeClient =>
   ({
     runtimeInfo: () => ({ control: 'held', controlReason }),
@@ -462,4 +565,68 @@ it('retains recovery-only capabilities without granting stop authority', async (
   await expect(retry.recover()).resolves.toBeUndefined()
   expect(recover).toHaveBeenCalledOnce()
   await expect(retry.stopAndContinue()).rejects.toBe(retry)
+})
+
+it('repairs an unavailable startup endpoint before attaching and retries the same verified repair', async () => {
+  const fresh = { ...fakeClient(undefined), runtimeInfo: () => ({ control: 'granted' }) }
+  const connect = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('connect ENOENT'))
+    .mockResolvedValueOnce(fresh)
+  const repairRuntime = vi.fn(async (signal: AbortSignal) => {
+    signal.throwIfAborted()
+  })
+  const replaceRuntime = vi.fn()
+  await expect(
+    connectDesktopRuntimeForStartup({ connect, version: 'test', repairRuntime, replaceRuntime })
+  ).resolves.toBe(fresh)
+  expect(repairRuntime).toHaveBeenCalledOnce()
+  expect(replaceRuntime).not.toHaveBeenCalled()
+
+  connect.mockRejectedValue(new Error('connect ENOENT'))
+  repairRuntime.mockRejectedValueOnce(new Error('retirement not yet confirmed'))
+  const failure = await connectDesktopRuntimeForStartup({
+    connect,
+    version: 'test',
+    repairRuntime
+  }).catch((error: unknown) => error)
+  expect(failure).toBeInstanceOf(DesktopRuntimeStartupError)
+  await (failure as DesktopRuntimeStartupError).recover()
+  expect(repairRuntime).toHaveBeenCalledTimes(3)
+})
+
+it('preserves authenticated stop authority and configuration returned by startup repair discovery', async () => {
+  const precise = new DesktopRuntimeStartupError(
+    { reason: 'version-mismatch', desktopVersion: 'test', canStop: true, canRecover: false },
+    'Different version',
+    vi.fn()
+  )
+  const failure = await connectDesktopRuntimeForStartup({
+    connect: async () => {
+      throw new Error('ENOENT')
+    },
+    version: 'test',
+    repairRuntime: async () => {
+      throw precise
+    }
+  }).catch((error: unknown) => error)
+  expect(failure).toBe(precise)
+})
+
+it('repairs a replacement endpoint that fails after the stopping runtime was already replaced', async () => {
+  const connect = vi
+    .fn()
+    .mockResolvedValueOnce(fakeClient('runtime-stopping'))
+    .mockRejectedValueOnce(new Error('ENOENT replacement socket'))
+  const replaceRuntime = vi.fn(async () => {})
+  const repairRuntime = vi.fn(async () => {})
+  const failure = await connectDesktopRuntimeForStartup({
+    connect,
+    version: 'test',
+    replaceRuntime,
+    repairRuntime
+  }).catch((error: unknown) => error)
+  await (failure as DesktopRuntimeStartupError).recover()
+  expect(replaceRuntime).toHaveBeenCalledOnce()
+  expect(repairRuntime).toHaveBeenCalledOnce()
 })

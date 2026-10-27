@@ -1,3 +1,4 @@
+import { i18next } from '../../i18n'
 import type { AcpStateSnapshot } from '../../../../shared/acp'
 import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
@@ -24,7 +25,10 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import type { useAcpRuntime } from './useAcpRuntime'
-import { reportWorkspaceOperationError } from './workspace-operation-error'
+import {
+  useWorkspaceOperationErrors,
+  reportWorkspaceOperationError
+} from './workspace-operation-error'
 import {
   acquireWorkspacePromptPreparation,
   isWorkspacePromptPreparationInFlight
@@ -230,6 +234,11 @@ const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error
 const getResumeFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
 
+  if (message.includes('The previous execution is still using this conversation.'))
+    return i18next.t(
+      'The previous execution is still using this conversation. Retry to stop it before continuing.'
+    )
+
   if (isClaudeCliCompatibilityError(message)) return CLAUDE_CLI_INCOMPATIBLE_MESSAGE
 
   if (/cwd does not exist/i.test(message)) return RESUME_WORKSPACE_MISSING_MESSAGE
@@ -433,6 +442,10 @@ const prepareExistingWorkspacePrompt = async (
         throw new Error('Agent context reset Runtime Segment could not be created.')
       }
       runtimeSegmentOpened = true
+      if (contextResetFromResume)
+        useWorkspaceOperationErrors.setState((state) => ({
+          contextResets: { ...state.contextResets, [sessionId]: true }
+        }))
     }
   } catch (error) {
     if (request.isCurrent?.() === false) return undefined

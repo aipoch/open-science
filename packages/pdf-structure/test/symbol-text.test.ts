@@ -10,6 +10,89 @@ const { repairPdfSymbolText, splitPdfNumericRuns, removeBackgroundNumericPadding
 
 it.each([
   'native',
+  'zapf',
+  'wrong-font',
+  'wrong-type',
+  'wrong-encoding',
+  'wrong-width',
+  'wrong-slot',
+  'compound-text',
+  'conflicting-glyph'
+])('repairs isolated native check and cross slots with %s evidence', async (variant) => {
+  const font = {
+    name: 'ABCDEF+Dingbats',
+    type: 'Type1',
+    differences: [] as string[],
+    defaultEncoding: Object.assign([] as string[], { 51: 'three', 55: 'seven' })
+  }
+  const glyphs = [
+    { originalCharCode: 51, unicode: '3', width: 755 },
+    { originalCharCode: 55, unicode: '7', width: 571 }
+  ]
+  const content = {
+    items: [
+      { str: '3', fontName: 'native' },
+      { str: '7', fontName: 'native' }
+    ]
+  }
+  if (variant === 'zapf') font.name = 'ABCDEF+ZapfDingbats'
+  if (variant === 'wrong-font') font.name = 'ABCDEF+Times-Roman'
+  if (variant === 'wrong-type') font.type = 'TrueType'
+  if (variant === 'wrong-encoding') font.defaultEncoding[51] = 'question'
+  if (variant === 'wrong-width') glyphs[0].width = 754
+  if (variant === 'wrong-slot') glyphs[0].originalCharCode = 52
+  if (variant === 'compound-text') content.items = [{ str: '37', fontName: 'native' }]
+  if (variant === 'conflicting-glyph')
+    glyphs.push({ originalCharCode: 52, unicode: '3', width: 755 })
+  const operators = { fnArray: [OPS.setFont, OPS.showText], argsArray: [['native', 10], [glyphs]] }
+  const before = structuredClone({ font, content, operators })
+  const actual = await repairPdfSymbolText({ commonObjs: { get: () => font } }, content, operators)
+  const expected = ['native', 'zapf'].includes(variant)
+    ? ['✓', '✗']
+    : variant === 'compound-text'
+      ? ['37']
+      : ['wrong-width', 'wrong-slot', 'conflicting-glyph'].includes(variant)
+        ? ['3', '✗']
+        : ['3', '7']
+  expect(actual.items.map((item: { str: string }) => item.str)).toEqual(expected)
+  expect({ font, content, operators }).toEqual(before)
+})
+
+it.each(['native', 'mismatched-origin'])(
+  'keeps verified check claims in the Reader alphabet without overwriting a %s origin',
+  async (variant) => {
+    const font = {
+      name: 'ABCDEF+Dingbats',
+      type: 'Type1',
+      differences: [],
+      defaultEncoding: Object.assign([], { 51: 'three', 55: 'seven' })
+    }
+    const content = {
+      items: [{ str: '3', fontName: 'native', sourceItem: { pageNumber: 1, index: 0, text: '3' } }]
+    }
+    if (variant === 'mismatched-origin') content.items[0].sourceItem.text = '7'
+    const before = structuredClone(content)
+    const operators = {
+      fnArray: [OPS.setFont, OPS.showText],
+      argsArray: [['native', 10], [[{ originalCharCode: 51, unicode: '3', width: 755 }]]]
+    }
+    const actual = await repairPdfSymbolText(
+      { commonObjs: { get: () => font } },
+      content,
+      operators
+    )
+    expect(actual.items[0].str).toBe('✓')
+    expect(actual.items[0].sourceItem).toEqual({
+      pageNumber: 1,
+      index: 0,
+      text: variant === 'native' ? '✓' : '7'
+    })
+    expect(content).toEqual(before)
+  }
+)
+
+it.each([
+  'native',
   'native-small',
   'wrong-font',
   'wrong-type',

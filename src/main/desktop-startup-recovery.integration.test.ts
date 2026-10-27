@@ -91,11 +91,16 @@ async function main(){
       expect(response.ok).toBe(true)
       await response.arrayBuffer()
       await exited
-      if (cleanExit || !modern) await expect(error.stopAndContinue()).resolves.toBeUndefined()
-      else
-        await expect(error.stopAndContinue()).rejects.toMatchObject({
-          code: 'runtime-stop-unclean'
-        })
+      const exitRecord = modern
+        ? await readFile(join(root, 'runtime-exit.json'), 'utf8')
+        : undefined
+      // Actual exit and released directory ownership allow this confirmed transition even
+      // when ordinary cleanup was degraded. Recovery must not rewrite failed evidence as clean.
+      await expect(error.stopAndContinue()).resolves.toBeUndefined()
+      if (modern) {
+        expect(await readFile(join(root, 'runtime-exit.json'), 'utf8')).toBe(exitRecord)
+        expect(JSON.parse(exitRecord!).outcome).toBe(cleanExit ? 'clean' : 'failed')
+      }
       acquireRuntimeDirectorySync(root).release()
       return
     }

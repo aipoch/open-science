@@ -20,6 +20,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 import {
   capturePosixProcessTreeIdentity,
+  isRecordedPosixLeaderCurrent,
   createPosixProcessTreeOwnership,
   proveRecordedPosixLeaderGone,
   registerProcessTreeOwnership,
@@ -38,12 +39,19 @@ import type { SessionKey } from './session-records'
 const log = createLogger('delegation:process-ownership')
 
 type ProcessScope = SessionKey & { frameId: string; attemptId: string; frameworkId: string }
-type Selection = { projectId?: string; sessionId?: string; frameId?: string; attemptId?: string }
+type Selection = {
+  projectId?: string
+  sessionId?: string
+  frameId?: string
+  attemptId?: string
+  frameworkId?: string
+}
 type Receipt = ProcessScope & {
   version: 1
   receiptId: string
   phase: 'starting' | 'owned' | 'cleanup-pending'
   createdAt: number
+  providerSessionIds?: string[]
   cleanupDiagnostics?: ProcessTreeKillResult['diagnostics']
   ownership?: {
     platform: 'linux' | 'darwin' | 'win32'
@@ -129,7 +137,8 @@ const parse = (value: unknown): Receipt => {
     'attemptId',
     'frameworkId',
     'ownership',
-    'cleanupDiagnostics'
+    'cleanupDiagnostics',
+    'providerSessionIds'
   ])
   if (
     Object.keys(receipt).some((key) => !fields.has(key)) ||
@@ -143,6 +152,12 @@ const parse = (value: unknown): Receipt => {
     if (typeof receipt[key] !== 'string') throw new Error('Invalid receipt scope')
     segment(receipt[key])
   }
+  if (
+    receipt.providerSessionIds !== undefined &&
+    (!Array.isArray(receipt.providerSessionIds) ||
+      receipt.providerSessionIds.some((id) => typeof id !== 'string' || !id))
+  )
+    throw new Error('Invalid provider session membership')
   const diagnostics = receipt.cleanupDiagnostics
   if (diagnostics !== undefined) {
     if (
@@ -208,22 +223,27 @@ const parse = (value: unknown): Receipt => {
   return receipt
 }
 
+export class MainAgentContextConflictError extends Error {
+  readonly code = 'main-agent-context-conflict'
+}
+
 // This owner is composed once by production delegation and shared by launch, workspace and exit.
 // Receipts are outside the deletable workspace. Task history is never used as process-exit proof.
 export class DelegatedProcessOwnership {
   private readonly root: string
   private readonly live = new Map<string, ChildProcessWithoutNullStreams>()
+  private readonly liveReceipts = new WeakMap<ChildProcessWithoutNullStreams, Receipt>()
   private readonly reconciling = new Map<string, Promise<void>>()
   private readonly gates = new Set<{ scope: Selection; done: Promise<void> }>()
 
-  constructor(dataRoot: string) {
+  constructor(dataRoot: string, directoryName = 'delegation-process-ownership') {
     let base = resolve(dataRoot)
     try {
       base = realpathSync(base)
     } catch (error) {
       if (!missing(error)) throw error
     }
-    this.root = join(base, 'delegation-process-ownership')
+    this.root = join(base, segment(directoryName))
   }
 
   private directory(path: string, create = false): boolean {
@@ -339,73 +359,92 @@ export class DelegatedProcessOwnership {
   }
 
   receipts(scope: Selection = {}): Receipt[] {
+    return this.readReceipts(scope)
+  }
+
+  private readReceipts(scope: Selection, onUnreadable?: (error: unknown) => void): Receipt[] {
     try {
       for (const value of Object.values(scope)) if (value !== undefined) segment(value)
       if (!this.directory(this.root)) return []
       const receipts: Receipt[] = []
       for (const projectId of scope.projectId ? [scope.projectId] : readdirSync(this.root)) {
-        // Skip OS sidecar files, but not directories with those names (valid ownership scopes)
-        if (osArtifact(projectId)) {
-          const projectPath = join(this.root, segment(projectId))
-          try {
-            const stat = lstatSync(projectPath)
-            if (!stat.isDirectory() || stat.isSymbolicLink()) continue
-          } catch {
-            continue // Doesn't exist or unreadable
-          }
-        }
-        const project = join(this.root, segment(projectId))
-        if (!this.directory(project)) continue
-        for (const sessionId of scope.sessionId ? [scope.sessionId] : readdirSync(project)) {
+        try {
           // Skip OS sidecar files, but not directories with those names (valid ownership scopes)
-          if (osArtifact(sessionId)) {
-            const sessionPath = join(project, segment(sessionId))
+          if (osArtifact(projectId)) {
+            const projectPath = join(this.root, segment(projectId))
             try {
-              const stat = lstatSync(sessionPath)
+              const stat = lstatSync(projectPath)
               if (!stat.isDirectory() || stat.isSymbolicLink()) continue
             } catch {
               continue // Doesn't exist or unreadable
             }
           }
-          const directory = this.sessionDirectory({ projectId, sessionId })
-          if (!directory) continue
-          for (const file of readdirSync(directory)) {
-            if (osArtifact(file)) continue
-            // A .pending file is a torn write left by a crash between write and rename. Skip it if
-            // the committed receipt exists (normal torn write). If the committed receipt is missing,
-            // fail closed — we cannot confirm whether ownership was released.
-            if (file.endsWith('.json.pending')) {
-              const committedFile = file.slice(0, -8) // Remove '.pending' suffix
-              const committedPath = join(directory, committedFile)
-              try {
-                lstatSync(committedPath)
-                // Committed receipt exists, pending is stale — skip it
-                continue
-              } catch (error) {
-                if (missing(error)) {
-                  // No committed receipt — cannot confirm ownership state
-                  throw new Error(
-                    `Orphaned pending receipt ${file} without committed receipt — ownership unconfirmed`
-                  )
+          const project = join(this.root, segment(projectId))
+          if (!this.directory(project)) continue
+          for (const sessionId of scope.sessionId ? [scope.sessionId] : readdirSync(project)) {
+            try {
+              // Skip OS sidecar files, but not directories with those names (valid ownership scopes)
+              if (osArtifact(sessionId)) {
+                const sessionPath = join(project, segment(sessionId))
+                try {
+                  const stat = lstatSync(sessionPath)
+                  if (!stat.isDirectory() || stat.isSymbolicLink()) continue
+                } catch {
+                  continue // Doesn't exist or unreadable
                 }
-                throw error
               }
+              const directory = this.sessionDirectory({ projectId, sessionId })
+              if (!directory) continue
+              for (const file of readdirSync(directory)) {
+                if (osArtifact(file)) continue
+                try {
+                  // A .pending file is a torn write left by a crash between write and rename. Skip it if
+                  // the committed receipt exists (normal torn write). If the committed receipt is missing,
+                  // fail closed — we cannot confirm whether ownership was released.
+                  if (file.endsWith('.json.pending')) {
+                    const committedFile = file.slice(0, -8) // Remove '.pending' suffix
+                    const committedPath = join(directory, committedFile)
+                    try {
+                      lstatSync(committedPath)
+                      // Committed receipt exists, pending is stale — skip it
+                      continue
+                    } catch (error) {
+                      if (missing(error)) {
+                        // No committed receipt — cannot confirm ownership state
+                        throw new Error(
+                          `Orphaned pending receipt ${file} without committed receipt — ownership unconfirmed`
+                        )
+                      }
+                      throw error
+                    }
+                  }
+                  if (!file.endsWith('.json') || !uuidLower.test(file.slice(0, -5)))
+                    throw new Error('Incomplete process receipt')
+                  const path = join(directory, file)
+                  const stat = lstatSync(path)
+                  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16_384)
+                    throw new Error('Invalid process receipt file')
+                  const receipt = parse(JSON.parse(readFileSync(path, 'utf8')))
+                  if (
+                    receipt.projectId !== projectId ||
+                    receipt.sessionId !== sessionId ||
+                    `${receipt.receiptId}.json` !== file
+                  )
+                    throw new Error('Process receipt scope mismatch')
+                  if (matches(receipt, scope)) receipts.push(receipt)
+                } catch (error) {
+                  if (!onUnreadable) throw error
+                  onUnreadable(error)
+                }
+              }
+            } catch (error) {
+              if (!onUnreadable) throw error
+              onUnreadable(error)
             }
-            if (!file.endsWith('.json') || !uuidLower.test(file.slice(0, -5)))
-              throw new Error('Incomplete process receipt')
-            const path = join(directory, file)
-            const stat = lstatSync(path)
-            if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16_384)
-              throw new Error('Invalid process receipt file')
-            const receipt = parse(JSON.parse(readFileSync(path, 'utf8')))
-            if (
-              receipt.projectId !== projectId ||
-              receipt.sessionId !== sessionId ||
-              `${receipt.receiptId}.json` !== file
-            )
-              throw new Error('Process receipt scope mismatch')
-            if (matches(receipt, scope)) receipts.push(receipt)
           }
+        } catch (error) {
+          if (!onUnreadable) throw error
+          onUnreadable(error)
         }
       }
       return receipts
@@ -466,6 +505,7 @@ export class DelegatedProcessOwnership {
           )
         : spawn(command, args, { ...options, env: ownership.env, detached: true })
     this.live.set(receipt.receiptId, child)
+    this.liveReceipts.set(child, receipt)
     registerProcessTreeOwnership(child, {
       ...(process.platform === 'win32'
         ? {
@@ -500,7 +540,11 @@ export class DelegatedProcessOwnership {
       receipt.phase = 'owned'
       this.write(receipt)
     } catch (error) {
-      void terminateProcessTree(child)
+      void terminateProcessTree(child).catch((cleanupError) => {
+        log.error('process cleanup after ownership publication failed', {
+          error: String(cleanupError)
+        })
+      })
       throw error
     }
     return child
@@ -543,7 +587,9 @@ export class DelegatedProcessOwnership {
     const failures: unknown[] = []
     const currentBootSession = bootSessionId()
     await Promise.all(
-      this.receipts(scope).map(async (receipt) => {
+      // One torn receipt must retain its error without preventing other verified trees from
+      // being reaped. Public reads/assertClear still reject incomplete evidence immediately.
+      this.readReceipts(scope, (error) => failures.push(error)).map(async (receipt) => {
         const child = this.live.get(receipt.receiptId)
         if (child && receipt.phase === 'owned' && !stopLive) return
         let pending = this.reconciling.get(receipt.receiptId)
@@ -619,6 +665,121 @@ export class DelegatedProcessOwnership {
     )
     if (failures.length > 0)
       throw new AggregateError(failures, 'Delegated process recovery is incomplete.')
+  }
+
+  recordMainAgentContext(child: ChildProcessWithoutNullStreams, providerSessionId: string): void {
+    const receipt = this.liveReceipts.get(child)
+    if (!receipt || this.live.get(receipt.receiptId) !== child) return
+    receipt.providerSessionIds ??= []
+    if (receipt.providerSessionIds.includes(providerSessionId)) return
+    receipt.providerSessionIds.push(providerSessionId)
+    this.write(receipt)
+  }
+
+  // A connection can host several contexts. Known membership scopes writer recovery; legacy or
+  // torn evidence requires a fresh context, never a framework-wide ban on continuing a conversation.
+  async assertMainAgentSessionResumeAllowed(
+    frameworkId: string,
+    providerSessionId?: string
+  ): Promise<void> {
+    const scope = { frameworkId }
+    try {
+      await this.recover(scope)
+    } catch {
+      /* Retain unresolved evidence below. */
+    }
+    let unreadable = false
+    const pendingReceipts = (): Receipt[] =>
+      this.readReceipts(scope, () => {
+        unreadable = true
+      }).filter(
+        (receipt) =>
+          !(this.live.has(receipt.receiptId) && receipt.phase === 'owned') &&
+          (!providerSessionId ||
+            !receipt.providerSessionIds ||
+            receipt.providerSessionIds.includes(providerSessionId))
+      )
+    const pending = pendingReceipts()
+    if (pending.length === 0) {
+      if (unreadable)
+        throw new DelegateExecutionCleanupError('Previous agent context ownership is unreadable.')
+      return
+    }
+    const recoveryFailure = new DelegateExecutionCleanupError(
+      'Previous agent context cleanup is unconfirmed.'
+    )
+    // Stronger-proof debt remains recorded, but it must not prevent stopping an exact known
+    // writer. This scan signals only birth-verified owned processes; ambiguous evidence survives.
+    await Promise.all(
+      pending.map(async (receipt) => {
+        const ownership = receipt.ownership
+        if (
+          providerSessionId &&
+          receipt.providerSessionIds?.includes(providerSessionId) &&
+          ownership?.platform !== 'win32' &&
+          ownership?.token &&
+          ownership.leader?.birthToken &&
+          isRecordedPosixLeaderCurrent(ownership.leader)
+        ) {
+          await proveRecordedPosixLeaderGone(ownership.leader, ownership.token, receipt.createdAt)
+        }
+      })
+    )
+    if (
+      pending.some(
+        (receipt) =>
+          providerSessionId &&
+          receipt.providerSessionIds?.includes(providerSessionId) &&
+          receipt.ownership?.leader?.birthToken &&
+          isRecordedPosixLeaderCurrent(receipt.ownership.leader)
+      )
+    ) {
+      throw new MainAgentContextConflictError(
+        'The previous execution is still using this conversation. Retry to stop it before continuing.'
+      )
+    }
+    if (unreadable)
+      throw new DelegateExecutionCleanupError('Previous agent context ownership is unreadable.')
+    const before = JSON.stringify(pending)
+    const outcomes = await Promise.all(
+      pending.map(async (receipt) => {
+        const ownership = receipt.ownership
+        if (
+          this.live.has(receipt.receiptId) ||
+          receipt.phase !== 'cleanup-pending' ||
+          receipt.cleanupDiagnostics?.failureCategory !== 'ownership-candidate-unresolved' ||
+          receipt.cleanupDiagnostics.recovery !== 'stronger-ownership-proof-required' ||
+          ownership?.platform !== process.platform ||
+          ownership.platform === 'win32' ||
+          !ownership.token ||
+          !ownership.leader?.birthToken ||
+          !(
+            ownership.platform === 'darwin'
+              ? /^darwin-proc-uniqueid:[1-9]\d*$/u
+              : /^linux-proc-starttime:[1-9]\d*$/u
+          ).test(ownership.leader.birthToken)
+        )
+          return false
+        return (
+          (await proveRecordedPosixLeaderGone(
+            ownership.leader,
+            ownership.token,
+            receipt.createdAt,
+            undefined,
+            undefined,
+            { terminateLive: false }
+          )) === 'gone'
+        )
+      })
+    )
+    // Recheck durable evidence after the asynchronous scan. Concurrent connections already
+    // owned by this service do not invalidate historical-writer recovery.
+    if (!outcomes.every(Boolean) || JSON.stringify(pendingReceipts()) !== before) {
+      throw (
+        recoveryFailure ??
+        new DelegateExecutionCleanupError('Main agent session recovery remains blocked.')
+      )
+    }
   }
 
   protectExecution(
