@@ -69,6 +69,7 @@ Las sesiones de investigación terminadas también pueden exportarse como paquet
 - [Datos, permisos y confianza](#datos-permisos-y-confianza)
 - [Desarrollo y empaquetado](#desarrollo-y-empaquetado)
 - [Preguntas frecuentes](#preguntas-frecuentes)
+- [Colaboradores](#colaboradores)
 - [Participe](#participe)
 - [Licencia](#licencia)
 - [Historial de estrellas](#historial-de-estrellas)
@@ -410,6 +411,14 @@ R: Abra el artefacto generado y elija **Procedencia**. Seleccione una versión p
 ### ¿Puedo revisar una solicitud anterior sin perder la conversación que siguió?
 
 R: Sí. Edite un mensaje de usuario completo y reenvíelo para crear una nueva rama desde ese punto. Los turnos posteriores originales permanecen disponibles y las flechas de revisión junto al mensaje permiten cambiar entre las rutas alternativas.
+
+## Colaboradores
+
+Gracias a todas las personas que contribuyen a AIPOCH Open-Science con código, documentación, traducciones, informes de errores y ayuda a la comunidad.
+
+[Ver colaboradores en GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![Colaboradores de AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
 
 ## Participe
 

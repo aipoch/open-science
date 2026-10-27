@@ -69,6 +69,7 @@ Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pak
 - [Daten, Berechtigungen und Vertrauen](#daten-berechtigungen-und-vertrauen)
 - [Entwicklung & Verpackung](#entwicklung--verpackung)
 - [Häufig gestellte Fragen](#häufig-gestellte-fragen)
+- [Mitwirkende](#mitwirkende)
 - [Machen Sie mit](#machen-sie-mit)
 - [Lizenz](#lizenz)
 - [Sterngeschichte](#sterngeschichte)
@@ -410,6 +411,14 @@ A: Öffnen Sie das generierte Artefakt und wählen Sie **Provenienz**. Wählen S
 ### Kann ich eine frühere Anfrage überarbeiten, ohne die anschließende Konversation zu verlieren?
 
 A: Ja. Bearbeiten Sie eine abgeschlossene Benutzernachricht und senden Sie sie erneut, um ab diesem Punkt einen neuen Branch zu erstellen. Die ursprünglichen nachfolgenden Interaktionen bleiben verfügbar. Mit den Versionspfeilen neben der Nachricht wechseln Sie zwischen den alternativen Pfaden.
+
+## Mitwirkende
+
+Vielen Dank an alle, die mit Code, Dokumentation, Übersetzungen, Fehlerberichten und Unterstützung der Community zu AIPOCH Open-Science beitragen.
+
+[Mitwirkende auf GitHub ansehen](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![Mitwirkende an AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
 
 ## Machen Sie mit
 

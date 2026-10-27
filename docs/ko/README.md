@@ -69,6 +69,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 - [데이터, 권한 및 신뢰](#데이터-권한-및-신뢰)
 - [개발 및 패키징](#개발-및-패키징)
 - [자주 묻는 질문](#자주-묻는-질문)
+- [기여자](#기여자)
 - [참여하기](#참여하기)
 - [라이선스](#라이선스)
 
@@ -409,6 +410,14 @@ open-science artifacts download <artifact-id> --output ./report.md
 ### 이후 대화를 잃지 않고 이전 요청을 수정할 수 있나요?
 
 답변: 가능합니다. 완료된 사용자 메시지를 편집해 다시 보내면 해당 지점에서 새 브랜치가 생성됩니다. 원래 후속 턴은 계속 사용할 수 있고, 메시지 옆의 수정 화살표로 대체 경로를 전환합니다.
+
+## 기여자
+
+코드, 문서, 번역, 버그 보고 및 커뮤니티 지원을 통해 AIPOCH Open-Science에 기여해 주시는 모든 분께 감사드립니다.
+
+[GitHub 기여자 보기](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science 기여자](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
 
 ## 참여하기
 

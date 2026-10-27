@@ -69,6 +69,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 - [数据、权限与信任](#数据权限与信任)
 - [开发与打包](#开发与打包)
 - [常见问题](#常见问题)
+- [贡献者](#贡献者)
 - [参与项目](#参与项目)
 - [许可证](#许可证)
 
@@ -409,6 +410,14 @@ open-science artifacts download <artifact-id> --output ./report.md
 ### 能否修改较早的请求而不丢失后续对话？
 
 答：可以。编辑已完成的用户消息并重新发送，从该位置新建分支。原有后续轮次仍然可用，消息旁的修订箭头可在不同路径之间切换。
+
+## 贡献者
+
+感谢所有为 AIPOCH Open-Science 贡献代码、文档、翻译、缺陷报告和社区支持的朋友。
+
+[查看 GitHub 贡献者](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science 贡献者](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
 
 ## 参与项目
 

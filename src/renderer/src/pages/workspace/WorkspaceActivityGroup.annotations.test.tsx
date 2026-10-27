@@ -13,7 +13,7 @@ import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 
 vi.mock('@/components/ui/message-scroller', () => ({
   MessageScrollerItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  useMessageScroller: () => ({ scrollToMessage: vi.fn() })
+  useMessageScroller: () => ({ stopAutoScroll: vi.fn() })
 }))
 
 let highlights: TestHighlightRegistry

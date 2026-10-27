@@ -67,6 +67,7 @@ Completed research sessions can also be exported as portable `.science` packages
 - [Data, Permissions, and Trust](#data-permissions-and-trust)
 - [Development & Packaging](#development--packaging)
 - [Frequently Asked Questions](#frequently-asked-questions)
+- [Contributors](#contributors)
 - [Get Involved](#get-involved)
 - [License](#license)
 - [Star History](#star-history)
@@ -414,6 +415,14 @@ A: Open the generated artifact and choose **Provenance**. Select a version to in
 ### Can I revise an earlier request without losing the conversation that followed?
 
 A: Yes. Edit a completed user message and resend it to create a new branch from that point. The original later turns remain available, and the revision arrows beside the message switch between the alternative paths.
+
+## Contributors
+
+Thank you to everyone who contributes code, documentation, translations, bug reports, and community support to AIPOCH Open-Science.
+
+[Contributors on GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science contributors](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
 
 ## Get Involved
 

@@ -251,6 +251,27 @@ ci(review): unify automated AI reviews
 PR type and size labels refresh automatically; labels do not control CI or merges.
 See [label maintenance](docs/ci.md#pr-and-issue-labels) for issue intake and catalog updates.
 
+## Contributor recognition
+
+We value code, documentation, translations, bug reports, testing, and community support from
+internal and external contributors alike. The README links to GitHub's contributor graph; that
+commit-based view does not capture every kind of contribution.
+
+When maintaining a contribution:
+
+- Preserve the original author's attribution when rebasing, cherry-picking, or adapting their work.
+  When squashing contributions from multiple authors, retain the appropriate `Co-authored-by`
+  trailers in the final commit. Follow [GitHub's co-author guidance](https://docs.github.com/en/pull-requests/how-tos/commit-changes/creating-a-commit-with-multiple-authors)
+  and use each person's chosen public or GitHub `noreply` email address.
+- Link the original issue or PR when building on someone else's report, proposal, or implementation.
+  Credit substantive non-code help in the PR or release notes as well.
+- Use the contributor's preferred public name or handle, respect requests for anonymity, and do not
+  publish private contact details. Contributors can request attribution corrections through the
+  original issue or PR.
+- Follow the [release-note attribution checklist](release-notes/README.md#contributor-recognition)
+  before publishing a release. Explain review decisions constructively, including when a contribution
+  cannot be accepted.
+
 ## Reporting Issues
 
 When filing a bug report, please include:
