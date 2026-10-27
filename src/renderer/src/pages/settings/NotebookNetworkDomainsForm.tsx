@@ -83,14 +83,12 @@ const NotebookNetworkDomainsForm = ({
   const [message, setMessage] = useState<FormMessage | undefined>()
   const [isSaving, setIsSaving] = useState(false)
   const [observedSettings, setObservedSettings] = useState(saved)
-  if (observedSettings !== saved) {
+  // Defer external snapshots until edits end, retaining their original merge baseline.
+  if (observedSettings !== saved && !dirty && !isSaving) {
     setObservedSettings(saved)
-    // Keep edits and their merge baseline intact when another client grants access.
-    if (!dirty && !isSaving) {
-      setDraft(saved)
-      setBaseline(saved)
-      setBaseAllowedDomains(saved.allowedDomains)
-    }
+    setDraft(saved)
+    setBaseline(saved)
+    setBaseAllowedDomains(saved.allowedDomains)
   }
   const [status, setStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
   const [isInstalling, setIsInstalling] = useState(false)
@@ -251,6 +249,7 @@ const NotebookNetworkDomainsForm = ({
         baseline.trustedPrivateDestinations ?? []
       )
       if (!mounted.current) return
+      setObservedSettings(useSettingsStore.getState().notebookNetwork)
       setBaseline(next)
       setDraft(next)
       setBaseAllowedDomains(next.allowedDomains)

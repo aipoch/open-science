@@ -53,6 +53,24 @@ afterEach(() => {
 })
 
 describe('NotebookNetworkDomainsForm', () => {
+  it('applies a deferred grant when pending hostname text is cleared', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+    await typeInput(input, 'unfinished')
+    act(() =>
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+          allowedDomains: ['approved.example.org']
+        }
+      })
+    )
+    expect(container.textContent).not.toContain('approved.example.org')
+    await typeInput(input, '')
+    expect(container.textContent).toContain('approved.example.org')
+    expect(container.textContent).toContain('No unsaved changes')
+  })
+
   it('refreshes a clean editor after settings hydrate and uses the new save baseline', async () => {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     const next = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['approved.example.org'] }
