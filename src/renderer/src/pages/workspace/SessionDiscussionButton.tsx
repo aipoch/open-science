@@ -42,7 +42,7 @@ export const SessionDiscussionButton = ({
   }
   return (
     <>
-      <Button variant="outline" size="sm" disabled={pending} onClick={() => void open()}>
+      <Button variant="ghost" size="sm" disabled={pending} onClick={() => void open()}>
         {pending ? (
           <LoaderCircle
             className="size-4 animate-spin motion-reduce:animate-none"

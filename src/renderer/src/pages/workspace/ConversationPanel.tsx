@@ -2277,26 +2277,17 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-xl border border-border bg-muted/50 px-4 py-3"
+                        className="relative z-10 rounded-xl border border-border bg-muted/50 p-3"
                         aria-label={t('Imported research history')}
                       >
-                        <p className="text-sm font-medium text-foreground">
-                          {t('Imported research history')}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {t('Imported on {{date}}', {
-                            date: new Date(activeSession.packageOrigin.importedAt).toLocaleString()
-                          })}
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          {t(
-                            'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
-                          )}
+                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <LockKeyhole className="size-3.5" aria-hidden="true" />
+                          {t('Read-only')}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           {sessionForkAvailable() ? (
                             <Button
-                              variant="outline"
+                              variant="ghost"
                               size="sm"
                               onClick={() => {
                                 void forkSession(activeSession)
@@ -2307,7 +2298,7 @@ const ConversationPanel = ({
                             </Button>
                           ) : null}
                           <Button
-                            variant="outline"
+                            variant="secondary"
                             size="sm"
                             aria-controls="right-panel"
                             onClick={() => {
@@ -2333,7 +2324,14 @@ const ConversationPanel = ({
                         </div>
                         <details className="mt-2 text-xs leading-5 text-muted-foreground">
                           <summary className="cursor-pointer">{t('Package source')}</summary>
-                          <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                          <p className="mt-2">
+                            {t('Imported on {{date}}', {
+                              date: new Date(
+                                activeSession.packageOrigin.importedAt
+                              ).toLocaleString()
+                            })}
+                          </p>
+                          <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                             <dt>{t('Source project')}</dt>
                             <dd className="break-all font-mono">
                               {activeSession.packageOrigin.sourceProjectId}
@@ -2343,11 +2341,6 @@ const ConversationPanel = ({
                               {activeSession.packageOrigin.sourceSessionId}
                             </dd>
                           </dl>
-                          <p className="mt-1">
-                            {t(
-                              'Original evidence is retained separately; local references and evidence hashes are derived during import.'
-                            )}
-                          </p>
                         </details>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
                           <details className="mt-2 text-xs text-muted-foreground">

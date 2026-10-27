@@ -597,7 +597,7 @@ const ReplayPanelContent = ({
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"
-                className="min-w-0 max-w-full justify-start gap-1.5 px-2 text-[13px] font-semibold"
+                className="min-w-0 max-w-full justify-start gap-1.5 px-2 text-sm font-semibold"
                 data-testid="replay-information-trigger"
                 aria-label={t('Session information: {{title}}', {
                   title: replayDocument.source.title
@@ -614,26 +614,26 @@ const ReplayPanelContent = ({
               aria-labelledby={informationTitleId}
               className="w-[min(360px,calc(100vw-1.5rem))] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-sm text-popover-foreground shadow-menu"
             >
-              <h2 id={informationTitleId} className="break-words text-sm font-semibold">
+              <h2 id={informationTitleId} className="sr-only">
                 {replayDocument.source.title}
               </h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t('Reconstructed from archived records')}
-              </p>
-              <p className="my-3 text-xs text-muted-foreground">
-                {t('Recorded steps: {{steps}}; files: {{files}}', {
-                  steps: branch?.steps.length ?? 0,
-                  files: replayDocument.resources.length
-                })}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {t('Presentation timing is reconstructed; recorded results are unchanged.')}
-              </p>
-              {replayDocument.source.packageOrigin ? (
-                <div className="border-t border-border pt-3">
-                  <ReplaySourceDetails source={replayDocument.source} onInspect={pause} />
+              <dl className="grid grid-cols-2 gap-4 pb-3 text-xs text-muted-foreground">
+                <div className="flex items-baseline justify-between gap-2">
+                  <dt>{t('Steps')}</dt>
+                  <dd className="text-sm font-medium tabular-nums text-foreground">
+                    {branch?.steps.length ?? 0}
+                  </dd>
                 </div>
-              ) : null}
+                <div className="flex items-baseline justify-between gap-2">
+                  <dt>{t('Files')}</dt>
+                  <dd className="text-sm font-medium tabular-nums text-foreground">
+                    {replayDocument.resources.length}
+                  </dd>
+                </div>
+              </dl>
+              <div className="border-t border-border pt-3">
+                <ReplaySourceDetails source={replayDocument.source} onInspect={pause} />
+              </div>
             </PopoverContent>
           </Popover>
         </div>
@@ -697,7 +697,7 @@ const ReplayPanelContent = ({
                       <GitBranch size={16} aria-hidden="true" />
                       <span
                         aria-hidden="true"
-                        className="absolute right-0.5 top-0 rounded-sm bg-bg-000 px-0.5 text-[9px] leading-3 tabular-nums"
+                        className="absolute -right-1 -top-1 rounded-sm bg-bg-000 px-0.5 text-xs leading-4 tabular-nums"
                       >
                         {replayDocument.branches.findIndex((item) => item.id === scene.branchId) +
                           1}
@@ -715,7 +715,7 @@ const ReplayPanelContent = ({
                   collisionBoundary={tooltipBoundary}
                   collisionPadding={8}
                 >
-                  {t('Replay branch')} ·{' '}
+                  {t('Replay branch')}:
                   {branch?.kind === 'unattributed'
                     ? t('Related material')
                     : t('Branch {{index}}', {
@@ -723,7 +723,7 @@ const ReplayPanelContent = ({
                           replayDocument.branches.findIndex((item) => item.id === scene.branchId) +
                           1
                       })}
-                  {branch?.label ? ` · ${branch.label}` : ''}
+                  {branch?.label ? `: ${branch.label}` : ''}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -748,9 +748,9 @@ const ReplayPanelContent = ({
                   {item.kind === 'unattributed'
                     ? t('Related material')
                     : t('Branch {{index}}', { index: index + 1 })}
-                  {item.label ? ` · ${item.label}` : ''}
+                  {item.label ? `: ${item.label}` : ''}
                   {item.parentBranchId
-                    ? ` · ${t('From branch {{index}}', { index: replayDocument.branches.findIndex((parent) => parent.id === item.parentBranchId) + 1 })}`
+                    ? ` (${t('From branch {{index}}', { index: replayDocument.branches.findIndex((parent) => parent.id === item.parentBranchId) + 1 })})`
                     : ''}
                 </SelectItem>
               ))}

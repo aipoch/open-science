@@ -136,7 +136,7 @@ export const captureDiscussionStep = (
       add(
         id,
         'step',
-        `Notebook · ${run?.kernelKind ?? reference.id}`,
+        `Notebook (${run?.kernelKind ?? reference.id})`,
         run
           ? [run.script, ...(reference.part === 'input' ? [] : replayNotebookText(run))].join('\n')
           : '',
