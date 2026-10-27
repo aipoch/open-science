@@ -101,6 +101,7 @@ export type AcpRuntimeOptions = {
   // from resolveBackend when it is available.
   spawnAgent?: () => ChildProcessWithoutNullStreams
   spawnProcess?: AgentProcessSpawner
+  registerOpenCodeStoreRelease?: (release: () => void) => void
   // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
   // provider switch takes effect on reconnect.
   resolveBackend?: (context: {

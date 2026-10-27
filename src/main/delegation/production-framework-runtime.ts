@@ -15,6 +15,7 @@ import {
 } from '../../shared/permission-profiles'
 import {
   releaseResolvedAgentBackendLeases,
+  type AgentProcessSpawner,
   type ResolvedAgentBackend,
   type SessionSetup
 } from '../agent-framework'
@@ -117,6 +118,8 @@ const createProductionDelegatedFrameworkRuntime = (
           backend: ResolvedAgentBackend
           connection: NotebookRpcConnection
           preparedSkills?: AcpRuntimeCompositionOptions['preparedSkills']
+          assertProcessAdmission(): void
+          registerOpenCodeStoreRelease(release: () => void): void
         }>
       >()
       // The exact provider/model is validated by admission's model resolver. This certification hook
@@ -158,6 +161,15 @@ const createProductionDelegatedFrameworkRuntime = (
             await makeRuntimeCopyRemovable(runtimeHome)
           }
           await rm(runtimeHome, { recursive: true, force: true })
+        }
+        let processCleanupStarted = false
+        const openCodeStoreReleases = new Set<() => void>()
+        const assertProcessAdmission = (): void => {
+          if (processCleanupStarted) throw new Error('Delegated Attempt cleanup has started.')
+        }
+        const registerOpenCodeStoreRelease = (release: () => void): void => {
+          assertProcessAdmission()
+          openCodeStoreReleases.add(release)
         }
         let openCodeRuntime: PreparedOpenCodeRuntime | undefined
         let preparedSkills: AcpRuntimeCompositionOptions['preparedSkills']
@@ -339,7 +351,9 @@ const createProductionDelegatedFrameworkRuntime = (
           preparedAttempts.set(input.attemptId, {
             backend: runtimeBackend,
             preparedSkills,
-            connection: capability
+            connection: capability,
+            assertProcessAdmission,
+            registerOpenCodeStoreRelease
           })
           const base: PreparedDelegateExecution = {
             executionId: input.attemptId,
@@ -366,10 +380,14 @@ const createProductionDelegatedFrameworkRuntime = (
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
             async confirmProcessCleanup() {
+              processCleanupStarted = true
               const selection = { ...input.session, attemptId: input.attemptId }
               const hadOwnership = ownership.receipts(selection).length > 0
               await ownership.recover(selection, true)
               ownership.assertClear(selection)
+              // A failed runtime shutdown retains these locks until Attempt recovery proves exit.
+              for (const release of openCodeStoreReleases) release()
+              openCodeStoreReleases.clear()
               // Empty receipts alone are not evidence: a runtime can fail before registering
               // a process. Only successful recovery of recorded ownership supersedes its failure.
               return hadOwnership ? true : undefined
@@ -445,14 +463,19 @@ const createProductionDelegatedFrameworkRuntime = (
         if (!owned) throw new Error('Delegated runtime scope is unavailable.')
         let initialProcess = agentProcess
         const backend = withDelegatedChildContext(owned.backend)
-        const spawnProcess = ownership.createProcessSpawner({
+        const spawnOwnedProcess = ownership.createProcessSpawner({
           projectId: scope.provenance.projectId,
           sessionId: scope.provenance.sessionId,
           frameId: scope.provenance.agentFrameId,
           attemptId: scope.executionId,
           frameworkId
         })
+        const spawnProcess: AgentProcessSpawner = (...args) => {
+          owned.assertProcessAdmission()
+          return spawnOwnedProcess(...args)
+        }
         const spawnOwned = (): ChildProcessWithoutNullStreams => {
+          owned.assertProcessAdmission()
           if (initialProcess) {
             const process = initialProcess
             initialProcess = undefined
@@ -484,7 +507,8 @@ const createProductionDelegatedFrameworkRuntime = (
             ? { delegatedArtifactCurrentRunFile: scope.artifactCurrentRunFile }
             : {}),
           spawnAgent: spawnOwned,
-          spawnProcess
+          spawnProcess,
+          registerOpenCodeStoreRelease: owned.registerOpenCodeStoreRelease
         })
       }
 

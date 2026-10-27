@@ -133,6 +133,41 @@ const openCandidate = async (
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it('releases a late store lease without spawning when its Attempt is closing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-closing-'))
+    const spawn = vi.fn()
+    const prepareBackend = vi.fn()
+    try {
+      await expect(
+        new AcpAgentConnectionAdapter().open(
+          {
+            epoch: 1,
+            resolveBackend: async () => ({
+              framework: { ...opencodeFramework, spawn },
+              executablePath: '/opencode',
+              env: { XDG_DATA_HOME: root },
+              opencodeMajorVersion: 2
+            }),
+            prepareBackend,
+            isCurrent: () => true,
+            isShuttingDown: () => false,
+            registerOpenCodeStoreRelease: () => {
+              throw new Error('Delegated Attempt cleanup has started.')
+            }
+          },
+          hooks()
+        )
+      ).rejects.toThrow('cleanup has started')
+      expect(startService).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      expect(prepareBackend).not.toHaveBeenCalled()
+      const lock = acquireRuntimeDirectorySync(join(root, 'opencode'))
+      lock.release()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(['preparation', 'spawn'] as const)(
     'does not publish when the companion exits during %s',
     async (phase) => {

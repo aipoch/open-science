@@ -97,6 +97,7 @@ type AcpAgentConnectionCandidateInput = Readonly<{
   isShuttingDown: () => boolean
   spawnAgent?: () => ChildProcessWithoutNullStreams
   spawnProcess?: AgentProcessSpawner
+  registerOpenCodeStoreRelease?: (release: () => void) => void
 }>
 
 type AcpTransferredAgentConnection = Readonly<{
@@ -206,6 +207,7 @@ class AcpAgentConnectionAdapter {
           backend.env.XDG_DATA_HOME,
           backend.opencodeMajorVersion
         )
+        input.registerOpenCodeStoreRelease?.(openCodeStore.release)
       }
       let serviceExited = false
       if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 2) {

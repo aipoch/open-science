@@ -38,6 +38,8 @@ import * as openCodeProcess from '../agent-framework/opencode'
 import { AcpAgentConnectionAdapter } from '../acp/agent-connection-adapter'
 import { AcpBackendGenerationOwner } from '../acp/backend-generation-owner'
 import { terminateProcessTree } from '../process-tree'
+import { acquireRuntimeDirectorySync } from '../runtime-ownership'
+import * as fsPromises from 'node:fs/promises'
 import * as processTree from '../process-tree'
 import * as openCodePreparation from './opencode-runtime-preparation'
 import { createDelegateExecutionBackendLease } from './execution-backend-lease'
@@ -48,6 +50,10 @@ import {
 } from './production-framework-runtime'
 
 import { DelegatedProcessOwnership } from './process-ownership'
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>())
+}))
 
 const safeOpenCodeConfig = JSON.stringify({
   permission: { task: 'deny' },
@@ -1605,6 +1611,24 @@ it.each([true, false])(
     const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-opencode-companion-'))
     const owner = new DelegatedProcessOwnership(dataRoot)
     const key = { projectId: 'project-1', sessionId: 'session-opencode' }
+    const runtimeHome = join(
+      dataRoot,
+      'delegation',
+      key.projectId,
+      key.sessionId,
+      'runtime',
+      'companion-attempt'
+    )
+    const storeRoot = join(runtimeHome, 'data', 'opencode')
+    const remove = fsPromises.rm
+    const removal = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === runtimeHome) {
+        // POSIX permits unlinking an open lock file; check the Windows cleanup precondition here.
+        const lease = acquireRuntimeDirectorySync(storeRoot)
+        lease.release()
+      }
+      return remove(path, options)
+    })
     const children: ChildProcessWithoutNullStreams[] = []
     const spawnChild = (spawnProcess = spawn): ChildProcessWithoutNullStreams => {
       const child = spawnProcess(
@@ -1630,18 +1654,23 @@ it.each([true, false])(
       }
     }
     let candidate: Awaited<ReturnType<AcpAgentConnectionAdapter['open']>> | undefined
+    let recoverCleanup: (() => Promise<void>) | undefined
+    let runtimeOptions: runtimeComposition.AcpRuntimeCompositionOptions | undefined
     let receiptsAtStartup = 0
     const realTerminate = processTree.terminateProcessTree
+    let initialCleanup = true
     const termination = vi
       .spyOn(processTree, 'terminateProcessTree')
       .mockImplementation((child, ...args) =>
-        !confirmed && child === children[0]
+        (initialCleanup || !confirmed) && child === children[0]
           ? Promise.resolve({ reaped: false })
           : realTerminate(child, ...args)
       )
-    const runtime = vi.spyOn(runtimeComposition, 'createAcpRuntime').mockImplementation(
-      (options) =>
-        ({
+    const runtime = vi
+      .spyOn(runtimeComposition, 'createAcpRuntime')
+      .mockImplementation((options) => {
+        runtimeOptions = options
+        return {
           createSession: async () => {
             const backendOwner = new AcpBackendGenerationOwner(opencodeFramework)
             candidate = await new AcpAgentConnectionAdapter().open(
@@ -1653,7 +1682,8 @@ it.each([true, false])(
                 isCurrent: () => true,
                 isShuttingDown: () => false,
                 spawnAgent: options.spawnAgent,
-                spawnProcess: options.spawnProcess
+                spawnProcess: options.spawnProcess,
+                registerOpenCodeStoreRelease: options.registerOpenCodeStoreRelease
               },
               {
                 createElicitation: async () => ({ action: 'decline' }),
@@ -1678,9 +1708,14 @@ it.each([true, false])(
             throw new Error('controlled failure after both processes start')
           },
           // Force the public Attempt recovery path to establish cleanup itself.
-          shutdownForQuit: async () => ({ reaped: false })
-        }) as never
-    )
+          shutdownForQuit: async () => {
+            await candidate?.dispose()
+            expect(() => acquireRuntimeDirectorySync(storeRoot)).toThrow('already using')
+            initialCleanup = false
+            return { reaped: false }
+          }
+        } as never
+      })
     try {
       const frameworks = createProductionDelegatedFrameworkRuntime({
         capacity: 1,
@@ -1698,6 +1733,7 @@ it.each([true, false])(
         readSession: async () => delegatedSession('opencode')
       })
       const selected = await frameworks.forSession(session('opencode'), owner)
+      recoverCleanup = () => selected.execution.recoverCleanup!()
       const reservation = await selected.execution.reserve(1)
       const running = selected.execution.run(
         {
@@ -1726,13 +1762,11 @@ it.each([true, false])(
       )
       expect(children).toHaveLength(2)
       expect(receiptsAtStartup).toBe(2)
-      const runtimeHome = join(
-        dataRoot,
-        'delegation',
-        key.projectId,
-        key.sessionId,
-        'runtime',
-        'companion-attempt'
+      expect(() => runtimeOptions!.spawnProcess!(process.execPath, [], { stdio: 'pipe' })).toThrow(
+        'cleanup has started'
+      )
+      expect(() => runtimeOptions!.registerOpenCodeStoreRelease!(() => undefined)).toThrow(
+        'cleanup has started'
       )
       if (confirmed) {
         await expect
@@ -1747,12 +1781,21 @@ it.each([true, false])(
         expect(children[0].signalCode).toBeNull()
         expect(owner.receipts(key).length).toBeGreaterThan(0)
         expect((await stat(runtimeHome)).isDirectory()).toBe(true)
+        expect(() => acquireRuntimeDirectorySync(storeRoot)).toThrow('already using')
+        await expect(recoverCleanup()).rejects.toThrow('Delegated resource recovery failed')
+        expect(() => acquireRuntimeDirectorySync(storeRoot)).toThrow('already using')
+        termination.mockRestore()
+        await recoverCleanup()
+        expect(owner.receipts(key)).toEqual([])
+        await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
       }
       await reservation.releaseAll()
     } finally {
+      removal.mockRestore()
       termination.mockRestore()
       await candidate?.dispose()
       await Promise.all(children.map((child) => terminateProcessTree(child)))
+      await recoverCleanup?.().catch(() => undefined)
       await owner.recover(key, true).catch(() => undefined)
       serviceSpawn.mockRestore()
       runtime.mockRestore()
