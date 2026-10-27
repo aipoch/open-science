@@ -1771,10 +1771,12 @@ describe('LiteratureLibraryPage', () => {
       )
       useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id })
       render(<LiteratureLibraryPage />)
-      await screen.findByRole('button', { name: 'Smart trial 0' })
+      // Scope role queries to the relevant row instead of computing names for 100 rows.
+      const first = (await screen.findByText('Smart trial 0')).closest('tr')!
       await act(async () => {})
-      const first = screen.getByRole('button', { name: 'Smart trial 0' }).closest('tr')!
-      const second = screen.getByRole('button', { name: 'Smart trial 1' }).closest('tr')!
+      const second = screen.getByText('Smart trial 1').closest('tr')!
+      expect(within(first).getByRole('button', { name: 'Smart trial 0' })).toBeTruthy()
+      expect(within(second).getByRole('button', { name: 'Smart trial 1' })).toBeTruthy()
       delayReads = true
       await act(async () => {
         window.dispatchEvent(new Event('focus'))
@@ -1819,10 +1821,12 @@ describe('LiteratureLibraryPage', () => {
         stalePanel({ kind: 'collection', id: collection.id, smart: view })
       })
       if (refreshFailed) {
-        await screen.findByText(
-          'Decision saved, but results could not be refreshed. Reload the collection to see the latest results.'
-        )
-        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        const notice = (
+          await screen.findByText(
+            'Decision saved, but results could not be refreshed. Reload the collection to see the latest results.'
+          )
+        ).closest('section')!
+        fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }))
         await waitFor(() =>
           expect(
             screen.queryByText(
@@ -1833,7 +1837,9 @@ describe('LiteratureLibraryPage', () => {
         expect(transact.mock.calls.filter(([c]) => c.action === 'override')).toHaveLength(1)
       } else {
         expect(
-          within(screen.getByRole('button', { name: /^Smart trials/ })).getByText('99')
+          within(
+            screen.getByText('Smart trials', { selector: 'button span' }).closest('button')!
+          ).getByText('99')
         ).toBeTruthy()
       }
       expect(screen.queryByText('1 selected')).toBeNull()
