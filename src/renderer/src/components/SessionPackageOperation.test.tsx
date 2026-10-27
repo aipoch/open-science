@@ -4,6 +4,7 @@ import { flushSessionPersistence } from '@/lib/session-persistence/session-persi
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -715,6 +716,8 @@ afterEach(() => {
   act(() => root.unmount())
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
+  document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+  document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
 })
 
 it('starts with a simple export summary and reveals optional controls on request', async () => {
@@ -1343,8 +1346,9 @@ it('keeps import confirmation in one dialog with omissions collapsed', async () 
   })
 })
 
-it('does not claim desktop import events on a Web client', async () => {
+it('does not claim desktop import events on a remote Web client', async () => {
   document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
   const subscribe = vi.fn(() => () => undefined)
   const query = vi.fn(async () => null)
   vi.stubGlobal('api', { sessions: { packageOperation: query, onPackageOperation: subscribe } })
@@ -1355,6 +1359,63 @@ it('does not claim desktop import events on a Web client', async () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   } finally {
     document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+  }
+})
+
+it('renders the operation dialog for a local Web client', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  const subscribe = vi.fn(() => () => undefined)
+  const operation: PackageOperationSnapshot = {
+    id: 'local-web',
+    kind: 'export',
+    state: 'running',
+    progress: { phase: 'copying' }
+  }
+  const query = vi.fn(async () => operation)
+  vi.stubGlobal('api', { sessions: { packageOperation: query, onPackageOperation: subscribe } })
+  usePackageOperationStore.setState({ operation, open: true })
+  try {
+    await act(async () => root.render(<SessionPackageOperation />))
+    expect(subscribe).toHaveBeenCalled()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  } finally {
+    document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+  }
+})
+
+it('saves a local Web export result to the browser from the footer button', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  const saveManagedFile = vi.fn(async () => ({ saved: true }))
+  const operation: PackageOperationSnapshot = {
+    id: 'export-done',
+    kind: 'export',
+    state: 'succeeded',
+    progress: { phase: 'saving' },
+    result: { filePath: 'C:\\tmp\\research.science' }
+  }
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation: vi.fn(async () => operation),
+      onPackageOperation: () => () => undefined
+    },
+    saveManagedFile
+  })
+  usePackageOperationStore.setState({ operation, open: true })
+  try {
+    await act(async () => root.render(<SessionPackageOperation />))
+    await act(async () => button('Download research.science').click())
+    expect(saveManagedFile).toHaveBeenCalledExactlyOnceWith({
+      source: 'local',
+      path: 'C:\\tmp\\research.science',
+      suggestedName: 'research.science'
+    })
+  } finally {
+    document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
   }
 })
 
