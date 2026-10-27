@@ -3562,6 +3562,21 @@ describe('session full-access authority subscriptions', () => {
     broker[method]('session')
     expect(broker.hasFullAccess('session')).toBe(false)
     expect(changed).toHaveBeenCalledExactlyOnceWith(false)
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(false)
+    expect(broker.hasFullAccess('session')).toBe(false)
+    expect(changed).toHaveBeenCalledExactlyOnceWith(false)
+  })
+
+  it('keeps provider updates bound to the current attachment authority', () => {
+    const broker = new AcpPermissionBroker(vi.fn())
+    let current = true
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(false)
+    broker.setLivePermissionProfile('session', profile('ask'), () => current)
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(true)
+    expect(broker.hasFullAccess('session')).toBe(true)
+    current = false
+    expect(broker.hasFullAccess('session')).toBe(false)
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(false)
   })
 
   it('does not grant authority from an invalidated generation', () => {

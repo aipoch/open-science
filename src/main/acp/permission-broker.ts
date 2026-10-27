@@ -957,8 +957,9 @@ class AcpPermissionBroker {
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>
   ): boolean {
-    if (this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked) return false
-    this.setLivePermissionProfile(sessionId, profile)
+    const live = this.livePermissionProfiles.get(sessionId)
+    if (!live || !live.isCurrent() || live.providerUpdatesBlocked) return false
+    this.setLivePermissionProfile(sessionId, profile, live.isCurrent)
     return true
   }
 

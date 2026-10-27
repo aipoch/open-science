@@ -14620,6 +14620,49 @@ describe('ACP runtime session management', () => {
     }
   )
 
+  it('rejects a late provider mode update after detaching a full session', async () => {
+    const process = new FakeAgentProcess()
+    startPermissionProbeAgent(process, {
+      newSessionId: 'full-detached',
+      toolCallId: 'unused',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+      const projector = (
+        runtime as unknown as {
+          sessionUpdateProjector: { route: (notification: acp.SessionNotification) => void }
+        }
+      ).sessionUpdateProjector
+      // A notification already admitted by the connection can finish projection after detach.
+      const finishQueuedUpdate = (): void =>
+        projector.route({
+          sessionId,
+          update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
+        })
+      await runtime.releaseSessionForTransfer(sessionId)
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      const changed = vi.fn()
+      const unsubscribe = runtime.subscribeFullAccess(sessionId, changed)
+      finishQueuedUpdate()
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      expect(changed).not.toHaveBeenCalledWith(true)
+      unsubscribe()
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
   it('restores full authority when an attached refresh fails before permission configuration', async () => {
     const process = new FakeAgentProcess()
     startPermissionProbeAgent(process, {
