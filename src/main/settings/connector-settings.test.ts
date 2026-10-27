@@ -194,10 +194,15 @@ describe('ConnectorSettingsModule', () => {
 
     expect(snapshot.connectors).toHaveLength(ALL_CONNECTOR_IDS.length)
     expect(snapshot.connectors.filter((c) => !c.enabled).map((c) => c.id)).toEqual([
+      'biodbnet',
       'biosamples',
+      'chea3',
+      'ctd',
       'dailymed',
+      'europepmc',
       'kegg',
       'orphadata',
+      'research-datasets',
       'rxnorm',
       'tcia',
       'wikipathways'
