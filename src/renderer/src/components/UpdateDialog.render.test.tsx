@@ -223,13 +223,18 @@ describe('UpdateDialog', () => {
     expect(download).toHaveBeenCalled()
   })
 
-  it('shows "Restart to update" when a ready update applies in place (win/linux)', () => {
+  it('shows the Update action and its interruption consequences for an in-place update', () => {
     useUpdateStore.setState({
       isDialogOpen: true,
       status: { state: 'ready', current: '0.1.0', latest: '0.2.0', applyKind: 'restart' }
     })
     act(() => root.render(<UpdateDialog />))
-    expect(document.body.textContent).toContain('Restart to update')
+    expect(
+      [...document.querySelectorAll('button')].some((button) => button.textContent === 'Update')
+    ).toBe(true)
+    expect(document.body.textContent).toContain(
+      'save your changes and stop those tasks after you confirm'
+    )
     expect(document.body.textContent).not.toContain('Open installer')
   })
 

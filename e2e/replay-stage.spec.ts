@@ -903,6 +903,7 @@ test('archived branches retain progress and show Reviewer and submitted choices 
     original.getByText('Recorded review. No new review is run during replay.')
   ).toBeVisible()
   await expect(page.getByText('Recorded file version', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'ask_user 1 step', exact: true }).click()
   const choice = page.getByTestId('elicitation-answer-summary')
   await expect(choice).toContainText('R analysis')
   await page.getByTestId('elicitation-answer-row').click()

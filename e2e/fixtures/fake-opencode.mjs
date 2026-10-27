@@ -2025,7 +2025,7 @@ if (process.argv.includes('--version')) {
           prompt.includes(
             'The user answered the pending question: Restart verification dataset?'
           ) ||
-          (prompt.includes('The user answered the pending questions:') &&
+          (prompt.includes('The user responded to the pending questions:') &&
             prompt.includes('Restart verification dataset?'))
         ) {
           reply = 'Restart verification: Question answer delivered.'

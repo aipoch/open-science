@@ -1,3 +1,12 @@
+import {
+  captureFixtureProcess,
+  captureFixtureService,
+  cleanupFixtureProcess,
+  cleanupFixtureService,
+  runFixtureCleanup,
+  type CapturedFixtureProcess,
+  type CapturedService
+} from './fixtures/local-service-cleanup'
 import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -8,6 +17,7 @@ import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { chromium, type Browser, type ElectronApplication } from 'playwright'
 import {
+  closeElectronApplicationForCleanup,
   electronLaunchTarget,
   launchEnvironment,
   launchOpenScience,
@@ -16,7 +26,7 @@ import {
 
 for (const stalled of [false, true]) {
   // eslint-disable-next-line no-empty-pattern
-  test(`Runtime-requested relaunch ${stalled ? 'times out before the transport closes' : 'replies before clean shutdown and Desktop relaunch'}`, async ({}, testInfo) => {
+  test(`Runtime-requested relaunch ${stalled ? 'continues after bounded degraded shutdown' : 'replies before clean shutdown and Desktop relaunch'}`, async ({}, testInfo) => {
     test.skip(
       !['darwin', 'win32', 'linux'].includes(process.platform) ||
         Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
@@ -44,27 +54,34 @@ for (const stalled of [false, true]) {
       ...(process.platform === 'darwin' ? [resolve('e2e/fixtures/mock-node-credentials.cjs')] : []),
       ...(stalled ? [resolve('e2e/fixtures/runtime-relaunch-stall.cjs')] : [])
     ]
-    const server = spawn(
-      process.execPath,
-      [resolve('out/backend/index.cjs'), '--development', '--desktop', '--serve=0'],
-      {
-        env: {
-          ...launchEnvironment(roots.storageRoot),
-          OPEN_SCIENCE_USER_DATA: roots.userDataRoot,
-          NODE_OPTIONS: preload.map((path) => `--require=${JSON.stringify(path)}`).join(' ')
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      }
-    )
-    let output = ''
-    server.stdout.on('data', (data) => {
-      output += String(data)
-    })
-    server.stderr.on('data', (data) => {
-      output += String(data)
-    })
+    let server!: ReturnType<typeof spawn>
+    let serverProcess: CapturedFixtureProcess | undefined
+    let desktopProcess: CapturedFixtureProcess | undefined
     let app: ElectronApplication | undefined
+    let service: CapturedService | undefined
+    let failure: unknown
     try {
+      server = spawn(
+        process.execPath,
+        [resolve('out/backend/index.cjs'), '--development', '--desktop', '--serve=0'],
+        {
+          env: {
+            ...launchEnvironment(roots.storageRoot),
+            OPEN_SCIENCE_USER_DATA: roots.userDataRoot,
+            NODE_OPTIONS: preload.map((path) => `--require=${JSON.stringify(path)}`).join(' ')
+          },
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
+      server.on('error', () => undefined)
+      serverProcess = captureFixtureProcess(server)
+      let output = ''
+      server.stdout!.on('data', (data) => {
+        output += String(data)
+      })
+      server.stderr!.on('data', (data) => {
+        output += String(data)
+      })
       await expect
         .poll(
           async () => {
@@ -88,6 +105,9 @@ for (const stalled of [false, true]) {
         )
         .toBe(true)
       app = await launchOpenScience(roots, false, false, roots.fakeRemoteItRoot, 'hidden', false)
+      desktopProcess = captureFixtureProcess(app.process())
+      if (!desktopProcess) throw new Error('Fixture desktop child was not captured')
+      service = await captureFixtureService(roots.storageRoot)
       const page = await app.firstWindow()
       await expect
         .poll(() => page.evaluate(() => window.api?.databaseStartup.getState()), { timeout: 60000 })
@@ -109,7 +129,7 @@ for (const stalled of [false, true]) {
         },
         join(root, 'desktop-relaunch')
       )
-      const desktop = app.process()
+      const desktop = desktopProcess.child
       const owner = JSON.parse(
         await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8')
       )
@@ -135,17 +155,53 @@ for (const stalled of [false, true]) {
             { timeout: 10000 }
           )
           .toBe('stalled')
-        await expect
-          .poll(() => readFile(join(root, 'desktop-relaunch.error'), 'utf8').catch(() => ''), {
-            timeout: 22000
-          })
-          .toContain('15 seconds')
-        expect(Date.now() - started).toBeLessThan(26000)
-        expect(desktop.exitCode).toBeNull()
-        expect(server.exitCode).toBeNull()
-        await expect
-          .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-          .toMatchObject({ phase: 'disconnected' })
+        await expect.poll(() => desktop.exitCode, { timeout: 27000 }).toBe(0)
+        const desktopExitObservedAt = Date.now()
+        await expect.poll(() => server.exitCode !== null || server.signalCode !== null).toBe(true)
+        const serviceExitObservedAt = Date.now()
+        expect(await readFile(join(root, 'desktop-relaunch'), 'utf8')).toBe('relaunch')
+        expect(await readFile(join(root, 'desktop-relaunch.error'), 'utf8').catch(() => '')).toBe(
+          ''
+        )
+        acquireRuntimeDirectorySync(roots.storageRoot).release()
+        const lockReleasedAt = Date.now()
+        expect(lockReleasedAt - started).toBeLessThan(28000)
+        await testInfo.attach('stalled-native-relaunch-evidence', {
+          body: JSON.stringify(
+            {
+              baseline: process.env.OPEN_SCIENCE_E2E_BASELINE ?? null,
+              buildId: process.env.OPEN_SCIENCE_E2E_BUILD_ID ?? null,
+              target: {
+                pid: server.pid,
+                birthToken: serverProcess?.birthToken,
+                generation: owner.desktop.generation
+              },
+              desktop: {
+                pid: desktop.pid,
+                birthToken: desktopProcess.birthToken,
+                exitCode: desktop.exitCode,
+                signalCode: desktop.signalCode
+              },
+              service: { exitCode: server.exitCode, signalCode: server.signalCode },
+              timing: {
+                startedAt: started,
+                desktopExitObservedAt,
+                serviceExitObservedAt,
+                lockReleasedAt,
+                desktopExitMs: desktopExitObservedAt - started,
+                serviceExitMs: serviceExitObservedAt - started,
+                totalMs: lockReleasedAt - started
+              },
+              lockReleased: true,
+              relaunchRequested: true,
+              nativeError: false
+            },
+            null,
+            2
+          ),
+          contentType: 'application/json'
+        })
+        app = undefined
       } else {
         await expect.poll(() => desktop.exitCode, { timeout: 25000 }).toBe(0)
         await expect.poll(() => server.exitCode).toBe(0)
@@ -155,24 +211,51 @@ for (const stalled of [false, true]) {
         ).toMatchObject({ generation: owner.desktop.generation, pid: server.pid, outcome: 'clean' })
         app = undefined
       }
+    } catch (error) {
+      failure = error
+      throw error
     } finally {
-      for (const [name, path] of [
-        ['runtime-log', join(roots.storageRoot, 'logs', 'main.log')],
-        ['desktop-log', join(roots.userDataRoot, 'desktop-logs', 'main.log')]
-      ]) {
-        await testInfo.attach(name, {
-          body: await readFile(path).catch(() => Buffer.from('Unavailable')),
-          contentType: 'text/plain'
-        })
-      }
-      const desktop = app?.process()
-      await app?.evaluate(({ app }) => app.exit(0)).catch(() => desktop?.kill('SIGKILL'))
-      if (desktop)
-        await expect.poll(() => desktop.exitCode !== null || desktop.signalCode !== null).toBe(true)
-      if (server.exitCode === null && server.signalCode === null)
-        server.kill(stalled ? 'SIGKILL' : 'SIGTERM')
-      await expect.poll(() => server.exitCode !== null || server.signalCode !== null).toBe(true)
-      await removeTreeForCleanup(root)
+      await runFixtureCleanup(
+        [
+          () => testInfo.attach('fixture-root', { body: root, contentType: 'text/plain' }),
+          async () => {
+            service ??= await captureFixtureService(roots.storageRoot)
+          },
+          async () => {
+            for (const [name, path] of [
+              ['runtime-log', join(roots.storageRoot, 'logs', 'main.log')],
+              ['desktop-log', join(roots.userDataRoot, 'desktop-logs', 'main.log')]
+            ]) {
+              await testInfo.attach(name, {
+                body: await readFile(path).catch(() => Buffer.from('Unavailable')),
+                contentType: 'text/plain'
+              })
+            }
+          },
+          async () => {
+            if (
+              !app ||
+              !desktopProcess ||
+              desktopProcess.child.exitCode !== null ||
+              desktopProcess.child.signalCode !== null
+            )
+              return
+            await closeElectronApplicationForCleanup(
+              {
+                close: () => app!.close(),
+                forceClose: () => cleanupFixtureProcess(desktopProcess)
+              },
+              { gracefulTimeoutMs: 5000, forcedTimeoutMs: 25_000 }
+            )
+          },
+          () => cleanupFixtureService(service),
+          () => cleanupFixtureProcess(desktopProcess),
+          () => cleanupFixtureProcess(serverProcess)
+        ],
+        failure
+      )
+      if (failure === undefined && testInfo.status === testInfo.expectedStatus)
+        await removeTreeForCleanup(root)
     }
   })
 }
@@ -208,6 +291,9 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
     resolve('e2e/fixtures/relaunch-observer.cjs')
   )
   let desktop: ChildProcess | undefined
+  let desktopProcess: CapturedFixtureProcess | undefined
+  const capturedServices: CapturedService[] = []
+  let failure: unknown
   let browser: Browser | undefined
   let successorPid: number | undefined
   let launchStderr = ''
@@ -235,6 +321,7 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       },
       stdio: ['ignore', 'pipe', 'pipe']
     })
+    desktopProcess = captureFixtureProcess(desktop)
     desktop.stderr?.on('data', (data) => {
       launchStderr += String(data)
     })
@@ -292,6 +379,8 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       `${firstDesktop.pid}\n`
     )
     const firstOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+    const firstService = await captureFixtureService(configRoot)
+    if (firstService) capturedServices.push(firstService)
     await page
       .evaluate(
         async (target) => {
@@ -354,6 +443,8 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       contentType: 'image/png'
     })
     const nextOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+    const nextService = await captureFixtureService(configRoot)
+    if (nextService) capturedServices.push(nextService)
     expect(nextOwner.pid).not.toBe(firstOwner.pid)
     expect(nextOwner.desktop.generation).not.toBe(firstOwner.desktop.generation)
     const desktopIdentities = (
@@ -404,39 +495,47 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       contentType: 'application/json'
     })
     completed = true
+  } catch (error) {
+    failure = error
+    throw error
   } finally {
-    await testInfo.attach('actual-relaunch-launch', {
-      body: JSON.stringify({ root, launchIdentity, launchStderr, successorPid }),
-      contentType: 'application/json'
-    })
-    await testInfo.attach('actual-relaunch-desktop-log', {
-      body: await readFile(join(profileRoot, 'desktop-logs', 'main.log')).catch(() =>
-        Buffer.from('Unavailable')
-      ),
-      contentType: 'text/plain'
-    })
-    if (successorPid && !exited(successorPid)) {
-      await writeFile(
-        join(configRoot, 'fixture-quit-pid'),
-        JSON.stringify({ pid: successorPid, capability })
-      )
-      await expect.poll(() => exited(successorPid!), { timeout: 25000 }).toBe(true)
-    }
-    await browser?.close().catch(() => undefined)
-    if (desktop && desktop.exitCode === null && desktop.signalCode === null) {
-      desktop.kill('SIGKILL')
-      await new Promise<void>((resolve) => desktop!.once('exit', () => resolve()))
-    }
+    let service: CapturedService | undefined
+    await runFixtureCleanup(
+      [
+        () => testInfo.attach('native-relaunch-root', { body: root, contentType: 'text/plain' }),
+        async () => {
+          service = await captureFixtureService(configRoot)
+        },
+        async () => {
+          await testInfo.attach('actual-relaunch-launch', {
+            body: JSON.stringify({ root, launchIdentity, launchStderr, successorPid }),
+            contentType: 'application/json'
+          })
+          await testInfo.attach('actual-relaunch-desktop-log', {
+            body: await readFile(join(profileRoot, 'desktop-logs', 'main.log')).catch(() =>
+              Buffer.from('Unavailable')
+            ),
+            contentType: 'text/plain'
+          })
+        },
+        async () => {
+          if (successorPid && !exited(successorPid)) {
+            await writeFile(
+              join(configRoot, 'fixture-quit-pid'),
+              JSON.stringify({ pid: successorPid, capability })
+            )
+            await expect.poll(() => exited(successorPid!), { timeout: 25000 }).toBe(true)
+          }
+        },
+        async () => {
+          await browser?.close()
+        },
+        () => cleanupFixtureProcess(desktopProcess),
+        () => cleanupFixtureService(service),
+        ...capturedServices.map((captured) => () => cleanupFixtureService(captured))
+      ],
+      failure
+    )
     if (completed) await removeTreeForCleanup(root)
-    else {
-      await writeFile(
-        join(root, 'native-relaunch-failed.json'),
-        JSON.stringify({ launchIdentity, launchStderr }, null, 2)
-      )
-      await testInfo.attach('native-relaunch-failed-root', {
-        body: JSON.stringify({ root, launchIdentity, launchStderr }, null, 2),
-        contentType: 'application/json'
-      })
-    }
   }
 })

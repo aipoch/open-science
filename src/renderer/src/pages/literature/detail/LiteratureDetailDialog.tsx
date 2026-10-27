@@ -35,6 +35,7 @@ import {
   Quote,
   Search,
   Settings2,
+  ShieldCheck,
   X
 } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -46,6 +47,7 @@ import { LiteratureCitationPanel } from './LiteratureCitationPanel'
 import { LiteratureFullTextLookup } from './LiteratureFullTextLookup'
 import { LiteratureMetadataCompletion } from './LiteratureMetadataCompletion'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
+import { LiteraturePublicationCheck } from './LiteraturePublicationCheck'
 const LiteratureDetailBoundary = ({
   children,
   controller
@@ -147,6 +149,7 @@ export function LiteratureDetailDialog({
   }, [])
   const credentialFormId = useId()
   const credentialTriggerRef = useRef<HTMLButtonElement>(null)
+  const moreActionsTriggerRef = useRef<HTMLButtonElement>(null)
   const closeSelectedItemDetail = (): void => {
     if (relatedSavingRef.current) return
     setCredentialsOpen(false)
@@ -274,8 +277,11 @@ export function LiteratureDetailDialog({
                           onClick={() => {
                             if (relatedSavingRef.current) return
                             const fromRelated = metadata.mode === 'related'
+                            const fromPublicationCheck = metadata.mode === 'publication-check'
                             setCredentialsOpen(false)
                             leaveMetadataEditor()
+                            if (fromPublicationCheck)
+                              requestAnimationFrame(() => moreActionsTriggerRef.current?.focus())
                             if (fromRelated)
                               requestAnimationFrame(() =>
                                 selectedItemDialogRef.current
@@ -303,7 +309,9 @@ export function LiteratureDetailDialog({
                                       ? t('Find supplementary materials')
                                       : metadata.mode === 'related'
                                         ? t('Citation discovery')
-                                        : t('Citation')}
+                                        : metadata.mode === 'publication-check'
+                                          ? t('Retractions and corrections')
+                                          : t('Citation')}
                             </Dialog.Title>
                             <Dialog.Description
                               className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
@@ -364,6 +372,7 @@ export function LiteratureDetailDialog({
                               size="icon-sm"
                               className="transition-none"
                               aria-label={t('More actions')}
+                              ref={moreActionsTriggerRef}
                             >
                               <MoreHorizontal className="size-4" aria-hidden="true" />
                             </Button>
@@ -391,6 +400,12 @@ export function LiteratureDetailDialog({
                               {t('Find full-text PDF')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
+                              onSelect={() => changeDetailMode('publication-check')}
+                            >
+                              <ShieldCheck className="mr-2 size-4" aria-hidden="true" />
+                              {t('Retractions and corrections')}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               onSelect={() => {
                                 changeDetailMode('citation')
                               }}
@@ -415,7 +430,11 @@ export function LiteratureDetailDialog({
                     </div>
                   </div>
                   {isAddingPdf ? pdfStaging.notice : null}
-                  {metadata.mode === 'related' ? (
+                  {metadata.mode === 'publication-check' ? (
+                    <div className="min-h-0 flex-1 overflow-y-auto px-5 text-sm sm:px-6">
+                      <LiteraturePublicationCheck item={selectedItem} />
+                    </div>
+                  ) : metadata.mode === 'related' ? (
                     <LiteratureRelatedLookup
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}:${generation}`}
                       item={selectedItem}

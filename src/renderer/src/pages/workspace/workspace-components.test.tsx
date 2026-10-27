@@ -543,7 +543,10 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).not.toContain('renderWebSearchDetails(')
     expect(workspaceMessageScrollerSource).not.toContain('formatActivityDetails(activity)')
     expect(workspaceMessageScrollerSource).toContain(
-      'transcriptWindow.entries.map(({ item, itemIndex })'
+      'const transcriptEntries = transcriptWindow.entries.flatMap((entry) =>'
+    )
+    expect(workspaceMessageScrollerSource).toContain(
+      'transcriptEntries.map(({ item, itemIndex, processHeader }, entryIndex) =>'
     )
     expect(workspaceMessageScrollerSource).toMatch(/import \{[^}]*\buseState\b[^}]*\} from 'react'/)
     expect(workspaceMessageScrollerSource).toContain('const currentSessionId = activeSession?.id')

@@ -1,6 +1,17 @@
+import { terminalContactSources } from './terminal-contact-source.js'
+import { readNativeCommandAdvances } from './compound-reference-boundary.js'
 import { getPdfTranslationTextContent } from './text-content.js'
-import type { PDFDocumentProxy } from 'pdfjs-dist'
+import {
+  readNativeReferenceEvidence,
+  readNativeDisplayEquationEvidence,
+  readNativeNumberedPacketEvidence
+} from './native-reference-evidence.js'
+import { readNativeSectionFontEvidence } from './wrapped-section-prose.js'
+import type { PDFDocumentProxy, PDFPageProxy, getDocument } from 'pdfjs-dist'
+import { createAuxiliaryNativeDisplayInkReader } from './auxiliary-native-ink.js'
+import { hasNativeDisplaySequence, nativeScopedDisplayOwners } from './native-display-packets.js'
 import { nativePartialNavigation } from './native-source-geometry.js'
+import { readOutlierFontNavigation } from './outlier-font-navigation.js'
 import { createPdfTranslationSource, type PdfTranslationSource } from './source.js'
 import { groupPdfTranslationPages, type PdfLayoutPage, type PdfLayoutTextItem } from './layout.js'
 import {
@@ -105,11 +116,16 @@ function independentRect(
 export async function extractPdfTranslationSource({
   document,
   resourceRequestKey,
+  sourceIdentity,
+  nativeDocumentFactory,
   signal,
   onProgress
 }: {
-  document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'>
+  document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'> &
+    Partial<Pick<PDFDocumentProxy, 'getData' | 'getMetadata'>>
   resourceRequestKey: string
+  sourceIdentity?: Readonly<{ sourceChecksum: string; sourceSizeBytes: number }>
+  nativeDocumentFactory?: typeof getDocument
   signal: AbortSignal
   onProgress?: (pagesRead: number) => void
 }): Promise<PdfTranslationExtraction> {
@@ -118,11 +134,18 @@ export async function extractPdfTranslationSource({
   if (!fingerprint || !Number.isInteger(document.numPages) || document.numPages < 1)
     throw new Error('Invalid PDF source identity')
   const pages: PdfLayoutPage[] = []
+  const scopedDisplays: {
+    page: PDFPageProxy
+    content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
+    viewport: ReturnType<PDFPageProxy['getViewport']>
+    pageNumber: number
+  }[] = []
   const mathDiagrams: PdfMathDiagram[] = []
   const styles: Record<string, TextStyle>[] = []
   const pagesWithoutText: number[] = []
   const exclusions: PdfTranslationExtraction['coverage']['exclusions'][number][] = []
   const unreliableItems = new Set<string>()
+  const outlierNavigation = new Map<string, NonNullable<ReturnType<typeof independentRect>>>()
   const partialNavigation = new Map<
     string,
     NonNullable<ReturnType<typeof nativePartialNavigation>>
@@ -205,6 +228,16 @@ export async function extractPdfTranslationSource({
         hasEOL: item.hasEOL
       }
     })
+    const nativeReferenceEvidence = await readNativeReferenceEvidence(page, content)
+    const nativeDisplayMathEvidence = await readNativeDisplayEquationEvidence(
+      page,
+      content,
+      nativeReferenceEvidence
+    )
+    if (!nativeDisplayMathEvidence.complete && hasNativeDisplaySequence(content))
+      scopedDisplays.push({ page, content, viewport, pageNumber })
+    for (const [index, rect] of readOutlierFontNavigation(page, content, viewport))
+      outlierNavigation.set(`${pageNumber}:${index}`, rect)
     styles.push(content.styles ?? {})
     mathDiagrams.push(...(await readPdfMathDiagrams(page, pageNumber, content)))
     signal.throwIfAborted()
@@ -216,7 +249,21 @@ export async function extractPdfTranslationSource({
       // Item coordinates already include the default viewport rotation above. Group
       // readable horizontal prose in that space; sideways items still remain source-only.
       rotation: 0,
-      items
+      items,
+      nativeReferenceEvidence,
+      nativeDisplayMathEvidence,
+      nativeNumberedPacketEvidence: await readNativeNumberedPacketEvidence(
+        page,
+        content,
+        nativeReferenceEvidence,
+        nativeDisplayMathEvidence
+      ),
+      nativeSectionFontEvidence: await readNativeSectionFontEvidence(
+        page,
+        content,
+        nativeReferenceEvidence
+      ),
+      nativeCommandAdvances: await readNativeCommandAdvances(page, content)
     })
     onProgress?.(pageNumber)
     // Let the reader paint and deliver cancellation between page reads.
@@ -303,7 +350,9 @@ export async function extractPdfTranslationSource({
         original = fragment.items[0]
       const page = pages[fragment.pageNumber - 1],
         item = page.items[original.index]
-      const rect = independentRect(item, page, styles[fragment.pageNumber - 1][item.fontName ?? ''])
+      const rect =
+        independentRect(item, page, styles[fragment.pageNumber - 1][item.fontName ?? '']) ??
+        outlierNavigation.get(`${fragment.pageNumber}:${original.index}`)
       if (rect) {
         const id = `rot-p${fragment.pageNumber}-i${original.index}`
         independent.push({
@@ -381,6 +430,7 @@ export async function extractPdfTranslationSource({
         source: unit.source,
         ...(unit.sourceOnly ? { sourceOnly: true as const } : {}),
         ...(unit.preserve ? { preserve: unit.preserve } : {}),
+        ...(unit.referenceBoundary ? { referenceBoundary: true as const } : {}),
         fragments
       })
       const reasons = [...unit.risks]
@@ -403,13 +453,50 @@ export async function extractPdfTranslationSource({
   )
   warnings.push(...independentWarnings)
   const excludedItemCount = exclusions.reduce((count, entry) => count + entry.items.length, 0)
+  let finalUnits = terminalContactSources(
+    [...units, ...independent],
+    layout,
+    pages,
+    document.numPages
+  )
+  if (scopedDisplays.length) {
+    const auxiliary = createAuxiliaryNativeDisplayInkReader({
+        document,
+        sourceIdentity,
+        nativeDocumentFactory,
+        signal
+      }),
+      protectedOwners = new Set<string>()
+    try {
+      for (const context of scopedDisplays) {
+        signal.throwIfAborted()
+        for (const id of await nativeScopedDisplayOwners(
+          finalUnits,
+          context.page,
+          context.content,
+          context.viewport,
+          context.pageNumber,
+          auxiliary
+        ))
+          protectedOwners.add(id)
+        signal.throwIfAborted()
+      }
+    } finally {
+      await auxiliary.dispose()
+    }
+    finalUnits = finalUnits.map((unit) =>
+      protectedOwners.has(unit.id) && !unit.sourceOnly && !unit.preserve
+        ? { ...unit, sourceOnly: true as const, preserve: 'formula' as const }
+        : unit
+    )
+  }
   signal.throwIfAborted()
   return Object.freeze({
     source: createPdfTranslationSource({
       resourceRequestKey,
       fingerprint,
       pages,
-      units: [...units, ...independent]
+      units: finalUnits
     }),
     coverage: Object.freeze({
       pageCount: pages.length,

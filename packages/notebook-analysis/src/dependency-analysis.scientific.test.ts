@@ -4136,7 +4136,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
   })
 
-  it('classifies a common dplyr and ggplot2 workflow as clear', async () => {
+  it('keeps dplyr and ggplot2 aggregation uncertain without masked column types', async () => {
     const projection = await projectScripts(
       'r',
       [
@@ -4160,10 +4160,13 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       'open-science-r-tidyverse-corpus-'
     )
 
-    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+    })
   })
 
-  it.each(['%>%', '|>'])('classifies a common dplyr %s pipeline as clear', async (pipe) => {
+  it.each(['%>%', '|>'])('keeps dplyr %s masked reductions uncertain', async (pipe) => {
     const projection = await projectScripts(
       'r',
       [
@@ -4177,7 +4180,10 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       'open-science-r-dplyr-pipe-corpus-'
     )
 
-    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+    })
   })
 
   it('does not trust a lookalike qualified transform in an R pipe', async () => {
@@ -4192,7 +4198,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-1']).toMatchObject({ state: 'unknown' })
   })
 
-  it('tracks a dplyr data-mask summary across data replacement', async () => {
+  it('retains dplyr masked-call uncertainty across data replacement', async () => {
     const projection = await projectScripts(
       'r',
       [
@@ -4203,7 +4209,10 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       'open-science-r-dplyr-lineage-corpus-'
     )
 
-    expect(projection?.stalenessByRunId['run-2']).toMatchObject({ state: 'stale' })
+    expect(projection?.stalenessByRunId['run-2']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+    })
   })
 
   it('marks a dplyr data-mask result unknown when an ambiguous environment name changes', async () => {
@@ -4353,7 +4362,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     })
   })
 
-  it('classifies a common dplyr and tidyr reshape workflow as clear', async () => {
+  it('keeps tidyr aggregation uncertain without masked column types', async () => {
     const projection = await projectScripts(
       'r',
       [
@@ -4374,7 +4383,10 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       'open-science-r-tidyr-corpus-'
     )
 
-    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+    })
   })
 
   it('tracks a tidyr reshape across source replacement', async () => {
@@ -4553,7 +4565,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-1']).toMatchObject({ state: 'unknown' })
   })
 
-  it('classifies common readr and tibble workflows as clear', async () => {
+  it('keeps readr reductions uncertain without masked column types', async () => {
     const projection = await projectScripts(
       'r',
       [
@@ -4572,7 +4584,10 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       'open-science-r-readr-tibble-corpus-'
     )
 
-    expect(projection?.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    expect(projection?.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+    })
   })
 
   it('classifies a common openxlsx workbook pipeline as clear', async () => {
@@ -5088,6 +5103,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
 
     expect(projection?.stalenessByRunId).toEqual({
       'run-1': { state: 'clear' },
+      // Alias tests consume shape with length; Summary dispatch is audited separately.
       'run-2': { state: 'clear' },
       'run-3': { state: 'clear' },
       'run-4': { state: 'clear' }
@@ -5100,7 +5116,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'library(data.table)\ntable <- data.table(value = c(1, 2, 3))',
         'alias <- table',
-        'snapshot <- sum(table$value)\nprint(snapshot)',
+        'snapshot <- length(table$value)\nprint(snapshot)',
         'alias[, value := value + 1]'
       ],
       'open-science-r-data-table-reference-corpus-'
@@ -5117,7 +5133,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         'library(data.table)\ntable <- data.table(value = c(1, 2, 3))',
         'first_alias <- table',
         'second_alias <- first_alias',
-        'snapshot <- sum(table$value)\nprint(snapshot)',
+        'snapshot <- length(table$value)\nprint(snapshot)',
         'second_alias[, value := value + 1]'
       ],
       'open-science-r-data-table-alias-chain-corpus-'
@@ -5133,7 +5149,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'table <- data.table::data.table(value = c(1, 2, 3))',
         'alias <- table',
-        'snapshot <- sum(table$value)\nprint(snapshot)',
+        'snapshot <- length(table$value)\nprint(snapshot)',
         'alias$value <- c(4, 5, 6)'
       ],
       'open-science-r-data-table-copy-on-member-write-corpus-'
@@ -5151,7 +5167,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         'second <- first',
         'third <- first',
         'first$value <- c(4, 5, 6)',
-        'snapshot <- sum(third$value)\nprint(snapshot)',
+        'snapshot <- length(third$value)\nprint(snapshot)',
         'data.table::setDT(second)'
       ],
       'open-science-r-copy-alias-equivalence-corpus-'
@@ -5169,7 +5185,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         'second <- first',
         'second$value <- c(4, 5, 6)\ndata.table::setDT(first)',
         'alias <- second',
-        'snapshot <- sum(second$value)\nprint(snapshot)',
+        'snapshot <- length(second$value)\nprint(snapshot)',
         'alias$value <- c(7, 8, 9)'
       ],
       'open-science-r-copy-reference-order-corpus-'
@@ -5203,7 +5219,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         'data.table::setnames(frame, "value", "measurement")',
         'holder <- list(frame)',
         'alias <- holder',
-        'snapshot <- sum(holder[[1]]$measurement)\nprint(snapshot)',
+        'snapshot <- length(holder[[1]]$measurement)\nprint(snapshot)',
         'alias[[1]]$measurement <- c(4, 5, 6)'
       ],
       'open-science-r-data-frame-set-helper-corpus-'
@@ -5219,7 +5235,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'table <- data.table::data.table(value = c(1, 2, 3))',
         'alias <- table',
-        'snapshot <- sum(alias$value)\nprint(snapshot)',
+        'snapshot <- length(alias$value)\nprint(snapshot)',
         'table$value <- c(4, 5, 6)\ntable[, doubled := value * 2]'
       ],
       'open-science-r-data-table-same-receiver-order-corpus-'
@@ -5238,7 +5254,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'frame <- data.frame(value = c(1, 2, 3))',
         'alias <- frame',
-        'snapshot <- sum(alias$value)\nprint(snapshot)',
+        'snapshot <- length(alias$value)\nprint(snapshot)',
         'data.table::setDT(frame)\nframe <- data.frame(value = c(4, 5, 6))'
       ],
       'open-science-r-reference-update-rebind-order-corpus-'
@@ -5256,7 +5272,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       'r',
       [
         'frame <- data.frame(value = c(1, 2, 3))',
-        'snapshot <- sum(frame$value)\nprint(snapshot)',
+        'snapshot <- length(frame$value)\nprint(snapshot)',
         'setnames <- function(...) NULL',
         'setnames(frame, "value", "measurement")'
       ],
@@ -5276,7 +5292,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         'setDT(frame)',
         'holder <- list(frame)',
         'alias <- holder',
-        'snapshot <- sum(holder[[1]]$value)\nprint(snapshot)',
+        'snapshot <- length(holder[[1]]$value)\nprint(snapshot)',
         'alias[[1]]$value <- c(4, 5, 6)'
       ],
       'open-science-r-shadowed-set-dt-type-corpus-'
@@ -5294,7 +5310,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'frame <- data.frame(value = c(1, 2, 3))',
         'alias <- frame',
-        'snapshot <- sum(alias$value)\nprint(snapshot)',
+        'snapshot <- length(alias$value)\nprint(snapshot)',
         'setDT <- function(x) x',
         'setDT(frame)\ndata.table::setDT(frame)'
       ],
@@ -5311,7 +5327,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'library(data.table)\ntable <- data.table(value = c(1, 2, 3))',
         'clone <- copy(table)',
-        'snapshot <- sum(table$value)\nprint(snapshot)',
+        'snapshot <- length(table$value)\nprint(snapshot)',
         'clone[, value := value + 1]'
       ],
       'open-science-r-data-table-copy-corpus-'
@@ -5321,7 +5337,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
     expect(projection?.stalenessByRunId['run-4']).toEqual({ state: 'clear' })
   })
 
-  it('classifies a common data.table grouped aggregation as a read', async () => {
+  it('keeps data.table masked aggregation uncertain', async () => {
     const projection = await projectScripts(
       'r',
       [
@@ -5333,7 +5349,10 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
 
     expect(projection?.stalenessByRunId).toEqual({
       'run-1': { state: 'clear' },
-      'run-2': { state: 'clear' }
+      'run-2': {
+        state: 'unknown',
+        reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+      }
     })
   })
 
@@ -5359,7 +5378,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         'frame <- data.frame(value = c(1, NA, 3))',
         'data.table::setDT(frame)',
         'alias <- frame',
-        'snapshot <- sum(is.na(frame$value))\nprint(snapshot)',
+        'snapshot <- length(is.na(frame$value))\nprint(snapshot)',
         'data.table::setnafill(alias, fill = 0)'
       ],
       'open-science-r-data-table-conversion-corpus-'
@@ -5393,7 +5412,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
         'existing_alias <- table',
         'data.table::setDF(table)',
         'alias <- existing_alias',
-        'snapshot <- sum(existing_alias$value)\nprint(snapshot)',
+        'snapshot <- length(existing_alias$value)\nprint(snapshot)',
         'alias[[1]] <- 99'
       ],
       'open-science-r-data-table-set-df-corpus-'
@@ -5425,9 +5444,9 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       'r',
       [
         'library(SummarizedExperiment)\ncounts <- matrix(c(1, 2, 3, 4), nrow = 2)\nse <- SummarizedExperiment(assays = list(counts = counts))',
-        'snapshot <- sum(assay(se))\nprint(snapshot)',
+        'snapshot <- length(assay(se))\nprint(snapshot)',
         'assay(se) <- matrix(c(10, 20, 30, 40), nrow = 2)',
-        'latest <- sum(assay(se))\nprint(latest)'
+        'latest <- length(assay(se))\nprint(latest)'
       ],
       'open-science-r-summarized-experiment-corpus-'
     )
@@ -5443,7 +5462,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'library(SummarizedExperiment)\nse <- SummarizedExperiment(assays = list(counts = matrix(c(1, 2), nrow = 1)))',
         'counts <- assay(se)',
-        'snapshot <- sum(assay(se))\nprint(snapshot)',
+        'snapshot <- length(assay(se))\nprint(snapshot)',
         'counts[[1]] <- 99'
       ],
       'open-science-r-summarized-experiment-copy-corpus-'
@@ -5563,7 +5582,7 @@ describe('scientific Notebook dependency corpus', { timeout: 60_000 }, () => {
       [
         'library(Biobase)\nset <- ExpressionSet(assayData = matrix(1:4, nrow = 2))',
         'values <- exprs(set)',
-        'snapshot <- sum(exprs(set))\nprint(snapshot)',
+        'snapshot <- length(exprs(set))\nprint(snapshot)',
         'values[[1]] <- 99'
       ],
       'open-science-r-expression-set-corpus-'

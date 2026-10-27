@@ -292,24 +292,24 @@ describe('createCloseConfirm', () => {
     await expect(h.confirm('persistence-failed', [])).resolves.toBe('cancel')
   })
 
-  it('cannot force quit delegated work through a renderer or native fallback choice', async () => {
+  it('accepts whole-service quit confirmation for delegated work', async () => {
     const delegated = { ...session, kind: 'delegated' as const }
     const rendererHarness = makeHarness()
     const pending = rendererHarness.confirm('quit', [delegated])
     rendererHarness.ack()
     rendererHarness.choose('quit')
-    await expect(pending).resolves.toBe('cancel')
+    await expect(pending).resolves.toBe('quit')
 
     const nativeHarness = makeHarness({ isRendererAvailable: () => false })
-    await expect(nativeHarness.confirm('quit', [delegated])).resolves.toBe('cancel')
+    await expect(nativeHarness.confirm('quit', [delegated])).resolves.toBe('quit')
     expect(nativeHarness.nativeFallback).toHaveBeenCalledWith('quit', [delegated])
   })
 
-  it('turns a saved quit preference into a safe minimize while delegated work is running', async () => {
+  it('honors a saved quit preference when delegated work is running', async () => {
     const delegated = { ...session, kind: 'delegated' as const }
     const h = makeHarness({ getClosePreference: async () => 'quit' })
 
-    await expect(h.confirm('close-to-tray', [delegated])).resolves.toBe('minimize')
+    await expect(h.confirm('close-to-tray', [delegated])).resolves.toBe('quit')
     expect(h.sent).toHaveLength(0)
   })
 
@@ -822,7 +822,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     expect(options.detail).toMatch(/risk losing recent changes/i)
   })
 
-  it('offers no force-quit action in the native fallback for delegated work', async () => {
+  it('offers whole-service interruption in the native fallback for delegated work', async () => {
     getWindow.mockReturnValue(undefined)
     electronMocks.showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false })
     const confirm = createElectronCloseConfirm(
@@ -834,9 +834,9 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     await expect(confirm('quit', [delegated])).resolves.toBe('cancel')
 
     const [options] = electronMocks.showMessageBox.mock.calls[0] as [Record<string, unknown>]
-    expect(options.buttons).toEqual(['Return to tasks'])
-    expect(options.message).toBe('Subagents are still running')
-    expect(options.detail).toMatch(/stop their subagents before quitting/i)
+    expect(options.buttons).toEqual(['Cancel', 'Quit'])
+    expect(options.message).toBe('Quit Open-Science?')
+    expect(options.detail).toMatch(/Quitting will interrupt unfinished tasks/)
   })
 
   it('offers Minimize/Quit for close-to-tray with a "remember" checkbox', async () => {

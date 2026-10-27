@@ -43,7 +43,9 @@ it('preserves live cross-cell inputs and clears self-contained recovery on cold 
       expect(result.dependenciesByRunId?.['python-plot']).toEqual(['python-setup'])
       expect(result.dependenciesByRunId?.['python-recovery']).toEqual([])
       for (const run of runs.filter((run) => run.status === 'completed')) {
-        expect(result.stalenessByRunId[run.runId], run.runId).toEqual({ state: 'clear' })
+        expect(result.stalenessByRunId[run.runId], run.runId).toMatchObject({
+          state: run.kernelKind === 'r' ? 'unknown' : 'clear'
+        })
       }
       const expectations = [
         { name: 'python-setup', reads: [], writes: ['qa_intermediate.csv'] },
@@ -65,11 +67,11 @@ it('preserves live cross-cell inputs and clears self-contained recovery on cold 
         })
         const access = await analyzeNotebookSourceFileAccess(language, run.script, context)
         expect(access, run.runId).toMatchObject({
-          readState: 'complete',
-          writeState: 'complete',
-          externalState: 'complete',
-          reasonCodes: []
+          readState: run.runId === 'r-setup' ? 'partial' : 'complete',
+          writeState: run.runId === 'r-setup' ? 'partial' : 'complete',
+          externalState: run.runId === 'r-setup' ? 'partial' : 'complete'
         })
+        if (language === 'python') expect(access.reasonCodes).toEqual([])
         expect(access.reads.toSorted(), run.runId).toEqual(expected.reads)
         expect(access.writes.toSorted(), run.runId).toEqual(expected.writes)
       }

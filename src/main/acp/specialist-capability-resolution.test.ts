@@ -3,7 +3,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -27,6 +27,7 @@ import { SettingsRepository } from '../settings/repository'
 import { SkillRegistry } from '@aipoch/skills'
 import { SkillCatalogModule } from '../skills/catalog'
 import { createAcpRuntime, type AcpRuntimeCompositionOptions } from './runtime-composition'
+import { projectDiagnosticLog } from '../session-diagnostics/projection'
 
 vi.mock('electron', () => ({
   app: { getVersion: () => 'test', getPath: () => tmpdir(), isPackaged: false },
@@ -324,6 +325,25 @@ it.each(
           message: 'The Specialist Skills or Connectors could not be loaded. Try sending again.'
         })
         expect(h.prompts).toHaveLength(1)
+        const warmFailure = diagnosticRecords as Array<{
+          scope: string
+          args: [string, Record<string, unknown>]
+        }>
+        const exportedWarm = warmFailure.map(({ scope, args }) =>
+          projectDiagnosticLog({ scope, msg: args[0], data: args[1] })
+        )
+        expect(exportedWarm).toContainEqual(
+          expect.objectContaining({
+            diagnostics: expect.objectContaining({
+              phase: boundary === 'listSpecialistSkillCatalog' ? 'skills' : 'connectors',
+              sessionId: h.session.sessionId,
+              specialistId: h.profile.id,
+              frameworkId: backend.framework.id,
+              modelRoute: backend.modelRoute,
+              reason: 'capability-read-failed'
+            })
+          })
+        )
         await h.runtime.requestSkillsReload()
         await expect(
           h.runtime.resumeSession({
@@ -337,13 +357,20 @@ it.each(
           message: 'The Specialist Skills or Connectors could not be loaded. Try sending again.'
         })
         expect(h.prompts).toHaveLength(1)
-        expect(JSON.stringify(diagnosticRecords)).toContain(failure.message)
+        expect(JSON.stringify(diagnosticRecords)).not.toContain(failure.message)
+        expect(diagnosticRecords).toContainEqual(
+          expect.objectContaining({
+            args: expect.arrayContaining([
+              expect.objectContaining({ reason: 'capability-read-failed', errorCategory: 'error' })
+            ])
+          })
+        )
         expect(diagnosticRecords).toContainEqual(
           expect.objectContaining({
             args: expect.arrayContaining([
               expect.objectContaining({
                 specialistId: h.profile.id,
-                stage: boundary === 'listSpecialistSkillCatalog' ? 'skills' : 'connectors'
+                phase: boundary === 'listSpecialistSkillCatalog' ? 'skills' : 'connectors'
               })
             ])
           })
@@ -383,27 +410,107 @@ it.each(['delete', 'disable'] as const)(
   }
 )
 
-it.each(['delete', 'disable'] as const)(
-  'records a cold resume after Specialist %s',
-  async (operation) => {
-    const h = await harness()
+it.each(
+  backends.flatMap((backend) =>
+    ['delete', 'disable', 'invalid-capabilities', 'invalid-json'].map((operation) => ({
+      ...backend,
+      operation
+    }))
+  )
+)(
+  '$label diagnoses a cold resume after Specialist $operation without exporting private content',
+  async ({ operation, ...backend }) => {
+    const h = await harness(backend)
     if (operation === 'delete') await h.service.delete(h.profile.id)
-    else await h.service.setEnabled(h.profile.id, false)
+    else if (operation === 'disable') await h.service.setEnabled(h.profile.id, false)
+    else {
+      const file = join(h.cwd, 'specialists.json')
+      const document = JSON.parse(await readFile(file, 'utf8'))
+      document.specialists[0].fullAccess = null
+      document.specialists[0].capabilityMode = 'full'
+      await writeFile(
+        file,
+        operation === 'invalid-json'
+          ? 'PRIVATE_SPECIALIST_PROMPT invalid json'
+          : JSON.stringify(document)
+      )
+    }
     await h.runtime.disconnect()
+    diagnosticRecords.length = 0
     await expect(
       h.runtime.resumeSession({
         sessionId: h.session.sessionId,
         cwd: h.cwd,
         specialistId: h.profile.id,
-        previousFrameworkId: 'opencode'
+        previousFrameworkId: backend.framework.id
       })
     ).rejects.toThrow('The bound specialist is unavailable.')
     expect(h.prompts).toHaveLength(1)
+    const entries = diagnosticRecords as Array<{
+      scope: string
+      args: [string, Record<string, unknown>]
+    }>
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        args: [
+          'bound specialist identity resolution failed',
+          expect.objectContaining({
+            specialistId: h.profile.id,
+            sessionId: h.session.sessionId,
+            frameworkId: backend.framework.id,
+            phase: 'identity',
+            reason: 'unavailable'
+          })
+        ]
+      })
+    )
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        args: [
+          'bound specialist profile resolution failed',
+          expect.objectContaining({
+            specialistId: h.profile.id,
+            phase: 'profile',
+            reason: operation === 'disable' ? 'disabled' : 'profile-read-failed',
+            resolver: 'identity'
+          })
+        ]
+      })
+    )
+    if (operation === 'delete' || operation === 'invalid-capabilities') {
+      expect(entries).toContainEqual(
+        expect.objectContaining({
+          args: [
+            'runnable specialist lookup failed',
+            expect.objectContaining({
+              specialistId: h.profile.id,
+              reason: operation === 'delete' ? 'not-found' : 'invalid-capabilities'
+            })
+          ]
+        })
+      )
+    }
+    const exported = entries.map(({ scope, args }) =>
+      projectDiagnosticLog({ scope, msg: args[0], data: args[1] })
+    )
+    expect(exported).toContainEqual(
+      expect.objectContaining({
+        diagnostics: expect.objectContaining({
+          specialistId: h.profile.id,
+          sessionId: h.session.sessionId,
+          frameworkId: backend.framework.id,
+          phase: 'identity',
+          reason: 'unavailable'
+        })
+      })
+    )
+    expect(JSON.stringify(entries)).not.toContain('PRIVATE_SPECIALIST_PROMPT')
+    expect(JSON.stringify(exported)).not.toContain('PRIVATE_SPECIALIST_PROMPT')
   }
 )
 
 // Diagnostic evidence of controlled failures does not attribute the external incident.
-it('retains the underlying catalog failure in diagnostic evidence', async () => {
+it('retains the catalog failure category without arbitrary error text in diagnostic evidence', async () => {
   const h = await harness()
   diagnosticRecords.length = 0
   const failure = new Error('investigation-skill-catalog-read-failed')
@@ -413,5 +520,12 @@ it('retains the underlying catalog failure in diagnostic evidence', async () => 
     message: 'The Specialist Skills or Connectors could not be loaded. Try sending again.'
   })
   expect(h.prompts).toHaveLength(1)
-  expect(JSON.stringify(diagnosticRecords)).toContain(failure.message)
+  expect(JSON.stringify(diagnosticRecords)).not.toContain(failure.message)
+  expect(diagnosticRecords).toContainEqual(
+    expect.objectContaining({
+      args: expect.arrayContaining([
+        expect.objectContaining({ reason: 'capability-read-failed', errorCategory: 'error' })
+      ])
+    })
+  )
 })

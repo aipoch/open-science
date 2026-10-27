@@ -12,6 +12,215 @@ const { nativeAxisTitlePacket, nativePlotPacketInventory, nativePageTextPacketIn
   await import(
     pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
   )
+const { tableTextToken } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+)
+
+const nativeSpacingFixture = (
+  mode: string
+): {
+  page: ReturnType<typeof anonymousScriptedArray>['args'][0]
+  tokens: ReturnType<typeof anonymousScriptedArray>['args'][5]
+  context: ReturnType<typeof anonymousScriptedArray>['args'][6]
+} => {
+  const fnArray: number[] = [],
+    argsArray: unknown[] = [],
+    items: Array<{
+      str: string
+      width: number
+      height: number
+      transform: number[]
+      fontName: string
+      sourceItem: { pageNumber: number; index: number; text: string }
+    }> = [],
+    viewport = {
+      width: 200,
+      height: 100,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 100],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, 100 - y]
+    },
+    add = (op: number, args: unknown = null): void => {
+      fnArray.push(op)
+      argsArray.push(args)
+    },
+    glyph = (text: string, width = 500, isSpace = false): object => ({
+      unicode: text,
+      fontChar: text,
+      width,
+      isSpace,
+      isInFont: true,
+      accent: null
+    }),
+    source = (text: string, width: number, x = 20, y = 70): void => {
+      items.push({
+        str: text,
+        width,
+        height: 10,
+        transform: [10, 0, 0, 10, x, y],
+        fontName: 'F',
+        sourceItem: { pageNumber: 1, index: items.length, text }
+      })
+    },
+    matrix = (x = 20, y = 70): void => add(OPS.setTextMatrix, [[1, 0, 0, 1, x, y]])
+  add(OPS.setFont, ['F', 10])
+  add(OPS.setCharSpacing, [mode === 'negative-Tc' ? -0.25 : 0.25])
+  add(OPS.setWordSpacing, [3])
+  add(OPS.beginText)
+  matrix()
+  if (mode === 'TJ') {
+    add(OPS.showText, [[glyph('A'), 120, glyph('B')]])
+    source('AB', 9.05)
+  } else if (mode === 'ligature') {
+    add(OPS.showText, [[glyph('fi', 600), glyph('B')]])
+    source('fiB', 11.25)
+  } else if (mode === 'space' || mode === 'unencoded-space') {
+    add(OPS.showText, [[glyph('A'), glyph(' ', 250, mode === 'space'), glyph('B')]])
+    source('A B', mode === 'space' ? 16 : 13)
+  } else if (mode === 'save-restore') {
+    add(OPS.save)
+    add(OPS.setCharSpacing, [2])
+    add(OPS.setWordSpacing, [7])
+    matrix(50)
+    add(OPS.showText, [[glyph('A'), glyph(' ', 250, true), glyph('B')]])
+    source('A B', 23.5, 50)
+    add(OPS.restore)
+    add(OPS.showText, [[glyph('A'), glyph(' ', 250, true), glyph('B')]])
+    source('A B', 16)
+  } else if (mode === 'BT-Tm') {
+    add(OPS.showText, [[glyph('A'), glyph('B')]])
+    source('AB', 10.25)
+    matrix(50)
+    add(OPS.showText, [[glyph('A'), glyph('B')]])
+    source('AB', 10.25, 50)
+    add(OPS.endText)
+    add(OPS.beginText)
+    matrix(80)
+    add(OPS.showText, [[glyph('A'), glyph(' ', 250, true), glyph('B')]])
+    source('A B', 16, 80)
+  } else {
+    add(OPS.showText, [[glyph('A'), glyph('B')]])
+    source('AB', mode === 'negative-Tc' ? 9.75 : 10.25)
+  }
+  add(OPS.endText)
+  const graphicsBounds: unknown[] = [],
+    context = {
+      operators: { fnArray, argsArray },
+      viewport,
+      content: { items, styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } } },
+      graphicsBounds,
+      glyphBounds: [
+        {
+          fontName: 'F',
+          glyphs: [
+            { fontChar: 'A', bounds: [0, -0.1, 0.5, 0.7] },
+            { fontChar: 'B', bounds: [0, -0.1, 0.5, 0.7] },
+            { fontChar: 'fi', bounds: [0, -0.1, 0.6, 0.7] },
+            { fontChar: ' ', bounds: [0, 0, 0, 0] }
+          ]
+        }
+      ]
+    }
+  return {
+    page: { pageNumber: 1, width: 200, height: 100, invalidGraphicsBounds: 0, graphicsBounds },
+    tokens: items.map((r) => tableTextToken(r, viewport, 0)),
+    context
+  }
+}
+it.each([
+  'ordinary',
+  'negative-Tc',
+  'TJ',
+  'ligature',
+  'space',
+  'unencoded-space',
+  'save-restore',
+  'BT-Tm'
+])('binds complete native character/word spacing and source advances for %s', (mode) => {
+  const { page, tokens, context } = nativeSpacingFixture(mode),
+    before = JSON.stringify({ page, tokens, context }),
+    p = nativePageTextPacketInventory(page, tokens, context)
+  expect(p).toBeDefined()
+  expect(p.records.map((r) => r.r.str)).toEqual(context.content.items.map((r) => r.str))
+  expect(JSON.stringify({ page, tokens, context })).toBe(before)
+})
+it.each(['TJ', 'ligature', 'save-restore'])(
+  'does not accept a stale source advance after %s spacing',
+  (mode) => {
+    const { page, tokens, context } = nativeSpacingFixture(mode)
+    context.content.items.at(-1).width += 0.1
+    expect(nativePageTextPacketInventory(page, tokens, context)).toBeUndefined()
+  }
+)
+it.each([
+  ['Perceptual', false],
+  ['RelativeColorimetric', true],
+  ['AbsoluteColorimetric', false],
+  ['Saturation', true]
+])('retains the fixed renderer no-op rendering intent %s', (name, inText) => {
+  const { page, tokens, context } = nativeSpacingFixture('ordinary'),
+    o = context.operators,
+    at = o.fnArray.indexOf(inText ? OPS.showText : OPS.beginText)
+  o.fnArray.splice(at, 0, OPS.setRenderingIntent)
+  o.argsArray.splice(at, 0, [{ name }])
+  const before = JSON.stringify(context)
+  expect(nativePageTextPacketInventory(page, tokens, context)).toBeDefined()
+  expect(JSON.stringify(context)).toBe(before)
+})
+it.each([
+  'missing',
+  'extra-argument',
+  'invalid-type',
+  'unknown',
+  'extra-key',
+  'getter',
+  'inherited'
+])('rejects an unproved rendering intent shape: %s', (mode) => {
+  const { page, tokens, context } = nativeSpacingFixture('ordinary'),
+    o = context.operators,
+    at = o.fnArray.indexOf(OPS.beginText)
+  let reads = 0
+  const name =
+    mode === 'getter'
+      ? Object.defineProperty({}, 'name', {
+          get: () => {
+            reads++
+            return 'Perceptual'
+          }
+        })
+      : mode === 'inherited'
+        ? Object.create({ name: 'Perceptual' })
+        : mode === 'invalid-type'
+          ? { name: 1 }
+          : mode === 'unknown'
+            ? { name: 'Unknown' }
+            : mode === 'extra-key'
+              ? { name: 'Perceptual', extra: true }
+              : { name: 'Perceptual' }
+  o.fnArray.splice(at, 0, OPS.setRenderingIntent)
+  o.argsArray.splice(
+    at,
+    0,
+    mode === 'missing' ? [] : mode === 'extra-argument' ? [name, 1] : [name]
+  )
+  expect(nativePageTextPacketInventory(page, tokens, context)).toBeUndefined()
+  expect(reads).toBe(0)
+})
+it.each(['stale-width', 'missing-space-flag', 'wrong-space-flag', 'nonfinite-Tc', 'nonfinite-Tw'])(
+  'rejects an incomplete native spacing claim: %s',
+  (mode) => {
+    const { page, tokens, context } = nativeSpacingFixture('space'),
+      o = context.operators,
+      show = o.argsArray[o.fnArray.indexOf(OPS.showText)] as [{ isSpace?: boolean }[]]
+    if (mode === 'stale-width') context.content.items[0].width -= 0.1
+    if (mode === 'missing-space-flag') delete show[0][1].isSpace
+    if (mode === 'wrong-space-flag') show[0][1].isSpace = false
+    if (mode === 'nonfinite-Tc') o.argsArray[o.fnArray.indexOf(OPS.setCharSpacing)] = [Infinity]
+    if (mode === 'nonfinite-Tw') o.argsArray[o.fnArray.indexOf(OPS.setWordSpacing)] = [NaN]
+    expect(nativePageTextPacketInventory(page, tokens, context)).toBeUndefined()
+  }
+)
 it('exposes the same strict page inventory without fabricating a figure or caption', () => {
   const { args: a, figure } = anonymousScriptedArray()
   const before = JSON.stringify(a)
@@ -39,6 +248,34 @@ it.each([
   a[6].content.items[0][field] = value
   expect(nativePageTextPacketInventory(a[0], a[5], a[6], true)).toBeUndefined()
 })
+it.each(['complete', 'missing-proof', 'changed-space-flag', 'unknown-space-flag', 'painted'])(
+  'binds an unencoded renderer-skipped blank to its captured boolean flag: %s',
+  (mode) => {
+    const { args: a } = skippedOutlineArray(),
+      o = a[6].operators
+    for (const proof of a[6].skippedSpaceGlyphs) {
+      const glyph = o.argsArray[proof.operationIndex][0][proof.glyphIndex]
+      glyph.isSpace = false
+      proof.isSpace = false
+    }
+    const first = a[6].skippedSpaceGlyphs[0],
+      glyph = o.argsArray[first.operationIndex][0][first.glyphIndex]
+    if (mode === 'missing-proof') delete a[6].skippedSpaceGlyphs
+    if (mode === 'changed-space-flag') glyph.isSpace = true
+    if (mode === 'unknown-space-flag') delete glyph.isSpace
+    if (mode === 'painted') glyph.isInFont = true
+    const before = JSON.stringify(a),
+      packet = nativePageTextPacketInventory(a[0], a[5], a[6], true)
+    if (mode === 'complete') {
+      expect(packet).toBeDefined()
+      expect(
+        packet.glyphs.filter((g: { rendererSkipped?: boolean }) => g.rendererSkipped)
+      ).toHaveLength(a[6].skippedSpaceGlyphs.length)
+    } else expect(packet).toBeUndefined()
+    expect(nativePageTextPacketInventory(a[0], a[5], a[6])).toBeUndefined()
+    expect(JSON.stringify(a)).toBe(before)
+  }
+)
 const skippedOutlineArray = (): ReturnType<typeof anonymousScriptedArray> => {
   const f = anonymousScriptedArray(),
     o = f.args[6].operators

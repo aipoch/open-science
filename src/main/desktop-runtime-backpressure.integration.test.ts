@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { once } from 'node:events'
 import { afterEach, expect, it, vi } from 'vitest'
+import type { WebSocket } from 'ws'
 import { ApplicationEventHub } from './application-events'
 import { connectDesktopRuntime } from './desktop-runtime-client'
 import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
@@ -24,8 +25,10 @@ import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { createAcpRuntimeEventBroadcastCoalescer } from './acp/runtime-event-broadcast-coalescer'
 import { toAcpRuntimeEvent } from './acp/runtime-events'
 import { createSessionFile, decodeSessionFile } from '../shared/session-persistence'
+import { createLocalServiceLifetime, readServiceLifetime } from './local-service-lifetime'
 
 const diagnostics = vi.hoisted(() => ({ warn: vi.fn() }))
+vi.mock('electron', () => ({}))
 vi.mock('@aipoch/diagnostics/node', () => ({
   createLogger: () => ({ warn: diagnostics.warn, info: vi.fn(), debug: vi.fn(), error: vi.fn() })
 }))
@@ -189,6 +192,193 @@ it('flushes queued events and the shutdown reply in order before stopping the ba
   expect(received).toEqual(['bootstrap', 'event-0', 'event-1', 'event-2', 'event-3', 'response'])
   expect(diagnostics.warn).not.toHaveBeenCalled()
 })
+
+it.each(['throw', 'reject'] as const)(
+  'reports a legacy shutdown %s after flushing its acknowledgement',
+  async (mode) => {
+    const failure = new Error('legacy fixture shutdown failed')
+    const shutdown = vi.fn(() => {
+      if (mode === 'throw') throw failure
+      return Promise.reject(failure)
+    })
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      commands: { commandNames: () => [], invoke: async () => undefined },
+      events: new ApplicationEventHub(),
+      requestShutdown: shutdown
+    })
+    cleanups.push(server.close)
+    const socket = await connectToDesktopEndpoint(server.endpoint)
+    const bootstrap = once(socket, 'message')
+    socket.send(JSON.stringify({ kind: 'bootstrap', desktopInstanceId: randomUUID() }))
+    await bootstrap
+    const response = once(socket, 'message')
+    const deadlineAt = Date.now() + 5000
+    socket.send(
+      JSON.stringify({
+        kind: 'shutdown',
+        id: 1,
+        generation: server.endpoint.generation,
+        pid: process.pid,
+        reason: 'restart',
+        deadlineAt
+      })
+    )
+    const [bytes] = await response
+    expect(parseRpcJson(bytes.toString())).toMatchObject({
+      kind: 'response',
+      ok: true,
+      result: null
+    })
+    await vi.waitFor(() =>
+      expect(diagnostics.warn).toHaveBeenCalledExactlyOnceWith(
+        'legacy desktop shutdown request failed',
+        { message: failure.message }
+      )
+    )
+    expect(shutdown).toHaveBeenCalledExactlyOnceWith('restart', deadlineAt)
+  }
+)
+
+it('restores both legacy attachments after a shared shutdown fails and permits an explicit retry', async () => {
+  const firstAttempt = Promise.withResolvers<void>()
+  const shutdown = vi
+    .fn<() => Promise<void>>()
+    .mockImplementationOnce(() => firstAttempt.promise)
+    .mockResolvedValue(undefined)
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    commands: { commandNames: () => ['projects:list'], invoke: async () => ['restored'] },
+    events: new ApplicationEventHub(),
+    requestShutdown: shutdown
+  })
+  cleanups.push(server.close)
+  const desktopInstanceId = randomUUID()
+  const exchange = async (
+    socket: WebSocket,
+    request: Record<string, unknown>
+  ): Promise<Record<string, unknown>> => {
+    const response = once(socket, 'message')
+    socket.send(JSON.stringify(request))
+    const [bytes] = await response
+    return parseRpcJson(bytes.toString()) as Record<string, unknown>
+  }
+  const attach = async (): Promise<WebSocket> => {
+    const socket = await connectToDesktopEndpoint(server.endpoint)
+    expect(await exchange(socket, { kind: 'bootstrap', desktopInstanceId })).toMatchObject({
+      control: 'granted'
+    })
+    return socket
+  }
+  const a = await attach()
+  const b = await attach()
+  const stop = (id: number): Record<string, unknown> => ({
+    kind: 'shutdown',
+    id,
+    generation: server.endpoint.generation,
+    pid: process.pid
+  })
+  expect(await exchange(a, stop(1))).toMatchObject({ ok: true })
+  await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce())
+  expect(await exchange(b, stop(1))).toMatchObject({ ok: true })
+  const invoke = (id: number): Record<string, unknown> => ({
+    kind: 'invoke',
+    id,
+    protocolVersion: 1,
+    clientId: randomUUID(),
+    channel: 'projects:list',
+    args: []
+  })
+  for (const socket of [a, b])
+    expect(await exchange(socket, invoke(2))).toMatchObject({
+      ok: false,
+      error: { code: 'command-unavailable' }
+    })
+  expect(shutdown).toHaveBeenCalledOnce()
+  firstAttempt.reject(new Error('first legacy shutdown failed'))
+  await vi.waitFor(() => expect(diagnostics.warn).toHaveBeenCalledOnce())
+  for (const socket of [a, b])
+    expect(await exchange(socket, invoke(3))).toMatchObject({ ok: true, result: ['restored'] })
+  expect(shutdown).toHaveBeenCalledOnce()
+  expect(await exchange(b, stop(4))).toMatchObject({ ok: true })
+  await vi.waitFor(() => expect(shutdown).toHaveBeenCalledTimes(2))
+})
+
+it.each(['committed', 'failed'] as const)(
+  'waits for modern durable stop authorization before its %s shutdown reply',
+  async (mode) => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'desktop-modern-shutdown-'))
+    cleanups.push(() => rm(configRoot, { recursive: true, force: true }))
+    const generation = randomUUID()
+    const stopped = vi.fn()
+    const lifetime = await createLocalServiceLifetime({
+      configRoot,
+      generation,
+      explicitStart: false,
+      stop: stopped,
+      report: vi.fn()
+    })
+    cleanups.push(() => lifetime.close())
+    const authorization = Promise.withResolvers<void>()
+    const shutdown = vi.fn(async (reason?: 'restart' | 'update', deadlineAt?: number) => {
+      await authorization.promise
+      await lifetime.stop(true, reason, deadlineAt)
+    })
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      generation,
+      lifetime,
+      commands: { commandNames: () => [], invoke: async () => undefined },
+      events: new ApplicationEventHub(),
+      requestShutdown: shutdown
+    })
+    cleanups.push(server.close)
+    const socket = await connectToDesktopEndpoint(server.endpoint)
+    const received: unknown[] = []
+    socket.on('message', (bytes) => received.push(parseRpcJson(bytes.toString())))
+    const bootstrap = once(socket, 'message')
+    socket.send(JSON.stringify({ kind: 'bootstrap', desktopInstanceId: randomUUID() }))
+    await bootstrap
+    const deadlineAt = Date.now() + 5000
+    socket.send(
+      JSON.stringify({
+        kind: 'shutdown',
+        id: 1,
+        generation,
+        pid: process.pid,
+        reason: 'restart',
+        deadlineAt
+      })
+    )
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledExactlyOnceWith('restart', deadlineAt))
+    const probe = once(socket, 'message')
+    socket.send(
+      JSON.stringify({
+        kind: 'invoke',
+        id: 2,
+        protocolVersion: 1,
+        clientId: randomUUID(),
+        channel: 'projects:list',
+        args: []
+      })
+    )
+    const [probeBytes] = await probe
+    expect(parseRpcJson(probeBytes.toString())).toMatchObject({ id: 2, ok: false })
+    expect(received).toHaveLength(2)
+    const response = once(socket, 'message')
+    if (mode === 'committed') authorization.resolve()
+    else authorization.reject(new Error('durable stop authorization failed'))
+    const [bytes] = await response
+    expect(parseRpcJson(bytes.toString())).toMatchObject({
+      kind: 'response',
+      ok: mode === 'committed'
+    })
+    expect((await readServiceLifetime(configRoot))?.stopping).toBe(mode === 'committed')
+    if (mode === 'committed') expect(stopped).toHaveBeenCalledExactlyOnceWith('restart', deadlineAt)
+    else expect(stopped).not.toHaveBeenCalled()
+    expect(diagnostics.warn).not.toHaveBeenCalled()
+  }
+)
 
 it('replays the full retained event window in order and keeps subsequent commands connected', async () => {
   const events = new ApplicationEventHub()

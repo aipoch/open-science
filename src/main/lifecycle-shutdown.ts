@@ -21,6 +21,14 @@ export type ShutdownOutcome = {
   legacyShellRecovery?: LegacyShellRecovery
 }
 
+/** The final leave widened App-only consent; keep the connection and ask about current impact. */
+export class QuitScopeChangedError extends Error {
+  constructor() {
+    super('The App quit now requires stopping the whole service.')
+    this.name = 'QuitScopeChangedError'
+  }
+}
+
 export class BackendShutdownOutcomeError extends Error {
   readonly name = 'BackendShutdownOutcomeError'
 

@@ -134,6 +134,31 @@ it('retains equal page identity and invalidates equal-revision relationship upda
   await bound.refreshItems(['paper'], [{ ...first, collectionIds: ['new'] }])
   expect(onPage.mock.calls.at(-1)![0].entries[0].collectionIds).toEqual(['new'])
 })
+it('resets the publication-check view when closing, reopening or switching references', () => {
+  const controller = createLiteratureDetailController(vi.fn())
+  controller.open(item())
+  const transact = vi.fn()
+  const owner = createLiteratureMetadata(controller, {
+    transact,
+    completeMetadata: vi.fn(),
+    onItemChange: vi.fn(),
+    messages: () => ({ reload: 'reload', update: 'update', complete: 'complete' })
+  })
+  const stop = owner.start()
+  owner.changeMode('publication-check')
+  expect(owner.getSnapshot().mode).toBe('publication-check')
+  controller.replace(item('paper', 2))
+  expect(owner.getSnapshot().mode).toBe('publication-check')
+  controller.open(item('other'))
+  expect(owner.getSnapshot().mode).toBe('view')
+  owner.changeMode('publication-check')
+  controller.close()
+  expect(owner.getSnapshot().mode).toBe('view')
+  controller.open(item('other'))
+  expect(owner.getSnapshot().mode).toBe('view')
+  expect(transact).not.toHaveBeenCalled()
+  stop()
+})
 it('recovers a committed metadata save by rereading without resubmitting the write', async () => {
   const get = vi
       .fn()

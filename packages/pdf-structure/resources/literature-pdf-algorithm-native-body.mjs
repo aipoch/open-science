@@ -8,6 +8,8 @@ import { nativePageTextPacketInventory } from './literature-pdf-figure-native-pl
 import { completeNativeNodeGlyphState } from './literature-pdf-figure-native-plot-bands.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
+import { matchNativeFigureRenderContext } from './literature-pdf-render-bounds.mjs'
+import { nativeRasterForeignPaints } from './literature-pdf-figure-native-stacked-raster.mjs'
 
 const valid = (r) =>
   Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
@@ -666,7 +668,9 @@ function framedNumberedInput(page, title, titles, rules, context) {
     ]),
     owned = new Set([...caption, ...seed]),
     first = seed[0].sourceItem.index,
-    last = seed.at(-1).sourceItem.index
+    last = seed.at(-1).sourceItem.index,
+    numbered = closedNativeOrdinalPackets(seed, h),
+    dotted = numbered ? undefined : closedDottedInput(page, title, seed, context)
   if (
     caption.some((t) => t.sourceItem.index >= first) ||
     inventory.some(
@@ -677,7 +681,7 @@ function framedNumberedInput(page, title, titles, rules, context) {
           (t.sourceItem.index >= first && t.sourceItem.index <= last))
     ) ||
     titles.some((t) => t !== title && overlap(box(t), rect)) ||
-    !closedNativeOrdinalPackets(seed, h)
+    (!numbered && !dotted)
   )
     return []
   const owners = frame.map((rule) =>
@@ -755,9 +759,120 @@ function framedNumberedInput(page, title, titles, rules, context) {
     )
   )
     return []
+  // The dotted I/O grammar has no loop-closing keyword. Require complete native
+  // glyph ownership and reject any additional paint inside its exclusive frame.
+  if (dotted) {
+    if (
+      dotted.some((r) => r.part.some((p) => valid(p.g.ink) && !inside(expanded, p.g.ink))) ||
+      page.graphicsBounds.some(
+        (g) =>
+          !indices.includes(g.operationIndex) &&
+          overlap(
+            g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)),
+            expanded
+          )
+      )
+    )
+      return []
+  }
   return [
     { rect: expanded, caption: { page: page.pageNumber, lines: [title.text], rect: box(title) } }
   ]
+}
+
+function closedDottedInput(page, title, body, context) {
+  const inputs = body.filter((t) => /^Inputs?\s*:/iu.test(t.text)),
+    outputs = body.filter((t) => /^Outputs?\s*:/iu.test(t.text)),
+    steps = body.filter((t) => /^\d+\.\s/iu.test(t.text)),
+    h = title.fontSize
+  if (
+    inputs.length !== 1 ||
+    outputs.length !== 1 ||
+    body[0] !== inputs[0] ||
+    steps.length < 3 ||
+    steps.length > 128 ||
+    inputs[0].sourceItem.index >= steps[0].sourceItem.index ||
+    outputs[0].sourceItem.index <= steps.at(-1).sourceItem.index ||
+    Math.abs(outputs[0].rect[0] - inputs[0].rect[0]) > h * 0.1 ||
+    body.some(
+      (t) =>
+        t.sourceItem.index > outputs[0].sourceItem.index &&
+        (t.rect[1] < outputs[0].rect[1] - h * 0.5 || t.baseline > outputs[0].baseline + h * 0.5)
+    ) ||
+    steps.some(
+      (t, i) =>
+        Number(t.text.match(/^\d+/u)[0]) !== i + 1 ||
+        !/^\d+\.\s+(?:Compute|For each|Set|Initialize|Update|Record)\b/u.test(t.text) ||
+        Math.abs(t.height - h) > 1e-6 ||
+        Math.abs(t.rect[0] - steps[0].rect[0]) > h * 0.1 ||
+        t.rect[0] < inputs[0].rect[0] ||
+        t.rect[0] - inputs[0].rect[0] > h * 2 ||
+        t.baseline <= inputs[0].baseline ||
+        t.baseline >= outputs[0].baseline ||
+        (i &&
+          (t.baseline <= steps[i - 1].baseline ||
+            t.sourceItem.index <= steps[i - 1].sourceItem.index))
+    )
+  )
+    return
+  const p = context.nativeGlyphContext,
+    raw = p?.content?.items,
+    current = context.content.items,
+    equal = (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    fontNames = new Map(),
+    reverse = new Map()
+  if (
+    !Array.isArray(raw) ||
+    raw.length !== current.length ||
+    !Array.isArray(p.viewport?.transform) ||
+    p.viewport.transform.length !== 6 ||
+    !p.viewport.transform.every(Number.isFinite) ||
+    !Array.isArray(p.operators?.fnArray) ||
+    !Array.isArray(p.operators.argsArray)
+  )
+    return
+  for (let i = 0; i < raw.length; i++) {
+    const a = raw[i],
+      b = current[i]
+    if (
+      ['str', 'width', 'height', 'dir', 'hasEOL'].some((k) => a[k] !== b[k]) ||
+      !equal(a.transform, b.transform) ||
+      !p.content.styles?.[a.fontName] ||
+      !equal(p.content.styles[a.fontName], context.content.styles[b.fontName]) ||
+      (fontNames.has(a.fontName) && fontNames.get(a.fontName) !== b.fontName) ||
+      (reverse.has(b.fontName) && reverse.get(b.fontName) !== a.fontName)
+    )
+      return
+    fontNames.set(a.fontName, b.fontName)
+    reverse.set(b.fontName, a.fontName)
+  }
+  const viewport = {
+      ...p.viewport,
+      convertToViewportPoint: (x, y) => {
+        const point = [x, y]
+        Util.applyTransform(point, p.viewport.transform)
+        return point
+      }
+    },
+    native = { ...p, viewport },
+    tokens = raw.filter((r) => r.str.trim()).map((r) => tableTextToken(r, viewport, 0)),
+    frames = collectClosedFigureFrames(p.operators, viewport),
+    sources = new Set([
+      ...body.map((t) => t.sourceItem.index),
+      ...nativeInventory(page, context)
+        .filter((t) => inside(box(title), t.rect))
+        .map((t) => t.sourceItem.index)
+    ])
+  if (
+    !equal(collectTableRules(p.operators, viewport), context.rules) ||
+    !nativePageTextPacketInventory(page, tokens, native, true) ||
+    !completeNativeNodeGlyphState(page, tokens, frames, native)
+  )
+    return
+  const proof = nativePageTextPacketInventory(page, tokens, native, false, sources)
+  if (!proof) return
+  const selected = proof.records.filter((r) => sources.has(r.index))
+  return selected.length === sources.size ? selected : undefined
 }
 
 function closedNativeOrdinalPackets(body, h) {
@@ -2143,6 +2258,388 @@ function verticalScopedLoop(page, context, title, titles) {
   }
 }
 
+// Complete native strokes and glyph ink close this caption-first, for-only family.
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+const expand = (r, p) => [r[0] - p, r[1] - p, r[2] + p, r[3] + p]
+const visible = (p) =>
+  p?.fillAlpha === 1 &&
+  typeof p.fillColor === 'string' &&
+  /^#[a-f0-9]{6}$/iu.test(p.fillColor) &&
+  p.fillColor.toLowerCase() !== '#ffffff'
+// Projection of stroke color only; complete packet validates the operators.
+function strokeColors(o) {
+  let color = '#000000'
+  const stack = [],
+    result = new Map()
+  for (let i = 0; i < o.fnArray.length; i++) {
+    const op = o.fnArray[i],
+      a = o.argsArray[i]
+    if (op === OPS.save || op === OPS.paintFormXObjectBegin) stack.push(color)
+    else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+      if (!stack.length) return
+      color = stack.pop()
+    } else if (op === OPS.setStrokeRGBColor)
+      color =
+        typeof a?.[0] === 'string' && /^#[a-f0-9]{6}$/iu.test(a[0]) ? a[0].toLowerCase() : undefined
+    else if (
+      [OPS.setStrokeColor, OPS.setStrokeColorN, OPS.setStrokeGray, OPS.setStrokeCMYKColor].includes(
+        op
+      )
+    )
+      color = undefined
+    else if (op === OPS.constructPath) result.set(i, color)
+  }
+  return stack.length ? undefined : result
+}
+function nativeClosedScopeLoops(page, context) {
+  const originalNative = context.nativeGlyphContext
+  if (
+    !/^[a-f0-9]{64}$/u.test(originalNative?.sourceSha256 ?? '') ||
+    originalNative.pageNumber !== page.pageNumber
+  )
+    return
+  const bound = matchNativeFigureRenderContext(
+    originalNative,
+    page.pageNumber,
+    context.content,
+    context.viewport,
+    page.graphicsBounds,
+    originalNative.sourceSha256
+  )
+  if (!bound) return
+  context = {
+    ...context,
+    ...bound,
+    nativeGlyphContext: {
+      ...bound,
+      pageNumber: page.pageNumber,
+      sourceSha256: originalNative.sourceSha256
+    }
+  }
+  if (
+    page.rotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.lines) ||
+    !Array.isArray(page.graphicsBounds) ||
+    page.graphicsBounds.some((g) => g.kind !== 'path')
+  )
+    return
+  const n = context.nativeGlyphContext,
+    v = context.viewport,
+    o = context.operators,
+    raw = context.content?.items,
+    inventory = nativeInventory(page, context),
+    lines = groupPageLines(page),
+    titles = lines.filter((l) => /^Algorithm\s+[1-9]\d*:\s+\p{Lu}/u.test(l.text)),
+    paint = new Map(),
+    rules = collectTableRules(o, v, paint)
+  if (
+    titles.length !== 1 ||
+    !inventory?.length ||
+    inventory.some((t) => t.invalid) ||
+    !raw ||
+    !eq(context.content?.items, n?.content?.items) ||
+    !eq(context.content?.styles, n?.content?.styles) ||
+    !eq(o?.fnArray, n?.operators?.fnArray) ||
+    !eq(o?.argsArray, n?.operators?.argsArray) ||
+    !eq(v.transform, n.viewport.transform) ||
+    !eq(page.graphicsBounds, n.graphicsBounds)
+  )
+    return
+  const title = titles[0],
+    h = title.fontSize,
+    horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] > page.width * 0.5),
+    frames = []
+  for (const top of horizontal) {
+    if (Math.abs(top[1] - title.y) > h) continue
+    const same = horizontal
+      .filter(
+        (r) => r[1] >= top[1] && Math.abs(r[0] - top[0]) < 1e-6 && Math.abs(r[2] - top[2]) < 1e-6
+      )
+      .sort((a, b) => a[1] - b[1])
+    if (
+      same.length === 3 &&
+      same[1][1] > title.bottom &&
+      same[1][1] - title.bottom < h &&
+      same[2][1] - same[1][1] > h * 5
+    )
+      frames.push(same)
+  }
+  if (frames.length !== 1) return
+  const [top, divider, bottom] = frames[0],
+    captionTokens = inventory.filter((t) => inside(box(title), t.rect)),
+    body = inventory.filter(
+      (t) =>
+        t.baseline > divider[1] &&
+        t.rect[1] < bottom[1] &&
+        t.rect[0] >= top[0] - 1e-6 &&
+        t.rect[2] <= top[2] + 1e-6
+    )
+  if (
+    !captionTokens.length ||
+    !body.length ||
+    captionTokens.concat(body).some((t) => !t.valid || !t.horizontal) ||
+    body.some((t) => t.rect[3] >= bottom[1]) ||
+    body.some((t) => /^(?:Algorithm|Figure|Table)\b/u.test(t.text))
+  )
+    return
+  const base = {
+      rect: [Math.min(title.x, top[0]), Math.min(title.y, top[1]), top[2], bottom[1]],
+      caption: { page: page.pageNumber, rect: box(title), lines: [title.text] }
+    },
+    old = proveNativeAlgorithmBody(page, base, context)
+  if (
+    !old ||
+    !eq(
+      old.nativeBody.sourceItems,
+      body.map((t) => t.sourceItem).sort((a, b) => a.index - b.index)
+    )
+  )
+    return
+  const claims = new Set(captionTokens.concat(body).map((t) => t.sourceItem.index)),
+    tokens = raw.map((r) => tableTextToken(r, v, 0)).filter((t) => t?.text?.trim()),
+    proof = nativePageTextPacketInventory(page, tokens, n, false, claims)
+  if (!proof) return
+  const colors = strokeColors(o)
+  if (!colors) return
+  const selected = proof.records.filter((r) => claims.has(r.index)),
+    captionRecords = selected.filter((r) =>
+      captionTokens.some((t) => t.sourceItem.index === r.index)
+    ),
+    bodyRecords = selected.filter(
+      (r) => !captionTokens.some((t) => t.sourceItem.index === r.index)
+    ),
+    captionInk = union(captionRecords.map((r) => r.ink)),
+    bodyInk = union(bodyRecords.map((r) => r.ink))
+  if (selected.some((r) => r.part.some((z) => !visible(z.g.textPaint)))) return
+  const captionFrame = [top[0], top[1], top[2], divider[1]],
+    captionGlyphs = captionRecords.flatMap((r) => r.part.map((z) => z.g)),
+    firstGlyph = captionGlyphs[0],
+    captionInside =
+      inside(captionFrame, captionInk) ||
+      (!!firstGlyph &&
+        firstGlyph.ink[0] === captionInk[0] &&
+        firstGlyph.ink[0] < top[0] &&
+        firstGlyph.ink[2] > top[0] &&
+        inside(captionFrame, [top[0], captionInk[1], captionInk[2], captionInk[3]]) &&
+        captionGlyphs.slice(1).every((g) => inside(captionFrame, g.ink)))
+  if (
+    selected.length !== claims.size ||
+    selected.some(
+      (r) => !r.advanceComplete || !valid(r.ink) || r.part.some((z) => !valid(z.g.ink))
+    ) ||
+    !captionInside ||
+    !inside([top[0], divider[1], top[2], bottom[1]], bodyInk)
+  )
+    return
+  const input = body.filter((t) => t.text === 'Input'),
+    output = body.filter((t) => t.text === 'Output'),
+    ret = body.filter((t) => t.text === 'Return'),
+    bold = captionTokens[0] && raw[captionTokens[0].sourceItem.index].fontName
+  if (
+    input.length !== 1 ||
+    output.length !== 1 ||
+    ret.length !== 1 ||
+    body[0] !== input[0] ||
+    input[0].sourceItem.index >= output[0].sourceItem.index ||
+    Math.abs(input[0].rect[0] - top[0]) > 1e-6 ||
+    Math.abs(output[0].rect[0] - top[0]) > 1e-6 ||
+    Math.abs(ret[0].rect[0] - top[0]) > 1e-6 ||
+    [input[0], output[0]].some((t) => raw[t.sourceItem.index].fontName !== bold)
+  )
+    return
+  const nextToInput = body[body.indexOf(input[0]) + 1],
+    plain = raw[nextToInput?.sourceItem.index]?.fontName
+  if (!plain || plain === bold || raw[ret[0].sourceItem.index].fontName !== plain) return
+  const anchors = []
+  for (const t of body.filter(
+    (t) => Math.abs(t.height - h) < 1e-6 && [bold, plain].includes(raw[t.sourceItem.index].fontName)
+  )) {
+    let row = anchors.find((r) => Math.abs(r.baseline - t.baseline) < 1e-6)
+    if (!row) anchors.push({ baseline: t.baseline, parts: [t] })
+    else row.parts.push(t)
+  }
+  anchors.sort((a, b) => a.baseline - b.baseline)
+  for (const row of anchors) {
+    row.parts.sort((a, b) => a.rect[0] - b.rect[0])
+    row.first = row.parts[0]
+    row.text = body
+      .filter((t) => Math.abs(t.height - h) < 1e-6 && Math.abs(t.baseline - row.baseline) < 1e-6)
+      .map((t) => t.text.trim())
+      .join(' ')
+  }
+  const controls = anchors.filter(
+      (r) => r.first.text === 'for' && raw[r.first.sourceItem.index].fontName === bold
+    ),
+    vertical = rules.filter((r) => r[0] === r[2] && r[1] > divider[1] && r[3] < bottom[1]),
+    bindings = []
+  if (
+    controls.length < 1 ||
+    controls.length > 8 ||
+    vertical.length !== controls.length ||
+    anchors.at(-1).first !== ret[0] ||
+    anchors.some((r) => /^(?:if|else|while|repeat|end|until)\b/iu.test(r.text))
+  )
+    return
+  for (const c of controls) {
+    if (!/^for\b.+\bdo$/u.test(c.text)) return
+    const matches = vertical.filter(
+      (r) =>
+        r[0] > c.first.rect[0] &&
+        r[0] - c.first.rect[0] < h &&
+        r[1] > c.baseline &&
+        r[1] - c.baseline < h
+    )
+    if (matches.length !== 1) return
+    const rule = matches[0],
+      inner = anchors.filter((r) => r.baseline > rule[1] && r.baseline < rule[3])
+    if (
+      !inner.length ||
+      inner.some((r) => r.first.rect[0] <= rule[0]) ||
+      rule[3] - inner.at(-1).baseline <= 0 ||
+      rule[3] - inner.at(-1).baseline >= h
+    )
+      return
+    bindings.push({ control: c, rule, inner })
+  }
+  const roots = bindings.filter(
+    (a) =>
+      !bindings.some(
+        (b) => a !== b && a.rule[0] > b.rule[0] && a.rule[1] > b.rule[1] && a.rule[3] < b.rule[3]
+      )
+  )
+  if (
+    roots.length !== 1 ||
+    bindings.some((a) =>
+      bindings.some(
+        (b) =>
+          a !== b &&
+          a.rule[1] < b.rule[3] &&
+          b.rule[1] < a.rule[3] &&
+          !(
+            (a.rule[0] < b.rule[0] && a.rule[1] < b.rule[1] && a.rule[3] > b.rule[3]) ||
+            (b.rule[0] < a.rule[0] && b.rule[1] < a.rule[1] && b.rule[3] > a.rule[3])
+          )
+      )
+    ) ||
+    anchors.some(
+      (r) =>
+        r.baseline > roots[0].control.baseline &&
+        r.baseline < ret[0].baseline &&
+        !bindings.some((b) => r.baseline > b.rule[1] && r.baseline < b.rule[3]) &&
+        r !== roots[0].control
+    )
+  )
+    return
+  const selectedRules = [top, divider, bottom, ...vertical]
+  for (const b of bindings) {
+    const close = rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[2] > r[0] &&
+        r[2] - r[0] < h &&
+        Math.abs(r[0] - b.rule[0]) < h * 0.1 &&
+        Math.abs(r[1] - b.rule[3]) < h * 0.1
+    )
+    if (
+      close.length !== 1 ||
+      !valid(paint.get(b.rule.join(','))) ||
+      !valid(paint.get(close[0].join(','))) ||
+      !(
+        overlap(paint.get(b.rule.join(',')), paint.get(close[0].join(','))) ||
+        (paint.get(b.rule.join(','))[2] === paint.get(close[0].join(','))[0] &&
+          Math.min(paint.get(b.rule.join(','))[3], paint.get(close[0].join(','))[3]) >
+            Math.max(paint.get(b.rule.join(','))[1], paint.get(close[0].join(','))[1]))
+      )
+    )
+      return
+    selectedRules.push(close[0])
+  }
+  // Index exact single-stroke geometry once. Only a unique matching primitive
+  // needs the more expensive counterfactual native-rule replay.
+  const pathOwners = new Map()
+  for (const [id, state] of proof.evidence.paths) {
+    const a = o.argsArray[id],
+      path = a?.[1]?.[0]
+    if (
+      o.fnArray[id] !== OPS.constructPath ||
+      a?.[0] !== OPS.stroke ||
+      a[1]?.length !== 1 ||
+      path?.length !== 6 ||
+      path[0] !== 0 ||
+      path[3] !== 1 ||
+      state.lineCap !== 0 ||
+      state.solidStroke !== true ||
+      state.strokeAlpha !== 1 ||
+      !colors.get(id) ||
+      colors.get(id) === '#ffffff'
+    )
+      continue
+    const bounds = proof.box(
+        [path[1], path[2], path[4], path[5]],
+        Util.transform(v.transform, state.transform)
+      ),
+      key = bounds.join(',')
+    const previous = pathOwners.get(key) ?? []
+    previous.push({ id, state })
+    pathOwners.set(key, previous)
+  }
+  const ids = []
+  for (const rule of selectedRules) {
+    const ink = paint.get(rule.join(',')),
+      matches = pathOwners.get(rule.join(',')) ?? []
+    if (
+      !valid(ink) ||
+      matches.length !== 1 ||
+      !valid(matches[0].state.clip) ||
+      !inside(matches[0].state.clip, ink)
+    )
+      return
+    const id = matches[0].id,
+      removed = { fnArray: [...o.fnArray], argsArray: [...o.argsArray] }
+    removed.fnArray[id] = OPS.dependency
+    removed.argsArray[id] = ['native-scope-proof']
+    if (collectTableRules(removed, v).some((r) => eq(r, rule))) return
+    ids.push(id)
+  }
+  if (new Set(ids).size !== ids.length) return
+  const rect = union([
+      old.rect,
+      captionInk,
+      bodyInk,
+      ...selectedRules.map((r) => paint.get(r.join(',')))
+    ]),
+    ownedGlyphs = new Set(selected.flatMap((r) => r.part.map((z) => z.g))),
+    foreignGlyphs = proof.glyphs
+      .filter((g) => !ownedGlyphs.has(g) && valid(g.ink))
+      .map((g) => g.ink),
+    foreignProof = {
+      ...proof,
+      records: [],
+      evidence: {
+        ...proof.evidence,
+        paths: new Map([...proof.evidence.paths].filter(([id]) => !ids.includes(id)))
+      }
+    },
+    foreign = nativeRasterForeignPaints(foreignProof, page, [], [], context, [])
+  if (
+    !foreign ||
+    !inside([0, 0, page.width, page.height], rect) ||
+    foreign.some((p) => !valid(p.rect) || overlap(p.rect, rect)) ||
+    foreignGlyphs.some((r) => overlap(r, rect))
+  )
+    return
+  return {
+    ...old,
+    rect,
+    caption: { ...old.caption, rect: union([old.caption.rect, captionInk]) },
+    scopedGlyphProof: {
+      foreignGlyphs,
+      foreignPaint: foreign.map((p) => ({ rect: p.rect, floor: p.floor }))
+    }
+  }
+}
+
 export function acceptsNativeScopedAlgorithmPng(page, candidate, png) {
   const proof = candidate?.scopedGlyphProof,
     raster = getPdfCropRasterProtectionFromPng(png, candidate?.rect, page)
@@ -2151,8 +2648,16 @@ export function acceptsNativeScopedAlgorithmPng(page, candidate, png) {
     !!raster &&
     Array.isArray(proof.foreignGlyphs) &&
     Array.isArray(proof.foreignPaint) &&
-    [...proof.foreignGlyphs, ...proof.foreignPaint].every(
-      (r) => valid(r) && !overlap(r, raster.protection)
+    proof.foreignGlyphs.every((r) => valid(r) && !overlap(r, raster.protection)) &&
+    proof.foreignPaint.every((p) =>
+      Array.isArray(p)
+        ? valid(p) && !overlap(p, raster.protection)
+        : p &&
+          Object.keys(p).sort().join(',') === 'floor,rect' &&
+          valid(p.rect) &&
+          Number.isFinite(p.floor) &&
+          p.floor >= 0 &&
+          !overlap(expand(p.rect, (p.floor + 2) / raster.scaleLower), raster.protection)
     )
   )
 }
@@ -2192,5 +2697,8 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
     const scoped = verticalScopedLoop(page, context, title, titles)
     if (scoped && !result.some((other) => overlap(other.rect, scoped.rect))) result.push(scoped)
   }
+  const closedScope = nativeClosedScopeLoops(page, context)
+  if (closedScope && !result.some((other) => overlap(other.rect, closedScope.rect)))
+    result.push(closedScope)
   return result
 }

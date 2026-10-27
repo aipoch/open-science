@@ -309,11 +309,19 @@ export class SpecialistService {
   }
 
   async resolveRunnableById(id: string): Promise<SpecialistView> {
-    const custom = await this.listRunnableCustom()
-    const customMatch = custom.find((profile) => profile.id === id)
-    if (customMatch) return customMatch
+    const snapshot = await this.repo.getAllWithIntegrity()
+    const customMatch = snapshot.document.specialists.find(
+      (profile) => profile.id === id && !snapshot.invalidCapabilityIds.has(id)
+    )
+    if (customMatch) return toView(customMatch)
     const builtin = (await this.builtinEntries()).find((entry) => entry.id === id)
     if (builtin) return this.toBuiltinView(builtin)
+    this.log.warn('runnable specialist lookup failed', {
+      operation: 'specialist-resolution',
+      phase: 'profile',
+      specialistId: id,
+      reason: snapshot.invalidCapabilityIds.has(id) ? 'invalid-capabilities' : 'not-found'
+    })
     throw specialistError(`Runnable Specialist ${id} not found.`)
   }
 

@@ -168,6 +168,9 @@ class AcpRuntimeCoordinator {
   private readonly sessionRuntimes = new Map<string, AcpRuntime>()
   private readonly sessionConnectionStatuses = new Map<string, AcpStateSnapshot['status']>()
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
+  // A cold decision is committed before runtime restoration. This single-use claim survives a
+  // runtime-generation handoff, but never a process restart or an explicit end-wait response.
+  private readonly preparedElicitationContinuations = new Map<string, string>()
   private readonly reviewerRuntimes = new WeakMap<ActiveSession, AcpRuntime>()
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
   private readonly runtimeTargetKeys = new WeakMap<AcpRuntime, string>()
@@ -205,6 +208,7 @@ class AcpRuntimeCoordinator {
   ) => Promise<void>
   private quitPreparationEpoch = 0
   private promptAdmissionClosedForQuit = false
+  private updateAdmissionHolds = 0
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionCreations = new Set<{ runtime: AcpRuntime; projectId?: string }>()
   private readonly sessionResumeOperations = new Map<
@@ -560,11 +564,14 @@ class AcpRuntimeCoordinator {
     if (sessionIds.length === 0 && !this.delegatedWork) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {
-      const delegatedStop = this.delegatedWork?.stopAll() ?? Promise.resolve()
-      await Promise.allSettled(
-        sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
-      )
-      await delegatedStop
+      // Observe both branches immediately: delegated stop may reject while a root cancellation
+      // is still waiting for its terminal response. Keep that rejection as the final outcome.
+      await Promise.all([
+        this.delegatedWork?.stopAll() ?? Promise.resolve(),
+        Promise.allSettled(
+          sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
+        )
+      ])
       await Promise.all(
         sessionIds.map((sessionId) => this.waitForSessionInteractionRelease(sessionId))
       )
@@ -602,6 +609,16 @@ class AcpRuntimeCoordinator {
     // Bounded: a cancellation that never settles is abandoned, so a refused quit always reopens.
     if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(reopen)
     else reopen()
+  }
+
+  holdUpdateAdmission(): () => void {
+    this.updateAdmissionHolds++
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      this.updateAdmissionHolds--
+    }
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
@@ -1874,6 +1891,7 @@ class AcpRuntimeCoordinator {
   }
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpRuntimeState> {
+    this.preparedElicitationContinuations.delete(request.sessionId)
     const queuedResume = this.sessionResumeOperations.get(request.sessionId)
     if (queuedResume) queuedResume.invalidated = true
     this.invalidateSessionTurn(request.sessionId)
@@ -1932,6 +1950,12 @@ class AcpRuntimeCoordinator {
   }
 
   async respondToElicitation(response: ElicitationResponse): Promise<AcpRuntimeState> {
+    const sessionId = response.request?.sessionId
+    const continuePrepared =
+      !!sessionId &&
+      !response.prepareContinuation &&
+      this.preparedElicitationContinuations.get(sessionId) === response.requestId
+    if (continuePrepared) this.preparedElicitationContinuations.delete(sessionId!)
     const runtime =
       Array.from(this.runtimes).find((candidate) =>
         candidate
@@ -1940,7 +1964,10 @@ class AcpRuntimeCoordinator {
       ) ??
       (response.request ? this.findRuntimeForSession(response.request.sessionId) : undefined) ??
       this.getActiveRuntime()
-    await runtime.respondToElicitation(response)
+    await runtime.respondToElicitation(response, continuePrepared)
+    if (response.prepareContinuation && sessionId) {
+      this.preparedElicitationContinuations.set(sessionId, response.requestId)
+    }
     return this.getState()
   }
 
@@ -2274,7 +2301,7 @@ class AcpRuntimeCoordinator {
 
   // A committed quit latches admission closed; a live (non-abandoned) teardown only pauses it.
   private admissionClosedReason(): 'quit' | 'settling' | undefined {
-    if (this.promptAdmissionClosedForQuit) return 'quit'
+    if (this.promptAdmissionClosedForQuit || this.updateAdmissionHolds > 0) return 'quit'
     return hasPendingLifecycleSettlement() ? 'settling' : undefined
   }
 
@@ -2866,6 +2893,7 @@ class AcpRuntimeCoordinator {
     this.pendingSessionDrains.clear()
     this.sessionConnectionStatuses.clear()
     this.permissionRuntimes.clear()
+    this.preparedElicitationContinuations.clear()
     this.pendingPromptStarts.clear()
     this.latestPromptRequests.clear()
     this.activePromptRequests.clear()

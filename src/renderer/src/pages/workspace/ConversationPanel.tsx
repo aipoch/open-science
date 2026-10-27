@@ -92,6 +92,7 @@ import type {
   ElicitationResponse,
   PendingElicitationRequest
 } from '../../../../shared/acp'
+import { resolveAgentUserChoiceQuestions } from '../../../../shared/elicitation'
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest
@@ -149,7 +150,7 @@ import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
-import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
+import { WorkspaceElicitationCard, WorkspaceElicitationRecovery } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
@@ -265,7 +266,10 @@ const attachmentLimitsText = (t: TFunction): string =>
     size: formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)
   })
 
-const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+const ResizableElicitationComposer = ({
+  children,
+  choice
+}: React.PropsWithChildren<{ choice: boolean }>): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ResizableBottomPanel
@@ -275,6 +279,7 @@ const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): Re
       constrainGrowthToOverflow
       minimumContentSelector='[data-elicitation-option-row="true"]'
       minimumContentIndex={1}
+      contentScrollSelector={choice ? '[data-testid="elicitation-options"]' : undefined}
     >
       {children}
     </ResizableBottomPanel>
@@ -352,6 +357,7 @@ type ConversationPanelView = {
   authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
+  canEditLocalDraft?: boolean
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
@@ -549,6 +555,7 @@ const ConversationPanel = ({
     activeSession,
     composerFocusKey,
     canEditDraft,
+    canEditLocalDraft = canEditDraft,
     persistenceBlocked,
     actionError,
     sideChatDisabledReason,
@@ -1030,6 +1037,9 @@ const ConversationPanel = ({
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
   const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const contextResetNotice = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.contextResets?.[activeSession.id] : false
+  )
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
@@ -1056,7 +1066,11 @@ const ConversationPanel = ({
       actionError)
   let resumeErrorDescription = resolvedActionError
   if (resumeDiagnostic && resolvedActionError) {
-    if (/timed out/i.test(resumeDiagnostic.detail)) {
+    if (resumeDiagnostic.detail.includes('Previous agent cleanup is unconfirmed.')) {
+      resumeErrorDescription = t(
+        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+      )
+    } else if (/timed out/i.test(resumeDiagnostic.detail)) {
       resumeErrorDescription = t(
         'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
       )
@@ -1149,7 +1163,9 @@ const ConversationPanel = ({
     ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
     : undefined
   const pendingElicitation: ElicitationProjection | undefined =
-    pendingElicitationActivity?.elicitation?.state === 'pending'
+    pendingElicitationActivity?.elicitation &&
+    (pendingElicitationActivity.elicitation.state === 'pending' ||
+      pendingElicitationActivity.elicitation.continuationRecovery)
       ? pendingElicitationActivity.elicitation
       : !pendingElicitationActivity && pendingElicitationRequest
         ? {
@@ -1813,6 +1829,23 @@ const ConversationPanel = ({
                     onResume={() => void handleResume()}
                   />
                 ) : null}
+                {contextResetNotice ? (
+                  <ErrorNotice
+                    inline
+                    level="info"
+                    className="mb-2"
+                    description={t(
+                      'Continuing in a new context using your saved conversation history.'
+                    )}
+                    dismissButton={{
+                      label: t('Dismiss'),
+                      onClick: () =>
+                        useWorkspaceOperationErrors.setState((state) => ({
+                          contextResets: { ...state.contextResets, [activeSession!.id]: false }
+                        }))
+                    }}
+                  />
+                ) : null}
                 {activeSession?.compacting ? (
                   // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
                   // while the agent context is reset and the conversation is replayed as text.
@@ -2119,7 +2152,8 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {ordinaryComposerBlocked && !authenticationRequired ? (
+                  {ordinaryComposerBlocked &&
+                  (!authenticationRequired || pendingElicitation?.continuationRecovery) ? (
                     <div
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
@@ -2148,8 +2182,26 @@ const ConversationPanel = ({
                             embedded
                           />
                         </ResizableCredentialComposer>
+                      ) : pendingElicitation?.continuationRecovery ? (
+                        <WorkspaceElicitationRecovery
+                          key={pendingElicitationRequest?.requestId}
+                          elicitation={{
+                            ...pendingElicitation,
+                            continuationRecovery: {
+                              ...pendingElicitation.continuationRecovery,
+                              error: actionError ?? pendingElicitation.continuationRecovery.error
+                            }
+                          }}
+                          request={pendingElicitationRequest}
+                          onRespond={onRespondToElicitation}
+                        />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
+                          choice={Boolean(
+                            resolveAgentUserChoiceQuestions(
+                              pendingElicitationRequest?.fields ?? pendingElicitation.fields
+                            )
+                          )}
                           key={
                             pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
                           }
@@ -2949,7 +3001,7 @@ const ConversationPanel = ({
                               onLocatePastedText={handleLocatePastedText}
                               onUndo={onUndo}
                               onRedo={onRedo}
-                              disabled={!canEditDraft}
+                              disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
                                 {

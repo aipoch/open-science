@@ -22,14 +22,16 @@ it.each([1, 2, 3, 5, 6, 13])(
       ? analyzeRNotebookSource(script)
       : analyzePythonNotebookSource(script))
     expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual(
-      index === 13 ? ['external-state', 'opaque-call'] : ['external-state']
+      [3, 5, 6, 13].includes(index)
+        ? ['external-state', 'function-scope', 'opaque-call']
+        : ['external-state']
     )
     expect(
       await analyzeNotebookSourceFileAccess(language === 'r' ? 'r' : 'python', script)
     ).toMatchObject({
-      readState: index === 13 ? 'partial' : 'complete',
-      writeState: index === 13 ? 'partial' : 'complete',
-      externalState: index === 13 ? 'partial' : 'complete',
+      readState: [3, 5, 6, 13].includes(index) ? 'partial' : 'complete',
+      writeState: [3, 5, 6, 13].includes(index) ? 'partial' : 'complete',
+      externalState: [3, 5, 6, 13].includes(index) ? 'partial' : 'complete',
       reads: ['inputs/set-membership-111111111111.xlsx'],
       writes:
         index === 13
@@ -49,16 +51,18 @@ it.each([7, 8, 9, 10, 11, 12])(
 )
 
 it.each(['df <- data.frame(A=c("a",NA), B=c("b","c"))', 'df <- readxl::read_excel("input.xlsx")'])(
-  'tracks ordinary captured data through immediate callbacks: %s',
+  'withholds method-result ownership in captured-data callbacks: %s',
   async (setup) => {
     const { facts } = await analyzeRNotebookSource(
       setup + '\nsets<-lapply(colnames(df),function(c) unique(stats::na.omit(df[[c]])))'
     )
     expect(facts.state === 'unknown' ? facts.reasons : []).toEqual(
-      setup.includes('read_excel') ? ['external-state'] : []
+      setup.includes('read_excel')
+        ? ['external-state', 'function-scope', 'opaque-call']
+        : ['function-scope', 'opaque-call']
     )
     expect(facts.usedNames).toContain('df')
-    expect(facts.copyOnModifyNames).toContain('sets')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('sets')
   }
 )
 

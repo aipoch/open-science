@@ -4,14 +4,16 @@
     "src/shared/__fixtures__/skill-marketplace.ts",
     "src/shared/skill-import.ts",
     "src/shared/custom-connector.ts",
-    "src/shared/resource-id.ts"
+    "src/shared/resource-id.ts",
+    "src/shared/skill-sources.ts"
   ],
   "interfacePaths": [
     "src/shared/skill-marketplace.ts",
     "src/shared/__fixtures__/skill-marketplace.ts",
     "src/shared/skill-import.ts",
     "src/shared/custom-connector.ts",
-    "src/shared/resource-id.ts"
+    "src/shared/resource-id.ts",
+    "src/shared/skill-sources.ts"
   ],
   "consumerModules": [
     "host_command_runtime",

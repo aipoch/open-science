@@ -102,6 +102,9 @@ type FakeSettingsService = Record<
   | 'setPackageMirror'
   | 'setNetworkProxy'
   | 'setNotebookNetwork'
+  | 'listSkillSources'
+  | 'addSkillSource'
+  | 'removeSkillSource'
   | 'listSkills'
   | 'startSkillMarketplaceBatch'
   | 'listSkillMarketplace'
@@ -292,6 +295,9 @@ const createFakeService = (): FakeSettingsService => ({
   updateSkill: vi.fn().mockResolvedValue([]),
   deleteSkill: vi.fn().mockResolvedValue([]),
   importSkillZipBatch: vi.fn().mockResolvedValue({ results: [], skills: [] }),
+  listSkillSources: vi.fn().mockResolvedValue([]),
+  addSkillSource: vi.fn().mockResolvedValue([]),
+  removeSkillSource: vi.fn().mockResolvedValue([]),
   previewGitHubSkill: vi.fn().mockResolvedValue({ name: 'GitHub preview' }),
   listAgentHomeSkills: vi.fn().mockResolvedValue([]),
   previewAgentHomeSkill: vi.fn().mockResolvedValue({ name: 'Installed preview' }),
@@ -1218,6 +1224,12 @@ describe('settings IPC handlers', () => {
     const github = { url: 'https://github.com/acme/skills/tree/main/foo' }
     const installed = { source: 'agents', slug: 'foo' }
 
+    await invoke('settings:list-skill-sources')
+    await invoke('settings:add-skill-source', { repository: 'org/repo' })
+    await invoke('settings:remove-skill-source', { id: 'saved' })
+    expect(service.listSkillSources).toHaveBeenCalledWith()
+    expect(service.addSkillSource).toHaveBeenCalledWith({ repository: 'org/repo' })
+    expect(service.removeSkillSource).toHaveBeenCalledWith({ id: 'saved' })
     await invoke('settings:preview-github-skill', github)
     await invoke('settings:preview-agent-home-skill', installed)
 

@@ -72,3 +72,48 @@ it.each([
   const { page } = load(name)
   expect(findCaptionCandidates([page])).toEqual([])
 })
+
+function unresolvedTitleAboveOwnedPlate(): ReturnType<typeof JSON.parse> {
+  const captions = [
+    { page: 1, lines: ['Figure 1. Prior drawing.'], rect: [40, 40, 550, 60] },
+    { page: 1, lines: ['Figure 2. Current drawing.'], rect: [40, 300, 550, 320] }
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: captions.map((c) => ({
+      text: c.lines[0],
+      x: c.rect[0],
+      y: c.rect[1],
+      width: 510,
+      height: 10,
+      fontSize: 10
+    })),
+    graphicsBounds: [0, 1, 2].map((n) => ({
+      kind: 'path',
+      normalizedRect: [(60 + n) / 600, (150 + n) / 800, (540 - n) / 600, (280 - n) / 800]
+    }))
+  }
+  return { page, captions }
+}
+
+it('does not lend a following captioned plate to an unresolved page-top title', () => {
+  const f = unresolvedTitleAboveOwnedPlate(),
+    before = structuredClone(f)
+  const result = associateFigures(f.page, f.captions)
+  expect(result).toHaveLength(2)
+  expect(result[0].rect).toBeUndefined()
+  expect(result[0].caption).toEqual(f.captions[0])
+  expect(result[1].rect).toEqual([60, 150, 540, 280])
+  expect(f).toEqual(before)
+})
+
+it('retains below-title recovery without a competing following caption', () => {
+  const f = unresolvedTitleAboveOwnedPlate()
+  f.captions = f.captions.slice(0, 1)
+  f.page.lines = f.page.lines.slice(0, 1)
+  expect(associateFigures(f.page, f.captions)[0].rect).toEqual([60, 150, 540, 280])
+})

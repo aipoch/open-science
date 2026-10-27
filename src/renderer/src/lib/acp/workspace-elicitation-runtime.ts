@@ -321,24 +321,45 @@ const respondToWorkspaceElicitation = async (
     throw new Error(`Session not found: ${restoredRequest.sessionId}`)
   }
 
-  if (restoredRequest && session && !runtime.state.sessionIds.includes(restoredRequest.sessionId)) {
+  if (
+    response.action !== 'cancel' &&
+    restoredRequest &&
+    session &&
+    !runtime.state.sessionIds.includes(restoredRequest.sessionId)
+  ) {
+    const prepared = await runtime.respondToElicitation({ ...response, prepareContinuation: true })
+    syncWorkspaceInteractionStateFromSnapshot(prepared)
     const cwd = session.cwd || runtime.state.cwd
-    if (!cwd) throw new Error(RESUME_WORKSPACE_MISSING_MESSAGE)
-
-    const resumed = await runtime.resumeSession(
-      session.id,
-      cwd,
-      session.projectId,
-      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      session.agentFrameworkId,
-      session.agentBackendId,
-      session.specialistId,
-      session.providerSessionId,
-      session.providerContinuityToken,
-      session.specialistBindingPending,
-      options.agentTarget,
-      session.memoryEnabled !== false
-    )
+    const resumed = await (async () => {
+      if (!cwd) throw new Error(RESUME_WORKSPACE_MISSING_MESSAGE)
+      return runtime.resumeSession(
+        session.id,
+        cwd,
+        session.projectId,
+        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        session.agentFrameworkId,
+        session.agentBackendId,
+        session.specialistId,
+        session.providerSessionId,
+        session.providerContinuityToken,
+        session.specialistBindingPending,
+        options.agentTarget,
+        session.memoryEnabled !== false
+      )
+    })().catch(async (error: unknown) => {
+      // Attachment can fail before Main sees the response. Still commit the human decision
+      // against canonical durable authority; this diagnostic cannot grant retry permission.
+      const snapshot = await runtime.respondToElicitation({
+        ...response,
+        continuationFailure: (error instanceof Error ? error.message : String(error)).slice(
+          0,
+          4_000
+        )
+      })
+      syncWorkspaceInteractionStateFromSnapshot(snapshot)
+      return null
+    })
+    if (resumed === null) return
     useSessionStore.getState().markResumed(
       session.id,
       resumed

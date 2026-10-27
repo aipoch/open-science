@@ -1,9 +1,15 @@
+import { readRuntimeExitOutcome } from './runtime-stop-confirmation'
 import { recoverInstallationAfterSystemRestart } from './update/installation-reboot-recovery'
 import type { DebSystemdGate } from './update/deb-systemd-gate'
 import { resumeBoundInstallationExecutor } from './update/installation-executor'
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
-import { UpdateLifecycleError, type UpdateApplyOptions, type UpdateStatus } from '../shared/update'
+import {
+  UpdateLifecycleError,
+  type UpdateApplyOptions,
+  type UpdateRecoveryStatus,
+  type UpdateStatus
+} from '../shared/update'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import type { RuntimeDirectoryLease } from './runtime-ownership'
@@ -98,8 +104,40 @@ export function createDesktopUpdateIntegration(options: {
         operationId: string
       }
     | undefined
+  const legacyStoppedRecovery = (canRetryInstall = false): UpdateRecoveryStatus => ({
+    phase: 'stopped',
+    runtime: 'stopped-unclean',
+    installation: 'unchanged',
+    canCancel: true,
+    canRecover: true,
+    canRetryInstall
+  })
   const recovery = (): ReturnType<typeof installationRecoveryStatus> | undefined =>
-    record && installationRecoveryStatus(record)
+    record
+      ? installationRecoveryStatus(record)
+      : legacy?.stopped
+        ? legacyStoppedRecovery()
+        : undefined
+  const inspectStoppedLegacyInstallation = async (signal: AbortSignal): Promise<void> => {
+    try {
+      // The exited Runtime and its remaining helpers no longer receive an occupancy exemption.
+      await inspectInstallationAvailability(
+        { ...options.location, allowedProcessIds: options.allowedProcessIds },
+        signal
+      )
+      signal.throwIfAborted()
+    } catch (error) {
+      signal.throwIfAborted()
+      if (error instanceof UpdateLifecycleError)
+        throw new UpdateLifecycleError(
+          error.reason,
+          error.message,
+          { ...error.recovery, ...legacyStoppedRecovery() },
+          { cause: error }
+        )
+      throw error
+    }
+  }
   const exclusive = async <T>(run: () => Promise<T>): Promise<T> => {
     if (pending)
       throw new UpdateLifecycleError(
@@ -218,11 +256,11 @@ export function createDesktopUpdateIntegration(options: {
           liveRecovered = true
         }
         if (old.phase === 'stopping' && !liveRecovered) {
-          // A stop timeout is not a permanent verdict: repeat the generation/PID/lock proof.
-          // Failed or missing exit evidence stays protected; no automatic task replay or PID kill.
+          // Repeat exact process-exit and directory-lock proof. Ordinary cleanup degradation
+          // is diagnostic evidence; actual installation occupancy remains a separate gate.
           let lease: RuntimeDirectoryLease
           try {
-            lease = await options.client().waitForStopped()
+            lease = await options.client().waitForStopped(undefined, false)
           } catch (cause) {
             if (!(cause instanceof RuntimeStopError)) throw cause
             options.onProgress?.({
@@ -234,7 +272,7 @@ export function createDesktopUpdateIntegration(options: {
             })
             throw new UpdateLifecycleError(
               cause.code,
-              'The service exited without verified clean shutdown. Do not install or restart it while child processes or pending work remain. Close the original clients, inspect the Runtime shutdown logs and remaining processes, and repair the incomplete shutdown before checking again.',
+              'The service exit or directory ownership could not be confirmed. Inspect the shutdown diagnostics and retry before replacing installation files.',
               {
                 ...installationRecoveryStatus(old),
                 runtime: cause.code === 'runtime-stop-unclean' ? 'stopped-unclean' : 'unknown',
@@ -245,7 +283,19 @@ export function createDesktopUpdateIntegration(options: {
             )
           }
           options.retainLease(lease)
-          record = advanceInstallationUpdate(options.location, old.operationId, 'stopped', true)
+          const clean =
+            (await readRuntimeExitOutcome(
+              old.startupOptions.configRoot,
+              old.runtime.generation,
+              old.runtime.pid
+            )) === 'clean'
+          record = advanceInstallationUpdate(
+            options.location,
+            old.operationId,
+            'stopped',
+            clean,
+            true
+          )
           options.onStopped()
         }
         // Abort the still-live task gate before clearing protection. A stopped host must never be called.
@@ -293,6 +343,8 @@ export function createDesktopUpdateIntegration(options: {
     active: NonNullable<typeof legacy>,
     apply: UpdateApplyOptions | undefined
   ): Promise<InstallReadiness> => {
+    if (active.stopped)
+      return { completed: true, reaped: false, runtimeStopped: true, recovery: recovery() }
     options.setClosing(true)
     try {
       await options.flushRenderer?.('preflight')
@@ -300,7 +352,7 @@ export function createDesktopUpdateIntegration(options: {
       const result = (await options
         .client()
         .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
-      if (!result.completed || !result.reaped) {
+      if ((!result.completed || !result.reaped) && !result.stopAuthorized) {
         options.setClosing(false)
         return result
       }
@@ -317,11 +369,11 @@ export function createDesktopUpdateIntegration(options: {
           canRetryInstall: false
         }
       })
-      const lease = await options.client().stopRuntime()
+      const lease = await options.client().stopRuntime('update')
       options.retainLease(lease)
       active.stopped = true
       options.onStopped()
-      return result
+      return { ...result, runtimeStopped: true }
     } catch (error) {
       if (!active.stopped) {
         await options
@@ -348,6 +400,11 @@ export function createDesktopUpdateIntegration(options: {
       exclusive(async () => {
         cancelRequested = false
         cancellation = new AbortController()
+        if (legacy?.stopped) {
+          await inspectStoppedLegacyInstallation(cancellation.signal)
+          checkCancellation()
+          return undefined
+        }
         legacy = undefined
         if (pendingRestart)
           return {
@@ -483,8 +540,13 @@ export function createDesktopUpdateIntegration(options: {
         if (legacy) return legacyGate(legacy, apply)
         if (!record)
           throw new UpdateLifecycleError('install-failed', 'Installation protection is missing.')
-        if (record.phase === 'stopped' && record.stoppedClean)
-          return { completed: true, reaped: true, recovery: recovery() }
+        if (record.phase === 'stopped' && (record.stoppedClean || record.runtimeExited))
+          return {
+            completed: true,
+            reaped: record.stoppedClean === true,
+            runtimeStopped: true,
+            recovery: recovery()
+          }
         if (record.phase !== 'preparing')
           throw new UpdateLifecycleError(
             'install-failed',
@@ -501,7 +563,7 @@ export function createDesktopUpdateIntegration(options: {
           const result = (await options
             .client()
             .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
-          if (!result.completed || !result.reaped) {
+          if ((!result.completed || !result.reaped) && !result.stopAuthorized) {
             options.setClosing(false)
             return { ...result, recovery: recovery() }
           }
@@ -510,13 +572,25 @@ export function createDesktopUpdateIntegration(options: {
           checkCancellation()
           record = advanceInstallationUpdate(options.location, record.operationId, 'stopping')
           publish()
-          const lease = await options.client().stopRuntime()
+          const lease = await options.client().stopRuntime('update')
           options.retainLease(lease)
-          record = advanceInstallationUpdate(options.location, record.operationId, 'stopped', true)
+          const clean =
+            (await readRuntimeExitOutcome(
+              record.startupOptions.configRoot,
+              record.runtime.generation,
+              record.runtime.pid
+            )) === 'clean'
+          record = advanceInstallationUpdate(
+            options.location,
+            record.operationId,
+            'stopped',
+            clean,
+            true
+          )
           stopped = true
           options.onStopped()
           publish()
-          return { ...result, recovery: recovery() }
+          return { ...result, runtimeStopped: true, recovery: recovery() }
         } catch (error) {
           // Any failure before a confirmed stop must not leave the app locked in its closing state.
           if (!stopped) options.setClosing(false)
@@ -538,10 +612,12 @@ export function createDesktopUpdateIntegration(options: {
       return exclusive(async () => {
         checkCancellation()
         if (legacy) {
+          await inspectStoppedLegacyInstallation(cancellation.signal)
+          checkCancellation()
           options.onProgress?.({
             recovery: {
               phase: 'handoff',
-              runtime: 'stopped-clean',
+              runtime: 'stopped-unclean',
               installation: 'unchanged',
               canCancel: false,
               canRecover: false,
@@ -583,11 +659,15 @@ export function createDesktopUpdateIntegration(options: {
           outcome: undefined,
           recovery: {
             phase: 'checking',
-            runtime: record?.stoppedClean ? 'stopped-clean' : 'running',
+            runtime: record?.stoppedClean
+              ? 'stopped-clean'
+              : legacy?.stopped
+                ? 'stopped-unclean'
+                : 'running',
             installation: 'unchanged',
             canCancel: record?.phase !== 'handoff',
             canRetryInstall: false,
-            canRecover: Boolean(record)
+            canRecover: Boolean(record || legacy?.stopped)
           }
         })
         try {
@@ -603,15 +683,26 @@ export function createDesktopUpdateIntegration(options: {
                 canRecover: true
               }
             }
+          if (legacy?.stopped) {
+            await inspectStoppedLegacyInstallation(checking)
+            return { ...reset, recovery: legacyStoppedRecovery(true) }
+          }
           if (record && record.phase !== 'preparing') {
             if (record.phase === 'stopping' && !isRuntimeProcessAlive(record.runtime.pid)) {
               try {
-                const lease = await options.client().waitForStopped()
+                const lease = await options.client().waitForStopped(undefined, false)
                 options.retainLease(lease)
+                const clean =
+                  (await readRuntimeExitOutcome(
+                    record.runtime.configRoot,
+                    record.runtime.generation,
+                    record.runtime.pid
+                  )) === 'clean'
                 record = advanceInstallationUpdate(
                   options.location,
                   record.operationId,
                   'stopped',
+                  clean,
                   true
                 )
                 options.onStopped()

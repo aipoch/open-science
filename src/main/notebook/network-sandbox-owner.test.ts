@@ -83,6 +83,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { NotebookKernelExecutor } from './kernel-executor'
+import { runShellCommand } from './shell-process'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
 import {
   beginMigration,
@@ -319,7 +320,67 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   )
 
-  it('refuses native Windows execution without protection even when folder relaxation was saved', async () => {
+  it.each(
+    [false, true].flatMap((configured) =>
+      [false, true].flatMap((restrictFolders) =>
+        (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({
+          configured,
+          restrictFolders,
+          runtime
+        }))
+      )
+    )
+  )(
+    'pins $runtime launch mode (protected: $configured, folder preference: $restrictFolders)',
+    async ({ configured, restrictFolders, runtime }) => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
+      const root = await mkdtemp(join(tmpdir(), 'os-windows-mode-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => restrictFolders,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        const wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query public database',
+          sessionId: 's',
+          projectId: 'p',
+          runtime,
+          superviseProcessTree: true,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [root],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            windowsProtectionRequired: configured,
+            superviseProcessTree: true,
+            filesystem: expect.objectContaining({ restrictFolders: configured })
+          })
+        )
+        expect(wrapped.env.HTTPS_PROXY).toBe('http://127.0.0.1:4567')
+        expect(wrapped.beginSpawn).toBeTypeOf('function')
+        expect(backend.installWindows).not.toHaveBeenCalled()
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('refuses explicit protected admission when protection is no longer configured', async () => {
     backend.isWindowsProtectionConfigured.mockResolvedValue(false)
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/unused',
@@ -377,18 +438,14 @@ describe('NotebookNetworkSandboxOwner', () => {
           platform: 'win32'
         })
         await expect(spawn(process.execPath, ['-m', 'pip', '--version'], {})).rejects.toThrow(
-          configured ? 'installer reached backend' : 'require Windows protected mode'
+          'installer reached backend'
         )
-        if (configured) {
-          expect(backend.wrap).toHaveBeenCalledWith(
-            expect.objectContaining({
-              superviseProcessTree: true,
-              windowsProtectionRequired: true
-            })
-          )
-        } else {
-          expect(backend.wrap).not.toHaveBeenCalled()
-        }
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            superviseProcessTree: true,
+            windowsProtectionRequired: configured
+          })
+        )
       } finally {
         await owner.dispose()
       }
@@ -1275,6 +1332,108 @@ describe('NotebookNetworkSandboxOwner', () => {
     } finally {
       prepare.mockRestore()
       await owner.dispose()
+    }
+  })
+
+  it.each(['bash', 'repl'] as const)(
+    'rejects removed protection after selecting the protected %s interpreter',
+    async (runtimeKind) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-selected-runtime-mode-'))
+      fixtureDirectories.push(root)
+      const runtime = { root, node: process.execPath, powershell: process.execPath }
+      const prepare = vi
+        .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
+        .mockImplementation(async () => {
+          backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+          return runtime
+        })
+      const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockReturnValue(runtime)
+      backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: owner })
+      try {
+        const request = {
+          cwd: root,
+          runtimeRoot: root,
+          sessionId: 'selected-mode',
+          projectId: 'project'
+        }
+        const result =
+          runtimeKind === 'bash'
+            ? await runShellCommand({
+                ...request,
+                command: 'echo query',
+                handoffDir: root,
+                platform: 'win32',
+                runtimeBinding: { kind: 'powershell', version: '7.6' },
+                processSandbox: owner
+              })
+            : await executor.execute({
+                ...request,
+                kind: 'repl',
+                language: 'python',
+                code: 'console.log("query")',
+                dataRoot: root,
+                notebookSessionRoot: root
+              })
+        expect(result.stderr).toContain('require Windows protected mode')
+        expect(backend.wrap).not.toHaveBeenCalled()
+      } finally {
+        await executor.shutdown()
+        await owner.dispose()
+        prepare.mockRestore()
+        get.mockRestore()
+      }
+    }
+  )
+
+  it('pins protection before validating the prepared interpreter identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-mode-identity-race-'))
+    fixtureDirectories.push(root)
+    const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockImplementation(() => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+      return { root, node: process.execPath, powershell: process.execPath }
+    })
+    backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      windowsRuntimeRoot: join(root, 'protected-runtimes'),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(
+        owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query',
+          sessionId: 's',
+          projectId: 'p',
+          runtime: 'repl',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+      ).rejects.toThrow('require Windows protected mode')
+      expect(backend.wrap).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+      get.mockRestore()
     }
   })
 
@@ -2402,7 +2561,7 @@ it('does not automatically grant durable permissions to an agent-created R envir
 })
 
 it.each(['managed', 'external'] as const)(
-  'blocks %s R in unconfigured Windows standard mode before process creation',
+  'runs %s R in unconfigured Windows standard mode without protection setup',
   async (selection) => {
     const root = await mkdtemp(join(tmpdir(), 'os-r-standard-'))
     fixtureDirectories.push(root)
@@ -2456,12 +2615,17 @@ it.each(['managed', 'external'] as const)(
         projectId: 'project',
         timeoutMs: 5000
       })
-      expect(result.status).toBe('failed')
-      expect(result.stderr).toContain('require Windows protected mode')
-      expect(beginSpawn).not.toHaveBeenCalled()
-      expect(started).not.toHaveBeenCalled()
+      expect(result.status, result.stderr).toBe('completed')
+      expect(result.stdout).toBe('15')
+      expect(beginSpawn).toHaveBeenCalledOnce()
+      expect(started).toHaveBeenCalledOnce()
       expect(notStarted).not.toHaveBeenCalled()
-      expect(backend.wrap).not.toHaveBeenCalled()
+      expect(backend.wrap).toHaveBeenCalledWith(
+        expect.objectContaining({
+          windowsProtectionRequired: false,
+          superviseProcessTree: true
+        })
+      )
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await executor.shutdown()

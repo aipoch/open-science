@@ -32,7 +32,8 @@
     "packages/open-science/BROWSER_IMPORT.md",
     "packages/open-science/mcp.mjs",
     "packages/open-science/mcp.test.ts",
-    "packages/open-science/mcp.integration.test.ts"
+    "packages/open-science/mcp.integration.test.ts",
+    "packages/open-science/runtime-control.test.ts"
   ],
   "interfacePaths": [
     "packages/open-science/cli.mjs",
@@ -62,7 +63,8 @@
       "packages/open-science/connector.test.ts",
       "packages/open-science/appimage-launcher.test.ts",
       "packages/open-science/locate-backend.test.ts",
-      "packages/open-science/browser-import.test.ts"
+      "packages/open-science/browser-import.test.ts",
+      "packages/open-science/runtime-control.test.ts"
     ],
     "contract": [
       "packages/open-science/mcp.test.ts",

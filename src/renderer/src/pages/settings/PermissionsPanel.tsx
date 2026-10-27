@@ -442,7 +442,7 @@ const PermissionsPanel = ({
           {window.api.platform === 'win32' ? (
             <InlineNotice className="mt-3">
               {t(
-                'Windows native runtimes always require protected mode and keep folder restrictions. This switch applies only to WSL2 Shell.'
+                'Windows native runtimes can run in standard mode without folder restrictions. Protected mode enforces folder restrictions. This switch applies only to WSL2 Shell.'
               )}
             </InlineNotice>
           ) : null}
@@ -457,8 +457,10 @@ const PermissionsPanel = ({
         <AlertDialog.Root open={confirmFolderAccess} onOpenChange={setConfirmFolderAccess}>
           <AlertDialog.Portal>
             <AlertDialog.Overlay className={dialogOverlayClassName} />
-            <AlertDialog.Content className={dialogPanelClassName()}>
-              <div className={dialogHeaderClassName}>
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+            >
+              <div className="px-5 py-4">
                 <AlertDialog.Title className={dialogTitleClassName}>
                   {t('Allow broader folder access?')}
                 </AlertDialog.Title>

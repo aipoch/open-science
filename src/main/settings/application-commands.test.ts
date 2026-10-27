@@ -91,6 +91,9 @@ const expectedChannels = [
   'settings:install-recommended-wsl-distro',
   'settings:open-wsl-terminal',
   'settings:refresh-provider-models',
+  'settings:list-skill-sources',
+  'settings:add-skill-source',
+  'settings:remove-skill-source',
   'settings:scan-repo-skills',
   'settings:save-github-token',
   'settings:remove-github-token',
@@ -514,6 +517,12 @@ describe('Settings core application commands', () => {
     await invoke('previewGitHubSkill', [{ url: 'https://github.com/org/repo' }])
     await invoke('previewSkillZip', [{ dataBase64: 'AA==' }])
     await invoke('refreshProviderModels', [{ providerId: 'provider-1' }])
+    await invoke('listSkillSources', [])
+    await invoke('addSkillSource', [{ repository: 'org/repo' }])
+    await invoke('removeSkillSource', [{ id: 'saved' }])
+    expect(serviceMethod('listSkillSources')).toHaveBeenCalledWith()
+    expect(serviceMethod('addSkillSource')).toHaveBeenCalledWith({ repository: 'org/repo' })
+    expect(serviceMethod('removeSkillSource')).toHaveBeenCalledWith({ id: 'saved' })
     await invoke('scanRepoSkills', [{ repo: 'org/repo' }])
     await invoke('setReviewerModel', [{ configuration: { mode: 'inherit' } }])
     await invoke('setSessionDetailsModel', [

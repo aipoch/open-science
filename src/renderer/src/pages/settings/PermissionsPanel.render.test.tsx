@@ -96,6 +96,18 @@ const setPermissionApi = (api: Partial<Window['api']['permissions']>): void => {
 }
 
 describe('PermissionsPanel', () => {
+  it('explains optional native Windows protection separately from the WSL2 folder switch', async () => {
+    setPermissionApi({ list: vi.fn().mockResolvedValue(snapshot) })
+    Object.defineProperty(window.api, 'platform', { value: 'win32', configurable: true })
+    await act(async () => root.render(<PermissionsPanel />))
+    expect(container.textContent).toContain(
+      'Windows native runtimes can run in standard mode without folder restrictions. Protected mode enforces folder restrictions.'
+    )
+    expect(
+      container.querySelector('[role="switch"][aria-label="Restrict WSL2 Shell folders"]')
+    ).not.toBeNull()
+  })
+
   it('requires confirmation before relaxing folders and reports a rejected settings write', async () => {
     setPermissionApi({ list: vi.fn().mockResolvedValue(snapshot) })
     const save = vi.fn().mockRejectedValue(new Error('shutdown failed'))

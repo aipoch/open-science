@@ -586,11 +586,13 @@ function MarketplaceInstallControls({
 export function SkillMarketplace({
   view,
   onNavigate,
+  onImportFromGitHub,
   onManageLocal
 }: {
   view: SkillMarketplaceView
   onNavigate: (view: SkillMarketplaceView) => void
   onManageLocal?: (id?: string) => void
+  onImportFromGitHub?: () => void
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const heading = useRef<HTMLHeadingElement>(null)
@@ -954,9 +956,16 @@ export function SkillMarketplace({
         onExit={() => onNavigate({ kind: 'marketplace' })}
         heading={
           view.kind !== 'marketplace-detail' ? (
-            <h3 ref={heading} tabIndex={-1} className="min-w-0 text-lg font-semibold">
-              {isBatch ? t('Batch manage') : t('Browse Marketplace')}
-            </h3>
+            <div className="flex min-w-0 items-center gap-3">
+              <h3 ref={heading} tabIndex={-1} className="min-w-0 text-lg font-semibold">
+                {isBatch ? t('Batch manage') : t('Browse Marketplace')}
+              </h3>
+              {onImportFromGitHub && !isBatch ? (
+                <Button variant="outline" size="sm" onClick={onImportFromGitHub}>
+                  {t('Import from GitHub')}
+                </Button>
+              ) : null}
+            </div>
           ) : undefined
         }
         onRefresh={

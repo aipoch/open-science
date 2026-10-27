@@ -1,3 +1,4 @@
+import { PreviousAgentContextUnavailableError } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
@@ -11,7 +12,10 @@ import {
   type ShellRuntimeAgentContract
 } from '../notebook/shell-runtime'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
-import { AcpProviderSessionResumer } from './provider-session-resumer'
+import {
+  AcpProviderSessionResumer,
+  type AcpSessionWriterTransfer
+} from './provider-session-resumer'
 import {
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   SIDE_CHAT_SESSION_CAPABILITY_POLICY,
@@ -20,13 +24,13 @@ import {
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
-const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
+const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({
     debug: vi.fn(),
     info: diagnosticLogs.info,
-    warn: vi.fn(),
+    warn: diagnosticLogs.warn,
     error: diagnosticLogs.error
   })
 }))
@@ -75,6 +79,7 @@ const opencodeBackend: AcpBackendGenerationView = {
 }
 
 type HarnessOptions = {
+  assertResumeAllowed?: (frameworkId: string) => Promise<void>
   attached?: boolean
   isWslSetupSession?: () => Promise<boolean>
   attachError?: Error
@@ -133,7 +138,10 @@ type ResumerHarness = {
   request: ReturnType<typeof vi.fn>
   releaseForTransfer: () => Promise<string | undefined>
   reconfigure: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
-  resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
+  resume: (
+    request?: Partial<AcpResumeSessionRequest>,
+    writerTransfer?: AcpSessionWriterTransfer
+  ) => Promise<AcpCreateSessionResponse>
   sessionSetupAppends: string[][]
   setTimer: ReturnType<typeof vi.fn>
   successorSession: ActiveSession
@@ -315,6 +323,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
         return connection
       }),
     assertCurrentConnection,
+    assertResumeAllowed: options.assertResumeAllowed,
     disconnectTimedOutConnection,
     resumeCapabilityAdvertised: () => options.supportsResume !== false,
     supportsSessionClose: () => options.supportsClose !== false,
@@ -366,14 +375,18 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     diagnosticContext: () => ({})
   })
   const resume = (
-    request: Partial<AcpResumeSessionRequest> = {}
+    request: Partial<AcpResumeSessionRequest> = {},
+    writerTransfer?: AcpSessionWriterTransfer
   ): Promise<AcpCreateSessionResponse> =>
-    resumer.resume({
-      sessionId: 'stable-app-session',
-      cwd: '/workspace',
-      projectId: 'project-a',
-      ...request
-    })
+    resumer.resume(
+      {
+        sessionId: 'stable-app-session',
+        cwd: '/workspace',
+        projectId: 'project-a',
+        ...request
+      },
+      writerTransfer
+    )
   const reconfigure = (
     request: Partial<AcpResumeSessionRequest> = {}
   ): Promise<AcpCreateSessionResponse> =>
@@ -416,6 +429,192 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('adopts an independent context in the original conversation when historical ownership is unknown', async () => {
+    const assertResumeAllowed = vi
+      .fn()
+      .mockRejectedValue(
+        new PreviousAgentContextUnavailableError('Previous agent cleanup is unconfirmed.')
+      )
+    const harness = createHarness({ assertResumeAllowed })
+    await expect(harness.resume({ providerSessionId: 'old-context' })).resolves.toMatchObject({
+      sessionId: 'stable-app-session',
+      contextReset: true
+    })
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('checks cleanup admission before provisioning or closing a persisted Codex writer, and retries it', async () => {
+    const cleanupFailure = new Error('Session not found: unresolved cleanup evidence')
+    const assertResumeAllowed = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(cleanupFailure)
+      .mockResolvedValue(undefined)
+    const harness = createHarness({
+      assertResumeAllowed,
+      initialBackend: {
+        ...codexResponsesBackend,
+        session: {
+          ...codexResponsesBackend.session,
+          options: {
+            openScienceSkillRuntime: {
+              command: '/node',
+              entryPath: '/main.js',
+              root: '/codex',
+              skillsDirectory: '/codex/skills'
+            }
+          }
+        }
+      }
+    })
+    const request = {
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      previousFrameworkId: 'codex' as const,
+      previousBackendId: codexResponsesBackend.backendId
+    }
+
+    await expect(harness.resume(request)).rejects.toBe(cleanupFailure)
+    expect(assertResumeAllowed).toHaveBeenCalledWith('codex', request.providerSessionId)
+    expect(harness.provision).not.toHaveBeenCalled()
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
+
+    await expect(harness.resume(request)).resolves.toMatchObject({
+      sessionId: 'stable-app-session'
+    })
+    expect(assertResumeAllowed).toHaveBeenCalledTimes(2)
+    expect(harness.request.mock.calls.map(([method]) => method)).toEqual([
+      acp.methods.agent.session.close,
+      acp.methods.agent.session.resume
+    ])
+  })
+
+  it.each([
+    { previousFrameworkId: 'opencode' as const },
+    { specialistBindingPending: true as const }
+  ])('does not gate fresh provider adoption on unrelated cleanup evidence: %j', async (request) => {
+    const assertResumeAllowed = vi.fn().mockRejectedValue(new Error('cleanup incomplete'))
+    const harness = createHarness({ assertResumeAllowed })
+
+    await expect(harness.resume(request)).resolves.toMatchObject({ contextReset: true })
+    expect(assertResumeAllowed).not.toHaveBeenCalled()
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an attached Session usable while unrelated provider cleanup is pending', async () => {
+    const assertResumeAllowed = vi.fn().mockRejectedValue(new Error('cleanup incomplete'))
+    const harness = createHarness({ attached: true, assertResumeAllowed })
+
+    await expect(harness.resume()).resolves.toMatchObject({ sessionId: 'stable-app-session' })
+    expect(assertResumeAllowed).not.toHaveBeenCalled()
+    expect(harness.configurePermissionProfile).toHaveBeenCalledOnce()
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.registry.lookup('stable-app-session')?.attachment?.session).toBe(
+      harness.providerSession
+    )
+  })
+
+  it.each(['connection', 'identity', 'timeout'] as const)(
+    'does not acquire a writer after cleanup admission outlives its %s',
+    async (invalidation) => {
+      const admission = Promise.withResolvers<void>()
+      const assertResumeAllowed = vi.fn(() => admission.promise)
+      const harness = createHarness({ assertResumeAllowed })
+      const resumed = harness.resume({ providerSessionId: 'provider-session' })
+      const rejection = expect(resumed).rejects.toThrow(
+        invalidation === 'timeout' ? 'timed out' : 'superseded'
+      )
+      await vi.waitFor(() => expect(assertResumeAllowed).toHaveBeenCalledOnce())
+      if (invalidation === 'connection') {
+        harness.assertCurrentConnection.mockImplementation(() => {
+          throw new Error('ACP session startup was superseded.')
+        })
+      } else if (invalidation === 'identity') {
+        harness.registry.invalidatePending()
+      } else {
+        harness.fireTimeout()
+        await rejection
+      }
+      admission.resolve()
+      await rejection
+      // Drain the late admission continuation after timeout before checking its side effects.
+      await admission.promise
+      await Promise.resolve()
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.request).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+      expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
+    }
+  )
+
+  it('preserves confirmed writer transfer despite unrelated historical cleanup debt', async () => {
+    const assertResumeAllowed = vi.fn().mockRejectedValue(new Error('historical cleanup debt'))
+    const harness = createHarness({ attached: true, assertResumeAllowed })
+    const providerSessionId = await harness.releaseForTransfer()
+    expect(providerSessionId).toBe('provider-session')
+    const transfer = { providerSessionId: providerSessionId!, writerReleased: true }
+
+    await expect(harness.resume({}, transfer)).resolves.toMatchObject({
+      sessionId: 'stable-app-session'
+    })
+    expect(assertResumeAllowed).not.toHaveBeenCalled()
+    expect(transfer.writerReleased).toBe(false)
+    expect(harness.adopt).not.toHaveBeenCalled()
+  })
+
+  it('does not trust an unconfirmed writer transfer', async () => {
+    const transfer = { providerSessionId: 'provider-session', writerReleased: false }
+    const cleanupFailure = new Error('historical cleanup debt')
+    const assertResumeAllowed = vi.fn().mockRejectedValue(cleanupFailure)
+    const harness = createHarness({ attached: true, assertResumeAllowed })
+    await harness.releaseForTransfer()
+    harness.request.mockClear()
+
+    await expect(harness.resume({}, transfer)).rejects.toBe(cleanupFailure)
+    expect(assertResumeAllowed).toHaveBeenCalledOnce()
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.provision).not.toHaveBeenCalled()
+    expect(harness.adopt).not.toHaveBeenCalled()
+  })
+
+  it('does not trust a writer transfer whose provider identity changes during connection setup', async () => {
+    const cleanupFailure = new Error('historical cleanup debt')
+    const assertResumeAllowed = vi.fn().mockRejectedValue(cleanupFailure)
+    const transfer = { providerSessionId: 'provider-session', writerReleased: true }
+    const harness: ResumerHarness = createHarness({
+      assertResumeAllowed,
+      ensureConnected: async () => {
+        transfer.providerSessionId = 'another-provider-session'
+        return harness.connection
+      }
+    })
+
+    await expect(harness.resume({}, transfer)).rejects.toBe(cleanupFailure)
+    expect(assertResumeAllowed).toHaveBeenCalledOnce()
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.provision).not.toHaveBeenCalled()
+    expect(harness.adopt).not.toHaveBeenCalled()
+  })
+
+  it('does not carry attached-writer provenance across a replacement connection', async () => {
+    const cleanupFailure = new Error('historical cleanup debt')
+    const assertResumeAllowed = vi.fn().mockRejectedValue(cleanupFailure)
+    const connected = Promise.withResolvers<ClientConnection>()
+    const ensureConnected = vi.fn(() => connected.promise)
+    const harness = createHarness({ attached: true, assertResumeAllowed, ensureConnected })
+    const reconfigured = harness.reconfigure()
+    const rejection = expect(reconfigured).rejects.toBe(cleanupFailure)
+    await vi.waitFor(() => expect(ensureConnected).toHaveBeenCalledOnce())
+    connected.resolve({ ...harness.connection } as ClientConnection)
+
+    await rejection
+    expect(assertResumeAllowed).toHaveBeenCalledOnce()
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.provision).not.toHaveBeenCalled()
+    expect(harness.adopt).not.toHaveBeenCalled()
+  })
+
   it('coalesces overlapping releases of the same provider writer', async () => {
     const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
     let finish!: () => void
@@ -810,8 +1009,13 @@ describe('AcpProviderSessionResumer', () => {
         initialBackend.framework.id === 'codex'
           ? '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
           : 'provider-session'
+      const assertResumeAllowed = vi.fn().mockRejectedValue(new Error('historical cleanup debt'))
       const harness = createHarness({
         attached: true,
+        assertResumeAllowed,
+        capabilityMcpServers: [
+          { name: 'literature', type: 'http', url: 'http://localhost/literature', headers: [] }
+        ],
         initialBackend: {
           ...initialBackend,
           session: {
@@ -834,6 +1038,7 @@ describe('AcpProviderSessionResumer', () => {
         providerSessionId
       })
 
+      expect(assertResumeAllowed).not.toHaveBeenCalled()
       expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
       expect(harness.registerSessionSpecialist).toHaveBeenCalledWith(
         'stable-app-session',
@@ -1811,6 +2016,7 @@ describe('AcpProviderSessionResumer', () => {
   })
 
   it('rechecks the Specialist binding after an asynchronous projection refresh', async () => {
+    diagnosticLogs.info.mockClear()
     const delayedIdentity = Promise.withResolvers<{ append: string; prefix: string }>()
     const specialistIdentity = vi.fn(async (specialistId: string) => {
       if (specialistId === 'new-specialist') return delayedIdentity.promise
@@ -1826,6 +2032,7 @@ describe('AcpProviderSessionResumer', () => {
     harness.request.mockImplementationOnce(() => providerResume.promise)
 
     const resumed = harness.resume({
+      specialistId: 'old-specialist',
       previousFrameworkId: 'opencode',
       previousBackendId: opencodeBackend.backendId
     })
@@ -1846,6 +2053,10 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.request).toHaveBeenCalledOnce()
     expect(harness.attachSession).toHaveBeenCalledOnce()
     expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    expect(diagnosticLogs.info).toHaveBeenCalledWith(
+      'bound specialist resolution started',
+      expect.objectContaining({ specialistId: 'newest-specialist', bindingSource: 'registry' })
+    )
   })
 
   it('fails closed before provider resume when a bound Specialist is unavailable', async () => {
@@ -1864,6 +2075,47 @@ describe('AcpProviderSessionResumer', () => {
 
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(diagnosticLogs.warn).toHaveBeenCalledWith(
+      'bound specialist identity resolution failed',
+      expect.objectContaining({
+        sessionId: 'stable-app-session',
+        specialistId: 'missing-specialist',
+        frameworkId: 'opencode',
+        operation: 'specialist-resolution',
+        mode: 'resume',
+        phase: 'identity',
+        reason: 'unavailable'
+      })
+    )
+  })
+
+  it('records a thrown identity resolver category without leaking its payload', async () => {
+    diagnosticLogs.warn.mockClear()
+    const harness = createHarness({
+      initialBackend: opencodeBackend,
+      specialistIdentity: async () => {
+        throw Object.assign(new Error('PRIVATE_SPECIALIST_PROMPT'), { code: 'EACCES' })
+      }
+    })
+    await expect(
+      harness.resume({
+        previousFrameworkId: 'opencode',
+        previousBackendId: opencodeBackend.backendId,
+        specialistId: 'specialist-1'
+      })
+    ).rejects.toThrow('The bound specialist is unavailable.')
+    expect(diagnosticLogs.warn).toHaveBeenCalledWith(
+      'bound specialist identity resolution failed',
+      expect.objectContaining({
+        reason: 'resolver-threw',
+        errorCategory: 'permission',
+        sessionId: 'stable-app-session'
+      })
+    )
+    expect(JSON.stringify(diagnosticLogs.warn.mock.calls)).not.toContain(
+      'PRIVATE_SPECIALIST_PROMPT'
+    )
+    expect(harness.request).not.toHaveBeenCalled()
   })
 
   it('replays configuration against a live effort change before publication', async () => {

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import { recoverNativeRaisedCaptionFragments } from './literature-pdf-native-caption-raised-glyphs.mjs'
 import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { nativeConditionalFigureReference } from './literature-pdf-native-conditional-figure-reference.mjs'
 
 // A PDF stream may paint a small script after the rest of its physical line.
 // Move it only when exactly one earlier token adjoins it and all intervening
@@ -419,8 +420,17 @@ export function captionKind(text) {
   if (
     /^(?:(?:Supplementary|Supplemental)\s+)?(?:Figure|Fig\.?)\s+/i.test(text) &&
     new RegExp(
-      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+(?:records|pairs|renders)\\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\\d+)\\s+\\p{L}`,
+      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+(?:records|pairs|renders|tests|showcases)\\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\\d+)\\s+\\p{L}`,
       'iu'
+    ).test(text)
+  )
+    return undefined
+  // A local side qualifier does not change a finite Figure subject into a title.
+  if (
+    /^(?:(?:Supplementary|Supplemental)\s+)?(?:Figure|Fig\.?)\s+/i.test(text) &&
+    new RegExp(
+      `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+on\\s+the\\s+(?:(?:upper|lower)\\s+)?(?:left|right)\\s+(?:(?:also|further)\\s+)?${narrativeReferenceVerb}\\b`,
+      'i'
     ).test(text)
   )
     return undefined
@@ -674,10 +684,10 @@ export function captionKind(text) {
   // A label followed by an adverb and a finite verb is still running prose
   // when PDF extraction keeps the reference at the start of a line (for
   // example, "Fig. 4 qualitatively compares ...").  Restrict this guard to
-  // adverbs ending in -ly so noun-phrase captions such as "Figure 4 visual
-  // comparison ..." remain eligible.
+  // adverbs ending in -ly and the irregular "likewise" so noun-phrase captions
+  // such as "Figure 4 visual comparison ..." remain eligible.
   const adverbNarrativeReference = new RegExp(
-    `^(?:(?:Supplementary|Supplemental)\\s+)?(?:Fig\\.?|Figure|Chart)\\s+(?:[A-Z]?\\d+(?:\\.\\d+)?|[A-Z]\\.\\d+|[IVXLCDM]+)${narrativeReferencePanel}\\s+[a-z]+ly\\s+${narrativeReferenceVerb}\\b`,
+    `^(?:(?:Supplementary|Supplemental)\\s+)?(?:Fig\\.?|Figure|Chart)\\s+(?:[A-Z]?\\d+(?:\\.\\d+)?|[A-Z]\\.\\d+|[IVXLCDM]+)${narrativeReferencePanel}\\s+(?:[a-z]+ly|likewise)\\s+${narrativeReferenceVerb}\\b`,
     'i'
   )
   if (adverbNarrativeReference.test(text ?? '')) return undefined
@@ -7740,6 +7750,22 @@ export function isNativeRowReference(candidate, page, context, rules = []) {
   return true
 }
 
+export function nativeConditionalFigureReferenceStarts(page) {
+  const runs = groupPageLines(page)
+  return new Set(
+    (page.captionStarts ?? []).filter((line) => {
+      const matches = runs.filter(
+        (r) =>
+          Math.abs(r.x - line.x) < 0.01 &&
+          Math.abs(r.y - line.y) < 0.01 &&
+          line.x + line.width <= r.right + 0.01 &&
+          r.text.replace(/\s/gu, '').startsWith(line.text.replace(/\s/gu, ''))
+      )
+      return matches.length === 1 && nativeConditionalFigureReference(matches[0], runs, page)
+    })
+  )
+}
+
 export function findCaptionCandidates(pages, rulesByPage = new Map()) {
   // Table borders are often painted one segment per column. Treat subpixel
   // joints as one separator without connecting unrelated rules across gutters.
@@ -7836,6 +7862,14 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
         isNativePhotographCaption(line, runs, page, separators.get(page.pageNumber) ?? [])
     )) {
       if (
+        nativeConditionalFigureReference(start, runs, page) ||
+        nativePanelReferenceContinuation(
+          start,
+          runs,
+          page,
+          rulesByPage.get(page.pageNumber) ?? [],
+          captionKind
+        ) ||
         ownedRuns.has(start) ||
         bodyReferenceBeforePrintedCaption(start) ||
         [...completedCaptionRuns].some(
@@ -10185,4 +10219,122 @@ function proveNativeCreditReference(candidate, page, context, records, rules) {
   )
     return false
   return true
+}
+
+function nativePanelReferenceContinuation(start, runs, page, rules, captionKind) {
+  if (
+    !/^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\.[a-z]\s+(?:and|or)\s+\p{Ll}/u.test(start.text) ||
+    /[.!?:;]$/u.test(start.text.trim()) ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.graphicsBounds) ||
+    !Array.isArray(page.lines) ||
+    !Array.isArray(rules)
+  )
+    return false
+  if (
+    ![page.width, page.height].every((n) => Number.isFinite(n) && n > 0) ||
+    page.lines.some(
+      (l) =>
+        l.text?.trim() &&
+        (![l.x, l.y, l.width, l.height, l.fontSize].every(Number.isFinite) ||
+          l.width <= 0 ||
+          l.height <= 0 ||
+          l.fontSize <= 0)
+    )
+  )
+    return false
+  const em = start.fontSize,
+    valid = (r) =>
+      [r.x, r.y, r.right, r.bottom, r.fontSize].every(Number.isFinite) &&
+      r.right > r.x &&
+      r.bottom > r.y
+  if (!(em > 0) || !valid(start)) return false
+  const aligned = (r) =>
+    r !== start &&
+    valid(r) &&
+    r.text.length > 30 &&
+    !captionKind(r.text) &&
+    Math.abs(r.fontSize - em) < em * 0.015 &&
+    Math.abs(r.x - start.x) < em * 0.05 &&
+    Math.abs(r.right - start.right) < em * 0.05
+  const before = runs.filter(
+    (r) =>
+      aligned(r) &&
+      /\b(?:shown|displayed|given|plotted)\s+in$/u.test(r.text.trim()) &&
+      r.bottom <= start.y &&
+      start.y - r.y > em &&
+      start.y - r.y < em * 2
+  )
+  const after = runs.filter(
+    (r) =>
+      aligned(r) &&
+      /^\p{Ll}/u.test(r.text) &&
+      r.y >= start.bottom &&
+      r.y - start.y > em &&
+      r.y - start.y < em * 2
+  )
+  if (
+    before.length !== 1 ||
+    after.length !== 1 ||
+    Math.abs(start.y - before[0].y - (after[0].y - start.y)) > em * 0.015
+  )
+    return false
+  const rows = [before[0], start, after[0]]
+  if (rows.some((r) => r.x < 0 || r.y < 0 || r.right > page.width || r.bottom > page.height))
+    return false
+  const box = [start.x, before[0].y, start.right, after[0].bottom]
+  const overlaps = (r) =>
+    Math.min(r[0], r[2]) < box[2] &&
+    Math.max(r[0], r[2]) > box[0] &&
+    Math.min(r[1], r[3]) < box[3] &&
+    Math.max(r[1], r[3]) > box[1]
+  const native = page.lines.filter(
+    (l) => l.text?.trim() && overlaps([l.x, l.y, l.x + l.width, l.y + l.height])
+  )
+  if (
+    native.length !== 3 ||
+    !rows.every(
+      (r) =>
+        native.filter(
+          (n) =>
+            n.text === r.text &&
+            n.x === r.x &&
+            n.y === r.y &&
+            n.x + n.width === r.right &&
+            n.y + n.height === r.bottom &&
+            n.fontSize === r.fontSize
+        ).length === 1
+    )
+  )
+    return false
+  const independent = (r) =>
+    overlaps(r) &&
+    !rows.some(
+      (l) =>
+        Math.min(r[0], r[2]) >= l.x &&
+        Math.max(r[0], r[2]) <= l.right &&
+        Math.min(r[1], r[3]) >= l.y &&
+        Math.max(r[1], r[3]) <= l.bottom
+    )
+  if (
+    rules.some(
+      (r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite) || independent(r)
+    )
+  )
+    return false
+  return !page.graphicsBounds.some(
+    (g) =>
+      !['path', 'image'].includes(g.kind) ||
+      !Array.isArray(g.normalizedRect) ||
+      g.normalizedRect.length !== 4 ||
+      !g.normalizedRect.every(Number.isFinite) ||
+      independent(g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))
+  )
+}
+
+// Explicit native/raster completion leaves the ordinary caption threshold unchanged.
+export async function recoverNativeCaptionLane(input) {
+  const { recoverNativeClosedCaptionLane } =
+    await import('./literature-pdf-native-caption-lane.mjs')
+  return recoverNativeClosedCaptionLane(input)
 }

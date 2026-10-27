@@ -51,7 +51,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 
 已完成的研究会话还可以导出为可移植的 `.science` 包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
 
-> 💡 **[AIPOCH Open-Science v1.0.3 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 10 月）_。本次补丁新增七个 Scientific Connector 工具，覆盖影像、通路、脂质、结构和癌症模型；文献库大幅升级，支持通过 Semantic Scholar 发现参考文献与施引文献、下载补充附件以及将 Smart Screening 判定导出为 CSV；`.science` 包可在无界面 CLI 和本地 Web 会话中导出和导入；翻译版 PDF 新增可选的内容优先排版；Notebook 新增文件夹访问限制。此外还加入 Kimi K3.1 Pro 模型以及一批 Windows、沙盒、会话恢复和 PDF 修复。详情请查看 [v1.0.3 发行说明](../../release-notes/1.0.3/zh-Hans.md)。
+> 💡 **[AIPOCH Open-Science v1.0.4 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 10 月）_。本次补丁让 CLI 和桌面下载体积明显缩小；通过本地 MCP 服务器向外部客户端暴露独立 CLI 的研究工具；在一轮对话结束后折叠中间消息和工具分组，让长对话保持易读；支持通过 Crossref 手动对文献参考文献进行撤稿和更正检查；支持从已授权的文件夹导入产物；GitHub Skills 导入工作流可保存仓库；问题卡片带来结构化跳过操作——此外还修复了一批 Notebook、设置、会话包和 Replay 方面的问题。详情请查看 [v1.0.4 发行说明](../../release-notes/1.0.4/zh-Hans.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />

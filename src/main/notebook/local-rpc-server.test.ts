@@ -3788,7 +3788,7 @@ describe('notebook local RPC server', () => {
           agentName: 'Claude Code',
           messageBranchAncestry: [...artifactCapabilityBinding.messageBranchAncestry]
         }),
-        { allowedImportRoots: [root], workspaceCwd: root },
+        { allowedImportRoots: [root], workspaceCwd: root, grantedImportRoots: [] },
         expect.any(AbortSignal),
         expect.any(Function)
       )
