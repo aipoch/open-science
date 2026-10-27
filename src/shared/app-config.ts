@@ -30,7 +30,7 @@ export const APP = {
   copyright: '© 2026 AIPOCH',
   update: {
     manifestUrl: `${CDN_BASE_URL}/app/stable/version.json`,
-    downloadPage: 'https://www.aipoch.com/open-science'
+    downloadPage: 'https://aipoch.com/open-science/download'
   }
 } as const
 

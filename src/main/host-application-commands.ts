@@ -391,7 +391,17 @@ const updateCommands = Object.freeze({
   ),
   getStatus: defineApplicationCommand<'update:get-status', readonly [], UpdateStatus>(
     'update:get-status'
-  )
+  ),
+  getInstaller: defineApplicationCommand<
+    'update:get-installer',
+    readonly [],
+    import('../shared/update').UpdateInstaller | null
+  >('update:get-installer'),
+  revealInstaller: defineApplicationCommand<
+    'update:reveal-installer',
+    readonly [],
+    import('../shared/update').UpdateInstallerRevealResult
+  >('update:reveal-installer')
 })
 
 const pdfStructureCommands = {
@@ -862,7 +872,15 @@ const registerHostApplicationCommands = (
       'update:download': ({ args, callerContext }) =>
         localCommand(callerContext, 'update:download', () => dependencies.update.download(args[0])),
       'update:get-app-info': () => dependencies.update.getAppInfo(),
-      'update:get-status': () => dependencies.update.getStatus()
+      'update:get-status': () => dependencies.update.getStatus(),
+      'update:get-installer': ({ callerContext }) =>
+        localCommand(callerContext, 'update:get-installer', () =>
+          dependencies.update.getInstaller()
+        ),
+      'update:reveal-installer': ({ callerContext }) =>
+        localCommand(callerContext, 'update:reveal-installer', () =>
+          dependencies.update.revealInstaller()
+        )
     })
     scope.registerGroup(hostApplicationCommandGroups[9], {
       'local-models:get-snapshot': ({ callerContext, args }) =>

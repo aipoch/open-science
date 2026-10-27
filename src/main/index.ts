@@ -687,6 +687,8 @@ async function startDesktop(): Promise<void> {
     'cli:uninstall',
     'update:get-app-info',
     'update:get-status',
+    'update:get-installer',
+    'update:reveal-installer',
     'update:check',
     'update:download',
     'update:cancel',
