@@ -11,18 +11,34 @@ Construct `LibraryTransaction` with a `LibraryStore` bound to one active transac
 
 Client owners accept public API callbacks. Compose an owner once per mounted workflow. React scheduling, localization, file transfers and native dialogs remain with the caller. Creation retries retain the original receipt, destination and file until reset; serialize submissions and reset only after pending work completes.
 
-Reading status is personal catalog state: `unread`, `reading` or `read`. The host defaults existing
-and newly created references to `unread`; opening a PDF never changes it. Dedicated
-`set-reading-status` commands update up to 200 active references atomically without changing
-their metadata revision or screening evidence. Search filters apply before counting and paging.
-Legacy snapshots may omit the top-level `readingStatus`, which clients display as `unread`.
-Duplicate merges keep the surviving reference's status; bibliographic imports do not overwrite it.
-
-No host source, ORM client, Electron or global `window.api` is imported. Public contracts preserve existing serialized values; this extraction introduces no database migration or new persisted state.
+No host source, ORM client, Electron or global `window.api` is imported. Public contracts preserve
+existing serialized values. The package does not own database migrations; the host owns persisted
+storage and the migration that adds reading status.
 
 `npm test` builds and runs this package's independent fixtures. From the repository, `npm run check:packages -- --packages=literature-library` also verifies packed production consumption outside the repository.
 
 Unit tests import this package's source entrypoints so coverage measures the code they execute. Packed-consumer checks import the package name and its public exports from a clean production install.
+
+## Reading status
+
+Reading status is manually managed catalog state: `unread` (Unread), `reading` (In progress) or
+`read` (Finished reading). The host defaults existing and newly created references to `unread`.
+Opening a PDF, changing pages or reaching the final page never changes status; it records the user's
+choice rather than an assessment of reading progress or comprehension.
+
+In the Library UI:
+
+- Set a reference's status with the Reading status selector in its details.
+- Select references and use the Reading status selector in the selection toolbar to update them
+  together. Cross-page selections respect explicitly excluded references.
+- Filter by Reading status to find unread, ongoing or completed reading.
+- View status in the dedicated Reading status column. Use the existing column settings to show,
+  hide or reorder it; these preferences persist.
+
+Dedicated `set-reading-status` commands update up to 200 active references atomically without
+changing their metadata revision or screening evidence. Search filters apply before counting and
+paging. Legacy snapshots may omit the top-level `readingStatus`, which clients display as `unread`.
+Duplicate merges keep the surviving reference's status; bibliographic imports do not overwrite it.
 
 ## Import-only consumers
 
