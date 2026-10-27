@@ -9,6 +9,30 @@ import {
 import { renderSkillDoc } from './skill-doc'
 
 describe('builtin registry host integration', () => {
+  it('routes scientific APIs through native descriptors and keeps analysis outside the connector surface', () => {
+    for (const id of ['research-datasets', 'europepmc', 'chea3', 'biodbnet', 'ctd']) {
+      expect(ALL_CONNECTOR_IDS).toContain(id)
+      expect(CONNECTOR_CATALOG.find((entry) => entry.id === id)?.defaultEnabled).toBe(false)
+      const tools = getConnectorTools(id)
+      expect(tools.length).toBeGreaterThan(0)
+      expect(
+        tools.some((tool) => ['import_data', 'query_local', 'get_job'].includes(tool.id))
+      ).toBe(false)
+      const doc = renderSkillDoc(id)
+      expect(doc).toContain('Official file URLs are discovery metadata')
+    }
+    for (const [connector, method] of [
+      ['genes', 'query_hgnc_field'],
+      ['genes', 'list_hgnc_files'],
+      ['cellosaurus', 'get_cell_line_rdf'],
+      ['drug-regulatory', 'list_faers_bulk_files']
+    ]) {
+      const tool = getDescriptor(connector, method)!
+      expect(tool).toBeDefined()
+      expect(() => validateToolArguments(tool, tool.exampleArgs!)).not.toThrow()
+    }
+  })
+
   it('retains application recovery guidance around package schema errors', () => {
     const tool = getDescriptor('chembl', 'get_assay')!
     expect(() => validateToolArguments(tool, {})).toThrow(

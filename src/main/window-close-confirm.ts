@@ -7,7 +7,7 @@ import {
 } from 'electron'
 import { randomUUID } from 'node:crypto'
 
-import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../shared/storage'
+import { type ActiveSessionInfo } from '../shared/storage'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
 import {
   WINDOW_CLOSE_CONFIRM_DISMISS_CHANNEL,
@@ -85,13 +85,10 @@ export const createCloseConfirm = (
 
   return async (variant, sessions, unlistedWorkActive = false) => {
     if (variant === 'quit' && sessions.length === 0 && !unlistedWorkActive) return 'quit'
-    const hasDelegatedWork = hasDelegatedActiveSession(sessions)
-    const enforceDelegatedBlock = (choice: CloseConfirmChoice): CloseConfirmChoice =>
-      hasDelegatedWork && choice === 'quit' ? (variant === 'quit' ? 'cancel' : 'minimize') : choice
 
     if (variant === 'close-to-tray') {
       const preference = await deps.getClosePreference().catch(() => undefined)
-      if (preference) return enforceDelegatedBlock(preference)
+      if (preference) return preference
     }
 
     const persistPreference = async (
@@ -109,11 +106,11 @@ export const createCloseConfirm = (
     const safeFallback = async (): Promise<CloseConfirmChoice> => {
       try {
         const result = await deps.nativeFallback(variant, sessions)
-        const choice = enforceDelegatedBlock(result.choice)
+        const choice = result.choice
         await persistPreference(choice, result.remember)
         return choice
       } catch {
-        return enforceDelegatedBlock(variant === 'close-to-tray' ? 'minimize' : 'cancel')
+        return variant === 'close-to-tray' ? 'minimize' : 'cancel'
       }
     }
 
@@ -145,7 +142,7 @@ export const createCloseConfirm = (
         offHang?.()
         offPageLost?.()
         dismiss()
-        const enforcedChoice = enforceDelegatedBlock(choice)
+        const enforcedChoice = choice
         void persistPreference(enforcedChoice, remember).then(() => resolve(enforcedChoice))
       }
 
@@ -210,10 +207,9 @@ export const createCloseConfirm = (
 const nativeFallback = async (
   getWindow: () => BrowserWindow | undefined,
   variant: CloseConfirmVariant,
-  sessions: ActiveSessionInfo[],
+  _sessions: ActiveSessionInfo[],
   translate: NativeTranslator
 ): Promise<NativeCloseConfirmResult> => {
-  const hasDelegatedWork = hasDelegatedActiveSession(sessions)
   const options =
     variant === 'persistence-failed'
       ? {
@@ -227,41 +223,29 @@ const nativeFallback = async (
             'Open-Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.'
           )
         }
-      : hasDelegatedWork
+      : variant === 'quit'
         ? {
-            type: 'warning' as const,
-            buttons: [
-              variant === 'quit' ? translate('Return to tasks') : translate('Minimize to tray')
-            ],
+            type: 'question' as const,
+            buttons: [translate('Cancel'), translate('Quit', { context: 'verb' })],
             defaultId: 0,
             cancelId: 0,
             title: 'Open-Science',
-            message: translate('Subagents are still running'),
+            message: translate('Quit Open-Science?'),
             detail: translate(
-              'Return to the running tasks and stop their subagents before quitting Open-Science.'
+              'Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.'
             )
           }
-        : variant === 'quit'
-          ? {
-              type: 'question' as const,
-              buttons: [translate('Cancel'), translate('Quit', { context: 'verb' })],
-              defaultId: 0,
-              cancelId: 0,
-              title: 'Open-Science',
-              message: translate('Quit Open-Science?'),
-              detail: translate('Work is still running and will be interrupted if you quit.')
-            }
-          : {
-              type: 'question' as const,
-              buttons: [translate('Minimize to tray'), translate('Quit', { context: 'verb' })],
-              defaultId: 0,
-              cancelId: 0,
-              title: 'Open-Science',
-              message: translate('Minimize to tray or quit?'),
-              detail: translate('Background work may still be running.'),
-              checkboxLabel: translate("Don't ask again"),
-              checkboxChecked: true
-            }
+        : {
+            type: 'question' as const,
+            buttons: [translate('Minimize to tray'), translate('Quit', { context: 'verb' })],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Open-Science',
+            message: translate('Minimize to tray or quit?'),
+            detail: translate('Background work may still be running.'),
+            checkboxLabel: translate("Don't ask again"),
+            checkboxChecked: true
+          }
   const window = getWindow()
   const { response, checkboxChecked } =
     window && !window.isDestroyed()
@@ -270,7 +254,6 @@ const nativeFallback = async (
   if (variant === 'persistence-failed') {
     return { choice: response === 1 ? 'retry' : response === 2 ? 'force-quit' : 'cancel' }
   }
-  if (hasDelegatedWork) return { choice: variant === 'quit' ? 'cancel' : 'minimize' }
   if (variant === 'quit') return { choice: response === 1 ? 'quit' : 'cancel' }
   return {
     choice: response === 1 ? 'quit' : 'minimize',

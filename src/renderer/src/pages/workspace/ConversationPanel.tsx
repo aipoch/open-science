@@ -357,6 +357,7 @@ type ConversationPanelView = {
   authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
+  canEditLocalDraft?: boolean
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
@@ -554,6 +555,7 @@ const ConversationPanel = ({
     activeSession,
     composerFocusKey,
     canEditDraft,
+    canEditLocalDraft = canEditDraft,
     persistenceBlocked,
     actionError,
     sideChatDisabledReason,
@@ -1035,6 +1037,9 @@ const ConversationPanel = ({
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
   const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const contextResetNotice = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.contextResets?.[activeSession.id] : false
+  )
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
@@ -1061,7 +1066,11 @@ const ConversationPanel = ({
       actionError)
   let resumeErrorDescription = resolvedActionError
   if (resumeDiagnostic && resolvedActionError) {
-    if (/timed out/i.test(resumeDiagnostic.detail)) {
+    if (resumeDiagnostic.detail.includes('Previous agent cleanup is unconfirmed.')) {
+      resumeErrorDescription = t(
+        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+      )
+    } else if (/timed out/i.test(resumeDiagnostic.detail)) {
       resumeErrorDescription = t(
         'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
       )
@@ -1818,6 +1827,23 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
+                  />
+                ) : null}
+                {contextResetNotice ? (
+                  <ErrorNotice
+                    inline
+                    level="info"
+                    className="mb-2"
+                    description={t(
+                      'Continuing in a new context using your saved conversation history.'
+                    )}
+                    dismissButton={{
+                      label: t('Dismiss'),
+                      onClick: () =>
+                        useWorkspaceOperationErrors.setState((state) => ({
+                          contextResets: { ...state.contextResets, [activeSession!.id]: false }
+                        }))
+                    }}
                   />
                 ) : null}
                 {activeSession?.compacting ? (
@@ -2975,7 +3001,7 @@ const ConversationPanel = ({
                               onLocatePastedText={handleLocatePastedText}
                               onUndo={onUndo}
                               onRedo={onRedo}
-                              disabled={!canEditDraft}
+                              disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
                                 {

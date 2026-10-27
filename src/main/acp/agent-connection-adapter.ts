@@ -1,3 +1,4 @@
+import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
   AuthenticateRequest,
@@ -224,12 +225,15 @@ class AcpAgentConnectionAdapter {
       hooks.onBackendResolved(framework)
       process = input.spawnAgent
         ? input.spawnAgent()
-        : backend.framework.spawn({
-            executablePath: backend.executablePath,
-            env: backend.env,
-            args: backend.args ?? [],
-            proxyEnvironmentMode: backend.proxyEnvironmentMode
-          })
+        : await spawnMainAgentProcess(framework, (spawnProcess) =>
+            backend.framework.spawn({
+              executablePath: backend.executablePath,
+              env: backend.env,
+              args: backend.args ?? [],
+              proxyEnvironmentMode: backend.proxyEnvironmentMode,
+              spawnProcess
+            })
+          )
       hooks.onProcessSpawned(framework)
       if (input.isShuttingDown() || !input.isCurrent()) {
         throw new Error(
@@ -272,6 +276,7 @@ class AcpAgentConnectionAdapter {
         })
       })
       connection = this.createClientConnection(spawnedProcess, hooks)
+      bindMainAgentConnection(connection, spawnedProcess)
     } catch (error) {
       if (error instanceof OpenCodeServiceCleanupError) serviceCleanupFailed = true
       backendAttempt?.fail()

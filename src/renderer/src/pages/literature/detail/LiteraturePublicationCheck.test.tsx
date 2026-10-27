@@ -72,7 +72,7 @@ const deferred = <T,>(): { promise: Promise<T>; resolve(value: T): void } => {
   }
 }
 const checkButton = (): HTMLElement =>
-  screen.getByRole('button', { name: 'Check retractions and corrections' })
+  screen.getByRole('button', { name: /^(Check now|Check again|Retry|Checking Crossref…)$/ })
 
 beforeEach(() => {
   changed = undefined
@@ -93,7 +93,7 @@ describe('single reference publication checks', () => {
         <LiteraturePublicationCheck item={item} />
       </StrictMode>
     )
-    await screen.findByText('No saved publication check. Run a check to look for related notices.')
+    await screen.findByText('Not checked')
     expect(publicationCheck.mock.calls.length).toBeGreaterThan(0)
     expect(publicationCheck.mock.calls.every(([request]) => request.mode === 'get')).toBe(true)
     expect(publicationCheck).toHaveBeenCalledWith({
@@ -103,6 +103,19 @@ describe('single reference publication checks', () => {
     })
     expect(screen.queryByText('No related notices found.')).toBeNull()
     expect(checkButton().getAttribute('aria-describedby')).toBeTruthy()
+  })
+
+  it('reveals the check disclosure on keyboard focus without requesting a new check', async () => {
+    render(<LiteraturePublicationCheck item={item} />)
+    await screen.findByText('Not checked')
+    expect(screen.getByRole('button', { name: 'Check now' })).toBeTruthy()
+    expect(screen.queryByRole('tooltip')).toBeNull()
+
+    act(() => screen.getByRole('button', { name: 'About this check' }).focus())
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent).toContain('Checking sends only this DOI to Crossref.')
+    expect(tooltip.textContent).toContain('Coverage is incomplete')
+    expect(publicationCheck.mock.calls.every(([request]) => request.mode === 'get')).toBe(true)
   })
 
   it('disables the check for absent or ambiguous DOI without sending a request', () => {
@@ -169,10 +182,11 @@ describe('single reference publication checks', () => {
 
   it('shows a positive empty result with its coverage limitation only after a completed check', async () => {
     render(<LiteraturePublicationCheck item={item} />)
-    await screen.findByText('No saved publication check. Run a check to look for related notices.')
+    await screen.findByText('Not checked')
     publicationCheck.mockResolvedValue(result({ snapshot: { ...snapshot, notices: [] } }))
     fireEvent.click(checkButton())
     await screen.findByText('No related notices found.')
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy()
     expect(
       screen.getByText(
         'Checking sends only this DOI to Crossref. Coverage is incomplete; no notices does not establish that a reference is reliable.'
@@ -187,7 +201,7 @@ describe('single reference publication checks', () => {
 
   it('locks immediately against repeated clicks until the request settles', async () => {
     render(<LiteraturePublicationCheck item={item} />)
-    await screen.findByText('No saved publication check. Run a check to look for related notices.')
+    await screen.findByText('Not checked')
     const pending = deferred<LiteraturePublicationCheckResult>()
     publicationCheck.mockReturnValue(pending.promise)
     act(() => {
@@ -227,9 +241,7 @@ describe('single reference publication checks', () => {
         metadataRevision: next.metadataRevision
       })
       view.rerender(<LiteraturePublicationCheck item={next} />)
-      await screen.findByText(
-        'No saved publication check. Run a check to look for related notices.'
-      )
+      await screen.findByText('Not checked')
       await act(async () => pending.resolve(result({ snapshot })))
       expect(screen.queryByText('Retraction notice')).toBeNull()
       expect(screen.queryByRole('alert')).toBeNull()
@@ -268,9 +280,7 @@ describe('single reference publication checks', () => {
     render(<LiteraturePublicationCheck item={item} />)
     await screen.findByRole('alert')
     expect(screen.queryByText('No related notices found.')).toBeNull()
-    expect(
-      screen.queryByText('No saved publication check. Run a check to look for related notices.')
-    ).toBeNull()
+    expect(screen.queryByText('Not checked')).toBeNull()
     publicationCheck.mockResolvedValue(result({ snapshot }))
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await screen.findByText('Retraction notice')
@@ -311,7 +321,7 @@ describe('single reference publication checks', () => {
 
   it('restores the new snapshot when its save event arrives before the check response', async () => {
     render(<LiteraturePublicationCheck item={item} />)
-    await screen.findByText('No saved publication check. Run a check to look for related notices.')
+    await screen.findByText('Not checked')
     const pending = deferred<LiteraturePublicationCheckResult>()
     publicationCheck.mockReturnValueOnce(pending.promise)
     fireEvent.click(checkButton())
@@ -373,11 +383,7 @@ describe('single reference publication checks', () => {
     async (kind) => {
       publicationCheck.mockResolvedValue(result(kind === 'empty' ? {} : { snapshot }))
       render(<LiteraturePublicationCheck item={item} />)
-      await screen.findByText(
-        kind === 'empty'
-          ? 'No saved publication check. Run a check to look for related notices.'
-          : 'Retraction notice'
-      )
+      await screen.findByText(kind === 'empty' ? 'Not checked' : 'Retraction notice')
       const check = deferred<LiteraturePublicationCheckResult>()
       publicationCheck.mockReturnValueOnce(check.promise)
       fireEvent.click(checkButton())

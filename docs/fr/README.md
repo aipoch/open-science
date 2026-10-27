@@ -69,6 +69,7 @@ Les sessions de recherche terminées peuvent également être exportées sous fo
 - [Données, autorisations et confiance](#données-autorisations-et-confiance)
 - [Développement et empaquetage](#développement-et-empaquetage)
 - [Questions fréquentes](#questions-fréquentes)
+- [Contributeurs](#contributeurs)
 - [Participer](#participer)
 - [Licence](#licence)
 
@@ -415,6 +416,14 @@ R : Ouvrez l'artefact généré et choisissez **Provenance**. Sélectionnez une 
 ### Puis-je réviser une demande antérieure sans perdre la conversation qui a suivi ?
 
 R : Oui. Modifiez un message utilisateur terminé et renvoyez-le pour créer une nouvelle branche à partir de ce point. Les tours ultérieurs d'origine restent disponibles, et les flèches de révision à côté du message basculent entre les chemins alternatifs.
+
+## Contributeurs
+
+Merci à toutes les personnes qui contribuent à AIPOCH Open-Science par leur code, leur documentation, leurs traductions, leurs signalements de bugs et leur aide à la communauté.
+
+[Voir les contributeurs sur GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![Contributeurs à AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
 
 ## Participer
 

@@ -14346,11 +14346,26 @@ describe('ACP runtime session management', () => {
     })
     const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
 
+    expect(runtime.hasFullAccess(session.sessionId)).toBe(true)
+    await runtime.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      permissionProfile: 'full'
+    })
+    expect(runtime.hasFullAccess(session.sessionId)).toBe(true)
+    const accessChanged = vi.fn()
+    const unsubscribe = runtime.subscribeFullAccess(session.sessionId, accessChanged)
     const selectingAsk = runtime.setPermissionProfile({
       sessionId: session.sessionId,
       profile: 'ask'
     })
     await askModeEntered.promise
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]?.selectedProfile).toBe(
+      'full'
+    )
+    expect(runtime.hasFullAccess(session.sessionId)).toBe(false)
+    expect(accessChanged).toHaveBeenCalledWith(false)
+    unsubscribe()
     const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
     const permission = await permissionSeen.promise
 
@@ -14527,63 +14542,267 @@ describe('ACP runtime session management', () => {
     await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
 
-  it('lets the latest overlapping profile change commit without releasing pending permission', async () => {
+  it.each(['profile', 'resume'] as const)(
+    'lets the latest overlapping %s change commit without releasing pending permission',
+    async (operation) => {
+      const process = new FakeAgentProcess()
+      const permissionSeen = createDeferred<AcpPermissionRequest>()
+      const fullModeEntered = createDeferred()
+      const releaseFullMode = createDeferred()
+      const modeChanges: string[] = []
+      let permissionResponse: unknown
+      startPermissionProbeAgent(process, {
+        newSessionId: 'live-permission-session',
+        toolCallId: 'live-permission-tool',
+        toolTitle: 'Run command',
+        modes: createModes(['default', 'bypassPermissions']),
+        onSetMode: async ({ modeId }) => {
+          modeChanges.push(modeId)
+          if (modeId === 'bypassPermissions') {
+            fullModeEntered.resolve()
+            await releaseFullMode.promise
+          }
+        },
+        onPermissionResponse: (response) => {
+          permissionResponse = response
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+      const permission = await permissionSeen.promise
+
+      const selectingFull =
+        operation === 'profile'
+          ? runtime.setPermissionProfile({ sessionId: session.sessionId, profile: 'full' })
+          : runtime.resumeSession({
+              sessionId: session.sessionId,
+              cwd: '/workspace',
+              permissionProfile: 'full'
+            })
+      const settledFull = selectingFull.then(
+        () => undefined,
+        (error: Error) => error
+      )
+      await fullModeEntered.promise
+      expect(runtime.hasFullAccess(session.sessionId)).toBe(operation === 'profile')
+      const revoked = vi.fn()
+      const unsubscribe = runtime.subscribeFullAccess(session.sessionId, revoked)
+      const selectingAsk = runtime.setPermissionProfile({
+        sessionId: session.sessionId,
+        profile: 'ask'
+      })
+      expect(runtime.hasFullAccess(session.sessionId)).toBe(false)
+      if (operation === 'profile') expect(revoked).toHaveBeenCalledWith(false)
+      unsubscribe()
+      releaseFullMode.resolve()
+
+      const fullResult = await settledFull
+      if (operation === 'resume') expect(fullResult?.message).toContain('superseded')
+      else expect(fullResult).toBeUndefined()
+      const snapshot = await selectingAsk
+      expect(modeChanges).toEqual(['bypassPermissions', 'default'])
+      expect(permissionResponse).toBeUndefined()
+      expect(snapshot.pendingPermissions).toHaveLength(1)
+      expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
+        selectedProfile: 'ask',
+        effectiveProfile: 'ask',
+        currentModeId: 'default'
+      })
+
+      runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+      await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    }
+  )
+
+  it('rejects a late provider mode update after detaching a full session', async () => {
     const process = new FakeAgentProcess()
-    const permissionSeen = createDeferred<AcpPermissionRequest>()
-    const fullModeEntered = createDeferred()
-    const releaseFullMode = createDeferred()
-    const modeChanges: string[] = []
-    let permissionResponse: unknown
     startPermissionProbeAgent(process, {
-      newSessionId: 'live-permission-session',
-      toolCallId: 'live-permission-tool',
+      newSessionId: 'full-detached',
+      toolCallId: 'unused',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+      const projector = (
+        runtime as unknown as {
+          sessionUpdateProjector: { route: (notification: acp.SessionNotification) => void }
+        }
+      ).sessionUpdateProjector
+      // A notification already admitted by the connection can finish projection after detach.
+      const finishQueuedUpdate = (): void =>
+        projector.route({
+          sessionId,
+          update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
+        })
+      await runtime.releaseSessionForTransfer(sessionId)
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      const changed = vi.fn()
+      const unsubscribe = runtime.subscribeFullAccess(sessionId, changed)
+      finishQueuedUpdate()
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      expect(changed).not.toHaveBeenCalledWith(true)
+      unsubscribe()
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
+  it('restores full authority when an attached refresh fails before permission configuration', async () => {
+    const process = new FakeAgentProcess()
+    startPermissionProbeAgent(process, {
+      newSessionId: 'full-refresh-preflight',
+      toolCallId: 'unused',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      await expect(
+        runtime.resumeSession({
+          sessionId,
+          cwd: '/workspace',
+          specialistBindingPending: true
+        })
+      ).rejects.toThrow('A pending Specialist binding')
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
+  it('keeps full network authority revoked after an attached refresh times out', async () => {
+    const process = new FakeAgentProcess()
+    const modeEntered = createDeferred()
+    const releaseMode = createDeferred()
+    let holdMode = false
+    let fireTimeout: (() => void) | undefined
+    startPermissionProbeAgent(process, {
+      newSessionId: 'full-refresh-timeout',
+      toolCallId: 'unused',
       toolTitle: 'Run command',
       modes: createModes(['default', 'bypassPermissions']),
-      onSetMode: async ({ modeId }) => {
-        modeChanges.push(modeId)
-        if (modeId === 'bypassPermissions') {
-          fullModeEntered.resolve()
-          await releaseFullMode.promise
+      onSetMode: async () => {
+        if (holdMode) {
+          modeEntered.resolve()
+          await releaseMode.promise
         }
-      },
-      onPermissionResponse: (response) => {
-        permissionResponse = response
       }
     })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+      resumeTimeoutMs: 1000,
+      setTimer: (callback) => {
+        fireTimeout = callback
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: () => {}
     })
-    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
-    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
-    const permission = await permissionSeen.promise
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+      holdMode = true
+      const refresh = runtime.resumeSession({
+        sessionId,
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      const rejected = expect(refresh).rejects.toThrow(/timed out.*permission.*unknown/i)
+      await modeEntered.promise
+      fireTimeout?.()
+      await rejected
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      expect(runtime.getSnapshot().permissionProfiles[sessionId].selectedProfile).toBe('full')
+      holdMode = false
+      releaseMode.resolve()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      await runtime.resumeSession({ sessionId, cwd: '/workspace', permissionProfile: 'full' })
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+    } finally {
+      releaseMode.resolve()
+      await runtime.disconnect()
+    }
+  })
 
-    const selectingFull = runtime.setPermissionProfile({
-      sessionId: session.sessionId,
-      profile: 'full'
+  it('does not restore full authority when a superseded attached refresh rejects', async () => {
+    const process = new FakeAgentProcess()
+    const modeEntered = createDeferred()
+    const releaseMode = createDeferred()
+    let rejectRefresh = false
+    startPermissionProbeAgent(process, {
+      newSessionId: 'full-refresh-rejected',
+      toolCallId: 'unused',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async () => {
+        if (rejectRefresh) {
+          rejectRefresh = false
+          modeEntered.resolve()
+          await releaseMode.promise
+          throw new Error('mode rejected')
+        }
+      }
     })
-    await fullModeEntered.promise
-    const selectingAsk = runtime.setPermissionProfile({
-      sessionId: session.sessionId,
-      profile: 'ask'
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
     })
-    releaseFullMode.resolve()
-
-    await expect(selectingFull).resolves.toBeDefined()
-    const snapshot = await selectingAsk
-    expect(modeChanges).toEqual(['bypassPermissions', 'default'])
-    expect(permissionResponse).toBeUndefined()
-    expect(snapshot.pendingPermissions).toHaveLength(1)
-    expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
-      selectedProfile: 'ask',
-      effectiveProfile: 'ask',
-      currentModeId: 'default'
-    })
-
-    runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
-    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      rejectRefresh = true
+      const refresh = runtime.resumeSession({
+        sessionId,
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      const rejected = expect(refresh).rejects.toThrow('Internal error')
+      await modeEntered.promise
+      const changed = vi.fn()
+      const unsubscribe = runtime.subscribeFullAccess(sessionId, changed)
+      const downgrade = runtime.setPermissionProfile({ sessionId, profile: 'ask' })
+      releaseMode.resolve()
+      await rejected
+      await downgrade
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      expect(changed).not.toHaveBeenCalledWith(true)
+      unsubscribe()
+    } finally {
+      releaseMode.resolve()
+      await runtime.disconnect()
+    }
   })
 
   it('logs OpenCode permission failures with canonical identities without routine request logs', async () => {

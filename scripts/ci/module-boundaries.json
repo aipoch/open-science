@@ -7722,6 +7722,7 @@
     "workspace_tool_model": {
       "sources": [
         "src/renderer/src/pages/workspace/agent-loading-message.ts",
+        "src/renderer/src/pages/workspace/authorized-directories-presentation.ts",
         "src/renderer/src/pages/workspace/handoff-lifecycle-projection.ts",
         "src/renderer/src/pages/workspace/session-notebook-projection.ts",
         "src/renderer/src/pages/workspace/subagent-release-projection.ts",
@@ -7747,7 +7748,8 @@
         "src/renderer/src/pages/workspace/workspace-tool-activity-details.ts": "presentation-adapter",
         "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts": "presentation-adapter",
         "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts": "presentation-adapter",
-        "src/renderer/src/pages/workspace/workspace-web-search-details.ts": "presentation-adapter"
+        "src/renderer/src/pages/workspace/workspace-web-search-details.ts": "presentation-adapter",
+        "src/renderer/src/pages/workspace/authorized-directories-presentation.ts": "presentation-model"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -9088,6 +9090,7 @@
     },
     "workspace_tool_presentation": {
       "sources": [
+        "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx",
         "src/renderer/src/pages/workspace/LiteratureCandidateStatus.tsx",
         "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx",
         "src/renderer/src/pages/workspace/WorkspaceLiteratureToolCard.tsx",
@@ -9111,10 +9114,12 @@
         "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx": "presentation-adapter",
-        "src/renderer/src/pages/workspace/LiteratureToolReferenceList.tsx": "presentation-adapter"
+        "src/renderer/src/pages/workspace/LiteratureToolReferenceList.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
+        "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.test.tsx",
         "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
         "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.render.test.tsx",
         "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",

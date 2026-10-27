@@ -8,7 +8,11 @@ import {
 } from './application-shutdown-trigger'
 import type { ActiveSessionInfo } from '../shared/storage'
 import type { RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
-import { BackendShutdownCoordinator, type ShutdownStepOutcome } from './lifecycle-shutdown'
+import {
+  BackendShutdownCoordinator,
+  QuitScopeChangedError,
+  type ShutdownStepOutcome
+} from './lifecycle-shutdown'
 import type {
   CloseClassification,
   CloseConfirmChoice,
@@ -29,7 +33,10 @@ const makeQuitEvent = (): QuitEvent => {
   return event
 }
 
-afterEach(() => clearApplicationShutdownTrigger())
+afterEach(() => {
+  clearApplicationShutdownTrigger()
+  vi.useRealTimers()
+})
 
 type FakeApp = {
   on: (event: string, handler: Handler) => void
@@ -133,7 +140,7 @@ type Harness = {
   tray: { destroy: ReturnType<typeof vi.fn> } | undefined
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
-  prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  prepareForQuit: AppLifecycleDeps['prepareForQuit']
   abortQuitPreparation: (
     reason: import('../shared/session-persistence-flush').SessionPersistenceFlushAbortReason
   ) => Promise<void> | void
@@ -168,6 +175,8 @@ const setup = (
       | 'logFlushTimeoutMs'
       | 'rendererFlushTimeoutMs'
       | 'systemShutdownTimeoutMs'
+      | 'shutdownTimeoutMs'
+      | 'onShutdownProgress'
       | 'shutdownTrigger'
       | 'isMigrationInProgress'
       | 'platform'
@@ -238,6 +247,8 @@ const setup = (
       logFlushTimeoutMs: overrides.logFlushTimeoutMs,
       rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
       systemShutdownTimeoutMs: overrides.systemShutdownTimeoutMs,
+      shutdownTimeoutMs: overrides.shutdownTimeoutMs,
+      onShutdownProgress: overrides.onShutdownProgress,
       shutdownTrigger: overrides.shutdownTrigger,
       isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
       quit,
@@ -1028,7 +1039,7 @@ describe('installAppLifecycle', () => {
     }
   )
 
-  it('requires persistence consent again after delegated work interrupts a force-quit attempt', async () => {
+  it('keeps explicit save-loss consent when delegated work appears during the same quit', async () => {
     let active: ActiveSessionInfo[] = []
     const flushSessionPersistence = vi.fn(async () => 'timeout' as const)
     const confirmClose = vi.fn(async (): Promise<CloseConfirmChoice> =>
@@ -1048,18 +1059,11 @@ describe('installAppLifecycle', () => {
     active = [{ projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }]
     app.emit('before-quit')
     await flush()
-    expect(confirmClose).toHaveBeenLastCalledWith('quit', active)
-
-    active = []
-    closeOpts[0].requestQuit()
-    app.emit('before-quit')
-    await flush()
-
-    expect(confirmClose).toHaveBeenLastCalledWith('persistence-failed', [])
-    expect(flushSessionPersistence).toHaveBeenCalledTimes(2)
-    expect(prepareForQuit).not.toHaveBeenCalled()
-    expect(shutdownBackends).not.toHaveBeenCalled()
-    expect(app.exit).not.toHaveBeenCalled()
+    // Explicit consent to discard unsaved changes remains authoritative for this quit.
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
   })
 
   it('keeps the app open when the terminal renderer flush conflicts', async () => {
@@ -1625,7 +1629,7 @@ describe('installAppLifecycle', () => {
     expect(quit).toHaveBeenCalledTimes(1)
   })
 
-  it('rechecks after an ordinary quit confirmation and blocks a child that started meanwhile', async () => {
+  it('keeps whole-service consent when delegated work starts during confirmation', async () => {
     let active: ActiveSessionInfo[] = []
     let resolveFirst: ((choice: CloseConfirmChoice) => void) | undefined
     const confirmClose = vi.fn((variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => {
@@ -1648,8 +1652,8 @@ describe('installAppLifecycle', () => {
     resolveFirst?.('quit')
     await flush()
 
-    expect(confirmClose).toHaveBeenCalledTimes(2)
-    expect(quit).not.toHaveBeenCalled()
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(quit).toHaveBeenCalledOnce()
     expect(prepareForQuit).not.toHaveBeenCalled()
     expect(flushSessionPersistence).not.toHaveBeenCalled()
     expect(shutdownBackends).not.toHaveBeenCalled()
@@ -1678,17 +1682,17 @@ describe('installAppLifecycle', () => {
     resolveFirst?.('quit')
     await flush()
 
-    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(confirmClose).toHaveBeenCalledTimes(1)
     expect(quit).toHaveBeenCalledTimes(1)
 
     app.emit('before-quit')
     await flush()
-    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(confirmClose).toHaveBeenCalledTimes(1)
     expect(shutdownBackends).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('rechecks delegated work added after the delegated confirmation', async () => {
+  it('stops newly added delegated work under the same whole-service confirmation', async () => {
     let active: ActiveSessionInfo[] = []
     let resolveFirst: ((choice: CloseConfirmChoice) => void) | undefined
     const confirmClose = vi.fn(() => {
@@ -1711,22 +1715,21 @@ describe('installAppLifecycle', () => {
     resolveFirst?.('quit')
     await flush()
 
-    expect(confirmClose).toHaveBeenCalledTimes(2)
+    expect(confirmClose).toHaveBeenCalledTimes(1)
     expect(quit).toHaveBeenCalledTimes(1)
 
     active = [...active, { projectId: 'demo', sessionId: 'child-2', kind: 'delegated' }]
     app.emit('before-quit')
     await flush()
 
-    expect(confirmClose).toHaveBeenCalledTimes(3)
-    expect(confirmClose).toHaveBeenLastCalledWith('quit', active)
-    expect(prepareForQuit).not.toHaveBeenCalled()
-    expect(flushSessionPersistence).not.toHaveBeenCalled()
-    expect(shutdownBackends).not.toHaveBeenCalled()
-    expect(app.exit).not.toHaveBeenCalled()
+    expect(confirmClose).toHaveBeenCalledTimes(1)
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(flushSessionPersistence).toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
   })
 
-  it('rechecks after a saved close preference resolves and safely minimizes for new delegated work', async () => {
+  it('honors a saved close preference when delegated work appears', async () => {
     let active: ActiveSessionInfo[] = []
     let resolveSavedPreference: ((choice: CloseConfirmChoice) => void) | undefined
     const confirmClose = vi.fn((variant: CloseConfirmVariant, sessions: ActiveSessionInfo[]) => {
@@ -1748,15 +1751,15 @@ describe('installAppLifecycle', () => {
     active = [{ projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }]
     resolveSavedPreference?.('quit')
 
-    await expect(pending).resolves.toBe('minimize')
-    expect(confirmClose).toHaveBeenCalledTimes(2)
+    await expect(pending).resolves.toBe('quit')
+    expect(confirmClose).toHaveBeenCalledTimes(1)
     expect(quit).not.toHaveBeenCalled()
     expect(prepareForQuit).not.toHaveBeenCalled()
     expect(flushSessionPersistence).not.toHaveBeenCalled()
     expect(shutdownBackends).not.toHaveBeenCalled()
   })
 
-  it('blocks a confirmed Windows titlebar request at the final shutdown boundary', async () => {
+  it('keeps confirmed Windows titlebar quit authoritative for delegated work', async () => {
     const delegated: ActiveSessionInfo[] = [
       { projectId: 'demo', sessionId: 'child-live', kind: 'delegated' }
     ]
@@ -1773,11 +1776,11 @@ describe('installAppLifecycle', () => {
     app.emit('before-quit')
     await flush()
 
-    expect(confirmClose).toHaveBeenCalledWith('quit', delegated)
-    expect(prepareForQuit).not.toHaveBeenCalled()
-    expect(flushSessionPersistence).not.toHaveBeenCalled()
-    expect(shutdownBackends).not.toHaveBeenCalled()
-    expect(app.exit).not.toHaveBeenCalled()
+    expect(confirmClose).not.toHaveBeenCalled()
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(flushSessionPersistence).toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(app.exit).toHaveBeenCalledWith(0)
   })
 
   it('reissues a confirmed Windows titlebar quit after delegated and Settings work are confirmed', async () => {
@@ -1996,6 +1999,37 @@ it.each(['prepare', 'shutdown'] as const)(
     if (kind === 'prepare') expect(h.shutdownBackends).not.toHaveBeenCalled()
   }
 )
+it.each(['prepare', 'shutdown'] as const)(
+  'keeps protected %s failure alive even when ordinary cleanup may exit',
+  async (phase) => {
+    const error = Object.assign(new Error('A protected transaction began after inspection.'), {
+      code: 'command-unavailable'
+    })
+    const onQuitError = vi.fn()
+    const h = setup({
+      requireCleanBackendShutdown: false,
+      onQuitError,
+      ...(phase === 'prepare'
+        ? {
+            prepareForQuit: async () => {
+              throw error
+            }
+          }
+        : {
+            shutdownBackends: async () => {
+              throw error
+            }
+          })
+    })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledWith(error))
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    if (phase === 'prepare') expect(h.shutdownBackends).not.toHaveBeenCalled()
+    expect(h.app.exit).not.toHaveBeenCalled()
+  }
+)
+
 it('awaits authoritative work before the confirmation and refuses a failed inspection', async () => {
   let inspect!: (changed: boolean) => void
   const refreshQuitState = vi.fn(
@@ -2222,4 +2256,126 @@ it('still flushes an ordinary quit even if an old update preparation flag remain
   h.app.emit('before-quit')
   await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
   expect(h.flushSessionPersistence).toHaveBeenCalledTimes(2)
+})
+
+it('shares one post-preflight deadline across preparation, final save, and backend confirmation', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(10000)
+  const progress = vi.fn()
+  const prepare = vi.fn<(deadlineAt?: number) => Promise<void>>(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  })
+  const backend = vi.fn<(deadlineAt?: number) => Promise<void>>(() => new Promise<void>(() => {}))
+  const save = vi
+    .fn(async () => 'completed' as const)
+    .mockImplementationOnce(async () => 'completed')
+    .mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return 'completed'
+    })
+  const h = setup({
+    shutdownTimeoutMs: 100,
+    prepareForQuit: prepare,
+    shutdownBackends: backend,
+    flushSessionPersistence: save,
+    onShutdownProgress: progress
+  })
+  h.quit.mockImplementation(() => h.app.emit('before-quit'))
+  h.app.emit('before-quit')
+  await vi.advanceTimersByTimeAsync(0)
+  expect(prepare).toHaveBeenCalledWith(10100)
+  expect(progress).toHaveBeenCalledWith(true)
+  await vi.advanceTimersByTimeAsync(70)
+  expect(backend).toHaveBeenCalledWith(10100)
+  expect(h.app.exit).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(30)
+  expect(h.app.exit).toHaveBeenCalledOnce()
+  expect(progress).toHaveBeenLastCalledWith(false)
+})
+
+it.each(['quit', 'cancel'] as const)(
+  'reconfirms changed quit scope after an asynchronous save and can %s',
+  async (choice) => {
+    const saved = Promise.withResolvers<RendererSessionPersistenceFlushOutcome>()
+    let wholeService = false
+    let observedWholeService = false
+    const session = { projectId: 'p', sessionId: 's', kind: 'agent' } as ActiveSessionInfo
+    const prepareForQuit = vi.fn(async () =>
+      observedWholeService ? ('completed' as const) : ('scope-changed' as const)
+    )
+    const onQuitError = vi.fn()
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      refreshQuitState: async () => {
+        const changed = wholeService !== observedWholeService
+        observedWholeService = wholeService
+        return changed
+      },
+      detectActiveSessions: () => (observedWholeService ? [session] : []),
+      flushSessionPersistence: vi
+        .fn()
+        .mockReturnValueOnce(saved.promise)
+        .mockResolvedValue('completed'),
+      prepareForQuit,
+      confirmClose: async (_variant, sessions) => (sessions.length ? choice : 'quit'),
+      onQuitError
+    })
+    h.quit.mockImplementation(() => {
+      if (h.quit.mock.calls.length <= 10) h.app.emit('before-quit')
+    })
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(h.flushSessionPersistence).toHaveBeenCalledOnce())
+    expect(h.confirmClose).toHaveBeenCalledOnce()
+    wholeService = true
+    saved.resolve('completed')
+    await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledTimes(2))
+    expect(h.confirmClose).toHaveBeenLastCalledWith('quit', [session])
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(onQuitError).not.toHaveBeenCalled()
+    if (choice === 'quit') {
+      await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+      expect(prepareForQuit).toHaveBeenCalledTimes(2)
+    } else {
+      expect(h.shutdownBackends).not.toHaveBeenCalled()
+      expect(h.app.exit).not.toHaveBeenCalled()
+      expect(prepareForQuit).toHaveBeenCalledOnce()
+    }
+  }
+)
+
+it('reopens confirmation instead of degrading quit when scope expands at the final leave', async () => {
+  const saved = Promise.withResolvers<RendererSessionPersistenceFlushOutcome>()
+  let wholeService = false
+  let observed = false
+  const session = { projectId: 'p', sessionId: 's', kind: 'agent' } as ActiveSessionInfo
+  const shutdownBackends = vi.fn(async () => {
+    if (!observed) throw new QuitScopeChangedError()
+  })
+  const h = setup({
+    requireCleanBackendShutdown: false,
+    refreshQuitState: async () => {
+      const changed = wholeService !== observed
+      observed = wholeService
+      return changed
+    },
+    detectActiveSessions: () => (observed ? [session] : []),
+    flushSessionPersistence: vi
+      .fn()
+      .mockResolvedValueOnce('completed')
+      .mockReturnValueOnce(saved.promise)
+      .mockResolvedValue('completed'),
+    shutdownBackends,
+    confirmClose: async (_variant, sessions) => (sessions.length ? 'cancel' : 'quit')
+  })
+  h.quit.mockImplementation(() => {
+    if (h.quit.mock.calls.length <= 10) h.app.emit('before-quit')
+  })
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.flushSessionPersistence).toHaveBeenCalledTimes(2))
+  wholeService = true
+  saved.resolve('completed')
+  await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledTimes(2))
+  expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+  expect(h.app.exit).not.toHaveBeenCalled()
+  expect(shutdownBackends).toHaveBeenCalledOnce()
 })

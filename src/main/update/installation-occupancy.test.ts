@@ -15,15 +15,19 @@ const mocks = vi.hoisted(() => ({
   realpath: vi.fn(),
   readlink: vi.fn(),
   readFile: vi.fn(),
-  arguments: vi.fn()
+  readdir: vi.fn(),
+  arguments: vi.fn(),
+  warn: vi.fn()
 }))
+vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => ({ warn: mocks.warn }) }))
 vi.mock('node:module', () => ({
   createRequire: () => () => ({ getDarwinProcessArguments: mocks.arguments })
 }))
 vi.mock('node:fs', () => ({
   realpathSync: mocks.realpath,
   readlinkSync: mocks.readlink,
-  readFileSync: mocks.readFile
+  readFileSync: mocks.readFile,
+  readdirSync: mocks.readdir
 }))
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
@@ -32,6 +36,8 @@ vi.mock('node:child_process', async (importOriginal) => ({
 vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.readdir.mockReturnValue([])
+  mocks.readFile.mockReturnValue('')
   mocks.readlink.mockImplementation(() => {
     throw Object.assign(new Error('Process exited'), { code: 'ENOENT' })
   })
@@ -173,25 +179,65 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     expect(await inspect('/Applications/Science.app')).toEqual([10, 11, 12])
   })
 
-  it.each([true, false])(
-    'reads case-insensitive Windows process identities (array=%s)',
-    async (array) => {
-      vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-      const executable = { ProcessId: '42', ExecutablePath: 'C:\\Apps\\Science\\node.exe' }
-      output(
-        JSON.stringify(
-          array
-            ? [
-                executable,
-                { ProcessId: 43, CommandLine: 'node C:\\APPS\\SCIENCE\\backend.cjs' },
-                { ProcessId: 44, ExecutablePath: null, CommandLine: null }
-              ]
-            : executable
-        )
-      )
-      expect(await inspect('c:\\apps\\science')).toEqual(array ? [42, 43] : [42])
-    }
-  )
+  it('reads Windows resource users and exact executable paths without trusting command text', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    const executable = { ProcessId: '42', ExecutablePath: 'C:\\Apps\\Science\\node.exe' }
+    output(
+      JSON.stringify({
+        resourcePids: [43],
+        processes: [
+          executable,
+          { ProcessId: 43, CommandLine: 'node C:\\APPS\\SCIENCE\\backend.cjs' },
+          { ProcessId: 44, ExecutablePath: null, CommandLine: null },
+          { ProcessId: 45, ExecutablePath: 'C:\\Apps\\Science-old\\node.exe' }
+        ]
+      })
+    )
+    expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
+  })
+
+  it('finds Linux open descriptors and mapped files outside the executable path', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    output('10 unrelated\n20 unrelated\n30 unrelated\n')
+    mocks.readFile.mockImplementation((path: string) =>
+      path === '/proc/20/maps'
+        ? '100-200 r--p 00000000 08:02 42 /opt/Science/library.so (deleted)'
+        : ''
+    )
+    mocks.readdir.mockImplementation((path: string) => (path === '/proc/10/fd' ? ['7'] : []))
+    mocks.readlink.mockImplementation((path: string) =>
+      path === '/proc/10/fd/7' ? '/opt/Science/data.bin' : '/usr/bin/unrelated'
+    )
+    expect(await inspect('/opt/Science')).toEqual([10, 20])
+  })
+
+  it('records Linux coverage limitations for unreadable unrelated processes without permanently blocking updates', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    output('10 unrelated\n')
+    mocks.readFile.mockImplementation(() => {
+      throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+    })
+    expect(await inspect('/opt/Science')).toEqual([])
+    expect(mocks.warn).toHaveBeenCalledWith('Linux installation file scan coverage limited', {
+      pid: 10,
+      code: 'EACCES'
+    })
+  })
+
+  it('keeps a Linux installation candidate blocking even when its file descriptors are unreadable', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    output('10 /opt/Science/backend.cjs\n')
+    mocks.readFile.mockImplementation(() => {
+      throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+    })
+    expect(await inspect('/opt/Science')).toEqual([10])
+  })
+
+  it('rejects Windows results missing the resource inspection proof', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    output(JSON.stringify([{ ProcessId: 42, ExecutablePath: 'C:\\Science\\node.exe' }]))
+    await expect(inspect('C:\\Science')).rejects.toThrow()
+  })
 
   it.each(['linux', 'win32', 'darwin'] as const)(
     'fails closed when %s inspection fails',

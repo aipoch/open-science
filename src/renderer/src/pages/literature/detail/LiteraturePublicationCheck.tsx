@@ -1,5 +1,6 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FileText, Info, LoaderCircle } from 'lucide-react'
 import {
   getPublicationCheckDoi,
   literaturePublicationCheckResultSchema,
@@ -10,6 +11,7 @@ import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLiteratureHost } from '../renderer-host'
 import { isCollectionOnlyChange, useLiteratureChanges } from '../useLiteratureChanges'
 
@@ -237,103 +239,138 @@ function PublicationCheck({
     }
   }
 
+  const helpMessage = t(
+    'Checking sends only this DOI to Crossref. Coverage is incomplete; no notices does not establish that a reference is reliable.'
+  )
+
   return (
-    <section className="space-y-3 py-4" aria-labelledby={headingId}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 id={headingId} className="sr-only">
-          {t('Retractions and corrections')}
-        </h3>
+    <section className="py-6" aria-labelledby={headingId}>
+      <h3 id={headingId} className="sr-only">
+        {t('Retractions and corrections')}
+      </h3>
+      <p id={helpId} className="sr-only">
+        {helpMessage}
+      </p>
+      <div className="flex flex-wrap items-start justify-between gap-5">
+        <div className="min-w-0 flex-1 space-y-3">
+          {unavailable ? (
+            <p className="text-sm text-muted-foreground">
+              {t('This reference is no longer available.')}
+            </p>
+          ) : !doi ? (
+            <p className="text-sm text-muted-foreground">
+              {t('Add one valid DOI to check this reference.')}
+            </p>
+          ) : null}
+          {loading || checking ? (
+            <p
+              role="status"
+              className={snapshot || checking ? 'sr-only' : 'text-sm text-muted-foreground'}
+            >
+              {checking ? t('Checking Crossref…') : t('Loading saved publication check…')}
+            </p>
+          ) : null}
+          {issue ? (
+            <ErrorNotice inline role="alert" tone="amber" description={issueMessage()} />
+          ) : null}
+          {snapshot ? (
+            snapshot.notices.length === 0 ? (
+              <div className="flex min-h-9 items-center gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <FileText className="size-4" aria-hidden="true" />
+                </span>
+                <p role="status" className="text-sm font-medium">
+                  {t('No related notices found.')}
+                </p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-border">
+                {snapshot.notices.map((notice, index) => (
+                  <li
+                    key={JSON.stringify([
+                      notice.doi,
+                      notice.type,
+                      notice.date,
+                      notice.source,
+                      index
+                    ])}
+                    className="space-y-1 py-3 first:pt-0 last:pb-0"
+                  >
+                    <p className="font-medium">{noticeLabel(notice.type)}</p>
+                    <p className="break-words text-xs text-muted-foreground">{notice.type}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {notice.source === 'publisher'
+                        ? t('Publisher via Crossref')
+                        : notice.source === 'retraction-watch'
+                          ? t('Retraction Watch via Crossref')
+                          : t('Crossref')}
+                      {notice.date ? (
+                        <>
+                          {' '}
+                          · <time dateTime={notice.date}>{notice.date}</time>
+                        </>
+                      ) : null}
+                    </p>
+                    <ExternalTextLink
+                      className="break-all text-xs"
+                      href={`https://doi.org/${encodeURIComponent(notice.doi)}`}
+                    >
+                      {notice.doi}
+                    </ExternalTextLink>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : loaded && !issue && !loading && !checking ? (
+            <div className="flex min-h-9 items-center gap-3 text-muted-foreground">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
+                <FileText className="size-4" aria-hidden="true" />
+              </span>
+              <p className="text-sm">{t('Not checked')}</p>
+            </div>
+          ) : null}
+        </div>
         <Button
-          size="sm"
-          variant="outline"
+          className="h-auto min-h-8 max-w-full whitespace-normal py-1"
           disabled={!doi || unavailable || loading || checking}
           aria-describedby={helpId}
-          onClick={() => void run('check')}
+          onClick={() => void run(issue ? retryMode : 'check')}
         >
-          {t('Check retractions and corrections')}
+          {checking ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : null}
+          {checking
+            ? t('Checking Crossref…')
+            : issue
+              ? t('Retry')
+              : snapshot
+                ? t('Check again')
+                : t('Check now')}
         </Button>
       </div>
-      <p id={helpId} className="text-xs text-muted-foreground">
-        {t(
-          'Checking sends only this DOI to Crossref. Coverage is incomplete; no notices does not establish that a reference is reliable.'
-        )}
-      </p>
-      {unavailable ? (
-        <p className="text-xs text-muted-foreground">
-          {t('This reference is no longer available.')}
-        </p>
-      ) : !doi ? (
-        <p className="text-xs text-muted-foreground">
-          {t('Add one valid DOI to check this reference.')}
-        </p>
-      ) : null}
-      {loading || checking ? (
-        <p role="status" className="text-xs text-muted-foreground">
-          {checking ? t('Checking Crossref…') : t('Loading saved publication check…')}
-        </p>
-      ) : null}
-      {issue ? (
-        <ErrorNotice
-          inline
-          role="alert"
-          tone="amber"
-          description={issueMessage()}
-          primaryButton={{
-            label: t('Retry'),
-            onClick: () => void run(retryMode),
-            disabled: loading || checking
-          }}
-        />
-      ) : null}
-      {snapshot ? (
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border pt-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <span>{t('Crossref')}</span>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon-xs" aria-label={t('About this check')}>
+                  <Info className="size-3.5" aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{helpMessage}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+        {snapshot ? (
+          <p>
             {t('Last checked: {{time}}', {
-              time: new Date(snapshot.checkedAt).toLocaleString(i18n.language)
+              time: new Date(snapshot.checkedAt).toLocaleString(i18n.language, {
+                dateStyle: 'medium',
+                timeStyle: 'short'
+              })
             })}
           </p>
-          {snapshot.notices.length === 0 ? (
-            <p role="status" className="text-xs">
-              {t('No related notices found.')}
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {snapshot.notices.map((notice, index) => (
-                <li
-                  key={JSON.stringify([notice.doi, notice.type, notice.date, notice.source, index])}
-                  className="space-y-1"
-                >
-                  <p className="font-medium">{noticeLabel(notice.type)}</p>
-                  <p className="break-words text-xs text-muted-foreground">{notice.type}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {notice.source === 'publisher'
-                      ? t('Publisher via Crossref')
-                      : notice.source === 'retraction-watch'
-                        ? t('Retraction Watch via Crossref')
-                        : t('Crossref')}
-                    {notice.date ? (
-                      <>
-                        {' '}
-                        · <time dateTime={notice.date}>{notice.date}</time>
-                      </>
-                    ) : null}
-                  </p>
-                  <ExternalTextLink
-                    className="break-all text-xs"
-                    href={`https://doi.org/${encodeURIComponent(notice.doi)}`}
-                  >
-                    {notice.doi}
-                  </ExternalTextLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : loaded && !issue && !loading && !checking ? (
-        <p className="text-xs text-muted-foreground">
-          {t('No saved publication check. Run a check to look for related notices.')}
-        </p>
-      ) : null}
+        ) : null}
+      </div>
     </section>
   )
 }

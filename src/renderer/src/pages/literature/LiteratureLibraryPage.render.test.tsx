@@ -9660,9 +9660,7 @@ describe('LiteratureLibraryPage', () => {
     await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
     expect(within(dialog).queryByText('Publication metadata')).toBeNull()
-    await within(dialog).findByText(
-      'No saved publication check. Run a check to look for related notices.'
-    )
+    await within(dialog).findByText('Not checked')
     expect(window.api.literature.publicationCheck).toHaveBeenCalledWith({
       mode: 'get',
       itemId: libraryItem.id,
@@ -9690,9 +9688,7 @@ describe('LiteratureLibraryPage', () => {
 
     await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
-    await within(dialog).findByText(
-      'No saved publication check. Run a check to look for related notices.'
-    )
+    await within(dialog).findByText('Not checked')
     expect(window.api.literature.publicationCheck).toHaveBeenCalledWith(
       expect.objectContaining({ mode: 'get' })
     )
@@ -9715,14 +9711,10 @@ describe('LiteratureLibraryPage', () => {
     const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
     await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
-    await within(dialog).findByText(
-      'No saved publication check. Run a check to look for related notices.'
-    )
+    await within(dialog).findByText('Not checked')
     const check = vi.mocked(window.api.literature.publicationCheck)
     check.mockRejectedValueOnce(new Error('offline'))
-    fireEvent.click(
-      within(dialog).getByRole('button', { name: 'Check retractions and corrections' })
-    )
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check now' }))
     await within(dialog).findByText('Could not load the publication check. Try again.')
     expect(check).toHaveBeenLastCalledWith({
       mode: 'check',

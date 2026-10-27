@@ -410,3 +410,23 @@ it('rejects an unreadable protection configuration instead of selecting an unpro
     'Windows protection ownership is inconsistent.'
   )
 })
+
+it('reads transition-aware authority and forwards subscriptions without an approval client', async () => {
+  await bootstrap()
+  const options = fixture.networkOptions!
+  expect(options.hasFullAccess!('session')).toBe(false)
+  options.subscribeFullAccess!('session', vi.fn())()
+  const hasFullAccess = vi.fn((sessionId: string) => sessionId === 'session')
+  const unsubscribe = vi.fn()
+  const subscribeFullAccess = vi.fn(() => unsubscribe)
+  fixture.runtime.current = { hasFullAccess, subscribeFullAccess } as never
+  expect(fixture.approvalAvailable()).toBe(false)
+  expect(options.hasFullAccess!('session')).toBe(true)
+  expect(options.hasFullAccess!('other-session')).toBe(false)
+  hasFullAccess.mockReturnValue(false)
+  expect(options.hasFullAccess!('session')).toBe(false)
+  const listener = vi.fn()
+  options.subscribeFullAccess!('session', listener)()
+  expect(subscribeFullAccess).toHaveBeenCalledWith('session', listener)
+  expect(unsubscribe).toHaveBeenCalledOnce()
+})

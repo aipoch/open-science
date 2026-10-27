@@ -3,6 +3,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
 import { spawnOpenCodeProcess } from '../agent-framework/opencode'
 import type { ResolvedAgentBackend } from '../agent-framework'
+import { spawnMainAgentProcess } from './main-agent-process-ownership'
 
 export class OpenCodeServiceCleanupError extends Error {}
 
@@ -19,14 +20,17 @@ export const startOpenCodeService = async (
   OpenCodeServiceLease & { api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']> }
 > => {
   const password = randomUUID()
-  const child = spawnOpenCodeProcess(
-    {
-      executablePath: backend.executablePath,
-      env: { ...backend.env, OPENCODE_PASSWORD: password, OPENCODE_USERNAME: 'opencode' },
-      args: ['--stdio', '--port', '0', '--hostname', '127.0.0.1'],
-      proxyEnvironmentMode: backend.proxyEnvironmentMode
-    },
-    'serve'
+  const child = await spawnMainAgentProcess(backend.framework.id, (spawnProcess) =>
+    spawnOpenCodeProcess(
+      {
+        executablePath: backend.executablePath,
+        env: { ...backend.env, OPENCODE_PASSWORD: password, OPENCODE_USERNAME: 'opencode' },
+        args: ['--stdio', '--port', '0', '--hostname', '127.0.0.1'],
+        proxyEnvironmentMode: backend.proxyEnvironmentMode,
+        spawnProcess
+      },
+      'serve'
+    )
   )
   let stopping = false
   let released: Promise<ProcessTreeKillResult> | undefined

@@ -49,6 +49,29 @@ describe('createActiveResearchSafeInstallGate', () => {
     expect(teardown).toHaveBeenCalledOnce()
   })
 
+  it.each([false, true])(
+    'rechecks new work after degraded cleanup with stop authorization (force=%s)',
+    async (force) => {
+      let active = false
+      const restore = vi.fn()
+      const gate = createActiveResearchSafeInstallGate(
+        () => (active ? ['agent'] : []),
+        async () => {
+          active = true
+          return { completed: true, reaped: false, stopAuthorized: true }
+        },
+        () => false,
+        restore
+      )
+      await expect(gate({ force })).resolves.toEqual({
+        completed: false,
+        reaped: false,
+        blockedBy: ['agent']
+      })
+      expect(restore).toHaveBeenCalledOnce()
+    }
+  )
+
   it('restores renderer preparation when the final update boundary refuses new work', async () => {
     let blockers: ReturnType<Parameters<typeof createActiveResearchSafeInstallGate>[0]> = []
     const teardown = vi.fn<InstallGate>().mockImplementation(async () => {
@@ -111,10 +134,10 @@ describe('createDataRootResearchSafeInstallGate', () => {
   )
 })
 
-it('offers force only for interruptible work while delegated and settings installs retain their hard block', async () => {
+it('permits interrupting delegated work while protecting settings installation', async () => {
   const { canForceUpdateBlockers } = await import('./strategy')
   expect(canForceUpdateBlockers(['agent', 'notebook'])).toBe(true)
-  expect(canForceUpdateBlockers(['agent', 'delegated'])).toBe(false)
+  expect(canForceUpdateBlockers(['agent', 'delegated'])).toBe(true)
   expect(canForceUpdateBlockers(['settings-install'])).toBe(false)
   expect(canForceUpdateBlockers([])).toBe(false)
 })

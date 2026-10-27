@@ -292,7 +292,7 @@ describe('installation protection', () => {
     advanceInstallationUpdate(f.location, record.operationId, 'stopping')
     expect(() =>
       advanceInstallationUpdate(f.location, record.operationId, 'stopped', false)
-    ).toThrow('clean')
+    ).toThrow('exit was not confirmed')
     advanceInstallationUpdate(f.location, record.operationId, 'stopped', true)
     advanceInstallationUpdate(f.location, record.operationId, 'handoff')
     writeFileSync(f.entry, 'partial')

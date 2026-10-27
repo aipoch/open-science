@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { processBirthIdentity } from './process-birth-identity'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -6,13 +9,19 @@ import { acquireRuntimeDirectorySync, RuntimeOwnershipConflict } from './runtime
 
 const run = promisify(execFile)
 
-export type InspectedProcess = { commandLine: string; parentPid?: number }
+export type InspectedProcess = { commandLine: string; parentPid?: number; birthToken?: string }
 
 export type LegacyTerminationDeps = {
   inspect(pid: number): Promise<InspectedProcess | undefined>
   isAlive(pid: number): boolean
   signal(pid: number, mode: 'terminate' | 'kill'): Promise<void>
   lockHeld(configRoot: string): boolean
+  proveOwner(
+    configRoot: string,
+    generation: string,
+    pid: number,
+    birthToken: string
+  ): Promise<boolean>
   selfPid: number
   graceMs: number
   settleMs: number
@@ -40,6 +49,8 @@ export type LegacyServiceKind = 'node' | 'electron'
 async function inspectProcess(pid: number): Promise<InspectedProcess | undefined> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
   try {
+    const birthToken = processBirthIdentity(pid)
+    if (!birthToken) return undefined
     if (process.platform === 'win32') {
       const { stdout } = await run(
         'powershell.exe',
@@ -53,14 +64,20 @@ async function inspectProcess(pid: number): Promise<InspectedProcess | undefined
       )
       const line = stdout.trim()
       const split = line.indexOf('|')
-      if (split < 0) return undefined
-      return { parentPid: Number(line.slice(0, split)), commandLine: line.slice(split + 1) }
+      if (split < 0 || processBirthIdentity(pid) !== birthToken) return undefined
+      return {
+        birthToken,
+        parentPid: Number(line.slice(0, split)),
+        commandLine: line.slice(split + 1)
+      }
     }
     const { stdout } = await run('ps', ['-p', String(pid), '-o', 'ppid=', '-o', 'command='], {
       timeout: 5000
     })
     const match = /^\s*(\d+)\s+(.+)$/s.exec(stdout.trim())
-    return match ? { parentPid: Number(match[1]), commandLine: match[2] } : undefined
+    return match && processBirthIdentity(pid) === birthToken
+      ? { birthToken, parentPid: Number(match[1]), commandLine: match[2] }
+      : undefined
   } catch {
     return undefined
   }
@@ -70,7 +87,7 @@ async function signalProcess(pid: number, mode: 'terminate' | 'kill'): Promise<v
   if (process.platform === 'win32') {
     if (mode === 'terminate') process.kill(pid)
     else
-      await run('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      await run('taskkill', ['/PID', String(pid), '/F'], {
         timeout: 10_000,
         windowsHide: true
       })
@@ -94,6 +111,38 @@ export const defaultLegacyTerminationDeps: LegacyTerminationDeps = {
   isAlive: isRuntimeProcessAlive,
   signal: signalProcess,
   lockHeld,
+  proveOwner: async (configRoot, generation, pid, birthToken) => {
+    try {
+      const owner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+      if (
+        owner.pid !== pid ||
+        (owner.generation !== generation && owner.desktop?.generation !== generation)
+      )
+        return false
+      if (owner.birthToken) return owner.birthToken === birthToken
+      // Older services have no durable birth identity. Authenticate this exact owner after
+      // capturing the kernel identity, then recheck it immediately before signaling.
+      if (!Number.isInteger(owner.port) || owner.port < 1 || owner.port > 65535) return false
+      const token = (await readFile(join(configRoot, 'web-token'), 'utf8')).trim()
+      const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-open-science-runtime-generation': owner.generation
+        },
+        signal: AbortSignal.timeout(1500),
+        redirect: 'error'
+      })
+      if (!response.ok) return false
+      const proof = (await response.json()) as { pid?: number; generation?: string }
+      return (
+        proof.pid === pid &&
+        proof.generation === owner.generation &&
+        processBirthIdentity(pid) === birthToken
+      )
+    } catch {
+      return false
+    }
+  },
   selfPid: process.pid,
   graceMs: 8000,
   settleMs: 8000
@@ -142,6 +191,8 @@ export async function terminateVerifiedLegacyRuntime(
     pid !== deps.selfPid &&
     info !== undefined &&
     info.parentPid !== deps.selfPid &&
+    Boolean(info.birthToken) &&
+    (await deps.proveOwner(configRoot, options.generation, pid, info.birthToken!)) &&
     matches(info.commandLine) &&
     deps.lockHeld(configRoot)
   if (!proven) {
@@ -150,12 +201,22 @@ export async function terminateVerifiedLegacyRuntime(
     if (!deps.isAlive(pid) && (await released(deps.settleMs))) return
     throw new LegacyTerminationError('identity-unproven', 'Its identity could not be confirmed.')
   }
+  const beforeSignal = await deps.inspect(pid)
+  if (!beforeSignal?.birthToken || beforeSignal.birthToken !== info!.birthToken)
+    throw new LegacyTerminationError(
+      'identity-unproven',
+      'The process identity changed before termination.'
+    )
   logger.info('legacy-stop', { step: 'terminate', runtimePid: pid })
   await deps.signal(pid, 'terminate')
   if (await released(deps.graceMs)) return
   // Re-prove identity: the PID must not have been recycled while waiting.
   const again = await deps.inspect(pid)
-  if (again && matches(again.commandLine)) {
+  if (
+    again?.birthToken &&
+    again.birthToken === info!.birthToken &&
+    (await deps.proveOwner(configRoot, options.generation, pid, again.birthToken))
+  ) {
     logger.warn('legacy-stop', { step: 'kill', runtimePid: pid })
     await deps.signal(pid, 'kill')
   }

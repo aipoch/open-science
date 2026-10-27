@@ -8,6 +8,9 @@ import {
   readTableBorderColors
 } from '../../../test/fixtures/docx-table-borders'
 
+import reportUrl from '../../../test/fixtures/docx-report.docx?url'
+import { createDocxStyleFixture } from '../../../test/fixtures/docx-table-styles'
+
 const container = document.getElementById('office-preview-root') as HTMLDivElement
 const scenario = docxTableCases.find(
   (item) => item.name === new URLSearchParams(location.search).get('case')
@@ -17,7 +20,11 @@ const scenario = docxTableCases.find(
 void (async () => {
   await initI18n('en')
   const dispose = await renderOfficeFile({
-    bytes: createDocxTableFixture(scenario),
+    bytes: new URLSearchParams(location.search).has('report')
+      ? new Uint8Array(await (await fetch(reportUrl)).arrayBuffer())
+      : new URLSearchParams(location.search).has('styles')
+        ? createDocxStyleFixture({ defaultStyle: true, banding: true, nested: true, direct: true })
+        : createDocxTableFixture(scenario),
     extension: 'docx',
     name: 'table.docx',
     container,

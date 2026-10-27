@@ -3515,3 +3515,73 @@ it.each(permissionRoutes)(
     expect(emit).not.toHaveBeenCalled()
   }
 )
+
+describe('session full-access authority subscriptions', () => {
+  const profile = (
+    selectedProfile: 'full' | 'ask' | 'auto'
+  ): import('../../shared/permission-profiles').SessionPermissionProfileState => ({
+    selectedProfile,
+    effectiveProfile: selectedProfile,
+    availableModeIds: [],
+    fullAccessAvailable: true
+  })
+
+  it('tracks transitions, rejects stale provider updates, restores rollback and unsubscribes', () => {
+    const broker = new AcpPermissionBroker(vi.fn())
+    const changed = vi.fn()
+    const sibling = vi.fn()
+    const unsubscribe = broker.subscribeFullAccess('session', changed)
+    broker.subscribeFullAccess('sibling', sibling)
+    expect(broker.hasFullAccess('session')).toBe(false)
+    broker.setLivePermissionProfile('session', profile('full'))
+    expect(changed).toHaveBeenLastCalledWith(true)
+    broker.beginPermissionProfileTransition('session', profile('ask'), () => true)
+    expect(broker.hasFullAccess('session')).toBe(false)
+    expect(changed).toHaveBeenLastCalledWith(false)
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(false)
+    expect(broker.hasFullAccess('session')).toBe(false)
+    broker.setLivePermissionProfile('session', profile('full'))
+    expect(changed).toHaveBeenLastCalledWith(true)
+    expect(sibling).not.toHaveBeenCalled()
+    unsubscribe()
+    changed.mockClear()
+    broker.clearLivePermissionProfile('session')
+    expect(changed).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'clearLivePermissionProfile',
+    'clearSession',
+    'cancelAllPending',
+    'abandonAllPending'
+  ] as const)('revokes authority and notifies on %s', (method) => {
+    const broker = new AcpPermissionBroker(vi.fn())
+    broker.setLivePermissionProfile('session', profile('full'))
+    const changed = vi.fn()
+    broker.subscribeFullAccess('session', changed)
+    broker[method]('session')
+    expect(broker.hasFullAccess('session')).toBe(false)
+    expect(changed).toHaveBeenCalledExactlyOnceWith(false)
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(false)
+    expect(broker.hasFullAccess('session')).toBe(false)
+    expect(changed).toHaveBeenCalledExactlyOnceWith(false)
+  })
+
+  it('keeps provider updates bound to the current attachment authority', () => {
+    const broker = new AcpPermissionBroker(vi.fn())
+    let current = true
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(false)
+    broker.setLivePermissionProfile('session', profile('ask'), () => current)
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(true)
+    expect(broker.hasFullAccess('session')).toBe(true)
+    current = false
+    expect(broker.hasFullAccess('session')).toBe(false)
+    expect(broker.setProviderPermissionProfile('session', profile('full'))).toBe(false)
+  })
+
+  it('does not grant authority from an invalidated generation', () => {
+    const broker = new AcpPermissionBroker(vi.fn())
+    broker.setLivePermissionProfile('session', profile('full'), () => false)
+    expect(broker.hasFullAccess('session')).toBe(false)
+  })
+})

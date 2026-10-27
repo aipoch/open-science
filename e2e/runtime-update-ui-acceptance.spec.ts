@@ -1,3 +1,12 @@
+import {
+  captureFixtureProcess,
+  captureFixtureService,
+  cleanupFixtureProcess,
+  cleanupFixtureService,
+  runFixtureCleanup,
+  type CapturedFixtureProcess,
+  type CapturedService
+} from './fixtures/local-service-cleanup'
 import { test, expect } from '@playwright/test'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -22,8 +31,16 @@ test('captures all runtime update states in isolated Electron (presentation-only
   const output = testInfo.outputPath('screenshots')
   await mkdir(output, { recursive: true })
   let application: ElectronApplication | undefined
+  let desktopProcess: CapturedFixtureProcess | undefined
+  let capturedService: CapturedService | undefined
+  let failure: unknown
   const capturedStates: string[] = []
-  const views: { id: string; text: string; buttons: string[] }[] = []
+  const views: {
+    id: string
+    text: string
+    buttons: string[]
+    recovery?: { text: string; buttons: string[] }
+  }[] = []
   try {
     application = await launchOpenScience(
       {
@@ -39,11 +56,14 @@ test('captures all runtime update states in isolated Electron (presentation-only
       'hidden',
       false
     )
+    desktopProcess = captureFixtureProcess(application.process())
+    if (!desktopProcess) throw new Error('Fixture desktop child was not captured')
     const page = await application.firstWindow()
     await page.waitForFunction(() => Boolean(window.api?.settings), { timeout: 60_000 })
     await expect
       .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60_000 })
       .toMatchObject({ phase: 'ready' })
+    capturedService = await captureFixtureService(storageRoot)
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -137,14 +157,21 @@ test('captures all runtime update states in isolated Electron (presentation-only
       capturedStates.push(id)
       const surface = page
         .locator(
-          '[role="alertdialog"]:visible, [data-testid="runtime-update-dialog"]:visible, [data-runtime-startup-state]:visible, [data-runtime-update-state] [role="status"]:visible'
+          '[data-testid="local-service-recovery"]:visible, [data-testid="runtime-update-dialog"]:visible, [data-runtime-startup-state]:visible, [data-runtime-update-state] [role="status"]:visible'
         )
         .last()
       const visibleSurface = (await surface.count()) ? surface : page.locator('main').last()
+      const recovery = page.getByTestId('local-service-recovery')
       views.push({
         id,
         text: await visibleSurface.innerText(),
-        buttons: await visibleSurface.locator('button:visible').allTextContents()
+        buttons: await visibleSurface.locator('button:visible').allTextContents(),
+        recovery: (await recovery.isVisible())
+          ? {
+              text: await recovery.innerText(),
+              buttons: await recovery.locator('button:visible').allTextContents()
+            }
+          : undefined
       })
     }
     await update(base)
@@ -321,6 +348,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(page.locator('[data-runtime-update-state="S23"]')).toBeVisible()
         await expect(page.getByRole('dialog')).toHaveCount(1)
         await expect(page.getByRole('alertdialog')).toHaveCount(0)
+        await expect(page.getByTestId('local-service-recovery')).toHaveCount(0)
         await expect(page.getByRole('button', { name: '取消', exact: true })).toHaveCount(0)
         await page.evaluate(() => window.dispatchEvent(new Event('online')))
         // An announced network probe holds its result for 500 ms. Check the inert background too.
@@ -329,11 +357,29 @@ test('captures all runtime update states in isolated Electron (presentation-only
           page.getByRole('button', { name: '互联网检查失败', exact: true, includeHidden: true })
         ).toHaveCount(0)
         await capture('S23-planned-runtime-disconnect')
+        const releaseNotes = page
+          .getByTestId('runtime-update-dialog')
+          .getByRole('link', { name: '在 GitHub 上查看发布说明', exact: true })
+        await releaseNotes.focus()
+        await expect(releaseNotes).toBeFocused()
         await desktopState(false)
-        await expect(page.getByRole('alertdialog', { name: '桌面连接已断开' })).toBeVisible()
-        await expect(page.getByTestId('runtime-update-dialog')).not.toBeVisible()
+        // LS-25 keeps unexpected connection loss in one nonmodal notice. LS-32 keeps the
+        // independent update transaction visible; connection loss must not replace its dialog.
+        const recovery = page.getByTestId('local-service-recovery')
+        await expect(recovery).toHaveCount(1)
+        await expect(recovery.getByRole('status')).toHaveCount(1)
+        await expect(
+          recovery.getByRole('heading', { name: '本地服务连接已断开', exact: true })
+        ).toBeVisible()
+        await expect(page.getByRole('alertdialog')).toHaveCount(0)
+        await expect(page.getByRole('dialog')).toHaveCount(1)
+        await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
+        await expect(releaseNotes).toBeFocused()
+        await capture('S23-unexpected-runtime-disconnect')
         await desktopState(false, 'connected')
+        await expect(recovery).toHaveCount(0)
         await expect(page.locator('[data-runtime-update-state="S23"]')).toBeVisible()
+        await expect(releaseNotes).toBeFocused()
       }
       await capture(id)
       if (['S13', 'S14', 'S23', 'S24', 'S25'].includes(id)) {
@@ -343,11 +389,11 @@ test('captures all runtime update states in isolated Electron (presentation-only
       if (['S23', 'S24'].includes(id))
         await expect(page.getByRole('button', { name: '取消', exact: true })).toHaveCount(0)
       if (id === 'S01') {
-        await page.getByRole('button', { name: '重启以更新', exact: true }).click()
+        await page.getByRole('button', { name: '更新', exact: true }).click()
         await expect.poll(applyCount).toBe(1)
         expect(
           (await getCalls()).filter((call) => call.action === 'update:apply').at(-1)?.args
-        ).toEqual([undefined])
+        ).toEqual([{ force: true }])
       }
       if (id === 'S06') {
         await application.evaluate(() => {
@@ -402,18 +448,10 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect.poll(applyCount).toBe(before + 1)
         expect(
           (await getCalls()).filter((call) => call.action === 'update:apply').at(-1)?.args
-        ).toEqual([{ force: false, cliConsentToken: cliConfirmation.token }])
+        ).toEqual([{ force: true, cliConsentToken: cliConfirmation.token }])
       }
       if (id === 'S04') {
-        await page.getByText('更多选项', { exact: true }).click()
-        await page.getByRole('button', { name: '强制更新…', exact: true }).click()
-        await expect(page.getByTestId('runtime-force-confirmation-S05')).toBeVisible()
-        await capture('S05')
         const before = await applyCount()
-        await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
-        expect(await applyCount()).toBe(before)
-        await page.getByText('更多选项', { exact: true }).click()
-        await page.getByRole('button', { name: '强制更新…', exact: true }).click()
         await page.getByRole('dialog').getByRole('button', { name: '更新', exact: true }).click()
         await expect.poll(applyCount).toBe(before + 1)
         expect(
@@ -529,10 +567,24 @@ test('captures all runtime update states in isolated Electron (presentation-only
           closing: false
         })
       }, phase)
-      await expect(page.getByRole('alertdialog')).toBeVisible()
-      if (phase === 'disconnected')
-        await expect(page.getByRole('button', { name: '重新连接', exact: true })).toBeVisible()
-      else await expect(page.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0)
+      const recovery = page.getByTestId('local-service-recovery')
+      await expect(recovery).toHaveCount(1)
+      await expect(recovery.getByRole('status')).toHaveCount(1)
+      await expect(
+        recovery.getByRole('heading', {
+          name:
+            phase === 'reconnecting' || phase === 'reconciling'
+              ? '正在恢复本地服务连接…'
+              : '本地服务连接已断开',
+          exact: true
+        })
+      ).toBeVisible()
+      await expect(page.getByRole('alertdialog')).toHaveCount(0)
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(recovery.getByRole('button', { name: '退出', exact: true })).toBeVisible()
+      if (phase === 'disconnected' || phase === 'unavailable')
+        await expect(recovery.getByRole('button', { name: '重试', exact: true })).toBeVisible()
+      else await expect(recovery.getByRole('button', { name: '重试', exact: true })).toHaveCount(0)
       await capture(`connection-${phase}`)
     }
     await application.evaluate(({ BrowserWindow }) => {
@@ -542,6 +594,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
         closing: false
       })
     })
+    await expect(page.getByTestId('local-service-recovery')).toHaveCount(0)
     await expect(page.getByRole('alertdialog')).toHaveCount(0)
     await update({
       ...base,
@@ -572,23 +625,46 @@ test('captures all runtime update states in isolated Electron (presentation-only
     expect(calls.some((call) => call.action === 'update:recover')).toBe(true)
     await writeFile(join(output, 'views.json'), JSON.stringify(views, null, 2))
     await writeFile(join(output, 'action-routing.json'), JSON.stringify(calls, null, 2))
-    // S19 has no current startup/update surface. Assert every supported state by identity.
+    // The separate force confirmation S05 was removed; S19 has no current surface. Assert every supported state by identity.
     expect(capturedStates.filter((id) => /^S\d\d$/.test(id)).sort()).toEqual(
       Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`).filter(
-        (id) => id !== 'S19'
+        (id) => id !== 'S19' && id !== 'S05'
       )
     )
+  } catch (error) {
+    failure = error
+    throw error
   } finally {
-    if (application)
-      await closeElectronApplicationForCleanup(
-        {
-          close: () => application!.close(),
-          forceClose: async () => {
-            application!.process().kill('SIGKILL')
-          }
+    let service: CapturedService | undefined
+    await runFixtureCleanup(
+      [
+        () => testInfo.attach('fixture-root', { body: root, contentType: 'text/plain' }),
+        async () => {
+          service = await captureFixtureService(storageRoot)
         },
-        { gracefulTimeoutMs: 5000, forcedTimeoutMs: 5000 }
-      )
-    await removeTreeForCleanup(root)
+        async () => {
+          if (
+            !application ||
+            !desktopProcess ||
+            desktopProcess.child.exitCode !== null ||
+            desktopProcess.child.signalCode !== null
+          )
+            return
+          await closeElectronApplicationForCleanup(
+            {
+              close: () => application!.close(),
+              forceClose: () => cleanupFixtureProcess(desktopProcess)
+            },
+            { gracefulTimeoutMs: 5000, forcedTimeoutMs: 25_000 }
+          )
+        },
+        () => cleanupFixtureService(service),
+        () => cleanupFixtureService(capturedService),
+        () => cleanupFixtureProcess(desktopProcess)
+      ],
+      failure
+    )
+    if (failure === undefined && testInfo.status === testInfo.expectedStatus)
+      await removeTreeForCleanup(root)
   }
 })

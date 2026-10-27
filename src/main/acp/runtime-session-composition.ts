@@ -110,6 +110,16 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     }
   })
   const sessionRegistry: AcpSessionRegistry = new AcpSessionRegistry({
+    onAttachmentChanged: ({ appSessionId, attachment, aggregate }) => {
+      const profile = aggregate.snapshot().permissionProfile
+      if (attachment && profile) {
+        permissionContext.setLivePermissionProfile(
+          appSessionId,
+          { ...profile, availableModeIds: [...profile.availableModeIds] },
+          () => sessionRegistry.lookup(appSessionId)?.attachment === attachment
+        )
+      } else permissionContext.clearLivePermissionProfile(appSessionId)
+    },
     addStartupBlocker: (token) => base.generationActivity.acquireStartup(token),
     foreignIdentityCollision: (sessionIds): Error | undefined => {
       const pendingReviewerCollision: string | undefined = sessionIds.find((sessionId) =>

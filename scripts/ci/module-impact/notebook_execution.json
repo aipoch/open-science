@@ -23,6 +23,8 @@
     "src/main/notebook/windows-launch-diagnostics.test.ts",
     "src/main/notebook/windows-launch-diagnostics.ts",
     "src/main/notebook/kernel-process-lifecycle.test.ts",
+    "src/main/notebook/kernel-process-identity.ts",
+    "src/main/notebook/kernel-process-identity.test.ts",
     "src/main/notebook/kernel-process-lifecycle.windows-posix.ts",
     "src/main/notebook/kernel-protocol.test.ts",
     "src/main/notebook/kernel-protocol.ts",
@@ -274,7 +276,8 @@
       "src/main/notebook/scientific-output-analysis.test.ts",
       "src/main/notebook/shell-npm-environment.test.ts",
       "src/main/notebook/trust-bundle.test.ts",
-      "src/main/notebook/execution-deadline.test.ts"
+      "src/main/notebook/execution-deadline.test.ts",
+      "src/main/notebook/kernel-process-identity.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

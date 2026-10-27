@@ -33,6 +33,7 @@ it('owns an authenticated ephemeral loopback service until one idempotent releas
   mocks.spawn.mockReturnValue(child)
   const unexpected = vi.fn()
   const pending = startOpenCodeService(backend, unexpected)
+  await Promise.resolve()
   child.stdout.write('log line\n{"url":"http://127.0.0.1:')
   child.stdout.write('42876"}\n')
   const service = await pending
@@ -60,6 +61,7 @@ it.each(['exit', 'error', 'timeout', 'remote-address'] as const)(
     const child = createChild()
     mocks.spawn.mockReturnValue(child)
     const pending = startOpenCodeService(backend, vi.fn())
+    await Promise.resolve()
     const rejection = expect(pending).rejects.toThrow(/OpenCode HTTP service/)
     if (failure === 'timeout') await vi.advanceTimersByTimeAsync(10_000)
     else if (failure === 'remote-address')
@@ -76,6 +78,7 @@ it('reports an unexpected service exit after readiness', async () => {
   mocks.spawn.mockReturnValue(child)
   const unexpected = vi.fn()
   const pending = startOpenCodeService(backend, unexpected)
+  await Promise.resolve()
   child.stdout.write('{"url":"http://127.0.0.1:42876"}\n')
   const service = await pending
   child.emit('exit', 1)

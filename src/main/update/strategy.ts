@@ -12,6 +12,10 @@ export type InstallReadiness = {
   canForce?: boolean
   completed: boolean
   reaped: boolean
+  // Renderer durability passed; ordinary process cleanup may be completed by bounded service stop.
+  stopAuthorized?: boolean
+  // Service exit and Config Root lock were confirmed. Installer occupancy is checked separately.
+  runtimeStopped?: boolean
   reason?: import('../../shared/update').UpdateFailureReason
   recovery?: import('../../shared/update').UpdateRecoveryStatus
   blockedBy?: UpdateBlocker[]
@@ -35,7 +39,11 @@ const restoreAfterFinalRefusal = (restore: () => void): void => {
 export const canForceUpdateBlockers = (blockers: readonly UpdateBlocker[]): boolean =>
   blockers.length > 0 &&
   blockers.every(
-    (blocker) => blocker === 'agent' || blocker === 'notebook' || blocker === 'reviewer'
+    (blocker) =>
+      blocker === 'agent' ||
+      blocker === 'delegated' ||
+      blocker === 'notebook' ||
+      blocker === 'reviewer'
   )
 
 // Checks active research before teardown and once more at the final install boundary. Kept
@@ -58,7 +66,7 @@ export const createActiveResearchSafeInstallGate =
       }
 
     const readiness = await runTeardownGate(options)
-    if (!readiness.completed || !readiness.reaped) return readiness
+    if ((!readiness.completed || !readiness.reaped) && !readiness.stopAuthorized) return readiness
     if (isExclusiveHandoffActive()) {
       restoreAfterFinalRefusal(onFinalRefusal)
       return { completed: false, reaped: false }
@@ -90,11 +98,17 @@ export const createDataRootResearchSafeInstallGate = (
 // events. A refused durability check leaves the installer untouched, while the non-latching teardown
 // allows the still-open app to reconnect on the next action.
 export const createDurableInstallGate =
-  (runTeardownGate: InstallGate, confirmRendererDurability: () => Promise<boolean>): InstallGate =>
+  (
+    runTeardownGate: InstallGate,
+    confirmRendererDurability: () => Promise<boolean>,
+    allowServiceStop = false
+  ): InstallGate =>
   async (options = {}) => {
     const readiness = await runTeardownGate(options)
-    if (!readiness.completed || !readiness.reaped) return readiness
-    return (await confirmRendererDurability()) ? readiness : { completed: false, reaped: false }
+    if ((!readiness.completed || !readiness.reaped) && !allowServiceStop) return readiness
+    return (await confirmRendererDurability())
+      ? { ...readiness, ...(allowServiceStop ? { stopAuthorized: true } : {}) }
+      : { completed: false, reaped: false }
   }
 
 // Shared admission invariant for every update provider. A failed transfer with a known release may

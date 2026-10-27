@@ -103,8 +103,8 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       })
       expect(result).toEqual({ connected: true })
       await expect.poll(() => secondPage.evaluate(() => document.documentElement.lang)).toBe('de')
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
@@ -174,7 +174,7 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
           )!
         pipe.destroy()
       })
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
       await expect
         .poll(() =>
           application.evaluate(
@@ -253,7 +253,7 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
           )
         )
         .toBe(true)
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'disconnected' })
@@ -263,7 +263,7 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       expect(
         (await secondPage.evaluate(() => window.api.settings.getSettings())).closePreference
       ).toBe('quit')
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'connected' })
@@ -360,7 +360,7 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
         if (!pipe) throw new Error('Recovery race pipe missing')
         pipe.destroy()
       })
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
       await expect
         .poll(() =>
           application.evaluate(
@@ -388,7 +388,7 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       await application.evaluate(() =>
         (globalThis as typeof globalThis & { quitRace: { release(): void } }).quitRace.release()
       )
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
       for (const current of [page, secondPage]) {
         await expect
           .poll(() => current.evaluate(() => window.api.desktopRuntime?.getState()))

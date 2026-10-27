@@ -361,7 +361,7 @@ for (const borrowed of [false, true])
         return pipes.length
       })
       expect(destroyed).toBe(1)
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
       await app.evaluate(({ dialog }) => {
         dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false })
       })
@@ -369,12 +369,12 @@ for (const borrowed of [false, true])
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ closing: false, phase: 'disconnected' })
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeEnabled()
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
+      await page.getByRole('button', { name: 'Retry', exact: true }).click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).not.toBeVisible()
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).not.toBeVisible()
       await expect
         .poll(() =>
           app!.evaluate(
@@ -452,8 +452,8 @@ for (const borrowed of [false, true])
         { session: savedBeforeLoss, title: lostTitle }
       )
       expect(saveOutcome).toContain('result of a submitted operation is unknown')
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click({ clickCount: 2 })
+      await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Retry', exact: true }).click({ clickCount: 2 })
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
@@ -526,7 +526,7 @@ for (const borrowed of [false, true])
           )
         ).toEqual({ confirmations: 1, errors: [] })
         await expect(page.getByRole('button', { name: 'Stay', exact: true })).toHaveCount(0)
-        await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+        await page.getByRole('button', { name: 'Retry', exact: true }).click()
         await expect
           .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
           .toMatchObject({ phase: 'connected', closing: false })
@@ -608,7 +608,7 @@ for (const borrowed of [false, true])
               ).quitRecovery
           )
         ).toEqual({ confirmations: 2, errors: [] })
-        await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+        await page.getByRole('button', { name: 'Retry', exact: true }).click()
         await expect
           .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
           .toMatchObject({ phase: 'connected' })
@@ -738,7 +738,7 @@ test('exits from the recovery notice when the original backend has really stoppe
     await expect
       .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
       .toMatchObject({ phase: 'unavailable' })
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
     await app.evaluate(({ dialog }) => {
       dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false })
     })
@@ -882,7 +882,7 @@ for (const scenario of [
       if (scenario === 'quit after failed reconnects') {
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const before = await page.evaluate(() => window.api.desktopRuntime!.getState())
-          await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+          await page.getByRole('button', { name: 'Retry', exact: true }).click()
           await expect
             .poll(() => page.evaluate(() => window.api.desktopRuntime!.getState()))
             .toMatchObject({ phase: 'disconnected', epoch: before.epoch + 1 })

@@ -187,7 +187,10 @@ const heartbeatFrame = (latestSequence: number): string =>
 
 const loadBootstrap = async (): Promise<WebApi> => {
   const bootstrapImport = import('./bootstrap')
-  await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined())
+  // Cold module transforms on shared CI runners can exceed waitFor's one-second default.
+  await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined(), {
+    timeout: 10_000
+  })
   window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
   await bootstrapImport
   return (window as unknown as { api: WebApi }).api
