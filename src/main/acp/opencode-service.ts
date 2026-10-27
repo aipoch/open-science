@@ -21,7 +21,7 @@ export const startOpenCodeService = async (
   OpenCodeServiceLease & { api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']> }
 > => {
   const password = randomUUID()
-  const start = (spawnProcess: AgentProcessSpawner | undefined) =>
+  const start = (spawnProcess: AgentProcessSpawner | undefined): ReturnType<AgentProcessSpawner> =>
     spawnOpenCodeProcess(
       {
         executablePath: backend.executablePath,
