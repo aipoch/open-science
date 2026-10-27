@@ -723,6 +723,18 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         }
         // A cancel() during the drain means never start this download.
         if (token.cancelled) return
+        if (this.installerInvalidated) {
+          // The SDK's same-process cache shortcut checks existence only. Discard its invalidated
+          // receipt through its own cleanup before another transfer may emit a completed artifact.
+          this.transferToken = undefined
+          operation.phase('reset-invalidated-cache')
+          const helper = Reflect.get(this.updater, 'downloadedUpdateHelper') as
+            { clear?: () => Promise<void> } | undefined
+          if (typeof helper?.clear !== 'function')
+            throw new Error('The installer is missing or has changed. Download the update again.')
+          await helper.clear()
+          if (token.cancelled) return
+        }
         operation.phase('transfer')
         this.transferToken = token
         await this.updater.downloadUpdate(token)

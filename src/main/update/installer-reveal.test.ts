@@ -38,6 +38,7 @@ const makeProvider = (path: string): EventEmitter & MinimalAutoUpdater =>
   Object.assign(new EventEmitter(), {
     autoDownload: false,
     autoInstallOnAppQuit: false,
+    downloadedUpdateHelper: { clear: vi.fn(async () => {}) },
     checkForUpdates: async function (this: EventEmitter) {
       this.emit('update-available', { version: '1.1.0' })
     },
