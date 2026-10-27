@@ -262,7 +262,7 @@ describe('AcpTurnSkillOwner', () => {
     await expect(
       owner.authorize({ specialistId: 'specialist-1', selectedSkillIds: ['stale-skill'] })
     ).rejects.toThrow('Skill "stale-skill" is not available to the active specialist.')
-    expect(resolveSpecialistSkills).toHaveBeenCalledWith('specialist-1')
+    expect(resolveSpecialistSkills).toHaveBeenCalledWith('specialist-1', undefined)
 
     await expect(
       owner.authorize({

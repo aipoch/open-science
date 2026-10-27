@@ -1,5 +1,54 @@
 import { expect, test } from '@playwright/test'
 
+test('stacks the folder access title above smaller copy and keeps confirmation within the viewport', async ({
+  page
+}) => {
+  await page.goto('/extensions-permissions.html')
+  await page.getByRole('button', { name: 'Permissions fixture' }).click()
+  const toggle = page.getByRole('switch', { name: 'Restrict Notebook and Shell folders' })
+  await toggle.click()
+  const dialog = page.getByRole('alertdialog', { name: 'Allow broader folder access?' })
+  await expect(dialog).toBeVisible()
+
+  for (const width of [900, 375]) {
+    await page.setViewportSize({ width, height: 700 })
+    await expect(async () => {
+      const layout = await dialog.evaluate((element) => {
+        const title = document.getElementById(element.getAttribute('aria-labelledby')!)!
+        const description = document.getElementById(element.getAttribute('aria-describedby')!)!
+        const heading = title.getBoundingClientRect()
+        const copy = description.getBoundingClientRect()
+        const panel = element.getBoundingClientRect()
+        return {
+          titleBottom: heading.bottom,
+          titleHeight: heading.height,
+          titleLineHeight: Number.parseFloat(getComputedStyle(title).lineHeight),
+          titleSize: Number.parseFloat(getComputedStyle(title).fontSize),
+          descriptionTop: copy.top,
+          descriptionSize: Number.parseFloat(getComputedStyle(description).fontSize),
+          left: panel.left,
+          right: panel.right,
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth
+        }
+      })
+      expect(layout.descriptionTop).toBeGreaterThanOrEqual(layout.titleBottom)
+      expect(layout.descriptionSize).toBeLessThan(layout.titleSize)
+      expect(layout.titleHeight).toBeLessThanOrEqual(layout.titleLineHeight + 1)
+      expect(layout.left).toBeGreaterThanOrEqual(0)
+      expect(layout.right).toBeLessThanOrEqual(width)
+      expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth)
+    }).toPass()
+  }
+
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(toggle).toBeChecked()
+  await toggle.click()
+  await dialog.getByRole('button', { name: 'Allow broader folder access', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(toggle).not.toBeChecked()
+})
+
 test('shows local changes before replacement and cancellation makes no import call', async ({
   page
 }) => {

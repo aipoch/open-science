@@ -4,6 +4,7 @@ import type {
   LiteratureFullTextFinder,
   LiteratureRelatedFinder,
   LiteratureSupplementFinder,
+  LiteraturePublicationChecker,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
@@ -34,6 +35,7 @@ type LiteratureCommandServices = Readonly<{
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher<LiteratureItemView>, 'complete'>
   literatureRelatedFinder: Pick<LiteratureRelatedFinder, 'run'>
   literatureSupplementFinder: Pick<LiteratureSupplementFinder, 'run'>
+  literaturePublicationChecker: Pick<LiteraturePublicationChecker, 'run'>
   literatureSupplementAttachments: Pick<LiteratureSupplementAttachments, 'run' | 'progress'>
   literatureFullTextFinder: Pick<LiteratureFullTextFinder<LiteratureItemView>, 'run'>
   artifactProvenanceRepository: {
@@ -72,6 +74,7 @@ export const createLiteratureCommandOwner = ({
   literatureFullTextFinder,
   literatureRelatedFinder,
   literatureSupplementFinder,
+  literaturePublicationChecker,
   literatureSupplementAttachments,
   artifactProvenanceRepository,
   managedFileVersionService,
@@ -97,6 +100,7 @@ export const createLiteratureCommandOwner = ({
     literatureSupplementAttachments.run(request, signal ?? new AbortController().signal),
   related: (request, signal) => literatureRelatedFinder.run(request, signal),
   supplements: (request, signal) => literatureSupplementFinder.run(request, signal),
+  publicationCheck: (request, signal) => literaturePublicationChecker.run(request, signal),
   fullText: (request) => literatureFullTextFinder.run(request),
   formatDocument: async (request) => {
     const literature = await artifactProvenanceRepository.getVersionLiterature({

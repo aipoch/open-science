@@ -110,6 +110,13 @@ describe('artifact MCP server', () => {
     )
   })
 
+  it('describes external imports through existing read-only folder grants', () => {
+    expect(writeArtifactFileToolDefinition.description).toContain('user-authorized folder')
+    expect(writeArtifactFileToolDefinition.description).toContain('absolute path on this host')
+    expect(writeArtifactFileToolDefinition.description).toContain('read-only access suffices')
+    expect(writeArtifactFileToolDefinition.description).toContain('list_authorized_directories')
+  })
+
   it('publishes filename as a required write_artifact_file argument', () => {
     const schema = z.object(writeArtifactFileToolDefinition.inputSchema)
 

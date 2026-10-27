@@ -1,5 +1,7 @@
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
 import {
+  type LiteraturePublicationCheckRequest,
+  type LiteraturePublicationCheckResult,
   type LiteratureRelatedRequest,
   type LiteratureRelatedResult,
   type LiteratureFullTextRequest,
@@ -81,6 +83,10 @@ type LiteratureCommandOwner = Readonly<{
     request: LiteratureSupplementRequest,
     signal?: AbortSignal
   ): Promise<LiteratureSupplementResult>
+  publicationCheck(
+    request: LiteraturePublicationCheckRequest,
+    signal?: AbortSignal
+  ): Promise<LiteraturePublicationCheckResult>
   fullText(request: LiteratureFullTextRequest): Promise<LiteratureFullTextResult>
   lookupMetadata(doi: string): Promise<LiteratureItemInput>
   completeMetadata(
@@ -142,6 +148,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [LiteratureSupplementAttachmentRequest],
     LiteratureSupplementAttachmentResult
   >('literature:supplement-attachment', literatureApplicationCommandContracts.supplementAttachment),
+  publicationCheck: defineApplicationCommand<
+    'literature:publication-check',
+    readonly [LiteraturePublicationCheckRequest],
+    LiteraturePublicationCheckResult
+  >('literature:publication-check', literatureApplicationCommandContracts.publicationCheck),
   related: defineApplicationCommand<
     'literature:related',
     readonly [LiteratureRelatedRequest],
@@ -226,6 +237,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
   literatureApplicationCommands.related,
+  literatureApplicationCommands.publicationCheck,
   literatureApplicationCommands.supplements,
   literatureApplicationCommands.supplementAttachment,
   literatureApplicationCommands.supplementAttachmentProgress,
@@ -293,6 +305,12 @@ const registerLiteratureApplicationCommands = (
       'literature:supplements': ({ args, callerLease }) =>
         run(
           () => owner.supplements(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
+      'literature:publication-check': ({ args, callerLease }) =>
+        run(
+          () =>
+            owner.publicationCheck(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
           false
         ),
       'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),

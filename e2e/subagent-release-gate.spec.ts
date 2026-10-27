@@ -1429,15 +1429,13 @@ test('fairly schedules two upward lanes with a concurrent real user prompt', asy
   await expect(page.getByTestId('composer-queue-trigger')).toBeVisible()
   await writeFile(releaseFile, '')
 
-  await expect(page.getByText('Main rendered reliable fairness child A.')).toBeVisible({
-    timeout: 120_000
-  })
-  await expect(page.getByText('Main rendered reliable fairness child B.')).toBeVisible({
-    timeout: 120_000
-  })
   await expect(page.getByText('Concurrent real user prompt completed.')).toBeVisible({
     timeout: 120_000
   })
+  // Earlier continuation replies share the original turn's collapsed message history.
+  await page.getByRole('button', { name: /^\d+ previous messages$/ }).click()
+  await expect(page.getByText('Main rendered reliable fairness child A.')).toBeVisible()
+  await expect(page.getByText('Main rendered reliable fairness child B.')).toBeVisible()
   const evidence = await page.evaluate(async (projectId) => {
     const loaded = await window.api.sessions.loadAll()
     const commands =

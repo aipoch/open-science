@@ -1,3 +1,5 @@
+import { createLinearConversationGraph } from '../../../../../shared/conversation-graph'
+import { buildReplayDocument } from '@/lib/replay/timeline'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -197,6 +199,146 @@ const openMaterials = (): void => {
 }
 
 describe('research replay interaction', () => {
+  describe.each([true, false])('automatic messages (interactive=%s)', (interactive) => {
+    const payload = 'Background execution outcomes are now available.\n\n{"runId":"private-run"}'
+    const cases: Array<{
+      name: string
+      metadata: Partial<NonNullable<ReplayStep['message']>>
+      title: string
+      description: string
+    }> = [
+      {
+        name: 'background result delivery',
+        metadata: {
+          attribution: {
+            kind: 'application',
+            feature: 'background-results',
+            purpose: 'agent-result-delivery',
+            deliveryKey: 'delivery-1',
+            deliveryIds: ['local-run:private-run']
+          }
+        },
+        title: 'Background activity',
+        description: 'New task results are available'
+      },
+      {
+        name: 'compute completion',
+        metadata: {
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: 'compute-1',
+            jobIds: ['job-1']
+          }
+        },
+        title: 'Remote job completed',
+        description: 'Analysis started automatically'
+      },
+      {
+        name: 'reloaded compute presentation',
+        metadata: { presentation: { kind: 'compute-job-completion' } },
+        title: 'Remote job completed',
+        description: 'Analysis started automatically'
+      }
+    ]
+    it.each(cases)(
+      'presents $name without the control payload',
+      ({ metadata, title, description }) => {
+        const document = makeDocument()
+        const message = document.branches[0].steps[0].message!
+        Object.assign(message, { role: 'user', content: payload }, metadata)
+        const before = JSON.stringify(document)
+        const view = render(
+          <ReplayStage
+            document={document}
+            fitContainer={interactive}
+            scene={projectReplayScene(document, 'main', 900)}
+          />
+        )
+        expect(screen.getByTestId('replay-stage').textContent).toContain(title)
+        expect(screen.getByRole('status').textContent).toContain(description)
+        expect(view.container.textContent).not.toContain('Background execution outcomes')
+        expect(view.container.textContent).not.toContain('private-run')
+        expect(view.container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
+        expect(JSON.stringify(document)).toBe(before)
+      }
+    )
+
+    if (interactive) {
+      it.each(cases)(
+        'keeps $name payload out of navigation after history projection',
+        async ({ metadata, title }) => {
+          const message = {
+            ...step('automatic', 0, payload).message!,
+            role: 'user' as const,
+            ...metadata
+          }
+          const source = {
+            session: {
+              id: 's',
+              projectId: 'p',
+              title: 'Research',
+              cwd: '/workspace',
+              status: 'idle' as const,
+              messages: [message],
+              createdAt: 1,
+              updatedAt: 1,
+              conversationGraph: createLinearConversationGraph({
+                sessionId: 's',
+                messages: [message],
+                createdAt: 1,
+                updatedAt: 1
+              })
+            },
+            runs: [],
+            resources: [],
+            issues: []
+          }
+          const before = JSON.stringify(source)
+          const document = buildReplayDocument(source)
+          render(<ReplayPanel document={document} {...callbacks()} />)
+          const browse = screen.getByRole('button', { name: 'Browse steps' })
+          expect(browse.textContent).toContain(title)
+          expect(browse.getAttribute('title')).toBe(title)
+          const slider = screen.getByRole('slider', { name: 'Replay progress' })
+          expect(slider.getAttribute('aria-valuetext')).toContain(title)
+          expect(slider.getAttribute('aria-valuetext')).not.toContain(
+            'Background execution outcomes'
+          )
+          const timeline = screen.getByTestId('replay-timeline')
+          vi.spyOn(timeline, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 32))
+          fireEvent.pointerMove(timeline, { clientX: 500 })
+          expect((await screen.findByTestId('replay-seek-preview')).textContent).toContain(title)
+          fireEvent.pointerLeave(timeline)
+          fireEvent.click(browse)
+          const directory = screen.getByRole('dialog', { name: 'Browse steps' })
+          const entry = within(directory).getByRole('button', { name: `Go to step 1: ${title}` })
+          expect(entry.getAttribute('title')).toBe(title)
+          expect(globalThis.document.body.textContent).not.toContain(
+            'Background execution outcomes'
+          )
+          expect(globalThis.document.body.textContent).not.toContain('private-run')
+          expect(JSON.stringify(source)).toBe(before)
+        }
+      )
+    }
+
+    it('preserves identical human-authored text without attribution', () => {
+      const document = makeDocument()
+      Object.assign(document.branches[0].steps[0].message!, { role: 'user', content: payload })
+      render(
+        <ReplayStage
+          document={document}
+          fitContainer={interactive}
+          scene={projectReplayScene(document, 'main', 900)}
+        />
+      )
+      expect(screen.getByTestId('replay-stage').textContent).toContain('private-run')
+      expect(screen.queryByRole('status')).toBeNull()
+    })
+  })
+
   it('exposes the visible playhead during playback and captures its latest position on demand', () => {
     const props = callbacks()
     const document = makeDocument()

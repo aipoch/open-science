@@ -72,6 +72,9 @@ beforeEach(() => {
   })
   ;(window as unknown as { api: unknown }).api = {
     settings: {
+      listSkillSources: vi.fn().mockResolvedValue([]),
+      addSkillSource: vi.fn().mockResolvedValue([]),
+      removeSkillSource: vi.fn().mockResolvedValue([]),
       getGitHubTokenStatus: vi.fn().mockResolvedValue({ configured: false }),
       saveGitHubToken: vi.fn(),
       removeGitHubToken: vi.fn()
@@ -993,6 +996,27 @@ describe('SkillsPanel (list view)', () => {
 })
 
 describe('SkillsPanel (sub-views)', () => {
+  it('scans a saved repository through the existing import flow', async () => {
+    vi.mocked(window.api.settings.listSkillSources).mockResolvedValue([
+      { id: 'bookmark', repository: 'owner/repo', ref: 'published' }
+    ])
+    await act(async () =>
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    )
+    expect(useSettingsStore.getState().scanRepoSkills).not.toHaveBeenCalled()
+    await act(async () => {
+      ;[...container.querySelectorAll('button')]
+        .find((button) => button.textContent?.includes('owner/repo'))!
+        .click()
+    })
+    expect(useSettingsStore.getState().scanRepoSkills).toHaveBeenCalledWith('owner/repo@published')
+    expect(container.querySelector('input')?.value).toBe('owner/repo@published')
+    expect(container.textContent).toContain('Foo')
+    expect(container.textContent).toContain('Saved')
+    expect(window.api.settings.addSkillSource).not.toHaveBeenCalled()
+    expect(useSettingsStore.getState().importSkill).not.toHaveBeenCalled()
+  })
+
   it('preserves imported frontmatter metadata when saving an edited skill', async () => {
     ;(window as unknown as { api: unknown }).api = {
       settings: {

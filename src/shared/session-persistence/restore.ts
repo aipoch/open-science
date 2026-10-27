@@ -129,7 +129,8 @@ const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefin
 export const rearmUnacceptedElicitationContinuations = (
   session: PersistedChatSession,
   promptMessageId?: string,
-  question?: { requestId: string; toolCallId: string }
+  question?: { requestId: string; toolCallId: string },
+  recovery?: { error: string; retryable?: true }
 ): PersistedChatSession => {
   if (session.runtimeTranscriptOwner !== 'main' || !session.conversationGraph) return session
   const graph = session.conversationGraph
@@ -146,6 +147,8 @@ export const rearmUnacceptedElicitationContinuations = (
           activity.promptMessageId === promptId &&
           activity.elicitation?.durable?.kind === 'agent-user-choice' &&
           activity.elicitation.continuationPending === true &&
+          (activity.elicitation.state === 'answered' ||
+            activity.elicitation.state === 'declined') &&
           (!question ||
             (activity.id === question.toolCallId &&
               activity.elicitation.durable.requestId === question.requestId))
@@ -155,20 +158,17 @@ export const rearmUnacceptedElicitationContinuations = (
   if (recoverable.size === 0) return session
   const rearm = <T extends PersistedToolActivity>(activity: T): T => {
     if (!recoverable.has(activity.id) || !activity.elicitation) return activity
-    const {
-      continuationPending: _pending,
-      respondedAt: _respondedAt,
-      ...elicitation
-    } = activity.elicitation
-    void _pending
-    void _respondedAt
     return {
       ...activity,
-      status: 'in_progress',
       elicitation: {
-        ...elicitation,
-        state: 'pending',
-        ...(elicitation.answers?.length ? { draftAnswers: elicitation.answers } : {})
+        ...activity.elicitation,
+        continuationRecovery: recovery ?? {
+          // Restart cannot prove whether a lost transport accepted the request. Preserve
+          // the decision, but never grant replay permission from a process-local receipt.
+          error:
+            activity.elicitation.continuationRecovery?.error ??
+            'The task could not continue. Your response is saved.'
+        }
       }
     }
   }

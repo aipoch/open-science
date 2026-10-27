@@ -1449,7 +1449,9 @@ describe('RuntimeSessionOwner', () => {
       first.owner.accept(questionEvent(resumed, 'pending', 11))
       first.owner.accept(stopEvent(resumed, 12))
       await first.owner.flush(original.sessionId, original.promptMessageId)
-      first.owner.accept(questionEvent(resumed, 'answered', 13))
+      const answer = questionEvent(resumed, 'answered', 13)
+      answer.elicitation!.continuationPending = true
+      first.owner.accept(answer)
       await first.owner.flush(original.sessionId, original.promptMessageId)
       const durable = first.sessions.get(original.sessionId)!
       // The production persistence coordinator stamps the settled run before its next admission.
@@ -1530,6 +1532,30 @@ describe('RuntimeSessionOwner', () => {
     })
   })
 
+  it('rejects a late continuation after the saved question wait has ended', async () => {
+    const turn = scope()
+    const { owner, sessions } = harness([{ ...session(turn), runtimeTranscriptOwner: 'main' }])
+    await owner.begin(turn)
+    owner.accept(questionEvent(turn, 'pending', 2))
+    owner.accept(stopEvent(turn, 3))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    owner.accept(questionEvent(turn, 'answered', 4))
+    await owner.flush(turn.sessionId, turn.promptMessageId)
+    const ended = sessions.get(turn.sessionId)!
+    ended.status = 'idle'
+    ended.runtimeTranscriptLastRun = { promptMessageId: turn.promptMessageId, startedAt: 1 }
+    // Ending preserves the answer and timestamp but revokes its continuation receipt.
+    for (const activity of [
+      ...(ended.activities ?? []),
+      ...(ended.conversationGraph?.activities ?? [])
+    ]) {
+      if (activity.elicitation) delete activity.elicitation.continuationPending
+    }
+    await expect(owner.begin({ ...turn, executionId: 'late-after-end' })).rejects.toThrow()
+    expect(sessions.get(turn.sessionId)?.status).toBe('idle')
+    expect(sessions.get(turn.sessionId)?.activeRun).toBeUndefined()
+  })
+
   it('flushes an answer queued after terminal settlement before admitting its continuation', async () => {
     const turn = scope()
     const { owner, sessions } = harness([session(turn)])
@@ -1553,13 +1579,20 @@ describe('RuntimeSessionOwner', () => {
     owner.accept(stopEvent(turn, 3))
     await owner.flush(turn.sessionId, turn.promptMessageId)
     const answer = questionEvent(turn, 'answered', 4)
+    answer.elicitation!.answers = [{ fieldId: 'answer', value: 'Saved dataset' }]
     answer.elicitation!.continuationPending = true
     owner.accept(answer)
     await owner.begin({ ...turn, executionId: 'execution-answer' })
 
     const notAccepted = normalizeSessionFile(structuredClone(sessions.get(turn.sessionId)))!
     expect(notAccepted.status).toBe('waiting-for-user')
-    expect(notAccepted.activities?.[0].elicitation?.state).toBe('pending')
+    expect(notAccepted.activities?.[0].elicitation).toMatchObject({
+      state: 'answered',
+      answers: answer.elicitation!.answers,
+      respondedAt: answer.elicitation!.respondedAt,
+      continuationPending: true,
+      continuationRecovery: { error: 'The task could not continue. Your response is saved.' }
+    })
 
     const nextAnswer = questionEvent(turn, 'answered', 11)
     nextAnswer.id = 'next-answer'
@@ -1594,7 +1627,7 @@ describe('RuntimeSessionOwner', () => {
     expect(restarted.sessions.get(turn.sessionId)?.status).toBe('running')
   })
 
-  it('admits a recorded answer after disk normalization clears the waiting status', async () => {
+  it('does not replay an answer without a continuation receipt after disk normalization', async () => {
     const turn = scope()
     const { owner, sessions } = harness([session(turn)])
     await owner.begin(turn)
@@ -1609,8 +1642,8 @@ describe('RuntimeSessionOwner', () => {
     const restored = normalizeSessionFile(JSON.parse(JSON.stringify(value)))!
     expect(restored.status).toBe('idle')
     const restarted = harness([restored])
-    await restarted.owner.begin({ ...turn, executionId: 'restarted' })
-    expect(restarted.sessions.get(turn.sessionId)?.status).toBe('running')
+    await expect(restarted.owner.begin({ ...turn, executionId: 'restarted' })).rejects.toThrow()
+    expect(restarted.sessions.get(turn.sessionId)?.status).toBe('idle')
   })
 
   it.each([

@@ -7,7 +7,7 @@ import { literatureDeletionError } from '../../../../shared/literature-deletion'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
@@ -101,7 +101,9 @@ vi.mock('../workspace/FilePreviewDialog', () => ({
           ) : null}
         </div>
       </FocusScope>
-    ) : null
+    ) : (
+      <span hidden data-testid="literature-preview-ready" />
+    )
   }
 }))
 
@@ -243,6 +245,14 @@ const openReferenceDetail = async (trigger: Element): Promise<HTMLElement> => {
 }
 
 describe('LiteratureLibraryPage', () => {
+  beforeAll(async () => {
+    // Settle the real lazy adapter before any test measures preview updates.
+    const Preview = literatureRendererHost.FilePreviewDialog
+    const preview = render(<Preview item={undefined} onClose={() => undefined} />)
+    await screen.findByTestId('literature-preview-ready')
+    preview.unmount()
+  })
+
   const search = vi.fn()
   const get = vi.fn()
   const formatReferences = vi.fn()
@@ -428,6 +438,12 @@ describe('LiteratureLibraryPage', () => {
         saveBlobFile,
         literature: {
           related: vi.fn(),
+          publicationCheck: vi.fn(
+            async (request: { itemId: string; expectedMetadataRevision: number }) => ({
+              itemId: request.itemId,
+              metadataRevision: request.expectedMetadataRevision
+            })
+          ),
           supplements: vi.fn(),
           supplementAttachment: vi.fn(),
           supplementAttachmentProgress: vi.fn().mockResolvedValue(null),
@@ -9623,6 +9639,27 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(filePreviewRenderCount.value).toBe(0)
+  })
+
+  it('loads only the saved publication check in the reference overview', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    expect(within(dialog).getByRole('region', { name: 'Retractions and corrections' })).toBeTruthy()
+    await within(dialog).findByText(
+      'No saved publication check. Run a check to look for related notices.'
+    )
+    expect(window.api.literature.publicationCheck).toHaveBeenCalledWith({
+      mode: 'get',
+      itemId: libraryItem.id,
+      expectedMetadataRevision: libraryItem.metadataRevision
+    })
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'check' })
+    )
   })
 
   it('opens the Add menu only after an explicit click without rerendering the Literature page', async () => {

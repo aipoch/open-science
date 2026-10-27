@@ -41,7 +41,13 @@ const probe = (
         if (pid === 2000 && scenario === 'coalition-reused') return { ...candidate, uniqueId: '201' }
         return processes.get(pid) ?? null
       },
-      listDarwinProcesses: () => ({ processes: [...processes.values()], complete: !incomplete }),
+      listDarwinProcesses: () => {
+        const snapshot = { processes: [...processes.values()], complete: !incomplete }
+        // The native snapshot already validated this identity. Model an external service exiting
+        // before a redundant later read, without changing the evidence in the returned snapshot.
+        if (scenario === 'coalition-vanished') processes.delete(2000)
+        return snapshot
+      },
       getDarwinEnvironmentValue: pid => {
         environmentReads++
         if (!readable) return null
@@ -97,7 +103,20 @@ describe('Darwin ownership evidence reconciliation', () => {
     expect(result.signals).not.toContain(-2000)
   })
 
-  it.each(['same', 'missing', 'leader-missing', 'unreadable', 'reused', 'changed', 'history'])(
+  it.each(['unreadable', 'reused', 'changed', 'vanished'])(
+    'preserves validated foreign-coalition evidence when a later process read is %s',
+    (evidence) => {
+      const result = probe(`coalition-${evidence}`)
+      expect(result.first.reaped).toBe(true)
+      expect(result.second.reaped).toBe(true)
+      expect(result.environmentReads).toBe(0)
+      expect(result.signals).toContain(-1000)
+      expect(result.signals).not.toContain(2000)
+      expect(result.signals).not.toContain(-2000)
+    }
+  )
+
+  it.each(['same', 'missing', 'leader-missing', 'history'])(
     'retains strict cleanup when coalition evidence is %s',
     (evidence) => {
       const result = probe(`coalition-${evidence}`)

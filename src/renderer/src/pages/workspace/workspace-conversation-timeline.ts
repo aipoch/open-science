@@ -310,6 +310,85 @@ const createWorkspaceConversationTimeline = (
   ])
 }
 
+type CollapsedTurnProcess = {
+  promptMessageId: string
+  outcome: 'completed' | 'failed'
+  itemIds: string[]
+  messageCount: number
+}
+
+// Presentation only: keep the full timeline authoritative for replay, export and navigation.
+// Ambiguous legacy ownership never becomes a reason to hide a row.
+const resolveCollapsibleTurnProcesses = (
+  session: ChatSession | undefined,
+  timeline: readonly WorkspaceConversationTimelineItem[],
+  presentingMessageIds: ReadonlySet<string>
+): Map<string, CollapsedTurnProcess> => {
+  const result = new Map<string, CollapsedTurnProcess>()
+  if (!session) return result
+  const resolveActivityPrompt = createActivityPromptResolver(session)
+  const byPrompt = new Map<string, WorkspaceConversationTimelineItem[]>()
+  for (const item of timeline) {
+    if (item.type === 'turn-completion' || item.type === 'turn-outcome') continue
+    const promptId = resolveTimelineItemPrompt(item, resolveActivityPrompt)
+    if (
+      !promptId ||
+      (item.type === 'activity-group' &&
+        item.activities.some((activity) => resolveActivityPrompt(activity) !== promptId))
+    )
+      continue
+    const rows = byPrompt.get(promptId) ?? []
+    rows.push(item)
+    byPrompt.set(promptId, rows)
+  }
+  const activePrompt =
+    openPromptMessageId(session) ??
+    (session.status === 'running' ? latestTurnAnchor(session.messages)?.id : undefined)
+  for (const prompt of session.messages) {
+    const outcome = prompt.turnOutcome
+    if (
+      !eligiblePrompt(prompt) ||
+      prompt.id === activePrompt ||
+      (outcome?.kind !== 'completed' && outcome?.kind !== 'failed')
+    )
+      continue
+    const rows = byPrompt.get(prompt.id) ?? []
+    if (rows.some((row) => presentingMessageIds.has(row.id))) continue
+    const replies = rows.filter((row) => row.type === 'message' && row.message.role === 'agent')
+    // The terminal fragment can own projected child artifacts and usage even with an empty body.
+    const terminalReply = replies.at(-1)
+    const lastReply = replies.findLast(
+      (row) =>
+        row.type === 'message' &&
+        (row.message.content.trim() ||
+          row.message.images?.length ||
+          row.message.artifactIds?.length)
+    )
+    // A successful tool-only turn has no final answer to leave outside the disclosure.
+    if (outcome.kind === 'completed' && !lastReply) continue
+    const process = rows.filter(
+      (row) =>
+        row !== lastReply &&
+        row !== terminalReply &&
+        (row.type === 'message'
+          ? row.message.role === 'agent'
+          : row.type === 'activity-group' ||
+            row.type === 'activity' ||
+            row.type === 'compaction-activity')
+    )
+    const messageCount = process.filter((row) => row.type === 'message').length
+    if (!messageCount) continue
+    const group: CollapsedTurnProcess = {
+      promptMessageId: prompt.id,
+      outcome: outcome.kind,
+      itemIds: process.map(({ id }) => id),
+      messageCount
+    }
+    for (const row of process) result.set(row.id, group)
+  }
+  return result
+}
+
 // Anchor to the copied conversation path, not the last inherited footer: late tool events can
 // move an old turn completion below newer turns. Legacy forks have no explicit local head.
 const resolveForkBoundaryItemId = (
@@ -348,6 +427,7 @@ const resolveForkBoundaryItemId = (
 
 export {
   createWorkspaceConversationTimeline,
+  resolveCollapsibleTurnProcesses,
   resolveCurrentTurnOutcomeItem,
   resolveForkBoundaryItemId
 }

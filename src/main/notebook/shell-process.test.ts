@@ -173,7 +173,8 @@ describe('notebook shell process behavior', () => {
         })
         expect(result.stderr).toBe('stop-before-spawn')
         expect(wrap).toHaveBeenCalledOnce()
-        expect(wrap.mock.calls[0][0].windowsProtectionRequired).toBe(true)
+        expect(wrap.mock.calls[0][0].windowsProtectionRequired).toBeUndefined()
+        expect(wrap.mock.calls[0][0].superviseProcessTree).toBe(true)
         const { filesystem, env } = wrap.mock.calls[0][0]
         if (version === '7.6') {
           expect(env.NPM_CONFIG_PREFIX).toBe(
