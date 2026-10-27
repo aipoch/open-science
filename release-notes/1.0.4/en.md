@@ -1,9 +1,9 @@
 ## ✨ Highlights
 
 - **Downloads are meaningfully smaller.** CLI and desktop runtime payloads are reduced by pruning unused generated components, bundling the translation worker against its compact runtime, shipping a single bundled environment manager, and dropping unused alternative distributions — without removing active runtime files or diagnostics. (#3863, #3867)
-- **The standalone CLI now speaks MCP.** Research tools are exposed through a local MCP server for external MCP clients, under the selected profile's existing permissions — it is not a separate sandbox or a read-only view, so a connected client can persist writes or incur model costs. (#3862)
+- **The standalone CLI now speaks MCP.** Research tools are exposed through a local MCP server for external MCP clients, under the selected profile's existing permissions — it is not a separate sandbox or a read-only view, so a connected client can persist writes or incur model costs. The profile's service must already be running and authenticated — start it with `open-science start`, then attach clients via `open-science mcp`; the adapter does not start the service itself. (#3862)
 - **Long conversations read cleanly.** Once a turn settles, intermediate messages collapse out of the way while running, waiting and interrupted work stays visible; tool groups collapse into summaries, and search, annotations, and native find still reveal hidden content when you need it. (#3868, #3866)
-- **Literature gains integrity checks.** References with a DOI can be checked on demand against Crossref for retractions and corrections, with results and check times saved to the reference. Coverage is incomplete — finding no notices does not establish that a reference is unaffected. (#3870)
+- **Literature gains integrity checks.** References with a DOI can be checked on demand against Crossref for retractions and corrections, with results and check times saved to the reference. A check sends the DOI to Crossref, and coverage is incomplete — finding no notices does not establish that a reference is unaffected. (#3870)
 
 ## 🚀 New Features
 
