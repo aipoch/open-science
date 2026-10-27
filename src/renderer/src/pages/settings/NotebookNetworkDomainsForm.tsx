@@ -82,16 +82,16 @@ const NotebookNetworkDomainsForm = ({
     JSON.stringify(draft) !== JSON.stringify(baseline) || Boolean(newDomain) || privateEditing
   const [message, setMessage] = useState<FormMessage | undefined>()
   const [isSaving, setIsSaving] = useState(false)
-  const observedSettings = useRef(saved)
-  useEffect(() => {
-    if (observedSettings.current === saved) return
-    observedSettings.current = saved
+  const [observedSettings, setObservedSettings] = useState(saved)
+  if (observedSettings !== saved) {
+    setObservedSettings(saved)
     // Keep edits and their merge baseline intact when another client grants access.
-    if (dirty || isSaving) return
-    setDraft(saved)
-    setBaseline(saved)
-    setBaseAllowedDomains(saved.allowedDomains)
-  }, [saved, dirty, isSaving])
+    if (!dirty && !isSaving) {
+      setDraft(saved)
+      setBaseline(saved)
+      setBaseAllowedDomains(saved.allowedDomains)
+    }
+  }
   const [status, setStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
   const [isInstalling, setIsInstalling] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
