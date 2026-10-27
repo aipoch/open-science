@@ -71,6 +71,19 @@ describe('provider registry', () => {
     })
   })
 
+  it('offers GPT-6.1 Terra with published capabilities without changing the default', () => {
+    const model = 'gpt-6.1-terra'
+    expect(getVendorModelIds('openai')).toContain(model)
+    expect(getVendorModelIds('openai')[0]).toBe('gpt-5.6-sol')
+    expect(getVendorModelContextWindow('openai', model)).toBe(1_050_000)
+    expect(isVendorModelMultimodal('openai', model)).toBe(true)
+    expect(resolveVendorModelApiEndpoints('openai', model)).toEqual(['responses'])
+    expect(getVendorModelReasoningCapability('openai', model)).toEqual({
+      supported: true,
+      values: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+  })
+
   it.each(['claude-sonnet-5-5', 'claude-haiku-5-5'])(
     'offers %s with its published capabilities and preserves the default',
     (model) => {

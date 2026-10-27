@@ -543,7 +543,9 @@ describe('codexFramework', () => {
   it.each([
     ['gpt-6-astra', '0.144.6'],
     ['gpt-6.1-sol', '0.144.6'],
-    ['gpt-6.1-sol', CODEX_VERSION]
+    ['gpt-6.1-sol', CODEX_VERSION],
+    ['gpt-6.1-terra', '0.144.6'],
+    ['gpt-6.1-terra', CODEX_VERSION]
   ])('adds local metadata for unbundled official model %s on Codex %s', (model, nativeVersion) => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(
