@@ -326,6 +326,9 @@ export async function composeSettingsBootstrap({
         await lifecycle.shutdownAll({ afterShutdown: commit })
       },
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
+      onNotebookNetworkDomainAllowed: async () => {
+        await settingsSnapshotCommits.projectAfter(Promise.resolve())
+      },
       validatePackageMirror: async (settings) => {
         await resolveNotebookTrustBundle(settings.caBundle)
       },

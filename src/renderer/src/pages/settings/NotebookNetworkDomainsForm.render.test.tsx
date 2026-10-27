@@ -53,6 +53,42 @@ afterEach(() => {
 })
 
 describe('NotebookNetworkDomainsForm', () => {
+  it('refreshes a clean editor after settings hydrate and uses the new save baseline', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const next = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['approved.example.org'] }
+    act(() => useSettingsStore.setState({ notebookNetwork: next }))
+    expect(container.textContent).toContain('approved.example.org')
+    expect(container.textContent).toContain('No unsaved changes')
+    await act(async () => button('Save changes').click())
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
+      next,
+      next.allowedDomains,
+      []
+    )
+  })
+
+  it('preserves pending domain text and the original baseline on an external grant', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+    await typeInput(input, 'draft.example.org')
+    act(() =>
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+          allowedDomains: ['approved.example.org']
+        }
+      })
+    )
+    expect(input.value).toBe('draft.example.org')
+    await act(async () => button('Add to list').click())
+    await act(async () => button('Save changes').click())
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
+      { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['draft.example.org'] },
+      [],
+      []
+    )
+  })
+
   it('does not discard domain edits when a pending save completes', async () => {
     let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
     const save = vi.fn(
