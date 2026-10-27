@@ -120,7 +120,8 @@ type ResumerHarness = {
   attachSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
   registerSessionSpecialist: ReturnType<typeof vi.fn>
-  clearLivePermissionProfile: ReturnType<typeof vi.fn>
+  setLivePermissionProfile: ReturnType<typeof vi.fn>
+  invalidatePermissionProfile: ReturnType<typeof vi.fn>
   clearTimer: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
   configurePermissionProfile: ReturnType<typeof vi.fn>
@@ -280,7 +281,8 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   })
   const clearTimer = vi.fn()
   const assertCurrentConnection = vi.fn()
-  const clearLivePermissionProfile = vi.fn()
+  const setLivePermissionProfile = vi.fn()
+  const invalidatePermissionProfile = vi.fn()
   const provision = vi.fn(async () => {
     order.push('capability provision')
     const mcpServers = options.capabilityMcpServers ?? []
@@ -339,7 +341,8 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     capabilityPolicy: options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
-    clearLivePermissionProfile,
+    setLivePermissionProfile,
+    invalidatePermissionProfile,
     ...('specialistIdentity' in options
       ? {
           resolveSpecialistIdentity: vi.fn(async (specialistId: string, frameworkId: string) =>
@@ -404,7 +407,8 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     backend: capturingBackend,
     commit,
     registerSessionSpecialist,
-    clearLivePermissionProfile,
+    setLivePermissionProfile,
+    invalidatePermissionProfile,
     clearTimer,
     configure,
     configurePermissionProfile,
@@ -1183,12 +1187,26 @@ describe('AcpProviderSessionResumer', () => {
       permissionProfile
     })
     expect(harness.registry.currentSessionId).toBe('stable-app-session')
-    expect(harness.clearLivePermissionProfile).toHaveBeenCalledWith('stable-app-session')
+    expect(harness.setLivePermissionProfile).toHaveBeenCalledWith(
+      'stable-app-session',
+      permissionProfile
+    )
     expect(harness.order).toEqual(['configure permission', 'cwd callback', 'state callback'])
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.adopt).not.toHaveBeenCalled()
     expect(harness.setTimer).toHaveBeenCalledOnce()
     expect(harness.assertCurrentConnection).toHaveBeenCalledWith(harness.connection)
+  })
+
+  it('restores committed authority when an attached refresh rejects before timeout', async () => {
+    const harness = createHarness({ attached: true })
+    const previous = harness.registry
+      .lookup('stable-app-session')!
+      .aggregate.snapshot().permissionProfile!
+    harness.configurePermissionProfile.mockRejectedValueOnce(new Error('mode rejected'))
+    await expect(harness.resume({ permissionProfile: 'full' })).rejects.toThrow('mode rejected')
+    expect(harness.invalidatePermissionProfile).toHaveBeenCalledWith('stable-app-session')
+    expect(harness.setLivePermissionProfile).toHaveBeenCalledWith('stable-app-session', previous)
   })
 
   it('bounds an attached refresh without disconnecting its live provider or committing late metadata', async () => {
@@ -1217,7 +1235,7 @@ describe('AcpProviderSessionResumer', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toEqual(before)
-    expect(harness.clearLivePermissionProfile).not.toHaveBeenCalled()
+    expect(harness.setLivePermissionProfile).not.toHaveBeenCalled()
   })
 
   it('does not start permission configuration after an attached capability lookup times out', async () => {

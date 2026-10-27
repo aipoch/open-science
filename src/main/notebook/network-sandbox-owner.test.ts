@@ -953,12 +953,19 @@ describe('NotebookNetworkSandboxOwner', () => {
     'uses live session full access for %s without persisting or requesting approval',
     async (runtime) => {
       let fullSession: string | undefined = 'session-1'
+      let onFullAccess: ((allowed: boolean) => void) | undefined
+      const unsubscribe = vi.fn()
       const requestDecision = vi.fn().mockResolvedValue('deny')
       const persistAlwaysAllow = vi.fn()
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: '/resources',
         getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
         hasFullAccess: (sessionId) => sessionId === fullSession,
+        subscribeFullAccess: (sessionId, listener) => {
+          expect(sessionId).toBe('session-1')
+          onFullAccess = listener
+          return unsubscribe
+        },
         persistAlwaysAllow,
         requestDecision,
         platform: 'linux'
@@ -988,13 +995,19 @@ describe('NotebookNetworkSandboxOwner', () => {
       await expect(request({ host: 'data.example.org' })).resolves.toBe(true)
       await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
       expect(requestDecision).not.toHaveBeenCalled()
+      backend.resetNetworkConnections.mockClear()
       fullSession = 'other-session'
+      onFullAccess!(false)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
       await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
       fullSession = 'session-1'
+      onFullAccess!(true)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
       await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
       controller.abort()
       await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
       end?.()
+      expect(unsubscribe).toHaveBeenCalledOnce()
       await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
       expect(persistAlwaysAllow).not.toHaveBeenCalled()
       expect(backend.updatePolicy).not.toHaveBeenCalled()

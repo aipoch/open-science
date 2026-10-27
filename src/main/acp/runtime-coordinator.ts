@@ -1997,6 +1997,16 @@ class AcpRuntimeCoordinator {
     return this.runtimeForSession(input.sessionId).requestAppPermission(input)
   }
 
+  hasFullAccess(sessionId: string): boolean {
+    return this.findRuntimeForSession(sessionId)?.hasFullAccess(sessionId) ?? false
+  }
+
+  subscribeFullAccess(sessionId: string, listener: (allowed: boolean) => void): () => void {
+    return (
+      this.findRuntimeForSession(sessionId)?.subscribeFullAccess(sessionId, listener) ?? (() => {})
+    )
+  }
+
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpRuntimeState> {
     await this.runtimeForSession(request.sessionId).setPermissionProfile(request)
     await this.delegatedWork?.setPermissionProfile(request.sessionId, request.profile)

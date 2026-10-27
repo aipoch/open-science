@@ -851,6 +851,45 @@ class AcpPermissionBroker {
     }
   >()
 
+  private readonly fullAccessListeners = new Map<string, Set<() => void>>()
+
+  hasFullAccess(sessionId: string): boolean {
+    const live = this.livePermissionProfiles.get(sessionId)
+    return live?.profile.selectedProfile === 'full' && live.isCurrent()
+  }
+
+  subscribeFullAccess(sessionId: string, listener: (allowed: boolean) => void): () => void {
+    let previous = this.hasFullAccess(sessionId)
+    const notify = (): void => {
+      const allowed = this.hasFullAccess(sessionId)
+      if (allowed === previous) return
+      previous = allowed
+      listener(allowed)
+    }
+    const listeners = this.fullAccessListeners.get(sessionId) ?? new Set()
+    listeners.add(notify)
+    this.fullAccessListeners.set(sessionId, listeners)
+    return () => {
+      listeners.delete(notify)
+      if (!listeners.size) this.fullAccessListeners.delete(sessionId)
+    }
+  }
+
+  invalidatePermissionProfile(sessionId: string): void {
+    const live = this.livePermissionProfiles.get(sessionId)
+    if (live)
+      this.livePermissionProfiles.set(sessionId, {
+        ...live,
+        isCurrent: () => false,
+        providerUpdatesBlocked: true
+      })
+    this.notifyFullAccess(sessionId)
+  }
+
+  private notifyFullAccess(sessionId: string): void {
+    for (const notify of this.fullAccessListeners.get(sessionId) ?? []) notify()
+  }
+
   // Accepts the callback used to publish new permission requests to listeners.
   constructor(
     private readonly emitPermissionRequest: EmitPermissionRequest,
@@ -900,6 +939,7 @@ class AcpPermissionBroker {
       isCurrent,
       providerUpdatesBlocked: false
     })
+    this.notifyFullAccess(sessionId)
   }
 
   beginPermissionProfileTransition(
@@ -908,6 +948,7 @@ class AcpPermissionBroker {
     isCurrent: () => boolean
   ): void {
     this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked: true })
+    this.notifyFullAccess(sessionId)
   }
 
   // A user-requested transition remains authoritative until its runtime operation commits or rolls
@@ -923,6 +964,7 @@ class AcpPermissionBroker {
 
   clearLivePermissionProfile(sessionId: string): void {
     this.livePermissionProfiles.delete(sessionId)
+    this.notifyFullAccess(sessionId)
   }
 
   async applyPermissionProfile(
@@ -933,6 +975,7 @@ class AcpPermissionBroker {
     const providerUpdatesBlocked =
       this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked ?? false
     this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked })
+    this.notifyFullAccess(sessionId)
     const resolvedRequestIds: string[] = []
     for (const [requestId, pending] of Array.from(this.pendingRequests)) {
       if (!isCurrent()) break
@@ -1967,6 +2010,7 @@ class AcpPermissionBroker {
   abandonAllPending(): void {
     this.cancellationGeneration += 1
     this.livePermissionProfiles.clear()
+    for (const sessionId of this.fullAccessListeners.keys()) this.notifyFullAccess(sessionId)
     this.restoredAllowOnceBySession.clear()
     this.restoredContinuations.clear()
     this.durableRequestQueues.clear()
@@ -1993,6 +2037,7 @@ class AcpPermissionBroker {
     this.cancellationGeneration += 1
     this.sessionCancellationTokens.clear()
     this.livePermissionProfiles.clear()
+    for (const sessionId of this.fullAccessListeners.keys()) this.notifyFullAccess(sessionId)
     this.restoredAllowOnceBySession.clear()
     this.restoredContinuations.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
@@ -2044,6 +2089,7 @@ class AcpPermissionBroker {
   clearSession(sessionId: string): void {
     this.cancelForSession(sessionId)
     this.livePermissionProfiles.delete(sessionId)
+    this.notifyFullAccess(sessionId)
     this.conversationGrants.clear(sessionId)
   }
 }

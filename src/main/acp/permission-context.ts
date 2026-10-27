@@ -744,6 +744,18 @@ class AcpPermissionContext {
     return this.presentationToolCallId(context.sessionId, event.toolCallId)
   }
 
+  invalidatePermissionProfile(sessionId: string): void {
+    this.broker.invalidatePermissionProfile(sessionId)
+  }
+
+  hasFullAccess(sessionId: string): boolean {
+    return this.broker.hasFullAccess(sessionId)
+  }
+
+  subscribeFullAccess(sessionId: string, listener: (allowed: boolean) => void): () => void {
+    return this.broker.subscribeFullAccess(sessionId, listener)
+  }
+
   async applyPermissionProfile(
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>,

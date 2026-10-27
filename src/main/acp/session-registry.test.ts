@@ -309,3 +309,19 @@ describe('ACP session registry', () => {
     })
   })
 })
+
+it('publishes attachment changes for authority initialization and revocation', () => {
+  const changed = vi.fn()
+  const registry = new AcpSessionRegistry({ onAttachmentChanged: changed })
+  const first = publish(registry, 'app', 'provider')
+  expect(changed).toHaveBeenLastCalledWith(first)
+  const next = publish(registry, 'app', 'replacement', 'app')
+  expect(changed).toHaveBeenLastCalledWith(next)
+  changed.mockClear()
+  expect(registry.detach(first.attachment!, 'provider')).toBe(false)
+  expect(changed).not.toHaveBeenCalled()
+  expect(registry.detach(next.attachment!, 'connection')).toBe(true)
+  expect(changed).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ appSessionId: 'app', attachment: undefined })
+  )
+})

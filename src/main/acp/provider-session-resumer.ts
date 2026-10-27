@@ -13,7 +13,8 @@ import type {
 } from '../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
-  normalizePermissionProfile
+  normalizePermissionProfile,
+  type SessionPermissionProfileState
 } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import {
@@ -75,7 +76,8 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   capabilityPolicy: SessionCapabilityPolicy
   configurator: Pick<AcpSessionConfigurator, 'configure' | 'configurePermissionProfile'>
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
-  clearLivePermissionProfile: (sessionId: string) => void
+  setLivePermissionProfile: (sessionId: string, profile: SessionPermissionProfileState) => void
+  invalidatePermissionProfile: (sessionId: string) => void
   resolveSpecialistIdentity?: (
     specialistId: string,
     frameworkId: string
@@ -124,7 +126,8 @@ export class AcpProviderSessionResumer {
 
   async resume(
     request: AcpResumeSessionRequest,
-    writerTransfer?: AcpSessionWriterTransfer
+    writerTransfer?: AcpSessionWriterTransfer,
+    isPermissionCurrent: () => boolean = () => true
   ): Promise<AcpCreateSessionResponse> {
     if (this.writerReleases.has(request.sessionId)) {
       const providerSessionId = await this.releaseForTransfer(request.sessionId)
@@ -137,7 +140,7 @@ export class AcpProviderSessionResumer {
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
     if (attached) {
       this.pendingResumeTransfers.delete(request.sessionId)
-      return this.resumeAttached(request, attached)
+      return this.resumeAttached(request, attached, isPermissionCurrent)
     }
     writerTransfer ??= this.pendingResumeTransfers.get(request.sessionId)
     if (writerTransfer)
@@ -311,11 +314,16 @@ export class AcpProviderSessionResumer {
 
   private async resumeAttached(
     request: AcpResumeSessionRequest,
-    attachment: AcpSessionAttachment
+    attachment: AcpSessionAttachment,
+    isPermissionCurrent: () => boolean
   ): Promise<AcpCreateSessionResponse> {
     // Refreshing an attachment must not tear down its running turn. Unrelated prompt progress
     // cannot extend this wait, and cancellation prevents late refresh results from committing.
     let permissionUpdateStarted = false
+    const initialConnection = this.deps.currentConnection()
+    const initialProfile = this.deps.registry
+      .lookup(request.sessionId)
+      ?.aggregate.snapshot().permissionProfile
     return this.withTimeout(
       async (cancellationSignal) => {
         if (request.specialistBindingPending === true) {
@@ -323,6 +331,7 @@ export class AcpProviderSessionResumer {
             'A pending Specialist binding cannot be reconciled through an already attached provider session.'
           )
         }
+        if (!isPermissionCurrent()) throw new Error('Permission profile refresh was superseded.')
         const entry = this.deps.registry.lookup(request.sessionId)
         if (!entry) throw new Error(`ACP session is not registered: ${request.sessionId}`)
         const connection = this.deps.currentConnection()
@@ -344,19 +353,39 @@ export class AcpProviderSessionResumer {
         const wslSetup =
           (await this.deps.capabilities.isWslSetupSession?.(request.sessionId)) === true
         cancellationSignal.throwIfAborted()
+        const previousProfile = entry.aggregate.snapshot().permissionProfile
         permissionUpdateStarted = true
-        const permissionProfile = await this.deps.configurator.configurePermissionProfile({
-          backend,
-          connection,
-          session: attachment.session,
-          cancellationSignal,
-          permissionProfile: normalizePermissionProfile(
-            request.permissionProfile ??
-              entry.aggregate.snapshot().permissionProfile?.selectedProfile ??
-              DEFAULT_PERMISSION_PROFILE
-          )
-        })
+        this.deps.invalidatePermissionProfile(request.sessionId)
+        const permissionProfile = await this.deps.configurator
+          .configurePermissionProfile({
+            backend,
+            connection,
+            session: attachment.session,
+            cancellationSignal,
+            permissionProfile: normalizePermissionProfile(
+              request.permissionProfile ??
+                entry.aggregate.snapshot().permissionProfile?.selectedProfile ??
+                DEFAULT_PERMISSION_PROFILE
+            )
+          })
+          .catch((error) => {
+            // A timeout has an unknown provider outcome: stay revoked until an explicit retry.
+            if (
+              !cancellationSignal.aborted &&
+              isPermissionCurrent() &&
+              previousProfile &&
+              this.deps.currentConnection() === connection &&
+              this.deps.registry.lookup(request.sessionId)?.attachment === attachment
+            ) {
+              this.deps.setLivePermissionProfile(request.sessionId, {
+                ...previousProfile,
+                availableModeIds: [...previousProfile.availableModeIds]
+              })
+            }
+            throw error
+          })
         cancellationSignal.throwIfAborted()
+        if (!isPermissionCurrent()) throw new Error('Permission profile refresh was superseded.')
         const current = this.deps.registry.lookup(request.sessionId)
         if (
           current?.attachment?.generation !== attachment.generation ||
@@ -367,7 +396,7 @@ export class AcpProviderSessionResumer {
         this.deps.assertCurrentConnection(connection)
         if (request.specialistId) current.aggregate.setSpecialistId(request.specialistId)
         current.aggregate.setPermissionProfile(structuredClone(permissionProfile))
-        this.deps.clearLivePermissionProfile(request.sessionId)
+        this.deps.setLivePermissionProfile(request.sessionId, permissionProfile)
         this.deps.registry.select(request.sessionId)
         this.deps.updateCwd(cwd)
         current.aggregate.updateLocation(cwd, projectId)
@@ -396,7 +425,21 @@ export class AcpProviderSessionResumer {
             ? 'The permission update outcome is unknown.'
             : 'No permission update was attempted.')
       }
-    )
+    ).catch((error) => {
+      if (
+        !permissionUpdateStarted &&
+        isPermissionCurrent() &&
+        initialProfile &&
+        this.deps.currentConnection() === initialConnection &&
+        this.deps.registry.lookup(request.sessionId)?.attachment === attachment
+      ) {
+        this.deps.setLivePermissionProfile(request.sessionId, {
+          ...initialProfile,
+          availableModeIds: [...initialProfile.availableModeIds]
+        })
+      }
+      throw error
+    })
   }
 
   private async withTimeout<Result>(

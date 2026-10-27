@@ -198,6 +198,7 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
   hasFullAccess?: (sessionId: string) => boolean
+  subscribeFullAccess?: (sessionId: string, listener: (allowed: boolean) => void) => () => void
   getFolderRestrictionEnabled?: () => Promise<boolean>
   persistAlwaysAllow: (hostname: string) => Promise<NotebookNetworkSettings>
   requestDecision: (request: NotebookNetworkDecisionRequest) => Promise<NotebookNetworkDecision>
@@ -529,6 +530,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       TMP: commandTempRoot
     }
     let activeExecutionGrants: ReadonlySet<string> = new Set()
+    let unsubscribeFullAccess: (() => void) | undefined
     let executionActive = false
     let activeCommandText = invocation.commandText
     let activeExecutionId = invocation.executionReference
@@ -804,6 +806,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       retry: () => cleanup(cleanupReason!, cleanupOutcome!)
     }
     const cleanup: NotebookSandboxedSpawn['cleanup'] = (reason, processOutcome) => {
+      unsubscribeFullAccess?.()
+      unsubscribeFullAccess = undefined
       cleanupReason ??= reason
       cleanupOutcome ??= processOutcome
       if (cleanupPromise) return cleanupPromise
@@ -944,6 +948,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         }
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
+        unsubscribeFullAccess = this.options.subscribeFullAccess?.(
+          invocation.sessionId,
+          (allowed) => {
+            if (!allowed) wrapped.resetNetworkConnections()
+          }
+        )
         executionActive = true
         activeCommandText = request?.commandText ?? invocation.commandText
         activeExecutionId = request?.executionReference ?? invocation.executionReference
@@ -966,6 +976,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           if (ended) return
           ended = true
           activeExecutionGrants = new Set()
+          unsubscribeFullAccess?.()
+          unsubscribeFullAccess = undefined
           executionActive = false
           wrapped.setExecutionActive(false)
           wrapped.resetNetworkConnections()
