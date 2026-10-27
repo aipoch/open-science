@@ -256,23 +256,27 @@ class AcpAgentConnectionAdapter {
       try {
         process = input.spawnAgent
           ? trackWriter(input.spawnAgent())
-          : await spawnMainAgentProcess(framework, (spawnProcess) => {
-              spawnAttempted = !spawnProcess
-              return trackWriter(
-                backend.framework.spawn({
-                  executablePath: backend.executablePath,
-                  env: backend.env,
-                  args: backend.args ?? [],
-                  proxyEnvironmentMode: backend.proxyEnvironmentMode,
-                  spawnProcess: spawnProcess
-                    ? (...args) => {
-                        spawnAttempted = true
-                        return spawnProcess(...args)
-                      }
-                    : undefined
-                })
-              )
-            })
+          : await spawnMainAgentProcess(
+              framework,
+              (spawnProcess) => {
+                spawnAttempted = !spawnProcess
+                return trackWriter(
+                  backend.framework.spawn({
+                    executablePath: backend.executablePath,
+                    env: backend.env,
+                    args: backend.args ?? [],
+                    proxyEnvironmentMode: backend.proxyEnvironmentMode,
+                    spawnProcess: spawnProcess
+                      ? (...args) => {
+                          spawnAttempted = true
+                          return spawnProcess(...args)
+                        }
+                      : undefined
+                  })
+                )
+              },
+              writerReaped
+            )
       } catch (error) {
         // A native spawn can throw after recording a starting receipt; only cancel before admission.
         if (!spawnAttempted) writerReaped?.()

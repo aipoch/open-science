@@ -85,6 +85,7 @@ export const fetchOpenCodeUsageSnapshot = async (
     for (const message of messages) {
       if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
       if (api.version === 2 && message.type === 'compaction' && typeof message.id === 'string') {
+        // Compaction is a model request too; absent tokens mean unknown usage, not zero cost.
         assistantMessageIds.add(message.id)
         if (message.status === 'completed' || message.status === 'failed') {
           const error = isRecord(message.error) ? message.error.message : undefined

@@ -53,7 +53,7 @@ export const startOpenCodeService = async (
   try {
     child = spawnProcess
       ? start(spawnProcess)
-      : await spawnMainAgentProcess(backend.framework.id, start)
+      : await spawnMainAgentProcess(backend.framework.id, start, onReaped)
   } catch (cause) {
     if (!spawnAttempted) onReaped?.()
     else

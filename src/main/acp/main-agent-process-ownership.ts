@@ -2,7 +2,16 @@ import { randomUUID } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
+type MainAgentScope = {
+  projectId: string
+  sessionId: string
+  frameId: string
+  attemptId: string
+  frameworkId: string
+}
+
 type MainAgentProcessOwnership = {
+  assertClear?(scope: MainAgentScope): void
   assertMainAgentSessionResumeAllowed(
     frameworkId: string,
     providerSessionId?: string
@@ -13,13 +22,7 @@ type MainAgentProcessOwnership = {
     terminateLive?: boolean
   ): Promise<void>
   spawn(
-    scope: {
-      projectId: string
-      sessionId: string
-      frameId: string
-      attemptId: string
-      frameworkId: string
-    },
+    scope: MainAgentScope,
     ...args: Parameters<AgentProcessSpawner>
   ): ReturnType<AgentProcessSpawner>
 }
@@ -44,6 +47,26 @@ let closed = false
 let closing: Promise<void> | undefined
 const projectId = 'main-agents'
 
+const failedStarts = new Set<{
+  owner: MainAgentProcessOwnership
+  scope: MainAgentScope
+  release: () => void
+}>()
+
+const settleFailedStarts = (ownership: MainAgentProcessOwnership): void => {
+  if (!ownership.assertClear) return
+  for (const pending of failedStarts) {
+    if (pending.owner !== ownership) continue
+    try {
+      ownership.assertClear(pending.scope)
+    } catch {
+      continue
+    }
+    failedStarts.delete(pending)
+    pending.release()
+  }
+}
+
 /** Called only after the service acquires Config Root ownership, before accepting agent work. */
 export async function configureMainAgentProcessOwnership(
   ownership: MainAgentProcessOwnership
@@ -52,24 +75,35 @@ export async function configureMainAgentProcessOwnership(
   closing = undefined
   generation++
   owner = ownership
-  await owner.recover()
+  try {
+    await ownership.recover()
+  } finally {
+    settleFailedStarts(ownership)
+  }
 }
 
 /** Stop the trees owned by this running service before releasing its directory ownership. */
 export function closeMainAgentProcessOwnership(): Promise<void> {
   closed = true
-  return (closing ??= owner?.recover({}, true) ?? Promise.resolve())
+  const current = owner
+  return (closing ??= (current?.recover({}, true) ?? Promise.resolve()).finally(() => {
+    if (current) settleFailedStarts(current)
+  }))
 }
 
 export async function spawnMainAgentProcess(
   frameworkId: string,
-  spawnConnection: (spawnProcess: AgentProcessSpawner | undefined) => ChildProcessWithoutNullStreams
+  spawnConnection: (
+    spawnProcess: AgentProcessSpawner | undefined
+  ) => ChildProcessWithoutNullStreams,
+  onFailedStartRecovered?: () => void
 ): Promise<ChildProcessWithoutNullStreams> {
   const current = owner
   const currentGeneration = generation
   if (closed) throw new Error('Main agent process ownership is closed.')
   if (!current) return spawnConnection(undefined)
   const attemptId = randomUUID()
+  const scope = { projectId, sessionId: attemptId, frameworkId, frameId: 'main-agent', attemptId }
   const assertCurrent = (): void => {
     if (closed || owner !== current || generation !== currentGeneration)
       throw new Error('Main agent process ownership is closed.')
@@ -83,12 +117,16 @@ export async function spawnMainAgentProcess(
       assertCurrent()
       if (!active) throw new Error('Main agent process admission has expired.')
       active = false
-      return current.spawn(
-        { projectId, sessionId: attemptId, frameworkId, frameId: 'main-agent', attemptId },
-        command,
-        args,
-        options
-      )
+      try {
+        return current.spawn(scope, command, args, options)
+      } catch (error) {
+        // Receipt publication can fail after creation, before the caller receives a child handle.
+        if (onFailedStartRecovered) {
+          failedStarts.add({ owner: current, scope, release: onFailedStartRecovered })
+          settleFailedStarts(current)
+        }
+        throw error
+      }
     })
   } finally {
     active = false
@@ -119,6 +157,8 @@ export async function assertMainAgentSessionResumeAllowed(
     throw new PreviousAgentContextUnavailableError('Previous agent cleanup is unconfirmed.', {
       cause
     })
+  } finally {
+    settleFailedStarts(current)
   }
   if (closed || owner !== current || generation !== currentGeneration)
     throw new Error('Main agent process ownership is closed.')

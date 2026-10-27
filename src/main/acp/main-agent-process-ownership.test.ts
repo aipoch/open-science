@@ -8,6 +8,11 @@ import { DelegatedProcessOwnership } from '../delegation/process-ownership'
 import { terminateProcessTree } from '../process-tree'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  return { ...fs, renameSync: vi.fn(fs.renameSync) }
+})
+
 const f = vi.hoisted(() => ({
   recover: vi.fn(async () => {}),
   assertMainAgentSessionResumeAllowed: vi.fn<(frameworkId: string) => Promise<void>>(
@@ -162,10 +167,12 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
       { major: 1 as const, startupFailure: false },
       { major: 2 as const, startupFailure: false },
       { major: 2 as const, startupFailure: true },
-      { major: 2 as const, startupFailure: false, acpSpawnFailure: true }
+      { major: 2 as const, startupFailure: false, acpSpawnFailure: true },
+      { major: 2 as const, startupFailure: false, receiptFailure: 'companion' },
+      { major: 2 as const, startupFailure: false, receiptFailure: 'acp' }
     ])(
-      'releases a retained OpenCode $major store after main recovery (startup failure: $startupFailure, ACP spawn failure: $acpSpawnFailure)',
-      async ({ major, startupFailure, acpSpawnFailure }) => {
+      'releases a retained OpenCode $major store after main recovery (startup failure: $startupFailure, ACP spawn failure: $acpSpawnFailure, receipt failure: $receiptFailure)',
+      async ({ major, startupFailure, acpSpawnFailure, receiptFailure }) => {
         root = await mkdtemp(join(tmpdir(), 'main-opencode-store-recovery-'))
         const tree = await import('../process-tree')
         const { DelegatedProcessOwnership: Ownership } =
@@ -186,6 +193,7 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
         >()
         vi.spyOn(tree, 'registerProcessTreeOwnership').mockImplementation((child, record) => {
           settlements.set(child, record)
+          children.push(child as ChildProcessWithoutNullStreams)
           realRegister(child, record)
         })
         let failCleanup = true
@@ -207,9 +215,25 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
             ],
             { stdio: 'pipe' }
           ) as ChildProcessWithoutNullStreams
-          children.push(child)
           return child
         })
+        if (receiptFailure) {
+          const fs = await import('node:fs')
+          const { renameSync: rename } = await vi.importActual<typeof import('node:fs')>('node:fs')
+          let injected = false
+          vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+            if (
+              !injected &&
+              children.length === (receiptFailure === 'companion' ? 1 : 2) &&
+              String(target).includes('main-agent-process-ownership') &&
+              JSON.parse(fs.readFileSync(source, 'utf8')).phase === 'owned'
+            ) {
+              injected = true
+              throw new Error('Ownership publication fixture failure')
+            }
+            rename(source, target)
+          })
+        }
         const selectedFramework = acpSpawnFailure
           ? {
               ...framework.opencodeFramework,
@@ -260,7 +284,13 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
             candidate.transferTo(attempt)
             return attempt.publish({ close: false, delete: false, resume: false, steering: false })
           })
-          if (acpSpawnFailure) await expect(pending).rejects.toThrow('ACP spawn rejected')
+          if (receiptFailure)
+            await expect(pending).rejects.toThrow(
+              receiptFailure === 'companion'
+                ? 'spawn is unconfirmed'
+                : 'Ownership publication fixture failure'
+            )
+          else if (acpSpawnFailure) await expect(pending).rejects.toThrow('ACP spawn rejected')
           else if (startupFailure) await expect(pending).rejects.toThrow('could not be stopped')
           else {
             await pending
@@ -274,7 +304,12 @@ describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
           const sameMajor = await acquireOpenCodeStore(root!, major)
           sameMajor.release()
           failCleanup = false
-          if (major === 2 && !startupFailure && !acpSpawnFailure) {
+          if (
+            major === 2 &&
+            !startupFailure &&
+            !acpSpawnFailure &&
+            receiptFailure !== 'companion'
+          ) {
             retainCompanion = true
             await expect(main.assertMainAgentSessionResumeAllowed('opencode')).rejects.toThrow(
               'Previous agent cleanup is unconfirmed'

@@ -336,6 +336,73 @@ describe('AcpProviderPromptExecutor', () => {
     })
   })
 
+  it.each([true, false])(
+    'keeps compaction usage unknown without inventing a partial total (ACP aggregate: %s)',
+    async (aggregateAvailable) => {
+      const response: PromptResponse = {
+        stopReason: 'end_turn',
+        ...(aggregateAvailable
+          ? { usage: { inputTokens: 30, outputTokens: 9, totalTokens: 39 } }
+          : {})
+      }
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] })))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: 'assistant-1', type: 'assistant', tokens: { input: 4, output: 2 } },
+                {
+                  id: 'compaction-1',
+                  type: 'compaction',
+                  status: 'failed',
+                  error: { message: 'provider stopped' }
+                }
+              ]
+            })
+          )
+        )
+      const executor = new AcpProviderPromptExecutor({
+        backendGeneration: {
+          openCodeUsageApi: () => ({
+            baseUrl: 'http://127.0.0.1:4242',
+            authorization: 'Basic fixture',
+            version: 2
+          }),
+          current: { adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false } }
+        },
+        opencodeUsageFetch: fetchImpl
+      })
+      const outcome = await executor.execute({
+        session: {
+          sessionId: 'provider-1',
+          prompt: vi.fn(async () => undefined),
+          nextUpdate: vi.fn(async () => stop(response))
+        } as unknown as ProviderPromptExecutionInput['session'],
+        content: 'prompt',
+        cwd: '/workspace',
+        frameworkId: 'opencode',
+        isCurrent: () => true,
+        beforeDispatch: async () => 'active',
+        captureStop: () => true,
+        onAccepted: () => undefined,
+        routeNotification: () => undefined
+      })
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(outcome).toEqual({
+        kind: 'stopped',
+        response,
+        facts: {
+          compaction: { succeeded: false, error: 'provider stopped' },
+          ...(aggregateAvailable
+            ? { turnUsage: { inputTokens: 30, cacheTokens: 0, outputTokens: 9 } }
+            : {})
+        }
+      })
+    }
+  )
+
   it('accepts once, routes updates in order, captures stop, and returns raw normalized facts', async () => {
     const response: PromptResponse = {
       stopReason: 'end_turn',
