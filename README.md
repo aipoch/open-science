@@ -67,6 +67,7 @@ Completed research sessions can also be exported as portable `.science` packages
 - [Data, Permissions, and Trust](#data-permissions-and-trust)
 - [Development & Packaging](#development--packaging)
 - [Frequently Asked Questions](#frequently-asked-questions)
+- [Contributors](#contributors)
 - [Get Involved](#get-involved)
 - [License](#license)
 - [Star History](#star-history)
@@ -415,6 +416,14 @@ A: Open the generated artifact and choose **Provenance**. Select a version to in
 
 A: Yes. Edit a completed user message and resend it to create a new branch from that point. The original later turns remain available, and the revision arrows beside the message switch between the alternative paths.
 
+## Contributors
+
+Thank you to everyone who contributes code, documentation, translations, bug reports, and community support to AIPOCH Open-Science.
+
+[Contributors on GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science contributors](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
+
 ## Get Involved
 
 AIPOCH Open-Science welcomes bug reports, feature proposals, design discussions, community questions, and contributions through GitHub, Discord, X, and the AIPOCH website. Choose the channel that best matches your goal, then follow the linked contribution guidance and public-posting safety reminder before sharing project details.
@@ -448,11 +457,3 @@ Apache License 2.0 — see [LICENSE](LICENSE).
    <img alt="AIPOCH Open-Science GitHub star history chart" src="https://star-history.dera.page/svg?repos=aipoch/open-science&type=date&legend=top-left" />
  </picture>
 </a>
-
-## Contributors
-
-Thank you to everyone who contributes code, documentation, translations, bug reports, and community support to AIPOCH Open-Science.
-
-[Contributors on GitHub](https://github.com/aipoch/open-science/graphs/contributors)
-
-[![AIPOCH Open-Science contributors](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

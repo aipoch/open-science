@@ -69,6 +69,7 @@ Las sesiones de investigación terminadas también pueden exportarse como paquet
 - [Datos, permisos y confianza](#datos-permisos-y-confianza)
 - [Desarrollo y empaquetado](#desarrollo-y-empaquetado)
 - [Preguntas frecuentes](#preguntas-frecuentes)
+- [Colaboradores](#colaboradores)
 - [Participe](#participe)
 - [Licencia](#licencia)
 - [Historial de estrellas](#historial-de-estrellas)
@@ -411,6 +412,14 @@ R: Abra el artefacto generado y elija **Procedencia**. Seleccione una versión p
 
 R: Sí. Edite un mensaje de usuario completo y reenvíelo para crear una nueva rama desde ese punto. Los turnos posteriores originales permanecen disponibles y las flechas de revisión junto al mensaje permiten cambiar entre las rutas alternativas.
 
+## Colaboradores
+
+Gracias a todas las personas que contribuyen a AIPOCH Open-Science con código, documentación, traducciones, informes de errores y ayuda a la comunidad.
+
+[Ver colaboradores en GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![Colaboradores de AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
+
 ## Participe
 
 AIPOCH Open-Science agradece informes de errores, propuestas de funciones, debates sobre diseño, preguntas de la comunidad y contribuciones a través de GitHub, Discord, X y el sitio web de AIPOCH. Elija el canal que mejor se adapte a su objetivo, luego siga la guía de contribución vinculada y el recordatorio de seguridad de publicación pública antes de compartir los detalles del proyecto.
@@ -442,11 +451,3 @@ Licencia Apache 2.0: consulte [LICENSE](../../LICENSE).
    <img alt="Gráfico del historial de estrellas de AIPOCH Open-Science en GitHub" src="https://star-history.dera.page/svg?repos=aipoch/open-science&type=date&legend=top-left" />
  </picture>
 </a>
-
-## Colaboradores
-
-Gracias a todas las personas que contribuyen a AIPOCH Open-Science con código, documentación, traducciones, informes de errores y ayuda a la comunidad.
-
-[Ver colaboradores en GitHub](https://github.com/aipoch/open-science/graphs/contributors)
-
-[![Colaboradores de AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

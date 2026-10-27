@@ -69,6 +69,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 - [데이터, 권한 및 신뢰](#데이터-권한-및-신뢰)
 - [개발 및 패키징](#개발-및-패키징)
 - [자주 묻는 질문](#자주-묻는-질문)
+- [기여자](#기여자)
 - [참여하기](#참여하기)
 - [라이선스](#라이선스)
 
@@ -410,6 +411,14 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 답변: 가능합니다. 완료된 사용자 메시지를 편집해 다시 보내면 해당 지점에서 새 브랜치가 생성됩니다. 원래 후속 턴은 계속 사용할 수 있고, 메시지 옆의 수정 화살표로 대체 경로를 전환합니다.
 
+## 기여자
+
+코드, 문서, 번역, 버그 보고 및 커뮤니티 지원을 통해 AIPOCH Open-Science에 기여해 주시는 모든 분께 감사드립니다.
+
+[GitHub 기여자 보기](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science 기여자](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
+
 ## 참여하기
 
 AIPOCH Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버그 신고, 기능 제안, 설계 토론, 커뮤니티 질문 및 기여를 받습니다. 목적에 가장 잘 맞는 채널을 선택하고 프로젝트 세부 정보를 공개하기 전에 관련 기여 가이드와 공개 게시 안전 안내를 확인하세요.
@@ -431,11 +440,3 @@ AIPOCH Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버�
 ## 라이선스
 
 Apache License 2.0 — [LICENSE](../../LICENSE)를 참고하세요.
-
-## 기여자
-
-코드, 문서, 번역, 버그 보고 및 커뮤니티 지원을 통해 AIPOCH Open-Science에 기여해 주시는 모든 분께 감사드립니다.
-
-[GitHub 기여자 보기](https://github.com/aipoch/open-science/graphs/contributors)
-
-[![AIPOCH Open-Science 기여자](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
