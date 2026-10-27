@@ -715,7 +715,7 @@ const ReplayPanelContent = ({
                   collisionBoundary={tooltipBoundary}
                   collisionPadding={8}
                 >
-                  {t('Replay branch')}:
+                  {t('Replay branch')}:{' '}
                   {branch?.kind === 'unattributed'
                     ? t('Related material')
                     : t('Branch {{index}}', {
