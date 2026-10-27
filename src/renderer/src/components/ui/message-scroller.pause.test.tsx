@@ -16,7 +16,7 @@ import type { WorkspaceConversationTimelineItem } from '../../pages/workspace/wo
 import {
   TranscriptEndSync,
   MessageScrollerFollowIntent
-} from '../../pages/workspace/TranscriptEndSync'
+} from '../../pages/workspace/use-transcript-window'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined

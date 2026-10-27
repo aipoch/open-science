@@ -73,8 +73,7 @@
     "src/renderer/src/pages/workspace/agent-authentication-error.ts",
     "src/renderer/src/pages/workspace/agent-authentication-error.test.ts",
     "src/renderer/src/pages/workspace/use-agent-authentication-recovery.ts",
-    "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx",
-    "src/renderer/src/pages/workspace/TranscriptEndSync.tsx"
+    "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ComposerMessageQueue.tsx",

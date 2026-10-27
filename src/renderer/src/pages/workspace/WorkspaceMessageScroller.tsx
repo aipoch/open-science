@@ -130,7 +130,7 @@ import { setWorkspacePresentationRevealing } from './workspace-presentation-reve
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 
-import { TranscriptEndSync, MessageScrollerFollowIntent } from './TranscriptEndSync'
+import { TranscriptEndSync, MessageScrollerFollowIntent } from './use-transcript-window'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
