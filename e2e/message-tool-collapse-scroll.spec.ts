@@ -97,23 +97,24 @@ for (const scenario of scenarios) {
       await page.mouse.move(box!.x + 10, box!.y + box!.height / 2)
       await page.mouse.wheel(0, -100)
       await page.waitForTimeout(300)
-      await viewport.evaluate((e, gap) => {
-        e.scrollTo({ top: e.scrollHeight - e.clientHeight - gap, behavior: 'instant' })
-      }, scenario.gap)
-      await expect
-        .poll(async () =>
-          Math.abs(
-            (await viewport.evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop)) -
-              scenario.gap
-          )
-        )
-        .toBeLessThanOrEqual(2)
+      // Cold rendering can briefly remove the scroll range. Establish a stable precondition;
+      // retries end here, before recording frames or performing the measured interaction.
+      await expect(async () => {
+        await viewport.evaluate((e, gap) => {
+          e.scrollTo({ top: e.scrollHeight - e.clientHeight - gap, behavior: 'instant' })
+        }, scenario.gap)
+        await page.waitForTimeout(700)
+        const geometry = await viewport.evaluate((e) => ({
+          range: e.scrollHeight - e.clientHeight,
+          gap: e.scrollHeight - e.clientHeight - e.scrollTop
+        }))
+        expect(geometry.range).toBeGreaterThan(500)
+        expect(Math.abs(geometry.gap - scenario.gap)).toBeLessThanOrEqual(2)
+        await expect(collapseButton).toBeInViewport({ timeout: 1000 })
+      }).toPass({ timeout: 10_000, intervals: [100] })
       if (scenario.gap) {
         await expect(toEnd).toHaveAttribute('data-active', 'true')
       }
-      // Let wheel momentum, streaming presentation and the expand tween settle before sampling.
-      await page.waitForTimeout(700)
-      await expect(collapseButton).toBeInViewport()
       await page.evaluate(
         ({ groupCollapse }) => {
           const viewport = document.querySelector<HTMLElement>(
