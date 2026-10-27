@@ -448,3 +448,11 @@ Apache License 2.0 — see [LICENSE](LICENSE).
    <img alt="AIPOCH Open-Science GitHub star history chart" src="https://star-history.dera.page/svg?repos=aipoch/open-science&type=date&legend=top-left" />
  </picture>
 </a>
+
+## Contributors
+
+Thank you to everyone who contributes code, documentation, translations, bug reports, and community support to AIPOCH Open-Science.
+
+[Contributors on GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science contributors](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

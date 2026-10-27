@@ -437,3 +437,11 @@ Les capacités livrées, partielles et prévues figurent dans la [carte des capa
 ## Licence
 
 Licence Apache 2.0 — voir [LICENSE](../../LICENSE).
+
+## Contributeurs
+
+Merci à toutes les personnes qui contribuent à AIPOCH Open-Science par leur code, leur documentation, leurs traductions, leurs signalements de bugs et leur aide à la communauté.
+
+[Voir les contributeurs sur GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![Contributeurs à AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

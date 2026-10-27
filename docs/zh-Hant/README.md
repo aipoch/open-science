@@ -431,3 +431,11 @@ AIPOCH Open-Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回
 ## 授權條款
 
 Apache License 2.0 — 請參閱 [LICENSE](../../LICENSE)。
+
+## 貢獻者
+
+感謝所有為 AIPOCH Open-Science 貢獻程式碼、文件、翻譯、錯誤回報及社群支援的朋友。
+
+[查看 GitHub 貢獻者](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science 貢獻者](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

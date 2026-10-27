@@ -442,3 +442,11 @@ Apache-Lizenz 2.0 – siehe [LICENSE](../../LICENSE).
    <img alt="GitHub-Sternverlauf von AIPOCH Open-Science" src="https://star-history.dera.page/svg?repos=aipoch/open-science&type=date&legend=top-left" />
 </picture>
 </a>
+
+## Mitwirkende
+
+Vielen Dank an alle, die mit Code, Dokumentation, Übersetzungen, Fehlerberichten und Unterstützung der Community zu AIPOCH Open-Science beitragen.
+
+[Mitwirkende auf GitHub ansehen](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![Mitwirkende an AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

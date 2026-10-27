@@ -431,3 +431,11 @@ AIPOCH Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버�
 ## 라이선스
 
 Apache License 2.0 — [LICENSE](../../LICENSE)를 참고하세요.
+
+## 기여자
+
+코드, 문서, 번역, 버그 보고 및 커뮤니티 지원을 통해 AIPOCH Open-Science에 기여해 주시는 모든 분께 감사드립니다.
+
+[GitHub 기여자 보기](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science 기여자](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

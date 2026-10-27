@@ -429,3 +429,11 @@ AIPOCH Open-Science приветствует сообщения об ошибк�
 ## Лицензия
 
 Apache License 2.0 — см. файл [LICENSE](../../LICENSE).
+
+## Участники
+
+Спасибо всем, кто помогает развивать AIPOCH Open-Science: пишет код и документацию, переводит, сообщает об ошибках и поддерживает сообщество.
+
+[Участники на GitHub](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![Участники AIPOCH Open-Science](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

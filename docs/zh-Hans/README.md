@@ -431,3 +431,11 @@ AIPOCH Open-Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报
 ## 许可证
 
 Apache License 2.0 — 参阅 [LICENSE](../../LICENSE)。
+
+## 贡献者
+
+感谢所有为 AIPOCH Open-Science 贡献代码、文档、翻译、缺陷报告和社区支持的朋友。
+
+[查看 GitHub 贡献者](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science 贡献者](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)

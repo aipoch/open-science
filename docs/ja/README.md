@@ -431,3 +431,11 @@ AIPOCH Open-Science では、バグ報告、機能提案、設計に関する議
 ## ライセンス
 
 Apache License 2.0 — [LICENSE](../../LICENSE) を参照してください。
+
+## 貢献者
+
+コード、ドキュメント、翻訳、不具合報告、コミュニティでのサポートを通じて AIPOCH Open-Science に貢献してくださる皆さまに感謝します。
+
+[GitHub の貢献者を見る](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science の貢献者](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
