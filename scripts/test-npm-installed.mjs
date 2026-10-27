@@ -33,6 +33,15 @@ for (const pkg of packages) {
 }
 let registry
 const downloaded = new Set()
+// The staged entry package declares real runtime deps (e.g. @modelcontextprotocol/sdk) that
+// npm must resolve like a real install; forward packuments we do not stage to npmjs.org.
+const upstreamRegistry = async (path, res) => {
+  const upstream = await fetch(`https://registry.npmjs.org/${path}`)
+  res.writeHead(upstream.status, {
+    'content-type': upstream.headers.get('content-type') ?? 'application/json'
+  })
+  res.end(Buffer.from(await upstream.arrayBuffer()))
+}
 const server = createServer((req, res) => {
   const path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).slice(1)
   if (bytes.has(path)) {
@@ -42,8 +51,10 @@ const server = createServer((req, res) => {
   }
   const pkg = packages.find((item) => item.manifest.name === path)
   if (!pkg) {
-    res.writeHead(404)
-    res.end('{"error":"not_found"}')
+    void upstreamRegistry(path, res).catch(() => {
+      res.writeHead(502)
+      res.end('{"error":"upstream_failed"}')
+    })
     return
   }
   res.setHeader('content-type', 'application/json')
