@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
   terminate: vi.fn(async () => ({ reaped: true }))
 }))
 vi.mock('../agent-framework/opencode', () => ({ spawnOpenCodeProcess: mocks.spawn }))
-vi.mock('../process-tree', () => ({ terminateProcessTree: mocks.terminate }))
+vi.mock('../process-tree', () => ({
+  terminateProcessTree: mocks.terminate,
+  onProcessTreeReaped: vi.fn()
+}))
 afterEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()

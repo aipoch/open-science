@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
-import { terminateProcessTree, type ProcessTreeKillResult } from '../process-tree'
+import {
+  onProcessTreeReaped,
+  terminateProcessTree,
+  type ProcessTreeKillResult
+} from '../process-tree'
 import { spawnOpenCodeProcess } from '../agent-framework/opencode'
 import type { AgentProcessSpawner, ResolvedAgentBackend } from '../agent-framework'
 import { spawnMainAgentProcess } from './main-agent-process-ownership'
@@ -16,25 +20,48 @@ export type OpenCodeServiceLease = Readonly<{
 export const startOpenCodeService = async (
   backend: ResolvedAgentBackend,
   onUnexpectedExit: () => void,
-  spawnProcess?: AgentProcessSpawner
+  spawnProcess?: AgentProcessSpawner,
+  onReaped?: () => void
 ): Promise<
   OpenCodeServiceLease & { api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']> }
 > => {
   const password = randomUUID()
-  const start = (spawnProcess: AgentProcessSpawner | undefined): ReturnType<AgentProcessSpawner> =>
-    spawnOpenCodeProcess(
+  let spawnAttempted = false
+  const start = (
+    spawnProcess: AgentProcessSpawner | undefined
+  ): ReturnType<AgentProcessSpawner> => {
+    spawnAttempted = !spawnProcess
+    const child = spawnOpenCodeProcess(
       {
         executablePath: backend.executablePath,
         env: { ...backend.env, OPENCODE_PASSWORD: password, OPENCODE_USERNAME: 'opencode' },
         args: ['--stdio', '--port', '0', '--hostname', '127.0.0.1'],
         proxyEnvironmentMode: backend.proxyEnvironmentMode,
-        spawnProcess
+        spawnProcess: spawnProcess
+          ? (...args) => {
+              spawnAttempted = true
+              return spawnProcess(...args)
+            }
+          : undefined
       },
       'serve'
     )
-  const child = spawnProcess
-    ? start(spawnProcess)
-    : await spawnMainAgentProcess(backend.framework.id, start)
+    if (onReaped) onProcessTreeReaped(child, onReaped)
+    return child
+  }
+  let child: ReturnType<AgentProcessSpawner>
+  try {
+    child = spawnProcess
+      ? start(spawnProcess)
+      : await spawnMainAgentProcess(backend.framework.id, start)
+  } catch (cause) {
+    if (!spawnAttempted) onReaped?.()
+    else
+      throw new OpenCodeServiceCleanupError('OpenCode HTTP service spawn is unconfirmed.', {
+        cause
+      })
+    throw cause
+  }
   let stopping = false
   let released: Promise<ProcessTreeKillResult> | undefined
   const release = (): Promise<ProcessTreeKillResult> => {

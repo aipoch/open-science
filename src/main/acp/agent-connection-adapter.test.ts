@@ -35,7 +35,7 @@ vi.mock('./opencode-service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./opencode-service')>()),
   startOpenCodeService: startService
 }))
-vi.mock('../process-tree', () => ({ terminateProcessTree }))
+vi.mock('../process-tree', () => ({ terminateProcessTree, onProcessTreeReaped: vi.fn() }))
 
 afterEach(() => {
   vi.clearAllMocks()

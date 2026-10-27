@@ -25,7 +25,7 @@ import {
 } from './opencode-service'
 import { acquireOpenCodeStore, type OpenCodeStoreLease } from './opencode-store'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { terminateProcessTree } from '../process-tree'
+import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import type {
   AcpBackendGenerationAttempt,
   AcpBackendGenerationView
@@ -129,8 +129,21 @@ class AcpAgentConnectionAdapter {
     let openCodeService: OpenCodeServiceLease | undefined
     let openCodeStore: OpenCodeStoreLease | undefined
     let backendAttempt: AcpBackendGenerationAttempt | undefined
-    let serviceCleanupFailed = false
+    let cleanupUnconfirmed = false
     let framework: AgentFramework['id'] = 'claude-code'
+    let opening = true
+    let storeWriters = 0
+    const releaseRecoveredStore = (): void => {
+      if (!opening && storeWriters === 0) openCodeStore?.release()
+    }
+    const retainStoreWriter = (): (() => void) | undefined => {
+      if (!openCodeStore) return undefined
+      storeWriters++
+      return () => {
+        storeWriters--
+        releaseRecoveredStore()
+      }
+    }
 
     const reportCleanupFailure = (stage: CandidateCleanupStage, error: unknown): void => {
       try {
@@ -140,7 +153,7 @@ class AcpAgentConnectionAdapter {
       }
     }
     const cleanup = async (): Promise<void> => {
-      let reaped = !serviceCleanupFailed
+      let reaped = !cleanupUnconfirmed
       if (!reaped) hooks.onProcessTreeReaped(false)
       try {
         connection?.close()
@@ -220,7 +233,8 @@ class AcpAgentConnectionAdapter {
               process.kill()
             }
           },
-          input.spawnProcess
+          input.spawnProcess,
+          retainStoreWriter()
         )
         openCodeService = service
         backend = { ...backend, opencodeUsageApi: service.api }
@@ -231,17 +245,40 @@ class AcpAgentConnectionAdapter {
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
       if (serviceExited) throw new Error('OpenCode HTTP service exited during preparation.')
-      process = input.spawnAgent
-        ? input.spawnAgent()
-        : await spawnMainAgentProcess(framework, (spawnProcess) =>
-            backend.framework.spawn({
-              executablePath: backend.executablePath,
-              env: backend.env,
-              args: backend.args ?? [],
-              proxyEnvironmentMode: backend.proxyEnvironmentMode,
-              spawnProcess
+      const writerReaped = retainStoreWriter()
+      const trackWriter = (
+        child: ChildProcessWithoutNullStreams
+      ): ChildProcessWithoutNullStreams => {
+        if (writerReaped) onProcessTreeReaped(child, writerReaped)
+        return child
+      }
+      let spawnAttempted = Boolean(input.spawnAgent)
+      try {
+        process = input.spawnAgent
+          ? trackWriter(input.spawnAgent())
+          : await spawnMainAgentProcess(framework, (spawnProcess) => {
+              spawnAttempted = !spawnProcess
+              return trackWriter(
+                backend.framework.spawn({
+                  executablePath: backend.executablePath,
+                  env: backend.env,
+                  args: backend.args ?? [],
+                  proxyEnvironmentMode: backend.proxyEnvironmentMode,
+                  spawnProcess: spawnProcess
+                    ? (...args) => {
+                        spawnAttempted = true
+                        return spawnProcess(...args)
+                      }
+                    : undefined
+                })
+              )
             })
-          )
+      } catch (error) {
+        // A native spawn can throw after recording a starting receipt; only cancel before admission.
+        if (!spawnAttempted) writerReaped?.()
+        else cleanupUnconfirmed = true
+        throw error
+      }
       hooks.onProcessSpawned(framework)
       if (serviceExited) throw new Error('OpenCode HTTP service exited during spawn.')
       if (input.isShuttingDown() || !input.isCurrent()) {
@@ -287,10 +324,14 @@ class AcpAgentConnectionAdapter {
       connection = this.createClientConnection(spawnedProcess, hooks)
       bindMainAgentConnection(connection, spawnedProcess)
     } catch (error) {
-      if (error instanceof OpenCodeServiceCleanupError) serviceCleanupFailed = true
+      if (error instanceof OpenCodeServiceCleanupError) cleanupUnconfirmed = true
       backendAttempt?.fail()
       await cleanup()
       throw error
+    } finally {
+      // Recovery may settle after this candidate has transferred or failed startup.
+      opening = false
+      releaseRecoveredStore()
     }
 
     const openedProcess = process
