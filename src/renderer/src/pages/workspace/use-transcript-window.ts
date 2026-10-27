@@ -57,7 +57,8 @@ const useTranscriptWindow = (
   scopeId: string | undefined,
   items: readonly WorkspaceConversationTimelineItem[],
   presentationBarrierIndex: number,
-  viewportRef: RefObject<HTMLDivElement | null>
+  viewportRef: RefObject<HTMLDivElement | null>,
+  followingPaused = false
 ): {
   entries: Array<{ item: WorkspaceConversationTimelineItem; itemIndex: number }>
   end: number
@@ -77,6 +78,7 @@ const useTranscriptWindow = (
     end: 0
   }))
   const pendingTargetRef = useRef<ReadingAnchor | undefined>(undefined)
+  const previousPauseRef = useRef({ scopeId, paused: followingPaused })
   const readingAnchorRef = useRef<ReadingAnchor | undefined>(undefined)
   const findRestoreRef = useRef<FindSnapshot | undefined>(undefined)
   const scrollInputRef = useRef<
@@ -107,7 +109,10 @@ const useTranscriptWindow = (
   }, [scopeId])
   const stateMatchesScope = state.scopeId === scopeId && state.itemCount > 0
   const wasPinnedToEnd =
-    stateMatchesScope && state.followEnd !== false && state.end === state.itemCount
+    !followingPaused &&
+    stateMatchesScope &&
+    state.followEnd !== false &&
+    state.end === state.itemCount
   const retainedWindowSize = Math.max(TRANSCRIPT_WINDOW_SIZE, state.end - state.start)
   const retainedStart =
     stateMatchesScope && state.anchorId ? items.findIndex((item) => item.id === state.anchorId) : -1
@@ -127,6 +132,36 @@ const useTranscriptWindow = (
         ? items.length
         : Math.min(start + retainedWindowSize, items.length)
       : items.length
+
+  // Preserve mounted reading rows as well as scrollTop during an explicit interaction pause.
+  // Persist the release so ending the pause alone cannot jump to a newer bounded tail.
+  useLayoutEffect(() => {
+    const previous = previousPauseRef.current
+    previousPauseRef.current = { scopeId, paused: followingPaused }
+    const viewport = viewportRef.current
+    if (followingPaused) {
+      readingAnchorRef.current = captureReadingAnchor(scopeId, viewport)
+      // Synchronize the external pause before paint so tail replacement cannot evict reading rows.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState((current) =>
+        current.followEnd === false ? current : { ...current, followEnd: false }
+      )
+    } else if (
+      previous.scopeId === scopeId &&
+      previous.paused &&
+      !finding &&
+      viewport &&
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5
+    ) {
+      // Native scrollbar arrival publishes the primitive state before the parent's scroll
+      // callback rerenders. Reconcile after that callback, including its queued window expansion.
+      setState((current) =>
+        current.end === items.length ? { ...current, followEnd: true } : current
+      )
+      readingAnchorRef.current = undefined
+      pendingTargetRef.current = undefined
+    }
+  }, [followingPaused, scopeId, viewportRef, finding, items.length])
 
   const revealMessage = useCallback(
     (messageId: string): void => {
@@ -346,9 +381,10 @@ const useTranscriptWindow = (
       return
     }
     const following =
-      keepFollowing ||
-      (end === items.length &&
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5)
+      !followingPaused &&
+      (keepFollowing ||
+        (end === items.length &&
+          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 0.5))
     if (following) readingAnchorRef.current = undefined
     let nextStart = start
     let nextEnd = end
@@ -457,7 +493,7 @@ const useTranscriptWindow = (
     followEnd,
     recordUserScroll,
     finishUserScroll,
-    isFollowingEnd: !finding && (!stateMatchesScope || wasPinnedToEnd)
+    isFollowingEnd: !finding && !followingPaused && (!stateMatchesScope || wasPinnedToEnd)
   }
 }
 

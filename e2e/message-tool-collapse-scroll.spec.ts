@@ -155,7 +155,10 @@ for (const scenario of scenarios) {
         { groupCollapse: 'groupCollapse' in scenario }
       )
       const mark = (label: string): Promise<void> =>
-        page.evaluate((label) => (window as ProbeWindow).collapseProbe.mark(label), label)
+        page.evaluate(
+          (label) => (window as unknown as ProbeWindow).collapseProbe.mark(label),
+          label
+        )
       const toggle = async (): Promise<void> => {
         const box = await collapseButton.boundingBox()
         // Use a real pointer without Playwright scrolling the target into view first.
@@ -186,7 +189,9 @@ for (const scenario of scenarios) {
       ).toBeAttached()
       await page.waitForTimeout(700)
       await mark('grown')
-      const records = await page.evaluate(() => (window as ProbeWindow).collapseProbe.stop())
+      const records = await page.evaluate(() =>
+        (window as unknown as ProbeWindow).collapseProbe.stop()
+      )
       await writeFile(
         testInfo.outputPath('geometry.json'),
         JSON.stringify({ scenario, records }, null, 2)

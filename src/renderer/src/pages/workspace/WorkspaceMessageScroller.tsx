@@ -9,8 +9,7 @@ import {
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
-  useMessageScroller,
-  useMessageScrollerScrollable
+  useMessageScroller
 } from '@/components/ui/message-scroller'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
@@ -130,49 +129,7 @@ import { setWorkspacePresentationRevealing } from './workspace-presentation-reve
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 
-// Replacing a bounded tail can keep the same row count. Tell the existing scroller to follow
-// after that replacement commits; its normal resize/streaming behavior remains authoritative.
-const TranscriptEndSync = ({
-  scopeId,
-  itemCount,
-  mountedItemCount,
-  following
-}: {
-  scopeId: string | undefined
-  itemCount: number
-  mountedItemCount: number
-  following: boolean
-}): null => {
-  const { scrollToEnd } = useMessageScroller()
-  const { end: readerAwayFromEnd } = useMessageScrollerScrollable()
-  const previousRef = useRef<
-    { scopeId: string | undefined; itemCount: number; mountedItemCount: number } | undefined
-  >(undefined)
-  useLayoutEffect(() => {
-    const previous = previousRef.current
-    previousRef.current = { scopeId, itemCount, mountedItemCount }
-    if (
-      following &&
-      !readerAwayFromEnd &&
-      previous &&
-      previous.scopeId === scopeId &&
-      itemCount > previous.itemCount &&
-      mountedItemCount === previous.mountedItemCount
-    ) {
-      // Content processes the replaced rows in a MutationObserver, which can select a new
-      // prompt anchor. Restore follow intent after that observer, before the next paint.
-      let cancelled = false
-      queueMicrotask(() => {
-        if (!cancelled) scrollToEnd({ behavior: 'auto' })
-      })
-      return () => {
-        cancelled = true
-      }
-    }
-    return undefined
-  }, [following, itemCount, mountedItemCount, readerAwayFromEnd, scopeId, scrollToEnd])
-  return null
-}
+import { TranscriptEndSync, MessageScrollerFollowIntent } from './TranscriptEndSync'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -207,20 +164,6 @@ type WorkspaceMessageScrollerProps = {
   // message queue can hold queued sends until the transcript finishes presenting.
   reportPresentationRevealing?: boolean
   turnOutcomeActions?: TurnOutcomeActions
-}
-
-const MessageScrollerFollowIntent = ({
-  active,
-  onChange
-}: {
-  active: boolean
-  onChange: (following: boolean) => void
-}): null => {
-  const { end } = useMessageScrollerScrollable()
-  useLayoutEffect(() => {
-    if (active) onChange(!end)
-  }, [active, end, onChange])
-  return null
 }
 
 type TerminalAnnouncement = {
@@ -898,11 +841,27 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex >= 0
       ? conversationItems.slice(0, presentationBarrierIndex + 1)
       : conversationItems
+  const [pauseState, setPauseState] = useState<{ scopeId: string | undefined; paused: boolean }>({
+    scopeId: undefined,
+    paused: false
+  })
+  const followingPaused = pauseState.scopeId === currentPresentationScopeId && pauseState.paused
+  const handlePauseChange = useCallback(
+    (paused: boolean): void => {
+      setPauseState((current) =>
+        current.scopeId === currentPresentationScopeId && current.paused === paused
+          ? current
+          : { scopeId: currentPresentationScopeId, paused }
+      )
+    },
+    [currentPresentationScopeId]
+  )
   const transcriptWindow = useTranscriptWindow(
     currentPresentationScopeId,
     conversationItems,
     presentationBarrierIndex,
-    messageScrollerViewportRef
+    messageScrollerViewportRef,
+    followingPaused
   )
   const revealTranscriptItem = transcriptWindow.revealMessage
   const searchFocus = useSearchMessageFocusStore((state) => state.pending)
@@ -1612,12 +1571,11 @@ const WorkspaceMessageScrollerImpl = ({
         defaultScrollPosition="last-anchor"
         scrollPreviousItemPeek={64}
       >
-        {onScrollFollowingChange ? (
-          <MessageScrollerFollowIntent
-            active={scrollIntentActive}
-            onChange={onScrollFollowingChange}
-          />
-        ) : null}
+        <MessageScrollerFollowIntent
+          active={scrollIntentActive}
+          onChange={onScrollFollowingChange}
+          onPauseChange={handlePauseChange}
+        />
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
           <AnnotationMessageReveal
             target={

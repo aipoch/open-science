@@ -20,7 +20,9 @@ const knownPatchedHashes = new Set([
   '4c620c8214a19ea267e9b465e61382699dbb5273ea8d4470fb1be40153db3a97', // 3c6b201e
   '2bf6d13e12fb7f161bd74ddd0c7848a5224ef84dbe3c04acf430bb7d0fb669fc', // 2d0f34d1
   '77e432ad0819c7e490a61a2085fc04b9ba1375c063f41614860bd6f9d7a6a641', // e1ea7d51
-  '6a757b0a426ee20bb883217dae1de8cb528bbcc2bdad79c586908495c52e5a84' // 2e224cba
+  '6a757b0a426ee20bb883217dae1de8cb528bbcc2bdad79c586908495c52e5a84', // 2e224cba
+  '395b69a31d0aa9a32c33753b36aeb763692ae59223f7a3e629433cda460ec5c1', // e4b6d48fa
+  '2414956c835d1acb02599358aa6cd33ce68ced2aa3d7be52b75bcc3826835caa' // 98799d397
 ])
 if (!knownPatchedHashes.has(digest(installed))) process.exit(0)
 
@@ -50,5 +52,19 @@ if (digest(original) !== '75458e9313c0c712b2bcff80b9f4a7cfdc881a30e834fc85fe114b
   )
 }
 
+// The first pause API release also patched declarations. Restore only that exact version.
+const declarationPath = join(packageDir, 'dist', 'message-scroller', 'index.d.ts')
+const declarations = readFileSync(declarationPath, 'utf8').replaceAll('\r\n', '\n')
+if (digest(declarations) === '45b93becea4855158a28d28dce53c63517e42d15461a747ec20dd49ed09bdd72') {
+  writeFileSync(
+    declarationPath,
+    declarations
+      .split('\n')
+      .filter(
+        (line) => !line.includes('stopAutoScroll') && !line.includes('Pause automatic following')
+      )
+      .join('\n')
+  )
+}
 writeFileSync(entry, original)
 console.log('Restored the original @shadcn/react@0.3.0 scroller before applying the current patch.')
