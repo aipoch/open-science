@@ -35,7 +35,14 @@ let registry
 const downloaded = new Set()
 // The staged entry package declares real runtime deps (e.g. @modelcontextprotocol/sdk) that
 // npm must resolve like a real install; forward packuments we do not stage to npmjs.org.
+// Only npm package-name shapes are proxied so the upstream URL can never be request-controlled.
+const PACKUMENT_PATH = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)?$/i
 const upstreamRegistry = async (path, res) => {
+  if (!PACKUMENT_PATH.test(path)) {
+    res.writeHead(404)
+    res.end('{"error":"not_found"}')
+    return
+  }
   const upstream = await fetch(`https://registry.npmjs.org/${path}`)
   res.writeHead(upstream.status, {
     'content-type': upstream.headers.get('content-type') ?? 'application/json'
