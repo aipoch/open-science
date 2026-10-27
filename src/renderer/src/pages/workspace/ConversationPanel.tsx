@@ -2322,7 +2322,7 @@ const ConversationPanel = ({
                           <Button asChild variant="ghost" size="sm" className="justify-start">
                             <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                               <ChevronRight
-                                className="size-4 transition-transform group-open/source:rotate-90"
+                                className="size-4 transition-transform group-open/source:rotate-90 motion-reduce:transition-none"
                                 aria-hidden="true"
                               />
                               {t('Package source')}
@@ -2353,7 +2353,7 @@ const ConversationPanel = ({
                             <Button asChild variant="ghost" size="sm" className="justify-start">
                               <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                                 <ChevronRight
-                                  className="size-4 transition-transform group-open/exclusions:rotate-90"
+                                  className="size-4 transition-transform group-open/exclusions:rotate-90 motion-reduce:transition-none"
                                   aria-hidden="true"
                                 />
                                 {t('Not included in this package')}
