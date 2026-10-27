@@ -1,16 +1,16 @@
 ## ✨ Highlights
 
 - **Les téléchargements sont nettement plus petits.** Les charges utiles d'exécution de la CLI et du bureau sont réduites en élaguant les composants générés inutilisés, en regroupant le worker de traduction contre son exécution compacte, en fournissant un gestionnaire d'environnement unique groupé et en supprimant les distributions alternatives inutilisées — sans retirer les fichiers d'exécution actifs ni les diagnostics. (#3863, #3867)
-- **La CLI autonome parle désormais MCP.** Les outils de recherche sont exposés via un serveur MCP local, afin que les clients MCP externes puissent découvrir et invoquer directement les capacités de recherche de la CLI. (#3862)
+- **La CLI autonome parle désormais MCP.** Les outils de recherche sont exposés via un serveur MCP local pour les clients MCP externes, sous les permissions existantes du profil sélectionné — ce n'est ni un bac à sable séparé ni une vue en lecture seule, donc un client connecté peut persister des écritures ou engendrer des coûts de modèle. (#3862)
 - **Les longues conversations restent lisibles.** Une fois un tour réglé, les messages intermédiaires se replient hors du chemin pendant l'exécution, tandis que le travail en cours, en attente et interrompu reste visible ; les groupes d'outils se replient en résumés, et la recherche, les annotations et la recherche native révèlent toujours le contenu masqué quand vous en avez besoin. (#3868, #3866)
-- **La bibliothèque Literature gagne des vérifications d'intégrité.** Les références dotées d'un DOI peuvent être vérifiées à la demande auprès de Crossref pour les rétractions et corrections, avec les résultats et les heures de vérification enregistrés sur la référence. (#3870)
+- **La bibliothèque Literature gagne des vérifications d'intégrité.** Les références dotées d'un DOI peuvent être vérifiées à la demande auprès de Crossref pour les rétractions et corrections, avec les résultats et les heures de vérification enregistrés sur la référence. La couverture est incomplète — ne trouver aucun avis ne permet pas de conclure qu'une référence est non affectée. (#3870)
 
 ## 🚀 New Features
 
 - La CLI autonome expose ses outils de recherche via un serveur MCP local pour les clients d'outils externes. (#3862)
 - Les cartes de questions prennent en charge des actions de saut structurées avec des contrôles fixes et prévisibles. (#3813)
 - Les références de la bibliothèque Literature prennent en charge des vérifications explicites de rétraction et de correction par référence via Crossref, lancées manuellement et uniquement pour les entrées avec un DOI valide. (#3870)
-- Les artifacts peuvent désormais être importés depuis les dossiers que vous avez autorisés, en utilisant le pipeline d'artifacts immuables existant. (#3882)
+- Les artifacts peuvent désormais être importés depuis les dossiers que vous avez autorisés ; l'application lit le fichier accordé et conserve une copie immuable et persistante dans son stockage d'artifacts géré. (#3882)
 - Le workflow d'import GitHub Skills peut enregistrer des référentiels pour les réutiliser. (#3878)
 - Les transcriptions de conversation replient les messages intermédiaires une fois le tour réglé, avec un basculement au clavier et une révélation complète par la recherche, les annotations et la recherche native. (#3868)
 - L'activité des outils dans la transcription se replie en groupes, les outils en cours étant résumés pendant leur fonctionnement. (#3866)
