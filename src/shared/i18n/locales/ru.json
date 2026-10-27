@@ -188,6 +188,11 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "Reading status": "Статус чтения",
+    "In progress": "В процессе чтения",
+    "Finished reading": "Прочитано",
+    "Set reading status": "Задать статус чтения",
+    "Unread": "Не прочитано",
     "{{count}} steps remaining_one": "Остался {{count}} шаг",
     "{{count}} steps remaining_few": "Осталось {{count}} шага",
     "{{count}} steps remaining_many": "Осталось {{count}} шагов",

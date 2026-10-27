@@ -187,6 +187,10 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
+    "Reading status": "État de lecture",
+    "In progress": "En cours de lecture",
+    "Finished reading": "Lecture terminée",
+    "Set reading status": "Définir l’état de lecture",
     "{{count}} steps remaining_one": "{{count}} étape restante",
     "{{count}} steps remaining_many": "{{count}} étapes restantes",
     "{{count}} steps remaining_other": "{{count}} étapes restantes",

@@ -5,6 +5,7 @@ import type {
   LiteratureItemInput,
   LiteratureItemView,
   LiteraturePdfProvenance,
+  LiteratureReadingStatus,
   LiteratureSourceInput
 } from './contracts.js'
 export type NormalizedIdentifier = LiteratureIdentifierInput & { normalizedValue: string }
@@ -117,6 +118,7 @@ export interface LibraryStore {
   projectAvailable(id: string): Promise<boolean>
   linkProject(projectId: string, itemId: string, source: string): Promise<void>
   unlinkProject(projectId: string, itemIds: readonly string[]): Promise<void>
+  setReadingStatus(ids: readonly string[], status: LiteratureReadingStatus): Promise<number>
   setLifecycle(ids: readonly string[], state: 'active' | 'deleted'): Promise<number>
   invalidateAssessments(ids: readonly string[]): Promise<void>
   mergeViews(ids: readonly string[]): Promise<LiteratureItemView[]>

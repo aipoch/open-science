@@ -22,6 +22,7 @@ export function memoryLibrary(runtime: {
     attachments: [],
     collectionIds: [],
     projectIds: [],
+    readingStatus: 'unread',
     metadataRevision: 1,
     createdAt: time,
     updatedAt: time
@@ -264,6 +265,18 @@ export function memoryLibrary(runtime: {
         const row = state.items.get(key)
         if (row) row.projectIds = row.projectIds.filter((p) => p !== project)
       }
+    },
+    setReadingStatus: async (ids, readingStatus) => {
+      let count = 0
+      for (const key of ids) {
+        const row = state.items.get(key)
+        if (row && row.deletedAt === undefined && !row.mergedIntoItemId) {
+          row.readingStatus = readingStatus
+          row.updatedAt = ++state.serial
+          count++
+        }
+      }
+      return count
     },
     setLifecycle: async (ids, lifecycle) => {
       let count = 0

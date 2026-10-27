@@ -185,6 +185,10 @@
     "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
+    "Reading status": "읽기 상태",
+    "In progress": "읽는 중",
+    "Finished reading": "읽기 완료",
+    "Set reading status": "읽기 상태 설정",
     "{{count}} steps remaining_other": "{{count}}단계 남음",
     "Input help": "입력 도움말",
     "Your changes have not been saved. Discard them and leave the editor?": "변경 사항이 저장되지 않았습니다. 변경 사항을 버리고 편집기를 나가시겠습니까?",

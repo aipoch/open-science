@@ -185,6 +185,10 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
+    "Reading status": "阅读状态",
+    "In progress": "阅读中",
+    "Finished reading": "已读",
+    "Set reading status": "设置阅读状态",
     "{{count}} steps remaining_other": "剩余 {{count}} 步",
     "Input help": "输入帮助",
     "Your changes have not been saved. Discard them and leave the editor?": "更改尚未保存。要放弃更改并离开编辑器吗？",

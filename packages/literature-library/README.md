@@ -11,6 +11,13 @@ Construct `LibraryTransaction` with a `LibraryStore` bound to one active transac
 
 Client owners accept public API callbacks. Compose an owner once per mounted workflow. React scheduling, localization, file transfers and native dialogs remain with the caller. Creation retries retain the original receipt, destination and file until reset; serialize submissions and reset only after pending work completes.
 
+Reading status is personal catalog state: `unread`, `reading` or `read`. The host defaults existing
+and newly created references to `unread`; opening a PDF never changes it. Dedicated
+`set-reading-status` commands update up to 200 active references atomically without changing
+their metadata revision or screening evidence. Search filters apply before counting and paging.
+Legacy snapshots may omit the top-level `readingStatus`, which clients display as `unread`.
+Duplicate merges keep the surviving reference's status; bibliographic imports do not overwrite it.
+
 No host source, ORM client, Electron or global `window.api` is imported. Public contracts preserve existing serialized values; this extraction introduces no database migration or new persisted state.
 
 `npm test` builds and runs this package's independent fixtures. From the repository, `npm run check:packages -- --packages=literature-library` also verifies packed production consumption outside the repository.

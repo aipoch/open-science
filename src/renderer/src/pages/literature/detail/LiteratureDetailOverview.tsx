@@ -2,6 +2,14 @@ import { useLiteratureHost } from '../renderer-host'
 import type { LiteraturePreviewItem } from '../renderer-host'
 import { FileDropZone } from '@/components/FileDropZone'
 import { ErrorNotice } from '@/components/error-notice'
+import type { LiteratureReadingStatus } from '../workflows/useLiteratureReadingStatus'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
@@ -34,6 +42,8 @@ export function LiteratureDetailOverview({
   smartView,
   items,
   selectedItem,
+  setReadingStatus,
+  readingStatusError,
   completedReevaluation,
   collectionId,
   singleReevaluation,
@@ -67,6 +77,8 @@ export function LiteratureDetailOverview({
   smartView: SmartCollectionView | undefined
   items: LiteratureItemView[]
   selectedItem: LiteratureItemView
+  setReadingStatus: (status: LiteratureReadingStatus, itemIds?: string[]) => Promise<void>
+  readingStatusError?: string
   completedReevaluation: ReturnType<typeof useLiteratureSmartReevaluation>['completedReevaluation']
   collectionId: string | undefined
   singleReevaluation: ReturnType<typeof useLiteratureSmartReevaluation>['singleReevaluation']
@@ -154,6 +166,34 @@ export function LiteratureDetailOverview({
         </section>
       )}
       <LiteratureBibliographicDetails selectedItem={selectedItem} itemTypeLabels={itemTypeLabels} />
+      <section className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <h3 className="font-medium">{t('Reading status')}</h3>
+        <Select
+          value={selectedItem.readingStatus ?? 'unread'}
+          disabled={isBatching}
+          onValueChange={(value) =>
+            void setReadingStatus(value as LiteratureReadingStatus, [selectedItem.id])
+          }
+        >
+          <SelectTrigger aria-label={t('Reading status')} className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="unread">{t('Unread')}</SelectItem>
+            <SelectItem value="reading">{t('In progress')}</SelectItem>
+            <SelectItem value="read">{t('Finished reading')}</SelectItem>
+          </SelectContent>
+        </Select>
+        {readingStatusError ? (
+          <ErrorNotice
+            inline
+            role="alert"
+            className="w-full"
+            tone="amber"
+            description={readingStatusError}
+          />
+        ) : null}
+      </section>
       <section className="flex flex-wrap items-center justify-between gap-3 py-4">
         <div className="space-y-1">
           <h3 className="font-medium">{t('Citation discovery')}</h3>

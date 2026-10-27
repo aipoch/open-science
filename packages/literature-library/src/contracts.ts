@@ -47,6 +47,12 @@ const LITERATURE_COLLECTION_DESCRIPTION_MAX_LENGTH = 1_000
 
 const LITERATURE_LIFECYCLE_STATES = ['active', 'deleted'] as const
 
+export const LITERATURE_READING_STATUSES = ['unread', 'reading', 'read'] as const
+
+export const literatureReadingStatusSchema = z.enum(LITERATURE_READING_STATUSES)
+
+export type LiteratureReadingStatus = z.infer<typeof literatureReadingStatusSchema>
+
 const LITERATURE_SORT_FIELDS = ['updated', 'created', 'title', 'year', 'rating'] as const
 
 const LITERATURE_SORT_DIRECTIONS = ['asc', 'desc'] as const
@@ -67,6 +73,7 @@ const literatureFilterSchema = z
     containerTitle: optionalTextSchema,
     itemTypes: z.array(z.enum(LITERATURE_ITEM_TYPES)).max(LITERATURE_ITEM_TYPES.length).optional(),
     hasFullText: z.boolean().optional(),
+    readingStatus: literatureReadingStatusSchema.optional(),
     collectionId: optionalTextSchema,
     projectId: optionalTextSchema,
     journalAttributes: z
@@ -164,6 +171,7 @@ const literatureItemViewSchema = z
     attachments: z.array(literatureAttachmentViewSchema),
     projectIds: z.array(nonEmptyTextSchema),
     collectionIds: z.array(nonEmptyTextSchema),
+    readingStatus: literatureReadingStatusSchema.optional(),
     metadataRevision: z.number().int().positive(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
@@ -450,6 +458,13 @@ const literatureCatalogCommandSchema = z.discriminatedUnion('kind', [
     .strict(),
   z
     .object({
+      kind: z.literal('set-reading-status'),
+      itemIds: z.array(nonEmptyTextSchema).min(1).max(200),
+      readingStatus: literatureReadingStatusSchema
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal('set-item-lifecycle'),
       itemIds: z.array(nonEmptyTextSchema).min(1).max(200),
       state: z.enum(LITERATURE_LIFECYCLE_STATES)
@@ -508,6 +523,7 @@ const literatureCatalogReceiptSchema = z
       ])
       .optional(),
     count: z.number().int().positive().optional(),
+    itemIds: z.array(nonEmptyTextSchema).min(1).max(200).optional(),
     batch: z
       .object({
         eligible: z.number().int().nonnegative(),
