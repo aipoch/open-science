@@ -19,12 +19,15 @@ export async function preparePdfTranslationStructure({
   extraction,
   context,
   signal,
+  nativeDocumentFactory,
   preserveUnitIdentity = false
 }: {
-  document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'>
+  document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'> &
+    Partial<Pick<PDFDocumentProxy, 'getData' | 'getMetadata'>>
   extraction: PdfTranslationExtraction
   context?: PdfTranslationStructureContext
   signal: AbortSignal
+  nativeDocumentFactory?: typeof import('pdfjs-dist').getDocument
   preserveUnitIdentity?: boolean
 }): Promise<{ extraction: PdfTranslationExtraction; retainedUnitIds: readonly string[] }> {
   signal.throwIfAborted()
@@ -62,6 +65,7 @@ export async function preparePdfTranslationStructure({
           : source.source.sourceVersionId,
       sourceIdentity: identity,
       signal,
+      nativeDocumentFactory,
       preserveUnitIdentity,
       readCached: ({ page }) => {
         let pending = pages.get(page)

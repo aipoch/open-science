@@ -284,10 +284,80 @@ export async function nativeAlgorithmInkRegions(
   pageNumber: number,
   selected: ReadonlySet<number>
 ): Promise<Map<number, NonNullable<ReturnType<typeof nativeLabelRegion>>> | undefined> {
+  return readNativeInkRegions(page, content, viewport, pageNumber, selected)
+}
+
+/** A separate text proof; a clip is harmless to text only when its entire
+ * saved lifetime is text-free. It does not certify any graphical paint. */
+export async function nativeTextFreeClipInkRegions(
+  page: PDFPageProxy,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  pageNumber: number,
+  selected: ReadonlySet<number>,
+  operatorSnapshot?: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>
+): Promise<Map<number, NonNullable<ReturnType<typeof nativeLabelRegion>>> | undefined> {
+  try {
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      original = await page.getOperatorList()
+    if (original.fnArray.length !== original.argsArray.length || original.fnArray.length > 100000)
+      return
+    if (operatorSnapshot && JSON.stringify(original) !== JSON.stringify(operatorSnapshot)) return
+    // The proof and glyph pass consume the same snapshot across their awaits.
+    const operators = structuredClone(operatorSnapshot ?? original),
+      clips = new Set<number>(),
+      stack: number[] = []
+    let active = 0,
+      pending = false
+    for (const [index, op] of operators.fnArray.entries()) {
+      const args = operators.argsArray[index]
+      if (op === OPS.save) {
+        if (pending) return
+        stack.push(active)
+      } else if (op === OPS.restore) {
+        if (pending || !stack.length) return
+        active = stack.pop()!
+      } else if (op === OPS.clip || op === OPS.eoClip) {
+        if (pending || !stack.length || clips.size >= 16) return
+        clips.add(index)
+        pending = true
+      } else if (op === OPS.constructPath && pending) {
+        if (args?.[0] !== OPS.endPath || args?.[1]?.length !== 1 || !nativeOutlineBox(args[1][0]))
+          return
+        pending = false
+        active++
+      } else if (
+        (active || pending) &&
+        [
+          OPS.beginText,
+          OPS.showText,
+          OPS.showSpacedText,
+          OPS.nextLineShowText,
+          OPS.nextLineSetSpacingShowText
+        ].includes(op)
+      )
+        return
+    }
+    if (pending || active || stack.length || !clips.size) return
+    return readNativeInkRegions(page, content, viewport, pageNumber, selected, operators, clips)
+  } catch {
+    return
+  }
+}
+
+async function readNativeInkRegions(
+  page: PDFPageProxy,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  pageNumber: number,
+  selected: ReadonlySet<number>,
+  operatorSnapshot?: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
+  textFreeClips?: ReadonlySet<number>
+): Promise<Map<number, NonNullable<ReturnType<typeof nativeLabelRegion>>> | undefined> {
   if (!page.commonObjs || typeof page.getOperatorList !== 'function') return
   if (viewport.scale !== 1 || viewport.rotation !== 0 || !selected.size) return
   const { OPS, Util } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
-    ops = await page.getOperatorList(),
+    ops = operatorSnapshot ?? (await page.getOperatorList()),
     finite = (a: unknown, n: number): a is number[] =>
       (Array.isArray(a) || ArrayBuffer.isView(a)) &&
       (a as number[]).length === n &&
@@ -462,6 +532,8 @@ export async function nativeAlgorithmInkRegions(
         return
     } else if (op === OPS.dependency) {
       if (!Array.isArray(a) || a.some((s) => typeof s !== 'string')) return
+    } else if (textFreeClips?.has(i) && (op === OPS.clip || op === OPS.eoClip)) {
+      // The separate entry point proved this clip cannot affect any text.
     } else if (!inert.has(op)) return
   }
   if (text || stack.length) return

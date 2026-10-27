@@ -115,6 +115,8 @@ export function usePdfTranslationPreparation(
     void extractPdfTranslationSource({
       document,
       resourceRequestKey,
+      sourceIdentity: structureContext?.identity ?? sourceIdentity,
+      nativeDocumentFactory: pdfjsLib.getDocument,
       signal: controller.signal,
       onProgress: (pagesRead) => publish({ status: 'running', pagesRead })
     })
@@ -122,6 +124,7 @@ export function usePdfTranslationPreparation(
         let { extraction: prepared } = await preparePdfTranslationStructure({
           extraction,
           document,
+          nativeDocumentFactory: pdfjsLib.getDocument,
           context: structureContext,
           signal: controller.signal
         })
