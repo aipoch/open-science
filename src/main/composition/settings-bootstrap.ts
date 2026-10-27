@@ -205,6 +205,9 @@ export async function composeSettingsBootstrap({
         return (await service.getPackageMirror()).caBundle
       },
       getGrantedLocalRoots: async () => grantedRootsRepositoryRef.current?.list() ?? [],
+      hasFullAccess: (sessionId) =>
+        getRuntimeRef().current?.getState().permissionProfiles[sessionId]?.selectedProfile ===
+        'full',
       persistAlwaysAllow: async (hostname) => {
         const service = settingsServiceRef.current
         if (!service) throw new Error('Settings are not ready.')

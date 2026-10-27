@@ -197,6 +197,7 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
+  hasFullAccess?: (sessionId: string) => boolean
   getFolderRestrictionEnabled?: () => Promise<boolean>
   persistAlwaysAllow: (hostname: string) => Promise<NotebookNetworkSettings>
   requestDecision: (request: NotebookNetworkDecisionRequest) => Promise<NotebookNetworkDecision>
@@ -616,6 +617,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         },
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
+          if (activeSignal?.aborted) return false
           if (
             await this.isCommandGrantAllowed(
               invocation.sessionId,
@@ -990,6 +992,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (!normalized.ok) {
       return this.networkAccessResult(request.hostname, 'blocked', request.runtime, {
         validationReason: normalized.reason
+      })
+    }
+    if (!request.signal?.aborted && this.options.hasFullAccess?.(request.sessionId)) {
+      return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime, {
+        message:
+          'The current session allows public network access without approval. Private-network and address checks still apply.'
       })
     }
     const settings = normalizeNotebookNetworkSettings(
@@ -2073,6 +2081,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (request.signal.aborted) return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
+    // The gateway still enforces private-address and explicit-deny rules. Read live authority
+    // on every connection/probe so another session or a later downgrade cannot inherit access.
+    if (this.options.hasFullAccess?.(sessionId)) return Promise.resolve(true)
     if (allowedNetworkHosts.has(normalized.hostname)) return Promise.resolve(true)
     if (commandGrants.has(normalized.hostname)) return Promise.resolve(true)
     if (request.purpose === 'probe') return Promise.resolve(false)

@@ -949,6 +949,96 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['bash', 'python', 'r', 'repl'] as const)(
+    'uses live session full access for %s without persisting or requesting approval',
+    async (runtime) => {
+      let fullSession: string | undefined = 'session-1'
+      const requestDecision = vi.fn().mockResolvedValue('deny')
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        hasFullAccess: (sessionId) => sessionId === fullSession,
+        persistAlwaysAllow,
+        requestDecision,
+        platform: 'linux'
+      })
+      const controller = new AbortController()
+      const wrapped = await owner.wrap({
+        signal: controller.signal,
+        executable: '/usr/bin/runtime',
+        args: [],
+        env: {},
+        cwd: '/workspace',
+        commandText: 'download dataset',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime,
+        executionReference: 'execution-1',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const request = backend.request!
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(false)
+      const end = wrapped.beginExecution?.()
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(true)
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      expect(requestDecision).not.toHaveBeenCalled()
+      fullSession = 'other-session'
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      fullSession = 'session-1'
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      controller.abort()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      end?.()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      expect(persistAlwaysAllow).not.toHaveBeenCalled()
+      expect(backend.updatePolicy).not.toHaveBeenCalled()
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it('answers explicit full-access requests without command context or durable grants', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('deny')
+    const persistAlwaysAllow = vi.fn()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      hasFullAccess: (sessionId) => sessionId === 'full-session',
+      persistAlwaysAllow,
+      requestDecision
+    })
+    const request = {
+      sessionId: 'full-session',
+      projectId: 'project',
+      hostname: 'data.example.org',
+      reason: 'Download'
+    }
+    await expect(owner.requestNetworkAccess(request)).resolves.toMatchObject({
+      status: 'alreadyAllowed'
+    })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, hostname: 'localhost' })
+    ).resolves.toMatchObject({ status: 'blocked' })
+    await expect(
+      owner.requestNetworkAccess({ ...request, signal: AbortSignal.abort() })
+    ).resolves.toMatchObject({ status: 'denied', decisionSource: 'aborted' })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, sessionId: 'other-session' })
+    ).resolves.toMatchObject({ status: 'denied' })
+    expect(requestDecision).toHaveBeenCalledOnce()
+    expect(persistAlwaysAllow).not.toHaveBeenCalled()
+    expect(backend.updatePolicy).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+
   it('applies allow-once to every matching connection in the next command only', async () => {
     const requestDecision = vi.fn().mockResolvedValue('allowOnce')
     const persistAlwaysAllow = vi.fn()

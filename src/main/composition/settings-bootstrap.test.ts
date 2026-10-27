@@ -410,3 +410,20 @@ it('rejects an unreadable protection configuration instead of selecting an unpro
     'Windows protection ownership is inconsistent.'
   )
 })
+
+it('reads live session full access without requiring an approval client', async () => {
+  await bootstrap()
+  const fullAccess = fixture.networkOptions!.hasFullAccess!
+  expect(fullAccess('session')).toBe(false)
+  const state = { permissionProfiles: { session: { selectedProfile: 'full' } } }
+  fixture.runtime.current = { getState: () => state } as never
+  expect(fixture.approvalAvailable()).toBe(false)
+  expect(fullAccess('session')).toBe(true)
+  expect(fullAccess('other-session')).toBe(false)
+  for (const profile of ['ask', 'auto']) {
+    state.permissionProfiles.session.selectedProfile = profile
+    expect(fullAccess('session')).toBe(false)
+  }
+  state.permissionProfiles.session.selectedProfile = 'full'
+  expect(fullAccess('session')).toBe(true)
+})
