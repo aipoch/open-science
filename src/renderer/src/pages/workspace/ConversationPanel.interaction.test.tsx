@@ -9452,6 +9452,10 @@ describe('ConversationPanel error box + report affordance', () => {
       [
         ['Internal error', 'Your conversation is preserved. Try Resume again.'],
         [
+          'Previous agent cleanup is unconfirmed.',
+          'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+        ],
+        [
           'Resume timed out',
           'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
         ],

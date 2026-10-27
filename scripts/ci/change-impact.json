@@ -282,7 +282,9 @@
         "src/main/notifications/desktop-attention.ts",
         "src/main/notifications/desktop-badge.ts",
         "src/main/permission-grants/capability.ts",
+        "src/main/process-birth-identity.ts",
         "src/main/process-tree.ts",
+        "src/main/runtime-entry-identity.ts",
         "src/main/runtime-ownership.ts",
         "src/main/remote-access/remoteit.ts",
         "src/main/session-diagnostics/environment.ts",
@@ -459,6 +461,7 @@
       "paths": [
         "e2e/desktop-composer-draft-restart.spec.ts",
         "e2e/desktop-runtime-lifetime.spec.ts",
+        "e2e/local-service-lifecycle.spec.ts",
         "e2e/desktop-runtime-backpressure.spec.ts",
         "e2e/desktop-runtime-event-delivery.spec.ts",
         "e2e/desktop-runtime-recovery.spec.ts",
@@ -576,6 +579,7 @@
         "e2e/fixtures/brand-storage-data.ts",
         "e2e/fixtures/conversation.ts",
         "e2e/fixtures/electron-app.ts",
+        "e2e/fixtures/local-service-cleanup.ts",
         "e2e/fixtures/fake-opencode.mjs",
         "e2e/fixtures/fake-remoteit.cjs",
         "e2e/fixtures/mock-credential-identity.cjs",
@@ -659,6 +663,17 @@
       "tests": [
         "scripts/electron-app-fixture.test.ts",
         "scripts/electron-fixture-teardown.test.ts"
+      ],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
+      "id": "desktop_e2e_reader_local_service_cleanup",
+      "role": "overlay",
+      "paths": ["e2e/fixtures/local-service-cleanup.ts"],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts",
+        "scripts/electron-fixture-teardown.test.ts",
+        "scripts/local-service-cleanup.test.ts"
       ],
       "capabilities": ["desktop_e2e_unit_readers"]
     },

@@ -1,5 +1,6 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startRuntimeControl, RUNTIME_OWNER_FILE, type RuntimeOwnerRecord } from './runtime-control'
@@ -11,11 +12,35 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close()
 })
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-async function runtime(host: 'node' | 'electron', desktop?: DesktopEndpoint) {
+async function runtime(
+  host: 'node' | 'electron',
+  desktop?: DesktopEndpoint,
+  withRootProof = false
+) {
   const root = await mkdtemp(join(tmpdir(), 'runtime-control-'))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   const ensureWeb = vi.fn().mockResolvedValue(undefined)
-  const control = await startRuntimeControl(root, host, ensureWeb, desktop)
+  const endpoint =
+    desktop ??
+    (withRootProof
+      ? {
+          path: join(root, 'runtime.sock'),
+          generation: randomUUID(),
+          secret: 'a'.repeat(64),
+          version: '1.0.0'
+        }
+      : undefined)
+  const startupOptions = withRootProof
+    ? {
+        configRoot: root,
+        dataRoot: root,
+        profilePath: root,
+        port: 0,
+        host: '127.0.0.1' as const,
+        credentialStore: 'os' as const
+      }
+    : undefined
+  const control = await startRuntimeControl(root, host, ensureWeb, endpoint, startupOptions)
   cleanup.push(() => control.close())
   const record = JSON.parse(
     await readFile(join(root, RUNTIME_OWNER_FILE), 'utf8')
@@ -76,7 +101,7 @@ describe('runtime ownership discovery', () => {
   it.each(['node', 'electron'] as const)(
     'reuses an authenticated %s owner and keeps credential selection read-only',
     async (host) => {
-      const value = await runtime(host)
+      const value = await runtime(host, undefined, true)
       await expect(
         requestExistingRuntimeWeb({ configRoot: value.root, port: 45100 })
       ).resolves.toBe(value.root)
@@ -85,6 +110,16 @@ describe('runtime ownership discovery', () => {
         requestExistingRuntimeWeb({ configRoot: value.root, credentialStore: 'os' })
       ).rejects.toThrow('already running')
       expect(value.ensureWeb).toHaveBeenCalledTimes(1)
+    }
+  )
+  it.each(['node', 'electron'] as const)(
+    'does not start Web for a %s owner without Config Root proof',
+    async (host) => {
+      const value = await runtime(host)
+      await expect(
+        requestExistingRuntimeWeb({ configRoot: value.root, port: 45100 })
+      ).resolves.toBeUndefined()
+      expect(value.ensureWeb).not.toHaveBeenCalled()
     }
   )
   it('rejects missing authentication and stale generations before starting Web', async () => {

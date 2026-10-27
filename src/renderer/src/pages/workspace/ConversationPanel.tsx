@@ -357,6 +357,7 @@ type ConversationPanelView = {
   authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
+  canEditLocalDraft?: boolean
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
@@ -554,6 +555,7 @@ const ConversationPanel = ({
     activeSession,
     composerFocusKey,
     canEditDraft,
+    canEditLocalDraft = canEditDraft,
     persistenceBlocked,
     actionError,
     sideChatDisabledReason,
@@ -1061,7 +1063,11 @@ const ConversationPanel = ({
       actionError)
   let resumeErrorDescription = resolvedActionError
   if (resumeDiagnostic && resolvedActionError) {
-    if (/timed out/i.test(resumeDiagnostic.detail)) {
+    if (resumeDiagnostic.detail.includes('Previous agent cleanup is unconfirmed.')) {
+      resumeErrorDescription = t(
+        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+      )
+    } else if (/timed out/i.test(resumeDiagnostic.detail)) {
       resumeErrorDescription = t(
         'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
       )
@@ -2975,7 +2981,7 @@ const ConversationPanel = ({
                               onLocatePastedText={handleLocatePastedText}
                               onUndo={onUndo}
                               onRedo={onRedo}
-                              disabled={!canEditDraft}
+                              disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
                                 {

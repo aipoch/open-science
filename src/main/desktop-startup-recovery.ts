@@ -10,6 +10,7 @@ import {
   checkInstallationResultAsync,
   finishInstallationRecoveryAsync,
   inspectInstallationUpdate,
+  inspectInstallationAvailability,
   inspectInstallationStartupAsync,
   completeInstallationStartupAsync,
   type InstallationLocation
@@ -158,16 +159,20 @@ export async function resolveDesktopInstallationStartup(
         )
           return
         if (result !== 'unchanged') throw blocked(diagnostics)
-        // Cancel only after an exact clean stop. A dead PID alone cannot settle old teardown.
+        // An observed exit is sufficient only together with exclusive directory ownership.
+        // Incomplete ordinary cleanup does not turn an unchanged installation into a blocker.
         const lease =
-          record.phase === 'handoff' && record.stoppedClean
+          (record.phase === 'handoff' || record.phase === 'stopped') &&
+          (record.stoppedClean || record.runtimeExited)
             ? acquireRuntimeDirectorySync(record.runtime.configRoot)
             : await waitForRuntimeStopped({
                 configRoot: record.runtime.configRoot,
                 generation: record.runtime.generation,
-                pid: record.runtime.pid
+                pid: record.runtime.pid,
+                requireCleanExit: false
               })
         try {
+          await inspectInstallationAvailability(options)
           await finishInstallationRecoveryAsync(options, record.operationId, 'cancel')
         } finally {
           lease.release()

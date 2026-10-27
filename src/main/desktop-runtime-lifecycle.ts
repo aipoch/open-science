@@ -1,8 +1,10 @@
+import { ApplicationCommandError } from '../shared/application-command-contract'
 import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ActiveSessionInfo } from '../shared/storage'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
+import { LOCAL_SERVICE_STOP_ESCALATION_MS, serviceStopDeadline } from './local-service-lifetime'
 
 // Process-local quit coordination. This token describes observed work, not persisted ownership;
 // only the desktop holding the actual started child requests preparation or shutdown.
@@ -11,9 +13,14 @@ export const desktopLifecycleRequestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('cancel-migration') }).strict(),
   z.object({ operation: z.literal('hold') }).strict(),
   z
-    .object({ operation: z.literal('prepare'), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) })
+    .object({
+      operation: z.literal('prepare'),
+      fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      deadlineAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+      attemptId: z.string().uuid().optional()
+    })
     .strict(),
-  z.object({ operation: z.literal('abort') }).strict(),
+  z.object({ operation: z.literal('abort'), attemptId: z.string().uuid().optional() }).strict(),
   z.object({ operation: z.literal('release') }).strict()
 ])
 const DISCONNECT_WAIT_MS = 10_000
@@ -41,12 +48,16 @@ export function createDesktopRuntimeLifecycle(
   },
   options: { disconnectWaitMs?: number } = {}
 ): {
-  request(operation: DesktopLifecycleRequest): Promise<unknown>
+  request(
+    operation: DesktopLifecycleRequest,
+    options?: { preserveService?: boolean }
+  ): Promise<unknown>
   disconnect(): Promise<void>
 } {
   let releaseAdmission: (() => void) | undefined
   let preparing = false
   let prepared = false
+  let inspectedWork: DesktopShutdownWork | undefined
   let disconnected = false
   let inFlight: Promise<unknown> | undefined
   const inspect = (): DesktopShutdownWork => {
@@ -81,6 +92,7 @@ export function createDesktopRuntimeLifecycle(
       disconnected = true
       // Cleanup is bounded: an operation that never settles must not keep the Desktop fenced out.
       const wait = options.disconnectWaitMs ?? DISCONNECT_WAIT_MS
+      const deadlineAt = Date.now() + wait
       let timer: ReturnType<typeof setTimeout> | undefined
       await Promise.race([
         inFlight?.catch(() => undefined),
@@ -90,11 +102,11 @@ export function createDesktopRuntimeLifecycle(
         })
       ])
       clearTimeout(timer)
-      await waitForLifecycleSettlement({ timeoutMs: wait })
+      await waitForLifecycleSettlement({ timeoutMs: Math.max(0, deadlineAt - Date.now()) })
       abort()
     },
-    request: (operation) => {
-      if (inFlight && operation.operation !== 'inspect')
+    request: (operation, requestOptions) => {
+      if (inFlight && !['inspect', 'abort', 'release'].includes(operation.operation))
         return Promise.reject(new Error('Desktop lifecycle operation is still running.'))
       const run = async (): Promise<unknown> => {
         const request = desktopLifecycleRequestSchema.parse(operation)
@@ -106,7 +118,7 @@ export function createDesktopRuntimeLifecycle(
             await deps.cancelMigrationForQuit()
             return null
           case 'inspect':
-            return inspect()
+            return (inspectedWork = inspect())
           case 'hold':
             releaseAdmission ??= deps.holdSettingsInstallAdmission()
             return null
@@ -119,24 +131,51 @@ export function createDesktopRuntimeLifecycle(
           case 'prepare': {
             if (preparing) throw new Error('Desktop quit preparation is already running.')
             const work = inspect()
-            if (work.fingerprint !== request.fingerprint)
-              throw new Error(
-                'Running work changed after quit confirmation. Review the current work before trying again.'
+            if (
+              work.settingsInstallId &&
+              (inspectedWork?.fingerprint !== request.fingerprint ||
+                inspectedWork.settingsInstallId !== work.settingsInstallId)
+            )
+              throw new ApplicationCommandError(
+                'command-unavailable',
+                'Wait for the settings installation to finish before quitting.'
               )
             if (work.migrationActive || work.packageTransferActive)
-              throw new Error(
+              throw new ApplicationCommandError(
+                'command-unavailable',
                 'Wait for the data move or Session package transfer to finish before quitting.'
               )
+            if (requestOptions?.preserveService) return 'completed'
             releaseAdmission ??= deps.holdSettingsInstallAdmission()
             preparing = true
             // Preparation can close ACP admission and then reject. That attempt still needs an
             // abort, just like a timeout or a completed preparation followed by a refused quit.
             prepared = true
+            let timer: ReturnType<typeof setTimeout> | undefined
             try {
-              const result = await deps.prepareForQuit()
+              const preparation = deps.prepareForQuit()
+              const result =
+                request.deadlineAt === undefined
+                  ? await preparation
+                  : await Promise.race([
+                      preparation,
+                      new Promise<'timeout'>((resolve) => {
+                        timer = setTimeout(
+                          () => resolve('timeout'),
+                          Math.max(
+                            0,
+                            serviceStopDeadline(request.deadlineAt) -
+                              LOCAL_SERVICE_STOP_ESCALATION_MS -
+                              Date.now()
+                          )
+                        )
+                        timer.unref?.()
+                      })
+                    ])
               if (disconnected) throw new Error('Desktop disconnected during quit preparation.')
               return result
             } finally {
+              clearTimeout(timer)
               preparing = false
             }
           }

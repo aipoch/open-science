@@ -59,6 +59,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   currentConnection: () => ClientConnection | undefined
   ensureConnected: (cwd: string) => Promise<ClientConnection>
   assertCurrentConnection: (connection: ClientConnection) => void
+  assertResumeAllowed?: (frameworkId: string) => Promise<void>
   disconnectTimedOutConnection: () => Promise<void>
   resumeCapabilityAdvertised: () => boolean
   supportsSessionClose: () => boolean
@@ -209,11 +210,14 @@ export class AcpProviderSessionResumer {
       )
     }
     this.assertSkillScopeRefreshSupported(request.sessionId)
+    const knownWriterConnection = this.deps.currentConnection()
     this.deps.registry.detach(attachment, 'provider')
     try {
       const result = await this.resumeDetached(
         { ...request, providerSessionId: attachment.providerSessionId },
-        true
+        true,
+        undefined,
+        knownWriterConnection
       )
       attachment.session.dispose()
       return result
@@ -268,7 +272,8 @@ export class AcpProviderSessionResumer {
   private async resumeDetached(
     request: AcpResumeSessionRequest,
     compatibleOnly: boolean,
-    writerTransfer?: AcpSessionWriterTransfer
+    writerTransfer?: AcpSessionWriterTransfer,
+    knownWriterConnection?: ClientConnection
   ): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
     const projectId = request.projectId?.trim() || this.deps.defaultProjectId
@@ -290,7 +295,8 @@ export class AcpProviderSessionResumer {
             identity,
             compatibleOnly,
             cancellationSignal,
-            writerTransfer
+            writerTransfer,
+            knownWriterConnection
           ),
         this.progressSessionIds(request)
       )
@@ -461,7 +467,8 @@ export class AcpProviderSessionResumer {
     identity: AcpPrimarySessionIdentityReservation,
     compatibleOnly: boolean,
     cancellationSignal: AbortSignal,
-    writerTransfer?: AcpSessionWriterTransfer
+    writerTransfer?: AcpSessionWriterTransfer,
+    knownWriterConnection?: ClientConnection
   ): Promise<AcpCreateSessionResponse> {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
@@ -487,7 +494,8 @@ export class AcpProviderSessionResumer {
         true,
         true,
         cancellationSignal,
-        writerTransfer
+        writerTransfer,
+        knownWriterConnection
       )
     }
     const decision = this.policy.decide({
@@ -526,7 +534,8 @@ export class AcpProviderSessionResumer {
       persistedProviderSessionId !== undefined,
       compatibleOnly,
       cancellationSignal,
-      writerTransfer
+      writerTransfer,
+      knownWriterConnection
     )
   }
 
@@ -540,13 +549,26 @@ export class AcpProviderSessionResumer {
     providerSessionIdPersisted: boolean,
     compatibleOnly: boolean,
     cancellationSignal: AbortSignal,
-    writerTransfer?: AcpSessionWriterTransfer
+    writerTransfer?: AcpSessionWriterTransfer,
+    knownWriterConnection?: ClientConnection
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
     try {
       let backend = this.deps.currentBackend()
       this.assertSkillScopeRefreshSupported(request.sessionId)
+      // Cleanup debt concerns reacquiring persisted provider writers, not fresh Sessions. Keep
+      // admission outside the provider rejection fallback so it never silently replaces history.
+      const ownsCurrentWriter = knownWriterConnection === connection
+      const releasedWriter =
+        writerTransfer?.writerReleased && writerTransfer.providerSessionId === providerSessionId
+      // An attached writer on this exact connection or a confirmed transfer already has current
+      // ownership evidence. Historical debt cannot revoke that unrelated, healthy Session.
+      if (!ownsCurrentWriter && !releasedWriter)
+        await this.deps.assertResumeAllowed?.(backend.framework.id)
+      cancellationSignal.throwIfAborted()
+      this.deps.assertCurrentConnection(connection)
+      identity.assertCurrent()
       capability = await this.deps.capabilities.provision({
         stableAppSessionId: request.sessionId,
         framework: backend.framework,

@@ -20,6 +20,7 @@ export type ApplicationCommandComposition = Readonly<{
   localWeb: ApplicationCommandByNameDispatcher
   remoteWeb: RemoteWebApplicationCommandDispatcher
   task: ApplicationCommandByNameDispatcher
+  beginStopping: () => void
   bindRemoteAccess: (owner: RemoteAccessOwner) => void
   dispose: () => Promise<void>
 }>

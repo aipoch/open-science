@@ -3,7 +3,9 @@
     "tests": [
       "src/main/process-tree.windows.integration.test.ts",
       "src/main/delegation/process-ownership.test.ts",
-      "src/main/delegation/production-composition.test.ts"
+      "src/main/delegation/production-composition.test.ts",
+      "src/main/acp/main-agent-process-ownership.test.ts",
+      "src/main/service-process-recovery.test.ts"
     ],
     "paths": [
       "src/main/acp/",
@@ -17,6 +19,7 @@
     "tests": [
       "scripts/windows-dev-notebook-host.integration.test.ts",
       "scripts/ci/run-windows-browser-diagnostics.test.ts",
+      "scripts/electron-app-fixture.test.ts",
       "scripts/windows-updater-certification.test.ts",
       "build/packaging.test.ts",
       "scripts/windows-update-handoff-uninstall.test.ts",
@@ -45,7 +48,15 @@
       "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
       "packages/specialists/src/repository.test.ts",
       "packages/environment/src/micromamba-cache-powershell.test.ts",
-      "packages/environment/src/micromamba-cache-acl.integration.test.ts"
+      "packages/environment/src/micromamba-cache-acl.integration.test.ts",
+      "src/main/local-service-lifetime.test.ts",
+      "src/main/node-fatal-errors.test.ts",
+      "src/main/desktop-runtime-recovery.test.ts",
+      "src/main/desktop-runtime-stop-deadline.integration.test.ts",
+      "src/main/update/installation-occupancy.test.ts",
+      "src/main/verified-service-stop.test.ts",
+      "packages/open-science/runtime-control.test.ts",
+      "src/main/local-service-stop-intent.integration.test.ts"
     ]
   },
   "windows_regressions": {
@@ -76,7 +87,8 @@
       "src/main/notebook/windows-shell.integration.test.ts",
       "src/main/notebook/package-process-sandbox.windows.integration.test.ts",
       "src/main/notebook/powershell-search-parser.windows.integration.test.ts",
-      "src/main/notebook/shell-search-scope.test.ts"
+      "src/main/notebook/shell-search-scope.test.ts",
+      "src/main/notebook/shell-process-ownership.test.ts"
     ],
     "paths": ["src/main/notebook/"]
   },

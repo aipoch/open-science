@@ -1,5 +1,6 @@
 import { ApplicationStartup } from '@/components/ApplicationStartup'
 import { DesktopRuntimeRecovery } from '@/components/desktop-runtime-recovery'
+import { saveRuntimeDiagnostics } from '@/components/save-runtime-diagnostics'
 import './assets/main.css'
 
 import { StrictMode } from 'react'
@@ -82,7 +83,7 @@ const startRenderer = (): void => {
         <ApplicationErrorBoundary>
           <ApplicationStartup>
             <App />
-            <DesktopRuntimeRecovery />
+            <DesktopRuntimeRecovery saveDiagnostics={saveRuntimeDiagnostics} />
           </ApplicationStartup>
         </ApplicationErrorBoundary>
       </WindowsTitleBar>

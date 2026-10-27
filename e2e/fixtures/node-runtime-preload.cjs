@@ -26,7 +26,9 @@ if (process.versions.electron) {
     app.setPath('home', fixtureHome)
     for (const [key, value] of [
       ['appData', process.env.APPDATA],
-      ['cache', process.env.LOCALAPPDATA],
+      // LOCALAPPDATA retains the Windows OS profile for native AppContainer Temp resolution;
+      // Electron's cache remains inside this fixture independently of that OS environment input.
+      ['cache', join(fixtureHome, 'AppData', 'Local')],
       ['downloads', join(fixtureHome, 'Downloads')]
     ]) {
       if (!value || !resolve(value).startsWith(resolve(fixtureHome) + require('node:path').sep))

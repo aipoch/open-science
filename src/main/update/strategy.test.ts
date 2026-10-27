@@ -111,10 +111,10 @@ describe('createDataRootResearchSafeInstallGate', () => {
   )
 })
 
-it('offers force only for interruptible work while delegated and settings installs retain their hard block', async () => {
+it('permits interrupting delegated work while protecting settings installation', async () => {
   const { canForceUpdateBlockers } = await import('./strategy')
   expect(canForceUpdateBlockers(['agent', 'notebook'])).toBe(true)
-  expect(canForceUpdateBlockers(['agent', 'delegated'])).toBe(false)
+  expect(canForceUpdateBlockers(['agent', 'delegated'])).toBe(true)
   expect(canForceUpdateBlockers(['settings-install'])).toBe(false)
   expect(canForceUpdateBlockers([])).toBe(false)
 })
