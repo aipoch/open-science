@@ -22,6 +22,13 @@ for (i in 1:(length(sets)-1)) for (j in (i+1):length(sets)) {
 five <- Reduce(intersect, sets)
 cat("\nA ∩ B ∩ C ∩ D ∩ E =", length(five), "\n")
 `
+// These loop-only cases must not inherit unknown workbook/S3 preprocessing.
+const loopScript = script
+  .replace(
+    'sets <- lapply(d, function(col) unique(stats::na.omit(col)))',
+    'sets <- list(A=1:3,B=2:4,C=1:2,D=2:3,E=1:4)'
+  )
+  .replace('all_e <- unique(unlist(sets))', 'all_e <- 1:4')
 const runFor = (script: string, id = '0'): NotebookRunRecord => ({
   runId: id,
   cellId: id,
@@ -50,27 +57,27 @@ it.each([
   expect(
     projectNotebookDependencies([{ run, facts }]).stalenessByRunId['0'],
     JSON.stringify(facts)
-  ).toEqual({ state: 'clear' })
+  ).toMatchObject({ state: 'unknown', reasons: expect.arrayContaining(['opaque-call']) })
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     reads: ['inputs/set-membership-111111111111.xlsx'],
     writes: []
   })
 })
 
 it.each([
-  script + '\nprint(inter)',
-  script + '\nprint(j)',
-  script.replace('1:(length(sets)-1)', '1:unknown_bound'),
-  script.replace('inter <- length(intersect', 'inter <<- length(intersect'),
-  script.replace(
+  loopScript + '\nprint(inter)',
+  loopScript + '\nprint(j)',
+  loopScript.replace('1:(length(sets)-1)', '1:unknown_bound'),
+  loopScript.replace('inter <- length(intersect', 'inter <<- length(intersect'),
+  loopScript.replace(
     'inter <- length(intersect(sets[[i]], sets[[j]]))',
     'inter <- custom(sets[[i]], sets[[j]])'
   ),
-  script.replace('for (i in', '`:` <- custom_range\nfor (i in'),
-  script.replace('inter <- length(intersect', 'if (i > 2) break\ninter <- length(intersect')
+  loopScript.replace('for (i in', '`:` <- custom_range\nfor (i in'),
+  loopScript.replace('inter <- length(intersect', 'if (i > 2) break\ninter <- length(intersect')
 ])('preserves uncertain state and effects around index loops: %#', async (script) => {
   const { facts } = await analyzeRNotebookSource(script)
   expect(
@@ -80,11 +87,11 @@ it.each([
 })
 
 it('keeps conditional loop bindings uncertain when consumed by a later cell', async () => {
-  const first = await analyzeRNotebookSource(script)
+  const first = await analyzeRNotebookSource(loopScript)
   const next = 'print(inter)'
   const second = await analyzeRNotebookSource(next)
   const projection = projectNotebookDependencies([
-    { run: runFor(script), facts: first.facts },
+    { run: runFor(loopScript), facts: first.facts },
     { run: runFor(next, '1'), facts: second.facts }
   ])
   expect(projection.stalenessByRunId['0']).toEqual({ state: 'clear' })
@@ -92,11 +99,11 @@ it('keeps conditional loop bindings uncertain when consumed by a later cell', as
 })
 
 it('links a later cell to the workbook analysis through the established set result', async () => {
-  const first = await analyzeRNotebookSource(script)
+  const first = await analyzeRNotebookSource(loopScript)
   const next = 'cat(length(five))'
   const second = await analyzeRNotebookSource(next)
   const projection = projectNotebookDependencies([
-    { run: runFor(script), facts: first.facts },
+    { run: runFor(loopScript), facts: first.facts },
     { run: runFor(next, '1'), facts: second.facts }
   ])
   expect(projection.stalenessByRunId['1']).toEqual({ state: 'clear' })

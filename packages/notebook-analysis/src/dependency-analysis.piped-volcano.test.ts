@@ -40,9 +40,11 @@ it('captures the reported connection, piped summaries and cross-cell labelled pl
         environment: 'r'
       })
       const files = await analyzeNotebookSourceFileAccess('r', run.script, context)
-      expect
-        .soft(files, run.runId)
-        .toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+      expect.soft(files, run.runId).toMatchObject({
+        readState: ['2', '3', '4'].includes(run.runId) ? 'partial' : 'complete',
+        writeState: ['2', '3', '4'].includes(run.runId) ? 'partial' : 'complete',
+        externalState: ['2', '3', '4'].includes(run.runId) ? 'partial' : 'complete'
+      })
       if (run.runId === '4')
         expect(files).toMatchObject({ reads: [], writes: ['diagonal_volcano_plot.png'] })
     }
@@ -51,9 +53,11 @@ it('captures the reported connection, piped summaries and cross-cell labelled pl
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect.soft(projection.stalenessByRunId['4']).toEqual({ state: 'clear' })
-    expect(projection.dependenciesByRunId?.['4']).toContain('3')
-    expect(projection.dependenciesByRunId?.['3']).toContain('2')
+    expect
+      .soft(projection.stalenessByRunId['4'])
+      .toEqual({ state: 'unknown', reasons: ['external-state', 'opaque-call'] })
+    expect(projection.dependenciesByRunId?.['4']).toBeUndefined()
+    expect(projection.dependenciesByRunId?.['3']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }

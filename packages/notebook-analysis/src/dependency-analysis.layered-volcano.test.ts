@@ -24,7 +24,7 @@ it('retains standalone plot paths while keeping unproven column dispatch uncerta
 })
 
 it.each([false, true])(
-  'handles recorded parse failure status (corrected=%s)',
+  'keeps opaque column effects uncertain after correcting parse status=%s',
   async (corrected) => {
     const root = await mkdtemp(join(tmpdir(), 'layered-volcano-'))
     const runs: NotebookRunRecord[] = cells
@@ -53,19 +53,16 @@ it.each([false, true])(
       // Correcting the failed record cannot prove dispatch on the standalone plot's columns.
       expect(p.stalenessByRunId['11'], JSON.stringify(p)).toEqual({
         state: 'unknown',
-        reasons: ['external-state', 'opaque-call']
+        reasons: ['external-state', 'opaque-call', 'opaque-mutation', 'dynamic-namespace']
       })
       expect(p.dependenciesByRunId?.['11']).toBeUndefined()
       for (const runId of ['2', '4']) {
-        // Correcting the parse record does not prove the classes passed to
-        // quantile in cell 4; its output must still retain dispatch uncertainty.
-        expect(p.stalenessByRunId[runId], JSON.stringify(p)).toEqual(
-          !corrected
-            ? { state: 'unknown', reasons: ['parse-error'] }
-            : runId === '2'
-              ? { state: 'clear' }
-              : { state: 'unknown', reasons: ['external-state', 'opaque-call'] }
-        )
+        // Unknown log10 methods can alter the namespace independently of the
+        // recorded parse status, so neither earlier record regains authority.
+        expect(p.stalenessByRunId[runId], JSON.stringify(p)).toEqual({
+          state: 'unknown',
+          reasons: ['external-state', 'opaque-call', 'opaque-mutation', 'dynamic-namespace']
+        })
       }
       expect(runs.find((run) => run.runId === '6')?.status).toBe(corrected ? 'failed' : 'completed')
       if (corrected) expect(p.stalenessByRunId['6']).toBeUndefined()

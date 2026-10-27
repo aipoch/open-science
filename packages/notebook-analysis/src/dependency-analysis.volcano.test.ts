@@ -85,6 +85,10 @@ it.each(cells.filter((cell) => cell.language === 'r' && cell.status === 'complet
     // Owned frames do not prove primitive columns for cor's coercion path.
     const unprovenCorrelation = ['15', '18'].includes(runId)
     const unprovenOrdering = ['13', '20', '21', '22', '25'].includes(runId)
+    // These diagnostic reductions consume outputs whose primitive shape has not
+    // been established; retain known input paths without certifying Summary effects.
+    const unprovenSummary = ['5', '8', '16', '17'].includes(runId)
+    const unprovenDistinct = runId === '6'
     expect
       .soft(
         facts.state === 'unknown'
@@ -93,21 +97,54 @@ it.each(cells.filter((cell) => cell.language === 'r' && cell.status === 'complet
         `variables in run ${runId}`
       )
       .toEqual(
-        unprovenCoercion
+        unprovenCoercion || ['13', '20'].includes(runId)
           ? ['dynamic-namespace', 'opaque-call']
-          : unprovenCorrelation || unprovenOrdering
+          : unprovenCorrelation || unprovenOrdering || unprovenSummary || unprovenDistinct
             ? ['opaque-call']
             : []
       )
     const files = await analyzeNotebookSourceFileAccess('r', script, context)
     expect.soft(files, `files in run ${runId}`).toMatchObject({
       readState:
-        unprovenCoercion || unprovenCorrelation || unprovenOrdering ? 'partial' : 'complete',
+        unprovenCoercion ||
+        unprovenCorrelation ||
+        unprovenOrdering ||
+        unprovenSummary ||
+        unprovenDistinct
+          ? 'partial'
+          : 'complete',
       writeState:
-        unprovenCoercion || unprovenCorrelation || unprovenOrdering ? 'partial' : 'complete',
+        unprovenCoercion ||
+        unprovenCorrelation ||
+        unprovenOrdering ||
+        unprovenSummary ||
+        unprovenDistinct
+          ? 'partial'
+          : 'complete',
       externalState:
-        unprovenCoercion || unprovenCorrelation || unprovenOrdering ? 'partial' : 'complete'
+        unprovenCoercion ||
+        unprovenCorrelation ||
+        unprovenOrdering ||
+        unprovenSummary ||
+        unprovenDistinct
+          ? 'partial'
+          : 'complete'
     })
+    if (unprovenSummary) {
+      expect(files.reads).toEqual(
+        runId === '17'
+          ? [
+              'inputs/differential-results-333333333333.xlsx',
+              'inputs/expression-matrix-444444444444.csv'
+            ]
+          : [
+              runId === '8'
+                ? 'inputs/expression-matrix-444444444444.csv'
+                : 'inputs/differential-results-333333333333.xlsx'
+            ]
+      )
+      expect(files.writes).toEqual([])
+    }
     if (['20', '21', '22', '25'].includes(runId)) {
       expect(files.reads).toEqual(['diff_final.rds'])
       expect(files.writes).toEqual(['diagonal_volcano.png'])

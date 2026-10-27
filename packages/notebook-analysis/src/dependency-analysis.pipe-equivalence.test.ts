@@ -87,7 +87,11 @@ it('does not certify unresolved functions after pipe expansion', async () => {
 it.each(['|>', '%>%'])(
   'preserves ordinary values through chained callbacks with %s',
   async (pipe) => {
-    const source = `sets <- list(A=c('1','2'), B=c('2','3')) ${pipe} lapply(unique); result <- sets ${pipe} Reduce(f=union); result ${pipe} writeLines(con='out.txt')`
+    const source = `sets <- list(A=c('1','2'), B=c('2','3')) ${pipe} lapply(as.character); result <- sets ${pipe} Reduce(f=union); result ${pipe} writeLines(con='out.txt')`
+    const unproved = source.replace('lapply(as.character)', 'lapply(unique)')
+    const uncertain = (await analyzeRNotebookSource(unproved)).facts
+    expect(uncertain.state).toBe('unknown')
+    expect(uncertain.copyOnModifyNames ?? []).not.toContain('sets')
     const { facts } = await analyzeRNotebookSource(source)
     expect(facts.state).toBe('available')
     expect(facts.copyOnModifyNames).toEqual(expect.arrayContaining(['sets', 'result']))

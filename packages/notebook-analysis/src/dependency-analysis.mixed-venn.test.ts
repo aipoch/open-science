@@ -119,12 +119,13 @@ it('resolves each cell in its own kernel without depending on the other language
         repository: { readSessionRuns: async () => runs }
       })
       const result = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '2' })
-      expect(result.stalenessByRunId).toEqual({
+      expect(result.stalenessByRunId).toMatchObject({
         '0': { state: 'clear' },
         '1': { state: 'clear' },
-        '2': { state: 'clear' }
+        '2': { state: 'unknown', reasons: expect.arrayContaining(['opaque-call']) }
       })
-      for (const index of [0, 1, 2]) expect(result.dependenciesByRunId?.[String(index)]).toEqual([])
+      for (const index of [0, 1]) expect(result.dependenciesByRunId?.[String(index)]).toEqual([])
+      expect(result.dependenciesByRunId?.['2']).toBeUndefined()
     }
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -132,13 +133,14 @@ it('resolves each cell in its own kernel without depending on the other language
 })
 
 it.each(['unique(trimws(x))', 'x <- x[!is.na(x) & nzchar(trimws(x))]; unique(x)'])(
-  'preserves cleaned function results: %s',
+  'does not certify unique methods hidden inside cleaning functions: %s',
   async (body) => {
     const { facts } = await analyzeRNotebookSource(
       `clean<-function(x){x<-as.character(x);${body}}; y<-clean(c(' a ',NA)); Reduce(union,list(y))`
     )
-    expect(facts.state === 'unknown' ? facts.reasons : []).toEqual([])
-    expect(facts.copyOnModifyNames).toContain('y')
+    expect(facts.state).toBe('unknown')
+    expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('y')
   }
 )
 
@@ -150,14 +152,16 @@ it.each([0, 1, 2])('captures mixed Venn cell %s', async (index) => {
   expect(
     facts.state === 'unknown' ? facts.reasons : [],
     JSON.stringify({ state: facts.state, reasons: facts.state === 'unknown' ? facts.reasons : [] })
-  ).toEqual(['external-state'])
+  ).toEqual(
+    index === 2 ? ['dynamic-namespace', 'external-state', 'opaque-call'] : ['external-state']
+  )
   expect(
     await analyzeNotebookSourceFileAccess(language, cells[index]),
     JSON.stringify({ state: facts.state, reasons: facts.state === 'unknown' ? facts.reasons : [] })
   ).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: index === 2 ? 'partial' : 'complete',
+    writeState: index === 2 ? 'partial' : 'complete',
+    externalState: index === 2 ? 'partial' : 'complete',
     reads: ['inputs/set-membership-111111111111.xlsx']
   })
 })

@@ -132,7 +132,9 @@ it('captures the Venn plot through its set preparation and skips inspection cell
       const { facts } = await analyzeRNotebookSource(vennCells[index], context)
       expect
         .soft(facts.state === 'unknown' ? facts.reasons : [], `cell ${index}`)
-        .toEqual(index === 3 ? [] : ['external-state'])
+        .toEqual(
+          index === 3 ? [] : index === 1 ? ['external-state', 'opaque-call'] : ['external-state']
+        )
       const atRun = await analyzer.project({
         projectId: 'p',
         sessionId: 's',
@@ -140,22 +142,22 @@ it('captures the Venn plot through its set preparation and skips inspection cell
       })
       expect
         .soft(atRun.stalenessByRunId[String(index)], `cell ${index}`)
-        .toEqual({ state: 'clear' })
+        .toMatchObject({ state: index === 0 ? 'clear' : 'unknown' })
       expect
         .soft(
           await analyzeNotebookSourceFileAccess('r', vennCells[index], context),
           `cell ${index}`
         )
         .toMatchObject({
-          readState: 'complete',
-          writeState: 'complete',
-          externalState: 'complete',
+          readState: index === 1 ? 'partial' : 'complete',
+          writeState: index === 1 ? 'partial' : 'complete',
+          externalState: index === 1 ? 'partial' : 'complete',
           reads: index < 3 ? ['inputs/set-membership-111111111111.xlsx'] : [],
           writes: index === 3 ? ['proportional_venn_5sets.png'] : []
         })
     }
-    expect(projection.dependenciesByRunId?.['2']).toEqual([])
-    expect(projection.dependenciesByRunId?.['3']).toEqual(['2'])
+    expect(projection.dependenciesByRunId?.['2']).toBeUndefined()
+    expect(projection.dependenciesByRunId?.['3']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }
