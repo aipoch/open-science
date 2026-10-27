@@ -331,7 +331,7 @@ function PublicationCheck({
           ) : null}
         </div>
         <Button
-          className="max-w-full whitespace-normal"
+          className="h-auto min-h-8 max-w-full whitespace-normal py-1"
           disabled={!doi || unavailable || loading || checking}
           aria-describedby={helpId}
           onClick={() => void run(issue ? retryMode : 'check')}
