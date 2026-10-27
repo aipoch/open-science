@@ -8,7 +8,11 @@ import {
   type LibraryClientApi,
   type LibraryPage
 } from '../src/client/index.js'
-import { literatureItemInputSchema, type LiteratureItemView } from '../src/contracts.js'
+import {
+  literatureItemInputSchema,
+  type LiteratureItemView,
+  type LiteratureMetadataCompletionResult
+} from '../src/contracts.js'
 import { expect, it, vi } from 'vitest'
 const item = (id = 'paper', revision = 1): LiteratureItemView => ({
   id,
@@ -204,6 +208,105 @@ it('discards completion previews when a different detail opens', async () => {
   pending.resolve({ mode: 'preview', reviewToken: 'old' } as never)
   await result
   expect(owner.getSnapshot().completion).toBeUndefined()
+  stop()
+})
+it('rereads a delayed metadata commit without reverting a newer reading status', async () => {
+  const saved = { ...item('paper', 2), readingStatus: 'unread' as const }
+  const latest = { ...saved, readingStatus: 'read' as const }
+  const pending = deferred<LiteratureMetadataCompletionResult>()
+  const get = vi.fn(async () => latest)
+  const controller = createLiteratureDetailController(get)
+  controller.open(item())
+  const onItemChange = vi.fn()
+  const owner = createLiteratureMetadata(controller, {
+    transact: vi.fn(),
+    completeMetadata: vi.fn(() => pending.promise),
+    onItemChange,
+    messages: () => ({ reload: 'reload', update: 'update', complete: 'complete' })
+  })
+  const stop = owner.start()
+  owner.changeMode('complete')
+  const writing = owner.complete('commit', { scheme: 'doi', value: '10.1234/paper' })
+  owner.changeMode('view')
+  controller.replace(latest)
+  pending.resolve({
+    mode: 'commit',
+    provider: 'crossref',
+    sourceUrl: 'https://example.test/paper',
+    item: saved,
+    filled: [],
+    conflicts: []
+  })
+  await writing
+  expect(controller.getSnapshot().item).toEqual(latest)
+  expect(onItemChange).toHaveBeenCalledExactlyOnceWith(latest)
+  expect(get).toHaveBeenCalledExactlyOnceWith('paper')
+  expect(owner.getSnapshot().mode).toBe('view')
+  stop()
+})
+it('does not republish a completion after leaving during its authoritative reload', async () => {
+  const latest = { ...item('paper', 2), readingStatus: 'read' as const }
+  const pendingRead = deferred<LiteratureItemView>()
+  const get = vi.fn(() => pendingRead.promise)
+  const controller = createLiteratureDetailController(get)
+  controller.open(item())
+  const owner = createLiteratureMetadata(controller, {
+    transact: vi.fn(),
+    completeMetadata: vi.fn(async () => ({
+      mode: 'commit' as const,
+      provider: 'crossref' as const,
+      sourceUrl: 'https://example.test/paper',
+      item: latest,
+      filled: [],
+      conflicts: []
+    })),
+    onItemChange: vi.fn(),
+    messages: () => ({ reload: 'reload', update: 'update', complete: 'complete' })
+  })
+  const stop = owner.start()
+  owner.changeMode('complete')
+  const writing = owner.complete('commit', { scheme: 'doi', value: '10.1234/paper' })
+  await vi.waitFor(() => expect(get).toHaveBeenCalledOnce())
+  owner.changeMode('view')
+  owner.changeMode('complete')
+  pendingRead.resolve(latest)
+  await writing
+  expect(owner.getSnapshot()).toMatchObject({ mode: 'complete', completing: false })
+  expect(owner.getSnapshot().completion).toBeUndefined()
+  expect(controller.getSnapshot().item).toEqual(latest)
+  stop()
+})
+it('reports a committed metadata reload failure without publishing its stale snapshot', async () => {
+  const saved = { ...item('paper', 2), readingStatus: 'unread' as const }
+  const controller = createLiteratureDetailController(
+    vi.fn(async () => {
+      throw new Error('read failed')
+    })
+  )
+  controller.open(item())
+  const onItemChange = vi.fn()
+  const owner = createLiteratureMetadata(controller, {
+    transact: vi.fn(),
+    completeMetadata: vi.fn(async () => ({
+      mode: 'commit' as const,
+      provider: 'crossref' as const,
+      sourceUrl: 'https://example.test/paper',
+      item: saved,
+      filled: [],
+      conflicts: []
+    })),
+    onItemChange,
+    messages: () => ({ reload: 'reload', update: 'update', complete: 'complete' })
+  })
+  const stop = owner.start()
+  owner.changeMode('complete')
+  await owner.complete('commit', { scheme: 'doi', value: '10.1234/paper' })
+  expect(onItemChange).not.toHaveBeenCalled()
+  expect(controller.getSnapshot().item).toEqual(item())
+  expect(owner.getSnapshot()).toMatchObject({
+    completing: false,
+    completionError: { itemId: 'paper', message: 'reload' }
+  })
   stop()
 })
 it('holds export admission until save settles and never saves partial batches', async () => {

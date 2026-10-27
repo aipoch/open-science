@@ -329,8 +329,9 @@ test('captures all runtime update states in isolated Electron (presentation-only
       if (await page.getByTestId('runtime-update-dialog').isVisible()) {
         await expect(page.getByRole('dialog')).toHaveCount(1)
         await expect(page.getByRole('alertdialog')).toHaveCount(0)
-        const footer = page.getByTestId('runtime-update-dialog').locator(':scope > div').last()
-        expect(await footer.getByRole('button').count()).toBeLessThanOrEqual(2)
+        const controls = page.getByTestId('manual-update-controls')
+        expect(await controls.getByRole('button').count()).toBeLessThanOrEqual(2)
+        await expect(page.getByTestId('manual-update-links')).toBeVisible()
       }
       if (id === 'S23') {
         const desktopState = async (closing: boolean, phase = 'disconnected'): Promise<void> => {

@@ -61,6 +61,10 @@ import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachment
 import { LiteratureReadingProjectDialog } from './workflows/LiteratureReadingProjectDialog'
 import { useLiteratureAttachments } from './workflows/useLiteratureAttachments'
 import { useLiteratureExport } from './workflows/useLiteratureExport'
+import {
+  useLiteratureReadingStatus,
+  type LiteratureReadingStatus
+} from './workflows/useLiteratureReadingStatus'
 import { useLiteratureItemEdits } from './workflows/useLiteratureItemEdits'
 import { useLiteratureReading } from './workflows/useLiteratureReading'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -260,6 +264,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [sortBy, setSortBy] = useState<LiteratureSort>('updated')
   const [filterItemType, setFilterItemType] = useState<LiteratureItemType | 'all'>('all')
   const [filterHasPdf, setFilterHasPdf] = useState<'all' | 'with' | 'without'>('all')
+  const [filterReadingStatus, setFilterReadingStatus] = useState<LiteratureReadingStatus | 'all'>(
+    'all'
+  )
   const [selectionStore] = useState(createLiteratureSelectionStore)
   const clearSelection = useCallback((): void => selectionStore.clear(), [selectionStore])
   const {
@@ -564,6 +571,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     filterYearFrom,
     filterYearTo,
     filterHasPdf,
+    filterReadingStatus,
     journalAttributeFilters,
     tableScrollRef,
     setError,
@@ -659,6 +667,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     if (!page.itemIds) throw new Error('Literature membership is unavailable.')
     return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
   }
+
+  const { setReadingStatus, readingStatusError, readingStatusPending } = useLiteratureReadingStatus(
+    {
+      scopeKey: entriesKey,
+      selectionStore,
+      resolveSelectedItemIds,
+      isBatching,
+      setIsBatching,
+      detailController,
+      loadEntries,
+      setError
+    }
+  )
 
   const {
     restorePreview,
@@ -804,6 +825,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     !!collectionId &&
     singleReevaluation?.collectionId !== collectionId &&
     !smartDecisionBatch.progress
+
+  const selectionBlocked = smartTableBlocked || readingStatusPending
 
   const selectLibrary = (nextCollectionId?: string): void => {
     setCitationStylesOpen(false)
@@ -1013,6 +1036,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     (yearFilter.from ? 1 : 0) +
     (yearFilter.to ? 1 : 0) +
     (filterHasPdf !== 'all' ? 1 : 0) +
+    (filterReadingStatus !== 'all' ? 1 : 0) +
     journalAttributeFilters.length
 
   const clearFilters = (): void => {
@@ -1020,6 +1044,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setFilterItemType('all')
     yearFilter.clear()
     setFilterHasPdf('all')
+    setFilterReadingStatus('all')
     setJournalAttributeFilters([])
     clearSelection()
   }
@@ -1442,7 +1467,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           defaultValue_one: '{{count}} reference'
         })}
         pageSizeLabel={t('References per page')}
-        disabled={smartTableBlocked}
+        disabled={selectionBlocked}
         loading={entriesLoading}
         onOffsetChange={(offset) => {
           clearSelection()
@@ -1536,6 +1561,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const rowActions = useRef<LiteratureRowActions>({
     openSelectedItemDetail,
     persistInlineItem,
+    setReadingStatus,
     previewFirstAttachment,
     setItemsLifecycle,
     requestPermanentDeletion
@@ -1544,6 +1570,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     rowActions.current = {
       openSelectedItemDetail,
       persistInlineItem,
+      setReadingStatus,
       previewFirstAttachment,
       setItemsLifecycle,
       requestPermanentDeletion
@@ -2034,6 +2061,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     itemTypeLabels={itemTypeLabels}
                                     filterHasPdf={filterHasPdf}
                                     setFilterHasPdf={setFilterHasPdf}
+                                    filterReadingStatus={filterReadingStatus}
+                                    setFilterReadingStatus={setFilterReadingStatus}
                                     journalFilterDatasets={journalFilterDatasets}
                                     journalAttributeFilters={journalAttributeFilters}
                                     setJournalAttributeFilters={setJournalAttributeFilters}
@@ -2070,6 +2099,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     section={section}
                                     startingReadingProjectId={startingReadingProjectId}
                                     requestReadSelection={requestReadSelection}
+                                    setReadingStatus={setReadingStatus}
                                     batchCollections={batchCollections}
                                     activeProjects={activeProjects}
                                     projectsLoaded={projectsLoaded}
@@ -2394,7 +2424,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       tableScrollRef={tableScrollRef}
                       tableMinWidth={tableMinWidth}
                       selectedCollection={selectedCollection}
-                      smartTableBlocked={smartTableBlocked}
+                      smartTableBlocked={selectionBlocked}
                       items={items}
                       selectionStore={selectionStore}
                       visibleOrderedTableColumns={visibleOrderedTableColumns}
@@ -2566,6 +2596,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         />
 
         <LiteratureDetailDialog
+          setReadingStatus={setReadingStatus}
+          readingStatusError={readingStatusError}
+          isBatching={isBatching}
           detailController={detailController}
           previewItem={previewItem}
           selectedItemDialogRef={selectedItemDialogRef}

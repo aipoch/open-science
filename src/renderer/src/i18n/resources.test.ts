@@ -143,6 +143,7 @@ const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
 const CONTEXT_SUFFIXES = new Set([
+  'readingStatus',
   'ago',
   'duration',
   'files',
