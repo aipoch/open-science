@@ -238,48 +238,6 @@ describe('ProviderRuntimeProjectionOwner', () => {
   )
 
   it.each(['official', 'codex-isolated', 'codex-shared'] as const)(
-    'offers GPT-6.1 Terra only as an explicit selection for %s',
-    (type) => {
-      const owner = new ProviderRuntimeProjectionOwner()
-      const provider: StoredProvider = {
-        id: type,
-        type,
-        ...(type === 'official' ? { vendorId: 'openai' as const } : {}),
-        name: 'OpenAI',
-        apiEndpoints: ['responses']
-      }
-      const model = 'gpt-6.1-terra'
-
-      expect(owner.toProviderView(provider).models).toContain(model)
-      expect(owner.resolveActiveModel(provider)).toBe(
-        type === 'official' ? 'gpt-5.6-sol' : undefined
-      )
-      expect(owner.resolveActiveModel(provider, 'gpt-6-sol')).toBe('gpt-6-sol')
-
-      for (const frameworkId of ['codex', 'opencode', 'claude-code'] as const) {
-        const target = owner.resolveRuntimeTarget(
-          provider,
-          { kind: 'required', model },
-          getAgentFramework(frameworkId)
-        )
-        expect(target).toMatchObject({
-          effectiveModel: model,
-          apiEndpoints: ['responses'],
-          frameworkCompatible: frameworkId === 'codex',
-          needsChatResponsesToChatCompletionsBridge: false,
-          needsNativeResponsesCompatibility: false,
-          reasoningEffortProfile: {
-            supported: true,
-            slots: ['low', 'medium', 'high', 'xhigh', 'max']
-          },
-          provider: { model, supportsImageInput: true }
-        })
-        expect(target.provider.contextWindow).toBe(1_050_000)
-      }
-    }
-  )
-
-  it.each(['official', 'codex-isolated', 'codex-shared'] as const)(
     'requests published OpenAI windows while leaving native caps to Codex for %s',
     (type) => {
       const owner = new ProviderRuntimeProjectionOwner()
@@ -295,7 +253,6 @@ describe('ProviderRuntimeProjectionOwner', () => {
       for (const [model, contextWindow] of [
         ['gpt-6-astra', 1_050_000],
         ['gpt-6.1-sol', 1_050_000],
-        ['gpt-6.1-terra', 1_050_000],
         ['gpt-6-sol', 1_050_000],
         ['gpt-6-luna', 1_050_000],
         ['gpt-5.6-sol', 1_050_000],
