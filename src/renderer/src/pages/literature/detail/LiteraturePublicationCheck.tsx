@@ -240,7 +240,7 @@ function PublicationCheck({
   return (
     <section className="space-y-3 py-4" aria-labelledby={headingId}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 id={headingId} className="font-medium">
+        <h3 id={headingId} className="sr-only">
           {t('Retractions and corrections')}
         </h3>
         <Button
