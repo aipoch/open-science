@@ -300,7 +300,6 @@ export const sandboxedPackageSpawn =
       allowedNetworkHosts: packageMirrorHosts(options.mirror),
       signal: spawnOptions?.signal,
       superviseProcessTree: platform === 'win32',
-      ...(platform === 'win32' ? { windowsProtectionRequired: true } : {}),
       filesystem: {
         readOnlyRoots: [
           ...grantedRoots.map((root) => root.path),

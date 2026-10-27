@@ -67,6 +67,7 @@ type AcpPromptTurnMode =
       promptAttemptId?: string
       planDelivery?: Readonly<{ projectId: string; commandId: string }>
       delegatedMessageId?: string
+      onProviderDispatched?: () => void
     }>
 
 type AcpPromptTurnPlanContext = Readonly<{
@@ -313,6 +314,11 @@ class AcpPromptTurnWorkflow {
       const skillRuntime = backend.session.options?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
         { nativeAllowedNames?: string[]; mainAllowedNames?: string[] } | undefined
       const authorization = this.options.skills.authorize({
+        diagnosticContext: {
+          sessionId: request.sessionId,
+          frameworkId: backend.framework.id,
+          modelRoute: backend.modelRoute
+        },
         frameworkId: backend.framework.id,
         nativeSkillScope: skillRuntime?.nativeAllowedNames,
         mainSkillScope: skillRuntime?.mainAllowedNames,
@@ -634,7 +640,13 @@ class AcpPromptTurnWorkflow {
               await resumeDispatch()
               deliveryClaimed = true
             }
-            return this.checkpoint(interaction)
+            const dispatch = await this.checkpoint(interaction)
+            // Mark the boundary before calling the adapter: a synchronous throw from
+            // session.prompt cannot prove that no request left the process.
+            if (dispatch !== 'cancelled' && turn.mode.kind === 'app-continuation') {
+              turn.mode.onProviderDispatched?.()
+            }
+            return dispatch
           },
           onDispatched: () => {
             providerDispatched = true

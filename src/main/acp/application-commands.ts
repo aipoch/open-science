@@ -104,7 +104,10 @@ const acpResponseCommandContracts = Object.freeze({
         z
           .object({
             requestId: z.string().min(1),
-            action: z.enum(['accept', 'decline', 'cancel'])
+            action: z.enum(['accept', 'decline', 'cancel']),
+            retryContinuation: z.boolean().optional(),
+            prepareContinuation: z.boolean().optional(),
+            continuationFailure: z.string().min(1).max(4_000).optional()
           })
           .passthrough()
       ])

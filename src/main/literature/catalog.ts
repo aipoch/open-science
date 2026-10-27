@@ -1,3 +1,8 @@
+import {
+  getPublicationCheckDoi,
+  literaturePublicationCheckSnapshotSchema,
+  type LiteraturePublicationCheckSnapshot
+} from '@aipoch/literature-discovery/contracts'
 import { journalBindingIdentity } from '@aipoch/journal-catalog/contracts'
 import {
   LibraryTransaction,
@@ -20,6 +25,7 @@ import {
 import { bindLiteraturePdfVersion } from '../pdf-annotations/source-bindings'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import type { ContentRepository } from '../storage/content-repository'
+import { withDataRootWrite } from '../storage/migration-state'
 import type { JournalAttributes } from './journal-attributes'
 import { boundedLiteraturePage } from './response-page'
 import type { LiteratureScreening } from './screening-adapter'
@@ -1314,6 +1320,58 @@ class LiteratureCatalog {
         ? undefined
         : requested
     return row ? (await this.itemViews([row]))[0] : undefined
+  }
+
+  async savePublicationCheck(
+    input: {
+      itemId: string
+      expectedMetadataRevision: number
+      snapshot: LiteraturePublicationCheckSnapshot
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const snapshot = literaturePublicationCheckSnapshotSchema.parse(input.snapshot)
+    await withDataRootWrite(async () => {
+      signal?.throwIfAborted()
+      const client = await this.getClient()
+      await client.$transaction(
+        async (transaction) => {
+          // Do not resolve merged IDs here: the request must still own its original reference.
+          const row = await transaction.literatureItem.findUnique({
+            where: { id: input.itemId },
+            include: { identifiers: true }
+          })
+          if (!row || row.deletedAt || row.mergedIntoItemId) {
+            throw new Error('Literature Item is unavailable.')
+          }
+          const doi = getPublicationCheckDoi(
+            row.identifiers.map(({ scheme, rawValue }) => ({ scheme, value: rawValue }))
+          )
+          if (row.metadataRevision !== input.expectedMetadataRevision || doi !== snapshot.doi) {
+            throw new Error('Literature Item revision conflict.')
+          }
+          signal?.throwIfAborted()
+          await this.attachSource(transaction, {
+            itemId: input.itemId,
+            source: {
+              provider: 'crossref-publication-check',
+              externalId: snapshot.doi,
+              sourceUrl: `https://api.crossref.org/works/${encodeURIComponent(snapshot.doi)}`,
+              rawMetadata: snapshot
+            }
+          })
+          signal?.throwIfAborted()
+        },
+        { maxWait: 30_000 }
+      )
+      // This source-only write does not change screening evidence or metadata. In particular,
+      // publishChanged/commit would unnecessarily schedule automatic AI screening.
+      try {
+        this.onChanged?.({ itemIds: [input.itemId], revision: ++this.revision })
+      } catch (error) {
+        log.warn('Could not publish committed publication check', { error })
+      }
+    })
   }
 
   async sources(itemId: string): Promise<LiteratureSourceRecordView[]> {

@@ -1,3 +1,4 @@
+import type { AcpSpecialistResolutionContext } from './runtime-contract'
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
@@ -74,7 +75,10 @@ type AcpProviderSessionResumerDependencies = Readonly<{
     specialistId: string,
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
-  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  resolveSpecialistSkills?: (
+    specialistId: string,
+    context?: AcpSpecialistResolutionContext
+  ) => Promise<EffectiveSpecialistSkills>
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
@@ -559,6 +563,7 @@ export class AcpProviderSessionResumer {
       const existingAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
       let specialistBindingRevision = existingAggregate?.specialistBindingRevision() ?? 0
       let specialistId = request.specialistId ?? existingAggregate?.snapshot().specialistId
+      let bindingSource = request.specialistId !== undefined ? 'request' : 'registry'
       const projectContextAppend = await this.resolveProjectAgentContext(projectId)
       const resolveSpecialistProjection = async (
         currentSpecialistId: string | undefined,
@@ -567,10 +572,33 @@ export class AcpProviderSessionResumer {
         identity: { append: string; prefix: string } | undefined
         setup: AcpSessionSetupPresentation
       }> => {
+        if (currentSpecialistId)
+          log.info('bound specialist resolution started', {
+            operation: 'specialist-resolution',
+            mode: 'resume',
+            phase: 'profile',
+            sessionId: request.sessionId,
+            specialistId: currentSpecialistId,
+            frameworkId: currentBackend.framework.id,
+            modelRoute: currentBackend.modelRoute,
+            bindingSource,
+            bindingRevision: specialistBindingRevision
+          })
         const [identity, skills] = await Promise.all([
-          this.resolveSpecialistIdentity(currentSpecialistId, currentBackend),
-          this.resolveSpecialistSkills(currentSpecialistId)
+          this.resolveSpecialistIdentity(currentSpecialistId, currentBackend, request.sessionId),
+          this.resolveSpecialistSkills(currentSpecialistId, currentBackend, request.sessionId)
         ])
+        if (currentSpecialistId)
+          log.info('bound specialist resolution finished', {
+            operation: 'specialist-resolution',
+            mode: 'resume',
+            phase: 'identity',
+            sessionId: request.sessionId,
+            specialistId: currentSpecialistId,
+            frameworkId: currentBackend.framework.id,
+            modelRoute: currentBackend.modelRoute,
+            outcome: skills?.kind === 'unavailable' ? 'unavailable' : 'resolved'
+          })
         return {
           identity,
           setup: this.presentation.buildSessionSetup({
@@ -715,6 +743,7 @@ export class AcpProviderSessionResumer {
           const currentAggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
           specialistBindingRevision = currentAggregate?.specialistBindingRevision() ?? 0
           specialistId = currentAggregate?.snapshot().specialistId
+          bindingSource = 'registry'
           specialistProjection = await resolveSpecialistProjection(specialistId, backend)
           continue
         }
@@ -845,31 +874,72 @@ export class AcpProviderSessionResumer {
   }
 
   private async resolveSpecialistSkills(
-    specialistId: string | undefined
+    specialistId: string | undefined,
+    backend: AcpBackendGenerationView,
+    sessionId: string
   ): Promise<EffectiveSpecialistSkills | undefined> {
     if (!specialistId || !this.deps.resolveSpecialistSkills) return undefined
     try {
-      return await this.deps.resolveSpecialistSkills(specialistId)
-    } catch {
+      return await this.deps.resolveSpecialistSkills(specialistId, {
+        sessionId,
+        frameworkId: backend.framework.id,
+        modelRoute: backend.modelRoute
+      })
+    } catch (error) {
+      log.warn('bound specialist capability resolution failed', {
+        operation: 'specialist-resolution',
+        mode: 'resume',
+        phase: 'skills',
+        reason: 'resolver-threw',
+        sessionId,
+        specialistId,
+        frameworkId: backend.framework.id,
+        modelRoute: backend.modelRoute,
+        ...diagnosticErrorFields(error)
+      })
       return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
     }
   }
 
   private async resolveSpecialistIdentity(
     specialistId: string | undefined,
-    backend: AcpBackendGenerationView
+    backend: AcpBackendGenerationView,
+    sessionId: string
   ): Promise<{ append: string; prefix: string } | undefined> {
     if (!specialistId) return undefined
+    const context = {
+      operation: 'specialist-resolution',
+      mode: 'resume',
+      phase: 'identity',
+      sessionId,
+      specialistId,
+      frameworkId: backend.framework.id,
+      backendId: backend.backendId,
+      modelRoute: backend.modelRoute
+    }
     if (!this.deps.resolveSpecialistIdentity) {
+      log.warn('bound specialist identity resolution failed', {
+        ...context,
+        reason: 'resolver-missing'
+      })
       throw new Error('The bound specialist is unavailable.')
     }
+    let identity
     try {
-      const identity = await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
-      if (!identity) throw new Error('The bound specialist is unavailable.')
-      return identity
-    } catch {
+      identity = await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+    } catch (error) {
+      log.warn('bound specialist identity resolution failed', {
+        ...context,
+        reason: 'resolver-threw',
+        ...diagnosticErrorFields(error)
+      })
       throw new Error('The bound specialist is unavailable.')
     }
+    if (!identity) {
+      log.warn('bound specialist identity resolution failed', { ...context, reason: 'unavailable' })
+      throw new Error('The bound specialist is unavailable.')
+    }
+    return identity
   }
 
   private registerSessionSpecialist(sessionId: string): void {

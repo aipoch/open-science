@@ -25,6 +25,7 @@ import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
 import { LiteratureAttachments } from './LiteratureAttachments'
 import { LiteratureBibliographicDetails } from './LiteratureBibliographicDetails'
 import { LiteratureDetailLinkList } from './LiteratureDetailLinkList'
+import { LiteraturePublicationCheck } from './LiteraturePublicationCheck'
 
 export function LiteratureDetailOverview({
   selectedCollection,
@@ -154,6 +155,7 @@ export function LiteratureDetailOverview({
         </section>
       )}
       <LiteratureBibliographicDetails selectedItem={selectedItem} itemTypeLabels={itemTypeLabels} />
+      <LiteraturePublicationCheck item={selectedItem} />
       <section className="flex flex-wrap items-center justify-between gap-3 py-4">
         <div className="space-y-1">
           <h3 className="font-medium">{t('Citation discovery')}</h3>

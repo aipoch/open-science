@@ -1,13 +1,30 @@
 import '@/assets/main.css'
-import { useState } from 'react'
+import { useState, type PropsWithChildren } from 'react'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { WorkspaceElicitationCard } from '@/pages/workspace/WorkspaceElicitationCard'
+import { ResizableBottomPanel } from '@/pages/workspace/ResizableBottomPanel'
 import { WorkspaceDelegatedQuestionCard } from '@/pages/workspace/WorkspaceDelegatedQuestionCard'
 import type { AgentUserChoicePrompt, ElicitationField } from '../../../src/shared/elicitation'
 import type { ElicitationResponse } from '../../../src/shared/acp'
 
 const search = new URLSearchParams(location.search)
+const QuestionPanel = ({ children }: PropsWithChildren): React.JSX.Element =>
+  search.has('embedded') ? (
+    <ResizableBottomPanel
+      ariaLabel="Resize question panel"
+      testId="elicitation-composer"
+      scrollTestId="elicitation-composer-scroll"
+      constrainGrowthToOverflow
+      minimumContentSelector='[data-elicitation-option-row="true"]'
+      minimumContentIndex={1}
+      contentScrollSelector='[data-testid="elicitation-options"]'
+    >
+      {children}
+    </ResizableBottomPanel>
+  ) : (
+    <>{children}</>
+  )
 document.documentElement.classList.toggle('dark', search.has('dark'))
 const kind = search.has('single') ? 'single-select' : 'multi-select'
 const options = Array.from({ length: 16 }, (_, index) => ({
@@ -15,7 +32,13 @@ const options = Array.from({ length: 16 }, (_, index) => ({
   description: `Research category ${index + 1}`
 }))
 const questions: AgentUserChoicePrompt[] = [
-  { question: 'Which outputs?', kind, options },
+  {
+    question: search.has('long')
+      ? Array.from({ length: 24 }, (_, index) => `Question line ${index + 1}`).join('\n')
+      : 'Which outputs?',
+    kind,
+    options
+  },
   ...(search.has('mixed') || search.has('review')
     ? [
         {
@@ -86,27 +109,34 @@ export const Fixture = (): React.JSX.Element => {
           onRespond={onRespond}
         />
       ) : (
-        <WorkspaceElicitationCard
-          // Historical surfaces retain the projection after the pending request is gone.
-          request={
-            response?.action === 'accept'
-              ? undefined
-              : {
-                  requestId: 'question-1',
-                  sessionId: 'session-1',
-                  toolCallId: 'tool-1',
-                  message: 'Which outputs?',
-                  fields
-                }
-          }
-          elicitation={{
-            message: 'Which outputs?',
-            fields,
-            state: response?.action === 'accept' ? 'answered' : 'pending',
-            answers: response?.answers
-          }}
-          onRespond={onRespond}
-        />
+        <QuestionPanel>
+          <WorkspaceElicitationCard
+            embedded={search.has('embedded')}
+            // Historical surfaces retain the projection after the pending request is gone.
+            request={
+              response
+                ? undefined
+                : {
+                    requestId: 'question-1',
+                    sessionId: 'session-1',
+                    toolCallId: 'tool-1',
+                    message: 'Which outputs?',
+                    fields
+                  }
+            }
+            elicitation={{
+              message: 'Which outputs?',
+              fields,
+              state: response
+                ? response.action === 'accept'
+                  ? 'answered'
+                  : 'declined'
+                : 'pending',
+              answers: response?.answers
+            }}
+            onRespond={onRespond}
+          />
+        </QuestionPanel>
       )}
       <pre
         className="mt-4 whitespace-pre-wrap break-words text-xs text-text-300"

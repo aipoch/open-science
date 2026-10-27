@@ -1,3 +1,4 @@
+import { replayAutomaticEvent } from './replay-presentation'
 import { Slider } from 'radix-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger, PopoverClose } from '@/components/ui/popover'
@@ -150,6 +151,8 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
     [props.resources]
   )
   const label = (step: ReplayStep): string => {
+    const automaticEvent = replayAutomaticEvent(step.message, t)
+    if (automaticEvent) return automaticEvent.title
     if (step.kind === 'artifact') {
       const files = step.resourceIds.flatMap((id) => {
         const resource = resourcesById.get(id)

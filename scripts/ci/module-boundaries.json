@@ -9314,6 +9314,7 @@
       "sources": [
         "src/renderer/src/pages/workspace/PermissionApprovalControls.tsx",
         "src/renderer/src/pages/workspace/PermissionScopeConfirmationDialog.tsx",
+        "src/renderer/src/pages/workspace/QuestionSkipButton.tsx",
         "src/renderer/src/pages/workspace/WorkspaceElicitationCard.tsx",
         "src/renderer/src/pages/workspace/permission-request-presentation.ts",
         "src/renderer/src/pages/workspace/session-permissions.ts",
@@ -9323,11 +9324,17 @@
       "sourceLayers": {
         "src/renderer/src/pages/workspace/PermissionApprovalControls.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/PermissionScopeConfirmationDialog.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/QuestionSkipButton.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceElicitationCard.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/permission-request-presentation.ts": "presentation-model",
         "src/renderer/src/pages/workspace/session-permissions.ts": "presentation-model",
         "src/renderer/src/pages/workspace/PermissionScopeButton.tsx": "presentation-adapter"
       },
+      "resourcePaths": ["src/renderer/src/pages/workspace/question-skip-button.css"],
+      "resourceImports": ["src/renderer/src/pages/workspace/question-skip-button.css"],
+      "resourceTests": [
+        "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx"
+      ],
       "consumerModules": [],
       "requiredTests": [
         "src/renderer/src/pages/workspace/PermissionApprovalControls.interaction.test.tsx",

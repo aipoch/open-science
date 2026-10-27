@@ -708,8 +708,9 @@ const captureTrackedDescendants = (
         continue
       }
       // Ordinary descendants retain the leader's resource coalition across fork, exec and
-      // reparenting. Exclude a foreign service only before recording any evidence debt, and
-      // validate the same birth identity again so PID reuse cannot supply negative evidence.
+      // reparenting. The native snapshot brackets its coalition read with matching kernel birth
+      // identities. Use that evidence directly: a second read can race with an external service's
+      // exit/PID reuse and turn proven nonownership into permanent evidence debt.
       // Never use a later observation to discharge an already ambiguous historical identity.
       const leaderCoalition = tracker.leaderIdentity.coalitionId
       if (
@@ -718,14 +719,7 @@ const captureTrackedDescendants = (
         candidate.coalitionId &&
         candidate.coalitionId !== leaderCoalition
       ) {
-        const current = binding.getDarwinProcess(candidate.pid)
-        if (
-          current &&
-          current.coalitionId === candidate.coalitionId &&
-          samePosixIdentity(candidate, normalizeDarwinProcess(current))
-        ) {
-          continue
-        }
+        continue
       }
       const ownershipToken = binding.getDarwinEnvironmentValue(
         candidate.pid,

@@ -1532,6 +1532,7 @@ it('retains one export dialog and its task context through completion and cleanu
   const description = document.getElementById(dialog.getAttribute('aria-describedby')!)!
   for (const next of [
     { state: 'running', progress: { phase: 'choosing-location' } },
+    { state: 'running', progress: { phase: 'preparing' } },
     { state: 'running', progress: { phase: 'copying' } },
     { state: 'running', progress: { phase: 'validating' } },
     { state: 'running', progress: { phase: 'compressing' } },
@@ -1544,6 +1545,13 @@ it('retains one export dialog and its task context through completion and cleanu
     expect(dialog.querySelector('ol')).toBe(steps)
     expect(description.textContent).toBe('Research history is always included.')
     expect(usePackageOperationStore.getState().open).toBe(true)
+    if (next.progress.phase === 'preparing') {
+      expect(dialog.textContent).toContain('Preparing package…')
+      expect(dialog.textContent).not.toContain('Waiting for a save location…')
+      expect(dialog.textContent).toContain(
+        'Keep the app open. You can work in other Sessions while this finishes.'
+      )
+    }
   }
   expect(steps.querySelector('[aria-current]')).toBeNull()
   expect(steps.querySelectorAll('svg')).toHaveLength(3)

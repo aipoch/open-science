@@ -20,13 +20,13 @@ import {
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
-const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
+const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({
     debug: vi.fn(),
     info: diagnosticLogs.info,
-    warn: vi.fn(),
+    warn: diagnosticLogs.warn,
     error: diagnosticLogs.error
   })
 }))
@@ -1811,6 +1811,7 @@ describe('AcpProviderSessionResumer', () => {
   })
 
   it('rechecks the Specialist binding after an asynchronous projection refresh', async () => {
+    diagnosticLogs.info.mockClear()
     const delayedIdentity = Promise.withResolvers<{ append: string; prefix: string }>()
     const specialistIdentity = vi.fn(async (specialistId: string) => {
       if (specialistId === 'new-specialist') return delayedIdentity.promise
@@ -1826,6 +1827,7 @@ describe('AcpProviderSessionResumer', () => {
     harness.request.mockImplementationOnce(() => providerResume.promise)
 
     const resumed = harness.resume({
+      specialistId: 'old-specialist',
       previousFrameworkId: 'opencode',
       previousBackendId: opencodeBackend.backendId
     })
@@ -1846,6 +1848,10 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.request).toHaveBeenCalledOnce()
     expect(harness.attachSession).toHaveBeenCalledOnce()
     expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    expect(diagnosticLogs.info).toHaveBeenCalledWith(
+      'bound specialist resolution started',
+      expect.objectContaining({ specialistId: 'newest-specialist', bindingSource: 'registry' })
+    )
   })
 
   it('fails closed before provider resume when a bound Specialist is unavailable', async () => {
@@ -1864,6 +1870,47 @@ describe('AcpProviderSessionResumer', () => {
 
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(diagnosticLogs.warn).toHaveBeenCalledWith(
+      'bound specialist identity resolution failed',
+      expect.objectContaining({
+        sessionId: 'stable-app-session',
+        specialistId: 'missing-specialist',
+        frameworkId: 'opencode',
+        operation: 'specialist-resolution',
+        mode: 'resume',
+        phase: 'identity',
+        reason: 'unavailable'
+      })
+    )
+  })
+
+  it('records a thrown identity resolver category without leaking its payload', async () => {
+    diagnosticLogs.warn.mockClear()
+    const harness = createHarness({
+      initialBackend: opencodeBackend,
+      specialistIdentity: async () => {
+        throw Object.assign(new Error('PRIVATE_SPECIALIST_PROMPT'), { code: 'EACCES' })
+      }
+    })
+    await expect(
+      harness.resume({
+        previousFrameworkId: 'opencode',
+        previousBackendId: opencodeBackend.backendId,
+        specialistId: 'specialist-1'
+      })
+    ).rejects.toThrow('The bound specialist is unavailable.')
+    expect(diagnosticLogs.warn).toHaveBeenCalledWith(
+      'bound specialist identity resolution failed',
+      expect.objectContaining({
+        reason: 'resolver-threw',
+        errorCategory: 'permission',
+        sessionId: 'stable-app-session'
+      })
+    )
+    expect(JSON.stringify(diagnosticLogs.warn.mock.calls)).not.toContain(
+      'PRIVATE_SPECIALIST_PROMPT'
+    )
+    expect(harness.request).not.toHaveBeenCalled()
   })
 
   it('replays configuration against a live effort change before publication', async () => {
