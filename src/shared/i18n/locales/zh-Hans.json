@@ -188,7 +188,14 @@
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "启动已停止。本次检查未修改原始数据。请将以下诊断信息提供给支持人员；仅凭此错误无法判定加密密钥丢失。",
     "The failing data source and exact cause are unknown.": "失败的数据来源及具体原因尚不明确。",
     "Failure reason: {{reason}}": "原因：{{reason}}",
-    "Cleaning up database inspection resources": "清理数据库检查资源"
+    "Cleaning up database inspection resources": "清理数据库检查资源",
+    "System credential authorization timed out. Retry startup and respond to the system authorization prompt.": "系统凭据授权超时。请重试启动并响应系统授权提示。",
+    "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "系统凭据辅助程序未能完成操作。请检查诊断代码并重试启动。",
+    "The system credential helper failed. The exact authorization or key status is unknown.": "系统凭据辅助程序失败。无法确定具体的授权或密钥状态。",
+    "System credential access failed": "系统凭据访问失败",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。解决授权问题后，请重试启动。",
+    "Waiting for system credential access": "正在等待系统凭据访问",
+    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "如果系统请求授权，请响应其提示。凭据访问完成后将继续启动。不会重置任何凭据。"
   },
   "renderer": {
     "{{count}} steps remaining_other": "剩余 {{count}} 步",

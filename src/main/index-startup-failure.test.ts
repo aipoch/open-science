@@ -401,13 +401,23 @@ it.each(['win32', 'linux', 'darwin'] as const)(
         disconnect = options.onDisconnect
         return client
       })
-      f.launch.mockResolvedValue({})
+      let startupWindowClose: (() => void) | undefined
+      f.launch.mockImplementation(async () => {
+        startupWindowClose = f.app.on.mock.calls.find(
+          ([event]) => event === 'window-all-closed'
+        )?.[1]
+        expect(startupWindowClose).toBeTypeOf('function')
+        startupWindowClose!()
+        expect(f.app.quit).not.toHaveBeenCalled()
+        return {}
+      })
       f.dialog.showMessageBox.mockResolvedValue({ response: 0 })
       await import('./index')
       await vi.waitFor(() => {
         expect(f.report.mock.calls).toEqual([])
         expect(f.lifecycle).toHaveBeenCalledOnce()
       })
+      expect(f.app.removeListener).toHaveBeenCalledWith('window-all-closed', startupWindowClose)
       expect(f.app.exit).not.toHaveBeenCalled()
       disconnect()
       const quitListeners = f.app.on.mock.calls.filter(([event]) => event === 'before-quit')

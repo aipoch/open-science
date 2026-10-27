@@ -191,7 +191,14 @@
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "Запуск остановлен. Эта проверка не изменила исходные данные. Передайте приведённые ниже диагностические сведения службе поддержки; сама по себе эта ошибка не означает, что ключ шифрования отсутствует.",
     "The failing data source and exact cause are unknown.": "Источник данных, вызвавший ошибку, и точная причина неизвестны.",
     "Failure reason: {{reason}}": "Причина: {{reason}}",
-    "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
+    "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных",
+    "System credential authorization timed out. Retry startup and respond to the system authorization prompt.": "Время ожидания разрешения доступа к системным учётным данным истекло. Повторите запуск и ответьте на системный запрос разрешения.",
+    "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "Вспомогательной программе системных учётных данных не удалось завершить операцию. Проверьте диагностический код и повторите запуск.",
+    "The system credential helper failed. The exact authorization or key status is unknown.": "Сбой вспомогательной программы системных учётных данных. Точное состояние разрешения или ключа неизвестно.",
+    "System credential access failed": "Не удалось получить доступ к системным учётным данным",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены. Устраните проблему с разрешением доступа и повторите запуск.",
+    "Waiting for system credential access": "Ожидание доступа к системным учётным данным",
+    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "Если система запросит разрешение, ответьте на запрос. Запуск продолжится после завершения доступа к учётным данным. Учётные данные не будут сброшены."
   },
   "renderer": {
     "{{count}} steps remaining_one": "Остался {{count}} шаг",

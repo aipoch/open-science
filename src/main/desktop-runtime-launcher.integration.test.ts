@@ -45,6 +45,42 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.j
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it('allows credential authorization beyond the ordinary startup deadline and retains retry after exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-credential-wait-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(
+      entry,
+      `
+      process.send({protocolVersion:1,attemptId:process.env.OPEN_SCIENCE_STARTUP_ATTEMPT,stage:'credentials',kind:'progress'});
+      setTimeout(() => { process.send({protocolVersion:1,attemptId:process.env.OPEN_SCIENCE_STARTUP_ATTEMPT,stage:'credentials',kind:'failed',code:'credential-unavailable',reason:'native-secret-operation-failed'}); process.exitCode=1; process.disconnect(); }, 300);
+    `
+    )
+    const now = Date.now.bind(Date)
+    let elapsed = 0
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now() + elapsed)
+    try {
+      await expect(
+        startOrAttachDesktopBackend({
+          configRoot: root,
+          profilePath: root,
+          version: 'test',
+          command: process.execPath,
+          entry,
+          packaged: true,
+          onStatus(status) {
+            if (status.kind === 'progress') elapsed = 61_000
+          }
+        })
+      ).rejects.toMatchObject({
+        stage: 'credentials',
+        canRetry: true,
+        credentialFailure: { reason: 'native-secret-operation-failed' }
+      })
+    } finally {
+      clock.mockRestore()
+    }
+  })
   it('hands a target-bound credential snapshot to one backend attempt and removes it after startup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-inventory-'))
     roots.push(root)

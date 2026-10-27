@@ -190,7 +190,14 @@
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "Se ha detenido el inicio. Esta comprobación no ha modificado los datos originales. Comparta los siguientes detalles de diagnóstico con el soporte; este error por sí solo no demuestra que falte una clave de cifrado.",
     "The failing data source and exact cause are unknown.": "Se desconocen el origen de datos que falló y la causa exacta.",
     "Failure reason: {{reason}}": "Motivo: {{reason}}",
-    "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
+    "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos",
+    "System credential authorization timed out. Retry startup and respond to the system authorization prompt.": "Se agotó el tiempo de autorización de las credenciales del sistema. Vuelva a intentar el inicio y responda a la solicitud de autorización del sistema.",
+    "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "El programa auxiliar de credenciales del sistema no pudo completar la operación. Revise el código de diagnóstico y vuelva a intentar el inicio.",
+    "The system credential helper failed. The exact authorization or key status is unknown.": "El programa auxiliar de credenciales del sistema falló. Se desconoce el estado exacto de la autorización o de la clave.",
+    "System credential access failed": "Error al acceder a las credenciales del sistema",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes. Vuelva a intentar el inicio después de resolver el problema de autorización.",
+    "Waiting for system credential access": "Esperando el acceso a las credenciales del sistema",
+    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "Si el sistema solicita autorización, responda a la solicitud. El inicio continuará cuando se complete el acceso a las credenciales. No se restablecerá ninguna credencial."
   },
   "renderer": {
     "{{count}} steps remaining_one": "Queda {{count}} paso",

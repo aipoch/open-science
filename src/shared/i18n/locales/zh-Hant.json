@@ -188,7 +188,14 @@
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "啟動已停止。本次檢查未修改原始資料。請將以下診斷資訊提供給支援人員；僅憑此錯誤無法判定加密金鑰遺失。",
     "The failing data source and exact cause are unknown.": "失敗的資料來源及確切原因尚不明確。",
     "Failure reason: {{reason}}": "原因：{{reason}}",
-    "Cleaning up database inspection resources": "清理資料庫檢查資源"
+    "Cleaning up database inspection resources": "清理資料庫檢查資源",
+    "System credential authorization timed out. Retry startup and respond to the system authorization prompt.": "系統憑證授權逾時。請重試啟動並回應系統授權提示。",
+    "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "系統憑證輔助程式無法完成操作。請檢查診斷代碼並重試啟動。",
+    "The system credential helper failed. The exact authorization or key status is unknown.": "系統憑證輔助程式失敗。無法確定具體的授權或金鑰狀態。",
+    "System credential access failed": "系統憑證存取失敗",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。解決授權問題後，請重試啟動。",
+    "Waiting for system credential access": "正在等待系統憑證存取",
+    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "如果系統要求授權，請回應其提示。憑證存取完成後將繼續啟動。不會重設任何憑證。"
   },
   "renderer": {
     "{{count}} steps remaining_other": "剩餘 {{count}} 步",

@@ -189,7 +189,14 @@
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "Der Start wurde angehalten. Diese Prüfung hat die Originaldaten nicht verändert. Geben Sie die folgenden Diagnosedetails an den Support weiter; dieser Fehler allein belegt nicht, dass ein Verschlüsselungsschlüssel fehlt.",
     "The failing data source and exact cause are unknown.": "Die betroffene Datenquelle und die genaue Ursache sind unbekannt.",
     "Failure reason: {{reason}}": "Ursache: {{reason}}",
-    "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
+    "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen",
+    "System credential authorization timed out. Retry startup and respond to the system authorization prompt.": "Die Zeit für die Freigabe der Systemanmeldedaten ist abgelaufen. Starten Sie erneut und beantworten Sie die Freigabeanfrage des Systems.",
+    "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "Das Hilfsprogramm für Systemanmeldedaten konnte den Vorgang nicht abschließen. Prüfen Sie den Diagnosecode und starten Sie erneut.",
+    "The system credential helper failed. The exact authorization or key status is unknown.": "Das Hilfsprogramm für Systemanmeldedaten ist fehlgeschlagen. Der genaue Freigabe- oder Schlüsselstatus ist unbekannt.",
+    "System credential access failed": "Zugriff auf Systemanmeldedaten fehlgeschlagen",
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten. Beheben Sie das Freigabeproblem und starten Sie erneut.",
+    "Waiting for system credential access": "Warten auf Zugriff auf Systemanmeldedaten",
+    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "Wenn das System eine Freigabe anfordert, beantworten Sie die Anfrage. Der Start wird fortgesetzt, sobald der Zugriff auf die Anmeldedaten abgeschlossen ist. Es werden keine Anmeldedaten zurückgesetzt."
   },
   "renderer": {
     "{{count}} steps remaining_one": "Noch {{count}} Schritt",

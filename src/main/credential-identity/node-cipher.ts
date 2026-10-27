@@ -13,7 +13,12 @@ import {
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { SecureStorageCipher } from './cipher-contract'
-import { CredentialIdentityError, type CredentialIdentity } from './identity-contract'
+import {
+  CREDENTIAL_AUTHORIZATION_TIMEOUT_MS,
+  CredentialIdentityError,
+  type CredentialIdentity
+} from './identity-contract'
+import { credentialSystemCode, nativeSecretDiagnosticSchema } from './diagnostic'
 
 // Electron 43.7.5's pinned OSCrypt sync format; no new ciphertext envelope is persisted.
 // https://github.com/electron/electron/blob/v43.7.5/patches/chromium/revert_oscrypt_remove_sync_backend.patch
@@ -34,14 +39,34 @@ const nativeSecret = (
   const executable = secretExecutablePath.replace(/app\.asar([/\\])/u, 'app.asar.unpacked$1')
   const result = spawnSync(executable, [operation, ...args], {
     input,
-    timeout: 30_000,
+    timeout:
+      operation === 'read-key' || operation === 'create-key'
+        ? CREDENTIAL_AUTHORIZATION_TIMEOUT_MS
+        : 30_000,
+    killSignal: 'SIGKILL',
     maxBuffer: 65536,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'ignore']
   })
   if (result.error || result.status !== 0 || result.signal || result.stdout.length === 0) {
     result.stdout?.fill(0)
-    throw new CredentialIdentityError('native-secret-operation-failed')
+    const systemCode = credentialSystemCode(result.error)
+    const signal = nativeSecretDiagnosticSchema.shape.signal.safeParse(result.signal)
+    throw new CredentialIdentityError('native-secret-operation-failed', undefined, {
+      code:
+        systemCode === 'ETIMEDOUT'
+          ? 'secret-timeout'
+          : result.error
+            ? 'secret-start-failed'
+            : result.signal
+              ? 'secret-signalled'
+              : result.status !== 0
+                ? 'secret-exit-failed'
+                : 'secret-empty-response',
+      ...(systemCode ? { systemCode } : {}),
+      ...(result.status !== null ? { exitCode: result.status } : {}),
+      ...(result.signal ? { signal: signal.success ? signal.data : ('UNKNOWN' as const) } : {})
+    })
   }
   return result.stdout
 }

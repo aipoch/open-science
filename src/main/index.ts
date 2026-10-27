@@ -26,7 +26,10 @@ import {
 import { RUNTIME_STARTUP_CHANNELS, type RuntimeStartupState } from '../shared/runtime-startup'
 import { projectDiagnosticError } from './session-diagnostics/detail'
 import { DesktopBackendStartupError } from './backend-startup'
-import { recoverDesktopBackendStartup } from './backend-startup-recovery'
+import {
+  createCredentialStartupNotice,
+  recoverDesktopBackendStartup
+} from './backend-startup-recovery'
 import { createDesktopRecoveryEventBuffer } from './desktop-recovery-event-buffer'
 import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
 import { DESKTOP_RUNTIME_RECOVERY_CHANNELS } from '../shared/desktop-runtime-recovery'
@@ -376,6 +379,9 @@ async function startDesktop(): Promise<void> {
     if (startupBlocked) void exitFromBlockedStartup()
   }
   app.on('before-quit', holdStartupQuit)
+  // A temporary credential notice closing is not a request to quit startup.
+  const holdStartupWindowClose = (): void => {}
+  app.on('window-all-closed', holdStartupWindowClose)
   const packageFiles = new PackageFileOpenRelay(() => {
     void client?.invokeHost('desktop:open-package', [null]).catch(reportError)
   })
@@ -924,21 +930,29 @@ async function startDesktop(): Promise<void> {
   // Shared by the first launch and the startup replacement of a stopping Runtime, so a replacement
   // keeps the preserved service port and credential arguments of the original launch.
   const launchInitialBackend = async (): Promise<void> => {
-    launch = await startOrAttachDesktopBackend({
-      onStatus: (status) => bootstrapLog.info('backend startup status', status),
-      configRoot,
-      profilePath,
-      version: app.getVersion(),
-      ...initialBackendPaths,
-      packaged: app.isPackaged,
-      credentialInventory: startupCredentialCiphertexts,
-      credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
-      args: [
-        ...credentialArgs,
-        ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
-      ]
-    })
-    startedBackend = launch.startedProcess
+    const notice = createCredentialStartupNotice()
+    try {
+      launch = await startOrAttachDesktopBackend({
+        onStatus: (status) => {
+          bootstrapLog.info('backend startup status', status)
+          notice.update(status)
+        },
+        configRoot,
+        profilePath,
+        version: app.getVersion(),
+        ...initialBackendPaths,
+        packaged: app.isPackaged,
+        credentialInventory: startupCredentialCiphertexts,
+        credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
+        args: [
+          ...credentialArgs,
+          ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
+        ]
+      })
+      startedBackend = launch.startedProcess
+    } finally {
+      notice.dispose()
+    }
   }
   while (true) {
     try {
@@ -1779,6 +1793,7 @@ async function startDesktop(): Promise<void> {
   })
   // Install the normal lifecycle and its first window before closing the startup gate.
   // Otherwise Electron may quit on window-all-closed and orphan the newly started backend.
+  app.removeListener('window-all-closed', holdStartupWindowClose)
   showMainWindow = lifecycle.showMainWindow
   getMainWindow = lifecycle.getMainWindow
   isMainWindowHidden = lifecycle.isMainWindowHidden

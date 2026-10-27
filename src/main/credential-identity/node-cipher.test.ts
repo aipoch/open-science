@@ -37,6 +37,128 @@ const fixtures: Array<{ identity: CredentialIdentity; prefix: string; hex: strin
 ]
 
 describe('Node OSCrypt-compatible cipher', () => {
+  it.each([0, 31_000])(
+    'decrypts legacy ciphertext when helper authorization completes after %i ms',
+    async (delay) => {
+      const actual =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      vi.mocked(createRequire).mockReturnValue((() => ({
+        secretExecutablePath: process.execPath
+      })) as unknown as NodeJS.Require)
+      // Exercise a real subprocess and the production timeout without accessing an OS vault.
+      vi.mocked(spawnSync).mockImplementation((executable, args, options) => {
+        expect(args).toEqual(['read-key', 'Open Science'])
+        return actual.spawnSync(
+          executable,
+          ['-e', `setTimeout(() => process.stdout.write('fixture-vault-password'), ${delay})`],
+          options
+        )
+      })
+      const cipher = createNodeSecureStorageCipher(fixtures[0].identity, '/unused')
+      try {
+        const ciphertext = Buffer.concat([Buffer.from('v10'), Buffer.from(fixtures[0].hex, 'hex')])
+        expect(cipher.decryptString(ciphertext)).toBe('fixture-科学-secret')
+      } finally {
+        cipher.dispose()
+        vi.mocked(createRequire).mockRestore()
+        vi.mocked(spawnSync).mockRestore()
+      }
+    },
+    40_000
+  )
+  it('retains a non-secret timeout diagnostic when reading existing legacy credentials', () => {
+    vi.mocked(createRequire).mockReturnValue((() => ({
+      secretExecutablePath: process.execPath
+    })) as unknown as NodeJS.Require)
+    vi.mocked(spawnSync).mockReturnValue({
+      error: Object.assign(new Error('private path must not be exposed'), { code: 'ETIMEDOUT' }),
+      status: null,
+      signal: 'SIGTERM',
+      pid: 1,
+      output: [],
+      stderr: Buffer.alloc(0),
+      stdout: Buffer.alloc(0)
+    } as ReturnType<typeof spawnSync>)
+    const cipher = createNodeSecureStorageCipher(fixtures[0].identity, '/unused')
+    try {
+      const ciphertext = Buffer.concat([Buffer.from('v10'), Buffer.from(fixtures[0].hex, 'hex')])
+      let failure: unknown
+      try {
+        cipher.decryptString(ciphertext)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toMatchObject({ diagnostic: { systemCode: 'ETIMEDOUT' } })
+      expect(JSON.stringify(failure)).not.toContain('private path')
+    } finally {
+      cipher.dispose()
+      vi.mocked(createRequire).mockRestore()
+      vi.mocked(spawnSync).mockRestore()
+    }
+  })
+
+  it.each([
+    {
+      result: { error: Object.assign(new Error('PRIVATE'), { code: 'ENOENT' }) },
+      code: 'secret-start-failed'
+    },
+    { result: { status: 1 }, code: 'secret-exit-failed' },
+    { result: { status: null, signal: 'SIGTERM' }, code: 'secret-signalled' },
+    { result: { status: 0 }, code: 'secret-empty-response' }
+  ])(
+    'classifies $code without replacing the existing key, then permits a fresh read',
+    ({ result, code }) => {
+      vi.mocked(createRequire).mockReturnValue((() => ({
+        secretExecutablePath: process.execPath
+      })) as unknown as NodeJS.Require)
+      vi.mocked(spawnSync)
+        .mockReturnValueOnce({
+          pid: 1,
+          output: [],
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.alloc(0),
+          status: null,
+          signal: null,
+          ...result
+        } as ReturnType<typeof spawnSync>)
+        .mockReturnValueOnce({
+          pid: 2,
+          output: [],
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.from('fixture-vault-password'),
+          status: 0,
+          signal: null
+        })
+      const cipher = createNodeSecureStorageCipher(fixtures[0].identity, '/unused')
+      const ciphertext = Buffer.concat([Buffer.from('v10'), Buffer.from(fixtures[0].hex, 'hex')])
+      const original = Buffer.from(ciphertext)
+      try {
+        let failure: unknown
+        try {
+          cipher.decryptString(ciphertext)
+        } catch (error) {
+          failure = error
+        }
+        expect(failure).toMatchObject({
+          reason: 'native-secret-operation-failed',
+          diagnostic: { code }
+        })
+        expect(JSON.stringify(failure)).not.toContain('PRIVATE')
+        expect(cipher.decryptString(ciphertext)).toBe('fixture-科学-secret')
+        expect(ciphertext).toEqual(original)
+        expect(spawnSync).toHaveBeenLastCalledWith(
+          process.execPath,
+          ['read-key', 'Open Science'],
+          expect.objectContaining({ input: Buffer.alloc(0) })
+        )
+      } finally {
+        cipher.dispose()
+        vi.mocked(createRequire).mockRestore()
+        vi.mocked(spawnSync).mockRestore()
+      }
+    }
+  )
+
   it('launches the packaged DPAPI helper outside app.asar', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'node-cipher-packaged-'))
     const executable = join(directory, 'app.asar', 'native', 'credential_secret.exe')

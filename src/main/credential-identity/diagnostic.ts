@@ -82,9 +82,36 @@ export const inventoryDiagnosticSchema = z
   })
   .strict()
 export type InventoryDiagnostic = z.infer<typeof inventoryDiagnosticSchema>
+export const nativeSecretDiagnosticSchema = z
+  .object({
+    code: z.enum([
+      'secret-timeout',
+      'secret-start-failed',
+      'secret-exit-failed',
+      'secret-signalled',
+      'secret-empty-response'
+    ]),
+    systemCode: systemCodeSchema.optional(),
+    exitCode: z.number().int().min(-0x80000000).max(0xffffffff).optional(),
+    signal: z
+      .enum([
+        'SIGTERM',
+        'SIGKILL',
+        'SIGABRT',
+        'SIGSEGV',
+        'SIGINT',
+        'SIGBUS',
+        'SIGILL',
+        'SIGPIPE',
+        'UNKNOWN'
+      ])
+      .optional()
+  })
+  .strict()
 export const credentialDiagnosticSchema = z.union([
   windowsCredentialDiagnosticSchema,
-  inventoryDiagnosticSchema
+  inventoryDiagnosticSchema,
+  nativeSecretDiagnosticSchema
 ])
 export type CredentialDiagnostic = z.infer<typeof credentialDiagnosticSchema>
 

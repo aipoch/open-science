@@ -2,6 +2,9 @@ import { credentialDiagnosticSchema, type CredentialDiagnostic } from './diagnos
 import type { IdentityProbeResult } from './probe-contract'
 import type { LinuxKWalletBackend } from './linux-backend-contract'
 
+// Interactive vault authorization must finish before the desktop startup deadline.
+export const CREDENTIAL_AUTHORIZATION_TIMEOUT_MS = 120_000
+
 export type CredentialIdentity = Readonly<
   | { backend: 'mac-keychain' | 'linux-secret-service'; appName: string; exists: boolean }
   | {

@@ -1,3 +1,4 @@
+import { CREDENTIAL_AUTHORIZATION_TIMEOUT_MS } from './credential-identity/identity-contract'
 import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
 import {
@@ -414,10 +415,18 @@ export async function startOrAttachDesktopBackend(options: {
   let failure: Error | undefined
   let status: BackendStartupStatus | undefined
   const startedAt = Date.now()
+  let deadline = startedAt + (options.timeoutMs ?? 60_000)
+  let credentialWaitGranted = false
   const onMessage = (message: unknown): void => {
     const result = backendStartupStatusSchema.safeParse(message)
     if (result.success && result.data.attemptId === attemptId && status?.kind !== 'failed') {
       status = result.data
+      if (status.stage === 'credentials' && status.kind === 'progress' && !credentialWaitGranted) {
+        credentialWaitGranted = true
+        // Grant once; repeated status messages cannot keep startup alive indefinitely.
+        if (options.timeoutMs === undefined)
+          deadline = Math.max(deadline, Date.now() + CREDENTIAL_AUTHORIZATION_TIMEOUT_MS + 60_000)
+      }
       try {
         options.onStatus?.({ ...status, elapsedMs: Date.now() - startedAt })
       } catch {
@@ -456,7 +465,6 @@ export async function startOrAttachDesktopBackend(options: {
   await file.close()
   child.unref()
   child.channel?.unref()
-  const deadline = startedAt + (options.timeoutMs ?? 60_000)
   try {
     while (Date.now() < deadline) {
       if (failure) throw failure
