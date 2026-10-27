@@ -2603,6 +2603,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           previewItem={previewItem}
           selectedItemDialogRef={selectedItemDialogRef}
           detailTagMenuOpenRef={detailTagMenuOpenRef}
+          handleDetailTagMenuOpenChange={handleDetailTagMenuOpenChange}
           detailSelectOpenRef={detailSelectOpenRef}
           childLayerDismissGuardUntilRef={childLayerDismissGuardUntilRef}
           closeSelectedItemDetail={closeSelectedItemDetail}
@@ -2653,8 +2654,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               pendingDecisions={pendingDecisions}
               smartRunningCollection={smartRunningCollection}
               confirmSmartDecision={confirmSmartDecision}
-              itemTypeLabels={itemTypeLabels}
-              handleDetailTagMenuOpenChange={handleDetailTagMenuOpenChange}
               activeProjects={activeProjects}
               projectLinkError={projectLinkError}
               projectsLoaded={projectsLoaded}
