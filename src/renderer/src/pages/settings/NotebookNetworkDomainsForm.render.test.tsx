@@ -198,11 +198,11 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    expect(container.textContent).toContain('The Windows sandbox needs administrator setup.')
+    expect(container.textContent).toContain('Allow administrator access to turn on protection.')
 
-    await act(async () => button('Set up').click())
+    await act(async () => button('Turn on').click())
     expect(install).toHaveBeenCalledOnce()
-    expect(container.textContent).toContain('Status: Active')
+    expect(container.textContent).toContain('Status: On')
   })
 
   it('keeps setup available when the Windows UAC prompt is cancelled', async () => {
@@ -222,9 +222,9 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    await act(async () => button('Set up').click())
-    expect(container.textContent).toContain('The Windows sandbox needs administrator setup.')
-    expect(button('Set up')).not.toBeUndefined()
+    await act(async () => button('Turn on').click())
+    expect(container.textContent).toContain('Allow administrator access to turn on protection.')
+    expect(button('Turn on')).not.toBeUndefined()
   })
 
   it('shows each Windows setup explanation only once', async () => {
@@ -251,10 +251,10 @@ describe('NotebookNetworkDomainsForm', () => {
     await flush()
 
     expect(
-      container.textContent?.match(/The Windows sandbox needs administrator setup\./g)
+      container.textContent?.match(/Allow administrator access to turn on protection\./g)
     ).toHaveLength(1)
     expect(container.textContent).toContain(
-      'The Windows sandbox gateway port is unavailable. Set up the sandbox again.'
+      'Network port unavailable. Try turning protection on again.'
     )
   })
 
@@ -276,10 +276,10 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    await act(async () => button('Remove…').click())
+    await act(async () => button('Turn off').click())
 
     expect(remove).toHaveBeenCalledOnce()
-    expect(container.textContent).toContain('Status: Not set up')
+    expect(container.textContent).toContain('Status: Off')
     expect(container.textContent).toContain('standard execution')
   })
 
@@ -338,8 +338,8 @@ it('shows the download estimate, progress and cancellation without reporting suc
   })
   try {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    expect(container.textContent).toContain('Missing components may download up to')
-    await act(async () => button('Set up').click())
+    expect(container.textContent).toContain('Downloads up to')
+    await act(async () => button('Turn on').click())
     expect(button('Cancel').disabled).toBe(true)
     current = {
       kind: 'checking',
@@ -364,7 +364,7 @@ it('shows the download estimate, progress and cancellation without reporting suc
     await act(async () => button('Cancel').click())
     expect(cancel).toHaveBeenCalledOnce()
     expect(button('Cancelling…').disabled).toBe(true)
-    expect(container.textContent).not.toContain('Status: Active')
+    expect(container.textContent).not.toContain('Status: On')
     current = {
       kind: 'error',
       reason: 'runtimeFailure',
@@ -372,10 +372,10 @@ it('shows the download estimate, progress and cancellation without reporting suc
     }
     await act(async () => finish(current))
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Preparation cancelled'
+      'Cancelled. Downloads are kept.'
     )
     expect(button('Try again').disabled).toBe(false)
-    expect(button('Remove…').disabled).toBe(false)
+    expect(button('Turn off').disabled).toBe(false)
   } finally {
     vi.useRealTimers()
   }
@@ -442,12 +442,12 @@ it('does not replace completed setup with a late preparation status response', a
   })
   try {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await act(async () => button('Set up').click())
+    await act(async () => button('Turn on').click())
     await act(async () => vi.advanceTimersByTimeAsync(1000))
     await act(async () => complete({ kind: 'ready', warnings: [] }))
-    expect(container.textContent).toContain('Status: Active')
+    expect(container.textContent).toContain('Status: On')
     await act(async () => stale({ kind: 'checking' }))
-    expect(container.textContent).toContain('Status: Active')
+    expect(container.textContent).toContain('Status: On')
     expect(container.textContent).not.toContain('Checking…')
   } finally {
     vi.useRealTimers()
