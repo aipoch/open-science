@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/literature/LiteratureReadingStatusLabel.tsx",
     "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
     "src/renderer/src/pages/literature/CitationStylesView.tsx",
     "src/renderer/src/pages/literature/collections/CollectionEditorDialog.test.tsx",

@@ -18,6 +18,7 @@ export const APP = {
     website: 'https://www.aipoch.com/open-science',
     docs: 'https://www.aipoch.com/docs/',
     githubRepo: GITHUB_REPO_URL,
+    security: `${GITHUB_REPO_URL}/blob/main/SECURITY.md`,
     license: `${GITHUB_REPO_URL}/blob/main/LICENSE`,
     githubReleases: `${GITHUB_REPO_URL}/releases`,
     githubApi: `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`,

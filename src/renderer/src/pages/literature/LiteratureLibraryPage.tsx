@@ -1561,6 +1561,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const rowActions = useRef<LiteratureRowActions>({
     openSelectedItemDetail,
     persistInlineItem,
+    setReadingStatus,
     previewFirstAttachment,
     setItemsLifecycle,
     requestPermanentDeletion
@@ -1569,6 +1570,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     rowActions.current = {
       openSelectedItemDetail,
       persistInlineItem,
+      setReadingStatus,
       previewFirstAttachment,
       setItemsLifecycle,
       requestPermanentDeletion
@@ -2594,6 +2596,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         />
 
         <LiteratureDetailDialog
+          setReadingStatus={setReadingStatus}
+          readingStatusError={readingStatusError}
+          isBatching={isBatching}
           detailController={detailController}
           previewItem={previewItem}
           selectedItemDialogRef={selectedItemDialogRef}
@@ -2630,12 +2635,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           relatedDirection={relatedDirection}
           renderOverview={(selectedItem) => (
             <LiteratureDetailOverview
-              setReadingStatus={setReadingStatus}
-              readingStatusError={
-                readingStatusError?.itemId === selectedItem.id
-                  ? readingStatusError.message
-                  : undefined
-              }
               onRelated={(direction) => {
                 setRelatedDirection(direction)
                 changeDetailMode('related')

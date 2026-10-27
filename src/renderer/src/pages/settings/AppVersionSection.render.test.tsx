@@ -68,11 +68,12 @@ describe('AppVersionSection', () => {
     })
 
     const links = Array.from(container.querySelectorAll('a'))
-    expect(links).toHaveLength(3)
+    expect(links).toHaveLength(4)
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       'https://www.aipoch.com/docs/',
       'https://github.com/aipoch/open-science/releases',
-      'https://github.com/aipoch/open-science/blob/main/LICENSE'
+      'https://github.com/aipoch/open-science/blob/main/LICENSE',
+      'https://github.com/aipoch/open-science/blob/main/SECURITY.md'
     ])
     expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
   })
@@ -100,6 +101,14 @@ describe('AppVersionSection', () => {
     expect(link.getAttribute('aria-label')).toBe(i18next.t('Open Help Center in your browser'))
     expect(link.target).toBe('_blank')
     expect(link.rel).toBe('noreferrer')
+
+    const security = container.querySelector<HTMLAnchorElement>(
+      'a[href="https://github.com/aipoch/open-science/blob/main/SECURITY.md"]'
+    )!
+    expect(security.getAttribute('aria-label')).toBe(i18next.t('Security'))
+    expect(security.textContent).toContain(
+      i18next.t('Read the security policy and report vulnerabilities.')
+    )
   })
 
   it('updates the existing help link after a language switch and resolves System through the app', async () => {
@@ -133,9 +142,9 @@ describe('AppVersionSection', () => {
       container.querySelectorAll('[data-slot="about-resource-description"]')
     )
 
-    expect(links).toHaveLength(3)
+    expect(links).toHaveLength(4)
     expect(links.every((link) => link.classList.contains('group'))).toBe(true)
-    expect(icons).toHaveLength(3)
+    expect(icons).toHaveLength(4)
     expect(
       icons.every(
         (icon) =>
@@ -143,7 +152,7 @@ describe('AppVersionSection', () => {
           icon.classList.contains('group-focus-visible:text-primary')
       )
     ).toBe(true)
-    expect(titles).toHaveLength(3)
+    expect(titles).toHaveLength(4)
     expect(titles.every((title) => !title.classList.contains('translate-y-2.5'))).toBe(true)
     expect(
       titles.every(
@@ -158,7 +167,7 @@ describe('AppVersionSection', () => {
           title.classList.contains('[@media(any-pointer:coarse)]:!translate-y-0')
       )
     ).toBe(true)
-    expect(descriptions).toHaveLength(3)
+    expect(descriptions).toHaveLength(4)
     expect(descriptions.every((description) => !description.classList.contains('opacity-0'))).toBe(
       true
     )

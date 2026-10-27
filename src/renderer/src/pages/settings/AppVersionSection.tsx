@@ -5,7 +5,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (semantic Settings tokens) · slop: pass
  */
-import { CircleHelp, Download, FileText, RefreshCw, Scale } from 'lucide-react'
+import { CircleHelp, Download, FileText, RefreshCw, Scale, Shield } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { license as licenseId } from '../../../../../package.json'
@@ -193,6 +193,25 @@ const AppVersionSection = ({
             </span>
             <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
               {licenseId}
+            </span>
+          </span>
+        </ExternalTextLink>
+        <ExternalTextLink
+          href={APP.links.security}
+          aria-label={t('Security')}
+          className={resourceLinkClassName}
+        >
+          <Shield
+            data-slot="about-resource-icon"
+            className={resourceIconClassName}
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1">
+            <span data-slot="about-resource-title" className={resourceTitleClassName}>
+              {t('Security')}
+            </span>
+            <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
+              {t('Read the security policy and report vulnerabilities.')}
             </span>
           </span>
         </ExternalTextLink>

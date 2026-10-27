@@ -185,11 +185,11 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
-    "Branches": "分支",
-    "Steps": "步骤",
+    "Read the security policy and report vulnerabilities.": "查看安全政策并报告漏洞。",
+    "Security": "安全",
     "Reading status": "阅读状态",
-    "In progress": "阅读中",
-    "Finished reading": "已读",
+    "Reading_readingStatus": "阅读中",
+    "Read_readingStatus": "已读",
     "Set reading status": "设置阅读状态",
     "{{count}} steps remaining_other": "剩余 {{count}} 步",
     "Input help": "输入帮助",
@@ -7318,7 +7318,6 @@
     "Session imported": "会话已导入",
     "Session package exported": "会话包已导出",
     "Checking Session package…": "正在检查会话包…",
-    "Optional files: {{selected}} / {{total}} selected": "可选文件：已选择 {{selected}} / {{total}}",
     "Choose save location…": "选择保存位置…",
     "Drop a .science file to import": "拖入 .science 文件以导入",
     "Checking current library status…": "正在检查当前文献库状态…",
@@ -7608,6 +7607,9 @@
     "The previous execution is still using this conversation. Retry to stop it before continuing.": "上一次执行仍在使用此对话。请重试，由应用先结束该执行再继续。",
     "Granted at {{time}}": "授权于 {{time}}",
     "{{count}} directories_other": "{{count}} 个目录",
-    "Show remaining {{count}} directories_other": "展示剩余 {{count}} 个"
+    "Show remaining {{count}} directories_other": "展示剩余 {{count}} 个",
+    "Branches": "分支",
+    "Optional files: {{selected}} / {{total}} selected": "可选文件：已选择 {{selected}} / {{total}}",
+    "Steps": "步骤"
   }
 }

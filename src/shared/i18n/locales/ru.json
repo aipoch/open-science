@@ -188,11 +188,11 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
-    "Branches": "Ветви",
-    "Steps": "Шаги",
+    "Read the security policy and report vulnerabilities.": "Ознакомьтесь с политикой безопасности и сообщите об уязвимостях.",
+    "Security": "Безопасность",
     "Reading status": "Статус чтения",
-    "In progress": "В процессе чтения",
-    "Finished reading": "Прочитано",
+    "Reading_readingStatus": "В процессе чтения",
+    "Read_readingStatus": "Прочитано",
     "Set reading status": "Задать статус чтения",
     "Unread": "Не прочитано",
     "{{count}} steps remaining_one": "Остался {{count}} шаг",
@@ -7789,7 +7789,6 @@
     "Session imported": "Сеанс импортирован",
     "Session package exported": "Пакет сеанса экспортирован",
     "Checking Session package…": "Проверка пакета сеанса…",
-    "Optional files: {{selected}} / {{total}} selected": "Необязательные файлы: выбрано {{selected}} из {{total}}",
     "Choose save location…": "Выбрать место сохранения…",
     "Drop a .science file to import": "Перетащите файл .science для импорта",
     "Checking current library status…": "Проверка текущего состояния в библиотеке…",
@@ -8088,6 +8087,9 @@
     "Show remaining {{count}} directories_one": "Показать оставшийся {{count}} каталог",
     "Show remaining {{count}} directories_few": "Показать оставшиеся {{count}} каталога",
     "Show remaining {{count}} directories_many": "Показать оставшиеся {{count}} каталогов",
-    "Show remaining {{count}} directories_other": "Показать оставшиеся {{count}} каталога"
+    "Show remaining {{count}} directories_other": "Показать оставшиеся {{count}} каталога",
+    "Branches": "Ветви",
+    "Optional files: {{selected}} / {{total}} selected": "Необязательные файлы: выбрано {{selected}} из {{total}}",
+    "Steps": "Шаги"
   }
 }

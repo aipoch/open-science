@@ -7,6 +7,7 @@ type NetworkOptions = ConstructorParameters<typeof NotebookNetworkSandboxOwner>[
 type NetworkSettings = Awaited<ReturnType<NetworkOptions['getSettings']>>
 
 const fixture = vi.hoisted(() => ({
+  projectAfter: vi.fn(async (pending: Promise<unknown>) => pending),
   ready: vi.fn<() => Promise<boolean>>(),
   configured: vi.fn(async () => true),
   networkOptions: undefined as NetworkOptions | undefined,
@@ -90,7 +91,9 @@ vi.mock('../settings/settings-install-coordinator', () => ({
   SettingsInstallCoordinator: class {}
 }))
 vi.mock('../settings/settings-snapshot-commit-owner', () => ({
-  SettingsSnapshotCommitOwner: class {}
+  SettingsSnapshotCommitOwner: class {
+    projectAfter = fixture.projectAfter
+  }
 }))
 vi.mock('../network-fetch', () => ({ netFetchStandard: vi.fn() }))
 vi.mock('@aipoch/skills', () => ({ UserSkillSpecialistPackageAdapter: class {} }))
@@ -409,6 +412,12 @@ it('rejects an unreadable protection configuration instead of selecting an unpro
   await expect(settings.getAvailableShellRuntimeBinding()).rejects.toThrow(
     'Windows protection ownership is inconsistent.'
   )
+})
+
+it('publishes global network grants through the shared settings snapshot owner', async () => {
+  await bootstrap()
+  await fixture.settingsOptions!.onNotebookNetworkDomainAllowed!()
+  expect(fixture.projectAfter).toHaveBeenCalledOnce()
 })
 
 it('reads transition-aware authority and forwards subscriptions without an approval client', async () => {

@@ -1,3 +1,4 @@
+import { LiteratureReadingStatusLabel } from '../LiteratureReadingStatusLabel'
 import { useLiteratureHost } from '../renderer-host'
 import {
   BookOpenText,
@@ -20,6 +21,13 @@ import { LiteratureRowNumbers } from './literature-row-numbers'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -29,7 +37,10 @@ import {
 
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
-import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type {
+  LiteratureItemView,
+  LiteratureReadingStatus
+} from '@aipoch/literature-library/contracts'
 import { ResourceTagBadges, ResourceTagMenu } from '../../settings/ResourceTagControls'
 import { LiteratureTextTooltip } from '../LiteratureTable'
 import { LiteratureSelectionStore } from './literature-selection'
@@ -50,6 +61,7 @@ import {
 } from '../literature-item-display'
 
 export type LiteratureRowActions = {
+  setReadingStatus: (status: LiteratureReadingStatus, itemIds?: string[]) => Promise<void>
   openSelectedItemDetail: (entry: LiteratureItemView, initiator?: HTMLElement) => void
   persistInlineItem: (
     entry: LiteratureItemView,
@@ -175,12 +187,32 @@ export const LiteratureItemRow = memo(function LiteratureItemRow({
         switch (column) {
           case 'readingStatus':
             return (
-              <td key={column} className="px-3 py-2 align-middle text-muted-foreground">
-                {entry.readingStatus === 'reading'
-                  ? t('In progress')
-                  : entry.readingStatus === 'read'
-                    ? t('Finished reading')
-                    : t('Unread')}
+              <td key={column} className="px-2 py-2 align-middle">
+                <Select
+                  value={entry.readingStatus ?? 'unread'}
+                  disabled={trash || smartTableBlocked || isBatching}
+                  onValueChange={(value) =>
+                    void actions.current.setReadingStatus(value as LiteratureReadingStatus, [
+                      entry.id
+                    ])
+                  }
+                >
+                  <SelectTrigger
+                    aria-label={`${t('Reading status')}: ${entry.item.title}`}
+                    className="h-7 w-full border-transparent bg-transparent px-1.5 text-xs hover:border-border hover:bg-muted"
+                  >
+                    <SelectValue>
+                      <LiteratureReadingStatusLabel status={entry.readingStatus} />
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(['unread', 'reading', 'read'] as const).map((status) => (
+                      <SelectItem key={status} value={status}>
+                        <LiteratureReadingStatusLabel status={status} />
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </td>
             )
           case 'abstract':

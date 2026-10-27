@@ -185,11 +185,11 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
-    "Branches": "ブランチ",
-    "Steps": "ステップ",
+    "Read the security policy and report vulnerabilities.": "セキュリティポリシーの確認と脆弱性の報告。",
+    "Security": "セキュリティ",
     "Reading status": "読書状況",
-    "In progress": "読書中",
-    "Finished reading": "読了",
+    "Reading_readingStatus": "読書中",
+    "Read_readingStatus": "読了",
     "Set reading status": "読書状況を設定",
     "{{count}} steps remaining_other": "残り{{count}}ステップ",
     "Input help": "入力ヘルプ",
@@ -7318,7 +7318,6 @@
     "Session imported": "セッションをインポートしました",
     "Session package exported": "セッションパッケージをエクスポートしました",
     "Checking Session package…": "セッションパッケージを検証中…",
-    "Optional files: {{selected}} / {{total}} selected": "任意のファイル：{{selected}} / {{total}} 件を選択",
     "Choose save location…": "保存先を選択…",
     "Drop a .science file to import": ".scienceファイルをドロップしてインポート",
     "Checking current library status…": "ライブラリの現在の状態を確認中…",
@@ -7608,6 +7607,9 @@
     "The previous execution is still using this conversation. Retry to stop it before continuing.": "前の実行がまだこの会話を使用しています。再試行して前の実行を停止してから続けてください。",
     "Granted at {{time}}": "許可日時：{{time}}",
     "{{count}} directories_other": "{{count}} 個のディレクトリ",
-    "Show remaining {{count}} directories_other": "残り {{count}} 個のディレクトリを表示"
+    "Show remaining {{count}} directories_other": "残り {{count}} 個のディレクトリを表示",
+    "Branches": "ブランチ",
+    "Optional files: {{selected}} / {{total}} selected": "任意のファイル：{{selected}} / {{total}} 件を選択",
+    "Steps": "ステップ"
   }
 }

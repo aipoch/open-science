@@ -187,11 +187,11 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
-    "Branches": "Branches",
-    "Steps": "Étapes",
+    "Read the security policy and report vulnerabilities.": "Consulter la politique de sécurité et signaler des vulnérabilités.",
+    "Security": "Sécurité",
     "Reading status": "État de lecture",
-    "In progress": "En cours de lecture",
-    "Finished reading": "Lecture terminée",
+    "Reading_readingStatus": "En cours de lecture",
+    "Read_readingStatus": "Lecture terminée",
     "Set reading status": "Définir l’état de lecture",
     "{{count}} steps remaining_one": "{{count}} étape restante",
     "{{count}} steps remaining_many": "{{count}} étapes restantes",
@@ -7648,7 +7648,6 @@
     "Session imported": "Session importée",
     "Session package exported": "Paquet de session exporté",
     "Checking Session package…": "Vérification du paquet de session…",
-    "Optional files: {{selected}} / {{total}} selected": "Fichiers facultatifs : {{selected}} / {{total}} sélectionnés",
     "Choose save location…": "Choisir l’emplacement…",
     "Drop a .science file to import": "Déposer un fichier .science pour l’importer",
     "Checking current library status…": "Vérification du statut actuel dans la bibliothèque…",
@@ -7944,6 +7943,9 @@
     "{{count}} directories_other": "{{count}} dossiers",
     "Show remaining {{count}} directories_one": "Afficher le {{count}} dossier restant",
     "Show remaining {{count}} directories_many": "Afficher les {{count}} dossiers restants",
-    "Show remaining {{count}} directories_other": "Afficher les {{count}} dossiers restants"
+    "Show remaining {{count}} directories_other": "Afficher les {{count}} dossiers restants",
+    "Branches": "Branches",
+    "Optional files: {{selected}} / {{total}} selected": "Fichiers facultatifs : {{selected}} / {{total}} sélectionnés",
+    "Steps": "Étapes"
   }
 }

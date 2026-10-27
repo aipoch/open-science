@@ -179,7 +179,7 @@ export function useLiteratureTable({
     () => ({
       ...Object.fromEntries(journalColumns.map(({ key, label }) => [key, label])),
       abstract: t('Abstract'),
-      readingStatus: t('Reading status'),
+      readingStatus: t('Status'),
       year: t('Year'),
       publication: t('Publication'),
       authors: t('Authors'),

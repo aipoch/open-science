@@ -186,11 +186,11 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
-    "Branches": "Branches",
-    "Steps": "Schritte",
+    "Read the security policy and report vulnerabilities.": "Sicherheitsrichtlinie lesen und Schwachstellen melden.",
+    "Security": "Sicherheit",
     "Reading status": "Lesestatus",
-    "In progress": "Wird gelesen",
-    "Finished reading": "Gelesen",
+    "Reading_readingStatus": "Wird gelesen",
+    "Read_readingStatus": "Gelesen",
     "Set reading status": "Lesestatus festlegen",
     "{{count}} steps remaining_one": "Noch {{count}} Schritt",
     "{{count}} steps remaining_other": "Noch {{count}} Schritte",
@@ -7479,7 +7479,6 @@
     "Session imported": "Sitzung importiert",
     "Session package exported": "Sitzungspaket exportiert",
     "Checking Session package…": "Sitzungspaket wird geprüft…",
-    "Optional files: {{selected}} / {{total}} selected": "Optionale Dateien: {{selected}} / {{total}} ausgewählt",
     "Choose save location…": "Speicherort auswählen…",
     "Drop a .science file to import": "Eine .science-Datei zum Importieren hier ablegen",
     "Checking current library status…": "Aktuellen Bibliotheksstatus prüfen…",
@@ -7772,6 +7771,9 @@
     "{{count}} directories_one": "{{count}} Verzeichnis",
     "{{count}} directories_other": "{{count}} Verzeichnisse",
     "Show remaining {{count}} directories_one": "Verbleibendes {{count}} Verzeichnis anzeigen",
-    "Show remaining {{count}} directories_other": "Verbleibende {{count}} Verzeichnisse anzeigen"
+    "Show remaining {{count}} directories_other": "Verbleibende {{count}} Verzeichnisse anzeigen",
+    "Branches": "Branches",
+    "Optional files: {{selected}} / {{total}} selected": "Optionale Dateien: {{selected}} / {{total}} ausgewählt",
+    "Steps": "Schritte"
   }
 }
