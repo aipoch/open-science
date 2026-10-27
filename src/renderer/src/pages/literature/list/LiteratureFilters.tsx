@@ -1,3 +1,4 @@
+import { LiteratureReadingStatusLabel } from '../LiteratureReadingStatusLabel'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
@@ -431,9 +432,15 @@ export function LiteratureFilters({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">{t('All')}</SelectItem>
-                      <SelectItem value="unread">{t('Unread')}</SelectItem>
-                      <SelectItem value="reading">{t('In progress')}</SelectItem>
-                      <SelectItem value="read">{t('Finished reading')}</SelectItem>
+                      <SelectItem value="unread">
+                        <LiteratureReadingStatusLabel status="unread" />
+                      </SelectItem>
+                      <SelectItem value="reading">
+                        <LiteratureReadingStatusLabel status="reading" />
+                      </SelectItem>
+                      <SelectItem value="read">
+                        <LiteratureReadingStatusLabel status="read" />
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 ) : null}

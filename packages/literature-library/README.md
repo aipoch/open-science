@@ -21,8 +21,8 @@ Unit tests import this package's source entrypoints so coverage measures the cod
 
 ## Reading status
 
-Reading status is manually managed catalog state: `unread` (Unread), `reading` (In progress) or
-`read` (Finished reading). The host defaults existing and newly created references to `unread`.
+Reading status is manually managed catalog state: `unread` (Unread), `reading` (Reading) or
+`read` (Read). The host defaults existing and newly created references to `unread`.
 Opening a PDF, changing pages or reaching the final page never changes status; it records the user's
 choice rather than an assessment of reading progress or comprehension.
 

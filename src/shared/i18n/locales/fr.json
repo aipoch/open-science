@@ -188,8 +188,8 @@
   },
   "renderer": {
     "Reading status": "État de lecture",
-    "In progress": "En cours de lecture",
-    "Finished reading": "Lecture terminée",
+    "Reading_readingStatus": "En cours de lecture",
+    "Read_readingStatus": "Lecture terminée",
     "Set reading status": "Définir l’état de lecture",
     "{{count}} steps remaining_one": "{{count}} étape restante",
     "{{count}} steps remaining_many": "{{count}} étapes restantes",

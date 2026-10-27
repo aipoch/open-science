@@ -189,8 +189,8 @@
   },
   "renderer": {
     "Reading status": "Статус чтения",
-    "In progress": "В процессе чтения",
-    "Finished reading": "Прочитано",
+    "Reading_readingStatus": "В процессе чтения",
+    "Read_readingStatus": "Прочитано",
     "Set reading status": "Задать статус чтения",
     "Unread": "Не прочитано",
     "{{count}} steps remaining_one": "Остался {{count}} шаг",

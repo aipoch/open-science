@@ -186,8 +186,8 @@
   },
   "renderer": {
     "Reading status": "読書状況",
-    "In progress": "読書中",
-    "Finished reading": "読了",
+    "Reading_readingStatus": "読書中",
+    "Read_readingStatus": "読了",
     "Set reading status": "読書状況を設定",
     "{{count}} steps remaining_other": "残り{{count}}ステップ",
     "Input help": "入力ヘルプ",

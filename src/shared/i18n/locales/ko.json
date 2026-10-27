@@ -186,8 +186,8 @@
   },
   "renderer": {
     "Reading status": "읽기 상태",
-    "In progress": "읽는 중",
-    "Finished reading": "읽기 완료",
+    "Reading_readingStatus": "읽는 중",
+    "Read_readingStatus": "읽기 완료",
     "Set reading status": "읽기 상태 설정",
     "{{count}} steps remaining_other": "{{count}}단계 남음",
     "Input help": "입력 도움말",

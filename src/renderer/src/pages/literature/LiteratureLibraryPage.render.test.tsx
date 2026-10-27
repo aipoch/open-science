@@ -598,7 +598,7 @@ describe('LiteratureLibraryPage', () => {
     }
     const chooseBatchStatus = async (): Promise<void> => {
       fireEvent.click(screen.getByRole('combobox', { name: 'Set reading status' }))
-      fireEvent.click(screen.getByRole('option', { name: 'Finished reading' }))
+      fireEvent.click(screen.getByRole('option', { name: 'Read' }))
       await act(async () => {})
     }
     const mockReadingLibrary = (records: LiteratureItemView[]): void => {
@@ -631,6 +631,51 @@ describe('LiteratureLibraryPage', () => {
       })
     }
 
+    it.each([false, true])(
+      'edits reading status directly in the table (failure: %s)',
+      async (fails) => {
+        const records = [structuredClone(libraryItem)]
+        mockReadingLibrary(records)
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const write = transact.getMockImplementation()!
+        transact.mockImplementation(async (command) => {
+          await gate
+          if (fails) throw new Error('Write failed')
+          return write(command)
+        })
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        const name = `Reading status: ${libraryItem.item.title}`
+        const select = await screen.findByRole('combobox', { name })
+        fireEvent.click(select)
+        fireEvent.click(screen.getByRole('option', { name: 'Read' }))
+        await waitFor(() => expect(select).toHaveProperty('disabled', true))
+        expect(transact).toHaveBeenCalledExactlyOnceWith({
+          kind: 'set-reading-status',
+          itemIds: ['item-1'],
+          readingStatus: 'read'
+        })
+        expect(screen.queryByRole('dialog')).toBeNull()
+        await act(async () => {
+          release()
+          await gate
+        })
+        await waitFor(() =>
+          expect(screen.getByRole('combobox', { name })).toHaveProperty('disabled', false)
+        )
+        expect(screen.getByRole('combobox', { name }).textContent).toBe(fails ? 'Unread' : 'Read')
+        expect(screen.getByLabelText(`Select ${libraryItem.item.title}`)).toHaveProperty(
+          'checked',
+          false
+        )
+        if (fails)
+          expect(await screen.findByText('Literature could not be updated.')).not.toBeNull()
+      }
+    )
+
     it('upgrades old columns and preserves hidden and reordered reading status across remounts', async () => {
       const key = 'open-science:literature-table-preferences'
       localStorage.setItem(key, JSON.stringify({ order: ['year'], visible: ['year'] }))
@@ -645,7 +690,7 @@ describe('LiteratureLibraryPage', () => {
       const statusIndex = (): number =>
         screen
           .getAllByRole('columnheader')
-          .indexOf(screen.getByRole('columnheader', { name: 'Reading status' }))
+          .indexOf(screen.getByRole('columnheader', { name: 'Status' }))
       const statusCells = (): string[] =>
         records.map((record) => {
           const row = screen.getByRole('button', { name: record.item.title }).closest('tr')!
@@ -654,31 +699,31 @@ describe('LiteratureLibraryPage', () => {
           return cells[statusIndex()].textContent!
         })
       expect(statusIndex()).toBe(3)
-      expect(statusCells()).toEqual(['Unread', 'In progress', 'Finished reading'])
+      expect(statusCells()).toEqual(['Unread', 'Reading', 'Read'])
       expect(screen.queryByRole('columnheader', { name: 'Rating' })).toBeNull()
       const shownWidth = screen.getByRole('table').style.minWidth
       fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
-      fireEvent.click(screen.getByRole('button', { name: 'Reading status: Hide column' }))
-      expect(screen.queryByRole('columnheader', { name: 'Reading status' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Status: Hide column' }))
+      expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull()
       expect(screen.getByRole('table').style.minWidth).not.toBe(shownWidth)
       view.unmount()
       view = render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       await screen.findByRole('button', { name: records[0].item.title })
-      expect(screen.queryByRole('columnheader', { name: 'Reading status' })).toBeNull()
+      expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
-      fireEvent.click(screen.getByRole('button', { name: 'Reading status: Show column' }))
-      fireEvent.keyDown(screen.getByRole('button', { name: 'Move Reading status' }), {
+      fireEvent.click(screen.getByRole('button', { name: 'Status: Show column' }))
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Move Status' }), {
         key: 'ArrowDown'
       })
       expect(statusIndex()).toBe(4)
-      expect(statusCells()).toEqual(['Unread', 'In progress', 'Finished reading'])
+      expect(statusCells()).toEqual(['Unread', 'Reading', 'Read'])
       view.unmount()
       render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       await screen.findByRole('button', { name: records[0].item.title })
       expect(statusIndex()).toBe(4)
-      expect(statusCells()).toEqual(['Unread', 'In progress', 'Finished reading'])
+      expect(statusCells()).toEqual(['Unread', 'Reading', 'Read'])
     })
 
     it('shows the default status and saves a single status without replacing concurrent metadata', async () => {
@@ -688,9 +733,7 @@ describe('LiteratureLibraryPage', () => {
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       expect(await screen.findByText('Unread')).not.toBeNull()
       const headers = screen.getAllByRole('columnheader')
-      const statusColumn = headers.indexOf(
-        screen.getByRole('columnheader', { name: 'Reading status' })
-      )
+      const statusColumn = headers.indexOf(screen.getByRole('columnheader', { name: 'Status' }))
       const row = screen.getByRole('button', { name: libraryItem.item.title }).closest('tr')!
       const cells = within(row).getAllByRole('cell')
       expect(cells).toHaveLength(headers.length)
@@ -706,8 +749,8 @@ describe('LiteratureLibraryPage', () => {
       }
       records[0].metadataRevision = 2
       fireEvent.click(select)
-      fireEvent.click(screen.getByRole('option', { name: 'In progress' }))
-      await waitFor(() => expect(select.textContent).toBe('In progress'))
+      fireEvent.click(screen.getByRole('option', { name: 'Reading' }))
+      await waitFor(() => expect(select.textContent).toBe('Reading'))
       expect(transact).toHaveBeenCalledExactlyOnceWith({
         kind: 'set-reading-status',
         itemIds: ['item-1'],
@@ -733,7 +776,7 @@ describe('LiteratureLibraryPage', () => {
         else get.mockRejectedValueOnce(new Error('Readback failed'))
         const select = within(dialog).getByRole('combobox', { name: 'Reading status' })
         fireEvent.click(select)
-        fireEvent.click(screen.getByRole('option', { name: 'In progress' }))
+        fireEvent.click(screen.getByRole('option', { name: 'Reading' }))
         const error = await within(dialog).findByRole('alert')
         expect(error.textContent).toContain(
           phase === 'write'
@@ -7670,17 +7713,7 @@ describe('LiteratureLibraryPage', () => {
         .map((header) => header.textContent)
         .filter(Boolean)
         .slice(0, 9)
-    ).toEqual([
-      '#',
-      'Title',
-      'Reading status',
-      'Year',
-      'Publication',
-      'Authors',
-      'Type',
-      'Tags',
-      'Rating'
-    ])
+    ).toEqual(['#', 'Title', 'Status', 'Year', 'Publication', 'Authors', 'Type', 'Tags', 'Rating'])
     expect(document.querySelector('[data-row-number="1"]')?.textContent).toBe('1')
     expect(screen.queryByRole('columnheader', { name: 'Publisher' })).toBeNull()
     expect(screen.getByRole('columnheader', { name: 'Rating' })).not.toBeNull()
@@ -7769,7 +7802,7 @@ describe('LiteratureLibraryPage', () => {
         .map((header) => header.textContent)
         .filter(Boolean)
         .slice(0, 5)
-    ).toEqual(['#', 'Title', 'Reading status', 'Year', 'Abstract'])
+    ).toEqual(['#', 'Title', 'Status', 'Year', 'Abstract'])
     expect(screen.getByRole('columnheader', { name: 'Abstract' })).not.toBeNull()
     expect(screen.getByRole('columnheader', { name: 'Rating' })).not.toBeNull()
     expect(screen.getByRole('columnheader', { name: 'Notes' })).not.toBeNull()
@@ -7840,7 +7873,7 @@ describe('LiteratureLibraryPage', () => {
         .map((header) => header.textContent)
         .filter(Boolean)
         .slice(0, 5)
-    ).toEqual(['#', 'Title', 'Reading status', 'Year', 'Abstract'])
+    ).toEqual(['#', 'Title', 'Status', 'Year', 'Abstract'])
     expect(document.querySelector('[data-slot="literature-column-drop-indicator"]')).toBeNull()
   })
 

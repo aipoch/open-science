@@ -187,8 +187,8 @@
   },
   "renderer": {
     "Reading status": "Lesestatus",
-    "In progress": "Wird gelesen",
-    "Finished reading": "Gelesen",
+    "Reading_readingStatus": "Wird gelesen",
+    "Read_readingStatus": "Gelesen",
     "Set reading status": "Lesestatus festlegen",
     "{{count}} steps remaining_one": "Noch {{count}} Schritt",
     "{{count}} steps remaining_other": "Noch {{count}} Schritte",

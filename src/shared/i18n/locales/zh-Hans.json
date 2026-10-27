@@ -186,8 +186,8 @@
   },
   "renderer": {
     "Reading status": "阅读状态",
-    "In progress": "阅读中",
-    "Finished reading": "已读",
+    "Reading_readingStatus": "阅读中",
+    "Read_readingStatus": "已读",
     "Set reading status": "设置阅读状态",
     "{{count}} steps remaining_other": "剩余 {{count}} 步",
     "Input help": "输入帮助",

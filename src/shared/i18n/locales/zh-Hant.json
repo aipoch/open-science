@@ -186,8 +186,8 @@
   },
   "renderer": {
     "Reading status": "閱讀狀態",
-    "In progress": "閱讀中",
-    "Finished reading": "已讀",
+    "Reading_readingStatus": "閱讀中",
+    "Read_readingStatus": "已讀",
     "Set reading status": "設定閱讀狀態",
     "{{count}} steps remaining_other": "剩餘 {{count}} 步",
     "Input help": "輸入說明",
