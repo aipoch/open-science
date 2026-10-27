@@ -2,6 +2,8 @@
 export type DesktopRuntimeRecoveryState = Readonly<{
   phase: 'connected' | 'disconnected' | 'reconnecting' | 'reconciling' | 'unavailable'
   epoch: number
+  /** Attached service identity; available before renderer snapshot reconciliation. */
+  generation?: string
   closing: boolean
   shutdownProgress?: boolean
   reason?:

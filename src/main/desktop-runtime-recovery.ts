@@ -56,7 +56,12 @@ export function createDesktopRuntimeRecovery(options: {
   let current = options.client
   let pendingCandidate: DesktopRuntimeClient | undefined
   let repairing = false
-  let state: DesktopRuntimeRecoveryState = { phase: 'connected', epoch: 0, closing: false }
+  let state: DesktopRuntimeRecoveryState = {
+    phase: 'connected',
+    epoch: 0,
+    closing: false,
+    generation
+  }
   let attempt: Promise<DesktopRuntimeRecoveryState> | undefined
   let cancellation: AbortController | undefined
   const publish = (next: DesktopRuntimeRecoveryState): void => {
@@ -228,7 +233,7 @@ export function createDesktopRuntimeRecovery(options: {
             options.activate(candidate, controller.signal, () => {
               controller.signal.throwIfAborted()
               if (cancellation !== controller) throw new Error('Desktop attempt superseded.')
-              publish({ ...state, phase: 'reconciling' })
+              publish({ ...state, phase: 'reconciling', generation })
             }),
             controller.signal
           )

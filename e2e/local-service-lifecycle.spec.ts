@@ -38,7 +38,10 @@ import { readProcessTree } from '../scripts/performance/process-snapshot'
 import { DelegatedProcessOwnership } from '../src/main/delegation/process-ownership'
 import { proveRecordedPosixLeaderGone } from '../src/main/process-tree'
 
-const evidence = resolve('.scratch/local-service-lifecycle-implementation/e2e')
+const evidence = resolve(
+  process.env.OPEN_SCIENCE_E2E_EVIDENCE_ROOT ??
+    '.scratch/local-service-lifecycle-implementation/e2e'
+)
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 async function launchFixture(stalled = false) {
@@ -1646,6 +1649,130 @@ test('restarts after proven service exit and stops automatic recovery on the thi
           restarts: restartTransitions.length,
           restartTransitions,
           nativeErrors
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await f.cleanup(failure)
+  }
+})
+
+// The provider is deterministic; Electron, service replacement, persistence and user continuation
+// are real. A draft-only crash misses a stale in-flight revision retained by the mounted hook.
+test('service crash during a running turn restores the original conversation without replay', async () => {
+  test.setTimeout(150_000)
+  const f = await launchFixture()
+  let failure: unknown
+  try {
+    const prompt = 'Hold the turn outcome fixture. Service replacement regression'
+    await submitPromptViaUi(f.page, prompt)
+    await expect(
+      f.page.getByText('Turn outcome cancellation checkpoint.', { exact: false })
+    ).toBeVisible()
+    const oldSnapshot = await f.page.evaluate(() => window.api.acp.getState())
+    expect(oldSnapshot.promptInFlightSessionIds).toHaveLength(1)
+    const sessionId = oldSnapshot.promptInFlightSessionIds[0]
+    const saved = (await f.page.evaluate(() => window.api.sessions.loadAll())).sessions.find(
+      (s) => s.id === sessionId
+    )!
+    const resultPath = join(saved.cwd!, 'service-recovery-result.txt')
+    await writeFile(resultPath, 'Saved before service crash.\n')
+    const capturePath = join(f.roots.storageRoot, 'e2e-handoff-captures', 'provider-prompts.jsonl')
+    const readPrompts = async (): Promise<{ sessionId: string; prompt: string }[]> =>
+      (await readFile(capturePath, 'utf8'))
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+    const beforePrompts = await readPrompts()
+    const composer = f.page.getByRole('textbox', { name: 'Ask anything' })
+    const draft = 'Draft preserved across running-turn service crash'
+    await composer.fill(draft)
+    const target = await captureFixtureService(f.roots.storageRoot)
+    if (!target || target.generation !== f.target.generation)
+      throw new Error('Fixture service identity changed before injection')
+    expect(processBirthIdentity(target.pid)).toBe(target.birthToken)
+    f.trackAgents(target)
+    await f.page.screenshot({
+      animations: 'disabled',
+      path: join(evidence, 'running-service-before.png')
+    })
+    process.kill(target.pid, 'SIGKILL')
+    await expect.poll(() => isRuntimeProcessAlive(target.pid)).toBe(false)
+    await expect
+      .poll(() => f.page.evaluate(() => window.api.desktopRuntime!.getState()), { timeout: 30_000 })
+      .toMatchObject({
+        phase: 'connected',
+        epoch: expect.any(Number),
+        restartedGeneration: expect.any(String)
+      })
+    const after = await f.page.evaluate(() => window.api.desktopRuntime!.getState())
+    expect(after.restartedGeneration).not.toBe(target.generation)
+    const newSnapshot = await f.page.evaluate(() => window.api.acp.getState())
+    expect(newSnapshot.revision).toBeLessThan(oldSnapshot.revision!)
+    expect(newSnapshot.promptInFlightSessionIds).toEqual([])
+    await expect(composer).toHaveText(draft)
+    await expect(f.page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    await expect(f.page.getByRole('button', { name: 'Resume session', exact: true })).toBeEnabled()
+    // Observe the recovered app before any user continuation, including delayed automatic work.
+    await f.page.waitForTimeout(1500)
+    expect(await readPrompts()).toEqual(beforePrompts)
+    expect(await readFile(resultPath, 'utf8')).toBe('Saved before service crash.\n')
+    await f.page.screenshot({
+      animations: 'disabled',
+      path: join(evidence, 'running-service-recovered.png')
+    })
+    await f.page
+      .getByTestId('local-service-recovery')
+      .getByRole('button', { name: 'Dismiss', exact: true })
+      .click()
+    const followup = 'Summarize the deterministic fixture. Follow-up after service replacement'
+    await submitPromptViaUi(f.page, followup)
+    await expect(
+      f.page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+    ).toBeVisible()
+    await expect(f.page.getByText('Response completed.', { exact: true })).toBeVisible()
+    await composer.fill('Ready for another message in the original conversation')
+    await expect(f.page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    const finalPrompts = await readPrompts()
+    expect(finalPrompts).toHaveLength(beforePrompts.length + 1)
+    expect(finalPrompts.at(-1)?.prompt).toContain(followup)
+    const continued = (await f.page.evaluate(() => window.api.sessions.loadAll())).sessions.find(
+      (s) => s.id === sessionId
+    )!
+    expect(continued.messages.some((message) => message.content === prompt)).toBe(true)
+    expect(
+      continued.messages.filter(
+        (message) => message.role === 'user' && message.content === followup
+      )
+    ).toHaveLength(1)
+    await f.page.screenshot({
+      animations: 'disabled',
+      path: join(evidence, 'running-service-continued.png')
+    })
+    await writeFile(
+      join(evidence, 'running-service-recovery.json'),
+      JSON.stringify(
+        {
+          build: f.build,
+          root: f.root,
+          sessionId,
+          oldRevision: oldSnapshot.revision,
+          newRevision: newSnapshot.revision,
+          oldGeneration: target.generation,
+          newGeneration: after.restartedGeneration,
+          automaticPromptReplay: false,
+          beforePromptCount: beforePrompts.length,
+          afterPromptCount: finalPrompts.length,
+          draftPreserved: true,
+          savedFilePreserved: true,
+          originalConversationContinued: true,
+          provider: 'deterministic fake-opencode'
         },
         null,
         2

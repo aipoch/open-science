@@ -419,7 +419,7 @@ describe('automatic recovery rounds', () => {
     recovery.disconnect(original)
     const first = recovery.reconnect()
     await vi.advanceTimersByTimeAsync(0)
-    expect(recovery.state().phase).toBe('reconciling')
+    expect(recovery.state()).toMatchObject({ phase: 'reconciling', generation: 'replacement-b' })
     intent = { ...intent, generation: 'replacement-b' }
     alive.delete(8)
     recovery.disconnect(replacement)

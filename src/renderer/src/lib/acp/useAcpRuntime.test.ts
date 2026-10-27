@@ -29,6 +29,8 @@ type OnEventListener = (events: readonly AcpRuntimeEvent[]) => void
 
 // Minimal renderHook so we can exercise the real hook without pulling in @testing-library/react,
 // which the repo does not depend on. A null-rendering harness captures each render's return value.
+const mountedHooks = new Set<() => void>()
+
 const renderHook = <Value>(
   hook: () => Value
 ): { result: { current: Value }; unmount: () => void } => {
@@ -45,13 +47,12 @@ const renderHook = <Value>(
     root.render(createElement(HookHarness))
   })
 
-  return {
-    result,
-    unmount: () =>
-      act(() => {
-        root.unmount()
-      })
+  const unmount = (): void => {
+    act(() => root.unmount())
+    mountedHooks.delete(unmount)
   }
+  mountedHooks.add(unmount)
+  return { result, unmount }
 }
 
 const createSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnapshot => ({
@@ -120,7 +121,12 @@ const mountRuntime = async (): Promise<{
 }
 
 beforeEach(() => {
-  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+  useDesktopRuntimeRecoveryStore.setState({
+    phase: 'connected',
+    epoch: 0,
+    closing: false,
+    generation: undefined
+  })
   resetAcpRuntimeSnapshotRevisionForTests()
   capturedStateListener = undefined
   capturedEventListener = undefined
@@ -154,6 +160,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  for (const unmount of mountedHooks) unmount()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -864,5 +871,158 @@ it('refreshes missed terminal state in the mounted recovery snapshot owner', asy
   expect(result.current.state.promptInFlight).toBe(false)
   expect(result.current.state.promptInFlightSessionIds).toEqual([])
   expect(result.current.state.pendingPermissions).toEqual([])
+  unmount()
+})
+
+describe('service-generation recovery ordering', () => {
+  const enterReplacement = async (): Promise<void> => {
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'reconciling',
+      epoch: 2,
+      generation: 'service-b'
+    })
+    await refreshDesktopRecoveryReaders()
+  }
+
+  beforeEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({ generation: 'service-a' })
+    acpApi.getState.mockResolvedValue(
+      createSnapshot({
+        revision: 23,
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        events: [
+          {
+            id: 'service-a:checkpoint',
+            kind: 'system',
+            level: 'info',
+            timestamp: 1,
+            text: 'checkpoint'
+          }
+        ]
+      })
+    )
+  })
+
+  it('accepts the replacement snapshot before connected and rejects old rendered authority', async () => {
+    const { result, unmount } = await mountRuntime()
+    const oldState = result.current.state
+    const listener = vi.fn()
+    const unsubscribe = result.current.subscribeRuntimeEvents!(listener)
+    acpApi.getState.mockResolvedValue(createSnapshot({ revision: 5 }))
+    await act(enterReplacement)
+    expect(result.current.state).toMatchObject({
+      revision: 5,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    })
+    expect(result.current.currentRuntimeEvents()).toEqual([])
+    expect(acceptAcpRuntimeSnapshotRevision(oldState)).toBe(false)
+    const event: AcpRuntimeEvent = {
+      id: 'service-b:event',
+      kind: 'system',
+      level: 'info',
+      timestamp: 2,
+      text: 'new service'
+    }
+    act(() => capturedEventListener?.([event]))
+    expect(listener).toHaveBeenLastCalledWith([event], undefined)
+    expect(result.current.currentRuntimeEvents()).toEqual([event])
+    unsubscribe()
+    unmount()
+  })
+
+  it('keeps the revision watermark when reconnecting to the same service', async () => {
+    const { result, unmount } = await mountRuntime()
+    acpApi.getState.mockResolvedValue(createSnapshot({ revision: 5 }))
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 2 })
+      await refreshDesktopRecoveryReaders()
+    })
+    expect(result.current.state.revision).toBe(23)
+    act(() => capturedStateListener?.(createSnapshot({ revision: 24 })))
+    expect(result.current.state.promptInFlight).toBe(false)
+    unmount()
+  })
+
+  it.each(['connect', 'sendPrompt', 'respondToPermission', 'createSession'] as const)(
+    'rejects a late old-service %s result without overwriting replacement state',
+    async (method) => {
+      const { result, unmount } = await mountRuntime()
+      const delayed = createDeferred<AcpStateSnapshot>()
+      acpApi[method].mockReturnValueOnce(delayed.promise)
+      let pending!: Promise<unknown>
+      await act(async () => {
+        if (method === 'connect') pending = result.current.connect('/workspace/project')
+        else if (method === 'sendPrompt')
+          pending = result.current.sendPrompt('session-1', 'old prompt')
+        else if (method === 'respondToPermission')
+          pending = result.current.respondToPermission('old-request')
+        else pending = result.current.createSession('/workspace/project')
+      })
+      acpApi.getState.mockResolvedValue(createSnapshot({ revision: 5 }))
+      await act(enterReplacement)
+      await act(async () => {
+        delayed.resolve(
+          createSnapshot({
+            revision: 99,
+            promptInFlight: true,
+            promptInFlightSessionIds: ['session-1']
+          })
+        )
+        if (method === 'connect') expect(await pending).toBeUndefined()
+        else await expect(pending).rejects.toMatchObject({ code: 'desktop-runtime-disconnected' })
+      })
+      expect(result.current.state).toMatchObject({ revision: 5, promptInFlight: false })
+      expect(result.current.actionError).toBeNull()
+      expect(result.current.isConnecting).toBe(false)
+      unmount()
+    }
+  )
+
+  it('ignores an initial pull that finishes after replacement recovery', async () => {
+    const initial = createDeferred<AcpStateSnapshot>()
+    acpApi.getState.mockReturnValueOnce(initial.promise)
+    const { result, unmount } = renderHook(() => useAcpRuntime())
+    acpApi.getState.mockResolvedValue(createSnapshot({ revision: 5 }))
+    await act(enterReplacement)
+    await act(async () => {
+      initial.resolve(
+        createSnapshot({
+          revision: 99,
+          promptInFlight: true,
+          promptInFlightSessionIds: ['session-1']
+        })
+      )
+      await initial.promise
+    })
+    expect(result.current.state).toMatchObject({ revision: 5, promptInFlight: false })
+    expect(result.current.actionError).toBeNull()
+    unmount()
+  })
+})
+
+it('binds the first service identity without losing already admitted startup ordering', async () => {
+  acpApi.getState.mockResolvedValue(createSnapshot({ revision: 23 }))
+  const { result, unmount } = await mountRuntime()
+  const startup = result.current.state
+  const listener = vi.fn()
+  result.current.subscribeRuntimeEvents!(listener)
+  act(() => useDesktopRuntimeRecoveryStore.setState({ generation: 'service-a' }))
+  expect(acceptAcpRuntimeSnapshotRevision(startup)).toBe(true)
+  const event: AcpRuntimeEvent = {
+    id: 'startup:event',
+    kind: 'system',
+    level: 'info',
+    timestamp: 1,
+    text: 'same service'
+  }
+  act(() => capturedEventListener?.([event]))
+  expect(listener).toHaveBeenLastCalledWith([event], undefined)
+  expect(acceptAcpRuntimeSnapshotRevision({ revision: 5 })).toBe(false)
+  act(() => useDesktopRuntimeRecoveryStore.setState({ generation: 'service-b' }))
+  expect(acceptAcpRuntimeSnapshotRevision({ revision: 5 })).toBe(true)
+  expect(acceptAcpRuntimeSnapshotRevision(startup)).toBe(false)
   unmount()
 })
