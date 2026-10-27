@@ -2277,14 +2277,15 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-2xl border border-border-200 bg-bg-000 p-2"
+                        className="relative z-10 rounded-2xl bg-bg-200 p-2"
                         aria-label={t('Imported research history')}
                       >
                         <div className="flex flex-wrap items-center gap-2">
                           {sessionForkAvailable() ? (
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
+                              className="px-2 text-xs"
                               onClick={() => {
                                 void forkSession(activeSession)
                               }}
@@ -2294,8 +2295,9 @@ const ConversationPanel = ({
                             </Button>
                           ) : null}
                           <Button
-                            variant="secondary"
+                            variant="outline"
                             size="sm"
+                            className="px-2 text-xs"
                             aria-controls="right-panel"
                             onClick={() => {
                               usePreviewWorkbenchStore
@@ -2318,39 +2320,14 @@ const ConversationPanel = ({
                             sessionId={activeSession.id}
                           />
                         </div>
-                        <details className="group/source mt-1 text-xs leading-5 text-muted-foreground">
-                          <Button asChild variant="ghost" size="sm" className="justify-start">
-                            <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-                              <ChevronRight
-                                className="size-4 transition-transform group-open/source:rotate-90 motion-reduce:transition-none"
-                                aria-hidden="true"
-                              />
-                              {t('Package source')}
-                            </summary>
-                          </Button>
-                          <div className="px-2.5 pb-2">
-                            <p className="mt-2">
-                              {t('Imported on {{date}}', {
-                                date: new Date(
-                                  activeSession.packageOrigin.importedAt
-                                ).toLocaleString()
-                              })}
-                            </p>
-                            <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-                              <dt>{t('Source project')}</dt>
-                              <dd className="break-all font-mono">
-                                {activeSession.packageOrigin.sourceProjectId}
-                              </dd>
-                              <dt>{t('Source Session')}</dt>
-                              <dd className="break-all font-mono">
-                                {activeSession.packageOrigin.sourceSessionId}
-                              </dd>
-                            </dl>
-                          </div>
-                        </details>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
                           <details className="group/exclusions mt-1 text-xs text-muted-foreground">
-                            <Button asChild variant="ghost" size="sm" className="justify-start">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              className="justify-start px-2 text-xs"
+                            >
                               <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                                 <ChevronRight
                                   className="size-4 transition-transform group-open/exclusions:rotate-90 motion-reduce:transition-none"
@@ -2359,7 +2336,7 @@ const ConversationPanel = ({
                                 {t('Not included in this package')}
                               </summary>
                             </Button>
-                            <ul className="mx-2.5 mb-2 mt-1 max-h-36 list-disc overflow-y-auto pl-4">
+                            <ul className="mx-2 mb-2 mt-1 max-h-36 list-disc overflow-y-auto pl-4">
                               {[
                                 ...new Set(
                                   activeSession.packageOrigin.excludedFiles.map(

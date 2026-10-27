@@ -617,7 +617,7 @@ const ReplayPanelContent = ({
               <h2 id={informationTitleId} className="sr-only">
                 {replayDocument.source.title}
               </h2>
-              <dl className="flex flex-wrap gap-x-6 gap-y-2 pb-2 text-xs text-muted-foreground">
+              <dl className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
                 <div className="flex items-baseline gap-1.5">
                   <dt>{t('Steps')}</dt>
                   <dd className="text-sm font-medium tabular-nums text-foreground">
@@ -631,9 +631,7 @@ const ReplayPanelContent = ({
                   </dd>
                 </div>
               </dl>
-              <div className="border-t border-border pt-2">
-                <ReplaySourceDetails source={replayDocument.source} onInspect={pause} />
-              </div>
+              <ReplaySourceDetails source={replayDocument.source} onInspect={pause} />
             </PopoverContent>
           </Popover>
         </div>

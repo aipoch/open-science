@@ -10107,7 +10107,9 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
     expect(importedHistory?.textContent).not.toContain(
       'Code execution and continuation are disabled.'
     )
-    expect(importedHistory?.querySelector('details')?.open).toBe(false)
+    expect(importedHistory?.querySelector('details')).toBeNull()
+    expect(importedHistory?.textContent).not.toContain('Package source')
+    expect(importedHistory?.textContent).not.toContain('Imported on')
     expect(importedHistory?.textContent).toContain('View replay')
     expect(importedHistory?.textContent).toContain('Fork to continue')
     expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()

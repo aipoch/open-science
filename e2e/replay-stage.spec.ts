@@ -129,6 +129,7 @@ test('independent 1280×720 Stage paints the same frame by sequential advance an
   const stage = page.getByTestId('replay-stage')
   await expect(stage).toHaveCSS('width', '1280px')
   await expect(stage).toHaveCSS('height', '720px')
+  await expect(stage.locator('footer')).toHaveText(/^Step \d+$/)
   await expect(page.getByText('Mean: 4.50', { exact: false })).toBeVisible()
   await expect(stage.locator('img')).toHaveCount(1)
   expect(
@@ -412,12 +413,11 @@ for (const locale of ['en', 'de']) {
     const popover = page.getByRole('dialog', { name: 'A reproducible observation study' })
     await expect(popover).toBeVisible()
     await expect(popover.getByText('original-project', { exact: true })).not.toBeVisible()
-    await popover
-      .locator('summary')
-      .filter({ hasText: /^Details$/ })
-      .click()
-    await expect(popover.getByText('original-project', { exact: true })).toBeVisible()
-    await expect(popover.getByText('original-session', { exact: true })).toBeVisible()
+    await expect(popover.locator('summary')).toHaveCount(1)
+    await popover.locator('summary').click()
+    await expect(popover.getByText('large-original.csv', { exact: true })).toBeVisible()
+    await expect(popover.getByText('original-project', { exact: true })).toHaveCount(0)
+    await expect(popover.getByText('original-session', { exact: true })).toHaveCount(0)
     const bounds = (await popover.boundingBox())!
     const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
     expect(bounds.x).toBeGreaterThanOrEqual(0)

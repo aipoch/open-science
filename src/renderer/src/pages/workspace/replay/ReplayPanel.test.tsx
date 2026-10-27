@@ -1049,7 +1049,7 @@ describe('replay readiness clock', () => {
 })
 
 describe('replay source metadata and final results', () => {
-  it('keeps imported package origin and excluded files inspectable beside the replay', async () => {
+  it('shows omitted files without exposing import diagnostics', async () => {
     const document = makeDocument()
     document.source.packageOrigin = {
       importId: 'import',
@@ -1069,12 +1069,16 @@ describe('replay source metadata and final results', () => {
     const stats = screen.getByText('Steps').closest('dl')!
     expect(within(stats).getByText('Steps').nextElementSibling?.textContent).toBe('3')
     expect(within(stats).getByText('Files').nextElementSibling?.textContent).toBe('2')
-    const details = screen.getByText('Details').closest('details')!
+    const details = screen.getByText('Not included in this package').closest('details')!
     expect(details.open).toBe(false)
-    fireEvent.click(screen.getByText('Details'))
+    fireEvent.click(screen.getByText('Not included in this package'))
     expect(details.open).toBe(true)
-    expect(screen.getByText('original-project')).toBeTruthy()
-    expect(screen.getByText('original-session')).toBeTruthy()
+    expect(screen.queryByText('original-project')).toBeNull()
+    expect(screen.queryByText('original-session')).toBeNull()
+    expect(screen.queryByText('Source fingerprint')).toBeNull()
+    expect(
+      screen.queryByText('Presentation timing is reconstructed; recorded results are unchanged.')
+    ).toBeNull()
     expect(screen.getByText('Not included in this package')).toBeTruthy()
     expect(screen.getByText('large-dataset.csv')).toBeTruthy()
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
@@ -1087,6 +1091,27 @@ describe('replay source metadata and final results', () => {
     expect(
       within(screen.getByRole('dialog')).getByText('Files').nextElementSibling?.textContent
     ).toBe('2')
+    await act(async () => {})
+  })
+
+  it('shows only counts when an imported package has no omitted files', async () => {
+    const document = makeDocument()
+    document.source.packageOrigin = {
+      importId: 'import',
+      sourceProjectId: 'original-project',
+      sourceSessionId: 'original-session',
+      importedAt: 1700000000000,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    render(<ReplayPanel document={document} {...callbacks()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Session information: Archived research' }))
+    const information = screen.getByRole('dialog', { name: 'Archived research' })
+    expect(within(information).getByText('Steps').nextElementSibling?.textContent).toBe('3')
+    expect(within(information).getByText('Files').nextElementSibling?.textContent).toBe('2')
+    expect(information.querySelector('details')).toBeNull()
+    expect(information.textContent).not.toContain('original-project')
+    expect(information.textContent).not.toContain('original-session')
+    expect(information.textContent).not.toContain('Imported on')
     await act(async () => {})
   })
 

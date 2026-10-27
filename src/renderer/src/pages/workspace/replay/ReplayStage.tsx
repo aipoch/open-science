@@ -1476,16 +1476,12 @@ const ReplayStageContent = ({
           </aside>
         ) : null}
       </div>
-      {!fitContainer && readiness.degraded ? (
-        <footer
-          className={
-            fitContainer
-              ? 'flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border-200 px-3 py-2 text-xs text-text-300'
-              : 'flex h-10 shrink-0 items-center justify-between border-t border-border-200 px-6 text-xs text-text-300'
-          }
-        >
-          <span>{t('Some source material is incomplete or unavailable.')}</span>
-          <span>
+      {!fitContainer ? (
+        <footer className="flex h-10 shrink-0 items-center justify-between border-t border-border-200 px-6 text-xs text-text-300">
+          {readiness.degraded ? (
+            <span>{t('Some source material is incomplete or unavailable.')}</span>
+          ) : null}
+          <span className="ml-auto">
             {active ? t('Step {{step}}', { step: scene.stepIndex + 1 }) : t('Research replay')}
           </span>
         </footer>
