@@ -10103,7 +10103,7 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
     const importedHistory = container.querySelector('[aria-label="Imported research history"]')
     expect(importedHistory).not.toBeNull()
-    expect(importedHistory?.textContent).toContain('Read-only')
+    expect(importedHistory?.textContent).not.toContain('Read-only')
     expect(importedHistory?.textContent).not.toContain(
       'Code execution and continuation are disabled.'
     )

@@ -2277,14 +2277,10 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-xl border border-border bg-muted/50 p-3"
+                        className="relative z-10 rounded-2xl border border-border-200 bg-bg-000 p-2"
                         aria-label={t('Imported research history')}
                       >
-                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <LockKeyhole className="size-3.5" aria-hidden="true" />
-                          {t('Read-only')}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {sessionForkAvailable() ? (
                             <Button
                               variant="ghost"
@@ -2322,32 +2318,48 @@ const ConversationPanel = ({
                             sessionId={activeSession.id}
                           />
                         </div>
-                        <details className="mt-2 text-xs leading-5 text-muted-foreground">
-                          <summary className="cursor-pointer">{t('Package source')}</summary>
-                          <p className="mt-2">
-                            {t('Imported on {{date}}', {
-                              date: new Date(
-                                activeSession.packageOrigin.importedAt
-                              ).toLocaleString()
-                            })}
-                          </p>
-                          <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-                            <dt>{t('Source project')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceProjectId}
-                            </dd>
-                            <dt>{t('Source Session')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceSessionId}
-                            </dd>
-                          </dl>
+                        <details className="group/source mt-1 text-xs leading-5 text-muted-foreground">
+                          <Button asChild variant="ghost" size="sm" className="justify-start">
+                            <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                              <ChevronRight
+                                className="size-4 transition-transform group-open/source:rotate-90"
+                                aria-hidden="true"
+                              />
+                              {t('Package source')}
+                            </summary>
+                          </Button>
+                          <div className="px-2.5 pb-2">
+                            <p className="mt-2">
+                              {t('Imported on {{date}}', {
+                                date: new Date(
+                                  activeSession.packageOrigin.importedAt
+                                ).toLocaleString()
+                              })}
+                            </p>
+                            <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                              <dt>{t('Source project')}</dt>
+                              <dd className="break-all font-mono">
+                                {activeSession.packageOrigin.sourceProjectId}
+                              </dd>
+                              <dt>{t('Source Session')}</dt>
+                              <dd className="break-all font-mono">
+                                {activeSession.packageOrigin.sourceSessionId}
+                              </dd>
+                            </dl>
+                          </div>
                         </details>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
-                          <details className="mt-2 text-xs text-muted-foreground">
-                            <summary className="cursor-pointer">
-                              {t('Not included in this package')}
-                            </summary>
-                            <ul className="mt-1 max-h-36 list-disc overflow-y-auto pl-4">
+                          <details className="group/exclusions mt-1 text-xs text-muted-foreground">
+                            <Button asChild variant="ghost" size="sm" className="justify-start">
+                              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                <ChevronRight
+                                  className="size-4 transition-transform group-open/exclusions:rotate-90"
+                                  aria-hidden="true"
+                                />
+                                {t('Not included in this package')}
+                              </summary>
+                            </Button>
+                            <ul className="mx-2.5 mb-2 mt-1 max-h-36 list-disc overflow-y-auto pl-4">
                               {[
                                 ...new Set(
                                   activeSession.packageOrigin.excludedFiles.map(

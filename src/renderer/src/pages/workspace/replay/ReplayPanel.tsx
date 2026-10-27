@@ -612,26 +612,26 @@ const ReplayPanelContent = ({
               sideOffset={8}
               collisionPadding={12}
               aria-labelledby={informationTitleId}
-              className="w-[min(360px,calc(100vw-1.5rem))] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-sm text-popover-foreground shadow-menu"
+              className="w-[min(280px,calc(100vw-1.5rem))] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-xl border border-border bg-popover p-3 text-sm text-popover-foreground shadow-menu"
             >
               <h2 id={informationTitleId} className="sr-only">
                 {replayDocument.source.title}
               </h2>
-              <dl className="grid grid-cols-2 gap-4 pb-3 text-xs text-muted-foreground">
-                <div className="flex items-baseline justify-between gap-2">
+              <dl className="flex flex-wrap gap-x-6 gap-y-2 pb-2 text-xs text-muted-foreground">
+                <div className="flex items-baseline gap-1.5">
                   <dt>{t('Steps')}</dt>
                   <dd className="text-sm font-medium tabular-nums text-foreground">
                     {branch?.steps.length ?? 0}
                   </dd>
                 </div>
-                <div className="flex items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-1.5">
                   <dt>{t('Files')}</dt>
                   <dd className="text-sm font-medium tabular-nums text-foreground">
                     {replayDocument.resources.length}
                   </dd>
                 </div>
               </dl>
-              <div className="border-t border-border pt-3">
+              <div className="border-t border-border pt-2">
                 <ReplaySourceDetails source={replayDocument.source} onInspect={pause} />
               </div>
             </PopoverContent>
