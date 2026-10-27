@@ -6,7 +6,11 @@ import {
   rendererSessionPersistenceFlushBlocksShutdown,
   type RendererSessionPersistenceFlushOutcome
 } from './session-persistence/renderer-flush'
-import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecycle-shutdown'
+import {
+  BackendShutdownOutcomeError,
+  QuitScopeChangedError,
+  type ShutdownStepOutcome
+} from './lifecycle-shutdown'
 import {
   LOCAL_SERVICE_STOP_BUDGET_MS,
   LOCAL_SERVICE_STOP_ESCALATION_MS
@@ -63,7 +67,7 @@ export type AppLifecycleDeps = {
   // Bounded, best-effort backend teardown (agent tree + notebook kernels); never throws.
   shutdownBackends: (deadlineAt?: number) => Promise<ShutdownStepOutcome | void>
   // Requests active ACP turns to cancel, then waits a bounded interval for terminal usage events.
-  prepareForQuit: (deadlineAt?: number) => Promise<ShutdownStepOutcome | void>
+  prepareForQuit: (deadlineAt?: number) => Promise<ShutdownStepOutcome | 'scope-changed' | void>
   // Closes installation admission synchronously across asynchronous quit preparation.
   holdSettingsInstallAdmission: () => () => void
   // Reopens Main/renderer admission when persistence prevents an orderly quit from committing.
@@ -502,6 +506,7 @@ export const installAppLifecycle = (
       let shutdownAbortReason: SessionPersistenceFlushAbortReason | undefined
       let persistenceFailureNeedsConsent = false
       let backendFailure: unknown
+      let quitScopeChanged = false
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
         timeoutMs: number
@@ -566,20 +571,23 @@ export const installAppLifecycle = (
         deps.onShutdownProgress?.(true)
         diagnostics?.phase('usage-drain')
         try {
-          usageDrainResult = normalizeStepOutcome(
-            await awaitQuitStep(
-              deps.prepareForQuit(shutdownDeadline),
-              Math.max(
-                0,
-                shutdownDeadline -
-                  Date.now() -
-                  Math.min(
-                    LOCAL_SERVICE_STOP_ESCALATION_MS + rendererFinalFlushTimeoutMs,
-                    (deps.shutdownTimeoutMs ?? LOCAL_SERVICE_STOP_BUDGET_MS) / 2
-                  )
-              )
+          const preparation = await awaitQuitStep(
+            deps.prepareForQuit(shutdownDeadline),
+            Math.max(
+              0,
+              shutdownDeadline -
+                Date.now() -
+                Math.min(
+                  LOCAL_SERVICE_STOP_ESCALATION_MS + rendererFinalFlushTimeoutMs,
+                  (deps.shutdownTimeoutMs ?? LOCAL_SERVICE_STOP_BUDGET_MS) / 2
+                )
             )
           )
+          if (preparation === 'scope-changed') {
+            quitScopeChanged = true
+            return
+          }
+          usageDrainResult = normalizeStepOutcome(preparation)
           diagnostics?.phase('usage-drain', { result: usageDrainResult })
           if (deps.requireCleanBackendShutdown && usageDrainResult !== 'completed') {
             throw new BackendShutdownOutcomeError(
@@ -645,7 +653,17 @@ export const installAppLifecycle = (
           }
         } catch (error) {
           backendTeardownResult = 'failed'
-          if (deps.requireCleanBackendShutdown) {
+          if (error instanceof QuitScopeChangedError) {
+            quitScopeChanged = true
+            return
+          }
+          if (
+            deps.requireCleanBackendShutdown ||
+            (error &&
+              typeof error === 'object' &&
+              'code' in error &&
+              error.code === 'command-unavailable')
+          ) {
             backendFailure = error
             return
           }
@@ -677,7 +695,12 @@ export const installAppLifecycle = (
         }
       } finally {
         deps.onShutdownProgress?.(false)
-        if (backendFailure || shutdownAbortReason || persistenceFailureNeedsConsent) {
+        if (
+          quitScopeChanged ||
+          backendFailure ||
+          shutdownAbortReason ||
+          persistenceFailureNeedsConsent
+        ) {
           shutdownDeadline = undefined
           try {
             await awaitQuitStep(deps.abortQuitPreparation(shutdownAbortReason))
@@ -692,7 +715,11 @@ export const installAppLifecycle = (
           shutdownStarted = false
           quitConfirmed = false
           confirmedSettingsInstallId = undefined
-          if (trigger === 'system') {
+          if (quitScopeChanged) {
+            // Release the obsolete leave reservation before inspecting current impact and asking
+            // the ordinary quit confirmation. No task has been stopped by this attempt.
+            deps.quit()
+          } else if (trigger === 'system') {
             await finishShutdown()
           } else if (systemShutdownRequested) {
             // A preventable OS shutdown arrived after this ordinary attempt began. Do not restore an

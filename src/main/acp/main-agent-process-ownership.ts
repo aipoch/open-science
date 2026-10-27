@@ -3,7 +3,11 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
 type MainAgentProcessOwnership = {
-  assertMainAgentSessionResumeAllowed(frameworkId: string): Promise<void>
+  assertMainAgentSessionResumeAllowed(
+    frameworkId: string,
+    providerSessionId?: string
+  ): Promise<void>
+  recordMainAgentContext?(child: ChildProcessWithoutNullStreams, providerSessionId: string): void
   recover(
     selection?: { projectId?: string; sessionId?: string; frameId?: string; attemptId?: string },
     terminateLive?: boolean
@@ -18,6 +22,20 @@ type MainAgentProcessOwnership = {
     },
     ...args: Parameters<AgentProcessSpawner>
   ): ReturnType<AgentProcessSpawner>
+}
+
+export class PreviousAgentContextUnavailableError extends Error {}
+
+const connections = new WeakMap<object, ChildProcessWithoutNullStreams>()
+export function bindMainAgentConnection(
+  connection: object,
+  child: ChildProcessWithoutNullStreams
+): void {
+  connections.set(connection, child)
+}
+export function recordMainAgentContext(connection: object, providerSessionId: string): void {
+  const child = connections.get(connection)
+  if (child) owner?.recordMainAgentContext?.(child, providerSessionId)
 }
 
 let owner: MainAgentProcessOwnership | undefined
@@ -78,15 +96,29 @@ export async function spawnMainAgentProcess(
 }
 
 /** Only restoring an old provider session can reacquire a historical writer's context. */
-export async function assertMainAgentSessionResumeAllowed(frameworkId: string): Promise<void> {
+export async function assertMainAgentSessionResumeAllowed(
+  frameworkId: string,
+  providerSessionId?: string
+): Promise<void> {
   const current = owner
   const currentGeneration = generation
   if (closed) throw new Error('Main agent process ownership is closed.')
   if (!current) return
   try {
-    await current.assertMainAgentSessionResumeAllowed(frameworkId)
+    await current.assertMainAgentSessionResumeAllowed(frameworkId, providerSessionId)
   } catch (cause) {
-    throw new Error('Previous agent cleanup is unconfirmed.', { cause })
+    if (
+      cause &&
+      typeof cause === 'object' &&
+      'code' in cause &&
+      cause.code === 'main-agent-context-conflict'
+    )
+      throw cause
+    if (closed || owner !== current || generation !== currentGeneration)
+      throw new Error('Main agent process ownership is closed.')
+    throw new PreviousAgentContextUnavailableError('Previous agent cleanup is unconfirmed.', {
+      cause
+    })
   }
   if (closed || owner !== current || generation !== currentGeneration)
     throw new Error('Main agent process ownership is closed.')

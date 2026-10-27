@@ -1,3 +1,4 @@
+import { createLocalServiceLifetime } from './local-service-lifetime'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -49,6 +50,53 @@ async function runtime(
   return { root, ensureWeb, control, record, token }
 }
 describe('runtime ownership discovery', () => {
+  it.each(['connected', 'explicit', 'unused', 'stopping'] as const)(
+    'atomically retires only unused desktop residue (%s)',
+    async (state) => {
+      const root = await mkdtemp(join(tmpdir(), 'runtime-retirement-'))
+      cleanup.push(() => rm(root, { recursive: true, force: true }))
+      const stop = vi.fn()
+      const lifetime = await createLocalServiceLifetime({
+        configRoot: root,
+        generation: randomUUID(),
+        explicitStart: state === 'explicit',
+        stop,
+        report: vi.fn()
+      })
+      cleanup.push(async () => lifetime.close())
+      if (state === 'connected') lifetime.connect('app', 'socket')
+      if (state === 'stopping') await lifetime.stop(true)
+      const control = await startRuntimeControl(
+        root,
+        'node',
+        async () => undefined,
+        undefined,
+        undefined,
+        undefined,
+        { lifetime, entryPath: '/fixture/backend/index.cjs', launch: 'desktop' }
+      )
+      cleanup.push(() => control.close())
+      const owner = JSON.parse(
+        await readFile(join(root, RUNTIME_OWNER_FILE), 'utf8')
+      ) as RuntimeOwnerRecord
+      const token = (await readFile(join(root, 'web-token'), 'utf8')).trim()
+      const response = await fetch(`http://127.0.0.1:${owner.port}/service/retire`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-open-science-runtime-generation': owner.generation
+        }
+      })
+      expect(response.status).toBe(state === 'stopping' ? 409 : 200)
+      if (state !== 'stopping')
+        expect((await response.json()).lifetime).toMatchObject({
+          stopping: state === 'unused',
+          explicit: state === 'explicit'
+        })
+      expect(stop).toHaveBeenCalledTimes(state === 'unused' || state === 'stopping' ? 1 : 0)
+    }
+  )
+
   it('reports stopping in the owner proof so a new Desktop never adopts the runtime', async () => {
     const root = await mkdtemp(join(tmpdir(), 'runtime-control-stopping-'))
     cleanup.push(() => rm(root, { recursive: true, force: true }))

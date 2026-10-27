@@ -78,7 +78,9 @@ export async function startRuntimeControl(
     if (
       service &&
       request.method === 'POST' &&
-      ['/service/start', '/service/stop', '/service/force-stop'].includes(url.pathname)
+      ['/service/start', '/service/stop', '/service/force-stop', '/service/retire'].includes(
+        url.pathname
+      )
     ) {
       if (
         (request.headers['content-length'] && request.headers['content-length'] !== '0') ||
@@ -90,7 +92,9 @@ export async function startRuntimeControl(
       const operation =
         url.pathname === '/service/start'
           ? service.lifetime.start()
-          : service.lifetime.stop(url.pathname === '/service/force-stop')
+          : url.pathname === '/service/retire'
+            ? service.lifetime.retireIfUnused()
+            : service.lifetime.stop(url.pathname === '/service/force-stop')
       void operation.then(
         (lifetime) => {
           response.writeHead(200, { 'content-type': 'application/json' })

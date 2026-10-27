@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises'
+import { copyFile, readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import { z } from 'zod'
@@ -20,7 +21,8 @@ export type ServiceLifetimeRecord = z.infer<typeof serviceLifetimeRecordSchema>
 export type ServiceLifetimeSnapshot = ServiceLifetimeRecord & { apps: number }
 export type ServiceStopOptions = { deadlineAt?: number; requireCleanExit?: boolean }
 export type AppLeaveAttempt = { attemptId: string; deadlineAt: number }
-export type AppLeaveOptions = Partial<AppLeaveAttempt>
+export type AppLeaveOptions = Partial<AppLeaveAttempt> & { detachOnDisconnect?: boolean }
+export type AppLeaveResult = ServiceLifetimeSnapshot & { scopeChanged?: true }
 export class LocalServiceStopIntentError extends Error {
   readonly code = 'service-stop-intent-timeout'
   constructor() {
@@ -34,14 +36,19 @@ export function serviceStopDeadline(deadlineAt?: number): number {
 }
 
 export async function readServiceLifetime(
-  configRoot: string
+  configRoot: string,
+  tolerateInvalid = false
 ): Promise<ServiceLifetimeRecord | undefined> {
   try {
     return serviceLifetimeRecordSchema.parse(
       JSON.parse(await readFile(join(configRoot, 'service-lifetime.json'), 'utf8'))
     )
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (tolerateInvalid && (error instanceof SyntaxError || error instanceof z.ZodError))
+    )
+      return undefined
     // A malformed intent must never be interpreted as permission for automatic recovery.
     throw error
   }
@@ -49,15 +56,13 @@ export async function readServiceLifetime(
 
 export type LocalServiceLifetime = {
   snapshot(): ServiceLifetimeSnapshot
+  preservesService(appId: string, connectionId: string): boolean
   connect(appId: string, connectionId: string): void
   disconnect(appId: string, connectionId: string): void
   prepareLeave(appId: string, connectionId: string, attempt: AppLeaveAttempt): Promise<boolean>
   abortLeave(appId: string, connectionId: string, attemptId: string): Promise<void>
-  leave(
-    appId: string,
-    connectionId: string,
-    attempt?: AppLeaveOptions
-  ): Promise<ServiceLifetimeSnapshot>
+  leave(appId: string, connectionId: string, attempt?: AppLeaveOptions): Promise<AppLeaveResult>
+  retireIfUnused(): Promise<ServiceLifetimeSnapshot>
   start(): Promise<ServiceLifetimeSnapshot>
   stop(
     force?: boolean,
@@ -78,7 +83,17 @@ export async function createLocalServiceLifetime(options: {
   disconnectGraceMs?: number
   firstConnectionMs?: number
 }): Promise<LocalServiceLifetime> {
-  const previous = await readServiceLifetime(options.configRoot)
+  const previous = await readServiceLifetime(options.configRoot).catch(async (error) => {
+    // A new service already owns Config Root. Invalid historical intent is evidence, not a live
+    // hold; retain it for diagnosis before publishing the new generation's lifetime.
+    if (!(error instanceof SyntaxError || error instanceof z.ZodError)) throw error
+    await copyFile(
+      join(options.configRoot, 'service-lifetime.json'),
+      join(options.configRoot, `service-lifetime.invalid-${randomUUID()}.json`)
+    )
+    options.report(error)
+    return undefined
+  })
   let record: ServiceLifetimeRecord = {
     version: 1,
     generation: options.generation,
@@ -101,6 +116,17 @@ export async function createLocalServiceLifetime(options: {
   let closed = false
   let noAppsDeadline = Date.now() + (options.firstConnectionMs ?? LOCAL_SERVICE_FIRST_CONNECTION_MS)
   let reservation: (AppLeaveAttempt & { appId: string; connectionId: string }) | undefined
+  const preservedLeaves = new Map<string, string>()
+  const detaching = new Map<string, string | undefined>()
+  const preservesService = (appId: string, connectionId: string): boolean =>
+    record.explicit ||
+    [...apps].some(([otherApp, connections]) =>
+      [...connections].some(
+        (otherConnection) =>
+          (otherApp !== appId || otherConnection !== connectionId) &&
+          !detaching.has(otherConnection)
+      )
+    )
   let uncertainWrite = false
   let stopAdmissionRetired = false
   let reconciliation: Promise<void> | undefined
@@ -241,6 +267,7 @@ export async function createLocalServiceLifetime(options: {
   grace(options.firstConnectionMs ?? LOCAL_SERVICE_FIRST_CONNECTION_MS)
   return {
     snapshot,
+    preservesService,
     connect(appId: string, connectionId: string): void {
       assertCertain()
       if (record.stopping || stopAdmissionRetired) throw new Error('The local service is stopping.')
@@ -254,6 +281,8 @@ export async function createLocalServiceLifetime(options: {
       clearTimeout(timer)
     },
     disconnect(appId: string, connectionId: string): void {
+      preservedLeaves.delete(connectionId)
+      detaching.delete(connectionId)
       const connections = apps.get(appId)
       if (!connections?.delete(connectionId)) return
       if (!connections.size) apps.delete(appId)
@@ -280,7 +309,11 @@ export async function createLocalServiceLifetime(options: {
             'The local service is preparing to stop. Retry after the App finishes quitting.'
           )
         }
-        if (record.explicit || apps.size > 1 || apps.get(appId)!.size > 1) return false
+        if (preservesService(appId, connectionId)) {
+          preservedLeaves.set(connectionId, attempt.attemptId)
+          return false
+        }
+        preservedLeaves.delete(connectionId)
         reservation = {
           appId,
           connectionId,
@@ -292,6 +325,8 @@ export async function createLocalServiceLifetime(options: {
       }, attempt.deadlineAt),
     abortLeave: (appId, connectionId, attemptId) =>
       serialize(async () => {
+        if (preservedLeaves.get(connectionId) === attemptId) preservedLeaves.delete(connectionId)
+        if (detaching.get(connectionId) === attemptId) detaching.delete(connectionId)
         if (
           reservation?.appId !== appId ||
           reservation.connectionId !== connectionId ||
@@ -301,7 +336,7 @@ export async function createLocalServiceLifetime(options: {
         reservation = undefined
         grace(options.disconnectGraceMs ?? LOCAL_SERVICE_DISCONNECT_GRACE_MS)
       }),
-    leave: (appId: string, connectionId: string, attempt): Promise<ServiceLifetimeSnapshot> => {
+    leave: (appId: string, connectionId: string, attempt): Promise<AppLeaveResult> => {
       const deadlineAt = serviceStopDeadline(attempt?.deadlineAt)
       return serialize(async () => {
         await waitForStopReconciliation(deadlineAt)
@@ -314,7 +349,16 @@ export async function createLocalServiceLifetime(options: {
         )
           throw new Error('The App quit attempt no longer owns service preparation.')
         const lastConnection =
-          connections?.has(connectionId) && connections.size === 1 && apps.size === 1
+          connections?.has(connectionId) && !preservesService(appId, connectionId)
+        if (
+          attempt?.attemptId !== undefined &&
+          preservedLeaves.get(connectionId) === attempt.attemptId &&
+          lastConnection &&
+          !record.explicit &&
+          !record.stopping &&
+          !stopAdmissionRetired
+        )
+          return { ...snapshot(), scopeChanged: true }
         if (stopAdmissionRetired || (lastConnection && !record.explicit)) {
           // The hold is removed only after the durable transition succeeds. A concurrent socket
           // disconnect can still remove it, in which case failed persistence rearms the grace.
@@ -325,11 +369,28 @@ export async function createLocalServiceLifetime(options: {
             true
           )
         } else assertCertain()
+        // A successful App-only reply is not proof that Desktop received it and closed. Keep its
+        // real socket hold until disconnect, so a lost reply can roll back without losing liveness.
+        if (attempt?.detachOnDisconnect && !record.stopping) {
+          detaching.set(connectionId, attempt.attemptId)
+          return snapshot()
+        }
+        preservedLeaves.delete(connectionId)
+        detaching.delete(connectionId)
         connections?.delete(connectionId)
         if (!connections?.size) apps.delete(appId)
         return snapshot()
       }, deadlineAt)
     },
+    retireIfUnused: (): Promise<ServiceLifetimeSnapshot> =>
+      serialize(async () => {
+        assertCertain()
+        if (record.stopping || stopAdmissionRetired)
+          throw new Error('The local service is already stopping.')
+        if (apps.size || record.explicit || reservation) return snapshot()
+        await commit('disconnect', true)
+        return snapshot()
+      }),
     start: (): Promise<ServiceLifetimeSnapshot> =>
       serialize(async () => {
         assertCertain()
@@ -350,6 +411,11 @@ export async function createLocalServiceLifetime(options: {
       const deadline = serviceStopDeadline(deadlineAt)
       return serialize(async () => {
         await waitForStopReconciliation(deadline)
+        if (record.stopping && reason === 'user-stop' && record.reason !== 'user-stop') {
+          const previous = record
+          record = { ...record, reason: 'user-stop' }
+          await persistIntent(record, previous, deadline)
+        }
         if (!record.stopping) {
           if (force || stopAdmissionRetired || apps.size === 0)
             await commit(reason, true, deadline, true)

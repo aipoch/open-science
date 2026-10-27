@@ -116,7 +116,7 @@ export const CloseConfirmModal = ({
         )
       : isQuitVariant
         ? t(
-            'Stopping the local service may interrupt App, CLI and Web tasks and lose unsaved progress. The list shows known tasks only.',
+            'Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.',
             { ns: 'common' }
           )
         : t('This app can keep running in the tray, or you can quit.')
@@ -243,9 +243,7 @@ export const CloseConfirmModal = ({
             )}
             {!isPersistenceFailure ? (
               <Button type="button" onClick={() => reply('quit')}>
-                {isQuitVariant
-                  ? t('Stop tasks and quit', { ns: 'common' })
-                  : t('Quit', { context: 'verb', ns: 'common' })}
+                {t('Quit', { context: 'verb', ns: 'common' })}
               </Button>
             ) : null}
           </div>

@@ -4032,6 +4032,25 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.compactSession).not.toHaveBeenCalled()
   })
 
+  it('releasing an older update hold cannot reopen newer quit preparation', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({ frameworkId: 'claude-code', sessionIds: ['session-1'], callbacks })
+          .runtime
+    )
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const releaseUpdate = coordinator.holdUpdateAdmission()
+    await coordinator.prepareForQuit()
+    releaseUpdate()
+    await expect(
+      coordinator.sendPrompt({ sessionId: session.sessionId, text: 'late work' })
+    ).rejects.toThrow(/quitting/i)
+    coordinator.abortQuitPreparation()
+    await expect(
+      coordinator.sendPrompt({ sessionId: session.sessionId, text: 'new work' })
+    ).resolves.toBeDefined()
+  })
+
   it('reopens prompt admission when quit preparation is aborted', async () => {
     let created!: ReturnType<typeof createFakeRuntime>
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

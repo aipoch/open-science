@@ -16,6 +16,7 @@ export const desktopLifecycleRequestSchema = z.discriminatedUnion('operation', [
     .object({
       operation: z.literal('prepare'),
       fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      preserveService: z.boolean().optional(),
       deadlineAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
       attemptId: z.string().uuid().optional()
     })
@@ -26,12 +27,26 @@ export const desktopLifecycleRequestSchema = z.discriminatedUnion('operation', [
 const DISCONNECT_WAIT_MS = 10_000
 export type DesktopLifecycleRequest = z.infer<typeof desktopLifecycleRequestSchema>
 export type DesktopShutdownWork = {
+  preserveService?: boolean
   sessions: ActiveSessionInfo[]
   reviewerActive: boolean
   settingsInstallId?: string
   migrationActive: boolean
   packageTransferActive: boolean
   fingerprint: string
+}
+
+/** Consent covers interruption of work, not every later change to the task rows. */
+export function desktopQuitImpactChanged(
+  previous: DesktopShutdownWork | undefined,
+  next: DesktopShutdownWork
+): boolean {
+  if (!previous || Boolean(previous.preserveService) !== Boolean(next.preserveService)) return true
+  if (next.settingsInstallId !== undefined && previous.settingsInstallId !== next.settingsInstallId)
+    return true
+  const active = (work: DesktopShutdownWork): boolean =>
+    work.sessions.length > 0 || work.reviewerActive
+  return !active(previous) && active(next)
 }
 
 export function createDesktopRuntimeLifecycle(
@@ -60,8 +75,9 @@ export function createDesktopRuntimeLifecycle(
   let inspectedWork: DesktopShutdownWork | undefined
   let disconnected = false
   let inFlight: Promise<unknown> | undefined
-  const inspect = (): DesktopShutdownWork => {
+  const inspect = (preserveService = false): DesktopShutdownWork => {
     const state = {
+      preserveService,
       sessions: deps.detectActiveSessions(),
       reviewerActive: deps.hasActiveReviewerWork(),
       settingsInstallId: deps.getActiveSettingsInstallId(),
@@ -113,13 +129,15 @@ export function createDesktopRuntimeLifecycle(
         if (disconnected) throw new Error('Desktop lifecycle attachment is closed.')
         switch (request.operation) {
           case 'cancel-migration':
+            if (requestOptions?.preserveService) return null
             if (!deps.cancelMigrationForQuit)
               throw new Error('Migration cancellation is unavailable.')
             await deps.cancelMigrationForQuit()
             return null
           case 'inspect':
-            return (inspectedWork = inspect())
+            return (inspectedWork = inspect(requestOptions?.preserveService))
           case 'hold':
+            if (requestOptions?.preserveService) return null
             releaseAdmission ??= deps.holdSettingsInstallAdmission()
             return null
           case 'release':
@@ -130,6 +148,10 @@ export function createDesktopRuntimeLifecycle(
             return null
           case 'prepare': {
             if (preparing) throw new Error('Desktop quit preparation is already running.')
+            if (requestOptions?.preserveService) return 'completed'
+            // A decision to leave tasks running cannot authorize stopping them after a hold or
+            // another App disappears. Return before producer cleanup; Desktop refreshes and confirms.
+            if (request.preserveService ?? inspectedWork?.preserveService) return 'scope-changed'
             const work = inspect()
             if (
               work.settingsInstallId &&
@@ -145,7 +167,6 @@ export function createDesktopRuntimeLifecycle(
                 'command-unavailable',
                 'Wait for the data move or Session package transfer to finish before quitting.'
               )
-            if (requestOptions?.preserveService) return 'completed'
             releaseAdmission ??= deps.holdSettingsInstallAdmission()
             preparing = true
             // Preparation can close ACP admission and then reject. That attempt still needs an

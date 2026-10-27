@@ -372,7 +372,7 @@ describe('CloseConfirmModal', () => {
         sessions: [{ projectId: 'p', sessionId: 'x', kind: 'notebook' }]
       })
     })
-    const quitButton = await findButtonByName(/^Stop tasks and quit$/i)
+    const quitButton = await findButtonByName(/^Quit$/i)
     act(() => quitButton.click())
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r3', choice: 'quit' })
   })
@@ -443,8 +443,8 @@ describe('CloseConfirmModal', () => {
     })
 
     await findByText(/Quit Open-Science/)
-    expect(document.body.textContent).toMatch(/App, CLI and Web tasks/)
-    const quitButton = await findButtonByName(/Stop tasks and quit/)
+    expect(document.body.textContent).toMatch(/Quitting will interrupt unfinished tasks/)
+    const quitButton = await findButtonByName(/Quit/)
     act(() => quitButton.click())
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-delegated', choice: 'quit' })
   })

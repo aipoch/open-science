@@ -167,34 +167,47 @@ source entry with `npm run build:backend` and Web UI with `npm run build:web` fi
 `--app-path` and `OPEN_SCIENCE_APP_PATH` no longer select a hidden Electron backend.
 `--no-sandbox` does not apply to Node startup; existing Notebook/process permissions still apply.
 
-An already running Node runtime is reused through authenticated discovery, including one started
-by the desktop. Electron attaches to an existing same-version Node server without adding another
-writer. Quitting a desktop stops only a server it started; a desktop attached to a CLI-started
-server only detaches. Closing a Web tab or SDK connection does not stop the server. Use
-`open-science stop` for an explicit global stop affecting every connected client.
+An already running compatible Node runtime is reused through authenticated discovery, including one
+started by the desktop. App connections and explicit `start` keep the service running. `start` sets
+one persistent hold; repeated calls do not accumulate holds. Quitting the last App stops the service
+unless that explicit hold remains. Ordinary CLI/Web work does not itself keep the service alive, so
+start it explicitly first when that work must continue after the App quits. Closing to the tray is
+not application Quit. Closing a Web tab or SDK connection does not release an explicit hold.
 
-`open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
-the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
-command fails without signalling the PID recorded in `web-service.json`; a stale PID may have been
-reused by an unrelated process. The state file is retained for diagnosis and can be replaced by a
-later `open-science start`.
+`open-science stop` revokes explicit persistent running. While any App remains connected, it succeeds
+without stopping the service or its tasks. Once no App remains, the service stops. Use
+`open-science stop --force` to request a whole-service stop, including while Apps are connected;
+running tasks may be interrupted. Desktop windows and drafts remain available for explicit retry.
+
+A modern stop records the intended generation and waits for verified process exit. Bounded desktop
+cleanup may escalate only after checking the process birth identity and stop authority. A state-file
+PID alone never authorizes signalling. Failed authentication, unresolved identity, or an unconfirmed
+exit produces an error; retained evidence must not be deleted to bypass a live owner.
 
 Automatic discovery tries the development config directory before the production directory, skipping
 dead or unhealthy candidates until it finds a healthy service. An explicit `--config-root`,
 `OPEN_SCIENCE_CONFIG_ROOT`, or `OPEN_SCIENCE_STORAGE_ROOT` limits discovery to that directory. Live
 unhealthy records are retained; failed authentication never authorizes signalling a recorded PID.
 
-`open-science stop --json` prints exactly one result object on success:
+`open-science stop --json` returns one result object:
 
-| `result`              | Meaning                                                                      |
-| --------------------- | ---------------------------------------------------------------------------- |
-| `already-stopped`     | No live service record was found.                                            |
-| `daemon-stopped`      | The authenticated Node daemon exited (desktop-started or CLI-started).       |
-| `web-service-stopped` | Legacy desktop-host protocol only: Web stopped; old desktop remains running. |
+| `result`             | Meaning                                                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `already-stopped`    | No live service record was found.                                                                                                         |
+| `keep-alive-revoked` | Explicit persistent running was revoked; connected Apps still keep the service running.                                                   |
+| `stopped`            | The requested generation exited and its directory ownership was released.                                                                 |
+| `shutdown-requested` | Legacy protocol accepted shutdown, but completion remains unconfirmed; `completionStatus` is `unconfirmed` and the command exits nonzero. |
 
-Among lifecycle commands, `status` and `stop` support `--json`. `start` and `url` reject
-it; run `start --no-open` followed by `status --json` for machine-readable startup status. Errors
-with `--json` are reported on stderr as a JSON error object with a nonzero exit code.
+The former `daemon-stopped` and `web-service-stopped` success values are no longer emitted. Modern
+results also include the authenticated service information and `lifetime` snapshot; scripts should
+branch on `result`, not infer that every zero exit code means the service stopped. `--force` requires
+the modern lifetime protocol and fails explicitly for an older service.
+
+`start`, `status`, and `stop` support `--json`; `url` rejects it. `start --no-open --json` reports
+`started` or `already-running`, service information, and `lifetime` (or `unknown` for an older
+protocol). It does not print a browser login URL. Errors with `--json` are reported on stderr as a
+JSON error object with a nonzero exit code. Older protocols can report unconfirmed shutdown even
+if the process subsequently exits; they cannot prove the stopped generation to a script.
 
 ## Readiness checks
 

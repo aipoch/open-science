@@ -7,6 +7,25 @@ if (!root) throw new Error('The Node runtime fixture requires an isolated source
 if (process.versions.electron) {
   const { app } = require('electron')
   if (app.isPackaged) throw new Error('Source fixture cannot run packaged.')
+  if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {
+    const { BrowserWindow, dialog } = require('electron')
+    BrowserWindow.prototype.show = () => {}
+    BrowserWindow.prototype.showInactive = () => {}
+    BrowserWindow.prototype.focus = () => {}
+    app.focus = () => {}
+    dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false })
+    dialog.showMessageBoxSync = () => 0
+    dialog.showErrorBox = (_title, message) => console.error('Native dialog suppressed:', message)
+  }
+  if (
+    process.platform !== 'linux' &&
+    app.commandLine.getSwitchValue('password-store') === 'basic' &&
+    !(process.argv ?? []).some((arg) => arg.startsWith('--password-store='))
+  ) {
+    // Playwright injects this Linux-only override outside argv. It is not an application-selected
+    // credential backend on macOS/Windows and must not create a false replacement mismatch.
+    app.commandLine.removeSwitch('password-store')
+  }
   if (process.platform === 'linux') {
     // Playwright's Electron loader overrides argv with password-store=basic. Restore the
     // explicitly selected test vault before application credential preflight runs.

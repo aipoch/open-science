@@ -20,6 +20,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 import {
   capturePosixProcessTreeIdentity,
+  isRecordedPosixLeaderCurrent,
   createPosixProcessTreeOwnership,
   proveRecordedPosixLeaderGone,
   registerProcessTreeOwnership,
@@ -50,6 +51,7 @@ type Receipt = ProcessScope & {
   receiptId: string
   phase: 'starting' | 'owned' | 'cleanup-pending'
   createdAt: number
+  providerSessionIds?: string[]
   cleanupDiagnostics?: ProcessTreeKillResult['diagnostics']
   ownership?: {
     platform: 'linux' | 'darwin' | 'win32'
@@ -135,7 +137,8 @@ const parse = (value: unknown): Receipt => {
     'attemptId',
     'frameworkId',
     'ownership',
-    'cleanupDiagnostics'
+    'cleanupDiagnostics',
+    'providerSessionIds'
   ])
   if (
     Object.keys(receipt).some((key) => !fields.has(key)) ||
@@ -149,6 +152,12 @@ const parse = (value: unknown): Receipt => {
     if (typeof receipt[key] !== 'string') throw new Error('Invalid receipt scope')
     segment(receipt[key])
   }
+  if (
+    receipt.providerSessionIds !== undefined &&
+    (!Array.isArray(receipt.providerSessionIds) ||
+      receipt.providerSessionIds.some((id) => typeof id !== 'string' || !id))
+  )
+    throw new Error('Invalid provider session membership')
   const diagnostics = receipt.cleanupDiagnostics
   if (diagnostics !== undefined) {
     if (
@@ -214,11 +223,16 @@ const parse = (value: unknown): Receipt => {
   return receipt
 }
 
+export class MainAgentContextConflictError extends Error {
+  readonly code = 'main-agent-context-conflict'
+}
+
 // This owner is composed once by production delegation and shared by launch, workspace and exit.
 // Receipts are outside the deletable workspace. Task history is never used as process-exit proof.
 export class DelegatedProcessOwnership {
   private readonly root: string
   private readonly live = new Map<string, ChildProcessWithoutNullStreams>()
+  private readonly liveReceipts = new WeakMap<ChildProcessWithoutNullStreams, Receipt>()
   private readonly reconciling = new Map<string, Promise<void>>()
   private readonly gates = new Set<{ scope: Selection; done: Promise<void> }>()
 
@@ -491,6 +505,7 @@ export class DelegatedProcessOwnership {
           )
         : spawn(command, args, { ...options, env: ownership.env, detached: true })
     this.live.set(receipt.receiptId, child)
+    this.liveReceipts.set(child, receipt)
     registerProcessTreeOwnership(child, {
       ...(process.platform === 'win32'
         ? {
@@ -652,27 +667,79 @@ export class DelegatedProcessOwnership {
       throw new AggregateError(failures, 'Delegated process recovery is incomplete.')
   }
 
-  // Old records have no provider-session membership. Restrict the conservative writer check
-  // to the affected framework; unknown/corrupt evidence still protects old-context restoration.
-  // New connections do not acquire historical contexts and do not need this proof. Admission
-  // never discharges cleanup debt or authorizes workspace/installation replacement.
-  async assertMainAgentSessionResumeAllowed(frameworkId: string): Promise<void> {
+  recordMainAgentContext(child: ChildProcessWithoutNullStreams, providerSessionId: string): void {
+    const receipt = this.liveReceipts.get(child)
+    if (!receipt || this.live.get(receipt.receiptId) !== child) return
+    receipt.providerSessionIds ??= []
+    if (receipt.providerSessionIds.includes(providerSessionId)) return
+    receipt.providerSessionIds.push(providerSessionId)
+    this.write(receipt)
+  }
+
+  // A connection can host several contexts. Known membership scopes writer recovery; legacy or
+  // torn evidence requires a fresh context, never a framework-wide ban on continuing a conversation.
+  async assertMainAgentSessionResumeAllowed(
+    frameworkId: string,
+    providerSessionId?: string
+  ): Promise<void> {
     const scope = { frameworkId }
-    let recoveryFailure: unknown
     try {
       await this.recover(scope)
-    } catch (error) {
-      recoveryFailure = error
+    } catch {
+      /* Retain unresolved evidence below. */
     }
+    let unreadable = false
     const pendingReceipts = (): Receipt[] =>
-      this.receipts(scope).filter(
-        (receipt) => !(this.live.has(receipt.receiptId) && receipt.phase === 'owned')
+      this.readReceipts(scope, () => {
+        unreadable = true
+      }).filter(
+        (receipt) =>
+          !(this.live.has(receipt.receiptId) && receipt.phase === 'owned') &&
+          (!providerSessionId ||
+            !receipt.providerSessionIds ||
+            receipt.providerSessionIds.includes(providerSessionId))
       )
     const pending = pendingReceipts()
     if (pending.length === 0) {
-      if (recoveryFailure) throw recoveryFailure
+      if (unreadable)
+        throw new DelegateExecutionCleanupError('Previous agent context ownership is unreadable.')
       return
     }
+    const recoveryFailure = new DelegateExecutionCleanupError(
+      'Previous agent context cleanup is unconfirmed.'
+    )
+    // Stronger-proof debt remains recorded, but it must not prevent stopping an exact known
+    // writer. This scan signals only birth-verified owned processes; ambiguous evidence survives.
+    await Promise.all(
+      pending.map(async (receipt) => {
+        const ownership = receipt.ownership
+        if (
+          providerSessionId &&
+          receipt.providerSessionIds?.includes(providerSessionId) &&
+          ownership?.platform !== 'win32' &&
+          ownership?.token &&
+          ownership.leader?.birthToken &&
+          isRecordedPosixLeaderCurrent(ownership.leader)
+        ) {
+          await proveRecordedPosixLeaderGone(ownership.leader, ownership.token, receipt.createdAt)
+        }
+      })
+    )
+    if (
+      pending.some(
+        (receipt) =>
+          providerSessionId &&
+          receipt.providerSessionIds?.includes(providerSessionId) &&
+          receipt.ownership?.leader?.birthToken &&
+          isRecordedPosixLeaderCurrent(receipt.ownership.leader)
+      )
+    ) {
+      throw new MainAgentContextConflictError(
+        'The previous execution is still using this conversation. Retry to stop it before continuing.'
+      )
+    }
+    if (unreadable)
+      throw new DelegateExecutionCleanupError('Previous agent context ownership is unreadable.')
     const before = JSON.stringify(pending)
     const outcomes = await Promise.all(
       pending.map(async (receipt) => {

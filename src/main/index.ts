@@ -1,3 +1,4 @@
+import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import { readServiceLifetime } from './local-service-lifetime'
 import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
 import type { PackageOperationSnapshot } from '../shared/session-package'
@@ -59,7 +60,11 @@ import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
 import type { SettingsSnapshot } from '../shared/settings'
 import type { LocalePreferenceSnapshot } from '../shared/locale'
-import { acquireCredentialBootstrapLease, type RuntimeDirectoryLease } from './runtime-ownership'
+import {
+  acquireCredentialBootstrapLease,
+  acquireRuntimeDirectorySync,
+  type RuntimeDirectoryLease
+} from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
 import { installationRootForEntry } from './update/installation-protection'
@@ -87,13 +92,17 @@ import {
 import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
-import { startOrAttachDesktopBackend, desktopBackendPaths } from './desktop-runtime-launcher'
+import {
+  startOrAttachDesktopBackend,
+  desktopBackendPaths,
+  discoverDesktopBackend
+} from './desktop-runtime-launcher'
 import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runtime-client'
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
 import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
-import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
+import { desktopQuitImpactChanged, type DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
 import { BrowserImportLaunchRelay } from './session-package/browser-import-protocol'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
@@ -1133,13 +1142,72 @@ async function startDesktop(): Promise<void> {
     })
     return attached
   }
+  let repairAuthorization: Awaited<ReturnType<typeof readServiceLifetime>>
+  let repairStartupOptions: RuntimeStartupOptions | undefined
+  const repairBackend = async (signal: AbortSignal): Promise<void> => {
+    let config =
+      client?.runtimeInfo().startupOptions ?? preservedStartupOptions ?? repairStartupOptions
+    const endpoint = await discoverDesktopBackend(
+      configRoot,
+      app.getVersion(),
+      undefined,
+      initialBackendPaths.entry,
+      true,
+      signal,
+      (intent, startupOptions) => {
+        repairAuthorization = Object.freeze({ ...intent })
+        config ??= startupOptions
+        repairStartupOptions = config
+      },
+      validatePreservedConfiguration
+    )
+    if (endpoint) launch = { endpoint }
+    else {
+      if (config) validatePreservedConfiguration(config)
+      launch = await startOrAttachDesktopBackend({
+        configRoot,
+        profilePath,
+        version: app.getVersion(),
+        ...initialBackendPaths,
+        packaged: app.isPackaged,
+        signal,
+        beforeLaunch: async () => {
+          signal.throwIfAborted()
+          assertDesktopRuntimeRestartAllowed(
+            await (async () => {
+              if (client)
+                return readServiceLifetime(configRoot, !isRuntimeProcessAlive(client.processId()))
+              // A cold repair has no attached process identity. Real directory ownership is the
+              // substitute proof before tolerating malformed historical hints; keep valid stops.
+              const lease = acquireRuntimeDirectorySync(configRoot)
+              try {
+                return await readServiceLifetime(configRoot, true)
+              } finally {
+                lease.release()
+              }
+            })(),
+            repairAuthorization,
+            updateCommitted || plannedRelaunch
+          )
+        },
+        args: [
+          `--credential-store=${config?.credentialStore ?? getCredentialStore()}`,
+          `--serve=${config?.port ?? 0}`,
+          ...(config?.passwordStore ? [`--password-store=${config?.passwordStore}`] : [])
+        ]
+      })
+      startedBackend = launch.startedProcess
+    }
+  }
+
   while (true) {
     try {
       client = await connectDesktopRuntimeForStartup({
         connect: attach,
         version: app.getVersion(),
         // The old Runtime is waited out (or stopped after identity proof) by the launcher.
-        replaceRuntime: launchInitialBackend
+        replaceRuntime: launchInitialBackend,
+        repairRuntime: repairBackend
       })
       startupBlocked = false
       startupFailure = undefined
@@ -1157,13 +1225,19 @@ async function startDesktop(): Promise<void> {
       reviewRestart: async (generation) => {
         // Manual reconnect may authorize only the already-observed stop of this generation.
         // A later stop/update or a replacement owner must still defeat this launch.
-        const intent = await readServiceLifetime(configRoot)
+        const intent = await readServiceLifetime(
+          configRoot,
+          !isRuntimeProcessAlive(client!.processId())
+        )
         return intent?.stopping && intent.generation === generation ? intent : undefined
       },
       restart: async (signal, authorization) => {
         const verifyRestartIntent = async (): Promise<void> => {
           signal.throwIfAborted()
-          const intent = await readServiceLifetime(configRoot)
+          const intent = await readServiceLifetime(
+            configRoot,
+            !isRuntimeProcessAlive(client!.processId())
+          )
           assertDesktopRuntimeRestartAllowed(
             intent,
             authorization,
@@ -1193,6 +1267,10 @@ async function startDesktop(): Promise<void> {
         return attach(signal)
       },
       connect: attach,
+      repair: async (signal) => {
+        await repairBackend(signal)
+        return attach(signal)
+      },
       activate: async (candidate, signal, readyForSnapshots) => {
         // A restarted process may publish its endpoint before business/database startup finishes.
         // Keep the existing renderer tree intact until the candidate can satisfy snapshots.
@@ -1307,10 +1385,11 @@ async function startDesktop(): Promise<void> {
       }
     })
   let recovery = makeRecovery()
-  if (client.ownsRuntime())
+  const initialClient = client
+  if (initialClient.ownsRuntime())
     launch.startedProcess?.once('exit', () => {
       if (headless && !updateCommitted && !plannedRelaunch) app.exit(0)
-      else if (client && !updateCommitted && !plannedRelaunch) recovery!.disconnect(client)
+      else if (!updateCommitted && !plannedRelaunch) recovery!.disconnect(initialClient)
     })
   const requireRecoveryFrame = (event: import('electron').IpcMainInvokeEvent): void => {
     if (
@@ -1689,6 +1768,16 @@ async function startDesktop(): Promise<void> {
         return false
       }
       let next = (await client!.lifecycle({ operation: 'inspect' })) as DesktopShutdownWork
+      if (next.preserveService) {
+        next = {
+          ...next,
+          sessions: [],
+          reviewerActive: false,
+          settingsInstallId: undefined,
+          migrationActive: false,
+          packageTransferActive: false
+        }
+      }
       if (next.migrationActive) {
         const confirmed =
           currentApplicationShutdownTrigger() === 'system' ||
@@ -1709,7 +1798,7 @@ async function startDesktop(): Promise<void> {
         await client!.lifecycle({ operation: 'cancel-migration' })
         next = (await client!.lifecycle({ operation: 'inspect' })) as DesktopShutdownWork
       }
-      const changed = work?.fingerprint !== next.fingerprint
+      const changed = desktopQuitImpactChanged(work, next)
       work = next
       return changed
     },
@@ -1760,8 +1849,9 @@ async function startDesktop(): Promise<void> {
         return (await client!.lifecycle({
           operation: 'prepare',
           fingerprint: work.fingerprint,
+          preserveService: Boolean(work.preserveService),
           deadlineAt
-        })) as 'completed' | 'timeout' | 'failed'
+        })) as 'completed' | 'timeout' | 'failed' | 'scope-changed'
       return undefined
     },
     abortQuitPreparation: async (reason) => {

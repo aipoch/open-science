@@ -226,13 +226,13 @@ const nativeFallback = async (
       : variant === 'quit'
         ? {
             type: 'question' as const,
-            buttons: [translate('Cancel'), translate('Stop tasks and quit')],
+            buttons: [translate('Cancel'), translate('Quit', { context: 'verb' })],
             defaultId: 0,
             cancelId: 0,
             title: 'Open-Science',
             message: translate('Quit Open-Science?'),
             detail: translate(
-              'Stopping the local service may interrupt App, CLI and Web tasks and lose unsaved progress. The list shows known tasks only.'
+              'Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.'
             )
           }
         : {

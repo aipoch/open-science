@@ -1,3 +1,4 @@
+import { PreviousAgentContextUnavailableError } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
@@ -428,6 +429,21 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('adopts an independent context in the original conversation when historical ownership is unknown', async () => {
+    const assertResumeAllowed = vi
+      .fn()
+      .mockRejectedValue(
+        new PreviousAgentContextUnavailableError('Previous agent cleanup is unconfirmed.')
+      )
+    const harness = createHarness({ assertResumeAllowed })
+    await expect(harness.resume({ providerSessionId: 'old-context' })).resolves.toMatchObject({
+      sessionId: 'stable-app-session',
+      contextReset: true
+    })
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
   it('checks cleanup admission before provisioning or closing a persisted Codex writer, and retries it', async () => {
     const cleanupFailure = new Error('Session not found: unresolved cleanup evidence')
     const assertResumeAllowed = vi
@@ -458,7 +474,7 @@ describe('AcpProviderSessionResumer', () => {
     }
 
     await expect(harness.resume(request)).rejects.toBe(cleanupFailure)
-    expect(assertResumeAllowed).toHaveBeenCalledWith('codex')
+    expect(assertResumeAllowed).toHaveBeenCalledWith('codex', request.providerSessionId)
     expect(harness.provision).not.toHaveBeenCalled()
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.adopt).not.toHaveBeenCalled()

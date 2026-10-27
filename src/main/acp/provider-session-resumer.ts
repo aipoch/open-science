@@ -1,4 +1,8 @@
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
+import {
+  recordMainAgentContext,
+  PreviousAgentContextUnavailableError
+} from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
@@ -59,7 +63,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   currentConnection: () => ClientConnection | undefined
   ensureConnected: (cwd: string) => Promise<ClientConnection>
   assertCurrentConnection: (connection: ClientConnection) => void
-  assertResumeAllowed?: (frameworkId: string) => Promise<void>
+  assertResumeAllowed?: (frameworkId: string, providerSessionId: string) => Promise<void>
   disconnectTimedOutConnection: () => Promise<void>
   resumeCapabilityAdvertised: () => boolean
   supportsSessionClose: () => boolean
@@ -557,15 +561,22 @@ export class AcpProviderSessionResumer {
     try {
       let backend = this.deps.currentBackend()
       this.assertSkillScopeRefreshSupported(request.sessionId)
-      // Cleanup debt concerns reacquiring persisted provider writers, not fresh Sessions. Keep
-      // admission outside the provider rejection fallback so it never silently replaces history.
       const ownsCurrentWriter = knownWriterConnection === connection
       const releasedWriter =
         writerTransfer?.writerReleased && writerTransfer.providerSessionId === providerSessionId
-      // An attached writer on this exact connection or a confirmed transfer already has current
-      // ownership evidence. Historical debt cannot revoke that unrelated, healthy Session.
-      if (!ownsCurrentWriter && !releasedWriter)
-        await this.deps.assertResumeAllowed?.(backend.framework.id)
+      if (!ownsCurrentWriter && !releasedWriter) {
+        try {
+          await this.deps.assertResumeAllowed?.(backend.framework.id, providerSessionId)
+        } catch (error) {
+          if (!(error instanceof PreviousAgentContextUnavailableError) || compatibleOnly)
+            throw error
+          cancellationSignal.throwIfAborted()
+          this.deps.assertCurrentConnection(connection)
+          identity.assertCurrent()
+          return this.adopt(request, connection, cwd, projectId, identity)
+        }
+      }
+      recordMainAgentContext(connection, providerSessionId)
       cancellationSignal.throwIfAborted()
       this.deps.assertCurrentConnection(connection)
       identity.assertCurrent()

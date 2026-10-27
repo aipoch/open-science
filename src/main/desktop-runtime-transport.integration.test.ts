@@ -939,7 +939,7 @@ it('keeps native host commands outside renderer approval presence and revokes th
   await vi.waitFor(() => expect(hostInvocation?.callerLease.signal.aborted).toBe(true))
 })
 
-it('arbitrates quit preparation from current service holds despite stale client bootstrap snapshots', async () => {
+it('keeps App holds and quit authority through stale snapshots and lost exit replies', async () => {
   const { mkdtemp, rm } = await import('node:fs/promises')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
@@ -960,6 +960,14 @@ it('arbitrates quit preparation from current service holds despite stale client 
   const server = await startDesktopRuntimeTransport({
     version: 'test',
     lifetime,
+    startupOptions: {
+      configRoot,
+      dataRoot: configRoot,
+      profilePath: configRoot,
+      port: 0,
+      host: '127.0.0.1',
+      credentialStore: 'os'
+    },
     commands: { commandNames: () => [], invoke: vi.fn() },
     events: new ApplicationEventHub(),
     createLifecycle: () =>
@@ -992,8 +1000,14 @@ it('arbitrates quit preparation from current service holds despite stale client 
   const workA = (await a.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
   await a.lifecycle({ operation: 'prepare', fingerprint: workA.fingerprint })
   expect(prepare).not.toHaveBeenCalled()
+  const appOnlyDecision = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
   await a.quit()
-  expect(lifetime.snapshot().apps).toBe(1)
+  await vi.waitFor(() => expect(lifetime.snapshot().apps).toBe(1))
+  await expect(
+    b.lifecycle({ operation: 'prepare', fingerprint: appOnlyDecision.fingerprint })
+  ).resolves.toBe('scope-changed')
+  expect(prepare).not.toHaveBeenCalled()
+  await b.lifecycle({ operation: 'abort' })
   expect(b.runtimeInfo().lifetime?.apps).toBe(2)
   const workB = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
   await b.lifecycle({ operation: 'prepare', fingerprint: workB.fingerprint })
@@ -1002,6 +1016,78 @@ it('arbitrates quit preparation from current service holds despite stale client 
   await b.lifecycle({ operation: 'abort' })
   await lifetime.start()
   expect(lifetime.snapshot().explicit).toBe(true)
+  const preserved = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: preserved.fingerprint })
+  await lifetime.stop(false)
+  await expect(b.quit()).rejects.toThrow('whole service')
+  expect(lifetime.snapshot()).toMatchObject({ apps: 1, explicit: false, stopping: false })
+  expect(stop).not.toHaveBeenCalled()
+  await b.lifecycle({ operation: 'abort' })
+  await lifetime.start()
+  const preservedAgain = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: preservedAgain.fingerprint })
+  const leave = lifetime.leave.bind(lifetime)
+  vi.spyOn(lifetime, 'leave').mockImplementationOnce(async (...args) => {
+    expect(await leave(...args)).toMatchObject({ apps: 1, explicit: true, stopping: false })
+    return new Promise<never>(() => {}) // A successful App-only response is lost.
+  })
+  await expect(b.quit({ deadlineAt: Date.now() + 3600 })).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  expect(server.isConnected()).toBe(true)
+  expect(lifetime.snapshot().apps).toBe(1)
+  await b.lifecycle({ operation: 'abort' })
+  await lifetime.stop(false)
+  expect(lifetime.snapshot()).toMatchObject({ apps: 1, explicit: false, stopping: false })
+  expect(stop).not.toHaveBeenCalled()
+  await lifetime.start()
+  const preservedAfterRollback = (await b.lifecycle({ operation: 'inspect' })) as {
+    fingerprint: string
+  }
+  await b.lifecycle({ operation: 'prepare', fingerprint: preservedAfterRollback.fingerprint })
+  await lifetime.stop(false)
+  vi.spyOn(lifetime, 'leave').mockImplementationOnce(async (...args) => {
+    expect(await leave(...args)).toMatchObject({ scopeChanged: true })
+    return new Promise<never>(() => {}) // The App never receives this scope-change response.
+  })
+  await expect(b.quit({ deadlineAt: Date.now() + 3600 })).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  expect(lifetime.snapshot()).toMatchObject({ apps: 1, stopping: false })
+  await b.lifecycle({ operation: 'abort' })
+  const confirmed = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: confirmed.fingerprint })
+  expect(prepare).toHaveBeenCalledTimes(2)
+  await b.lifecycle({ operation: 'abort' })
+  const c = await attach()
+  cleanups.push(async () => c.close())
+  const togetherB = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  const togetherC = (await c.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: togetherB.fingerprint })
+  await c.lifecycle({ operation: 'prepare', fingerprint: togetherC.fingerprint })
+  vi.spyOn(lifetime, 'leave').mockImplementationOnce(async (...args) => {
+    expect(await leave(...args)).toMatchObject({ apps: 2, stopping: false })
+    return new Promise<never>(() => {})
+  })
+  const lostTogether = expect(b.quit({ deadlineAt: Date.now() + 3600 })).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  await vi.waitFor(async () =>
+    expect(await c.lifecycle({ operation: 'inspect' })).toMatchObject({ preserveService: false })
+  )
+  await expect(c.quit()).rejects.toThrow('whole service')
+  await c.lifecycle({ operation: 'abort' })
+  const currentC = (await c.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await c.lifecycle({
+    operation: 'prepare',
+    fingerprint: currentC.fingerprint,
+    preserveService: false
+  })
+  await c.lifecycle({ operation: 'abort' })
+  await lostTogether
+  await b.lifecycle({ operation: 'abort' })
+  expect(await c.lifecycle({ operation: 'inspect' })).toMatchObject({ preserveService: true })
+  expect(lifetime.snapshot()).toMatchObject({ apps: 2, stopping: false })
   expect(stop).not.toHaveBeenCalled()
 })
 
@@ -1019,6 +1105,7 @@ it.each(['abort', 'disconnect', 'expiry'] as const)(
       disconnect: vi.fn(async () => {})
     }
     const lifetime = {
+      preservesService: () => false,
       snapshot: () => ({
         version: 1 as const,
         generation,
@@ -1034,6 +1121,7 @@ it.each(['abort', 'disconnect', 'expiry'] as const)(
       }),
       leave: vi.fn(),
       start: vi.fn(),
+      retireIfUnused: vi.fn(),
       stop: vi.fn(),
       close: vi.fn()
     }
@@ -1086,6 +1174,7 @@ it('passes an app-exit deadline even when the caller did not prepare an attempt'
   const generation = randomUUID()
   const snapshot = { version: 1 as const, generation, explicit: true, stopping: false, apps: 0 }
   const lifetime = {
+    preservesService: () => true,
     snapshot: () => snapshot,
     connect: vi.fn(),
     disconnect: vi.fn(),
@@ -1093,6 +1182,7 @@ it('passes an app-exit deadline even when the caller did not prepare an attempt'
     abortLeave: vi.fn(),
     leave: vi.fn(async () => snapshot),
     start: vi.fn(),
+    retireIfUnused: vi.fn(),
     stop: vi.fn(),
     close: vi.fn()
   }
@@ -1112,13 +1202,17 @@ it('passes an app-exit deadline even when the caller did not prepare an attempt'
   const deadlineAt = Date.now() + 100
   socket.send(stringifyRpcJson({ kind: 'app-exit', id: 1, generation, deadlineAt }))
   expect(await received.next()).toMatchObject({ kind: 'response', ok: true })
-  expect(lifetime.leave).toHaveBeenCalledWith(appId, expect.any(String), { deadlineAt })
+  expect(lifetime.leave).toHaveBeenCalledWith(appId, expect.any(String), {
+    deadlineAt,
+    detachOnDisconnect: true
+  })
   socket.close()
 })
 
 it('rolls back global desktop update preparation only when its controller disconnects', async () => {
   const generation = randomUUID()
   const lifetime = {
+    preservesService: () => true,
     snapshot: () => ({
       version: 1 as const,
       generation,
@@ -1132,6 +1226,7 @@ it('rolls back global desktop update preparation only when its controller discon
     abortLeave: vi.fn(),
     leave: vi.fn(),
     start: vi.fn(),
+    retireIfUnused: vi.fn(),
     stop: vi.fn(),
     close: vi.fn()
   }

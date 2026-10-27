@@ -566,3 +566,67 @@ it('retains recovery-only capabilities without granting stop authority', async (
   expect(recover).toHaveBeenCalledOnce()
   await expect(retry.stopAndContinue()).rejects.toBe(retry)
 })
+
+it('repairs an unavailable startup endpoint before attaching and retries the same verified repair', async () => {
+  const fresh = { ...fakeClient(undefined), runtimeInfo: () => ({ control: 'granted' }) }
+  const connect = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('connect ENOENT'))
+    .mockResolvedValueOnce(fresh)
+  const repairRuntime = vi.fn(async (signal: AbortSignal) => {
+    signal.throwIfAborted()
+  })
+  const replaceRuntime = vi.fn()
+  await expect(
+    connectDesktopRuntimeForStartup({ connect, version: 'test', repairRuntime, replaceRuntime })
+  ).resolves.toBe(fresh)
+  expect(repairRuntime).toHaveBeenCalledOnce()
+  expect(replaceRuntime).not.toHaveBeenCalled()
+
+  connect.mockRejectedValue(new Error('connect ENOENT'))
+  repairRuntime.mockRejectedValueOnce(new Error('retirement not yet confirmed'))
+  const failure = await connectDesktopRuntimeForStartup({
+    connect,
+    version: 'test',
+    repairRuntime
+  }).catch((error: unknown) => error)
+  expect(failure).toBeInstanceOf(DesktopRuntimeStartupError)
+  await (failure as DesktopRuntimeStartupError).recover()
+  expect(repairRuntime).toHaveBeenCalledTimes(3)
+})
+
+it('preserves authenticated stop authority and configuration returned by startup repair discovery', async () => {
+  const precise = new DesktopRuntimeStartupError(
+    { reason: 'version-mismatch', desktopVersion: 'test', canStop: true, canRecover: false },
+    'Different version',
+    vi.fn()
+  )
+  const failure = await connectDesktopRuntimeForStartup({
+    connect: async () => {
+      throw new Error('ENOENT')
+    },
+    version: 'test',
+    repairRuntime: async () => {
+      throw precise
+    }
+  }).catch((error: unknown) => error)
+  expect(failure).toBe(precise)
+})
+
+it('repairs a replacement endpoint that fails after the stopping runtime was already replaced', async () => {
+  const connect = vi
+    .fn()
+    .mockResolvedValueOnce(fakeClient('runtime-stopping'))
+    .mockRejectedValueOnce(new Error('ENOENT replacement socket'))
+  const replaceRuntime = vi.fn(async () => {})
+  const repairRuntime = vi.fn(async () => {})
+  const failure = await connectDesktopRuntimeForStartup({
+    connect,
+    version: 'test',
+    replaceRuntime,
+    repairRuntime
+  }).catch((error: unknown) => error)
+  await (failure as DesktopRuntimeStartupError).recover()
+  expect(replaceRuntime).toHaveBeenCalledOnce()
+  expect(repairRuntime).toHaveBeenCalledOnce()
+})

@@ -276,7 +276,8 @@ it.each([undefined, 'enabled'])(
     })
     runInNewContext(source, {
       require: (name: string) => {
-        if (name === 'electron') return { app: { isPackaged: false, setPath } }
+        if (name === 'electron')
+          return { app: { isPackaged: false, setPath, commandLine: { getSwitchValue: () => '' } } }
         if (name === 'node:path') return { dirname, join, resolve, sep }
         if (name === 'node:fs')
           return { readFileSync: vi.fn(), mkdirSync: (path: string) => created.add(path) }
@@ -671,3 +672,52 @@ describe('Electron E2E flush diagnostics', () => {
     }
   })
 })
+
+it.each([false, true])(
+  'suppresses source Electron focus while preserving explicit vault selection: %s',
+  async (explicitVault) => {
+    const source = await readFile('e2e/fixtures/node-runtime-preload.cjs', 'utf8')
+    const show = vi.fn(),
+      focus = vi.fn(),
+      removeSwitch = vi.fn()
+    class BrowserWindow {
+      show = show
+      focus = focus
+    }
+    BrowserWindow.prototype.show = show
+    BrowserWindow.prototype.focus = focus
+    const app = {
+      isPackaged: false,
+      focus,
+      commandLine: { getSwitchValue: () => 'basic', removeSwitch }
+    }
+    const dialog = { showMessageBox: vi.fn(), showMessageBoxSync: vi.fn(), showErrorBox: vi.fn() }
+    runInNewContext(source, {
+      require: (name: string) => {
+        if (name === 'electron') return { app, BrowserWindow, dialog }
+        if (name === 'node:path') return { join: resolve }
+        if (name === 'node:fs') return { readFileSync: vi.fn() }
+        if (name === 'node:module') return { _load: vi.fn() }
+        throw new Error(`Unexpected module: ${name}`)
+      },
+      process: {
+        platform: 'darwin',
+        versions: { electron: 'test' },
+        argv: explicitVault ? ['--password-store=basic'] : [],
+        env: {
+          OPEN_SCIENCE_E2E_STORAGE_ROOT: resolve('fixture/storage'),
+          OPEN_SCIENCE_E2E_NO_FOCUS: '1'
+        }
+      },
+      __dirname: resolve('e2e/fixtures')
+    })
+    BrowserWindow.prototype.show()
+    BrowserWindow.prototype.focus()
+    app.focus()
+    expect(show).not.toHaveBeenCalled()
+    expect(focus).not.toHaveBeenCalled()
+    if (explicitVault) expect(removeSwitch).not.toHaveBeenCalled()
+    else expect(removeSwitch).toHaveBeenCalledWith('password-store')
+    await expect(dialog.showMessageBox()).resolves.toMatchObject({ response: 0 })
+  }
+)

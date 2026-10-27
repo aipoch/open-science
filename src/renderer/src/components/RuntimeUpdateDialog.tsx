@@ -29,8 +29,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const { status, isDialogOpen, apply, cancel, recheck, recover, download, check } =
     useUpdateStore()
   const [legacyToken, setLegacyToken] = useState<string>()
-  const [forceConfirmation, setForceConfirmation] = useState(false)
-  const forceIntent = useRef(false)
   const [cancelPending, setCancelPending] = useState(false)
   const [dismissedCliToken, setDismissedCliToken] = useState<string>()
   const [requestPending, setRequestPending] = useState(false)
@@ -79,11 +77,8 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const cli = status.cliConfirmation
   const cliOpen = Boolean(cli && cli.token !== dismissedCliToken)
   const legacyOpen = Boolean(legacyToken && legacyToken === status.legacyShellRecovery?.token)
-  const confirming = cliOpen || forceConfirmation || legacyOpen
+  const confirming = cliOpen || legacyOpen
   const completed = ['S15', 'S27', 'S28'].includes(id)
-  useEffect(() => {
-    if (!isDialogOpen || completed) forceIntent.current = false
-  }, [isDialogOpen, completed])
   const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
@@ -112,7 +107,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
         : status.state === 'applying'
           ? t('Please wait for the app to close and reopen.')
           : id === 'S01'
-            ? t('Ready to restart; running tasks will be checked.')
+            ? t(
+                'Updating restarts the app and interrupts affected tasks. Open-Science will save your changes and stop those tasks after you confirm.'
+              )
             : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {
     if (pendingRef.current) return
@@ -129,7 +126,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     if (!canCancel || cancelRef.current) return
     cancelRef.current = true
     setCancelPending(true)
-    forceIntent.current = false
     void (async () => {
       try {
         await cancel()
@@ -148,7 +144,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     })()
   }
   const cancelConfirmation = (): void => {
-    setForceConfirmation(false)
     setLegacyToken(undefined)
     if (cliOpen && cli) {
       setDismissedCliToken(cli.token)
@@ -183,7 +178,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     <Dialog.Root
       open={open}
       onOpenChange={(next) => {
-        if (!next && !recovery && !cliOpen && !forceConfirmation) cancelUpdate()
+        if (!next && !recovery && !cliOpen) cancelUpdate()
       }}
     >
       <Dialog.Portal>
@@ -263,7 +258,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                 data-runtime-update-state={
                   cliOpen ? (cli?.source === 'this-installation' ? 'S03' : 'S02') : undefined
                 }
-                data-testid={forceConfirmation ? 'runtime-force-confirmation-S05' : undefined}
+
                 className="space-y-3 text-sm"
               >
                 <p>
@@ -272,7 +267,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                         'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
                       )
                     : t(
-                        'Updating will interrupt running tasks. Unsaved work may be lost. Interrupted tasks will not restart automatically.'
+                        'Updating restarts the app and interrupts affected tasks, including work using this service through other connections. Open-Science will save your changes and stop those tasks. Interrupted tasks will not restart automatically.'
                       )}
                 </p>
                 {cliOpen ? (
@@ -380,18 +375,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                 {blocked || recovery || status.error ? (
                   <RuntimeDiagnostics text={diagnostics} />
                 ) : null}
-                {id === 'S04' && status.canForce === true ? (
-                  <details className="mt-4 text-sm">
-                    <summary>{t('More options')}</summary>
-                    <Button
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => setForceConfirmation(true)}
-                    >
-                      {t('Force update…')}
-                    </Button>
-                  </details>
-                ) : null}
                 {!recovery && !checkFailed && !checking ? (
                   <UpdateReleaseNotes status={status} />
                 ) : null}
@@ -423,21 +406,11 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                 onClick={() => {
                   if (cliOpen && cli) {
                     setDismissedCliToken(cli.token)
-                    const force = forceIntent.current
-                    forceIntent.current = false
-                    void request(() => apply({ force, cliConsentToken: cli.token }))
+                    void request(() => apply({ force: true, cliConsentToken: cli.token }))
                   } else if (legacyOpen && legacyToken) {
                     const token = legacyToken
                     setLegacyToken(undefined)
                     void request(() => apply({ legacyShellRecoveryToken: token }))
-                  } else if (forceConfirmation) {
-                    setForceConfirmation(false)
-                    forceIntent.current = true
-                    void request(async () => {
-                      await apply({ force: true })
-                      if (!useUpdateStore.getState().status.cliConfirmation)
-                        forceIntent.current = false
-                    })
                   }
                 }}
               >
@@ -484,7 +457,16 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                         else if (needsDownload) void request(download)
                         else if (status.legacyShellRecovery)
                           setLegacyToken(status.legacyShellRecovery.token)
-                        else if (blocked && !cli) void request(recheck)
+                        else if (!blocked || (id === 'S04' && status.canForce)) {
+                          void request(async () => {
+                            await apply({ force: true })
+                            const consent = useUpdateStore.getState().status.cliConfirmation
+                            if (consent) {
+                              setDismissedCliToken(consent.token)
+                              await apply({ force: true, cliConsentToken: consent.token })
+                            }
+                          })
+                        } else if (blocked && !cli) void request(recheck)
                         else void request(() => apply())
                       }}
                     >
@@ -500,9 +482,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                           ? t('Checking…')
                           : status.legacyShellRecovery
                             ? t('Continue')
-                            : checkFailed || (blocked && !cli)
+                            : checkFailed || (blocked && !cli && !(id === 'S04' && status.canForce))
                               ? t('Retry')
-                              : t('Restart to update')}
+                              : t('Update')}
                     </Button>
                   ) : null}
                 </>

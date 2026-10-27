@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createDesktopRuntimeLifecycle,
+  desktopQuitImpactChanged,
   type DesktopShutdownWork
 } from './desktop-runtime-lifecycle'
 import { trackLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
@@ -52,6 +53,44 @@ describe('Node desktop quit coordination', () => {
       expect(deps.prepareForQuit).not.toHaveBeenCalled()
     }
   )
+  it.each(['isMigrationInProgress', 'hasActivePackageTransfer'] as const)(
+    'leaves unrelated %s running when only the App exits',
+    async (kind) => {
+      const { owner, deps } = fixture()
+      deps[kind].mockReturnValue(true)
+      const work = (await owner.request(
+        { operation: 'inspect' },
+        { preserveService: true }
+      )) as DesktopShutdownWork
+      expect(work.preserveService).toBe(true)
+      await owner.request({ operation: 'hold' }, { preserveService: true })
+      await expect(
+        owner.request({ operation: 'cancel-migration' }, { preserveService: true })
+      ).resolves.toBeNull()
+      await expect(
+        owner.request(
+          { operation: 'prepare', fingerprint: work.fingerprint },
+          { preserveService: true }
+        )
+      ).resolves.toBe('completed')
+      expect(deps.prepareForQuit).not.toHaveBeenCalled()
+      expect(deps.holdSettingsInstallAdmission).not.toHaveBeenCalled()
+    }
+  )
+
+  it('changes the quit fingerprint when service preservation changes without task changes', async () => {
+    const { owner } = fixture()
+    const preserved = (await owner.request(
+      { operation: 'inspect' },
+      { preserveService: true }
+    )) as DesktopShutdownWork
+    const stopping = (await owner.request(
+      { operation: 'inspect' },
+      { preserveService: false }
+    )) as DesktopShutdownWork
+    expect(stopping.fingerprint).not.toBe(preserved.fingerprint)
+  })
+
   it('reopens only its own admission on disconnect and never requests server shutdown', async () => {
     const { owner, deps, release } = fixture()
     const observed = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
@@ -156,4 +195,59 @@ it('bounds prepare without committing service exit before the final renderer sav
   } finally {
     vi.useRealTimers()
   }
+})
+
+it('withdraws App-only authority before any producer cleanup when preservation ends', async () => {
+  const { owner, deps } = fixture()
+  const observed = (await owner.request(
+    { operation: 'inspect' },
+    { preserveService: true }
+  )) as DesktopShutdownWork
+  await expect(
+    owner.request(
+      { operation: 'prepare', fingerprint: observed.fingerprint },
+      { preserveService: false }
+    )
+  ).resolves.toBe('scope-changed')
+  expect(deps.prepareForQuit).not.toHaveBeenCalled()
+  expect(deps.holdSettingsInstallAdmission).not.toHaveBeenCalled()
+  await owner.request({ operation: 'abort' })
+  const current = (await owner.request(
+    { operation: 'inspect' },
+    { preserveService: false }
+  )) as DesktopShutdownWork
+  await expect(
+    owner.request(
+      { operation: 'prepare', fingerprint: current.fingerprint, preserveService: false },
+      { preserveService: false }
+    )
+  ).resolves.toBe('completed')
+  expect(deps.prepareForQuit).toHaveBeenCalledOnce()
+})
+
+it('does not invalidate a whole-service decision when ordinary task activity changes', async () => {
+  const { owner, deps } = fixture()
+  const observed = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
+  deps.hasActiveReviewerWork.mockReturnValue(true)
+  await expect(
+    owner.request({ operation: 'prepare', fingerprint: observed.fingerprint })
+  ).resolves.toBe('completed')
+  expect(deps.prepareForQuit).toHaveBeenCalledOnce()
+})
+
+it('invalidates quit consent for new impact, not ordinary task row changes', async () => {
+  const { owner, deps } = fixture()
+  const idle = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
+  deps.hasActiveReviewerWork.mockReturnValue(true)
+  const active = (await owner.request({ operation: 'inspect' })) as DesktopShutdownWork
+  expect(desktopQuitImpactChanged(idle, active)).toBe(true)
+  expect(
+    desktopQuitImpactChanged(active, {
+      ...active,
+      sessions: [{ projectId: 'p', sessionId: 's', kind: 'agent' }]
+    })
+  ).toBe(false)
+  expect(desktopQuitImpactChanged(active, idle)).toBe(false)
+  expect(desktopQuitImpactChanged(active, { ...active, preserveService: true })).toBe(true)
+  expect(desktopQuitImpactChanged(active, { ...active, settingsInstallId: 'new' })).toBe(true)
 })

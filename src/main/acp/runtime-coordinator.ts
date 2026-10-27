@@ -208,6 +208,7 @@ class AcpRuntimeCoordinator {
   ) => Promise<void>
   private quitPreparationEpoch = 0
   private promptAdmissionClosedForQuit = false
+  private updateAdmissionHolds = 0
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionCreations = new Set<{ runtime: AcpRuntime; projectId?: string }>()
   private readonly sessionResumeOperations = new Map<
@@ -608,6 +609,16 @@ class AcpRuntimeCoordinator {
     // Bounded: a cancellation that never settles is abandoned, so a refused quit always reopens.
     if (hasPendingLifecycleSettlement()) void waitForLifecycleSettlement().then(reopen)
     else reopen()
+  }
+
+  holdUpdateAdmission(): () => void {
+    this.updateAdmissionHolds++
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      this.updateAdmissionHolds--
+    }
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
@@ -2290,7 +2301,7 @@ class AcpRuntimeCoordinator {
 
   // A committed quit latches admission closed; a live (non-abandoned) teardown only pauses it.
   private admissionClosedReason(): 'quit' | 'settling' | undefined {
-    if (this.promptAdmissionClosedForQuit) return 'quit'
+    if (this.promptAdmissionClosedForQuit || this.updateAdmissionHolds > 0) return 'quit'
     return hasPendingLifecycleSettlement() ? 'settling' : undefined
   }
 

@@ -49,6 +49,29 @@ describe('createActiveResearchSafeInstallGate', () => {
     expect(teardown).toHaveBeenCalledOnce()
   })
 
+  it.each([false, true])(
+    'rechecks new work after degraded cleanup with stop authorization (force=%s)',
+    async (force) => {
+      let active = false
+      const restore = vi.fn()
+      const gate = createActiveResearchSafeInstallGate(
+        () => (active ? ['agent'] : []),
+        async () => {
+          active = true
+          return { completed: true, reaped: false, stopAuthorized: true }
+        },
+        () => false,
+        restore
+      )
+      await expect(gate({ force })).resolves.toEqual({
+        completed: false,
+        reaped: false,
+        blockedBy: ['agent']
+      })
+      expect(restore).toHaveBeenCalledOnce()
+    }
+  )
+
   it('restores renderer preparation when the final update boundary refuses new work', async () => {
     let blockers: ReturnType<Parameters<typeof createActiveResearchSafeInstallGate>[0]> = []
     const teardown = vi.fn<InstallGate>().mockImplementation(async () => {

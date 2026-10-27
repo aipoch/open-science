@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -31,6 +31,55 @@ afterEach(async () => {
   for (const lifetime of lifetimes.splice(0)) lifetime.close()
   vi.useRealTimers()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+it('retires unused App residue atomically without revoking a new independent hold', async () => {
+  const { lifetime, stop } = await fixture()
+  lifetime.connect('other-app', 'socket')
+  expect((await lifetime.retireIfUnused()).stopping).toBe(false)
+  lifetime.disconnect('other-app', 'socket')
+  await lifetime.start()
+  expect((await lifetime.retireIfUnused()).explicit).toBe(true)
+  expect(stop).not.toHaveBeenCalled()
+  const unused = await fixture()
+  expect((await unused.lifetime.retireIfUnused()).stopping).toBe(true)
+  expect(unused.stop).toHaveBeenCalledOnce()
+  expect(() => unused.lifetime.connect('late-app', 'socket')).toThrow()
+})
+
+it('never treats an explicit stop racing retirement as permission to restart', async () => {
+  const first = await fixture()
+  await first.lifetime.stop(true)
+  await expect(first.lifetime.retireIfUnused()).rejects.toThrow('already stopping')
+  expect((await readServiceLifetime(first.configRoot))?.reason).toBe('user-stop')
+  const second = await fixture()
+  const authorization = await second.lifetime.retireIfUnused()
+  expect(authorization.reason).toBe('disconnect')
+  await second.lifetime.stop(true)
+  expect((await readServiceLifetime(second.configRoot))?.reason).toBe('user-stop')
+})
+
+it('archives invalid historical intent and starts a usable new generation', async () => {
+  const configRoot = await mkdtemp(join(tmpdir(), 'invalid-lifetime-'))
+  roots.push(configRoot)
+  const source = '{invalid historical record'
+  await writeFile(join(configRoot, 'service-lifetime.json'), source)
+  await expect(readServiceLifetime(configRoot)).rejects.toThrow()
+  expect(await readServiceLifetime(configRoot, true)).toBeUndefined()
+  const lifetime = await createLocalServiceLifetime({
+    configRoot,
+    generation: randomUUID(),
+    explicitStart: false,
+    stop: vi.fn(),
+    report: vi.fn()
+  })
+  lifetimes.push(lifetime)
+  lifetime.connect('app', 'socket')
+  expect(lifetime.snapshot()).toMatchObject({ apps: 1, explicit: false, stopping: false })
+  const archived = (await readdir(configRoot)).find((name) =>
+    name.startsWith('service-lifetime.invalid-')
+  )!
+  expect(await readFile(join(configRoot, archived), 'utf8')).toBe(source)
 })
 
 it('keeps the last App hold when its stop intent cannot be persisted', async () => {
@@ -458,4 +507,89 @@ it('bounds explicit stop retries behind in-flight compensation without reopening
   await lifetime.stop(true)
   expect(stop).toHaveBeenCalledOnce()
   expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping')
+})
+
+it.each(['explicit', 'other-app'] as const)(
+  'keeps the App attached when %s preservation ends after preparation',
+  async (hold) => {
+    const { lifetime, stop } = await fixture()
+    lifetime.connect('app', 'socket')
+    if (hold === 'explicit') await lifetime.start()
+    else lifetime.connect('other', 'other-socket')
+    const attempt = { attemptId: randomUUID(), deadlineAt: Date.now() + 30_000 }
+    expect(await lifetime.prepareLeave('app', 'socket', attempt)).toBe(false)
+    if (hold === 'explicit') await lifetime.stop(false)
+    else await lifetime.leave('other', 'other-socket')
+    const result = await lifetime.leave('app', 'socket', attempt)
+    expect(result).toMatchObject({ scopeChanged: true, apps: 1, explicit: false, stopping: false })
+    expect(stop).not.toHaveBeenCalled()
+    await lifetime.abortLeave('app', 'socket', attempt.attemptId)
+    const confirmed = { attemptId: randomUUID(), deadlineAt: Date.now() + 30_000 }
+    expect(await lifetime.prepareLeave('app', 'socket', confirmed)).toBe(true)
+    expect((await lifetime.leave('app', 'socket', confirmed)).stopping).toBe(true)
+    expect(stop).toHaveBeenCalledOnce()
+  }
+)
+
+it.each(['explicit', 'other-app'] as const)(
+  'retains the connected App hold after an App-only leave with %s preservation',
+  async (hold) => {
+    const { lifetime, stop } = await fixture()
+    lifetime.connect('app', 'socket')
+    if (hold === 'explicit') await lifetime.start()
+    else lifetime.connect('other', 'other-socket')
+    const attempt = {
+      attemptId: randomUUID(),
+      deadlineAt: Date.now() + 30_000,
+      detachOnDisconnect: true
+    }
+    expect(await lifetime.prepareLeave('app', 'socket', attempt)).toBe(false)
+    expect((await lifetime.leave('app', 'socket', attempt)).apps).toBe(hold === 'explicit' ? 1 : 2)
+    if (hold === 'explicit') await lifetime.stop(false)
+    else lifetime.disconnect('other', 'other-socket')
+    expect(lifetime.snapshot()).toMatchObject({ apps: 1, explicit: false, stopping: false })
+    expect(stop).not.toHaveBeenCalled()
+    // Retrying the unacknowledged attempt still cannot widen its original App-only authority.
+    expect(await lifetime.leave('app', 'socket', attempt)).toMatchObject({ scopeChanged: true })
+    await lifetime.abortLeave('app', 'socket', attempt.attemptId)
+    const confirmed = { ...attempt, attemptId: randomUUID() }
+    expect(await lifetime.prepareLeave('app', 'socket', confirmed)).toBe(true)
+    expect((await lifetime.leave('app', 'socket', confirmed)).stopping).toBe(true)
+    expect(stop).toHaveBeenCalledOnce()
+  }
+)
+
+it('releases a successfully detached App-only hold when its socket actually disconnects', async () => {
+  const { lifetime, stop } = await fixture(true)
+  lifetime.connect('app', 'socket')
+  expect((await lifetime.leave('app', 'socket', { detachOnDisconnect: true })).apps).toBe(1)
+  lifetime.disconnect('app', 'socket')
+  expect(lifetime.snapshot()).toMatchObject({ apps: 0, explicit: true, stopping: false })
+  await lifetime.stop(false)
+  expect(stop).toHaveBeenCalledOnce()
+})
+
+it('reconfirms the last App when two App-only exits precede both socket disconnects', async () => {
+  const { lifetime, stop } = await fixture()
+  lifetime.connect('a', 'socket-a')
+  lifetime.connect('b', 'socket-b')
+  const a = { attemptId: randomUUID(), deadlineAt: Date.now() + 30_000, detachOnDisconnect: true }
+  const b = { ...a, attemptId: randomUUID() }
+  expect(await lifetime.prepareLeave('a', 'socket-a', a)).toBe(false)
+  expect(await lifetime.prepareLeave('b', 'socket-b', b)).toBe(false)
+  expect(await lifetime.leave('a', 'socket-a', a)).toMatchObject({ apps: 2, stopping: false })
+  expect(await lifetime.leave('b', 'socket-b', b)).toMatchObject({ scopeChanged: true })
+  expect(lifetime.preservesService('b', 'socket-b')).toBe(false)
+  expect(stop).not.toHaveBeenCalled()
+  // A's delayed rollback makes it a staying App again, without registering another hold.
+  await lifetime.abortLeave('a', 'socket-a', a.attemptId)
+  expect(lifetime.preservesService('b', 'socket-b')).toBe(true)
+  expect(lifetime.snapshot().apps).toBe(2)
+  lifetime.disconnect('a', 'socket-a')
+  expect(lifetime.preservesService('b', 'socket-b')).toBe(false)
+  await lifetime.abortLeave('b', 'socket-b', b.attemptId)
+  const confirmed = { ...b, attemptId: randomUUID() }
+  expect(await lifetime.prepareLeave('b', 'socket-b', confirmed)).toBe(true)
+  expect((await lifetime.leave('b', 'socket-b', confirmed)).stopping).toBe(true)
+  expect(stop).toHaveBeenCalledOnce()
 })

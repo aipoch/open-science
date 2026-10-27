@@ -389,11 +389,11 @@ test('captures all runtime update states in isolated Electron (presentation-only
       if (['S23', 'S24'].includes(id))
         await expect(page.getByRole('button', { name: '取消', exact: true })).toHaveCount(0)
       if (id === 'S01') {
-        await page.getByRole('button', { name: '重启以更新', exact: true }).click()
+        await page.getByRole('button', { name: '更新', exact: true }).click()
         await expect.poll(applyCount).toBe(1)
         expect(
           (await getCalls()).filter((call) => call.action === 'update:apply').at(-1)?.args
-        ).toEqual([undefined])
+        ).toEqual([{ force: true }])
       }
       if (id === 'S06') {
         await application.evaluate(() => {
@@ -448,18 +448,10 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect.poll(applyCount).toBe(before + 1)
         expect(
           (await getCalls()).filter((call) => call.action === 'update:apply').at(-1)?.args
-        ).toEqual([{ force: false, cliConsentToken: cliConfirmation.token }])
+        ).toEqual([{ force: true, cliConsentToken: cliConfirmation.token }])
       }
       if (id === 'S04') {
-        await page.getByText('更多选项', { exact: true }).click()
-        await page.getByRole('button', { name: '强制更新…', exact: true }).click()
-        await expect(page.getByTestId('runtime-force-confirmation-S05')).toBeVisible()
-        await capture('S05')
         const before = await applyCount()
-        await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
-        expect(await applyCount()).toBe(before)
-        await page.getByText('更多选项', { exact: true }).click()
-        await page.getByRole('button', { name: '强制更新…', exact: true }).click()
         await page.getByRole('dialog').getByRole('button', { name: '更新', exact: true }).click()
         await expect.poll(applyCount).toBe(before + 1)
         expect(
@@ -591,9 +583,8 @@ test('captures all runtime update states in isolated Electron (presentation-only
       await expect(page.getByRole('dialog')).toHaveCount(0)
       await expect(recovery.getByRole('button', { name: '退出', exact: true })).toBeVisible()
       if (phase === 'disconnected' || phase === 'unavailable')
-        await expect(recovery.getByRole('button', { name: '重新连接', exact: true })).toBeVisible()
-      else
-        await expect(recovery.getByRole('button', { name: '重新连接', exact: true })).toHaveCount(0)
+        await expect(recovery.getByRole('button', { name: '重试', exact: true })).toBeVisible()
+      else await expect(recovery.getByRole('button', { name: '重试', exact: true })).toHaveCount(0)
       await capture(`connection-${phase}`)
     }
     await application.evaluate(({ BrowserWindow }) => {
@@ -634,10 +625,10 @@ test('captures all runtime update states in isolated Electron (presentation-only
     expect(calls.some((call) => call.action === 'update:recover')).toBe(true)
     await writeFile(join(output, 'views.json'), JSON.stringify(views, null, 2))
     await writeFile(join(output, 'action-routing.json'), JSON.stringify(calls, null, 2))
-    // S19 has no current startup/update surface. Assert every supported state by identity.
+    // The separate force confirmation S05 was removed; S19 has no current surface. Assert every supported state by identity.
     expect(capturedStates.filter((id) => /^S\d\d$/.test(id)).sort()).toEqual(
       Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`).filter(
-        (id) => id !== 'S19'
+        (id) => id !== 'S19' && id !== 'S05'
       )
     )
   } catch (error) {

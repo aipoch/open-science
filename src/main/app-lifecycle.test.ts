@@ -8,7 +8,11 @@ import {
 } from './application-shutdown-trigger'
 import type { ActiveSessionInfo } from '../shared/storage'
 import type { RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
-import { BackendShutdownCoordinator, type ShutdownStepOutcome } from './lifecycle-shutdown'
+import {
+  BackendShutdownCoordinator,
+  QuitScopeChangedError,
+  type ShutdownStepOutcome
+} from './lifecycle-shutdown'
 import type {
   CloseClassification,
   CloseConfirmChoice,
@@ -136,7 +140,7 @@ type Harness = {
   tray: { destroy: ReturnType<typeof vi.fn> } | undefined
   trayHandlers: TrayHandlers | undefined
   shutdownBackends: () => Promise<ShutdownStepOutcome | void>
-  prepareForQuit: () => Promise<ShutdownStepOutcome | void>
+  prepareForQuit: AppLifecycleDeps['prepareForQuit']
   abortQuitPreparation: (
     reason: import('../shared/session-persistence-flush').SessionPersistenceFlushAbortReason
   ) => Promise<void> | void
@@ -1995,25 +1999,36 @@ it.each(['prepare', 'shutdown'] as const)(
     if (kind === 'prepare') expect(h.shutdownBackends).not.toHaveBeenCalled()
   }
 )
-it('keeps a protected transaction alive even when ordinary cleanup failures may exit', async () => {
-  const error = Object.assign(new Error('A protected transaction began after inspection.'), {
-    code: 'command-unavailable'
-  })
-  const onQuitError = vi.fn()
-  const h = setup({
-    requireCleanBackendShutdown: false,
-    onQuitError,
-    prepareForQuit: async () => {
-      throw error
-    }
-  })
-  h.closeOpts[0].requestQuit(true)
-  h.app.emit('before-quit')
-  await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledWith(error))
-  expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
-  expect(h.shutdownBackends).not.toHaveBeenCalled()
-  expect(h.app.exit).not.toHaveBeenCalled()
-})
+it.each(['prepare', 'shutdown'] as const)(
+  'keeps protected %s failure alive even when ordinary cleanup may exit',
+  async (phase) => {
+    const error = Object.assign(new Error('A protected transaction began after inspection.'), {
+      code: 'command-unavailable'
+    })
+    const onQuitError = vi.fn()
+    const h = setup({
+      requireCleanBackendShutdown: false,
+      onQuitError,
+      ...(phase === 'prepare'
+        ? {
+            prepareForQuit: async () => {
+              throw error
+            }
+          }
+        : {
+            shutdownBackends: async () => {
+              throw error
+            }
+          })
+    })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledWith(error))
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    if (phase === 'prepare') expect(h.shutdownBackends).not.toHaveBeenCalled()
+    expect(h.app.exit).not.toHaveBeenCalled()
+  }
+)
 
 it('awaits authoritative work before the confirmation and refuses a failed inspection', async () => {
   let inspect!: (changed: boolean) => void
@@ -2276,4 +2291,91 @@ it('shares one post-preflight deadline across preparation, final save, and backe
   await vi.advanceTimersByTimeAsync(30)
   expect(h.app.exit).toHaveBeenCalledOnce()
   expect(progress).toHaveBeenLastCalledWith(false)
+})
+
+it.each(['quit', 'cancel'] as const)(
+  'reconfirms changed quit scope after an asynchronous save and can %s',
+  async (choice) => {
+    const saved = Promise.withResolvers<RendererSessionPersistenceFlushOutcome>()
+    let wholeService = false
+    let observedWholeService = false
+    const session = { projectId: 'p', sessionId: 's', kind: 'agent' } as ActiveSessionInfo
+    const prepareForQuit = vi.fn(async () =>
+      observedWholeService ? ('completed' as const) : ('scope-changed' as const)
+    )
+    const onQuitError = vi.fn()
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      refreshQuitState: async () => {
+        const changed = wholeService !== observedWholeService
+        observedWholeService = wholeService
+        return changed
+      },
+      detectActiveSessions: () => (observedWholeService ? [session] : []),
+      flushSessionPersistence: vi
+        .fn()
+        .mockReturnValueOnce(saved.promise)
+        .mockResolvedValue('completed'),
+      prepareForQuit,
+      confirmClose: async (_variant, sessions) => (sessions.length ? choice : 'quit'),
+      onQuitError
+    })
+    h.quit.mockImplementation(() => {
+      if (h.quit.mock.calls.length <= 10) h.app.emit('before-quit')
+    })
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(h.flushSessionPersistence).toHaveBeenCalledOnce())
+    expect(h.confirmClose).toHaveBeenCalledOnce()
+    wholeService = true
+    saved.resolve('completed')
+    await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledTimes(2))
+    expect(h.confirmClose).toHaveBeenLastCalledWith('quit', [session])
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(onQuitError).not.toHaveBeenCalled()
+    if (choice === 'quit') {
+      await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+      expect(prepareForQuit).toHaveBeenCalledTimes(2)
+    } else {
+      expect(h.shutdownBackends).not.toHaveBeenCalled()
+      expect(h.app.exit).not.toHaveBeenCalled()
+      expect(prepareForQuit).toHaveBeenCalledOnce()
+    }
+  }
+)
+
+it('reopens confirmation instead of degrading quit when scope expands at the final leave', async () => {
+  const saved = Promise.withResolvers<RendererSessionPersistenceFlushOutcome>()
+  let wholeService = false
+  let observed = false
+  const session = { projectId: 'p', sessionId: 's', kind: 'agent' } as ActiveSessionInfo
+  const shutdownBackends = vi.fn(async () => {
+    if (!observed) throw new QuitScopeChangedError()
+  })
+  const h = setup({
+    requireCleanBackendShutdown: false,
+    refreshQuitState: async () => {
+      const changed = wholeService !== observed
+      observed = wholeService
+      return changed
+    },
+    detectActiveSessions: () => (observed ? [session] : []),
+    flushSessionPersistence: vi
+      .fn()
+      .mockResolvedValueOnce('completed')
+      .mockReturnValueOnce(saved.promise)
+      .mockResolvedValue('completed'),
+    shutdownBackends,
+    confirmClose: async (_variant, sessions) => (sessions.length ? 'cancel' : 'quit')
+  })
+  h.quit.mockImplementation(() => {
+    if (h.quit.mock.calls.length <= 10) h.app.emit('before-quit')
+  })
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.flushSessionPersistence).toHaveBeenCalledTimes(2))
+  wholeService = true
+  saved.resolve('completed')
+  await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledTimes(2))
+  expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+  expect(h.app.exit).not.toHaveBeenCalled()
+  expect(shutdownBackends).toHaveBeenCalledOnce()
 })

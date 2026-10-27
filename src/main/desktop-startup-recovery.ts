@@ -58,7 +58,7 @@ export class DesktopRuntimeStartupError extends Error {
   }
 }
 
-/** Retry the original endpoint only; a failed attachment never authorizes a replacement service. */
+/** Failed attachment permits only the caller's ownership-verified repair, never a blind restart. */
 export async function connectDesktopRuntimeForStartup(options: {
   connect(signal: AbortSignal): Promise<DesktopRuntimeClient>
   version: string
@@ -66,9 +66,13 @@ export async function connectDesktopRuntimeForStartup(options: {
   // Replaces a Runtime that is stopping with a fresh one. Without it, a stopping Runtime is only
   // reported as a recoverable failure.
   replaceRuntime?: () => Promise<void>
+  repairRuntime?: (signal: AbortSignal) => Promise<void>
 }): Promise<DesktopRuntimeClient> {
   let candidate: DesktopRuntimeClient | undefined
   let needsReplacement = false
+  const repair = async (): Promise<void> => {
+    await options.repairRuntime?.(AbortSignal.timeout(30_000))
+  }
   const attempt = async (): Promise<DesktopRuntimeClient> => {
     const signal = AbortSignal.timeout(options.timeoutMs ?? 12_000)
     candidate = await options.connect(signal)
@@ -84,15 +88,19 @@ export async function connectDesktopRuntimeForStartup(options: {
       return await attempt()
     } catch (error) {
       // A Runtime that already began shutting down is never reused: stop it and launch a fresh one.
-      if (!(error instanceof RuntimeStoppingError) || !options.replaceRuntime) throw error
-      needsReplacement = true
       candidate?.close()
       candidate = undefined
-      await replace()
+      if (error instanceof RuntimeStoppingError && options.replaceRuntime) {
+        needsReplacement = true
+        await replace()
+        needsReplacement = false
+      } else if (options.repairRuntime) await repair()
+      else throw error
       return await attempt()
     }
   } catch (error) {
     candidate?.close()
+    if (error instanceof DesktopRuntimeStartupError) throw error
     throw new DesktopRuntimeStartupError(
       {
         reason: 'startup-recovery-required',
@@ -106,6 +114,7 @@ export async function connectDesktopRuntimeForStartup(options: {
       // Recovery does real work: replace a stopping Runtime; the startup owner then re-verifies.
       async () => {
         if (needsReplacement || error instanceof RuntimeStoppingError) await replace()
+        else await repair()
       }
     )
   }

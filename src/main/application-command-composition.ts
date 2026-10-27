@@ -531,6 +531,7 @@ const createApplicationCommandComposition = (
   const installations: CommandModuleInstallation[] = []
   let disposal: Promise<void> | undefined
   let stopping = false
+  let updateHolds = 0
 
   try {
     for (const module of modules) installations.push(module.install(router.registrar))
@@ -565,7 +566,7 @@ const createApplicationCommandComposition = (
     return Object.freeze({
       commandNames: (): readonly string[] => names,
       invoke: (commandName, invocation): Promise<unknown> => {
-        if (stopping && !allowedDuringServiceStop(commandName)) {
+        if ((stopping || updateHolds > 0) && !allowedDuringServiceStop(commandName)) {
           return Promise.reject(
             new ApplicationCommandError('command-unavailable', 'The local service is stopping.')
           )
@@ -613,6 +614,15 @@ const createApplicationCommandComposition = (
     localWeb,
     remoteWeb,
     task,
+    holdUpdateAdmission: (): (() => void) => {
+      updateHolds++
+      let active = true
+      return () => {
+        if (!active) return
+        active = false
+        updateHolds--
+      }
+    },
     beginStopping: (): void => {
       stopping = true
     },

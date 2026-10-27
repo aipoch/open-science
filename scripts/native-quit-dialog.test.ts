@@ -64,7 +64,7 @@ test('captures the live native translator through the source preload with an arb
         id === 'node:module'
           ? moduleLoader
           : id === 'electron'
-            ? { app: { isPackaged: false } }
+            ? { app: { isPackaged: false, commandLine: { getSwitchValue: () => '' } } }
             : require(id),
       process: { versions: { electron: 'test' }, env: { OPEN_SCIENCE_E2E_STORAGE_ROOT: config } },
       __filename: preload,
@@ -78,18 +78,18 @@ test('captures the live native translator through the source preload with an arb
       [
         'ru',
         {
-          buttons: ['Отмена', 'Остановить задачи и выйти'],
+          buttons: ['Отмена', 'Выйти'],
           detail:
-            'Остановка локального сервиса может прервать задачи приложения, CLI и веб-интерфейса и привести к потере несохранённых данных. В списке показаны только известные задачи.',
+            'При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся.',
           message: 'Выйти из Open-Science?'
         }
       ],
       [
         'de',
         {
-          buttons: ['Abbrechen', 'Aufgaben stoppen und beenden'],
+          buttons: ['Abbrechen', 'Beenden'],
           detail:
-            'Das Stoppen des lokalen Dienstes kann Aufgaben in App, CLI und Web unterbrechen und ungespeicherten Fortschritt verlieren. Die Liste zeigt nur bekannte Aufgaben.',
+            'Beim Beenden werden nicht abgeschlossene Aufgaben unterbrochen. Ihre gespeicherten Konversationen und Dateien bleiben erhalten.',
           message: 'Open-Science beenden?'
         }
       ]

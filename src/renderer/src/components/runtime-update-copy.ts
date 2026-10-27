@@ -15,7 +15,9 @@ export const runtimeUpdateCopy = (
     case 'S04':
       return {
         title: t('Tasks are still running'),
-        description: t('Wait for active tasks to finish, or stop them before updating.')
+        description: t(
+          'Updating restarts the app and interrupts affected tasks. Open-Science will save your changes and stop those tasks after you confirm.'
+        )
       }
     case 'S06':
       return {

@@ -106,6 +106,50 @@ describe('same-backend desktop recovery', () => {
     expect(replacement.close).toHaveBeenCalledOnce()
     expect(activate).not.toHaveBeenCalled()
   })
+  it('reconnects a healthy service before considering residual repair', async () => {
+    const old = client(7, true)
+    const repair = vi.fn()
+    const recovery = createDesktopRuntimeRecovery({
+      client: old,
+      connect: async () => client(7, true),
+      repair,
+      activate: vi.fn(async () => undefined),
+      onState: vi.fn()
+    })
+    recovery.disconnect(old)
+    await recovery.reconnect()
+    expect(repair).not.toHaveBeenCalled()
+    expect(recovery.state().phase).toBe('connected')
+  })
+
+  it('does not let retirement of the original process cancel its explicit repair', async () => {
+    const old = client(7, true)
+    const next = client(8, true)
+    const replacement = deferred<DesktopRuntimeClient>()
+    const repair = vi.fn(() => replacement.promise)
+    const recovery = createDesktopRuntimeRecovery({
+      client: old,
+      connect: async () => {
+        throw new Error('ENOENT')
+      },
+      repair,
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    recovery.disconnect(old)
+    const attempt = recovery.reconnect()
+    await vi.waitFor(() => expect(repair).toHaveBeenCalledOnce())
+    vi.mocked(isRuntimeProcessAlive).mockImplementation((pid) => pid === 8)
+    recovery.disconnect(old)
+    replacement.resolve(next)
+    await attempt
+    expect(recovery.state().phase).toBe('connected')
+    recovery.disconnect(old)
+    expect(recovery.state().phase).toBe('connected')
+    recovery.disconnect(next)
+    expect(recovery.state().phase).toBe('disconnected')
+  })
+
   it('bounds a hung connection and closes its late result', async () => {
     vi.useFakeTimers()
     const old = client()
@@ -124,7 +168,7 @@ describe('same-backend desktop recovery', () => {
     await result
     expect(recovery.state().phase).toBe('disconnected')
     connection.resolve(next)
-    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
     expect(next.close).toHaveBeenCalledOnce()
   })
   it('cancels an unanswered control refresh and ignores its late reply', async () => {

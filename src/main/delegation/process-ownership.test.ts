@@ -238,6 +238,52 @@ describe('durable delegated process ownership', () => {
     expect(owner.receipts(scope)).toEqual([])
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'stops a matching live historical writer even with retained stronger-proof debt',
+    async () => {
+      const owner = await setup()
+      const child = owner.spawn(
+        scope,
+        process.execPath,
+        ['-e', 'process.stdout.write("ready");setInterval(()=>{},1000)'],
+        { stdio: 'pipe', env: process.env, windowsHide: true }
+      )
+      children.push(child)
+      await once(child.stdout, 'data')
+      owner.recordMainAgentContext(child, 'context-with-live-writer')
+      const [receipt] = owner.receipts(scope)
+      expect(receipt.providerSessionIds).toEqual(['context-with-live-writer'])
+      const path = join(
+        directory!,
+        'delegation-process-ownership',
+        scope.projectId,
+        scope.sessionId,
+        `${receipt.receiptId}.json`
+      )
+      await writeFile(
+        path,
+        JSON.stringify({
+          ...receipt,
+          phase: 'cleanup-pending',
+          cleanupDiagnostics: {
+            failureCategory: 'ownership-candidate-unresolved',
+            recovery: 'stronger-ownership-proof-required',
+            ownedIdentityCount: 1,
+            ambiguousIdentityCount: 1
+          }
+        })
+      )
+      const cold = new DelegatedProcessOwnership(directory!)
+      const outcome = cold.assertMainAgentSessionResumeAllowed(
+        scope.frameworkId,
+        'context-with-live-writer'
+      )
+      await expect.poll(() => child.exitCode !== null || child.signalCode !== null).toBe(true)
+      await expect(outcome).resolves.toBeUndefined()
+      expect(cold.receipts(scope)).toHaveLength(1)
+    }
+  )
+
   it('preserves cleanup evidence across reconstruction and removes it after proven teardown', async () => {
     const owner = await setup()
     const diagnostics = {
@@ -519,6 +565,28 @@ describe('durable delegated process ownership', () => {
     const cold = new DelegatedProcessOwnership(directory!)
     await expect(cold.recover(scope)).rejects.toThrow('Delegated process recovery is incomplete')
     expect(cold.receipts(scope)[0].cleanupDiagnostics).toEqual(diagnostics)
+  })
+
+  it('limits known old-context ownership to its recorded context, preserving other sessions', async () => {
+    const owner = await setup()
+    owner.recordFailure(scope)
+    const [receipt] = owner.receipts(scope)
+    const path = join(
+      directory!,
+      'delegation-process-ownership',
+      scope.projectId,
+      scope.sessionId,
+      `${receipt.receiptId}.json`
+    )
+    await writeFile(path, JSON.stringify({ ...receipt, providerSessionIds: ['context-a'] }))
+    const before = await readFile(path, 'utf8')
+    await expect(
+      owner.assertMainAgentSessionResumeAllowed(scope.frameworkId, 'context-b')
+    ).resolves.toBeUndefined()
+    await expect(
+      owner.assertMainAgentSessionResumeAllowed(scope.frameworkId, 'context-a')
+    ).rejects.toThrow()
+    expect(await readFile(path, 'utf8')).toBe(before)
   })
 
   describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(

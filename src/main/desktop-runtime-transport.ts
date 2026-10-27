@@ -563,7 +563,8 @@ export async function startDesktopRuntimeTransport(options: {
             void options.lifetime
               .leave(desktopInstanceId, connectionId, {
                 ...(request.attemptId ? { attemptId: request.attemptId } : {}),
-                deadlineAt: serviceStopDeadline(request.deadlineAt)
+                deadlineAt: serviceStopDeadline(request.deadlineAt),
+                detachOnDisconnect: true
               })
               .then(
                 (result) =>
@@ -691,7 +692,15 @@ export async function startDesktopRuntimeTransport(options: {
                       await options.lifetime.abortLeave(desktopInstanceId, connectionId, attemptId)
                     if (prepareAttemptId === attemptId) prepareAttemptId = undefined
                   } else result = null
-                } else result = await lifecycle.request(request.request)
+                } else {
+                  const lifetime = options.lifetime?.snapshot()
+                  result = await lifecycle.request(request.request, {
+                    preserveService:
+                      options.lifetime && desktopInstanceId
+                        ? options.lifetime.preservesService(desktopInstanceId, connectionId)
+                        : Boolean(lifetime && (lifetime.explicit || lifetime.apps > 1))
+                  })
+                }
                 respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result })
               } catch (error) {
                 respond({

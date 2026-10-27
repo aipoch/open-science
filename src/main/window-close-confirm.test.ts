@@ -786,7 +786,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
 
     expect(electronMocks.showMessageBox).toHaveBeenCalledTimes(1)
     const [options] = electronMocks.showMessageBox.mock.calls[0] as [Record<string, unknown>]
-    expect(options.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
+    expect(options.buttons).toEqual(['Cancel', 'Quit'])
     expect(options.defaultId).toBe(0)
     expect(options.cancelId).toBe(0)
     expect(options.message).toBe('Quit Open-Science?')
@@ -834,9 +834,9 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     await expect(confirm('quit', [delegated])).resolves.toBe('cancel')
 
     const [options] = electronMocks.showMessageBox.mock.calls[0] as [Record<string, unknown>]
-    expect(options.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
+    expect(options.buttons).toEqual(['Cancel', 'Quit'])
     expect(options.message).toBe('Quit Open-Science?')
-    expect(options.detail).toMatch(/App, CLI and Web tasks/)
+    expect(options.detail).toMatch(/Quitting will interrupt unfinished tasks/)
   })
 
   it('offers Minimize/Quit for close-to-tray with a "remember" checkbox', async () => {
@@ -887,7 +887,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
       Record<string, unknown>
     ]
     expect(parentArg).toBe(window)
-    expect(optionsArg.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
+    expect(optionsArg.buttons).toEqual(['Cancel', 'Quit'])
   })
 
   it('falls back to a windowless dialog when the window has been destroyed', async () => {
@@ -905,7 +905,7 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
     const [onlyArg] = electronMocks.showMessageBox.mock.calls[0] as unknown as [
       Record<string, unknown>
     ]
-    expect(onlyArg.buttons).toEqual(['Cancel', 'Stop tasks and quit'])
+    expect(onlyArg.buttons).toEqual(['Cancel', 'Quit'])
     expect(electronMocks.showMessageBox.mock.calls[0]).toHaveLength(1)
   })
 })

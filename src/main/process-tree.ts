@@ -1296,6 +1296,14 @@ const currentRecordedPosixIdentity = (pid: number): PosixProcessIdentity | undef
   return undefined
 }
 
+/** Positive identity proof only; an unavailable identity does not prove process exit. */
+export const isRecordedPosixLeaderCurrent = (leader: {
+  pid: number
+  birthToken?: string
+}): boolean =>
+  leader.birthToken !== undefined &&
+  currentRecordedPosixIdentity(leader.pid)?.birthToken === leader.birthToken
+
 const signalRecordedPosixGroup = (
   leader: PosixProcessIdentity,
   signal: NodeJS.Signals

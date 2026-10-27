@@ -1,3 +1,4 @@
+import { QuitScopeChangedError } from './lifecycle-shutdown'
 import { terminateVerifiedService } from './verified-service-stop'
 import {
   recoverStoppedServiceProcesses,
@@ -43,7 +44,10 @@ import {
   webRpcEventResyncRequiredSchema,
   webRpcResponseSchema
 } from '../shared/web-rpc-contract'
-import { parseApplicationCommandError } from '../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  parseApplicationCommandError
+} from '../shared/application-command-contract'
 import { connectToDesktopEndpoint, type DesktopEndpoint } from './desktop-connection'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -690,7 +694,8 @@ export async function connectDesktopRuntime(options: {
     runtimeInfo.lifetime
       ? !runtimeInfo.lifetime.explicit && runtimeInfo.lifetime.apps <= 1
       : runtimeInfo.control === 'granted' && runtimeInfo.launch === 'desktop'
-  let quitAttempt: { attemptId: string; deadlineAt: number } | undefined
+  let inspectedPreserveService = false
+  let quitAttempt: { attemptId: string; deadlineAt: number; preserveService: boolean } | undefined
   let stopPromise: Promise<RuntimeDirectoryLease> | undefined
   const runStop = async (
     reason?: 'restart' | 'update',
@@ -820,7 +825,8 @@ export async function connectDesktopRuntime(options: {
       if (operation.operation === 'prepare')
         quitAttempt ??= {
           attemptId: randomUUID(),
-          deadlineAt: serviceStopDeadline(operation.deadlineAt)
+          deadlineAt: serviceStopDeadline(operation.deadlineAt),
+          preserveService: operation.preserveService ?? inspectedPreserveService
         }
       const attempt = quitAttempt
       try {
@@ -834,12 +840,20 @@ export async function connectDesktopRuntime(options: {
                 ...(operation.operation === 'prepare' ? { deadlineAt: attempt.deadlineAt } : {})
               }
             : operation
-        return await boundedRequest(
+        const result = await boundedRequest(
           { kind: 'lifecycle', request: wireOperation },
           operation.operation === 'prepare'
             ? (attempt?.deadlineAt ?? serviceStopDeadline()) - LOCAL_SERVICE_STOP_ESCALATION_MS
             : Date.now() + 2000
         )
+        if (
+          operation.operation === 'inspect' &&
+          result &&
+          typeof result === 'object' &&
+          'preserveService' in result
+        )
+          inspectedPreserveService = result.preserveService === true
+        return result
       } finally {
         if (operation.operation === 'abort' && quitAttempt === attempt) quitAttempt = undefined
       }
@@ -920,7 +934,7 @@ export async function connectDesktopRuntime(options: {
                 const deadline = serviceStopDeadline(
                   stopOptions.deadlineAt ?? quitAttempt?.deadlineAt
                 )
-                let outcome: ServiceLifetimeSnapshot | undefined
+                let outcome: (ServiceLifetimeSnapshot & { scopeChanged?: true }) | undefined
                 try {
                   outcome = (await boundedRequest(
                     {
@@ -930,7 +944,7 @@ export async function connectDesktopRuntime(options: {
                       deadlineAt: deadline
                     },
                     Math.min(Date.now() + 2000, deadline - LOCAL_SERVICE_STOP_ESCALATION_MS)
-                  )) as ServiceLifetimeSnapshot
+                  )) as ServiceLifetimeSnapshot & { scopeChanged?: true }
                 } catch (error) {
                   // A lost reply cannot undo a committed stop. Consult the exact generation's
                   // durable intent, then use process exit and the directory lock as evidence.
@@ -938,6 +952,7 @@ export async function connectDesktopRuntime(options: {
                   if (intent?.generation !== runtimeInfo.generation || !intent.stopping) throw error
                   outcome = { ...intent, apps: 0 }
                 }
+                if (outcome.scopeChanged) throw new QuitScopeChangedError()
                 if (outcome.stopping) {
                   let lease: RuntimeDirectoryLease
                   try {
@@ -975,6 +990,12 @@ export async function connectDesktopRuntime(options: {
                 close()
                 return undefined
               } catch (error) {
+                if (error instanceof QuitScopeChangedError) throw error
+                if (quitAttempt?.preserveService)
+                  throw new ApplicationCommandError(
+                    'command-unavailable',
+                    'The App quit result could not be confirmed. Retry quitting.'
+                  )
                 // A desktop may leave even when the residual service cannot be identified safely.
                 // Verified termination itself requires the exact durable stop intent.
                 logger.warn('App exited with an unresolved local service', {

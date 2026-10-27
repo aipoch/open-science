@@ -1,5 +1,6 @@
+import { findBrowserImportPort } from '../src/main/session-package/test-helpers/browser-import-port'
 import { test, expect } from '@playwright/test'
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, writeFile, unlink, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn, execFile } from 'node:child_process'
@@ -266,22 +267,42 @@ async function launchFixture(stalled = false) {
         )
         .toBe(true)
     }
-    app = await launchOpenScience(roots, true, false, roots.fakeRemoteItRoot, 'normal', false)
+    app = await launchOpenScience(
+      roots,
+      true,
+      false,
+      roots.fakeRemoteItRoot,
+      process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1' ? 'hidden' : 'normal',
+      false
+    )
     desktopProcess = trackProcess(app.process())
     if (!desktopProcess) throw new Error('Fixture desktop child was not captured')
     const page = await app.firstWindow({ timeout: 30_000 })
+    if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+    }
     await expect
       .poll(() => page.evaluate(() => window.api.databaseStartup.getState()))
       .toMatchObject({ phase: 'ready' })
     target = await captureFixtureService(roots.storageRoot)
     if (!target) throw new Error(`Missing service identity: ${root}`)
-    await app.evaluate(({ dialog }) => {
+    await app.evaluate(({ dialog }, suppressNativeDialogs) => {
       const errors: string[] = []
       Object.assign(globalThis, { lifecycleErrors: errors })
+      if (suppressNativeDialogs) {
+        dialog.showMessageBox = async () => {
+          errors.push('Native dialog suppressed during focus-free verification')
+          return { response: 0, checkboxChecked: false }
+        }
+        dialog.showMessageBoxSync = () => {
+          errors.push('Native dialog suppressed during focus-free verification')
+          return 0
+        }
+      }
       dialog.showErrorBox = (_title, message) => {
         errors.push(message)
       }
-    })
+    }, process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1')
     await page.evaluate(async () => {
       await window.api.settings.markOnboardingComplete()
       const snapshot = await window.api.settings.upsertProvider({
@@ -326,13 +347,35 @@ async function launchFixture(stalled = false) {
       trackAgents,
       retainedReceipts,
       restart: async () => {
-        app = await launchOpenScience(roots, true, false, roots.fakeRemoteItRoot, 'normal', false)
+        app = await launchOpenScience(
+          roots,
+          true,
+          false,
+          roots.fakeRemoteItRoot,
+          process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1' ? 'hidden' : 'normal',
+          false
+        )
         desktopProcess = trackProcess(app.process())
         if (!desktopProcess) throw new Error('Restarted fixture desktop child was not captured')
         const page = await app.firstWindow({ timeout: 30_000 })
-        await expect
-          .poll(() => page.evaluate(() => window.api.databaseStartup.getState()))
-          .toMatchObject({ phase: 'ready' })
+        if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {
+          await page.emulateMedia({ reducedMotion: 'reduce' })
+        }
+        try {
+          await expect
+            .poll(() => page.evaluate(() => window.api.databaseStartup.getState()))
+            .toMatchObject({ phase: 'ready' })
+        } catch (error) {
+          await writeFile(
+            join(evidence, 'cold-start-failure.json'),
+            JSON.stringify(
+              await page.evaluate(() => window.api.runtimeStartup!.getState()),
+              null,
+              2
+            )
+          )
+          throw error
+        }
         target = await captureFixtureService(roots.storageRoot)
         if (!target) throw new Error('Restarted fixture service identity was not captured')
         return { app, page, target }
@@ -500,16 +543,14 @@ for (const stalled of [false, true]) {
       })
       const quitRequestedAt = Date.now()
       await f.app.evaluate(({ app }) => app.quit())
-      await expect(
-        f.page.getByRole('button', { name: 'Stop tasks and quit', exact: true })
-      ).toBeVisible()
+      await expect(f.page.getByRole('button', { name: 'Quit', exact: true })).toBeVisible()
       await f.page.screenshot({
         animations: 'disabled',
         path: join(evidence, `whole-service-quit-confirmation-${stalled}.png`)
       })
       const started = Date.now()
       const confirmedAt = started
-      await f.page.getByRole('button', { name: 'Stop tasks and quit', exact: true }).click()
+      await f.page.getByRole('button', { name: 'Quit', exact: true }).click()
       if (stalled) {
         await expect(f.page.getByText('Closing Open-Science…', { exact: true })).toBeVisible({
           timeout: 5000
@@ -638,7 +679,7 @@ for (const stalled of [false, true]) {
       }
       {
         // Recreate the two old, count-only diagnostic receipts from the actual owned launches.
-        // Their leaders have exited through the real Stop tasks and quit path. No user records
+        // Their leaders have exited through the real Quit path. No user records
         // or historical candidate identities are invented, deleted, or used as signal authority.
         for (const [index, original] of legacyReceipts.entries()) {
           expect(
@@ -782,7 +823,7 @@ for (const stalled of [false, true]) {
   })
 }
 
-test('identityless historical cleanup blocks only old context restoration while fresh conversations remain usable', async () => {
+test('identityless historical cleanup preserves the original conversation and continues once using saved history', async () => {
   test.setTimeout(150_000)
   const f = await launchFixture()
   let failure: unknown
@@ -813,8 +854,13 @@ test('identityless historical cleanup blocks only old context restoration while 
         .filter(Boolean)
         .map((line) => JSON.parse(line))
     const beforeQuitPrompts = await readProviderPrompts()
+    const savedSession = (await f.page.evaluate(() => window.api.sessions.loadAll())).sessions.find(
+      (session) => session.messages.some((message) => message.content === prompt)
+    )!
+    const savedResult = join(savedSession.cwd!, 'saved-lifecycle-result.txt')
+    await writeFile(savedResult, 'Previously saved result must survive recovery.\n')
     await f.app.evaluate(({ app }) => app.quit())
-    await f.page.getByRole('button', { name: 'Stop tasks and quit', exact: true }).click()
+    await f.page.getByRole('button', { name: 'Quit', exact: true }).click()
     await expect
       .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
         timeout: 30_000
@@ -827,7 +873,12 @@ test('identityless historical cleanup blocks only old context restoration while 
     // Reproduce a crash between durable starting publication and process identity publication.
     // This record carries no signal authority. Keep it byte-for-byte; never invent a PID or
     // remove evidence merely to let recovery or fixture cleanup pass.
-    const retained = { ...original, phase: 'starting', ownership: undefined }
+    const retained = {
+      ...original,
+      phase: 'starting',
+      ownership: undefined,
+      providerSessionIds: undefined
+    }
     const path = join(
       f.roots.storageRoot,
       'main-agent-process-ownership',
@@ -839,7 +890,14 @@ test('identityless historical cleanup blocks only old context restoration while 
     await writeFile(path, source, { flag: 'wx', mode: 0o600 })
     f.retainedReceipts.set(retained.receiptId, { path, source })
 
+    await writeFile(
+      join(f.roots.storageRoot, 'service-lifetime.json'),
+      '{truncated historical lifetime'
+    )
     const restarted = await f.restart()
+    expect(await readFile(savedResult, 'utf8')).toBe(
+      'Previously saved result must survive recovery.\n'
+    )
     expect(restarted.target.generation).not.toBe(f.target.generation)
     await expect
       .poll(() => restarted.page.evaluate(() => window.api.desktopRuntime!.getState()))
@@ -855,21 +913,41 @@ test('identityless historical cleanup blocks only old context restoration while 
       .getByRole('region', { name: 'Recent sessions' })
       .getByRole('button', { name: prompt })
       .click()
-    for (let attempt = 0; attempt < 2; attempt++) {
-      await restarted.page.getByRole('button', { name: 'Resume session', exact: true }).click()
-      await expect(restarted.page.getByTestId('resume-operation-error')).toContainText(
-        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+    const followup = 'Continue the interrupted turn from where it stopped. Check the saved history.'
+    await submitPromptViaUi(restarted.page, followup)
+    await expect(
+      restarted.page.getByText('Turn outcome resumed successfully.', { exact: true })
+    ).toBeVisible({ timeout: 30_000 })
+    await expect(
+      restarted.page.getByText(
+        'Continuing in a new context using your saved conversation history.',
+        { exact: true }
       )
-      expect(await readProviderPrompts()).toEqual(beforeQuitPrompts)
-      expect(await readFile(path, 'utf8')).toBe(source)
-    }
-    const unchanged = (
+    ).toBeVisible()
+    const continued = (
       await restarted.page.evaluate(() => window.api.sessions.loadAll())
     ).sessions.find((session) => session.id === historical.id)!
-    expect(unchanged.providerSessionId).toBe(historical.providerSessionId)
-    expect(unchanged.messages.filter((message) => message.role === 'user')).toEqual(
-      historical.messages.filter((message) => message.role === 'user')
-    )
+    expect(continued.providerSessionId).not.toBe(historical.providerSessionId)
+    expect(
+      continued.messages
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content)
+    ).toEqual([
+      ...historical.messages
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content),
+      followup
+    ])
+    const afterContinuation = await readProviderPrompts()
+    expect(afterContinuation).toHaveLength(beforeQuitPrompts.length + 1)
+    expect(afterContinuation.at(-1)!.prompt).toContain(prompt)
+    expect(afterContinuation.at(-1)!.prompt).toContain(followup)
+    expect(afterContinuation.at(-1)!.sessionId).not.toBe(beforeQuitPrompts[0].sessionId)
+    expect(await readFile(path, 'utf8')).toBe(source)
+    await restarted.page.screenshot({
+      path: join(evidence, 'original-conversation-continued.png'),
+      animations: 'disabled'
+    })
 
     await restarted.page.getByRole('button', { name: 'All projects', exact: true }).click()
     await createProjectViaUi(restarted.page, 'Fresh conversation with retained cleanup evidence')
@@ -880,7 +958,7 @@ test('identityless historical cleanup blocks only old context restoration while 
       })
     ).toBeVisible({ timeout: 30_000 })
     const after = await readProviderPrompts()
-    expect(after).toHaveLength(beforeQuitPrompts.length + 1)
+    expect(after).toHaveLength(beforeQuitPrompts.length + 2)
     expect(after.at(-1)!.sessionId).not.toBe(beforeQuitPrompts[0].sessionId)
     expect(after.at(-1)!.prompt).toContain('Summarize the deterministic fixture.')
     expect(await readFile(path, 'utf8')).toBe(source)
@@ -897,7 +975,10 @@ test('identityless historical cleanup blocks only old context restoration while 
           retainedReceiptIds: [...f.retainedReceipts.keys()],
           beforeQuitPrompts,
           providerPrompts: after,
-          explicitResumeRejections: 2,
+          originalConversationContinued: true,
+          savedFilePreserved:
+            (await readFile(savedResult, 'utf8')) ===
+            'Previously saved result must survive recovery.\n',
           freshConversationSucceeded: true,
           retainedEvidenceUnchanged: true
         },
@@ -906,6 +987,463 @@ test('identityless historical cleanup blocks only old context restoration while 
       )
     )
   } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await f.cleanup(failure)
+  }
+})
+
+test('App-only quit releases its retained socket hold after the desktop exits', async () => {
+  test.setTimeout(90_000)
+  const f = await launchFixture()
+  let failure: unknown
+  try {
+    await f.cli('start', '--no-open', '--json')
+    const owner = JSON.parse(
+      await readFile(join(f.roots.storageRoot, 'runtime-owner.json'), 'utf8')
+    )
+    const token = (await readFile(join(f.roots.storageRoot, 'web-token'), 'utf8')).trim()
+    await f.app.evaluate(({ app }) => app.quit())
+    await expect
+      .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
+        timeout: 30_000
+      })
+      .toBe(true)
+    await expect
+      .poll(async () => {
+        const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+          headers: {
+            authorization: `Bearer ${token}`,
+            'x-open-science-runtime-generation': owner.generation
+          }
+        })
+        return (await response.json()).lifetime
+      })
+      .toMatchObject({ apps: 0, explicit: true, stopping: false })
+    expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+    await f.cli('stop', '--json')
+    await expect.poll(() => isRuntimeProcessAlive(f.target.pid), { timeout: 25_000 }).toBe(false)
+    acquireRuntimeDirectorySync(f.roots.storageRoot).release()
+    await writeFile(
+      join(evidence, 'app-only-socket-hold-release.json'),
+      JSON.stringify(
+        {
+          desktopExited: true,
+          appHoldsAfterDisconnect: 0,
+          explicitServicePreserved: true,
+          normalStopAfterDisconnectCompleted: true
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await f.cleanup(failure)
+  }
+})
+
+test('quits only this App while a browser package transfer remains usable', async ({ browser }) => {
+  test.skip(
+    process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1',
+    'OS protocol delivery activates the App; omitted from focus-free validation.'
+  )
+  test.setTimeout(120_000)
+  const f = await launchFixture()
+  const context = await browser.newContext()
+  let failure: unknown
+  try {
+    await f.cli('start', '--no-open', '--json')
+    const website = await context.newPage()
+    const origin = 'https://lifecycle.example'
+    await context.grantPermissions(['local-network-access'], { origin })
+    const source = await readFile('packages/open-science/browser-import.mjs', 'utf8')
+    const archive = await readFile(
+      'src/main/session-package/fixtures/session-package-v0.31.1-minimal.science'
+    )
+    await website.route(`${origin}/**`, (route) =>
+      route.fulfill({
+        contentType: route.request().url().endsWith('.mjs') ? 'text/javascript' : 'text/html',
+        body: route.request().url().endsWith('.mjs')
+          ? source
+          : '<!doctype html><title>Independent browser transfer</title>'
+      })
+    )
+    await website.goto(origin)
+    const transferUrl = await website.evaluate(
+      async ({ bytes, port }) => {
+        const sdk = '/browser-import.mjs'
+        const { prepareBrowserImport } = await import(/* @vite-ignore */ sdk)
+        const transfer = prepareBrowserImport(new Blob([new Uint8Array(bytes)]), {
+          filename: 'background.science',
+          port
+        })
+        Object.assign(window, { lifecycleTransfer: transfer })
+        return transfer.url as string
+      },
+      { bytes: [...archive], port: await findBrowserImportPort() }
+    )
+    await f.app.evaluate(
+      ({ app }, url) =>
+        app.emit(
+          'open-url',
+          {
+            preventDefault() {
+              /* Simulated OS delivery has no navigation to cancel. */
+            }
+          },
+          url
+        ),
+      transferUrl
+    )
+    await expect
+      .poll(() => f.page.evaluate(() => window.api.packagePresentation!.getState()))
+      .toMatchObject({ browserTransfers: [{ state: 'waiting' }] })
+    await f.page.screenshot({
+      path: join(evidence, 'preserved-service-browser-transfer.png'),
+      animations: 'disabled'
+    })
+    await f.app.evaluate(({ app }) => app.quit())
+    await expect
+      .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
+        timeout: 30_000
+      })
+      .toBe(true)
+    expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+    const result = await website.evaluate(() =>
+      (
+        window as unknown as { lifecycleTransfer: { send(): Promise<unknown> } }
+      ).lifecycleTransfer.send()
+    )
+    expect(result).toEqual({ received: true })
+    expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+    await writeFile(
+      join(evidence, 'preserved-service-browser-transfer.json'),
+      JSON.stringify(
+        { desktopExited: true, serviceAlive: true, transferCompletedAfterAppQuit: true, result },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await context.close()
+    await f.cleanup(failure)
+  }
+})
+
+test('cold startup repairs an abandoned same-version socket and continues the original conversation', async () => {
+  test.skip(process.platform === 'win32', 'This controlled residual uses a POSIX socket path.')
+  test.setTimeout(120_000)
+  const f = await launchFixture()
+  let failure: unknown
+  try {
+    const prompt = 'Summarize the deterministic fixture.'
+    await submitPromptViaUi(f.page, prompt)
+    await expect(f.page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+    const historical = (await f.page.evaluate(() => window.api.sessions.loadAll())).sessions.find(
+      (session) => session.messages.some((message) => message.content === prompt)
+    )!
+    const savedResult = join(historical.cwd!, 'saved-cold-start-result.txt')
+    await writeFile(savedResult, 'Saved before the abandoned socket.\n')
+    const promptPath = join(f.roots.storageRoot, 'e2e-handoff-captures', 'provider-prompts.jsonl')
+    const promptsBefore = await readFile(promptPath, 'utf8')
+    f.trackAgents(f.target)
+    const owner = JSON.parse(
+      await readFile(join(f.roots.storageRoot, 'runtime-owner.json'), 'utf8')
+    )
+    const tokenBeforeCrash = (await readFile(join(f.roots.storageRoot, 'web-token'), 'utf8')).trim()
+    const ownerProof = await (
+      await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+        headers: {
+          authorization: `Bearer ${tokenBeforeCrash}`,
+          'x-open-science-runtime-generation': owner.generation
+        }
+      })
+    ).json()
+    await writeFile(
+      join(evidence, 'cold-start-configuration.json'),
+      JSON.stringify(
+        {
+          owner: ownerProof,
+          desktop: await f.app.evaluate(({ app }) => ({
+            argv: process.argv,
+            passwordStore: app.commandLine.getSwitchValue('password-store'),
+            profilePath: app.getPath('userData')
+          }))
+        },
+        null,
+        2
+      )
+    )
+    expect((await stat(owner.desktop.path)).isSocket()).toBe(true)
+    await unlink(owner.desktop.path)
+    f.desktopProcess.kill('SIGKILL')
+    await expect.poll(() => f.desktopProcess.signalCode).toBe('SIGKILL')
+    const token = (await readFile(join(f.roots.storageRoot, 'web-token'), 'utf8')).trim()
+    await expect
+      .poll(async () => {
+        const response = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+          headers: {
+            authorization: `Bearer ${token}`,
+            'x-open-science-runtime-generation': owner.generation
+          }
+        })
+        return response.json()
+      })
+      .toMatchObject({
+        pid: owner.pid,
+        launch: 'desktop',
+        lifetime: { explicit: false, apps: 0, stopping: false }
+      })
+    const restarted = await f.restart()
+    if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {
+      const windows = await restarted.app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().map((window) => ({
+          visible: window.isVisible(),
+          focused: window.isFocused()
+        }))
+      )
+      expect(windows.every((window) => !window.visible && !window.focused)).toBe(true)
+    }
+    expect(restarted.target.generation).not.toBe(f.target.generation)
+    expect(isRuntimeProcessAlive(f.target.pid)).toBe(false)
+    expect(await readFile(savedResult, 'utf8')).toBe('Saved before the abandoned socket.\n')
+    expect(await readFile(promptPath, 'utf8')).toBe(promptsBefore)
+    await restarted.page
+      .getByRole('region', { name: 'Recent sessions' })
+      .getByRole('button', { name: prompt })
+      .click()
+    await expect(
+      restarted.page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+    ).toBeVisible()
+    const followup = 'Continue the interrupted turn from where it stopped. Check the saved history.'
+    await submitPromptViaUi(restarted.page, followup)
+    await expect(
+      restarted.page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+    ).toHaveCount(2, { timeout: 30_000 })
+    const continued = (
+      await restarted.page.evaluate(() => window.api.sessions.loadAll())
+    ).sessions.find((session) => session.id === historical.id)!
+    expect(
+      continued.messages
+        .filter((message) => message.role === 'user')
+        .map((message) => message.content)
+    ).toEqual([prompt, followup])
+    expect((await readFile(promptPath, 'utf8')).trim().split('\n')).toHaveLength(
+      promptsBefore.trim().split('\n').length + 1
+    )
+    await restarted.page.screenshot({
+      path: join(evidence, 'cold-start-original-conversation.png'),
+      animations: 'disabled'
+    })
+    await writeFile(
+      join(evidence, 'cold-start-original-conversation.json'),
+      JSON.stringify(
+        {
+          oldGeneration: f.target.generation,
+          newGeneration: restarted.target.generation,
+          historicalSessionId: historical.id,
+          savedFilePreserved: true,
+          historyPreserved: true,
+          automaticPromptReplay: false,
+          followupSubmittedOnce: true,
+          backendExitConfirmed: true
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await f.cleanup(failure)
+  }
+})
+
+for (const savePhase of ['preflight', 'final'] as const)
+  test(`reconfirms whole-service quit when explicit preservation ends during the ${savePhase} renderer save`, async () => {
+    test.setTimeout(120_000)
+    const f = await launchFixture()
+    let failure: unknown
+    try {
+      await f.cli('start', '--no-open', '--json')
+      const prompt = 'Hold the turn outcome fixture. Quit scope race'
+      await submitPromptViaUi(f.page, prompt)
+      await expect(
+        f.page.getByText('Turn outcome cancellation checkpoint.', { exact: false })
+      ).toBeVisible()
+      const agents = f.trackAgents(f.target)
+      await f.app.evaluate(({ BrowserWindow }, savePhase) => {
+        const contents = BrowserWindow.getAllWindows()[0].webContents
+        const send = contents.send.bind(contents)
+        let flushes = 0
+        contents.send = (channel, ...args) => {
+          if (
+            channel === 'sessions:flush-request' &&
+            ++flushes === (savePhase === 'preflight' ? 1 : 2)
+          ) {
+            Object.assign(globalThis, { resumeQuitScopeSave: () => send(channel, ...args) })
+          } else send(channel, ...args)
+        }
+      }, savePhase)
+      await f.app.evaluate(({ app }) => app.quit())
+      await expect
+        .poll(() =>
+          f.app.evaluate(
+            () =>
+              typeof (globalThis as unknown as { resumeQuitScopeSave?: unknown })
+                .resumeQuitScopeSave
+          )
+        )
+        .toBe('function')
+      await expect(f.page.getByRole('button', { name: 'Quit', exact: true })).toHaveCount(0)
+      await f.cli('stop', '--json')
+      await f.app.evaluate(() =>
+        (globalThis as unknown as { resumeQuitScopeSave(): void }).resumeQuitScopeSave()
+      )
+      await expect(f.page.getByRole('button', { name: 'Quit', exact: true })).toBeVisible()
+      expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+      expect(agents.some((agent) => isRuntimeProcessAlive(agent.pid))).toBe(true)
+      await f.page.screenshot({
+        path: join(evidence, `quit-scope-reconfirmation-${savePhase}.png`),
+        animations: 'disabled'
+      })
+      await f.page.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(f.page.getByRole('button', { name: 'Quit', exact: true })).toHaveCount(0)
+      expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+      expect(agents.some((agent) => isRuntimeProcessAlive(agent.pid))).toBe(true)
+      await f.app.evaluate(({ app }) => app.quit())
+      await f.page.getByRole('button', { name: 'Quit', exact: true }).click()
+      await expect
+        .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
+          timeout: 30_000
+        })
+        .toBe(true)
+      await expect.poll(() => isRuntimeProcessAlive(f.target.pid), { timeout: 25_000 }).toBe(false)
+      acquireRuntimeDirectorySync(f.roots.storageRoot).release()
+      await writeFile(
+        join(evidence, `quit-scope-reconfirmation-${savePhase}.json`),
+        JSON.stringify(
+          {
+            explicitHoldRevokedDuringSave: true,
+            tasksAliveBeforeConfirmation: true,
+            cancelKeptTasksAlive: true,
+            subsequentConfirmedQuitCompleted: true
+          },
+          null,
+          2
+        )
+      )
+    } catch (error) {
+      failure = error
+      throw error
+    } finally {
+      await f.cleanup(failure)
+    }
+  })
+
+test('manual retry repairs a verified App service with an unusable desktop socket', async () => {
+  test.skip(process.platform === 'win32', 'This controlled residual uses a POSIX socket path.')
+  test.setTimeout(90_000)
+  const f = await launchFixture()
+  let failure: unknown
+  const mainDiagnostics: string[] = []
+  f.app.process().stderr?.on('data', (chunk) => mainDiagnostics.push(String(chunk)))
+  try {
+    const draft = 'Draft kept while repairing an abandoned desktop transport'
+    await f.page.getByRole('textbox', { name: 'Ask anything' }).fill(draft)
+    const owner = JSON.parse(
+      await readFile(join(f.roots.storageRoot, 'runtime-owner.json'), 'utf8')
+    )
+    await f.app.evaluate(() => {
+      const events: unknown[] = []
+      Object.assign(globalThis, { repairControlEvidence: events })
+      const fetchControl = globalThis.fetch
+      globalThis.fetch = async (input, init) => {
+        const response = await fetchControl(input, init)
+        if (/\/(owner|service\/retire)$/.test(String(input)))
+          events.push({
+            url: String(input),
+            status: response.status,
+            body: await response
+              .clone()
+              .json()
+              .catch(() => null)
+          })
+        return response
+      }
+    })
+    await writeFile(
+      join(evidence, 'manual-retry-parent.json'),
+      JSON.stringify({
+        desktopPid: f.desktopProcess.pid,
+        runtimePid: owner.pid,
+        parent: (
+          await promisify(execFile)('ps', ['-p', String(owner.pid), '-o', 'ppid='])
+        ).stdout.trim()
+      })
+    )
+    // Simulate an unusable endpoint in this isolated fixture. The real directory lock and owner
+    // record stay intact; repair must stop its verified generation before another writer starts.
+    expect((await stat(owner.desktop.path)).isSocket()).toBe(true)
+    await unlink(owner.desktop.path)
+    await f.app.evaluate(disconnectFixtureServiceConnection)
+    const recovery = f.page.getByTestId('local-service-recovery')
+    await expect(recovery.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({
+      timeout: 18_000
+    })
+    await recovery.getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect
+      .poll(() => f.page.evaluate(() => window.api.desktopRuntime!.getState()), { timeout: 35_000 })
+      .toMatchObject({ phase: 'connected' })
+    const replacement = await captureFixtureService(f.roots.storageRoot)
+    expect(replacement?.generation).not.toBe(f.target.generation)
+    expect(isRuntimeProcessAlive(f.target.pid)).toBe(false)
+    await expect(f.page.getByRole('textbox', { name: 'Ask anything' })).toHaveText(draft)
+    await submitPromptViaUi(f.page, 'Summarize the deterministic fixture.')
+    await expect(
+      f.page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+    ).toBeVisible({ timeout: 30_000 })
+    await f.page.screenshot({
+      path: join(evidence, 'repaired-desktop-transport.png'),
+      animations: 'disabled'
+    })
+    await writeFile(
+      join(evidence, 'repaired-desktop-transport.json'),
+      JSON.stringify(
+        {
+          oldGeneration: f.target.generation,
+          newGeneration: replacement?.generation,
+          draftPreserved: true,
+          newMessageSucceeded: true,
+          controlEndpointResponsive: true
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    await writeFile(join(evidence, 'manual-retry-main.log'), mainDiagnostics.join('')).catch(
+      () => undefined
+    )
+    await writeFile(
+      join(evidence, 'manual-retry-control-failure.json'),
+      JSON.stringify(
+        await f.app.evaluate(
+          () =>
+            (globalThis as unknown as { repairControlEvidence: unknown[] }).repairControlEvidence
+        ),
+        null,
+        2
+      )
+    ).catch(() => undefined)
     failure = error
     throw error
   } finally {
@@ -972,7 +1510,7 @@ test('repeated disconnects preserve drafts; force stop never automatically reviv
     f.trackAgents(f.target)
     const force = await f.cli('stop', '--force', '--json')
     await expect(f.page.getByTestId('local-service-recovery')).toBeVisible()
-    await expect(f.page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible({
+    await expect(f.page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({
       timeout: 18_000
     })
     await f.page.screenshot({

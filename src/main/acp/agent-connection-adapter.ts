@@ -1,4 +1,4 @@
-import { spawnMainAgentProcess } from './main-agent-process-ownership'
+import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
   AuthenticateRequest,
@@ -229,6 +229,7 @@ class AcpAgentConnectionAdapter {
         })
       })
       connection = this.createClientConnection(spawnedProcess, hooks)
+      bindMainAgentConnection(connection, spawnedProcess)
     } catch (error) {
       backendAttempt?.fail()
       await cleanup()

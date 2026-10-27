@@ -66,7 +66,7 @@ export const createActiveResearchSafeInstallGate =
       }
 
     const readiness = await runTeardownGate(options)
-    if (!readiness.completed || !readiness.reaped) return readiness
+    if ((!readiness.completed || !readiness.reaped) && !readiness.stopAuthorized) return readiness
     if (isExclusiveHandoffActive()) {
       restoreAfterFinalRefusal(onFinalRefusal)
       return { completed: false, reaped: false }

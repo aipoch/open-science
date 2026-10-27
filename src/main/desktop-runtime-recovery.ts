@@ -29,6 +29,7 @@ export function createDesktopRuntimeRecovery(options: {
   client: DesktopRuntimeClient
   startedProcess?: ChildProcess
   connect(signal: AbortSignal): Promise<DesktopRuntimeClient>
+  repair?(signal: AbortSignal): Promise<DesktopRuntimeClient>
   activate(
     client: DesktopRuntimeClient,
     signal: AbortSignal,
@@ -54,6 +55,7 @@ export function createDesktopRuntimeRecovery(options: {
   let generation = options.client.runtimeInfo().generation
   let current = options.client
   let pendingCandidate: DesktopRuntimeClient | undefined
+  let repairing = false
   let state: DesktopRuntimeRecoveryState = { phase: 'connected', epoch: 0, closing: false }
   let attempt: Promise<DesktopRuntimeRecoveryState> | undefined
   let cancellation: AbortController | undefined
@@ -91,6 +93,9 @@ export function createDesktopRuntimeRecovery(options: {
     setShutdownProgress: (active: boolean) => publish({ ...state, shutdownProgress: active }),
     disconnect: (client: DesktopRuntimeClient) => {
       if (client !== current && client !== pendingCandidate) return
+      // Retiring the failed original process is part of this explicit repair. Its exit must
+      // not cancel the replacement; a pending replacement disconnect still cancels normally.
+      if (repairing && client === current) return
       cancellation?.abort()
       if (state.closing) return
       if (state.phase === 'connected') restartAuthorization = undefined
@@ -137,7 +142,7 @@ export function createDesktopRuntimeRecovery(options: {
         void restartAuthorization?.catch(() => undefined)
         stopped = false
         crashes = []
-        roundDeadline = Date.now() + (options.timeoutMs ?? 12_000)
+        roundDeadline = Date.now() + (options.timeoutMs ?? 30_000)
       }
       if (!childAlive() && !options.restart) {
         publish({ ...state, phase: 'unavailable' })
@@ -178,10 +183,22 @@ export function createDesktopRuntimeRecovery(options: {
               'crash-limit'
             )
           }
-          const connection =
-            restarting && options.restart
-              ? options.restart(controller.signal, authorization)
-              : options.connect(controller.signal)
+          const connection = (async () => {
+            if (restarting && options.restart)
+              return options.restart(controller.signal, authorization)
+            if (!automatic && options.repair) {
+              try {
+                return await options.connect(
+                  AbortSignal.any([controller.signal, AbortSignal.timeout(2000)])
+                )
+              } catch {
+                controller.signal.throwIfAborted()
+                repairing = true
+                return options.repair(controller.signal)
+              }
+            }
+            return options.connect(controller.signal)
+          })()
           void connection.then(
             (late) => {
               if (controller.signal.aborted) late.close()
@@ -191,7 +208,7 @@ export function createDesktopRuntimeRecovery(options: {
           candidate = await abortable(connection, controller.signal)
           pendingCandidate = candidate
           if (controller.signal.aborted) throw new Error('Desktop reconnect canceled.')
-          if (restarting) {
+          if (restarting || (!automatic && options.repair && candidate.processId() !== processId)) {
             processId = candidate.processId()
             generation = candidate.runtimeInfo().generation
             pendingRestartedGeneration = generation
@@ -269,6 +286,7 @@ export function createDesktopRuntimeRecovery(options: {
           })
         } finally {
           clearTimeout(timer)
+          repairing = false
           pendingCandidate = undefined
           cancellation = undefined
           attempt = undefined

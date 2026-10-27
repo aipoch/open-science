@@ -167,16 +167,14 @@ export function DesktopRuntimeRecovery({
         title={title}
         description={
           state.shutdownProgress
-            ? t(
-                'Stopping the local service. Unfinished tasks, including CLI tasks, may be interrupted.'
-              )
+            ? t('Saving changes and closing the app…')
             : connected
               ? interrupted.length
                 ? t('Some tasks were interrupted. Open them to resume.')
                 : undefined
               : state.reason === 'crash-limit'
                 ? t(
-                    'Automatic recovery has stopped. Save diagnostics, then retry or quit. Your projects and saved records are kept.'
+                    'Automatic recovery has paused. Your drafts, projects and saved records are kept. You can retry now.'
                   )
                 : state.reason === 'service-stopped'
                   ? t(
@@ -210,7 +208,7 @@ export function DesktopRuntimeRecovery({
         primaryButton={
           connected && interrupted.length && !state.shutdownProgress
             ? {
-                label: t('View tasks'),
+                label: t('View task'),
                 onClick: () => {
                   const session = interrupted[0]!
                   useNavigationStore.getState().openSession(session.projectId, session.id, 'user')
@@ -218,7 +216,7 @@ export function DesktopRuntimeRecovery({
               }
             : !connected && !busy && !state.shutdownProgress
               ? {
-                  label: t('Reconnect'),
+                  label: t('Retry'),
                   onClick: () => {
                     void window.api.desktopRuntime?.reconnect()
                   }

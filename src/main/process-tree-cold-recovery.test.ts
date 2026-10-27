@@ -94,14 +94,14 @@ const probe = (
 }
 
 describe('Darwin cold process recovery', () => {
-  it.each(['ordinary-process', 'foreign-marker', 'reused-leader'])(
+  it.each(['ordinary-process', 'foreign-marker', 'reused-leader', 'identity-race'])(
     'clears a gone tree despite an unrelated %s',
     (scenario) => {
       expect(probe(scenario)).toEqual({ outcome: 'gone', signals: [] })
     }
   )
 
-  it.each(['escaped', 'unreadable', 'incomplete-table', 'identity-race', 'surviving-group'])(
+  it.each(['escaped', 'unreadable', 'incomplete-table', 'surviving-group'])(
     'retains the receipt for %s without signalling unrelated processes',
     (scenario) => {
       expect(probe(scenario)).toEqual({ outcome: 'blocked', signals: [] })

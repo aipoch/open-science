@@ -1037,6 +1037,9 @@ const ConversationPanel = ({
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
   const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const contextResetNotice = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.contextResets?.[activeSession.id] : false
+  )
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
@@ -1824,6 +1827,23 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
+                  />
+                ) : null}
+                {contextResetNotice ? (
+                  <ErrorNotice
+                    inline
+                    level="info"
+                    className="mb-2"
+                    description={t(
+                      'Continuing in a new context using your saved conversation history.'
+                    )}
+                    dismissButton={{
+                      label: t('Dismiss'),
+                      onClick: () =>
+                        useWorkspaceOperationErrors.setState((state) => ({
+                          contextResets: { ...state.contextResets, [activeSession!.id]: false }
+                        }))
+                    }}
                   />
                 ) : null}
                 {activeSession?.compacting ? (

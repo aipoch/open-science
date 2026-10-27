@@ -680,8 +680,8 @@ describe('process catalog boundaries', () => {
     const sharedCloseConfirmKeys = [
       "Don't ask again",
       'Minimize to tray',
-      'Stop tasks and quit',
-      'Stopping the local service may interrupt App, CLI and Web tasks and lose unsaved progress. The list shows known tasks only.'
+      'Quit_verb',
+      'Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.'
     ]
 
     for (const locale of TRANSLATED) {

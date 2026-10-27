@@ -94,7 +94,7 @@ test('reacquires a mounted managed image capability after recovery', async () =>
     })
     await expect(page.getByRole('button', { name: 'Quit', exact: true })).toBeFocused()
     await page.keyboard.press('Tab')
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeFocused()
     await page.keyboard.press('Enter')
     await expect
       .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
