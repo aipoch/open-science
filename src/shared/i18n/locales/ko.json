@@ -7606,7 +7606,6 @@
     "Turning off…": "끄는 중…",
     "Status: On": "상태: 켜짐",
     "Status: Off": "상태: 꺼짐",
-    "Could not turn on protection.": "보호를 켤 수 없습니다.",
     "Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.": "네트워크 규칙으로 Notebook 코드 실행과 패키지 다운로드를 보호합니다. 끄면 표준 실행을 사용합니다.",
     "Downloads up to {{size}}. Downloaded components are reused.": "최대 다운로드 크기: {{size}}. 다운로드한 구성 요소는 재사용됩니다.",
     "Turning protection on or off requires administrator permission.": "켜거나 끄려면 관리자 권한이 필요합니다.",
@@ -7614,6 +7613,7 @@
     "Network port unavailable. Try turning protection on again.": "네트워크 포트를 사용할 수 없습니다. 보호를 다시 켜세요.",
     "Cancelled. Downloads are kept. Try again or turn off protection.": "취소되었습니다. 다운로드는 유지됩니다. 다시 시도하거나 보호를 끄세요.",
     "Could not prepare {{component}}. Try again or turn off protection.": "{{component}}을(를) 준비할 수 없습니다. 다시 시도하거나 보호를 끄세요.",
-    "Could not cancel. Try again.": "취소할 수 없습니다. 다시 시도하세요."
+    "Could not cancel. Try again.": "취소할 수 없습니다. 다시 시도하세요.",
+    "Network protection error": "네트워크 보호 오류"
   }
 }

@@ -7608,7 +7608,6 @@
     "Turning off…": "正在关闭…",
     "Status: On": "状态：已开启",
     "Status: Off": "状态：未开启",
-    "Could not turn on protection.": "无法开启网络保护。",
     "Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.": "按网络规则保护 Notebook 代码执行和软件包下载。关闭时使用标准执行模式。",
     "Downloads up to {{size}}. Downloaded components are reused.": "最多下载 {{size}}，已下载的组件可重复使用。",
     "Turning protection on or off requires administrator permission.": "开启或关闭需要管理员权限。",
@@ -7616,6 +7615,7 @@
     "Network port unavailable. Try turning protection on again.": "网络端口不可用，请重新开启保护。",
     "Cancelled. Downloads are kept. Try again or turn off protection.": "已取消，下载内容已保留。请重试或关闭保护。",
     "Could not prepare {{component}}. Try again or turn off protection.": "无法准备 {{component}}。请重试或关闭保护。",
-    "Could not cancel. Try again.": "无法取消，请重试。"
+    "Could not cancel. Try again.": "无法取消，请重试。",
+    "Network protection error": "网络保护出错"
   }
 }

@@ -7608,7 +7608,6 @@
     "Turning off…": "正在關閉…",
     "Status: On": "狀態：已開啟",
     "Status: Off": "狀態：未開啟",
-    "Could not turn on protection.": "無法開啟網路保護。",
     "Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.": "依網路規則保護 Notebook 程式碼執行和套件下載。關閉時使用標準執行模式。",
     "Downloads up to {{size}}. Downloaded components are reused.": "最多下載 {{size}}，已下載的元件可重複使用。",
     "Turning protection on or off requires administrator permission.": "開啟或關閉需要管理員權限。",
@@ -7616,6 +7615,7 @@
     "Network port unavailable. Try turning protection on again.": "網路連接埠無法使用，請重新開啟保護。",
     "Cancelled. Downloads are kept. Try again or turn off protection.": "已取消，下載內容已保留。請重試或關閉保護。",
     "Could not prepare {{component}}. Try again or turn off protection.": "無法準備 {{component}}。請重試或關閉保護。",
-    "Could not cancel. Try again.": "無法取消，請重試。"
+    "Could not cancel. Try again.": "無法取消，請重試。",
+    "Network protection error": "網路保護出錯"
   }
 }

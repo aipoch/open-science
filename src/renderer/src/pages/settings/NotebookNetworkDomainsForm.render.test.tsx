@@ -283,6 +283,30 @@ describe('NotebookNetworkDomainsForm', () => {
     expect(container.textContent).toContain('standard execution')
   })
 
+  it('uses operation-neutral error copy when turning protection off fails', async () => {
+    const remove = vi.fn().mockRejectedValue(new Error('private backend details'))
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'win32',
+      settings: {
+        getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] }),
+        installNotebookNetwork: vi.fn(),
+        removeNotebookNetwork: remove
+      }
+    }
+
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await flush()
+    await act(async () => button('Turn off').click())
+
+    expect(remove).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Network protection error'
+    )
+    expect(container.textContent).not.toContain('Could not turn on protection.')
+    expect(container.textContent).not.toContain('private backend details')
+    expect(button('Turn off').disabled).toBe(false)
+  })
+
   it('shows translated generic copy when saving fails', async () => {
     useSettingsStore.setState({
       setNotebookNetwork: vi.fn().mockRejectedValue(new Error('C:\\private\\backend.txt'))

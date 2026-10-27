@@ -7770,7 +7770,6 @@
     "Turning off…": "Wird ausgeschaltet…",
     "Status: On": "Status: Ein",
     "Status: Off": "Status: Aus",
-    "Could not turn on protection.": "Schutz konnte nicht eingeschaltet werden.",
     "Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.": "Notebook-Code und Paketdownloads durch Netzwerkregeln schützen. Ohne Schutz nutzt Notebook die Standardausführung.",
     "Downloads up to {{size}}. Downloaded components are reused.": "Download bis zu {{size}}. Heruntergeladene Komponenten werden wiederverwendet.",
     "Turning protection on or off requires administrator permission.": "Zum Ein- oder Ausschalten sind Administratorrechte erforderlich.",
@@ -7778,6 +7777,7 @@
     "Network port unavailable. Try turning protection on again.": "Netzwerkport nicht verfügbar. Schutz erneut einschalten.",
     "Cancelled. Downloads are kept. Try again or turn off protection.": "Abgebrochen. Downloads bleiben erhalten. Erneut versuchen oder Schutz ausschalten.",
     "Could not prepare {{component}}. Try again or turn off protection.": "{{component}} konnte nicht vorbereitet werden. Erneut versuchen oder Schutz ausschalten.",
-    "Could not cancel. Try again.": "Abbruch fehlgeschlagen. Erneut versuchen."
+    "Could not cancel. Try again.": "Abbruch fehlgeschlagen. Erneut versuchen.",
+    "Network protection error": "Fehler beim Netzwerkschutz"
   }
 }

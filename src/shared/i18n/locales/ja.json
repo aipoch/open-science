@@ -7608,7 +7608,6 @@
     "Turning off…": "オフにしています…",
     "Status: On": "状態：オン",
     "Status: Off": "状態：オフ",
-    "Could not turn on protection.": "保護をオンにできませんでした。",
     "Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.": "ネットワークルールで Notebook のコード実行とパッケージのダウンロードを保護します。オフの場合は標準実行を使用します。",
     "Downloads up to {{size}}. Downloaded components are reused.": "最大 {{size}} をダウンロードします。ダウンロード済みのコンポーネントは再利用されます。",
     "Turning protection on or off requires administrator permission.": "オン・オフの切り替えには管理者権限が必要です。",
@@ -7616,6 +7615,7 @@
     "Network port unavailable. Try turning protection on again.": "ネットワークポートを使用できません。保護を再度オンにしてください。",
     "Cancelled. Downloads are kept. Try again or turn off protection.": "キャンセルしました。ダウンロードは保持されます。再試行するか保護をオフにしてください。",
     "Could not prepare {{component}}. Try again or turn off protection.": "{{component}} を準備できませんでした。再試行するか保護をオフにしてください。",
-    "Could not cancel. Try again.": "キャンセルできませんでした。再試行してください。"
+    "Could not cancel. Try again.": "キャンセルできませんでした。再試行してください。",
+    "Network protection error": "ネットワーク保護エラー"
   }
 }

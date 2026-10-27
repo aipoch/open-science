@@ -8081,7 +8081,6 @@
     "Turning off…": "Выключение…",
     "Status: On": "Состояние: включена",
     "Status: Off": "Состояние: выключена",
-    "Could not turn on protection.": "Не удалось включить защиту.",
     "Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.": "Защита кода Notebook и загрузок пакетов сетевыми правилами. При отключении Notebook использует стандартное выполнение.",
     "Downloads up to {{size}}. Downloaded components are reused.": "Загрузка до {{size}}. Загруженные компоненты используются повторно.",
     "Turning protection on or off requires administrator permission.": "Для включения и выключения нужны права администратора.",
@@ -8089,6 +8088,7 @@
     "Network port unavailable. Try turning protection on again.": "Сетевой порт недоступен. Попробуйте снова включить защиту.",
     "Cancelled. Downloads are kept. Try again or turn off protection.": "Отменено. Загрузки сохранены. Повторите попытку или выключите защиту.",
     "Could not prepare {{component}}. Try again or turn off protection.": "Не удалось подготовить {{component}}. Повторите попытку или выключите защиту.",
-    "Could not cancel. Try again.": "Не удалось отменить. Повторите попытку."
+    "Could not cancel. Try again.": "Не удалось отменить. Повторите попытку.",
+    "Network protection error": "Ошибка защиты сети"
   }
 }

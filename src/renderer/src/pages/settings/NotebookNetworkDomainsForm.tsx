@@ -314,7 +314,7 @@ const NotebookNetworkDomainsForm = ({
                       : status.kind === 'unsupported'
                         ? t('Notebook network protection is not supported on this platform.')
                         : window.api.platform === 'win32'
-                          ? t('Could not turn on protection.')
+                          ? t('Network protection error')
                           : statusReasonLabel(status.reason, t)}
               </p>
               {window.api.platform === 'win32' && status.kind === 'ready' ? (
@@ -337,7 +337,7 @@ const NotebookNetworkDomainsForm = ({
                   title={
                     status.windowsRuntimeSetup?.cancelled
                       ? t('Cancelled')
-                      : t('Could not turn on protection.')
+                      : t('Network protection error')
                   }
                   description={failureDescription}
                 />

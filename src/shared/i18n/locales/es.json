@@ -7940,7 +7940,6 @@
     "Turning off…": "Desactivando…",
     "Status: On": "Estado: activada",
     "Status: Off": "Estado: desactivada",
-    "Could not turn on protection.": "No se pudo activar la protección.",
     "Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.": "Proteger el código de Notebook y las descargas de paquetes con reglas de red. Al desactivarse, Notebook usa la ejecución estándar.",
     "Downloads up to {{size}}. Downloaded components are reused.": "Descarga de hasta {{size}}. Los componentes descargados se reutilizan.",
     "Turning protection on or off requires administrator permission.": "Activar o desactivar la protección requiere permisos de administrador.",
@@ -7948,6 +7947,7 @@
     "Network port unavailable. Try turning protection on again.": "El puerto de red no está disponible. Vuelva a activar la protección.",
     "Cancelled. Downloads are kept. Try again or turn off protection.": "Cancelado. Se conservan las descargas. Reintente o desactive la protección.",
     "Could not prepare {{component}}. Try again or turn off protection.": "No se pudo preparar {{component}}. Reintente o desactive la protección.",
-    "Could not cancel. Try again.": "No se pudo cancelar. Vuelva a intentarlo."
+    "Could not cancel. Try again.": "No se pudo cancelar. Vuelva a intentarlo.",
+    "Network protection error": "Error de protección de red"
   }
 }
