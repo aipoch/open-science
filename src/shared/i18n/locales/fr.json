@@ -189,6 +189,10 @@
   "renderer": {
     "Read the security policy and report vulnerabilities.": "Consulter la politique de sécurité et signaler des vulnérabilités.",
     "Security": "Sécurité",
+    "Reading status": "État de lecture",
+    "In progress": "En cours de lecture",
+    "Finished reading": "Lecture terminée",
+    "Set reading status": "Définir l’état de lecture",
     "{{count}} steps remaining_one": "{{count}} étape restante",
     "{{count}} steps remaining_many": "{{count}} étapes restantes",
     "{{count}} steps remaining_other": "{{count}} étapes restantes",

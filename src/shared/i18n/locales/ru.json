@@ -190,6 +190,11 @@
   "renderer": {
     "Read the security policy and report vulnerabilities.": "Ознакомьтесь с политикой безопасности и сообщите об уязвимостях.",
     "Security": "Безопасность",
+    "Reading status": "Статус чтения",
+    "In progress": "В процессе чтения",
+    "Finished reading": "Прочитано",
+    "Set reading status": "Задать статус чтения",
+    "Unread": "Не прочитано",
     "{{count}} steps remaining_one": "Остался {{count}} шаг",
     "{{count}} steps remaining_few": "Осталось {{count}} шага",
     "{{count}} steps remaining_many": "Осталось {{count}} шагов",

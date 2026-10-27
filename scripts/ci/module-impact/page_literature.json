@@ -60,6 +60,7 @@
     "src/renderer/src/pages/literature/list/useLiteratureEntries.test.tsx",
     "src/renderer/src/pages/literature/list/useLiteratureEntries.ts",
     "src/renderer/src/pages/literature/workflows/useLiteratureMetadata.ts",
+    "src/renderer/src/pages/literature/workflows/useLiteratureReadingStatus.ts",
     "src/renderer/src/pages/literature/list/useLiteratureYearFilter.ts",
     "src/renderer/src/pages/literature/collections/SmartCollectionPanel.tsx",
     "src/renderer/src/pages/literature/collections/SmartCollectionPanel.test.tsx",

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
+  BookOpen,
   ChevronDown,
   Hash,
   List,
@@ -28,6 +29,7 @@ import { TagFilter } from '../../settings/ResourceTagControls'
 import { CollectionOptionHelp } from '../collections/CollectionOptionHelp'
 import { LiteratureYearFilter } from './LiteratureYearFilter'
 import type { YearFilterState } from './useLiteratureYearFilter'
+import type { LiteratureReadingStatus } from '../workflows/useLiteratureReadingStatus'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 
 import {
@@ -38,7 +40,7 @@ import {
   type JournalField
 } from '@aipoch/journal-catalog/contracts'
 
-type FixedField = 'tags' | 'type' | 'year' | 'pdf'
+type FixedField = 'tags' | 'type' | 'year' | 'pdf' | 'readingStatus'
 type Field = {
   key: string
   label: string
@@ -48,7 +50,7 @@ type Field = {
 }
 type Row = { id: number; key: string; operator: JournalAttributeFilter['operator']; value: string }
 type AppliedRow = { id: number; filter: JournalAttributeFilter }
-const fixedFields: FixedField[] = ['tags', 'type', 'year', 'pdf']
+const fixedFields: FixedField[] = ['tags', 'type', 'year', 'pdf', 'readingStatus']
 const journalKey = (datasetId: string, fieldId: string): string =>
   JSON.stringify([datasetId, fieldId])
 
@@ -159,6 +161,8 @@ export function LiteratureFilters({
   itemTypeLabels,
   hasPdf,
   onHasPdfChange,
+  readingStatus,
+  onReadingStatusChange,
   yearFilter,
   datasets,
   journalFilters,
@@ -172,6 +176,8 @@ export function LiteratureFilters({
   itemType: LiteratureItemType | 'all'
   onItemTypeChange: (value: LiteratureItemType | 'all') => void
   itemTypeLabels: Record<LiteratureItemType, string>
+  readingStatus: LiteratureReadingStatus | 'all'
+  onReadingStatusChange: (value: LiteratureReadingStatus | 'all') => void
   hasPdf: 'all' | 'with' | 'without'
   onHasPdfChange: (value: 'all' | 'with' | 'without') => void
   yearFilter: YearFilterState
@@ -188,6 +194,7 @@ export function LiteratureFilters({
       { key: 'type', label: t('Reference type'), icon: Type },
       { key: 'year', label: t('Year'), icon: Calendar },
       { key: 'pdf', label: t('PDF'), icon: Paperclip },
+      { key: 'readingStatus', label: t('Reading status'), icon: BookOpen },
       ...datasets.flatMap((dataset) =>
         dataset.fields.map((field) => ({
           key: journalKey(dataset.id, field.id),
@@ -210,7 +217,7 @@ export function LiteratureFilters({
   const initialRows = (): Row[] => [
     ...fixedFields.map((key, id) => ({ id, key, operator: 'equals' as const, value: '' })),
     ...journalFilters.map((filter, index) => ({
-      id: index + 4,
+      id: index + fixedFields.length,
       key: journalKey(filter.datasetId, filter.fieldId),
       operator: filter.operator,
       value: filter.value ?? ''
@@ -218,7 +225,7 @@ export function LiteratureFilters({
   ]
   const [rows, setRows] = useState(initialRows)
   const [appliedRows, setAppliedRows] = useState<AppliedRow[]>(() =>
-    journalFilters.map((filter, index) => ({ id: index + 4, filter }))
+    journalFilters.map((filter, index) => ({ id: index + fixedFields.length, filter }))
   )
   const nextId = useRef(rows.length)
   const applied = JSON.stringify(journalFilters)
@@ -305,6 +312,7 @@ export function LiteratureFilters({
     if (key === 'tags') onTagChange('all')
     if (key === 'type') onItemTypeChange('all')
     if (key === 'pdf') onHasPdfChange('all')
+    if (key === 'readingStatus') onReadingStatusChange('all')
     if (key === 'year') yearFilter.clear()
     onFilterChange()
   }
@@ -409,6 +417,25 @@ export function LiteratureFilters({
                     }}
                     className="w-full"
                   />
+                ) : null}
+                {row.key === 'readingStatus' ? (
+                  <Select
+                    value={readingStatus}
+                    onValueChange={(value) => {
+                      onReadingStatusChange(value as LiteratureReadingStatus | 'all')
+                      onFilterChange()
+                    }}
+                  >
+                    <SelectTrigger aria-label={t('Reading status')} className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t('All')}</SelectItem>
+                      <SelectItem value="unread">{t('Unread')}</SelectItem>
+                      <SelectItem value="reading">{t('In progress')}</SelectItem>
+                      <SelectItem value="read">{t('Finished reading')}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 ) : null}
                 {row.key === 'type' ? (
                   <Select

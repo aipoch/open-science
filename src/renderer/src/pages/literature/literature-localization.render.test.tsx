@@ -112,6 +112,7 @@ it('retranslates shared rating labels without replacing focused row controls or 
       selectionStore={createLiteratureSelectionStore()}
       visibleOrderedTableColumns={['rating']}
       tableColumnLabels={{
+        readingStatus: 'Reading status',
         type: 'Type',
         authors: 'Authors',
         year: 'Year',

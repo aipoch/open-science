@@ -188,6 +188,10 @@
   "renderer": {
     "Read the security policy and report vulnerabilities.": "Sicherheitsrichtlinie lesen und Schwachstellen melden.",
     "Security": "Sicherheit",
+    "Reading status": "Lesestatus",
+    "In progress": "Wird gelesen",
+    "Finished reading": "Gelesen",
+    "Set reading status": "Lesestatus festlegen",
     "{{count}} steps remaining_one": "Noch {{count}} Schritt",
     "{{count}} steps remaining_other": "Noch {{count}} Schritte",
     "Input help": "Eingabehilfe",

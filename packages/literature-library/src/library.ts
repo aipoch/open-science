@@ -195,6 +195,14 @@ export class LibraryTransaction extends LibraryImporter {
     }
     return { kind: 'item', id: ids[0]!, state: command.included ? 'linked' : 'unlinked' }
   }
+  async setReadingStatus(
+    command: Extract<LiteratureCatalogCommand, { kind: 'set-reading-status' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    const ids = [...new Set(command.itemIds)]
+    if ((await this.store.setReadingStatus(ids, command.readingStatus)) !== ids.length)
+      throw new Error('One or more Literature Items are unavailable.')
+    return { kind: 'item', id: ids[0]!, itemIds: ids, state: 'present' }
+  }
   async setItemLifecycle(
     command: Extract<LiteratureCatalogCommand, { kind: 'set-item-lifecycle' }>
   ): Promise<LiteratureCatalogReceipt> {

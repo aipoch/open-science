@@ -9033,3 +9033,60 @@ describe('Notebook folder restriction settings', () => {
     ).toThrow('Invalid Notebook folder restriction flag')
   })
 })
+
+describe('Global network grant publication', () => {
+  it('publishes only after the durable grant has finalized', async () => {
+    const calls: string[] = []
+    const publish = vi.fn(async () => {
+      expect((await repository.getSettings()).notebookNetwork?.allowedDomains).toContain(
+        'data.example.org'
+      )
+      calls.push('publish')
+    })
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      applyNotebookNetwork: async () => {
+        calls.push('apply')
+      },
+      onNotebookNetworkDomainAllowed: publish,
+      log: silentLog
+    })
+    await service.allowNotebookNetworkDomain('data.example.org', undefined, async () => {
+      calls.push('finalize')
+    })
+    expect(calls).toEqual(['apply', 'finalize', 'publish'])
+  })
+
+  it('does not publish a grant whose finalization rolls back', async () => {
+    const publish = vi.fn()
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      onNotebookNetworkDomainAllowed: publish,
+      log: silentLog
+    })
+    await expect(
+      service.allowNotebookNetworkDomain('data.example.org', undefined, async () => {
+        throw new Error('cancelled')
+      })
+    ).rejects.toThrow('cancelled')
+    expect(publish).not.toHaveBeenCalled()
+    expect((await service.getNotebookNetwork()).allowedDomains).not.toContain('data.example.org')
+  })
+
+  it('keeps committed consent when publication fails', async () => {
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      onNotebookNetworkDomainAllowed: async () => {
+        throw new Error('offline')
+      },
+      log: silentLog
+    })
+    await expect(service.allowNotebookNetworkDomain('data.example.org')).resolves.toMatchObject({
+      allowedDomains: ['data.example.org']
+    })
+    expect((await service.getNotebookNetwork()).allowedDomains).toContain('data.example.org')
+  })
+})

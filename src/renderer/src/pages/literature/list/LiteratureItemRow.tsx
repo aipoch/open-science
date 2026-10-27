@@ -173,6 +173,16 @@ export const LiteratureItemRow = memo(function LiteratureItemRow({
             </td>
           )
         switch (column) {
+          case 'readingStatus':
+            return (
+              <td key={column} className="px-3 py-2 align-middle text-muted-foreground">
+                {entry.readingStatus === 'reading'
+                  ? t('In progress')
+                  : entry.readingStatus === 'read'
+                    ? t('Finished reading')
+                    : t('Unread')}
+              </td>
+            )
           case 'abstract':
             return (
               <LiteratureTextTooltip key={column} text={entry.item.abstract}>
