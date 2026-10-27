@@ -1,5 +1,6 @@
 import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { ResolvedAgentBackend } from '../agent-framework'
+import { isRecord } from '../value-guards'
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 
 export type OpenCodeUsageSnapshot = {
@@ -61,17 +62,21 @@ export const fetchOpenCodeUsageSnapshot = async (
 ): Promise<OpenCodeUsageSnapshot | undefined> => {
   try {
     const url = new URL(
-      `/session/${encodeURIComponent(sessionId)}/message`,
+      api.version === 2
+        ? `/api/session/${encodeURIComponent(sessionId)}/context`
+        : `/session/${encodeURIComponent(sessionId)}/message`,
       api.baseUrl.endsWith('/') ? api.baseUrl : `${api.baseUrl}/`
     )
-    url.searchParams.set('directory', cwd)
+    if (api.version !== 2) url.searchParams.set('directory', cwd)
     const response = await fetchImpl(url, {
       headers: { authorization: api.authorization },
       signal: AbortSignal.timeout(2_000)
     })
     if (!response.ok) return undefined
 
-    const messages = (await response.json()) as unknown
+    const body: unknown = await response.json()
+    const messages =
+      api.version === 2 && body && typeof body === 'object' && 'data' in body ? body.data : body
     if (!Array.isArray(messages)) return undefined
 
     const assistantMessageIds = new Set<string>()
@@ -79,7 +84,23 @@ export const fetchOpenCodeUsageSnapshot = async (
     const compactionByMessageId = new Map<string, { succeeded: boolean; error?: string }>()
     for (const message of messages) {
       if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
-      const info = (message as { info?: OpenCodeMessageInfo }).info
+      if (api.version === 2 && message.type === 'compaction' && typeof message.id === 'string') {
+        assistantMessageIds.add(message.id)
+        if (message.status === 'completed' || message.status === 'failed') {
+          const error = isRecord(message.error) ? message.error.message : undefined
+          compactionByMessageId.set(message.id, {
+            succeeded: message.status === 'completed',
+            ...(typeof error === 'string' ? { error: error.slice(0, 2000) } : {})
+          })
+        }
+        const usage = messageUsage(message.tokens)
+        if (usage) usageByMessageId.set(message.id, usage)
+        continue
+      }
+      const info: OpenCodeMessageInfo | undefined =
+        api.version === 2
+          ? { ...message, role: (message as { type?: unknown }).type }
+          : (message as { info?: OpenCodeMessageInfo }).info
       if (!info || info.role !== 'assistant' || typeof info.id !== 'string') continue
       assistantMessageIds.add(info.id)
       if (info.summary === true) {

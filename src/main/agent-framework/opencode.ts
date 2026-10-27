@@ -32,7 +32,7 @@ import type {
   SessionSetupContext
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
-import { renderAppMcpToolReferences } from './app-mcp-names'
+import { appMcpServerNames, renderAppMcpToolReferences } from './app-mcp-names'
 
 type SpawnProcess = (
   command: string,
@@ -300,6 +300,43 @@ const buildOpencodeGoSessionPlugin = (
   ].join('\n')
 }
 
+const buildOpencodeV2Plugin = (provider: ResolvedProvider, ctx: ModelConfigContext): string => {
+  const providerIds = opencodeModelCatalog(provider, ctx.reasoningEffort, ctx.providerModelCatalog)
+    .filter((entry) => entry.provider.vendorId === 'opencode-go')
+    .map((entry) => resolveOpencodeEndpoint(entry.provider).providerId)
+  return [
+    'import { Plugin } from "@opencode/plugin"',
+    `const servers = new Set(${JSON.stringify(appMcpServerNames('opencode'))})`,
+    `const providerIDs = new Set(${JSON.stringify(providerIds)})`,
+    'export default Plugin.define({',
+    '  id: "open-science-compatibility",',
+    '  async setup(ctx) {',
+    '    await ctx.mcp.transform(editor => {',
+    '      for (const [name, server] of editor.list()) {',
+    '        if (servers.has(name)) server.codemode = false',
+    '      }',
+    '    })',
+    // 2.x returns session/new before async MCP discovery and its tool catalog debounce settle.
+    '    await ctx.session.hook("prompt", async () => {',
+    '      const expected = (await ctx.mcp.list()).data.filter(server => servers.has(server.name)).map(server => server.name)',
+    '      if (!expected.length) return',
+    '      const deadline = Date.now() + 10000',
+    '      do {',
+    '        const available = new Set((await ctx.tool.list()).filter(tool => tool.options?.codemode === false).map(tool => tool.options.namespace))',
+    '        if (expected.every(name => available.has(name))) return',
+    '        await new Promise(resolve => setTimeout(resolve, 20))',
+    '      } while (Date.now() < deadline)',
+    '      throw new Error("OpenCode app tools did not become ready. Reconnect the session and try again.")',
+    '    })',
+    '    await ctx.session.hook("model.request", event => {',
+    '      if (providerIDs.has(event.model.providerID)) event.headers["x-opencode-session"] = event.sessionID',
+    '    })',
+    '  }',
+    '})',
+    ''
+  ].join('\n')
+}
+
 const buildOpencodeModelConfig = (
   provider: ResolvedProvider,
   reasoningEffort: ModelReasoningEffort | undefined,
@@ -455,6 +492,50 @@ const buildOpencodeConfig = (
 
 export { buildOpencodeConfig }
 
+export const spawnOpenCodeProcess = (
+  input: AgentSpawnInput,
+  command: 'acp' | 'serve',
+  {
+    platform = process.platform,
+    sourceEnv = process.env,
+    spawnProcess = spawn as SpawnProcess
+  }: OpencodeFrameworkDeps = {}
+): ChildProcessWithoutNullStreams => {
+  // `opencode acp` starts the ACP subprocess over stdio, matching the app's existing transport. On
+  // Windows an npm-installed opencode is a `opencode.cmd`/`.bat` shim that Node cannot launch without
+  // a shell (spawn EINVAL, same as Claude's cli.js shim), so those go through the shell with the
+  // path quoted; a native `.exe`/Unix binary spawns directly.
+  const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
+  const inheritedEnv = { ...augmentedPathEnv(sourceEnv) }
+  // Config overrides bypass HOME/XDG isolation; PURE also disables our required Go plugin.
+  // Drop shell-owned controls, then apply the explicit app backend configuration below.
+  for (const key of Object.keys(inheritedEnv)) {
+    if (
+      [
+        'OPENCODE_CONFIG',
+        'OPENCODE_CONFIG_DIR',
+        'OPENCODE_CONFIG_CONTENT',
+        'OPENCODE_TEST_MANAGED_CONFIG_DIR',
+        'OPENCODE_PLUGIN_META_FILE',
+        'OPENCODE_PURE'
+      ].includes(key.toUpperCase())
+    ) {
+      delete inheritedEnv[key]
+    }
+  }
+
+  return (input.spawnProcess ?? spawnProcess)(
+    needsShell ? `"${input.executablePath}"` : input.executablePath,
+    [command, ...input.args],
+    {
+      env: { ...inheritedEnv, ...input.env },
+      stdio: 'pipe',
+      windowsHide: true,
+      shell: needsShell
+    }
+  )
+}
+
 export const createOpencodeFramework = ({
   platform = process.platform,
   sourceEnv = process.env,
@@ -481,39 +562,7 @@ export const createOpencodeFramework = ({
   supportedApiTypes: ['messages', 'chat-completions'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
-    // `opencode acp` starts the ACP subprocess over stdio, matching the app's existing transport. On
-    // Windows an npm-installed opencode is a `opencode.cmd`/`.bat` shim that Node cannot launch without
-    // a shell (spawn EINVAL, same as Claude's cli.js shim), so those go through the shell with the
-    // path quoted; a native `.exe`/Unix binary spawns directly.
-    const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
-    const inheritedEnv = { ...augmentedPathEnv(sourceEnv) }
-    // Config overrides bypass HOME/XDG isolation; PURE also disables our required Go plugin.
-    // Drop shell-owned controls, then apply the explicit app backend configuration below.
-    for (const key of Object.keys(inheritedEnv)) {
-      if (
-        [
-          'OPENCODE_CONFIG',
-          'OPENCODE_CONFIG_DIR',
-          'OPENCODE_CONFIG_CONTENT',
-          'OPENCODE_TEST_MANAGED_CONFIG_DIR',
-          'OPENCODE_PLUGIN_META_FILE',
-          'OPENCODE_PURE'
-        ].includes(key.toUpperCase())
-      ) {
-        delete inheritedEnv[key]
-      }
-    }
-
-    return (input.spawnProcess ?? spawnProcess)(
-      needsShell ? `"${input.executablePath}"` : input.executablePath,
-      ['acp', ...input.args],
-      {
-        env: { ...inheritedEnv, ...input.env },
-        stdio: 'pipe',
-        windowsHide: true,
-        shell: needsShell
-      }
-    )
+    return spawnOpenCodeProcess(input, 'acp', { platform, sourceEnv, spawnProcess })
   },
 
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
@@ -524,17 +573,24 @@ export const createOpencodeFramework = ({
     const dataHome = opencodeDataHome(ctx.storageRoot)
     const opencodeDir = join(configHome, 'opencode')
     const configPath = join(opencodeDir, 'opencode.json')
+    const v2PluginDir = ctx.nativeVersion?.startsWith('2.')
+      ? join(opencodeDir, 'open-science-v2')
+      : undefined
     const configFiles: NonNullable<AgentModelConfig['configFiles']> = [
       { path: configPath, content: '' },
       {
-        path: join(opencodeDir, 'plugins', OPENCODE_GO_SESSION_PLUGIN),
+        path: v2PluginDir
+          ? join(v2PluginDir, 'index.ts')
+          : join(opencodeDir, 'plugins', OPENCODE_GO_SESSION_PLUGIN),
         // Always rewrite the app-owned plugin, including with an empty provider set, so switching
         // away from Go cannot leave a previously generated provider match active on disk.
-        content: buildOpencodeGoSessionPlugin(
-          provider,
-          ctx.reasoningEffort,
-          ctx.providerModelCatalog ?? []
-        )
+        content: v2PluginDir
+          ? buildOpencodeV2Plugin(provider, ctx)
+          : buildOpencodeGoSessionPlugin(
+              provider,
+              ctx.reasoningEffort,
+              ctx.providerModelCatalog ?? []
+            )
       }
     ]
 
@@ -619,6 +675,7 @@ export const createOpencodeFramework = ({
             ctx.storageRoot
           ),
           instructions: instructionPaths,
+          ...(v2PluginDir ? { plugins: [v2PluginDir] } : {}),
           ...(ctx.skillDiscovery
             ? {
                 permission: {

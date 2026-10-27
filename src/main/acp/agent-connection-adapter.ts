@@ -17,6 +17,12 @@ import { Readable, Writable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import {
+  startOpenCodeService,
+  OpenCodeServiceCleanupError,
+  type OpenCodeServiceLease
+} from './opencode-service'
+import { acquireOpenCodeStore, type OpenCodeStoreLease } from './opencode-store'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { terminateProcessTree } from '../process-tree'
 import type {
@@ -117,7 +123,10 @@ class AcpAgentConnectionAdapter {
     let bridgeLease: ResponsesTransportLease
     let messagesBridgeLease: MessagesBridgeLease
     let providerTransportLease: ProviderTransportLease
+    let openCodeService: OpenCodeServiceLease | undefined
+    let openCodeStore: OpenCodeStoreLease | undefined
     let backendAttempt: AcpBackendGenerationAttempt | undefined
+    let serviceCleanupFailed = false
     let framework: AgentFramework['id'] = 'claude-code'
 
     const reportCleanupFailure = (stage: CandidateCleanupStage, error: unknown): void => {
@@ -128,6 +137,8 @@ class AcpAgentConnectionAdapter {
       }
     }
     const cleanup = async (): Promise<void> => {
+      let reaped = !serviceCleanupFailed
+      if (!reaped) hooks.onProcessTreeReaped(false)
       try {
         connection?.close()
       } catch (error) {
@@ -139,11 +150,26 @@ class AcpAgentConnectionAdapter {
           const result = await terminateProcessTree(process, undefined, {
             error: (message, error) => hooks.reportProcessTreeError(message, error)
           })
+          reaped = reaped && result.reaped
           hooks.onProcessTreeReaped(result.reaped)
         } catch (error) {
+          reaped = false
+          hooks.onProcessTreeReaped(false)
           reportCleanupFailure('agent-process', error)
         }
       }
+      if (openCodeService) {
+        try {
+          const result = await openCodeService.release()
+          reaped = reaped && result.reaped
+          hooks.onProcessTreeReaped(result.reaped)
+        } catch (error) {
+          reaped = false
+          hooks.onProcessTreeReaped(false)
+          reportCleanupFailure('agent-process', error)
+        }
+      }
+      if (reaped) openCodeStore?.release()
       if (bridgeLease) {
         try {
           await bridgeLease.release()
@@ -168,11 +194,32 @@ class AcpAgentConnectionAdapter {
     }
 
     try {
-      const backend = await input.resolveBackend()
+      let backend = await input.resolveBackend()
       framework = backend.framework.id
       bridgeLease = backend.responsesTransportLease
       messagesBridgeLease = backend.messagesBridgeLease
       providerTransportLease = backend.providerTransportLease
+      if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion) {
+        openCodeStore = await acquireOpenCodeStore(
+          backend.env.XDG_DATA_HOME,
+          backend.opencodeMajorVersion
+        )
+      }
+      let serviceExited = false
+      if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 2) {
+        const service = await startOpenCodeService(backend, () => {
+          serviceExited = true
+          if (process && input.isCurrent()) {
+            process.emit('error', new Error('OpenCode HTTP service exited unexpectedly.'))
+            process.kill()
+          }
+        })
+        openCodeService = service
+        backend = { ...backend, opencodeUsageApi: service.api }
+      }
+      if (input.isShuttingDown()) throw new Error('ACP runtime is shutting down.')
+      if (!input.isCurrent()) throw new Error('ACP connection superseded during preparation.')
+      if (serviceExited) throw new Error('OpenCode HTTP service exited during preparation.')
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
       process = input.spawnAgent
@@ -226,6 +273,7 @@ class AcpAgentConnectionAdapter {
       })
       connection = this.createClientConnection(spawnedProcess, hooks)
     } catch (error) {
+      if (error instanceof OpenCodeServiceCleanupError) serviceCleanupFailed = true
       backendAttempt?.fail()
       await cleanup()
       throw error
@@ -252,7 +300,9 @@ class AcpAgentConnectionAdapter {
           framework,
           bridgeLease,
           messagesBridgeLease,
-          providerTransportLease
+          providerTransportLease,
+          openCodeService,
+          openCodeStore
         })
         state = 'transferred'
         openedConnection.closed.then(() => {

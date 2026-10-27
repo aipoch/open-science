@@ -228,7 +228,12 @@
     "src/main/acp/runtime-activity-port.ts",
     "src/main/acp/runtime-contract.ts",
     "src/main/acp/sandbox-network-approval-owner.test.ts",
-    "src/main/acp/sandbox-network-approval-owner.ts"
+    "src/main/acp/sandbox-network-approval-owner.ts",
+    "src/main/acp/opencode-service.ts",
+    "src/main/acp/opencode-service.test.ts",
+    "src/main/acp/opencode-store.ts",
+    "src/main/acp/opencode-store.test.ts",
+    "src/main/acp/opencode-v2.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -401,7 +406,10 @@
       "src/main/acp/auto-operation-broker.test.ts",
       "src/main/acp/auto-operation-inventory.test.ts",
       "src/main/acp/auto-operation-policy.test.ts",
-      "src/main/acp/sandbox-network-approval-owner.test.ts"
+      "src/main/acp/sandbox-network-approval-owner.test.ts",
+      "src/main/acp/opencode-service.test.ts",
+      "src/main/acp/opencode-store.test.ts",
+      "src/main/acp/opencode-v2.integration.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",

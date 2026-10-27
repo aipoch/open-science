@@ -18,7 +18,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const fixture = async (): Promise<{ root: string; backend: ResolvedAgentBackend }> => {
+const fixture = async (
+  nativeVersion?: string
+): Promise<{ root: string; backend: ResolvedAgentBackend }> => {
   const root = await mkdtemp(join(tmpdir(), 'opencode-preparation-'))
   roots.push(root)
   const config = opencodeFramework.prepareModelConfig(
@@ -34,6 +36,7 @@ const fixture = async (): Promise<{ root: string; backend: ResolvedAgentBackend 
     },
     {
       storageRoot: root,
+      nativeVersion,
       executablePath: '/opencode',
       instructions: 'admitted connector guidance',
       systemPromptAppends: ['admitted app guidance']
@@ -62,6 +65,27 @@ const fixture = async (): Promise<{ root: string; backend: ResolvedAgentBackend 
 }
 
 describe('OpenCode delegated runtime preparation', () => {
+  it('keeps the 2.x plugin and companion service inside the delegated runtime', async () => {
+    const { root, backend } = await fixture('2.1.4')
+    backend.opencodeMajorVersion = 2
+    backend.args = []
+    backend.opencodeUsageApi = {
+      baseUrl: 'http://127.0.0.1:12345',
+      authorization: 'Basic parent',
+      version: 2
+    }
+    const runtime = await prepareOpenCodeRuntime(backend, join(root, 'attempt'))
+    prepared.push(runtime)
+    const overlay = JSON.parse(runtime.backend.env.OPENCODE_CONFIG_CONTENT)
+    expect(overlay.plugins).toEqual([
+      join(runtime.backend.env.XDG_CONFIG_HOME, 'opencode', 'open-science-v2')
+    ])
+    expect(await readFile(join(overlay.plugins[0], 'index.ts'), 'utf8')).toContain('Plugin.define')
+    expect(runtime.backend.opencodeUsageApi).toBeUndefined()
+    expect(runtime.backend.args).toEqual([])
+    expect(runtime.backend.opencodeMajorVersion).toBe(2)
+  })
+
   it('materializes admitted config, Go plugin, instructions and skills without sharing writable state', async () => {
     const { root, backend } = await fixture()
     const original = JSON.stringify(backend)
