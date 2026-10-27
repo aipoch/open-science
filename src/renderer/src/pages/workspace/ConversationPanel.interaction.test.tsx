@@ -32,8 +32,7 @@ import { recordRestartTurnOutcome } from '../../../../main/session-persistence/t
 import {
   materializeSessionConversationGraph,
   normalizeSessionAfterRestore,
-  rearmUnacceptedElicitationContinuations,
-  type PersistedChatSession
+  rearmUnacceptedElicitationContinuations
 } from '../../../../shared/session-persistence'
 import type { SessionConversationCommand } from '../../../../shared/session-conversation-command'
 import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
@@ -60,7 +59,10 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
+import type {
+  DelegatedQuestionRequest,
+  PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
@@ -3763,7 +3765,8 @@ describe('ConversationPanel composer intake', () => {
       })
       let waitingSession: PersistedChatSession = {
         ...structuredClone(activeSession),
-        status: 'waiting-for-user'
+        status: 'waiting-for-user',
+        activeRun: undefined
       }
       const waitingAuthority = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(waitingSession),
@@ -3784,6 +3787,14 @@ describe('ConversationPanel composer intake', () => {
           action: 'decline'
         })
       ).resolves.toMatchObject({ request: { requestId: 'export-choice-request' } })
+      expect(waitingSession.activities![0].elicitation).toMatchObject({
+        state: 'declined',
+        continuationPending: true
+      })
+      expect(waitingSession.conversationGraph!.activities[0].elicitation).toEqual(
+        waitingSession.activities![0].elicitation
+      )
+      expect(activeSession.activities![0].elicitation?.state).toBe('pending')
       await expect(
         authority.prepareElicitation({
           projectId: activeSession.projectId,

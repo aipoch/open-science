@@ -359,10 +359,14 @@ describe('workspace runtime events', () => {
           state: 'answered',
           answers: [{ fieldId: 'choice', value: 'continue' }],
           respondedAt: source.activities![0].elicitation!.respondedAt,
-          continuationPending: true,
-          continuationRecovery: { error: 'The task could not continue. Your response is saved.' }
+          continuationPending: true
         })
-        expect(before.activities![0].elicitation?.continuationRecovery?.retryable).toBeUndefined()
+        expect(before.activities![0].elicitation?.continuationRecovery).toEqual({
+          error: 'The task could not continue. Your response is saved.'
+        })
+        expect(before.conversationGraph!.activities[0].elicitation).toEqual(
+          before.activities![0].elicitation
+        )
       } else {
         expect(before.error).toBe('Provider failed')
         if (unaccepted) expect(before.activities![0].elicitation?.continuationPending).toBe(true)
