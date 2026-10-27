@@ -523,6 +523,7 @@ for (const theme of ['Light', 'Dark'] as const) {
     await submitPromptViaUi(page, 'Request fixture permission.')
     await page.getByRole('button', { name: 'Deny', exact: true }).click()
     await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
+    await page.getByTestId('tool-group-header').click()
     await checkContrast(
       page.getByText('Declined by you: tool', { exact: true }),
       'Declined tool 767px'

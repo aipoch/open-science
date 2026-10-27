@@ -355,8 +355,14 @@ describe('workspace runtime events', () => {
       })
       if (phase === 'rearmed') {
         expect(before.status).toBe('waiting-for-user')
-        expect(before.activities![0].elicitation).toMatchObject({ state: 'pending' })
-        expect(before.activities![0].elicitation?.respondedAt).toBeUndefined()
+        expect(before.activities![0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: [{ fieldId: 'choice', value: 'continue' }],
+          respondedAt: source.activities![0].elicitation!.respondedAt,
+          continuationPending: true,
+          continuationRecovery: { error: 'The task could not continue. Your response is saved.' }
+        })
+        expect(before.activities![0].elicitation?.continuationRecovery?.retryable).toBeUndefined()
       } else {
         expect(before.error).toBe('Provider failed')
         if (unaccepted) expect(before.activities![0].elicitation?.continuationPending).toBe(true)

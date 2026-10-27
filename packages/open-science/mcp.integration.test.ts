@@ -87,7 +87,7 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
 }, 15000)
 
 it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
-  'exits cleanly on %s without writing non-protocol stdout',
+  'terminates on %s without writing non-protocol stdout',
   async (event) => {
     const child = spawn(process.execPath, [resolve('packages/open-science/cli.mjs'), 'mcp'], {
       stdio: 'pipe'
@@ -117,8 +117,10 @@ it.each(['EOF', 'SIGTERM', 'SIGINT'] as const)(
     if (event === 'EOF') child.stdin.end()
     else child.kill(event)
     const [code, signal] = await exited
-    expect(code).toBe(0)
-    expect(signal).toBeNull()
+    // Windows kill() forcibly terminates the process without invoking signal handlers.
+    const forced = process.platform === 'win32' && event !== 'EOF'
+    expect(code).toBe(forced ? null : 0)
+    expect(signal).toBe(forced ? event : null)
     expect(
       output
         .trim()

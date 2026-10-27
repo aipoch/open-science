@@ -32,7 +32,8 @@ import { recordRestartTurnOutcome } from '../../../../main/session-persistence/t
 import {
   materializeSessionConversationGraph,
   normalizeSessionAfterRestore,
-  rearmUnacceptedElicitationContinuations
+  rearmUnacceptedElicitationContinuations,
+  type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import type { SessionConversationCommand } from '../../../../shared/session-conversation-command'
 import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
@@ -3760,11 +3761,19 @@ describe('ConversationPanel composer intake', () => {
       const authority = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(activeSession)
       })
+      let waitingSession: PersistedChatSession = {
+        ...structuredClone(activeSession),
+        status: 'waiting-for-user'
+      }
       const waitingAuthority = new AcpDurableContinuationContextOwner({
-        loadSessionForContinuation: async () => ({
-          ...structuredClone(activeSession),
-          status: 'waiting-for-user'
-        })
+        loadSessionForContinuation: async () => structuredClone(waitingSession),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          waitingSession = {
+            ...mutate(structuredClone(waitingSession)),
+            runtimeTranscriptOwner: 'main'
+          }
+          return structuredClone(waitingSession)
+        }
       })
       await expect(
         waitingAuthority.prepareElicitation({
