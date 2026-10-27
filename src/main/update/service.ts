@@ -13,6 +13,8 @@ import {
   UPDATE_INSTALLATION_REQUIRED,
   type UpdateApplyOptions,
   type UpdateDownloadOptions,
+  type UpdateInstaller,
+  type UpdateInstallerRevealResult,
   type UpdateStatus
 } from '../../shared/update'
 import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diagnostics/node'
@@ -24,6 +26,15 @@ import { canStartUpdateDownload, toAvailableUpdateStatus, type UpdateStrategy } 
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+import {
+  confirmInstaller,
+  inspectConfirmedInstaller,
+  inspectInstallerFile,
+  installerMatchesStatus,
+  withoutMissingInstaller,
+  type ConfirmedInstaller,
+  type InspectInstallerFile
+} from './current-installer'
 
 type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
   channel: Channel,
@@ -47,6 +58,8 @@ export type UpdateServiceDeps = {
   fileExists?: (path: string) => boolean
   openPath?: (path: string) => Promise<string>
   openExternal?: (url: string) => Promise<void>
+  showItemInFolder?: (path: string) => void
+  inspectInstallerFile?: InspectInstallerFile
   // Removes a stale partial file. Injected in tests; defaults to fs rm (best-effort). Used to drop a
   // prior session's <target>.part the FIRST time a target path is downloaded this session, so a restart
   // starts the installer download from scratch rather than resuming last session's fragment via Range.
@@ -111,6 +124,9 @@ export class UpdateService implements UpdateStrategy {
   private readonly log: Logger
   private readonly installationGuard: (interactive: boolean) => boolean
   private readonly translate: NativeTranslator
+  private readonly showItemInFolder: (path: string) => void
+  private readonly inspectInstallerFile: InspectInstallerFile
+  private confirmedInstaller?: ConfirmedInstaller
   // Per-session set of target paths that have already been downloaded once this run. The first
   // download to a given path removes any pre-existing <target>.part and validator sidecar so a restart
   // starts fresh
@@ -132,6 +148,8 @@ export class UpdateService implements UpdateStrategy {
     this.fileExists = deps.fileExists ?? existsSync
     this.openPath = deps.openPath ?? ((path) => shell.openPath(path))
     this.openExternal = deps.openExternal ?? ((url) => shell.openExternal(url))
+    this.showItemInFolder = deps.showItemInFolder ?? ((path) => shell.showItemInFolder(path))
+    this.inspectInstallerFile = deps.inspectInstallerFile ?? inspectInstallerFile
     this.removeFile = deps.removeFile ?? ((path) => rm(path, { force: true }))
     this.log = deps.log ?? NOOP_LOGGER
     this.translate = deps.translate ?? englishNativeTranslator
@@ -162,6 +180,45 @@ export class UpdateService implements UpdateStrategy {
     return this.status
   }
 
+  private async inspectCurrentInstaller(): ReturnType<typeof inspectConfirmedInstaller> {
+    const artifact = this.confirmedInstaller
+    const result = await inspectConfirmedInstaller(
+      artifact,
+      this.inspectInstallerFile,
+      (value) => this.confirmedInstaller === value && installerMatchesStatus(value, this.status)
+    )
+    if (result.kind === 'missing' && this.confirmedInstaller === artifact) {
+      this.confirmedInstaller = undefined
+      this.setStatus(withoutMissingInstaller(this.status, Boolean(this.applyLifecycle)))
+    }
+    return result
+  }
+
+  async getInstaller(): Promise<UpdateInstaller | null> {
+    const result = await this.inspectCurrentInstaller()
+    return result.kind === 'ready' &&
+      this.confirmedInstaller === result.artifact &&
+      installerMatchesStatus(result.artifact, this.status)
+      ? result.installer
+      : null
+  }
+
+  async revealInstaller(): Promise<UpdateInstallerRevealResult> {
+    const result = await this.inspectCurrentInstaller()
+    if (result.kind !== 'ready') return result.kind
+    if (
+      this.confirmedInstaller !== result.artifact ||
+      !installerMatchesStatus(result.artifact, this.status)
+    )
+      return 'unavailable'
+    try {
+      this.showItemInFolder(result.path)
+      return 'revealed'
+    } catch {
+      return 'unavailable'
+    }
+  }
+
   // Manifest flow always applies via an installer, so stamp applyKind here so every broadcast status
   // carries it (the renderer picks the "Open installer" vs "Restart" action off this field).
   private blockForInstallation(interactive: boolean): boolean {
@@ -173,12 +230,14 @@ export class UpdateService implements UpdateStrategy {
 
   private setStatus(next: UpdateStatus): void {
     this.status = { ...next, applyKind: 'installer' }
+    if (this.confirmedInstaller && !installerMatchesStatus(this.confirmedInstaller, this.status))
+      this.confirmedInstaller = undefined
     this.broadcast('update:status', this.status)
   }
 
   async check(): Promise<UpdateStatus> {
     // A transfer and a manifest check cannot own the status concurrently. Once ready, checks still run
-    // but only a strictly newer release may supersede the downloaded installer.
+    // but only a newer release or changed current artifact may supersede the downloaded installer.
     if (this.downloadLifecycle) return this.status
     if (this.checkLifecycle) return this.checkLifecycle
 
@@ -192,6 +251,7 @@ export class UpdateService implements UpdateStrategy {
       operation.phase('fetch-manifest')
       try {
         const manifest = await fetchManifest(this.manifestUrl, this.fetchImpl)
+        const download = selectDownload(manifest, this.platform, this.arch) ?? undefined
         if (readyStatus) {
           // Another operation (for example apply() discovering a missing file) already moved the
           // lifecycle forward; this check no longer owns the snapshot it started from.
@@ -199,7 +259,13 @@ export class UpdateService implements UpdateStrategy {
             operation.complete({ result: 'superseded' })
             return this.status
           }
-          if (!isNewer(manifest.version, readyStatus.latest ?? this.currentVersion)) {
+          const artifactChanged =
+            manifest.version === readyStatus.latest &&
+            JSON.stringify(download) !== JSON.stringify(readyStatus.download)
+          if (
+            !isNewer(manifest.version, readyStatus.latest ?? this.currentVersion) &&
+            !artifactChanged
+          ) {
             operation.complete({ result: 'ready-preserved' })
             return this.status
           }
@@ -213,7 +279,6 @@ export class UpdateService implements UpdateStrategy {
           operation.complete({ result: 'up-to-date' })
           return this.status
         }
-        const download = selectDownload(manifest, this.platform, this.arch) ?? undefined
         this.setStatus({
           state: 'available',
           current: this.currentVersion,
@@ -385,14 +450,22 @@ export class UpdateService implements UpdateStrategy {
           signal: abort.signal
         })
         if (abort.signal.aborted || this.downloadAbort !== abort) return
-        this.setStatus({
+        const readyStatus: UpdateStatus = {
           ...this.status,
           state: 'ready',
           progress: 100,
           downloadedBytes: download.size,
           totalBytes: download.size,
           localPath
-        })
+        }
+        delete readyStatus.installerMissing
+        this.confirmedInstaller = confirmInstaller(
+          readyStatus,
+          this.platform,
+          this.inspectInstallerFile,
+          defaultFileName
+        )
+        this.setStatus(readyStatus)
         operation.complete({ result: 'ready' })
       } catch (error) {
         // A user cancel aborts the fetch (rejects here); cancel() already reset the status to
@@ -440,7 +513,15 @@ export class UpdateService implements UpdateStrategy {
     if (this.applyLifecycle) return this.applyLifecycle
 
     const admittedStatus = this.status
-    const lifecycle = Promise.resolve().then(() => this.applyAdmitted(admittedStatus, options))
+    const lifecycle = Promise.resolve().then(async () => {
+      try {
+        await this.applyAdmitted(admittedStatus, options)
+      } finally {
+        if (this.status.state === 'applying' && !this.status.localPath && this.status.download)
+          this.setStatus(withoutMissingInstaller(this.status))
+      }
+      return this.status
+    })
     this.applyLifecycle = lifecycle
     const clearLifecycle = (): void => {
       if (this.applyLifecycle === lifecycle) this.applyLifecycle = undefined

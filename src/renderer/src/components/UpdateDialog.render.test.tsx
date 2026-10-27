@@ -249,10 +249,13 @@ describe('UpdateDialog', () => {
     expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
       'Please wait for the app to close and reopen.'
     )
-    expect(document.body.querySelectorAll('button')).toHaveLength(1)
+    const controls = document.querySelector('[data-testid="manual-update-controls"]')!
+    expect(controls.querySelectorAll('button')).toHaveLength(1)
+    expect(controls.querySelector<HTMLButtonElement>('button')?.disabled).toBe(true)
     expect(
-      Array.from(document.body.querySelectorAll('button')).every((button) => button.disabled)
-    ).toBe(true)
+      document.querySelector<HTMLButtonElement>('[data-testid="manual-update-links"] button')
+        ?.disabled
+    ).toBe(false)
   })
 
   it('shows "Open installer" when a ready update applies via installer (mac)', () => {
@@ -295,7 +298,7 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).toContain('Install failed')
     const link = document.body.querySelector(`a[href="${APP.update.downloadPage}"]`)
     expect(link).not.toBeNull()
-    expect(link?.textContent).toContain('Download manually')
+    expect(link?.textContent).toContain('download from the website')
   })
 
   it('guides background-process shutdown failures to diagnostics and GitHub issues', () => {
@@ -451,4 +454,80 @@ it('opens installation guidance from a read-only update failure', () => {
   act(() => guidanceButton.click())
   expect(download).toHaveBeenCalledOnce()
   useUpdateStore.setState({ download: originalDownload })
+})
+
+it('keeps manual resources outside release notes and returns from instructions to the latest update state', async () => {
+  const original = useUpdateStore.getState()
+  const download = vi.fn(async () => {})
+  const apply = vi.fn(async () => {})
+  const cancel = vi.fn(async () => {})
+  const recover = vi.fn(async () => {})
+  const base = {
+    current: '1',
+    latest: '2',
+    applyKind: 'installer' as const,
+    notes: 'Keep these release notes.'
+  }
+  useUpdateStore.setState({
+    download,
+    apply,
+    cancel,
+    recover,
+    isDialogOpen: true,
+    status: { ...base, state: 'downloading' }
+  })
+  try {
+    act(() => root.render(<UpdateDialog />))
+    const dialog = document.querySelector('[role="dialog"]')!
+    const resources = dialog.querySelector('[data-testid="manual-update-links"]')!
+    expect(dialog.querySelector('[data-slot="scroll-area-viewport"]')?.contains(resources)).toBe(
+      false
+    )
+    const instructions = resources.querySelector('button')!
+    act(() => instructions.click())
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+    expect(dialog.getAttribute('aria-label')).toBe('Installation instructions')
+    const back = dialog.querySelector<HTMLButtonElement>('button[aria-label="Back to update"]')!
+    expect(document.activeElement).toBe(back)
+    act(() => useUpdateStore.setState({ status: { ...base, state: 'ready' } }))
+    act(() => back.click())
+    expect(document.activeElement).toBe(instructions)
+    const controls = dialog.querySelector('[data-testid="manual-update-controls"]')!
+    expect(controls.textContent).toContain('Open installer')
+    expect(controls.textContent).not.toContain('Downloading')
+    expect(dialog.textContent).toContain(base.notes)
+    expect(download).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+    expect(cancel).not.toHaveBeenCalled()
+    expect(recover).not.toHaveBeenCalled()
+  } finally {
+    act(() => useUpdateStore.setState(original))
+  }
+})
+
+it('keeps instructions open when an installer error clears into the runtime update surface', () => {
+  const base = { current: '1', latest: '2', applyKind: 'restart' as const }
+  useUpdateStore.setState({
+    isDialogOpen: true,
+    status: { ...base, state: 'ready', error: 'The update action could not be completed.' }
+  })
+  act(() => root.render(<UpdateDialog />))
+  const instructions = document.querySelector<HTMLButtonElement>(
+    '[data-testid="manual-update-links"] button'
+  )!
+  act(() => instructions.click())
+  act(() => useUpdateStore.setState({ status: { ...base, state: 'available' } }))
+  const dialog = document.querySelector('[role="dialog"]')!
+  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  expect(dialog.getAttribute('aria-label')).toBe('Installation instructions')
+  const back = dialog.querySelector<HTMLButtonElement>('button[aria-label="Back to update"]')!
+  expect(back).not.toBeNull()
+  act(() => back.click())
+  expect(document.activeElement).toBe(
+    dialog.querySelector('[data-testid="manual-update-links"] button')
+  )
+  expect(dialog.querySelector('[data-testid="manual-update-controls"]')?.textContent).toContain(
+    'Download update'
+  )
 })

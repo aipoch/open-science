@@ -28,7 +28,10 @@
     "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
     "src/renderer/src/components/DeferredPresentationOwner.tsx",
     "src/renderer/src/components/FileDropZone.tsx",
-    "src/renderer/src/components/FileDropZone.test.tsx"
+    "src/renderer/src/components/FileDropZone.test.tsx",
+    "src/renderer/src/components/ManualUpdate.tsx",
+    "src/renderer/src/components/ManualUpdate.test.tsx",
+    "src/renderer/src/components/use-manual-update.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ActionToast.tsx",
@@ -50,7 +53,9 @@
     "src/renderer/src/components/flask-logo.tsx",
     "src/renderer/src/components/notice.tsx",
     "src/renderer/src/components/use-settings-undo-portal.tsx",
-    "src/renderer/src/components/FileDropZone.tsx"
+    "src/renderer/src/components/FileDropZone.tsx",
+    "src/renderer/src/components/ManualUpdate.tsx",
+    "src/renderer/src/components/use-manual-update.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -73,7 +78,8 @@
       "src/renderer/src/components/use-settings-undo-portal.test.tsx",
       "src/renderer/src/components/LegacyDataMoveDialog.storage.test.tsx",
       "src/renderer/src/components/DeferredPresentationOwner.test.tsx",
-      "src/renderer/src/components/FileDropZone.test.tsx"
+      "src/renderer/src/components/FileDropZone.test.tsx",
+      "src/renderer/src/components/ManualUpdate.test.tsx"
     ],
     "contract": [
       "src/main/host-layer-dependencies.architecture.test.ts",

@@ -21,6 +21,8 @@ export function createRuntimeUpdateStrategy(
       current: runtimeMetadata().version,
       error: 'Update the Node backend using your package manager.'
     }),
+    getInstaller: async () => null,
+    revealInstaller: async () => 'unavailable',
     check: unavailable,
     download: unavailable,
     cancel: unavailable,

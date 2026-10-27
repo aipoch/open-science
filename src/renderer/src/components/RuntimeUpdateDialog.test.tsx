@@ -130,7 +130,7 @@ describe('runtime update operation boundaries', () => {
     })
     render()
     const dialog = document.querySelector('[role="dialog"]')!
-    expect(dialog.querySelectorAll('button')).toHaveLength(3)
+    expect(dialog.querySelectorAll('button')).toHaveLength(4)
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
@@ -399,7 +399,9 @@ it.each([
     render()
     expect(buttons('Update')).toHaveLength(0)
     expect(buttons('Retry')).toHaveLength(1)
-    expect(buttons('Retry')[0].parentElement?.className).toContain('border-t')
+    expect(
+      buttons('Retry')[0].closest('[data-testid="manual-update-footer"]')?.className
+    ).toContain('border-t')
     await act(async () => buttons('Retry')[0].click())
     expect(recheck).toHaveBeenCalledOnce()
   }
@@ -640,4 +642,71 @@ describe('update check and download admission', () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
     expect(buttons('Retry')).toHaveLength(1)
   })
+})
+
+it.each([
+  [
+    'applying',
+    r({ phase: 'handoff', runtime: 'stopped-clean', installation: 'pending', canCancel: false })
+  ],
+  [
+    'error',
+    r({ runtime: 'stopped-clean', installation: 'unknown', canCancel: false, canRecover: true })
+  ]
+] as const)(
+  'reads and leaves manual instructions without unlocking %s recovery',
+  async (state, recovery) => {
+    const cancel = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    const recover = vi.fn(async () => {})
+    const download = vi.fn(async () => {})
+    useUpdateStore.setState({
+      cancel,
+      apply,
+      recover,
+      download,
+      status: { state, current: '1', latest: '2', recovery }
+    })
+    render()
+    const dialog = document.querySelector('[role="dialog"]')!
+    const instructions = dialog.querySelector<HTMLButtonElement>(
+      '[data-testid="manual-update-links"] button'
+    )!
+    act(() => instructions.click())
+    expect(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).toHaveLength(1)
+    expect(dialog.getAttribute('aria-label')).toBe('Installation instructions')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Back to update')
+    expect(dialog.querySelector('[data-manual-update-guide]')?.textContent).toContain(
+      'An installer may still be running'
+    )
+    await act(async () =>
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    )
+    expect(document.activeElement).toBe(instructions)
+    expect(useUpdateStore.getState().isDialogOpen).toBe(true)
+    expect(useUpdateStore.getState().status.recovery).toEqual(recovery)
+    expect(buttons('Cancel')).toHaveLength(0)
+    expect(cancel).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+    expect(recover).not.toHaveBeenCalled()
+    expect(download).not.toHaveBeenCalled()
+  }
+)
+
+it('puts manual failure links inside existing error prose while keeping the persistent footer', () => {
+  useUpdateStore.setState({
+    status: { state: 'error', current: '1', error: 'Provider check failed' }
+  })
+  render()
+  const alert = document.querySelector('[role="alert"]')!
+  expect(alert.textContent).toContain('Provider check failed')
+  const notice = alert.closest('section')!
+  expect(notice.querySelector('a')?.textContent).toContain('download from the website')
+  expect(notice.querySelector('button')?.textContent).toBe('installation instructions')
+  const footer = document.querySelector('[data-testid="manual-update-footer"]')!
+  expect(footer.querySelector('[data-testid="manual-update-links"]')).not.toBeNull()
+  expect(alert.contains(footer)).toBe(false)
+  expect(buttons('Retry')).toHaveLength(1)
 })

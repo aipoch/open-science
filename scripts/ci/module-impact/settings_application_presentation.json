@@ -98,7 +98,8 @@
     "src/renderer/src/pages/settings/validation-message.ts",
     "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
     "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
-    "src/renderer/src/pages/settings/TrustedPrivateServices.tsx"
+    "src/renderer/src/pages/settings/TrustedPrivateServices.tsx",
+    "src/renderer/src/pages/settings/settings-manual-update-guide.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",
@@ -135,7 +136,8 @@
     "src/renderer/src/pages/settings/test-utils.ts",
     "src/renderer/src/pages/settings/token-usage-analytics.ts",
     "src/renderer/src/pages/settings/use-file-credential-notice.ts",
-    "src/renderer/src/pages/settings/validation-message.ts"
+    "src/renderer/src/pages/settings/validation-message.ts",
+    "src/renderer/src/pages/settings/settings-manual-update-guide.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -347,5 +349,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Manual-update guide dismissal adds a Settings event helper outside the reviewed presentation sources; retain complete validation until the expanded Settings boundary is reviewed and reclassified."
 }
