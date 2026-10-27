@@ -3248,6 +3248,41 @@ describe('LiteratureLibraryPage', () => {
     reveal.mockRestore()
   })
 
+  it.each([false, true])(
+    'omits empty publication details while retaining identifiers: %s',
+    async (hasIdentifier) => {
+      get.mockResolvedValue({
+        ...libraryItem,
+        item: {
+          ...libraryItem.item,
+          issuedYear: undefined,
+          issuedText: '',
+          containerTitle: '',
+          language: '',
+          typeFields: {},
+          url: '',
+          identifiers: hasIdentifier ? libraryItem.item.identifiers : []
+        }
+      })
+      useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
+      render(<LiteratureLibraryPage />)
+      const detail = within(await screen.findByRole('dialog'))
+      expect(detail.getAllByText('Journal article')).toHaveLength(1)
+      expect(detail.queryByText('Reference type')).toBeNull()
+      expect(Boolean(detail.queryByText('Publication metadata'))).toBe(hasIdentifier)
+      if (hasIdentifier)
+        expect(detail.getByRole('link', { name: 'DOI: 10.0000/example' })).not.toBeNull()
+      expect(
+        detail
+          .getByRole('button', { name: 'Manage Tags' })
+          .compareDocumentPosition(detail.getByRole('heading', { name: libraryItem.item.title })) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+      expect(detail.getByRole('button', { name: 'References' })).not.toBeNull()
+      expect(detail.getByRole('button', { name: 'Cited by' })).not.toBeNull()
+    }
+  )
+
   it('offers stored metadata sources from reference details', async () => {
     get.mockResolvedValue(libraryItem)
     useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
@@ -6429,7 +6464,7 @@ describe('LiteratureLibraryPage', () => {
       within(dialog)
         .getAllByText('Journal article')
         .filter((element) => !element.className.includes('sr-only'))
-    ).toHaveLength(2)
+    ).toHaveLength(1)
     expect(within(dialog).getByText('Open Research Press')).not.toBeNull()
 
     const headings = within(dialog)
@@ -6533,7 +6568,7 @@ describe('LiteratureLibraryPage', () => {
     expect(authors.className).not.toContain('truncate')
     expect(authors.className).toContain('line-clamp-5')
     expect(authors.closest('section')?.parentElement?.className).toContain('overflow-y-auto')
-    expect(within(dialog).getAllByText('Review')).toHaveLength(2)
+    expect(within(dialog).getAllByText('Review')).toHaveLength(1)
   })
 
   it('collapses an overflowing author list until the reader expands it', async () => {

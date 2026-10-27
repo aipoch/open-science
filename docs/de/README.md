@@ -366,7 +366,7 @@ Die Headless-CLI und das Node.js-SDK ohne zusätzliche Abhängigkeiten verwenden
 - [CLI-Anleitung](../../packages/open-science/CLI.md) – Installation, Dienstlebenszyklus, Aufgabenautomatisierung, Artefakte, Ausgabeformate und Exit-Codes
 - [SDK-Paketübersicht](../../packages/open-science/README.md) – Node.js-Schnellstart und Einstiegspunkt des Pakets
 
-Die eigenständige CLI kann ihre Recherchewerkzeuge über `open-science mcp` für externe MCP-Clients bereitstellen. Starten und authentifizieren Sie zuerst den Dienst des ausgewählten Profils. Der Adapter verwendet dessen bestehende Berechtigungen; er ist weder eine separate Sandbox noch schreibgeschützt, sodass verbundene Clients Änderungen speichern und Modellkosten verursachen können. Beliebiger Zugriff auf die Befehlszeile oder RPC, Anmeldedatenverwaltung, Dateiimport und -export, Downloads auf einen Pfad und ein entfernter HTTP-MCP-Endpunkt werden nicht bereitgestellt.
+Die eigenständige CLI kann ihre Recherchewerkzeuge über `open-science mcp` für externe MCP-Clients bereitstellen. Starten und authentifizieren Sie zuerst den Dienst des ausgewählten Profils. Der Adapter verwendet dessen bestehende Berechtigungen; er ist weder eine separate Sandbox noch schreibgeschützt, sodass verbundene Clients Änderungen speichern und Modellkosten verursachen können. Beliebiger Befehlszeilen- oder RPC-Zugriff, Anmeldedatenverwaltung, Dateiimport und -export, Downloads auf einen Pfad und ein entfernter HTTP-MCP-Endpunkt werden nicht bereitgestellt.
 
 ## Häufig gestellte Fragen
 

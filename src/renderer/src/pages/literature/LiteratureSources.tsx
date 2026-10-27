@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 import { useLiteratureHost } from './renderer-host'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -100,16 +101,15 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
         }
       }}
     >
-      <summary className="cursor-pointer rounded font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
         {t('Metadata sources')}
+        <ChevronRight
+          className={`size-4 shrink-0 text-muted-foreground ${open ? 'rotate-90' : ''}`}
+          aria-hidden="true"
+        />
       </summary>
       {open ? (
         <div className="mt-3">
-          <p className="text-xs text-muted-foreground">
-            {t(
-              'Saved source records, not a complete change history. Times show when each record was saved.'
-            )}
-          </p>
           {failed ? (
             <div className="mt-3">
               <ErrorNotice
@@ -127,13 +127,11 @@ const LiteratureSources = ({ itemId }: { itemId: string }): React.JSX.Element =>
               />
             </div>
           ) : sources === undefined ? (
-            <p role="status" className="mt-3 text-xs text-muted-foreground">
+            <p role="status" className="text-xs text-muted-foreground">
               {t('Loading…')}
             </p>
           ) : sources.length === 0 ? (
-            <p className="mt-3 text-xs text-muted-foreground">
-              {t('No saved metadata sources for this reference.')}
-            </p>
+            <p className="text-xs text-muted-foreground">{t('No sources saved')}</p>
           ) : (
             <ul className="divide-y divide-border">
               {sources.map((source) => (

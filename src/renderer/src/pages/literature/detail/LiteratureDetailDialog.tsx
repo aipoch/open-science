@@ -1,3 +1,4 @@
+import { ResourceTagBadges, ResourceTagMenu } from '../../settings/ResourceTagControls'
 import { LiteratureReadingStatusLabel } from '../LiteratureReadingStatusLabel'
 import type { LiteratureReadingStatus } from '../workflows/useLiteratureReadingStatus'
 import {
@@ -85,6 +86,7 @@ export function LiteratureDetailDialog({
   previewItem,
   selectedItemDialogRef,
   detailTagMenuOpenRef,
+  handleDetailTagMenuOpenChange,
   detailSelectOpenRef,
   childLayerDismissGuardUntilRef,
   closeSelectedItemDetail: closeDetail,
@@ -120,6 +122,7 @@ export function LiteratureDetailDialog({
   previewItem: LiteraturePreviewItem | undefined
   selectedItemDialogRef: React.RefObject<HTMLDivElement | null>
   detailTagMenuOpenRef: React.RefObject<boolean>
+  handleDetailTagMenuOpenChange: (open: boolean) => void
   detailSelectOpenRef: React.RefObject<boolean>
   childLayerDismissGuardUntilRef: React.RefObject<number>
   closeSelectedItemDetail: () => void
@@ -255,7 +258,9 @@ export function LiteratureDetailDialog({
                         metadata.mode === 'supplements' ||
                         metadata.mode === 'related'
                         ? 'h-[min(720px,calc(100vh-2rem))]'
-                        : 'h-[min(840px,calc(100vh-2rem))]'
+                        : metadata.mode === 'view'
+                          ? 'max-h-[min(840px,calc(100vh-2rem))]'
+                          : 'h-[min(840px,calc(100vh-2rem))]'
                     )
                   )}
                   onInteractOutside={(event) => {
@@ -368,6 +373,23 @@ export function LiteratureDetailDialog({
                                   </SelectItem>
                                 </SelectContent>
                               </Select>
+                              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                                <ResourceTagMenu
+                                  reference={{
+                                    resourceType: 'literature.item',
+                                    resourceId: selectedItem.id
+                                  }}
+                                  onOpenChange={handleDetailTagMenuOpenChange}
+                                  keepOpenOnSelect
+                                />
+                                <ResourceTagBadges
+                                  reference={{
+                                    resourceType: 'literature.item',
+                                    resourceId: selectedItem.id
+                                  }}
+                                  limit={Number.POSITIVE_INFINITY}
+                                />
+                              </div>
                               {readingStatusError?.itemId === selectedItem.id ? (
                                 <ErrorNotice
                                   inline
@@ -378,7 +400,7 @@ export function LiteratureDetailDialog({
                                 />
                               ) : null}
                               {publicationSummary(selectedItem.item) ? (
-                                <span className="min-w-0 break-words">
+                                <span className="w-full min-w-0 break-words">
                                   {publicationSummary(selectedItem.item)}
                                 </span>
                               ) : null}
