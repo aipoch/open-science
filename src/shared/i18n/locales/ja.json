@@ -195,7 +195,7 @@
     "System credential access failed": "システム認証情報へのアクセスに失敗しました",
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。アクセス許可の問題を解決してから起動を再試行してください。",
     "Waiting for system credential access": "システム認証情報へのアクセスを待機中",
-    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "システムが許可を求めた場合は、その要求に応答してください。認証情報へのアクセスが完了すると起動を続行します。認証情報はリセットされません。"
+    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "システムの許可要求に応答してください。最大5分間待機できます。タイムアウトした場合は起動を再試行してください。既存の認証情報は保持されます。"
   },
   "renderer": {
     "{{count}} steps remaining_other": "残り{{count}}ステップ",

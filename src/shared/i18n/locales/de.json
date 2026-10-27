@@ -196,7 +196,7 @@
     "System credential access failed": "Zugriff auf Systemanmeldedaten fehlgeschlagen",
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten. Beheben Sie das Freigabeproblem und starten Sie erneut.",
     "Waiting for system credential access": "Warten auf Zugriff auf Systemanmeldedaten",
-    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "Wenn das System eine Freigabe anfordert, beantworten Sie die Anfrage. Der Start wird fortgesetzt, sobald der Zugriff auf die Anmeldedaten abgeschlossen ist. Es werden keine Anmeldedaten zurückgesetzt."
+    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "Beantworten Sie die Freigabeanfrage des Systems. Sie können bis zu fünf Minuten warten. Starten Sie nach einer Zeitüberschreitung erneut. Bestehende Anmeldedaten bleiben erhalten."
   },
   "renderer": {
     "{{count}} steps remaining_one": "Noch {{count}} Schritt",

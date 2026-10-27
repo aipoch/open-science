@@ -197,7 +197,7 @@
     "System credential access failed": "Échec de l’accès aux identifiants système",
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Le démarrage s’est arrêté pendant l’accès aux identifiants système. Les identifiants et les données de profil existants ont été conservés. Relancez le démarrage après avoir résolu le problème d’autorisation.",
     "Waiting for system credential access": "En attente de l’accès aux identifiants système",
-    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "Si le système demande une autorisation, répondez à son invite. Le démarrage se poursuivra une fois l’accès aux identifiants terminé. Aucun identifiant ne sera réinitialisé."
+    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "Répondez à la demande d’autorisation du système. Vous pouvez attendre jusqu’à cinq minutes. Si ce délai expire, relancez le démarrage. Les identifiants existants seront conservés."
   },
   "renderer": {
     "{{count}} steps remaining_one": "{{count}} étape restante",

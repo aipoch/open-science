@@ -82,6 +82,8 @@ describe('backend startup recovery', () => {
         nodeIntegration: false
       })
       expect(decodeURIComponent(window.url!)).toContain('正在等待系统凭据访问')
+      expect(decodeURIComponent(window.url!)).toContain('最多等待五分钟')
+      expect(decodeURIComponent(window.url!)).toContain('超时后可重试启动')
       notice.update({ ...status, stage: 'storage' })
       expect(window.destroyed).toBe(true)
       notice.update(status)

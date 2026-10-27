@@ -37,21 +37,28 @@ const fixtures: Array<{ identity: CredentialIdentity; prefix: string; hex: strin
 ]
 
 describe('Node OSCrypt-compatible cipher', () => {
-  it.each([0, 31_000])(
-    'decrypts legacy ciphertext when helper authorization completes after %i ms',
-    async (delay) => {
+  it.each([
+    { delay: 0, scale: 1 },
+    { delay: 31_000, scale: 1 },
+    { delay: 240_000, scale: 100 }
+  ])(
+    'decrypts legacy ciphertext after $delay ms authorization (time scale $scale)',
+    async ({ delay, scale }) => {
       const actual =
         await vi.importActual<typeof import('node:child_process')>('node:child_process')
       vi.mocked(createRequire).mockReturnValue((() => ({
         secretExecutablePath: process.execPath
       })) as unknown as NodeJS.Require)
-      // Exercise a real subprocess and the production timeout without accessing an OS vault.
+      // Scale the long authorization and timeout together at the existing subprocess boundary.
       vi.mocked(spawnSync).mockImplementation((executable, args, options) => {
         expect(args).toEqual(['read-key', 'Open Science'])
         return actual.spawnSync(
           executable,
-          ['-e', `setTimeout(() => process.stdout.write('fixture-vault-password'), ${delay})`],
-          options
+          [
+            '-e',
+            `setTimeout(() => process.stdout.write('fixture-vault-password'), ${delay / scale})`
+          ],
+          { ...options, timeout: (options?.timeout ?? 0) / scale }
         )
       })
       const cipher = createNodeSecureStorageCipher(fixtures[0].identity, '/unused')

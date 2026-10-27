@@ -84,7 +84,7 @@ export function createCredentialStartupNotice(): {
         const translate = i18n.t.bind(i18n)
         const title = translate('Waiting for system credential access')
         const description = translate(
-          'If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.'
+          'Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.'
         )
         const escape = (value: string): string =>
           value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

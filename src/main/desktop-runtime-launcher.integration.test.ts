@@ -69,7 +69,7 @@ describe('ordinary Node desktop launcher', () => {
           entry,
           packaged: true,
           onStatus(status) {
-            if (status.kind === 'progress') elapsed = 61_000
+            if (status.kind === 'progress') elapsed = 241_000
           }
         })
       ).rejects.toMatchObject({

@@ -195,7 +195,7 @@
     "System credential access failed": "시스템 자격 증명 접근 실패",
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "시스템 자격 증명에 접근하는 동안 시작이 중지되었습니다. 기존 자격 증명과 프로필 데이터는 보존되었습니다. 승인 문제를 해결한 후 시작을 다시 시도하세요.",
     "Waiting for system credential access": "시스템 자격 증명 접근 대기 중",
-    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "시스템이 승인을 요청하면 해당 요청에 응답하세요. 자격 증명 접근이 완료되면 시작이 계속됩니다. 자격 증명은 초기화되지 않습니다."
+    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "시스템 승인 요청에 응답하세요. 최대 5분 동안 기다릴 수 있습니다. 시간이 초과되면 시작을 다시 시도하세요. 기존 자격 증명은 보존됩니다."
   },
   "renderer": {
     "{{count}} steps remaining_other": "{{count}}단계 남음",

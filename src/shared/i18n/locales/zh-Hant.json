@@ -195,7 +195,7 @@
     "System credential access failed": "系統憑證存取失敗",
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。解決授權問題後，請重試啟動。",
     "Waiting for system credential access": "正在等待系統憑證存取",
-    "If the system asks for authorization, respond to its prompt. Startup will continue when credential access completes. No credentials will be reset.": "如果系統要求授權，請回應其提示。憑證存取完成後將繼續啟動。不會重設任何憑證。"
+    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "請回應系統授權提示。最多等待五分鐘，逾時後可重試啟動。現有憑證將予以保留。"
   },
   "renderer": {
     "{{count}} steps remaining_other": "剩餘 {{count}} 步",
