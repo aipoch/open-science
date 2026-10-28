@@ -164,7 +164,7 @@ try {
   assert.ok(ownedChildren.length > 0, 'Exercise shutdown with owned child processes.')
   const stopped = JSON.parse(await cli('stop', '--json'))
   running = false
-  assert.equal(stopped.result, 'daemon-stopped')
+  assert.equal(stopped.result, 'stopped')
   for (const child of ownedChildren) {
     const stat = await readFile(`/proc/${child.pid}/stat`, 'utf8').catch(() => '')
     const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
