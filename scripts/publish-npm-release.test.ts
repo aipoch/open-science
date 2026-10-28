@@ -406,7 +406,8 @@ describe('parallel platform publication', () => {
     // A conflicting version surfaces mid-batch: preflight passes (registry empty), then the
     // first visibility poll sees mismatched bytes after a concurrent publish landed.
     let conflicting = false
-    const lookup = async (name: string) =>
+    type RegistryView = { versions: Record<string, { dist: { integrity: string } }> } | null
+    const lookup = async (name: string): Promise<RegistryView> =>
       conflicting && name === packages[0].manifest.name
         ? { versions: { '1.2.3': { dist: { integrity: 'wrong-bytes' } } } }
         : null
