@@ -11,7 +11,13 @@ import type {
   AcpRuntimeState
 } from '../../../../shared/acp'
 import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
-import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
+import {
+  createInitialSessionState,
+  useSessionStore,
+  toPersistedSession,
+  hydrateSession,
+  retainSessionRecoveryDrafts
+} from '../../stores/session-store'
 import {
   resetSessionPersistenceWriteFailuresForTests,
   type SessionPersistenceApi
@@ -267,6 +273,10 @@ describe('first prompt preparation boundaries', () => {
       )
       await flush()
       expect(agent.sendPrompt).toHaveBeenCalledOnce()
+      expect(
+        useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')
+          ?.firstPromptDraft
+      ).toBeUndefined()
       if (outcome === 'rejected-contender')
         expect(
           await sendWorkspaceMessage(agent, {
@@ -353,6 +363,9 @@ describe('first prompt preparation boundaries', () => {
     expect(
       useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')?.isPending
     ).toBe(false)
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')?.firstPromptDraft
+    ).toBe(true)
     await cancelWorkspaceRun(agent, 'bound-session')
     expect(stopped).toHaveBeenCalledOnce()
     expect(await sending).toBeUndefined()
@@ -360,6 +373,15 @@ describe('first prompt preparation boundaries', () => {
     expect(
       useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')?.messages
     ).toEqual([])
+    expect(
+      useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')?.firstPromptDraft
+    ).toBe(true)
+    const draftOwner = useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')!
+    const persisted = toPersistedSession(draftOwner)
+    expect(persisted).not.toHaveProperty('firstPromptDraft')
+    expect(
+      retainSessionRecoveryDrafts(hydrateSession(persisted), draftOwner).firstPromptDraft
+    ).toBe(true)
     // The write still owns admission even though Stop has returned and the draft is restored.
     expect(
       await sendWorkspaceMessage(agent, { ...input, sessionId: 'bound-session' })

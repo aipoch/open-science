@@ -7366,8 +7366,6 @@
     "Connection lost — Resume to reconnect and continue.": "Соединение потеряно — Возобновите работу, чтобы переподключиться и продолжить.",
     "Session was interrupted before the app closed.": "Сеанс был прерван до закрытия приложения.",
     "The run failed with no error message.": "Выполнение завершилось с ошибкой без сообщения об ошибке.",
-    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "Не удалось откатить неотправленное сообщение ({{failure}}). Отправьте его снова или остановите выполнение, чтобы повторить попытку.",
-    "Agent Session cleanup did not complete.": "Очистка сессии агента не завершена.",
     "Add to list": "Добавить в список",
     "Add to trusted services": "Добавить в доверенные службы",
     "Allow a specific service on your private network. Other private destinations stay blocked.": "Разрешите конкретную службу в частной сети. Остальные частные адресаты останутся заблокированы.",

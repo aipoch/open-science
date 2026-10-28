@@ -7226,8 +7226,6 @@
     "Connection lost — Resume to reconnect and continue.": "Se ha perdido la conexión — Reanude para volver a conectarse y continuar.",
     "Session was interrupted before the app closed.": "La sesión se ha interrumpido antes de cerrar la aplicación.",
     "The run failed with no error message.": "La ejecución ha fallado sin mensaje de error.",
-    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "No se pudo revertir el mensaje sin enviar ({{failure}}). Vuelve a enviarlo o detén la ejecución para reintentar.",
-    "Agent Session cleanup did not complete.": "La limpieza de la sesión del agente no se completó.",
     "Add to list": "Añadir a la lista",
     "Add to trusted services": "Añadir a los servicios de confianza",
     "Allow a specific service on your private network. Other private destinations stay blocked.": "Permitir un servicio específico de la red privada. Los demás destinos privados siguen bloqueados.",

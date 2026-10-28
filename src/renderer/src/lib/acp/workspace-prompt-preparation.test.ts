@@ -27,7 +27,11 @@ import {
   saveSessionInOrder,
   type SessionPersistenceApi
 } from '../session-persistence/session-persistence'
-import { prepareWorkspacePrompt, rollbackWorkspacePrompt } from './workspace-prompt-preparation'
+import {
+  describeWorkspacePromptRollbackFailure,
+  prepareWorkspacePrompt,
+  rollbackWorkspacePrompt
+} from './workspace-prompt-preparation'
 
 const fixture = (): PersistedChatSession =>
   materializeSessionConversationGraph({
@@ -487,5 +491,19 @@ describe('workspace prompt preparation with Main rollback authority', () => {
     expect(await rollbackWorkspacePrompt(prep)).toBe(true)
     expect(current().messages.map(({ id }) => id)).toEqual(['old'])
     expect(main.read().messages.map(({ id }) => id)).toEqual(['old'])
+  })
+})
+
+describe('rollback error presentation', () => {
+  it('keeps the operation error without exposing cleanup details or obsolete Stop instructions', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(
+      describeWorkspacePromptRollbackFailure('Attachment preparation failed', 'private disk detail')
+    ).toBe('Attachment preparation failed')
+    expect(describeWorkspacePromptRollbackFailure(undefined, 'private disk detail')).toBe(
+      'Session storage is not ready.'
+    )
+    expect(warning).toHaveBeenCalledWith('Workspace prompt rollback failed', 'private disk detail')
+    warning.mockRestore()
   })
 })

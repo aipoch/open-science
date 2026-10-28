@@ -177,11 +177,8 @@ export const describeWorkspacePromptRollbackFailure = (
   original: string | undefined,
   rollbackFailure: string
 ): string => {
-  const rollback = i18next.t(
-    'The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.',
-    { failure: rollbackFailure }
-  )
-  return original ? `${original}\n\n${rollback}` : rollback
+  console.warn('Workspace prompt rollback failed', rollbackFailure)
+  return original ?? i18next.t('Session storage is not ready.')
 }
 
 // Rolls back one preparation. A failed write is retained for retry and returned instead of thrown,
@@ -223,7 +220,15 @@ export const retryPendingWorkspacePromptRollback = async (
   sessionId: string
 ): Promise<{ rolledBack: boolean; failure?: string }> => {
   const pending = pendingPromptRollbacks.get(sessionId)
-  if (pending) return pending.result
+  if (pending) {
+    const result = await pending.result
+    return result.failure === undefined
+      ? result
+      : {
+          rolledBack: false,
+          failure: describeWorkspacePromptRollbackFailure(undefined, result.failure)
+        }
+  }
   const preparation = failedPromptRollbacks.get(sessionId)?.preparation
   if (!preparation) return { rolledBack: false }
   if (!useSessionStore.getState().sessions.some(({ id }) => id === sessionId)) {

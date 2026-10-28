@@ -690,7 +690,7 @@ const discardUnboundSeedSession = async (
     // The terminal deletion owner removes runtime, JSON and file relations in order.
     const result = await deleteSession({ projectId, sessionId })
     if (result.status === 'deleted') return undefined
-    return i18next.t('Agent Session cleanup did not complete.')
+    return 'Agent Session cleanup did not complete.'
   } catch (error) {
     try {
       await runtime.deleteSession?.(sessionId)
@@ -1015,6 +1015,13 @@ const startPendingPrompt = (
         beforeDispatch: () => {
           if (attempt) {
             attempt.dispatched = true
+            useSessionStore.setState((state) => ({
+              sessions: state.sessions.map((session) =>
+                attempt.sessionIds.has(session.id) && session.firstPromptDraft
+                  ? { ...session, firstPromptDraft: undefined }
+                  : session
+              )
+            }))
             attempt.endPresentation()
           }
         },
@@ -1674,6 +1681,13 @@ const performSendWorkspaceMessage = async (
         beforeDispatch: () => {
           if (attempt) {
             attempt.dispatched = true
+            useSessionStore.setState((state) => ({
+              sessions: state.sessions.map((session) =>
+                attempt.sessionIds.has(session.id) && session.firstPromptDraft
+                  ? { ...session, firstPromptDraft: undefined }
+                  : session
+              )
+            }))
             attempt.endPresentation()
           }
         },

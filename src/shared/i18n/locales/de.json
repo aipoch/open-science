@@ -7058,8 +7058,6 @@
     "Connection lost — Resume to reconnect and continue.": "Verbindung verloren — Setzen Sie die Sitzung fort, um die Verbindung wiederherzustellen und weiterzumachen.",
     "Session was interrupted before the app closed.": "Die Sitzung wurde unterbrochen, bevor die App geschlossen wurde.",
     "The run failed with no error message.": "Der Lauf ist ohne Fehlermeldung fehlgeschlagen.",
-    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "Die nicht gesendete Nachricht konnte nicht zurückgesetzt werden ({{failure}}). Senden Sie sie erneut oder beenden Sie die Ausführung, um es noch einmal zu versuchen.",
-    "Agent Session cleanup did not complete.": "Die Bereinigung der Agentensitzung wurde nicht abgeschlossen.",
     "Add to list": "Zur Liste hinzufügen",
     "Add to trusted services": "Zu vertrauenswürdigen Diensten hinzufügen",
     "Allow a specific service on your private network. Other private destinations stay blocked.": "Erlauben Sie einen bestimmten Dienst in Ihrem privaten Netzwerk. Andere private Ziele bleiben gesperrt.",

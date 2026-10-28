@@ -1658,7 +1658,7 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
-          {activeSession && (
+          {activeSession && !activeSession.firstPromptDraft && !activeSession.isPending && (
             <SessionHeaderMenu
               key={activeSession.id}
               session={activeSession}

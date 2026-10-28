@@ -6898,8 +6898,6 @@
     "Connection lost — Resume to reconnect and continue.": "连接已断开 — 恢复以重新连接并继续。",
     "Session was interrupted before the app closed.": "应用关闭前，会话已中断。",
     "The run failed with no error message.": "运行失败，未提供错误信息。",
-    "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未发送的消息无法回滚（{{failure}}）。请重新发送或停止运行后重试。",
-    "Agent Session cleanup did not complete.": "智能体会话清理未完成。",
     "Add to list": "添加到列表",
     "Add to trusted services": "添加到受信任服务",
     "Allow a specific service on your private network. Other private destinations stay blocked.": "允许访问私有网络中的指定服务，其他私网目标仍被阻止。",
