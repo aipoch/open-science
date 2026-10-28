@@ -77,8 +77,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 className="size-4"
               />
               <span className="truncate">
-                {current.model || current.providerName}
-                {' '}
+                {current.model || current.providerName}{' '}
                 <span className="ml-1.5 text-muted-foreground">{current.providerName}</span>
               </span>
             </>
