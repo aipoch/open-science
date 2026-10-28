@@ -200,7 +200,7 @@ describe('Web session package import', () => {
     expect(usePackageOperationStore.getState().importError).toContain('.science')
   })
 
-  it('picks a package through a hidden file input when none was supplied', async () => {
+  it('keeps the file picker alive when focus precedes a valid selection', async () => {
     enableWeb('local')
     const importPackage = vi.fn(async () => null)
     stubWebApi(importPackage, stageableUploads('/uploads/picked.science'))
@@ -208,6 +208,9 @@ describe('Web session package import', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
     expect(input).not.toBeNull()
     expect(input!.accept).toBe('.science,.SCIENCE')
+    window.dispatchEvent(new Event('focus'))
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    expect(document.body.contains(input)).toBe(true)
     Object.defineProperty(input!, 'files', {
       value: [new File(['fixture'], 'picked.science')],
       configurable: true

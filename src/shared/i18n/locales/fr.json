@@ -187,6 +187,7 @@
     "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
+    "Only .science packages can be imported.": "Seuls les paquets .science peuvent être importés.",
     "Read the security policy and report vulnerabilities.": "Consulter la politique de sécurité et signaler des vulnérabilités.",
     "Security": "Sécurité",
     "Reading status": "État de lecture",

@@ -185,6 +185,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "Only .science packages can be imported.": ".science パッケージのみインポートできます。",
     "Read the security policy and report vulnerabilities.": "セキュリティポリシーの確認と脆弱性の報告。",
     "Security": "セキュリティ",
     "Reading status": "読書状況",

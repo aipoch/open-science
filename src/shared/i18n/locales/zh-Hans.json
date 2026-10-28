@@ -185,6 +185,7 @@
     "Cleaning up database inspection resources": "清理数据库检查资源"
   },
   "renderer": {
+    "Only .science packages can be imported.": "只能导入 .science 包。",
     "Read the security policy and report vulnerabilities.": "查看安全政策并报告漏洞。",
     "Security": "安全",
     "Reading status": "阅读状态",
