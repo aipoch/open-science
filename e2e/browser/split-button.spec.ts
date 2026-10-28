@@ -227,6 +227,71 @@ test('an exiting panel does not steal focus from the next control', async ({ pag
   await expect(page.getByRole('button', { name: 'Outside' })).toBeFocused()
 })
 
+for (const kind of ['menu', 'popover']) {
+  for (const backwards of [false, true]) {
+    test(`${kind}: Escape then ${backwards ? 'Shift+Tab' : 'Tab'} navigates during exit`, async ({
+      page
+    }) => {
+      await page.goto(`/split-button.html${kind === 'popover' ? '?popover=1' : ''}`)
+      const trigger = page.getByRole('button', { name: 'Options' })
+      await trigger.focus()
+      await page.keyboard.press('Enter')
+      await page
+        .getByRole(kind === 'menu' ? 'menuitem' : 'button', { name: 'Plan', exact: true })
+        .focus()
+      await page.waitForTimeout(260)
+      const panel = page.locator('[data-split-panel]')
+      const original = await panel.elementHandle()
+      await page.keyboard.press('Escape')
+      // No retry: focus must return before the 160 ms exit completes.
+      expect(await trigger.evaluate((node) => node === document.activeElement)).toBe(true)
+      expect(await original!.evaluate((node) => node.isConnected)).toBe(true)
+      await original!.evaluate((node) => {
+        const action = node.querySelector<HTMLElement>('[role="menuitem"], button')!
+        action.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        action.click()
+      })
+      await page.keyboard.press(backwards ? 'Shift+Tab' : 'Tab')
+      const destination = page.getByRole('button', {
+        name: backwards ? 'Send' : 'After',
+        exact: true
+      })
+      await expect(destination).toBeFocused()
+      await expect(panel).toHaveCount(0)
+      await expect(destination).toBeFocused()
+      await expect(page.getByTestId('result')).toBeEmpty()
+    })
+  }
+
+  test(`${kind}: outside close then retained reopen resets Escape focus restoration`, async ({
+    page
+  }) => {
+    await page.goto(`/split-button.html${kind === 'popover' ? '?popover=1' : ''}`)
+    const trigger = page.getByRole('button', { name: 'Options' })
+    await trigger.click()
+    await expect(page.locator('[data-split-panel]')).toBeVisible()
+    await page.waitForTimeout(260)
+    const original = await page.locator('[data-split-panel]').elementHandle()
+    const outside = await page.getByRole('button', { name: 'Outside' }).boundingBox()
+    const arrow = await trigger.boundingBox()
+    // Real pointer events without locator actionability waits inside the exit window.
+    await page.mouse.click(outside!.x + outside!.width / 2, outside!.y + outside!.height / 2)
+    await page.mouse.click(arrow!.x + arrow!.width / 2, arrow!.y + arrow!.height / 2)
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      await original!.evaluate((node) => node === document.querySelector('[data-split-panel]'))
+    ).toBe(true)
+    await page
+      .getByRole(kind === 'menu' ? 'menuitem' : 'button', { name: 'Plan', exact: true })
+      .focus()
+    await page.keyboard.press('Escape')
+    expect(await trigger.evaluate((node) => node === document.activeElement)).toBe(true)
+    await expect(page.locator('[data-split-panel]')).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+    await expect(page.getByTestId('result')).toHaveText('outside')
+  })
+}
+
 test('Escape then Enter during exit cannot execute the cancelled menu action', async ({ page }) => {
   await page.goto('/split-button.html')
   await page.getByRole('button', { name: 'Options' }).focus()
@@ -235,6 +300,12 @@ test('Escape then Enter during exit cannot execute the cancelled menu action', a
   await page.keyboard.press('Escape')
   await page.keyboard.press('Enter')
   await expect(page.getByTestId('result')).toBeEmpty()
+  // Enter now reaches the restored trigger and reopens, rather than activating the cancelled item.
+  await expect(page.getByRole('button', { name: 'Options' })).toHaveAttribute(
+    'aria-expanded',
+    'true'
+  )
+  await page.keyboard.press('Escape')
   await expect(page.locator('[data-split-panel]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Options' })).toBeFocused()
 })

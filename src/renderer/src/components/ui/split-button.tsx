@@ -216,6 +216,7 @@ export const SplitButtonContent = ({
   onCloseAutoFocus,
   onOpenAutoFocus,
   onInteractOutside,
+  onEscapeKeyDown,
   onKeyDownCapture,
   onClickCapture,
   ...props
@@ -227,10 +228,35 @@ export const SplitButtonContent = ({
   const motion = useRef<Animation | null>(null)
   const bind = useBoundRef(ref, setPanel)
   const previousPresence = useRef({ panel, open })
+  const closeReason = useRef<'escape' | 'outside' | null>(null)
+
+  const restoreCloseFocus = (event: Event): void => {
+    onCloseAutoFocus?.(event)
+    if (event.defaultPrevented) return
+    // Radix retains outside-interaction flags until unmount. Use this opening's reason instead.
+    event.preventDefault()
+    if (closeReason.current === 'outside') return
+    const doc = trigger?.ownerDocument
+    const active = doc?.activeElement
+    if (
+      active &&
+      active !== doc?.body &&
+      active !== doc?.documentElement &&
+      active !== trigger &&
+      !panel?.contains(active)
+    )
+      return
+    trigger?.focus({ preventScroll: true })
+  }
 
   useLayoutEffect(() => {
     const previous = previousPresence.current
     previousPresence.current = { panel, open }
+    if (open && !previous.open) closeReason.current = null
+    if (!open && previous.open && closeReason.current === 'escape') {
+      // Return focus before the next keystroke, once Radix has released its focus trap.
+      restoreCloseFocus(new Event('splitButton.closeAutoFocus', { cancelable: true }))
+    }
     // Radix only autofocuses on mount; interrupted exits retain the panel and its focus scope.
     if (!panel || panel !== previous.panel || !open || previous.open) return
     const event = new Event('splitButton.openAutoFocus', { cancelable: true })
@@ -254,7 +280,7 @@ export const SplitButtonContent = ({
     }
     // Menu's roving-focus group applies its keyboard entry policy when the panel receives focus.
     panel.focus({ preventScroll: true })
-  }, [panel, open, kind, onOpenAutoFocus])
+  })
 
   useLayoutEffect(() => {
     if (!group) return
@@ -346,21 +372,17 @@ export const SplitButtonContent = ({
         onInteractOutside?.(event)
         // The retained closing layer must not dismiss a reopen from its own trigger.
         if (event.target instanceof Node && trigger?.contains(event.target)) event.preventDefault()
+        if (open && !event.defaultPrevented) closeReason.current = 'outside'
+      }}
+      onEscapeKeyDown={(event) => {
+        if (!open) return
+        onEscapeKeyDown?.(event)
+        if (!event.defaultPrevented) closeReason.current = 'escape'
       }}
       onCloseAutoFocus={(event) => {
-        onCloseAutoFocus?.(event)
-        // Exit presence can outlive the user's move into another control or confirmation dialog.
-        // Restore focus normally unless that move has already established a new focus destination.
-        const doc = panel?.ownerDocument
-        const active = doc?.activeElement
-        if (
-          active &&
-          active !== doc?.body &&
-          active !== doc?.documentElement &&
-          active !== trigger &&
-          !panel?.contains(active)
-        )
-          event.preventDefault()
+        // Escape already ran the owner's focus policy; do not steal a subsequent Tab destination.
+        if (closeReason.current === 'escape') event.preventDefault()
+        else restoreCloseFocus(event)
       }}
       onKeyDownCapture={(event) => {
         // A focused descendant can receive input before the browser applies inert's focus update.

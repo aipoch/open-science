@@ -36,6 +36,7 @@ export const Fixture = (): React.JSX.Element => {
           />
         ) : (
           <SplitButton
+            kind={params.has('popover') ? 'popover' : 'menu'}
             disabled={params.has('disabled')}
             busy={params.has('busy')}
             hideMenu={params.has('single')}
@@ -60,15 +61,22 @@ export const Fixture = (): React.JSX.Element => {
               matchWidth={!params.has('wide')}
               style={params.has('wide') ? { width: 280 } : undefined}
             >
-              {['Plan', 'Branch', 'Review', 'Archive', 'Cancel'].map((label) => (
-                <DropdownMenuItem key={label} onSelect={() => setResult(label)}>
-                  {label}
-                </DropdownMenuItem>
-              ))}
+              {['Plan', 'Branch', 'Review', 'Archive', 'Cancel'].map((label) =>
+                params.has('popover') ? (
+                  <button key={label} onClick={() => setResult(label)}>
+                    {label}
+                  </button>
+                ) : (
+                  <DropdownMenuItem key={label} onSelect={() => setResult(label)}>
+                    {label}
+                  </DropdownMenuItem>
+                )
+              )}
             </SplitButtonContent>
           </SplitButton>
         )}
       </div>
+      <button>After</button>
     </main>
   )
 }
