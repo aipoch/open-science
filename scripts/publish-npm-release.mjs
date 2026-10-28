@@ -10,9 +10,11 @@ import { runtimeTargets, runtimePackageName } from '../packages/open-science/run
 
 const registry = 'https://registry.npmjs.org'
 
-// npm registry visibility can lag minutes behind a successful publish; the run
-// must outlast that lag, and concurrent reruns must converge instead of E403-failing.
-export const VISIBILITY_ATTEMPTS = 30
+// npm registry visibility can lag tens of minutes behind a successful publish. Keep polling
+// long enough to absorb routine lag; whatever is still invisible afterwards is reported as
+// pending (the staged bytes commit eventually) instead of failing the run, and concurrent
+// reruns must converge instead of E403/E409-failing.
+export const VISIBILITY_ATTEMPTS = 120
 export const VISIBILITY_INTERVAL_MS = 10_000
 
 // A successful stable Release is the authority for historical and future npm publications.
@@ -259,10 +261,17 @@ export async function publishPackages(
     plan.slice(0, -1).map(async (pkg) => {
       try {
         await publishMissing(pkg)
-        await waitForPublished(pkg, lookup, delay)
       } catch (error) {
         throw new Error(`${pkg.manifest.name}: ${error.message}`, { cause: error })
       }
+      // Upload succeeded; only visibility lags. That is recoverable registry lag, not a
+      // publication failure, so report it as pending instead of failing the batch.
+      try {
+        await waitForPublished(pkg, lookup, delay)
+      } catch {
+        return pkg.manifest.name
+      }
+      return null
     })
   )
   const errors = results
@@ -273,8 +282,16 @@ export async function publishPackages(
       errors,
       `Platform publication failed; entry package blocked:\n${errors.map((error) => error.message).join('\n')}`
     )
+  const pending = results
+    .map((result) => (result.status === 'fulfilled' ? result.value : null))
+    .filter(Boolean)
   await publishMissing(entry)
-  await waitForPublished(entry, lookup, delay)
+  try {
+    await waitForPublished(entry, lookup, delay)
+  } catch {
+    pending.push(entry.manifest.name)
+  }
+  return pending
 }
 
 async function main() {
@@ -307,8 +324,13 @@ async function main() {
     assert.equal(process.env.GITHUB_EVENT_NAME, 'push')
     assert.equal(process.env.GITHUB_REF, `refs/tags/v${version}`)
   }
-  if (publish) await publishPackages(packages)
-  else if (mode === '--verify-release') await publishPlan(packages, registryPackage)
+  if (publish) {
+    const pending = await publishPackages(packages)
+    if (pending.length)
+      console.log(
+        `::warning::Staged but not yet visible in the registry (commit pending; re-run this workflow to verify): ${pending.join(', ')}`
+      )
+  } else if (mode === '--verify-release') await publishPlan(packages, registryPackage)
   // Build-time checks are local: registry availability must not block a GitHub Release.
   console.log(`Verified ${packages.length} npm packages at ${version} from ${sourceSha}`)
 }

@@ -342,16 +342,22 @@ describe('parallel platform publication', () => {
     expect(uploads).not.toHaveBeenCalled()
   })
 
-  it('blocks the entry if uploads succeed but registry versions never appear', async () => {
+  it('reports staged packages as pending instead of failing when the registry lags', async () => {
     const uploads = vi.fn(async () => {})
+    const pending = await publishPackages(packages, async () => null, uploads, async () => {})
+    expect(pending).toEqual(packages.map((pkg) => pkg.manifest.name))
+    expect(uploads).toHaveBeenCalledTimes(6)
+  })
+
+  it('still fails on genuine publish errors while reporting visibility lag as pending', async () => {
+    const registry = new Map()
+    const uploads = vi.fn(async (pkg: (typeof packages)[number]) => {
+      if (pkg.manifest.name === packages[0].manifest.name) throw new Error('ENEEDAUTH')
+      registry.set(pkg.manifest.name, published(pkg))
+    })
     await expect(
-      publishPackages(
-        packages,
-        async () => null,
-        uploads,
-        async () => {}
-      )
-    ).rejects.toThrow('entry package blocked')
+      publishPackages(packages, async (name: string) => registry.get(name), uploads, async () => {})
+    ).rejects.toThrow('ENEEDAUTH')
     expect(uploads).toHaveBeenCalledTimes(5)
   })
 
