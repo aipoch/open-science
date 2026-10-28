@@ -195,9 +195,7 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "El programa auxiliar de credenciales del sistema no pudo completar la operación. Revise el código de diagnóstico y vuelva a intentar el inicio.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "El programa auxiliar de credenciales del sistema falló. Se desconoce el estado exacto de la autorización o de la clave.",
     "System credential access failed": "Error al acceder a las credenciales del sistema",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes. Vuelva a intentar el inicio después de resolver el problema de autorización.",
-    "Waiting for system credential access": "Esperando el acceso a las credenciales del sistema",
-    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "Responda a la solicitud de autorización del sistema. Puede esperar hasta cinco minutos. Si se agota el tiempo, vuelva a intentar el inicio. Se conservarán las credenciales existentes."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes. Vuelva a intentar el inicio después de resolver el problema de autorización."
   },
   "renderer": {
     "{{count}} steps remaining_one": "Queda {{count}} paso",

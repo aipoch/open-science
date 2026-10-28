@@ -196,9 +196,7 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "Вспомогательной программе системных учётных данных не удалось завершить операцию. Проверьте диагностический код и повторите запуск.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "Сбой вспомогательной программы системных учётных данных. Точное состояние разрешения или ключа неизвестно.",
     "System credential access failed": "Не удалось получить доступ к системным учётным данным",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены. Устраните проблему с разрешением доступа и повторите запуск.",
-    "Waiting for system credential access": "Ожидание доступа к системным учётным данным",
-    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "Ответьте на системный запрос разрешения. Можно подождать до пяти минут. Если время истечёт, повторите запуск. Существующие учётные данные будут сохранены."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены. Устраните проблему с разрешением доступа и повторите запуск."
   },
   "renderer": {
     "{{count}} steps remaining_one": "Остался {{count}} шаг",

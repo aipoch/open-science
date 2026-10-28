@@ -194,9 +194,7 @@
     "The system credential helper could not complete its operation. Check the diagnostic code and retry startup.": "Das Hilfsprogramm für Systemanmeldedaten konnte den Vorgang nicht abschließen. Prüfen Sie den Diagnosecode und starten Sie erneut.",
     "The system credential helper failed. The exact authorization or key status is unknown.": "Das Hilfsprogramm für Systemanmeldedaten ist fehlgeschlagen. Der genaue Freigabe- oder Schlüsselstatus ist unbekannt.",
     "System credential access failed": "Zugriff auf Systemanmeldedaten fehlgeschlagen",
-    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten. Beheben Sie das Freigabeproblem und starten Sie erneut.",
-    "Waiting for system credential access": "Warten auf Zugriff auf Systemanmeldedaten",
-    "Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.": "Beantworten Sie die Freigabeanfrage des Systems. Sie können bis zu fünf Minuten warten. Starten Sie nach einer Zeitüberschreitung erneut. Bestehende Anmeldedaten bleiben erhalten."
+    "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Der Start wurde beim Zugriff auf Systemanmeldedaten angehalten. Bestehende Anmeldedaten und Profildaten wurden beibehalten. Beheben Sie das Freigabeproblem und starten Sie erneut."
   },
   "renderer": {
     "{{count}} steps remaining_one": "Noch {{count}} Schritt",

@@ -1,6 +1,6 @@
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, dialog, shell } from 'electron'
 import { resolveLocale } from '../shared/locale'
-import { DesktopBackendStartupError, type BackendStartupStatus } from './backend-startup'
+import { DesktopBackendStartupError } from './backend-startup'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
 import { createNativeI18n } from './locale/main-process-messages'
 
@@ -53,72 +53,5 @@ export async function recoverDesktopBackendStartup(
     if (response === retryIndex) app.relaunch()
     app.exit(1)
     return
-  }
-}
-
-// Use an in-memory session: the profile must stay closed until credential validation completes.
-export function createCredentialStartupNotice(): {
-  update(status: BackendStartupStatus): void
-  dispose(): void
-} {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let window: BrowserWindow | undefined
-  let shown = false
-  const dispose = (): void => {
-    clearTimeout(timer)
-    timer = undefined
-    if (window && !window.isDestroyed()) window.destroy()
-    window = undefined
-  }
-  return {
-    update(status) {
-      if (status.stage !== 'credentials' || status.kind !== 'progress') {
-        dispose()
-        return
-      }
-      if (timer || shown) return
-      timer = setTimeout(() => {
-        timer = undefined
-        shown = true
-        const i18n = createNativeI18n(resolveLocale('system', app.getPreferredSystemLanguages()))
-        const translate = i18n.t.bind(i18n)
-        const title = translate('Waiting for system credential access')
-        const description = translate(
-          'Respond to the system authorization prompt. You can wait up to five minutes. If it times out, retry startup. Existing credentials will be preserved.'
-        )
-        const escape = (value: string): string =>
-          value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        window = new BrowserWindow({
-          width: 500,
-          height: 300,
-          title: 'Open-Science',
-          show: false,
-          resizable: false,
-          autoHideMenuBar: true,
-          webPreferences: {
-            partition: 'credential-startup-notice',
-            sandbox: true,
-            contextIsolation: true,
-            nodeIntegration: false
-          }
-        })
-        const notice = window
-        notice.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-        void notice
-          .loadURL(
-            'data:text/html;charset=utf-8,' +
-              encodeURIComponent(
-                `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>Open-Science</title><style>:root{color-scheme:light dark}body{font:14px system-ui;margin:32px;line-height:1.6;background:Canvas;color:CanvasText}h1{font-size:18px;font-weight:600}</style></head><body><h1>${escape(title)}</h1><p role="status">${escape(description)}</p></body></html>`
-              )
-          )
-          .then(() => {
-            if (!notice.isDestroyed()) notice.showInactive()
-          })
-          .catch(() => {
-            if (!notice.isDestroyed()) notice.destroy()
-          })
-      }, 1500)
-    },
-    dispose
   }
 }
