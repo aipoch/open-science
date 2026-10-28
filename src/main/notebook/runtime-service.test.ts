@@ -5387,7 +5387,9 @@ describe('notebook runtime service', () => {
       // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
       await firstStarted.promise
       const admittedPath = observedPaths[0]
-      expect(admittedPath).toContain(originalPath)
+      expect(admittedPath.split(delimiter)).toEqual(
+        expect.arrayContaining([...new Set(originalPath.split(delimiter))])
+      )
       const second = service.executeShell({ ...scope, command: 'second' })
       await vi.waitFor(
         async () => {

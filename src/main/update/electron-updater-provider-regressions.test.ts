@@ -1,12 +1,12 @@
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import type { DownloadedUpdateHelper as SdkDownloadHelper } from 'electron-updater/out/DownloadedUpdateHelper'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import {
   ElectronUpdaterStrategy,
   type MinimalAutoUpdater,
@@ -39,14 +39,6 @@ const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
 const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }
-
-// NodeHttpExecutor does not honor NO_PROXY, so ambient proxy settings can redirect this
-// file's loopback fixtures. Keep the real SDK transport and restore the environment per test.
-beforeEach(() => {
-  vi.stubEnv('http_proxy', undefined)
-  vi.stubEnv('https_proxy', undefined)
-})
-afterEach(() => vi.unstubAllEnvs())
 
 type RealCacheSession = {
   strategy: ElectronUpdaterStrategy
@@ -101,6 +93,8 @@ const realCacheFixture = async (
       onQuit: vi.fn()
     })
     const executor = new NodeHttpExecutor()
+    // This fixture serves only loopback HTTP; inherited proxy settings must not reroute it.
+    executor.createRequest = request
     executor.download = ElectronHttpExecutor.prototype.download
     updater.httpExecutor = executor
     updater._testOnlyOptions = { platform: 'linux' }

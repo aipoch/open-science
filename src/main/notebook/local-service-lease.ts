@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 import { lstatSync } from 'node:fs'
 import { Agent, request, type ClientRequest } from 'node:http'
-import { connect, type Socket } from 'node:net'
+import { connect, Socket } from 'node:net'
 import { validateLocalServiceLocation } from '@aipoch/notebook-network-sandbox'
 
 type LocalServiceScope = Readonly<{
@@ -49,7 +49,14 @@ class LocalServiceLease {
     this.paths = new Set(options.allowedPaths)
     this.agent.createConnection = () => {
       // Even an unexpected Agent retry cannot transfer this authority to a new listener.
-      if (this.closed || this.socket) throw new Error('Local service lease cannot reconnect.')
+      if (this.closed || this.socket) {
+        // Agent can request a replacement from its asynchronous socket-close listener.
+        // Return a failed, unconnected socket so queued requests receive an error instead
+        // of throwing outside their Promise and leaving them pending indefinitely.
+        const refused = new Socket()
+        queueMicrotask(() => refused.destroy(new Error('Local service lease cannot reconnect.')))
+        return refused
+      }
       const socket = connect({ path: options.socketPath })
       this.socket = socket
       socket.once('close', this.abort)

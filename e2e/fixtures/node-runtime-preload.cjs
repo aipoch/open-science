@@ -6,6 +6,7 @@ const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
 if (!root) throw new Error('The Node runtime fixture requires an isolated source E2E profile.')
 if (process.versions.electron) {
   const { app } = require('electron')
+  if (process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) require('./use-case-download-preload.cjs')
   if (app.isPackaged) throw new Error('Source fixture cannot run packaged.')
   if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {
     const { BrowserWindow, dialog } = require('electron')

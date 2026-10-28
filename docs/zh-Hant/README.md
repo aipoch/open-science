@@ -51,7 +51,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 已完成的研究會話也可以匯出為可攜式 `.science` 包，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
 
-> 💡 **[AIPOCH Open-Science v1.0.4 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 10 月）_。這個修補版大幅縮小 CLI 與桌面版的下載體積，並透過本機 MCP 伺服器向外部用戶端提供獨立 CLI 的研究工具。它也會收合已完成回合的中間訊息與工具群組，新增透過 Crossref 手動檢查撤稿與更正、從已授權資料夾匯入產物、在 GitHub Skills 匯入流程中收藏 GitHub 儲存庫及問題卡片的結構化略過動作，並修正 Notebook、設定、工作階段套件與 Replay 的多項問題。詳情請參閱 [v1.0.4 發行說明](../../release-notes/1.0.4/zh-Hant.md)。
+> 💡 **[AIPOCH Open-Science v1.0.5 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 10 月）_。這個修補版為科學連接器新增原生來源 API 與官方檔案探索功能，為文獻資料庫新增支援篩選與批次更新的閱讀狀態追蹤，將工作階段套件的匯出與匯入帶入 Web UI，並讓本機服務的存續時間取決於明確的保持執行要求。它還新增可顯示安裝程式的手動更新入口、設定中的安全性政策連結，並修正網路權限、OpenCode 2.x 相容性、macOS Notebook 工具探索，以及 Windows Notebook 啟動等待的問題。詳情請參閱 [v1.0.5 發行說明](../../release-notes/1.0.5/zh-Hant.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />

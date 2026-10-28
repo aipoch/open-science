@@ -8,6 +8,7 @@ import type { ReplayDocument, ReplayStep } from '../../../../../shared/replay'
 import { projectReplayScene } from '@/lib/replay'
 import { ReplayPanel } from './ReplayPanel'
 import { ReplayControls } from './ReplayControls'
+import { ReplayCurrentContext } from './ReplayCurrentContext'
 import { ReplayStage } from './ReplayStage'
 import { useReplayMaterialAction } from './replay-material-action'
 import * as notebookCell from '../NotebookRecordCell'
@@ -263,6 +264,32 @@ describe('research replay interaction', () => {
         expect(view.container.textContent).not.toContain('private-run')
         expect(view.container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
         expect(JSON.stringify(document)).toBe(before)
+      }
+    )
+
+    it.each(cases)(
+      'hides $name payload in collapsed and expanded research context',
+      ({ metadata, title, description }) => {
+        const document = makeDocument()
+        Object.assign(
+          document.branches[0].steps[0].message!,
+          { role: 'user', content: payload },
+          metadata
+        )
+        render(
+          <ReplayCurrentContext
+            compact={interactive}
+            scene={projectReplayScene(document, 'main', 900)}
+            steps={document.branches[0].steps}
+            onHistory={() => {}}
+          />
+        )
+        expect(screen.getByTestId('replay-current-context').textContent).toContain(title)
+        expect(window.document.body.textContent).not.toContain('private-run')
+        fireEvent.click(screen.getByRole('button', { name: 'Expand context' }))
+        expect(window.document.body.textContent).toContain(description)
+        expect(window.document.body.textContent).not.toContain('Background execution outcomes')
+        expect(window.document.body.textContent).not.toContain('private-run')
       }
     )
 

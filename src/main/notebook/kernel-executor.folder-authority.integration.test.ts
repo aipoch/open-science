@@ -2,7 +2,7 @@ import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
@@ -111,13 +111,17 @@ it
         cwd,
         code,
         language: 'python',
-        resolvedInterpreter: { command: python3! },
+        resolvedInterpreter: {
+          command: python3!,
+          condaPrefix: dirname(dirname(realpathSync(python3!)))
+        },
         protectedDirs: [protectedFile],
         sessionId: 'folder-session',
         projectId: 'folder-project'
       })
     try {
-      expect(await run(`open('workspace.txt', 'w').write('workspace')`)).toMatchObject({
+      const initialWrite = await run(`open('workspace.txt', 'w').write('workspace')`)
+      expect(initialWrite, initialWrite.traceback).toMatchObject({
         status: 'completed'
       })
       const write = `open(${JSON.stringify(file)}, 'w').write('changed')`
