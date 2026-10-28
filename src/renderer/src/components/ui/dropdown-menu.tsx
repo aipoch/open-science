@@ -58,11 +58,13 @@ function DropdownMenuContent({
   className,
   style,
   sideOffset = 4,
+  container,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>): React.JSX.Element {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> &
+  Pick<React.ComponentProps<typeof DropdownMenuPrimitive.Portal>, 'container'>): React.JSX.Element {
   const layer = useOverlayLayer()
   return (
-    <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Portal container={container}>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}

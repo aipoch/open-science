@@ -904,10 +904,10 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
   })
 
-  it('places a warning-colored Skip all button last in the footer row for multi-question cards', async () => {
+  it('records a skipped question, advances without declining, and preserves the answer on finish', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
-
-    await act(async () => {
+    const onDraftChange = vi.fn()
+    await act(async () =>
       root.render(
         <WorkspaceElicitationCard
           elicitation={{
@@ -917,50 +917,36 @@ describe('WorkspaceElicitationCard choice question', () => {
           }}
           request={multiQuestionRequest}
           onRespond={onRespond}
+          onDraftChange={onDraftChange}
         />
       )
-    })
-
+    )
     const skip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip all'
+      (button) => button.textContent?.trim() === 'Skip'
     )
     expect(skip).toBeDefined()
-    expect(skip?.className).toContain('status-warning')
-    // Footer buttons match the compact card scale.
-    expect(skip?.className).not.toContain('h-11')
-    // Advance to the second question so Back renders, then check it shares the same pill
-    // geometry as the solid buttons (no borderless ghost).
-    await act(async () => {
+    await act(async () => skip!.click())
+    expect(onRespond).not.toHaveBeenCalled()
+    expect(onDraftChange).toHaveBeenLastCalledWith([
+      { fieldId: 'question_0_custom', value: 'User skipped' }
+    ])
+    expect(container.querySelector('h3')?.textContent).toBe('Which language should the skill use?')
+    await act(async () =>
       container
-        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-multi-omics"]')
-        ?.click()
-    })
-    const next = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Next'
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-option-chinese"]')!
+        .click()
     )
-    await act(async () => next?.click())
-    const back = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Back'
+    const finish = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Finish'
     )
-    expect(back?.getAttribute('data-variant')).toBe('secondary')
-    expect(back?.className).toContain('px-3')
-    // Same row as the footer tally, last button in the action group.
-    const skipAfter = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim() === 'Skip all'
-    )
-    expect(skipAfter?.parentElement?.lastElementChild).toBe(skipAfter)
-    expect(skipAfter?.parentElement?.parentElement?.textContent).toContain('selected')
-    // The full-width separator is gone; the input carries its own underline instead.
-    const customRow = container.querySelector('textarea')?.closest('div')
-    expect(customRow?.textContent).not.toContain('Skip')
-    expect(customRow?.classList.contains('border-t')).toBe(false)
-    expect(customRow?.classList.contains('border-b')).toBe(false)
-    expect(container.querySelector('textarea')?.className).toContain('border-b')
-
-    await act(async () => skip?.click())
+    await act(async () => finish!.click())
     expect(onRespond).toHaveBeenCalledWith({
-      requestId: multiQuestionRequest.requestId,
-      action: 'decline'
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0_custom', value: 'User skipped' },
+        { fieldId: 'question_1', value: 'chinese' }
+      ]
     })
   })
 

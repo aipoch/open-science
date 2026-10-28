@@ -39,7 +39,10 @@
     "src/renderer/src/components/notice.tsx",
     "src/renderer/src/lib/utils.ts",
     "src/renderer/src/pages/literature/imports/LiteratureImportDialogFrame.tsx",
-    "src/renderer/src/components/ui/workflow-dialog-frame.tsx"
+    "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
+    "src/renderer/src/components/ui/split-button.tsx",
+    "src/renderer/src/components/ui/split-button.css",
+    "src/renderer/src/components/ui/split-button.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ui/badge.tsx",
@@ -114,7 +117,8 @@
     "src/renderer/src/components/session-package-import-menu-model.ts",
     "src/renderer/src/components/use-settings-undo-portal.tsx",
     "src/renderer/src/lib/utils.ts",
-    "src/renderer/src/components/ui/workflow-dialog-frame.tsx"
+    "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
+    "src/renderer/src/components/ui/split-button.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -126,7 +130,8 @@
       "src/renderer/src/components/ui/popover.render.test.tsx",
       "src/renderer/src/components/ui/resizable.modal-isolation.test.tsx",
       "src/renderer/src/components/ui/resizable.test.tsx",
-      "src/renderer/src/components/ui/use-retained-dialog-value.test.tsx"
+      "src/renderer/src/components/ui/use-retained-dialog-value.test.tsx",
+      "src/renderer/src/components/ui/split-button.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

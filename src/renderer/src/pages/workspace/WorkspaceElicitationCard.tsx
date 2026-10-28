@@ -1,3 +1,11 @@
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
+  SplitButtonContent
+} from '@/components/ui/split-button'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useId, useEffectEvent, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -289,9 +297,11 @@ const WorkspaceElicitationCard = ({
   )
   // Translate the app-owned sentinel only in a choice's custom field, not arbitrary answer text.
   const displayAnswer = (answer: ElicitationAnswer): string =>
-    answer.value === 'Let the agent decide' &&
+    (answer.value === 'Let the agent decide' || answer.value === 'User skipped') &&
     choiceQuestions?.some((question) => question.customField.id === answer.fieldId)
-      ? t('Let the agent decide')
+      ? answer.value === 'User skipped'
+        ? t('User skipped')
+        : t('Let the agent decide')
       : displayValue(answer.value, fieldsById.get(answer.fieldId), t)
   const canReviewAnswer = Boolean(elicitation.state === 'answered' && choiceQuestions)
   const isPendingPlaceholder = variant === 'pending-placeholder' && elicitation.state === 'pending'
@@ -462,11 +472,7 @@ const WorkspaceElicitationCard = ({
                 <Check className="size-3" strokeWidth={2} aria-label={t('Selected')} />
               </span>
               <span className="min-h-4 min-w-0 flex-1 whitespace-pre-wrap break-words">
-                {displayValue(
-                  questionAnswer?.value ?? '',
-                  fieldsById.get(question.customField.id),
-                  t
-                )}
+                {questionAnswer ? displayAnswer(questionAnswer) : ''}
               </span>
             </div>
           ) : null}
@@ -545,6 +551,39 @@ const WorkspaceElicitationCard = ({
       action: 'accept',
       answers: completedChoiceAnswers
     })
+  }
+
+  // Store a skipped question in the existing custom-answer field so drafts and history retain it.
+  const skipCurrentQuestion = (): void => {
+    if (!request || !choiceQuestions || !choiceQuestion || isSubmitting) return
+    if (choiceQuestions.length === 1) {
+      void respond({ requestId: request.requestId, action: 'decline' })
+      return
+    }
+    const skipped = {
+      ...values,
+      [choiceQuestion.choiceField.id]: undefined,
+      [choiceQuestion.customField.id]: 'User skipped'
+    }
+    const confirmed = {
+      ...confirmedValues,
+      [choiceQuestion.choiceField.id]: undefined,
+      [choiceQuestion.customField.id]: 'User skipped'
+    }
+    setValues(skipped)
+    setConfirmedValues(confirmed)
+    onDraftChange?.(choiceAnswers(choiceQuestions, confirmed))
+    setError(undefined)
+    const answers = choiceAnswers(choiceQuestions, skipped)
+    if (isFinalChoiceQuestion && answers.length === choiceQuestions.length) {
+      void respond({ requestId: request.requestId, action: 'accept', answers })
+    } else {
+      setActiveChoiceIndex(
+        isFinalChoiceQuestion
+          ? firstUnansweredQuestionIndex(choiceQuestions, skipped)
+          : activeChoiceIndex + 1
+      )
+    }
   }
 
   useEffect(() => {
@@ -853,20 +892,34 @@ const WorkspaceElicitationCard = ({
                     <ChevronRight className="size-4" strokeWidth={1.75} aria-hidden="true" />
                   </Button>
                 ) : null}
-                {/* Skipping declines the whole request, so multi-question cards say "Skip all". */}
-                <Button
-                  className="px-3 bg-status-warning-surface text-status-warning-foreground hover:bg-status-warning-surface/70 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface/70"
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() =>
-                    void respond({
-                      requestId: request.requestId,
-                      action: 'decline'
-                    })
-                  }
-                >
-                  {choiceQuestions.length > 1 ? t('Skip all') : t('Skip')}
-                </Button>
+                <SplitButton disabled={isSubmitting} hideMenu={choiceQuestions.length <= 1}>
+                  <SplitButtonGroup className="bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground">
+                    <SplitButtonPrimary
+                      variant="ghost"
+                      className="px-3 text-inherit hover:text-inherit hover:bg-status-warning-surface/70 dark:hover:bg-status-warning-dark-surface/70"
+                      onClick={skipCurrentQuestion}
+                    >
+                      {t('Skip')}
+                    </SplitButtonPrimary>
+                    <SplitButtonTrigger
+                      variant="ghost"
+                      className="px-2 text-inherit hover:text-inherit hover:bg-status-warning-surface/70 dark:hover:bg-status-warning-dark-surface/70"
+                      aria-label={t('Skip options')}
+                    >
+                      <ChevronDown className="size-3.5" aria-hidden="true" />
+                    </SplitButtonTrigger>
+                  </SplitButtonGroup>
+                  <SplitButtonContent side="top" align="end" matchWidth className="min-w-0">
+                    <DropdownMenuItem
+                      className="text-status-warning-foreground data-[highlighted]:text-status-warning-foreground dark:text-status-warning-dark-foreground dark:data-[highlighted]:text-status-warning-dark-foreground"
+                      onSelect={() =>
+                        void respond({ requestId: request.requestId, action: 'decline' })
+                      }
+                    >
+                      {t('Skip all')}
+                    </DropdownMenuItem>
+                  </SplitButtonContent>
+                </SplitButton>
               </div>
             </div>
           ) : null}

@@ -5138,7 +5138,8 @@
         "src/renderer/src/components/notice.tsx",
         "src/renderer/src/lib/utils.ts",
         "src/renderer/src/pages/literature/imports/LiteratureImportDialogFrame.tsx",
-        "src/renderer/src/components/ui/workflow-dialog-frame.tsx"
+        "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
+        "src/renderer/src/components/ui/split-button.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -5173,7 +5174,8 @@
         "src/renderer/src/components/notice.tsx": "presentation-adapter",
         "src/renderer/src/lib/utils.ts": "presentation-model",
         "src/renderer/src/pages/literature/imports/LiteratureImportDialogFrame.tsx": "presentation-adapter",
-        "src/renderer/src/components/ui/workflow-dialog-frame.tsx": "presentation-adapter"
+        "src/renderer/src/components/ui/workflow-dialog-frame.tsx": "presentation-adapter",
+        "src/renderer/src/components/ui/split-button.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -5185,7 +5187,8 @@
         "src/renderer/src/components/ui/resizable.modal-isolation.test.tsx",
         "src/renderer/src/components/ui/resizable.test.tsx",
         "src/renderer/src/components/ui/use-retained-dialog-value.test.tsx",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/renderer/src/components/ui/split-button.test.tsx"
       ],
       "externalImports": [
         "@shadcn/react/message-scroller",

@@ -5570,8 +5570,6 @@ describe('ConversationPanel composer intake', () => {
       expect.arrayContaining([
         'border-0',
         'bg-transparent',
-        'after:left-0',
-        'after:bg-primary-foreground/20',
         'active:translate-y-px',
         'motion-reduce:active:translate-y-0'
       ])

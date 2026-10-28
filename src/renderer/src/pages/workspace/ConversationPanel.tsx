@@ -1,3 +1,10 @@
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
+  SplitButtonContent
+} from '@/components/ui/split-button'
 import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import { isAgentAuthenticationRequired } from './agent-authentication-error'
 import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
@@ -229,12 +236,12 @@ const composerIconButtonClassName = cn(
 )
 
 const composerSplitSendPrimaryButtonClassName = cn(
-  "relative h-8 w-8 rounded-l-md rounded-r-none border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:-left-3 [@media(pointer:coarse)]:before:right-0 [@media(pointer:coarse)]:before:content-['']",
+  "relative h-8 w-8 border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:-left-3 [@media(pointer:coarse)]:before:right-0 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 
 const composerSplitSendMenuButtonClassName = cn(
-  "relative h-8 w-8 rounded-l-none rounded-r-md border-0 bg-transparent bg-clip-border text-primary-foreground after:pointer-events-none after:absolute after:inset-y-1 after:left-0 after:w-px after:bg-primary-foreground/20 after:content-[''] hover:bg-primary-foreground/10 hover:text-primary-foreground active:translate-y-px aria-expanded:bg-primary-foreground/10 aria-expanded:text-primary-foreground focus-visible:keyboard-focus motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:left-0 [@media(pointer:coarse)]:before:-right-3 [@media(pointer:coarse)]:before:content-['']",
+  "relative h-8 w-8 border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground active:translate-y-px aria-expanded:bg-primary-foreground/10 aria-expanded:text-primary-foreground focus-visible:keyboard-focus motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:left-0 [@media(pointer:coarse)]:before:-right-3 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 
@@ -3329,59 +3336,65 @@ const ConversationPanel = ({
                                 // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
                                 // in a separate ACP session), so fixLoopActive keeps the cancel affordance
                                 // reachable across the whole loop, not just the agent-fix running turn.
-                                <div
-                                  data-testid="composer-running-control-slot"
-                                  className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
-                                >
-                                  <PopoverAnchor asChild>
-                                    <button
-                                      ref={sendButtonRef}
-                                      type="button"
-                                      onClick={canQueueMessage ? handleSubmit : handleStop}
-                                      disabled={isStopping}
-                                      data-testid={
-                                        canQueueMessage ? 'composer-queue-submit' : undefined
-                                      }
-                                      className={cn(
-                                        composerCancelButtonClassName,
-                                        canQueueMessage &&
-                                          'bg-primary text-primary-foreground hover:bg-primary/90'
-                                      )}
-                                      aria-label={
-                                        canQueueMessage
-                                          ? t('Add message to queue')
-                                          : isStopping
-                                            ? t('Stopping run and subagents')
-                                            : t('Cancel run')
-                                      }
-                                    >
-                                      {canQueueMessage ? (
-                                        <ArrowUp
-                                          className="size-4"
-                                          strokeWidth={2.2}
-                                          aria-hidden="true"
-                                        />
-                                      ) : isStopping ? (
-                                        <Loader2
-                                          className="size-3.5 animate-spin"
-                                          strokeWidth={2.2}
-                                          aria-hidden="true"
-                                        />
-                                      ) : (
-                                        <Square
-                                          className="size-3.5"
-                                          strokeWidth={2.2}
-                                          aria-hidden="true"
-                                        />
-                                      )}
-                                    </button>
-                                  </PopoverAnchor>
-                                  {stopError ? (
-                                    <span className="sr-only" role="alert">
-                                      {stopError}
-                                    </span>
-                                  ) : null}
-                                  <DropdownMenu>
+                                <SplitButton>
+                                  <SplitButtonGroup
+                                    data-testid="composer-running-control-slot"
+                                    className={cn(
+                                      'flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3',
+                                      canQueueMessage ? 'bg-primary' : 'bg-bg-200'
+                                    )}
+                                  >
+                                    <PopoverAnchor asChild>
+                                      <SplitButtonPrimary
+                                        variant="ghost"
+                                        size="icon"
+                                        ref={sendButtonRef}
+                                        type="button"
+                                        onClick={canQueueMessage ? handleSubmit : handleStop}
+                                        disabled={isStopping}
+                                        data-testid={
+                                          canQueueMessage ? 'composer-queue-submit' : undefined
+                                        }
+                                        className={cn(
+                                          composerCancelButtonClassName,
+                                          canQueueMessage &&
+                                            'bg-primary text-primary-foreground hover:bg-primary/90'
+                                        )}
+                                        aria-label={
+                                          canQueueMessage
+                                            ? t('Add message to queue')
+                                            : isStopping
+                                              ? t('Stopping run and subagents')
+                                              : t('Cancel run')
+                                        }
+                                      >
+                                        {canQueueMessage ? (
+                                          <ArrowUp
+                                            className="size-4"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                        ) : isStopping ? (
+                                          <Loader2
+                                            className="size-3.5 animate-spin"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                        ) : (
+                                          <Square
+                                            className="size-3.5"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                        )}
+                                      </SplitButtonPrimary>
+                                    </PopoverAnchor>
+                                    {stopError ? (
+                                      <span className="sr-only" role="alert">
+                                        {stopError}
+                                      </span>
+                                    ) : null}
+
                                     <>
                                       <Tooltip>
                                         <TooltipTrigger
@@ -3396,25 +3409,29 @@ const ConversationPanel = ({
                                           }}
                                         >
                                           <span className="inline-flex">
-                                            <DropdownMenuTrigger asChild>
-                                              <button
-                                                type="button"
-                                                className={composerIconButtonClassName}
-                                                disabled={
-                                                  !canQueueMessage &&
-                                                  !canOpenSideChat &&
-                                                  !canStartSideChat &&
-                                                  !canRetrySideChatHydration
-                                                }
-                                                aria-label={t('More send options')}
-                                                data-testid="running-side-chat-menu-trigger"
-                                              >
-                                                <ChevronDown
-                                                  className="size-3.5"
-                                                  aria-hidden="true"
-                                                />
-                                              </button>
-                                            </DropdownMenuTrigger>
+                                            <SplitButtonTrigger
+                                              variant="ghost"
+                                              size="icon"
+                                              type="button"
+                                              className={cn(
+                                                composerIconButtonClassName,
+                                                canQueueMessage &&
+                                                  'text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                                              )}
+                                              disabled={
+                                                !canQueueMessage &&
+                                                !canOpenSideChat &&
+                                                !canStartSideChat &&
+                                                !canRetrySideChatHydration
+                                              }
+                                              aria-label={t('More send options')}
+                                              data-testid="running-side-chat-menu-trigger"
+                                            >
+                                              <ChevronDown
+                                                className="size-3.5"
+                                                aria-hidden="true"
+                                              />
+                                            </SplitButtonTrigger>
                                           </span>
                                         </TooltipTrigger>
                                         <TooltipContent side="top">
@@ -3424,70 +3441,71 @@ const ConversationPanel = ({
                                         </TooltipContent>
                                       </Tooltip>
                                     </>
-                                    <DropdownMenuContent side="top" align="end" className="w-64">
-                                      {canQueueMessage ? (
-                                        <DropdownMenuItem
-                                          onSelect={handleStop}
-                                          aria-label={t('Cancel run')}
-                                          className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                        >
-                                          <Square
-                                            className="mr-2 size-4 text-text-300"
-                                            aria-hidden="true"
-                                          />
-                                          {t('Cancel run')}
-                                        </DropdownMenuItem>
-                                      ) : null}
-                                      {sideChatMenuItems}
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
+                                  </SplitButtonGroup>
+                                  <SplitButtonContent side="top" align="end" className="w-64">
+                                    {canQueueMessage ? (
+                                      <DropdownMenuItem
+                                        onSelect={handleStop}
+                                        aria-label={t('Cancel run')}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <Square
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Cancel run')}
+                                      </DropdownMenuItem>
+                                    ) : null}
+                                    {sideChatMenuItems}
+                                  </SplitButtonContent>
+                                </SplitButton>
                               ) : (
                                 <>
-                                  <div
-                                    role="group"
-                                    aria-label={t('Send message options')}
-                                    className={cn(
-                                      'flex rounded-md [@media(pointer:coarse)]:mx-3',
-                                      specialistSwitchInFlight
-                                        ? 'bg-bg-300 text-text-300'
-                                        : 'bg-primary text-primary-foreground',
-                                      !specialistSwitchInFlight &&
-                                        !effectiveCanSend &&
-                                        !canOpenSendOptions &&
-                                        'opacity-50'
-                                    )}
-                                  >
-                                    <Tooltip open={specialistUnavailableOpen ? false : undefined}>
-                                      <TooltipTrigger asChild>
-                                        <PopoverAnchor asChild>
-                                          <Button
-                                            ref={sendButtonRef}
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={handleSubmit}
-                                            disabled={!effectiveCanSend}
-                                            className={cn(
-                                              composerSplitSendPrimaryButtonClassName,
-                                              specialistSwitchInFlight && 'text-text-300',
-                                              canOpenSendOptions && 'disabled:opacity-50'
-                                            )}
-                                            aria-label={t('Send message')}
-                                          >
-                                            <ArrowUp
-                                              className="size-4"
-                                              strokeWidth={2.2}
-                                              aria-hidden="true"
-                                            />
-                                          </Button>
-                                        </PopoverAnchor>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        {t('Send message')}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <DropdownMenu>
+                                  <SplitButton>
+                                    <SplitButtonGroup
+                                      role="group"
+                                      aria-label={t('Send message options')}
+                                      className={cn(
+                                        'flex rounded-md [@media(pointer:coarse)]:mx-3',
+                                        specialistSwitchInFlight
+                                          ? 'bg-bg-300 text-text-300'
+                                          : 'bg-primary text-primary-foreground',
+                                        !specialistSwitchInFlight &&
+                                          !effectiveCanSend &&
+                                          !canOpenSendOptions &&
+                                          'opacity-50'
+                                      )}
+                                    >
+                                      <Tooltip open={specialistUnavailableOpen ? false : undefined}>
+                                        <TooltipTrigger asChild>
+                                          <PopoverAnchor asChild>
+                                            <SplitButtonPrimary
+                                              ref={sendButtonRef}
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              onClick={handleSubmit}
+                                              disabled={!effectiveCanSend}
+                                              className={cn(
+                                                composerSplitSendPrimaryButtonClassName,
+                                                specialistSwitchInFlight && 'text-text-300',
+                                                canOpenSendOptions && 'disabled:opacity-50'
+                                              )}
+                                              aria-label={t('Send message')}
+                                            >
+                                              <ArrowUp
+                                                className="size-4"
+                                                strokeWidth={2.2}
+                                                aria-hidden="true"
+                                              />
+                                            </SplitButtonPrimary>
+                                          </PopoverAnchor>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {t('Send message')}
+                                        </TooltipContent>
+                                      </Tooltip>
+
                                       <Tooltip>
                                         {/* Same focus guard as the + trigger: a dropdown close returns
                                       programmatic focus, which must not re-open the tooltip. */}
@@ -3499,67 +3517,65 @@ const ConversationPanel = ({
                                             }
                                           }}
                                         >
-                                          <DropdownMenuTrigger asChild>
-                                            <Button
-                                              type="button"
-                                              variant="ghost"
-                                              size="icon"
-                                              disabled={!canOpenSendOptions}
-                                              className={cn(
-                                                composerSplitSendMenuButtonClassName,
-                                                specialistSwitchInFlight &&
-                                                  'text-text-300 after:bg-text-300/20',
-                                                effectiveCanSend && 'disabled:opacity-50'
-                                              )}
-                                              aria-label={t('More send options')}
-                                              aria-haspopup="menu"
-                                              data-testid="branch-send-menu-trigger"
-                                            >
-                                              <ChevronDown
-                                                className="size-3.5"
-                                                strokeWidth={2.2}
-                                                aria-hidden="true"
-                                              />
-                                            </Button>
-                                          </DropdownMenuTrigger>
+                                          <SplitButtonTrigger
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            disabled={!canOpenSendOptions}
+                                            className={cn(
+                                              composerSplitSendMenuButtonClassName,
+                                              specialistSwitchInFlight &&
+                                                'text-text-300 after:bg-text-300/20',
+                                              effectiveCanSend && 'disabled:opacity-50'
+                                            )}
+                                            aria-label={t('More send options')}
+                                            aria-haspopup="menu"
+                                            data-testid="branch-send-menu-trigger"
+                                          >
+                                            <ChevronDown
+                                              className="size-3.5"
+                                              strokeWidth={2.2}
+                                              aria-hidden="true"
+                                            />
+                                          </SplitButtonTrigger>
                                         </TooltipTrigger>
                                         <TooltipContent side="top">
                                           {t('More send options')}
                                         </TooltipContent>
                                       </Tooltip>
-                                      <DropdownMenuContent side="top" align="end" className="w-56">
-                                        <DropdownMenuItem
-                                          data-testid="menu-plan-first"
-                                          disabled={!canPlanFirst}
-                                          onSelect={handlePlanFirst}
-                                          className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                        >
-                                          <ListChecks
-                                            className="mr-2 size-4 text-text-300"
-                                            aria-hidden="true"
-                                          />
-                                          {t('Plan first')}
-                                        </DropdownMenuItem>
-                                        {sideChatMenuItems}
-                                        <DropdownMenuItem
-                                          data-testid="menu-branch-in-new-session"
-                                          disabled={
-                                            !effectiveCanSend ||
-                                            !onBranchInNewSession ||
-                                            !canBranchInNewSession
-                                          }
-                                          onSelect={handleBranchInNewSession}
-                                          className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
-                                        >
-                                          <GitBranch
-                                            className="mr-2 size-4 text-text-300"
-                                            aria-hidden="true"
-                                          />
-                                          {t('Branch in new session')}
-                                        </DropdownMenuItem>
-                                      </DropdownMenuContent>
-                                    </DropdownMenu>
-                                  </div>
+                                    </SplitButtonGroup>
+                                    <SplitButtonContent side="top" align="end" className="w-56">
+                                      <DropdownMenuItem
+                                        data-testid="menu-plan-first"
+                                        disabled={!canPlanFirst}
+                                        onSelect={handlePlanFirst}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <ListChecks
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Plan first')}
+                                      </DropdownMenuItem>
+                                      {sideChatMenuItems}
+                                      <DropdownMenuItem
+                                        data-testid="menu-branch-in-new-session"
+                                        disabled={
+                                          !effectiveCanSend ||
+                                          !onBranchInNewSession ||
+                                          !canBranchInNewSession
+                                        }
+                                        onSelect={handleBranchInNewSession}
+                                        className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                      >
+                                        <GitBranch
+                                          className="mr-2 size-4 text-text-300"
+                                          aria-hidden="true"
+                                        />
+                                        {t('Branch in new session')}
+                                      </DropdownMenuItem>
+                                    </SplitButtonContent>
+                                  </SplitButton>
                                 </>
                               )}
                               <PopoverContent
