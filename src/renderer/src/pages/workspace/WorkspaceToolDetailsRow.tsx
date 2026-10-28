@@ -25,6 +25,7 @@ import {
   type ToolDetailSection
 } from './workspace-tool-activity-details'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
+import { AuthorizedDirectoriesList } from './AuthorizedDirectoriesList'
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
@@ -238,6 +239,13 @@ const WorkspaceToolDetailsRow = ({
   }, [isNearViewport, notebookRunId, onNotebookRunNearViewport])
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
+    if (section.kind === 'authorized-directories')
+      return (
+        <AuthorizedDirectoriesList
+          key={`${activity.id}:${section.snapshot.revision}`}
+          directories={section.snapshot.directories}
+        />
+      )
     if (section.kind === 'summary')
       return <WorkspaceToolSummaryCard key={index} summary={section.summary} file={section.file} />
     if (section.kind === 'literature') {

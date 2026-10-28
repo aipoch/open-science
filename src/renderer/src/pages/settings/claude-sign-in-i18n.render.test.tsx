@@ -51,20 +51,20 @@ describe('ClaudeIsolatedSignInModal copy', () => {
   it('translates the title, step, and footer actions, and re-renders on language change', () => {
     renderModal()
     expect(document.body.textContent).toContain('Sign in with Anthropic')
-    expect(document.body.textContent).toContain('Step 1 · Run')
+    expect(document.body.textContent).toContain('Step 1: Run')
     expect(document.body.textContent).toContain('Sign in')
     expect(document.body.textContent).toContain('Cancel')
 
     switchTo('zh-Hans')
     expect(document.body.textContent).toContain('使用 Anthropic 账号登录')
-    expect(document.body.textContent).toContain('第 1 步 · 运行')
+    expect(document.body.textContent).toContain('第 1 步，运行')
     expect(document.body.textContent).toContain('取消')
 
     // zh-Hant must not fall back to zh-Hans: 登录→登入, 运行→執行.
     switchTo('zh-Hant')
     expect(document.body.textContent).toContain('使用 Anthropic 帳號登入')
-    expect(document.body.textContent).toContain('第 1 步 · 執行')
-    expect(document.body.textContent).not.toContain('第 1 步 · 运行')
+    expect(document.body.textContent).toContain('第 1 步，執行')
+    expect(document.body.textContent).not.toContain('第 1 步，运行')
   })
 
   it('keeps the code spans and the docs link when interpolating the description', () => {
@@ -85,7 +85,7 @@ describe('ClaudeIsolatedSignInModal copy', () => {
   it('swaps the paste label and hides step 1 while a browser sign-in is pending', () => {
     renderModal(true)
     expect(document.body.textContent).toContain('Paste the token printed by setup-token')
-    expect(document.body.textContent).not.toContain('Step 1 · Run')
+    expect(document.body.textContent).not.toContain('Step 1: Run')
     expect(document.body.textContent).toContain('Opening your browser to sign in…')
 
     switchTo('zh-Hans')

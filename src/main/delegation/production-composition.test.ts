@@ -53,6 +53,7 @@ import {
   finalizeDelegatedArtifactPublication
 } from './delegated-artifact-publication'
 import { createProductionDelegatedFrameworks } from './production-frameworks'
+import { DelegatedProcessOwnership } from './process-ownership'
 import type { AcpDelegateExecutionCallbacks, AcpDelegateRuntime } from './acp-execution'
 import type { DelegateExecutionInput } from './execution-port'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
@@ -103,6 +104,7 @@ type CompositionHarness = Readonly<{
   session: PersistedChatSession
   durable(): PersistedChatSession
   replaceDurable(session: PersistedChatSession): void
+  recoverStartup(): Promise<unknown>
   caller: AuthenticatedDelegateCaller
   commands: DelegatedWorkRecordCommands
   reopen(): ReturnType<typeof createProductionDelegatedWorkComposition>
@@ -282,6 +284,7 @@ const createCompositionHarness = async (
       toolInvocationId: `call-${frameworkId}`
     },
     commands: coordinator,
+    recoverStartup: () => coordinator.recoverInterruptedDelegatedWork(),
     reopen: () => createProductionDelegatedWorkComposition(compositionOptions)
   }
 }
@@ -1847,6 +1850,10 @@ describe('production delegated-work composition', () => {
         { task, name: 'Source audit' },
         { wait: false }
       )
+      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      harness.execution.controls()[0].accept()
+      harness.execution.controls()[0].complete('first complete')
+      await harness.composition.host.collect(harness.caller, [first.children[0].frameId])
       const reopened = harness.reopen()
       compositions.push(reopened)
       const second = await reopened.host.delegate(
@@ -1854,6 +1861,10 @@ describe('production delegated-work composition', () => {
         { task, name: 'Source audit 2' },
         { wait: false }
       )
+      await expect.poll(() => harness.execution.controls()).toHaveLength(2)
+      harness.execution.controls()[1].accept()
+      harness.execution.controls()[1].complete('second complete')
+      await reopened.host.collect(harness.caller, [second.children[0].frameId])
 
       expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
       expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })
@@ -2131,9 +2142,11 @@ describe('production delegated-work composition', () => {
           additionalProperties: false
         }
       })
-      await expect.poll(() => harness.controls.size).toBe(1)
+      // Workspace preparation and durable writes can exceed the default 1s poll on Windows.
+      const waitOptions = { timeout: 10_000 }
+      await expect.poll(() => harness.controls.size, waitOptions).toBe(1)
       const control = [...harness.controls.values()][0]
-      await expect.poll(() => control.prompts).toHaveLength(1)
+      await expect.poll(() => control.prompts, waitOptions).toHaveLength(1)
       await expect(
         readFile(join(control.input.workspaceCwd!, 'inputs', '01-framework-input.txt'), 'utf8')
       ).resolves.toBe('framework evidence\n')
@@ -3915,6 +3928,70 @@ describe('production delegated-work composition', () => {
       .toEqual(expect.arrayContaining([first.message_id, second.message_id]))
     expect(deliveries).toHaveLength(2)
   })
+
+  it.each([
+    ['confirmed', false],
+    ['unconfirmed', false],
+    ['confirmed', true],
+    ['unconfirmed', true]
+  ] as const)(
+    'protects interrupted Attempt runtime homes until cold cleanup is %s (startup recovery: %s)',
+    async (cleanup, hydrated) => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-production-cold-runtime-'))
+      const harness = await createCompositionHarness(root, 'opencode')
+      const receipt = await harness.composition.host.delegate(
+        harness.caller,
+        { task: 'Interrupted child', name: 'Interrupted child' },
+        { wait: false }
+      )
+      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+      harness.execution.controls()[0].accept()
+      const runtimeRoot = join(
+        root,
+        'delegation',
+        harness.session.projectId,
+        harness.session.id,
+        'runtime'
+      )
+      const home = join(runtimeRoot, receipt.children[0].attemptId)
+      const sibling = join(runtimeRoot, 'unrelated-attempt')
+      await mkdir(home, { recursive: true })
+      await mkdir(sibling, { recursive: true })
+      await writeFile(join(home, 'config.json'), '{}')
+      if (cleanup === 'unconfirmed') {
+        new DelegatedProcessOwnership(root).recordFailure({
+          ...harness.caller.session,
+          frameId: receipt.children[0].frameId,
+          attemptId: receipt.children[0].attemptId,
+          frameworkId: 'opencode'
+        })
+      }
+      if (hydrated) await harness.recoverStartup()
+      const restarted = harness.reopen()
+      try {
+        if (cleanup === 'unconfirmed') {
+          await expect(restarted.root.wakeMessages?.(harness.session.id)).rejects.toThrow()
+          expect(
+            harness.durable().runtimeContext?.delegatedWork?.records[0].attempts.at(-1)?.status
+          ).toBe(hydrated ? 'cancelled' : 'running')
+          await expect(readFile(join(home, 'config.json'), 'utf8')).resolves.toBe('{}')
+          expect(new DelegatedProcessOwnership(root).receipts(harness.caller.session)).toHaveLength(
+            1
+          )
+          return
+        }
+        await restarted.root.wakeMessages?.(harness.session.id)
+        expect(
+          harness.durable().runtimeContext?.delegatedWork?.records[0].attempts.at(-1)
+        ).toMatchObject({ status: 'cancelled', cancellationReason: 'runtime_interrupted' })
+        await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' })
+        await expect(stat(sibling)).resolves.toBeDefined()
+      } finally {
+        await restarted.root.shutdown().catch(() => undefined)
+        await harness.composition.root.shutdown().catch(() => undefined)
+      }
+    }
+  )
 
   it('discovers a durable queued parent message when a cold composition is woken after restart', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-parent-restart-wake-'))

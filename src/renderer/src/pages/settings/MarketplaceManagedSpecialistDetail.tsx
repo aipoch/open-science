@@ -96,7 +96,7 @@ const MarketplaceManagedSpecialistDetail = ({
             <p className="mt-2 text-xs text-muted-foreground">
               {t('Version {{version}}', { version: specialist.packageVersion ?? '0.1.0' })}
               {specialist.marketplaceProvenance?.publisher
-                ? ` · ${t('Publisher: {{publisher}}', {
+                ? ` / ${t('Publisher: {{publisher}}', {
                     publisher: specialist.marketplaceProvenance.publisher
                   })}`
                 : ''}

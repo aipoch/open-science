@@ -19,7 +19,7 @@ export const providerType = (env: DiscoveredInterpreter, t: TFunction): string =
 
 // One-line readiness for a discovered env: version plus runnable/gap detail.
 export const envReadyLine = (env: DiscoveredInterpreter, t: TFunction): string => {
-  const version = env.version ? ` · ${env.version}` : ''
+  const version = env.version ? ` / ${env.version}` : ''
   // `detail` is a runtime-probe string from the main process, not catalog copy.
   return env.runnable ? `${t('Ready')}${version}` : `${env.detail ?? t('Not runnable')}${version}`
 }

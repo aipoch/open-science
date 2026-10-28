@@ -1,7 +1,9 @@
+import { importSessionPackage } from '@/lib/session-package-import'
 import {
   packageOperationPresentation,
   primaryBrowserTransfer
 } from '@/lib/package-operation-presentation'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { PackageImportSelection } from './PackageImportSelection'
 import { PackageImportQueue } from './PackageImportQueue'
@@ -52,7 +54,6 @@ import { PackageFileSelection } from './PackageFileSelection'
 import {
   formatPackageBytes as bytes,
   PACKAGE_IO_RATE_OPTIONS,
-  PACKAGE_IMPORT_STAGES,
   packageImportPercent
 } from '../../../shared/session-package'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -82,105 +83,40 @@ const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
 
 const isImportCheck = (operation: PackageOperationSnapshot): boolean =>
   !operation.browserReceiptOnly &&
+  !operation.useCaseDownload &&
   operation.kind === 'import' &&
   operation.state === 'running' &&
   ['preparing', 'copying', 'validating'].includes(operation.progress.phase)
-
-const PackageOperationSteps = ({
-  operation
-}: {
-  operation: PackageOperationSnapshot
-}): React.JSX.Element | null => {
-  const { t } = useTranslation()
-  if (operation.browserReceiptOnly || operation.kind === 'fork') return null
-  const importing = operation.kind === 'import'
-  const steps = importing
-    ? [t('Check package'), t('Review contents'), t('Import')]
-    : [t('Choose contents'), t('Create package'), t('Save package')]
-  const phase = operation.progress.phase
-  const current =
-    operation.state === 'succeeded'
-      ? steps.length
-      : !['running', 'awaiting-selection'].includes(operation.state) || phase === 'cleaning'
-        ? -1
-        : importing
-          ? phase === 'importing'
-            ? 2
-            : phase === 'confirming'
-              ? 1
-              : 0
-          : phase === 'saving'
-            ? 2
-            : ['preparing', 'selecting', 'choosing-location'].includes(phase)
-              ? 0
-              : 1
-  return (
-    <ol aria-label={t('Package steps')} className="flex shrink-0 items-start text-xs">
-      {steps.map((label, index) => (
-        <li
-          key={label}
-          aria-current={
-            index === current && ['running', 'awaiting-selection'].includes(operation.state)
-              ? 'step'
-              : undefined
-          }
-          className="flex min-w-0 flex-auto items-start last:flex-none"
-        >
-          <span
-            className={cn(
-              'flex min-w-0 items-start gap-1.5 leading-5',
-              index === current ? 'font-medium text-foreground' : 'text-muted-foreground'
-            )}
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium tabular-nums',
-                index === current
-                  ? 'bg-primary text-primary-foreground'
-                  : index < current
-                    ? 'bg-primary/10 text-primary'
-                    : 'bg-muted text-muted-foreground'
-              )}
-            >
-              {index < current ? <Check className="size-3" /> : index + 1}
-            </span>
-            <span className="min-w-0">{label}</span>
-          </span>
-          {index < steps.length - 1 ? (
-            <span
-              aria-hidden="true"
-              className={cn(
-                'mx-1.5 mt-2.5 h-px min-w-2 flex-1 sm:mx-3',
-                index < current ? 'bg-primary/30' : 'bg-border'
-              )}
-            />
-          ) : null}
-        </li>
-      ))}
-    </ol>
-  )
-}
 
 const operationStatus = (
   operation: PackageOperationSnapshot,
   t: TFunction
 ): { phase: string; status: string; waiting: boolean; busy: boolean; description?: string } => {
-  const phase = {
-    preparing: operation.kind === 'fork' ? t('Preparing fork…') : t('Preparing package…'),
-    selecting:
-      operation.kind === 'import'
-        ? t('Choose a destination project')
-        : t('Choose package contents'),
-    copying: t('Copying files…'),
-    validating: t('Validating package…'),
-    compressing: t('Compressing package…'),
-    saving: t('Saving package…'),
-    importing: operation.kind === 'fork' ? t('Copying research…') : t('Importing research…'),
-    'choosing-location': t('Waiting for a save location…'),
-    confirming: t('Waiting for import confirmation…'),
-    cleaning: t('Cleaning temporary files…')
-  }[operation.progress.phase]
+  const download = operation.useCaseDownload
+  const downloadPercent = download?.totalBytes
+    ? Math.min(100, Math.floor((download.completedBytes / download.totalBytes) * 100))
+    : undefined
+  const phase = download
+    ? downloadPercent === undefined
+      ? t('Preparing download…')
+      : downloadPercent === 100
+        ? t('Verifying download…')
+        : t('Downloading {{percent}}%', { percent: downloadPercent })
+    : {
+        preparing: operation.kind === 'fork' ? t('Preparing fork…') : t('Preparing package…'),
+        selecting:
+          operation.kind === 'import'
+            ? t('Choose a destination project')
+            : t('Choose package contents'),
+        copying: t('Copying files…'),
+        validating: t('Validating package…'),
+        compressing: t('Compressing package…'),
+        saving: t('Saving package…'),
+        importing: operation.kind === 'fork' ? t('Copying research…') : t('Importing research…'),
+        'choosing-location': t('Waiting for a save location…'),
+        confirming: t('Waiting for import confirmation…'),
+        cleaning: t('Cleaning temporary files…')
+      }[operation.progress.phase]
   const receiptState = primaryBrowserTransfer(operation)?.state
   const status = operation.browserReceiptOnly
     ? receiptState === 'preparing'
@@ -230,11 +166,7 @@ const operationStatus = (
           : operation.progress.phase === 'choosing-location'
             ? t('Choose where to save the package in the system dialog.')
             : t('Choose package contents')
-        : isImportCheck(operation)
-          ? t('Review the package contents next. No Session has been created yet.')
-          : busy
-            ? t('Keep the app open. You can work in other Sessions while this finishes.')
-            : undefined
+        : undefined
   return { phase, status, waiting, busy, description }
 }
 
@@ -248,7 +180,7 @@ const PackageProgressMeter = ({
   const { t } = useTranslation()
   const { waiting, phase } = operationStatus(operation, t)
   const importPercent =
-    operation.kind === 'import' && !operation.browserReceiptOnly
+    operation.kind === 'import' && !operation.browserReceiptOnly && !operation.useCaseDownload
       ? (operation.progress.overallPercent ?? packageImportPercent(operation.progress))
       : undefined
   if ((operation.state !== 'running' && operation.state !== 'succeeded') || waiting) return null
@@ -276,9 +208,7 @@ const PackageProgressMeter = ({
       <div className="space-y-2">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-xs text-muted-foreground">{stageLabel}</span>
-          <span className={`${compact ? 'text-sm' : 'text-xl'} font-semibold tabular-nums`}>
-            {percent}%
-          </span>
+          <span className={'text-sm font-semibold tabular-nums'}>{percent}%</span>
         </div>
         <div
           role="progressbar"
@@ -295,19 +225,6 @@ const PackageProgressMeter = ({
             className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out motion-reduce:transition-none"
           />
         </div>
-        {!compact ? (
-          <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
-            <span>{t('Overall import progress (estimated)')}</span>
-            {importStage ? (
-              <span>
-                {t('Stage {{current}} of {{total}}', {
-                  current: Object.keys(PACKAGE_IMPORT_STAGES).indexOf(importStage) + 1,
-                  total: Object.keys(PACKAGE_IMPORT_STAGES).length
-                })}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     )
   }
@@ -364,9 +281,7 @@ const PackageProgressMeter = ({
           {compact ? `${bytes(completedBytes)} / ${bytes(totalBytes)}` : phase}
         </span>
         {percent !== undefined ? (
-          <span className={`${compact ? 'text-sm' : 'text-xl'} font-semibold tabular-nums`}>
-            {percent}%
-          </span>
+          <span className={'text-sm font-semibold tabular-nums'}>{percent}%</span>
         ) : null}
       </div>
       <progress
@@ -520,8 +435,8 @@ export const PackageExportProgressButton = ({
         'h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground',
         iconOnly && 'size-9 max-w-none p-0'
       )}
-      aria-label={`${iconOnly ? `${t('Export Session package')} · ` : ''}${status} · ${t('View progress')}`}
-      title={iconOnly ? `${t('Export Session package')} · ${status}` : status}
+      aria-label={`${iconOnly ? `${t('Export Session package')}: ` : ''}${status} ${t('View progress')}`}
+      title={iconOnly ? `${t('Export Session package')}: ${status}` : status}
       onClick={() => setOpen(true)}
     >
       <Icon
@@ -533,117 +448,86 @@ export const PackageExportProgressButton = ({
   )
 }
 
-export const PackageOperationIndicator = (): React.JSX.Element | null => {
+export const PackageOperationIndicator = ({
+  iconOnly = false
+}: {
+  iconOnly?: boolean
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const {
     operation: sourceOperation,
     browserReceipt,
     open,
     dismissedId,
-    setOpen,
-    dismiss
+    setOpen
   } = usePackageOperationStore()
-  const operation = packageOperationPresentation(sourceOperation, browserReceipt)
-  const [cancellingId, setCancellingId] = useState<string>()
-  const [cancelError, setCancelError] = useState<{ id: string; message: string }>()
+  const awayFromHome = useNavigationStore((state) => state.view !== 'home')
+  const operation = packageOperationPresentation(
+    sourceOperation,
+    browserReceipt,
+    awayFromHome || open
+  )
   if (
     !operation ||
     open ||
     dismissedId === operation.id ||
+    ((operation.state === 'cancelled' || operation.state === 'succeeded') &&
+      !operation.cleanupPending &&
+      !operation.result?.imported &&
+      !operation.result?.recovery &&
+      !operation.importQueueFull &&
+      !operation.pendingImports?.length) ||
     (operation.kind === 'export' && operation.progress.phase !== 'selecting')
   )
     return null
-  const active = packageOperationActive(operation)
-  const cancelling = cancellingId === operation.id || operation.state === 'cancelling'
-  const configuringExport = operation.kind === 'export' && operation.state === 'awaiting-selection'
-  const cancel = async (): Promise<void> => {
-    if (cancelling) return
-    setCancellingId(operation.id)
-    setCancelError(undefined)
-    try {
-      await window.api.sessions.packageOperation({ action: 'cancel', operationId: operation.id })
-    } catch (error) {
-      setCancelError({
-        id: operation.id,
-        message: error instanceof Error ? error.message : String(error)
-      })
-    } finally {
-      setCancellingId(undefined)
-    }
-  }
   const { status, waiting, busy } = operationStatus(operation, t)
+  const configuringExport = operation.kind === 'export' && operation.state === 'awaiting-selection'
+  const needsAttention =
+    waiting ||
+    operation.cleanupPending ||
+    operation.result?.recovery ||
+    operation.pendingImports?.length ||
+    operation.importQueueFull
   const Icon =
-    operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
+    operation.state === 'failed'
+      ? CircleAlert
+      : needsAttention
+        ? Clock3
+        : busy
+          ? LoaderCircle
+          : PackageOpen
+  const action = configuringExport ? t('Continue setup') : t('View progress')
   return (
-    <section
-      aria-label={t('Package progress')}
-      className="mb-3 shrink-0 overflow-hidden rounded-lg border border-border bg-muted/40"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+    <span role="group" aria-label={t('Package progress')} className="inline-flex shrink-0">
+      <span role="status" className="sr-only">
+        {status}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          'h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground',
+          iconOnly && 'size-9 max-w-none p-0'
+        )}
+        aria-label={`${status} ${action}`}
+        title={status}
+        onClick={() => setOpen(true)}
+      >
         <Icon
-          className={`size-4 shrink-0 ${waiting ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-primary'} ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
+          className={cn(
+            'size-4 shrink-0',
+            operation.state === 'failed'
+              ? 'text-status-failure-foreground'
+              : needsAttention
+                ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                : 'text-primary',
+            busy && !needsAttention && 'animate-spin motion-reduce:animate-none'
+          )}
           aria-hidden="true"
         />
-        <p role="status" className="min-w-0 flex-1 basis-48 text-sm">
-          {waiting ? (
-            <span className="mr-2 text-xs font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground">
-              {t('Waiting for you')}
-            </span>
-          ) : null}
-          {status}
-        </p>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          {active && !operation.browserReceiptOnly ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={cancelling || operation.progress.phase === 'cleaning'}
-              onClick={() => void cancel()}
-            >
-              {cancelling ? (
-                <LoaderCircle
-                  className="size-3.5 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-              ) : null}
-              {t('Cancel')}
-            </Button>
-          ) : null}
-          <Button variant="link" size="sm" className="text-xs" onClick={() => setOpen(true)}>
-            {configuringExport ? t('Continue setup') : t('View progress')}
-            <ChevronRight
-              className={`size-3.5 ${configuringExport && !cancelling ? 'motion-safe:animate-[package-setup-nudge_1.6s_ease-in-out_3] motion-safe:transition-transform motion-safe:group-hover/button:animate-none motion-safe:group-hover/button:translate-x-0.5 motion-safe:group-focus-visible/button:animate-none motion-safe:group-focus-visible/button:translate-x-0.5' : ''}`}
-              aria-hidden="true"
-            />
-          </Button>
-        </div>
-        {!active ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            aria-label={t('Dismiss')}
-            onClick={dismiss}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </Button>
-        ) : null}
-      </div>
-      {active && !operation.browserReceiptOnly && cancelError?.id === operation.id ? (
-        <ErrorNotice
-          inline
-          role="alert"
-          tone="amber"
-          description={cancelError.message}
-          className="px-3 pb-2 pt-0"
-        />
-      ) : null}
-      {operation.state === 'running' && !waiting && !operation.browserReceiptOnly ? (
-        <div className="border-t border-border px-3 py-3">
-          <PackageProgressMeter operation={operation} compact />
-        </div>
-      ) : null}
-    </section>
+        <span className={iconOnly ? 'sr-only' : 'hidden truncate lg:inline'}>{action}</span>
+      </Button>
+    </span>
   )
 }
 
@@ -722,6 +606,39 @@ const PackageDialogLayout = ({
   )
 }
 
+// Local Web receives a staged package path instead of a desktop save dialog, so the browser
+// saves it on demand. The save has to start inside this click: once the export promise resolves
+// the user gesture is gone and showSaveFilePicker would reject with NotAllowedError.
+const WebPackageDownloadButton = ({ filePath }: { filePath: string }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const name = filePath.split(/[\\/]/).pop() ?? filePath
+  const label =
+    status === 'saving'
+      ? t('Saving {{name}}', { name })
+      : status === 'saved'
+        ? t('Saved {{name}}', { name })
+        : status === 'error'
+          ? t('Download failed for {{name}}', { name })
+          : t('Download {{name}}', { name })
+  return (
+    <Button
+      variant="outline"
+      disabled={status === 'saving'}
+      aria-busy={status === 'saving'}
+      onClick={() => {
+        setStatus('saving')
+        window.api
+          .saveManagedFile({ source: 'local', path: filePath, suggestedName: name })
+          .then((result) => setStatus(result.saved ? 'saved' : 'idle'))
+          .catch(() => setStatus('error'))
+      }}
+    >
+      {label}
+    </Button>
+  )
+}
+
 export const SessionPackageOperation = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const speedId = useId()
@@ -732,9 +649,14 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     open,
     receive,
     setOpen,
-    dismiss
+    dismiss: dismissLocal
   } = usePackageOperationStore()
-  const operation = packageOperationPresentation(sourceOperation, browserReceipt)
+  const awayFromHome = useNavigationStore((state) => state.view !== 'home')
+  const operation = packageOperationPresentation(
+    sourceOperation,
+    browserReceipt,
+    awayFromHome || open
+  )
   const destinationName = useProjectStore(
     (state) =>
       state.projects.find(
@@ -751,8 +673,11 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const titleRef = useRef<HTMLHeadingElement>(null)
   const navigationIntent = useRef<{ operationId: string; revision: number } | undefined>(undefined)
   const isWeb = document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) === 'true'
+  // Only remote Web loses the dialog: local Web and Electron both own these operations.
+  const isRemoteWeb =
+    isWeb && document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) === 'remote'
   useEffect(() => {
-    if (isWeb) return
+    if (isRemoteWeb) return
     const native = window.api?.packagePresentation
     const subscribe = native?.onStateChanged ?? window.api?.sessions?.onPackageOperation
     if (!subscribe) return
@@ -775,7 +700,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       disposed = true
       remove()
     }
-  }, [receive, isWeb])
+  }, [receive, isRemoteWeb])
   const openedImport = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (
@@ -798,7 +723,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       })
       .catch(() => undefined)
   }, [sourceOperation, isWeb])
-  if (isWeb || !operation) return null
+  if (isRemoteWeb || !operation) return null
   const errorId = operation.browserReceiptOnly
     ? (primaryBrowserTransfer(operation)?.id ?? operation.id)
     : operation.id
@@ -840,6 +765,30 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       })
     }
   }
+  const dismiss = (): void => {
+    if (
+      isWeb &&
+      operation.kind === 'import' &&
+      operation.state === 'failed' &&
+      operation.importRequestId &&
+      !operation.cleanupPending &&
+      !operation.result?.recovery
+    ) {
+      void window.api.sessions
+        .packageOperation({
+          action: 'discard-import',
+          operationId: operation.id,
+          requestId: operation.importRequestId
+        })
+        .then(dismissLocal)
+        .catch((caught) =>
+          setError({
+            id: errorId,
+            message: caught instanceof Error ? caught.message : String(caught)
+          })
+        )
+    } else dismissLocal()
+  }
   const retry = async (
     chooseAnotherPackage = false,
     allowSensitiveContent = false
@@ -867,6 +816,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
         else await window.api.sessions.exportPackage(operation.session)
       } else if (operation.importRequestId && !chooseAnotherPackage)
         await respond({ action: 'retry-import', operationId: operation.id })
+      else if (isWeb) await importSessionPackage(operation.importTarget?.projectId)
       else await window.api.sessions.importPackage(operation.importTarget)
     } catch (caught) {
       setError({
@@ -1068,7 +1018,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     <Dialog.Title
                       ref={titleRef}
                       tabIndex={-1}
-                      className={`${dialogTitleClassName} min-w-0 flex-1 break-words py-0.5 leading-6 outline-none`}
+                      className={cn(
+                        dialogTitleClassName,
+                        'min-w-0 flex-1 break-words py-0.5 text-base leading-6 outline-none'
+                      )}
                     >
                       {title}
                     </Dialog.Title>
@@ -1108,13 +1061,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                       {operation.importFilename}
                     </p>
                   ) : null}
-                  <Dialog.Description
-                    className={
-                      operation.kind !== 'fork' || (active && !selecting)
-                        ? 'sr-only'
-                        : 'text-sm leading-relaxed text-muted-foreground'
-                    }
-                  >
+                  <Dialog.Description className={'sr-only'}>
                     {operation.kind === 'export'
                       ? t('Research history is always included.')
                       : operation.kind === 'fork'
@@ -1124,7 +1071,6 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                         : t('Import creates a new read-only Session. No code runs automatically.')}
                   </Dialog.Description>
                 </div>
-                <PackageOperationSteps operation={operation} />
               </div>
               {!selecting ? (
                 <div
@@ -1152,23 +1098,17 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                                 />
                               </div>
                               <div className="min-w-0 flex-1 space-y-1.5">
-                                {waiting ? (
-                                  <p className="text-xs font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                                    {t('Waiting for you')}
-                                  </p>
-                                ) : null}
                                 <p role="status" className="text-base font-semibold leading-6">
                                   {status}
                                 </p>
-                                {description || (operation.kind === 'export' && !active) ? (
+                                {description ? (
                                   <p
                                     className={cn(
                                       'text-sm leading-relaxed text-muted-foreground',
                                       operation.kind === 'import' && 'leading-5'
                                     )}
                                   >
-                                    {description ??
-                                      t('The Session is unlocked. You can continue your research.')}
+                                    {description}
                                   </p>
                                 ) : null}
                               </div>
@@ -1370,7 +1310,17 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                       <span className="tabular-nums">({operation.pendingImports?.length})</span>
                     </Button>
                   ) : null}
-                  {operation.state === 'succeeded' && operation.result?.filePath ? (
+                  {operation.kind === 'export' &&
+                  operation.state === 'succeeded' &&
+                  operation.result?.filePath &&
+                  isWeb ? (
+                    <WebPackageDownloadButton
+                      key={operation.result.filePath}
+                      filePath={operation.result.filePath}
+                    />
+                  ) : null}
+                  {/* A headless host has no desktop shell to reveal the staged path in. */}
+                  {operation.state === 'succeeded' && operation.result?.filePath && !isWeb ? (
                     <Button
                       onClick={() => void respond({ action: 'reveal', operationId: operation.id })}
                     >

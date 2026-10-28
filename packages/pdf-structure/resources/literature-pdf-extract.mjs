@@ -2,6 +2,10 @@
 // Candidate extractor adapted from the reviewed offline experiment. Main owns authorization/cache.
 // Usage: node resources/pdf-structure/literature-pdf-extract.mjs PDF ASSETS ORT_PACKAGE PAGES NEW_OUTPUT
 import assert from 'node:assert/strict'
+import {
+  ordinaryTableCompetitionRect,
+  recoverOrdinaryThreeLineTables
+} from './literature-pdf-native-ordinary-three-line.mjs'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -32,6 +36,7 @@ import {
   proveNativeGraphicalTableCrop,
   validateNativeGraphicalTableCropPng
 } from './literature-pdf-native-graphical-table-crop.mjs'
+import { retainCaptionedRuledMathTableBody } from './literature-pdf-native-captioned-ruled-math-body.mjs'
 import {
   reviewNativeTableSources,
   reviewFinalNativeTableSources,
@@ -45,9 +50,20 @@ import {
   findCaptionCandidates,
   isNativeRowReference,
   recoverAuxiliaryTableCaptions,
+  recoverNativeCaptionLane,
   joinCaptionLines,
   sourceWordSpellings
 } from './literature-pdf-caption-group.mjs'
+import {
+  nativeCaptionLaneAnchors,
+  recoverNativeClosedTableBorder,
+  recoverNativeClosedCaptionImage
+} from './literature-pdf-native-caption-lane.mjs'
+import {
+  nativeRunningFolioClaim,
+  createNativeRunningFolioFrame,
+  reviewNativeRunningFolioConflict
+} from './literature-pdf-native-running-folio-conflict.mjs'
 import {
   associateFigures,
   deduplicateFigureCaptions,
@@ -164,6 +180,17 @@ import {
 import { matchNativeFigureRenderContext } from './literature-pdf-render-bounds.mjs'
 import { nativeOpenAxisHeaderSourceItems } from './literature-pdf-figure-native-open-axis-bottom.mjs'
 import { nativeCompleteFormCropPngSafe } from './literature-pdf-figure-native-complete-form.mjs'
+import { nativeOrderedFormRasterPngSafe } from './literature-pdf-figure-native-ordered-form-rasters.mjs'
+import { nativeIsolatedRasterFigurePngSafe } from './literature-pdf-figure-native-isolated-raster.mjs'
+import { nativeIsolatedFormPngSafe } from './literature-pdf-figure-native-isolated-form.mjs'
+import { nativeRecoveryFigurePngSafe } from './literature-pdf-figure-native-whole-paint-scope.mjs'
+import { nativeClosedProgramPngSafe } from './literature-pdf-figure-native-closed-program.mjs'
+import { reviewFinalNativeAtomicHeaderSources } from './literature-pdf-native-atomic-header-conflicts.mjs'
+import { reviewFinalNativePrintedFaceSources } from './literature-pdf-native-printed-face-conflict.mjs'
+import { reviewFinalNativeHeaderRuleSources } from './literature-pdf-native-header-rule-conflict.mjs'
+import { reviewNativeMissingGroupHeader } from './literature-pdf-native-missing-group-header.mjs'
+import { retainCaptionlessMathTableBody } from './literature-pdf-native-captionless-math-body.mjs'
+import { refuseFigureBorrowingCaptionedTable } from './literature-pdf-figure-captioned-table-conflict.mjs'
 import { proveNativeTableCaptionOwnership } from './literature-pdf-native-caption-ownership.mjs'
 import {
   nativeFigureLabelBounds,
@@ -261,7 +288,8 @@ const structurePhase = await run('./literature-pdf-structure.mjs', [
   join(output, 'geometry'),
   pageArgument,
   'adjacent',
-  'production'
+  'production',
+  'caption-raster'
 ])
 try {
   await run('./literature-pdf-onnx.mjs', [
@@ -491,6 +519,45 @@ try {
       }
     }
     await visitOutline(geometry.outline)
+    const matchedNativePages = new Map()
+    const runningFolioFrames = new Map()
+    const readNativePageContext = async (number) => {
+      if (!requestedPages.includes(number)) return
+      if (matchedNativePages.has(number)) return matchedNativePages.get(number)
+      try {
+        const nativePage = await document.getPage(number),
+          pageGeometry = originalPages.get(number),
+          nativeContent = await nativePage.getTextContent(),
+          viewport = nativePage.getViewport({ scale: 1, rotation: pageGeometry.renderRotation }),
+          matched = matchNativeFigureRenderContext(
+            structurePhase.nativeFigureRenderContexts.get(number),
+            number,
+            nativeContent,
+            viewport,
+            pageGeometry.graphicsBounds,
+            geometry.summary.checksum
+          )
+        if (!matched) return
+        const result = {
+          pageGeometry,
+          nativePage,
+          nativeContent,
+          context: { ...matched, pageNumber: number, sourceSha256: geometry.summary.checksum }
+        }
+        matchedNativePages.set(number, result)
+        return result
+      } catch {
+        return
+      }
+    }
+    const readRunningFolioFrame = async (number) => {
+      if (runningFolioFrames.has(number)) return runningFolioFrames.get(number)
+      const source = await readNativePageContext(number)
+      if (!source) return
+      const frame = createNativeRunningFolioFrame(source.pageGeometry, source.context, source)
+      runningFolioFrames.set(number, frame)
+      return frame
+    }
     for (const pageNumber of requestedPages) {
       const pageGeometry = geometry.pages.find((p) => p.pageNumber === pageNumber)
       const pageInference = inference.results.find((p) => p.page === pageNumber)
@@ -509,7 +576,6 @@ try {
         const operators = await page.getOperatorList()
         const originalContent = await page.getTextContent()
         const figureSnapshot = structurePhase.nativeFigureRenderContexts.get(pageNumber)
-        structurePhase.nativeFigureRenderContexts.delete(pageNumber)
         const matchedFigureContext = matchNativeFigureRenderContext(
           figureSnapshot,
           pageNumber,
@@ -518,11 +584,19 @@ try {
           originalPages.get(pageNumber)?.graphicsBounds,
           geometry.summary.checksum
         )
-        const nativeFigureContext = matchedFigureContext && {
+        const nativePageContext = matchedFigureContext && {
           ...matchedFigureContext,
           pageNumber,
           sourceSha256: geometry.summary.checksum
         }
+        const nativeFigureContext = nativePageContext && { ...nativePageContext }
+        if (nativeFigureContext)
+          matchedNativePages.set(pageNumber, {
+            pageGeometry: originalPages.get(pageNumber),
+            nativePage: page,
+            nativeContent: originalContent,
+            context: nativePageContext
+          })
         let previousFigureProse
         if (nativeFigureContext && needsPreviousFigureProse(pageGeometry, captions)) {
           const previousPage = geometry.pages.find((p) => p.pageNumber === pageNumber - 1)
@@ -976,7 +1050,8 @@ try {
           pageNumber,
           pageInference.tables,
           measuredRuns,
-          rulePaintBounds
+          rulePaintBounds,
+          { page: pageGeometry, tokens: nativeFigureTokens, context: nativeFigureContext }
         )
         pageInference.tables.push(...recoveredCaptionedTables)
         for (const table of recoveredCaptionedTables) {
@@ -2095,13 +2170,36 @@ try {
         )
         for (const [index, table] of graphicalTables.entries()) {
           const id = `p${pageNumber}-graphical-table-${index + 1}`
-          recognizedTableRects.push(table.rect)
           const matrix = table === nativeMatrix && recoverNativeRepeatedMatrixParts(table, 1.5)
+          const nativeBody =
+            !matrix &&
+            !table.nativeBody &&
+            (await retainCaptionedRuledMathTableBody(
+              table,
+              {
+                page: pageGeometry,
+                tokens: nativeFigureTokens,
+                context: nativeFigureContext,
+                captions,
+                competingRects: [
+                  ...recognizedTableRects,
+                  ...graphicalTables.filter((other) => other !== table).map((other) => other.rect)
+                ]
+              },
+              (rect) => renderPdfCrop(page, rect, pageGeometry.renderRotation)
+            ))
+          const owned = nativeBody?.table ?? table
+          recognizedTableRects.push(owned.rect)
+          let thumbnail
+          if (nativeBody) {
+            thumbnail = `thumbnails/${id}.png`
+            await writeFile(join(output, thumbnail), nativeBody.png)
+          } else thumbnail = await crop(table.rect, id)
           tables.push({
             id,
             page: pageNumber,
-            caption: captionValue(table.caption),
-            ...(!matrix && table.nativeBody ? { nativeBody: table.nativeBody } : {}),
+            caption: captionValue(owned.caption),
+            ...(!matrix && owned.nativeBody ? { nativeBody: owned.nativeBody } : {}),
             ...(matrix
               ? {
                   parts: matrix.parts.map((part) => ({
@@ -2116,18 +2214,19 @@ try {
                   unassigned: [],
                   issues: ['no-source-cell-grid']
                 }),
-            region: normalize(table.rect, pageGeometry.width, pageGeometry.height),
-            thumbnail: await crop(table.rect, id)
+            region: normalize(owned.rect, pageGeometry.width, pageGeometry.height),
+            thumbnail
           })
         }
         // A complete native continuation frame is not figure paint. Preserve
         // its text and prior-page overflow; this exclusion creates no grid or claims.
         if (numberedContinuationRect) recognizedTableRects.push(numberedContinuationRect)
+        const figureAssociationPage = {
+          ...pageGeometry,
+          ...(pageLabels ? { pageLabel: pageLabels[pageNumber - 1] } : {})
+        }
         const localFigures = associateFigures(
-          {
-            ...pageGeometry,
-            ...(pageLabels ? { pageLabel: pageLabels[pageNumber - 1] } : {})
-          },
+          figureAssociationPage,
           captions,
           [
             ...recognizedTableRects,
@@ -2400,7 +2499,13 @@ try {
                   : pageGeometry.height,
                 Math.max(
                   candidate.rect[3] + 2 / scale,
-                  nativeOwnedFigureInkBottom(candidate, nativeFigureTokens)
+                  candidate.closedProgramRaster ||
+                    candidate.orderedFormRaster ||
+                    candidate.isolatedFormRaster ||
+                    candidate.isolatedRasterRoot ||
+                    candidate.recoveryProgramRaster
+                    ? candidate.rect[3]
+                    : nativeOwnedFigureInkBottom(candidate, nativeFigureTokens)
                 )
               )
             ]
@@ -2504,7 +2609,37 @@ try {
                       }
                     : candidate.formCropRaster
                       ? (png) =>
-                          nativeCompleteFormCropPngSafe(png, rect, pageGeometry, candidate) &&
+                          (nativeIsolatedRasterFigurePngSafe(
+                            png,
+                            rect,
+                            figureAssociationPage,
+                            candidate
+                          ) ??
+                            nativeRecoveryFigurePngSafe(
+                              png,
+                              rect,
+                              figureAssociationPage,
+                              candidate
+                            ) ??
+                            nativeIsolatedFormPngSafe(
+                              png,
+                              rect,
+                              figureAssociationPage,
+                              candidate
+                            ) ??
+                            nativeOrderedFormRasterPngSafe(
+                              png,
+                              rect,
+                              figureAssociationPage,
+                              candidate
+                            ) ??
+                            nativeClosedProgramPngSafe(
+                              png,
+                              rect,
+                              figureAssociationPage,
+                              candidate
+                            ) ??
+                            nativeCompleteFormCropPngSafe(png, rect, pageGeometry, candidate)) &&
                           (!legacyPngValidator || legacyPngValidator(png))
                       : groupedCaptionProof
                         ? (png) =>
@@ -3086,18 +3221,114 @@ try {
             thumbnail
           })
         }
+        // Independent three-line ordinary tables retain literal whole sources.
+        // The native certificate excludes captions, Notes and competing objects.
+        for (const proof of recoverOrdinaryThreeLineTables(
+          pageGeometry,
+          nativeFigureTokens,
+          nativeFigureContext,
+          [
+            ...tables
+              .filter((table) => table.page === pageNumber)
+              .map((table) => ordinaryTableCompetitionRect(table, pageGeometry, viewport.scale)),
+            ...pageFigures.filter((figure) => figure.rect).map((figure) => figure.rect),
+            ...pageAlgorithms.map((algorithm) => algorithm.rect)
+          ],
+          captions.filter((caption) => caption.page === pageNumber)
+        )) {
+          const thumbnail = await crop(
+            proof.nativeCrop,
+            proof.table.id,
+            [proof.nativeCrop],
+            (png) => matchesInitialPdfCropPng(png, proof.raster)
+          )
+          if (thumbnail)
+            tables.push({
+              ...proof.table,
+              region: normalize(proof.table.cropRect, viewport.width, viewport.height),
+              thumbnail
+            })
+        }
         const sourceTables = { parts: tables.filter((table) => table.page === pageNumber) }
         refineMeasuredAssignedNumericSegments(sourceTables, tokens, measuredRuns)
         attachMeasuredTableSourceSegments(sourceTables, tokens)
-        for (let i = 0; i < tables.length; i++)
-          if (tables[i].page === pageNumber)
-            tables[i] = reviewFinalNativeTableSources(
-              tables[i],
+        for (let i = 0; i < tables.length; i++) {
+          if (tables[i].page === pageNumber) {
+            const reviewContext = {
+                ...nativeRecordContext,
+                sourceSha256: geometry.summary.checksum
+              },
+              reviewed = reviewFinalNativeTableSources(
+                tables[i],
+                wholeOwnerFonts,
+                rules,
+                measuredRuns,
+                reviewContext
+              )
+            tables[i] = await reviewFinalNativeAtomicHeaderSources(
+              reviewed,
               wholeOwnerFonts,
               rules,
-              measuredRuns,
-              { ...nativeRecordContext, sourceSha256: geometry.summary.checksum }
+              reviewContext,
+              () => readFile(join(output, reviewed.thumbnail))
             )
+            const atomic = tables[i]
+            tables[i] = await reviewFinalNativePrintedFaceSources(
+              atomic,
+              wholeOwnerFonts,
+              rules,
+              reviewContext,
+              () => readFile(join(output, atomic.thumbnail))
+            )
+            const printed = tables[i]
+            tables[i] = await reviewFinalNativeHeaderRuleSources(
+              printed,
+              wholeOwnerFonts,
+              rules,
+              reviewContext,
+              () => readFile(join(output, printed.thumbnail))
+            )
+            tables[i] = await reviewNativeMissingGroupHeader(
+              tables[i],
+              {
+                page: pageGeometry,
+                context: nativeFigureContext && {
+                  ...nativeFigureContext,
+                  pageNumber,
+                  sourceSha256: geometry.summary.checksum
+                }
+              },
+              (raster) => readFile(raster.path)
+            )
+            const currentTable = tables[i]
+            tables[i] = await retainCaptionlessMathTableBody(
+              currentTable,
+              {
+                page: originalPages.get(pageNumber),
+                tokens: nativeTextTokens(
+                  sourceContent,
+                  nativeViewport,
+                  pageGeometry.renderRotation,
+                  true
+                ),
+                nativeContext: nativeFigureContext,
+                competingRects: [...tables, ...figures, ...algorithms]
+                  .filter(
+                    (item) => item !== currentTable && item.page === pageNumber && item.region
+                  )
+                  .map((item) =>
+                    item.region.map(
+                      (n, axis) => n * (axis % 2 ? nativeViewport.height : nativeViewport.width)
+                    )
+                  ),
+                captionRects: captions
+                  .filter((caption) => caption.page === pageNumber)
+                  .map((caption) => caption.rect)
+              },
+              () => readFile(join(output, currentTable.thumbnail))
+            )
+          }
+        }
         const retainedTables = deduplicateSourceOwnedTableSubsets(
           tables.filter(
             (table) =>
@@ -3208,6 +3439,118 @@ try {
           } catch {
             // Optional evidence must never replace an otherwise valid preview.
           }
+        }
+        // A final independently captioned table remains the source owner even
+        // when a generic figure candidate encloses every one of its records.
+        // Withdraw that unproved preview without guessing a replacement crop.
+        for (const [index, figure] of figures.entries()) {
+          if (figure.page !== pageNumber) continue
+          const refused = refuseFigureBorrowingCaptionedTable(
+            pageGeometry,
+            figure,
+            tables,
+            nativeFigureTokens,
+            nativeFigureContext
+          )
+          if (refused === figure) continue
+          assert(/^[a-z0-9-]{1,80}$/.test(figure.id))
+          assert(figure.thumbnail === `thumbnails/${figure.id}.png`)
+          assert(
+            ![...tables, ...algorithms, ...figures].some(
+              (other) => other !== figure && other.thumbnail === figure.thumbnail
+            )
+          )
+          await unlink(join(imageRoot, `${figure.id}.png`))
+          figures[index] = refused
+        }
+        // Complete a caption only after its independently associated body and
+        // whole native cell sources exist. Association keeps its original inputs.
+        if (nativePageContext?.captionLaneRaster) {
+          const sourcePage = originalPages.get(pageNumber),
+            raster = nativePageContext.captionLaneRaster,
+            nativeRules = collectTableRules(operators, nativeViewport),
+            recoveredCaptionTables = new Set()
+          for (const candidate of captions.filter((c) => c.page === pageNumber)) {
+            const anchors = nativeCaptionLaneAnchors(sourcePage, tables, figures, nativeRules)
+            const recovered = await recoverNativeCaptionLane({
+              page: sourcePage,
+              candidate,
+              tokens: nativeFigureTokens,
+              context: nativePageContext,
+              anchors,
+              otherCaptions: captions.filter((c) => c.page === pageNumber),
+              raster,
+              loadPng: () => readFile(raster.path)
+            })
+            if (!recovered) continue
+            const matchingFigures = figures.filter(
+              (f) =>
+                f.page === pageNumber &&
+                f.caption?.lines?.[0] === candidate.lines[0] &&
+                JSON.stringify(f.caption.rect) === JSON.stringify(candidate.rect)
+            )
+            if (matchingFigures.length === 1) {
+              const figure = matchingFigures[0],
+                image = await recoverNativeClosedCaptionImage({
+                  page: sourcePage,
+                  figure,
+                  caption: recovered,
+                  tokens: nativeFigureTokens,
+                  context: nativePageContext,
+                  otherCaptions: captions.filter((c) => c.page === pageNumber),
+                  tables: anchors.filter((a) => a.kind === 'table').map((a) => a.rect),
+                  renderCrop: (rect) => renderPdfCrop(page, rect, pageGeometry.renderRotation)
+                })
+              if (image) {
+                assert(figure.thumbnail === `thumbnails/${figure.id}.png`)
+                await writeFile(join(output, figure.thumbnail), image.png)
+                figure.region = image.region
+                figure.graphicsCount = image.graphicsCount
+              }
+            }
+            const index = captions.indexOf(candidate)
+            captions[index] = {
+              ...candidate,
+              lines: recovered.lines,
+              rect: recovered.rect,
+              ...(Object.hasOwn(candidate, 'text') ? { text: recovered.text } : {})
+            }
+            for (const item of [...tables, ...figures])
+              if (
+                item.page === pageNumber &&
+                item.caption?.lines?.[0] === candidate.lines[0] &&
+                JSON.stringify(item.caption.rect) === JSON.stringify(candidate.rect)
+              ) {
+                item.caption = captionValue(recovered)
+                if (tables.includes(item)) recoveredCaptionTables.add(item)
+              }
+          }
+          for (const table of tables.filter((t) => recoveredCaptionTables.has(t))) {
+            const recovered = await recoverNativeClosedTableBorder({
+              page: sourcePage,
+              table,
+              tokens: nativeFigureTokens,
+              context: nativePageContext,
+              renderCrop: (rect) => renderPdfCrop(page, rect, pageGeometry.renderRotation)
+            })
+            if (!recovered) continue
+            assert(table.thumbnail === `thumbnails/${table.id}.png`)
+            await writeFile(join(output, table.thumbnail), recovered.png)
+            table.region = recovered.region
+          }
+        }
+        for (const [index, table] of tables.entries()) {
+          if (
+            table.page !== pageNumber ||
+            !nativePageContext ||
+            !nativeRunningFolioClaim(table, originalPages.get(pageNumber), nativePageContext)
+          )
+            continue
+          const current = await readRunningFolioFrame(pageNumber),
+            previous = await readRunningFolioFrame(pageNumber - 1),
+            next = await readRunningFolioFrame(pageNumber + 1),
+            reviewed = reviewNativeRunningFolioConflict(table, current, [previous, next])
+          if (reviewed) tables[index] = reviewed
         }
       } finally {
         page.cleanup()
@@ -3349,5 +3692,12 @@ try {
     await task.destroy()
   }
 } finally {
+  for (const path of structurePhase.nativePageRasterFiles ?? []) {
+    assert.equal(dirname(path), resolve(output, 'geometry'))
+    await unlink(path).catch((error) => {
+      if (error?.code !== 'ENOENT') throw error
+    })
+  }
+  structurePhase.nativePageRasterFiles?.clear()
   structurePhase.nativeFigureRenderContexts.clear()
 }

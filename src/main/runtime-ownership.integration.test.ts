@@ -35,6 +35,23 @@ afterEach(async () => {
 })
 
 describe('shared Node/Electron runtime ownership', () => {
+  it('excludes another writer and releases runtime directories beyond the Windows path limit', async () => {
+    let directory = await root()
+    while (join(directory, RUNTIME_LOCK_FILE).length < 280) {
+      directory = join(directory, 'delegated-attempt-runtime')
+    }
+    const first = await acquireRuntimeDirectory(directory)
+    leases.push(first)
+    await expect(acquireRuntimeDirectory(directory)).rejects.toBeInstanceOf(
+      RuntimeOwnershipConflict
+    )
+    first.release()
+    const next = await acquireRuntimeDirectory(directory)
+    leases.push(next)
+    next.release()
+    await rm(directory, { recursive: true })
+  })
+
   it('isolates Windows credential bootstrap by profile while excluding the same profile', async () => {
     const home = await root()
     const options = { home, profilePath: join(home, 'profile-a'), platform: 'win32' as const }

@@ -1,3 +1,4 @@
+import { UseCaseCarousel } from './UseCaseCarousel'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { ErrorNotice } from '@/components/error-notice'
 import {
@@ -644,7 +645,7 @@ const HomePage = ({
     <TooltipProvider>
       <ProjectPackageDropZone canImport className="relative h-svh">
         <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
-          <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
+          <div className="mx-auto flex min-h-full max-w-[1080px] flex-col px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
             <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -701,6 +702,7 @@ const HomePage = ({
                 ) : null}
                 <NetworkStatusIndicator variant="pill" withTooltipProvider={false} />
                 <PackageExportProgressButton iconOnly />
+                <PackageOperationIndicator iconOnly />
                 <span className="hidden sm:inline-flex">
                   <GitHubStarBadge variant="home" withTooltipProvider={false} />
                 </span>
@@ -785,7 +787,6 @@ const HomePage = ({
                 </Tooltip>
               </div>
             </header>
-            <PackageOperationIndicator />
 
             {sessionUpdates.length > 0 ? (
               <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
@@ -1220,6 +1221,7 @@ const HomePage = ({
                 )}
               </section>
             </div>
+            <UseCaseCarousel />
           </div>
 
           <ProjectFormDialog {...projectFormDialogProps} />

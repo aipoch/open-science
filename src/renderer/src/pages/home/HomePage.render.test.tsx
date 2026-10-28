@@ -25,6 +25,9 @@ import { createInitialSkillImportState, useSkillImportStore } from '@/stores/ski
 import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
 import { HomePage } from './HomePage'
 
+// Catalog requests and card interactions have their own suite and browser journey.
+vi.mock('./UseCaseCarousel', () => ({ UseCaseCarousel: () => null }))
+
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
 vi.mock('@/components/UpdateCapsule', () => ({
   UpdateCapsule: () => (

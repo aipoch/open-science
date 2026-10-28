@@ -295,7 +295,8 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-details.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-groups.test.ts",
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
-      "src/renderer/src/stores/specialist-store.test.ts"
+      "src/renderer/src/stores/specialist-store.test.ts",
+      "src/renderer/src/components/ui/message-scroller.pause.test.tsx"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

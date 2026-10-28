@@ -90,7 +90,7 @@ export const ReplayActivityGroup = memo(function ReplayActivityGroup({
       meta={
         <>
           {formatStepCount(activities, undefined, runs, t)}
-          {elapsed ? ` · ${elapsed}` : ''}
+          {elapsed ? <span className="ml-3 tabular-nums">{elapsed}</span> : null}
         </>
       }
       isExpanded={expanded}

@@ -188,6 +188,27 @@ describe('certified historical Release source', () => {
     data[path] = { ...Object(data[path]), ...overrides }
     await expect(releaseSource('42', async (key: string) => data[key])).rejects.toThrow()
   })
+  it('accepts a cancelled run whose publish job certified the release', async () => {
+    const data = responses()
+    data['actions/runs/42'] = { ...Object(data['actions/runs/42']), conclusion: 'cancelled' }
+    data['actions/runs/42/jobs?per_page=100'] = {
+      jobs: [{ name: 'publish', conclusion: 'success' }]
+    }
+    expect(await releaseSource('42', async (path: string) => data[path])).toEqual({
+      version: '1.0.1',
+      sourceSha: sha,
+      tag: 'v1.0.1'
+    })
+  })
+  it.each([[undefined], [{ jobs: [] }], [{ jobs: [{ name: 'publish', conclusion: 'failure' }] }]])(
+    'rejects a cancelled run without certified publish job %j',
+    async (jobs) => {
+      const data = responses()
+      data['actions/runs/42'] = { ...Object(data['actions/runs/42']), conclusion: 'cancelled' }
+      if (jobs !== undefined) data['actions/runs/42/jobs?per_page=100'] = jobs
+      await expect(releaseSource('42', async (path: string) => data[path])).rejects.toThrow()
+    }
+  )
   it('fails closed on malformed inputs and unavailable GitHub evidence', async () => {
     for (const runId of ['', '../42', '42\n', '0']) {
       await expect(releaseSource(runId, async () => null)).rejects.toThrow()

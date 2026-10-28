@@ -768,7 +768,11 @@ const convertR = (node: Node | null | undefined): RExpr | null => {
       const op = fieldChild(node, 'operator')?.text ?? ''
       const lhs = convertR(fieldChild(node, 'lhs')) ?? emptySymbol()
       const rhs = convertR(fieldChild(node, 'rhs')) ?? emptySymbol()
-      return rCall(op, [lhs, rhs])
+      const expression = rCall(op, [lhs, rhs])
+      // The remainder boundary uses the same invocation proof as function
+      // calls. Preserve its infix location so file analysis can consume it.
+      if (op === '%%') expression.sourceOffset = node.startIndex
+      return expression
     }
     case 'unary_operator': {
       const op = fieldChild(node, 'operator')?.text ?? ''
@@ -968,6 +972,8 @@ const analyzeRSource = (
     contextualFileWrappers.map(({ name }) => name)
   )
   const baseLabelFormatCalls = ['format', 'format.default', 'formatC', 'pretty', 'prettyNum']
+  const fastMatrixReductionCalls = new Set(['.rowSums', '.colSums', '.rowMeans', '.colMeans'])
+  const nativeRepetitionCalls = new Set(['rep.int', 'rep_len'])
   const cumulativeStatistics = new Set(['cumsum', 'cumprod', 'cummin', 'cummax'])
   const centralDistributionCalls = new Set([
     'dt',
@@ -982,11 +988,71 @@ const analyzeRSource = (
   ])
   const gammaDistributionCalls = new Set(['dgamma', 'pgamma', 'qgamma'])
   const poissonDistributionCalls = new Set(['dpois', 'ppois', 'qpois'])
+  const binomialDistributionCalls = new Set(['dbinom', 'pbinom', 'qbinom'])
+  const negativeBinomialDistributionCalls = new Set(['dnbinom', 'pnbinom', 'qnbinom'])
+  const betaDistributionCalls = new Set(['dbeta', 'pbeta', 'qbeta'])
+  const waitingDistributionCalls = new Set(['dexp', 'pexp', 'qexp', 'dgeom', 'pgeom', 'qgeom'])
+  const hypergeometricDistributionCalls = new Set(['dhyper', 'phyper', 'qhyper'])
+  const exactRankDistributionCalls = new Set([
+    'dwilcox',
+    'pwilcox',
+    'qwilcox',
+    'dsignrank',
+    'psignrank',
+    'qsignrank'
+  ])
+  const weibullDistributionCalls = new Set(['dweibull', 'pweibull', 'qweibull'])
+  const twoParameterDistributionCalls = new Set([
+    'dlogis',
+    'plogis',
+    'qlogis',
+    'dcauchy',
+    'pcauchy',
+    'qcauchy',
+    'dlnorm',
+    'plnorm',
+    'qlnorm',
+    'dunif',
+    'punif',
+    'qunif'
+  ])
   const inputSensitiveStatistics = new Set([
+    'rowsum',
+    'rowsum.default',
+    'rle',
+    'is.unsorted',
+    'duplicated',
+    'anyDuplicated',
+    'sort.list',
+    'diffinv',
+    'inverse.rle',
+    'sequence',
+    'sequence.default',
+    'lengths',
+    '.subset',
+    '.subset2',
+    'match',
+    'seq.int',
+    ...nativeRepetitionCalls,
+    'matrix',
+    'max.col',
+    'findInterval',
+    'tabulate',
+    '.bincode',
+    'append',
     ...cumulativeStatistics,
+    ...fastMatrixReductionCalls,
     ...centralDistributionCalls,
     ...gammaDistributionCalls,
     ...poissonDistributionCalls,
+    ...binomialDistributionCalls,
+    ...negativeBinomialDistributionCalls,
+    ...betaDistributionCalls,
+    ...waitingDistributionCalls,
+    ...hypergeometricDistributionCalls,
+    ...exactRankDistributionCalls,
+    ...weibullDistributionCalls,
+    ...twoParameterDistributionCalls,
     'mean',
     'mean.default',
     'scale',
@@ -996,7 +1062,71 @@ const analyzeRSource = (
     'isTRUE',
     'isFALSE',
     'dnorm',
-    'qnorm'
+    'qnorm',
+    'pmin',
+    'pmin.int',
+    'pmax',
+    'pmax.int',
+    'anyNA',
+    'log1p',
+    'expm1',
+    'round',
+    'signif',
+    'sqrt',
+    'abs',
+    'sin',
+    'cos',
+    'floor',
+    'ceiling',
+    'exp',
+    'log',
+    'logb',
+    'log2',
+    'log10',
+    'sign',
+    'trunc',
+    'tan',
+    'atan',
+    'asin',
+    'acos',
+    'sinh',
+    'cosh',
+    'tanh',
+    'atanh',
+    'asinh',
+    'acosh',
+    'atan2',
+    'gamma',
+    'lgamma',
+    'digamma',
+    'trigamma',
+    'beta',
+    'lbeta',
+    'besselJ',
+    'besselY',
+    'psigamma',
+    'besselI',
+    'besselK',
+    'zapsmall',
+    'polyroot',
+    'norm',
+    'crossprod',
+    'tcrossprod',
+    '%%',
+    'fft',
+    'nextn',
+    'convolve',
+    'choose',
+    'lchoose',
+    'factorial',
+    'lfactorial',
+    'Mod',
+    'Arg',
+    'Conj',
+    'Re',
+    'Im',
+    'rev',
+    'unique'
   ])
   const pureSafeCalls = [
     ...baseLabelFormatCalls,
@@ -1054,17 +1184,31 @@ const analyzeRSource = (
     'is.logical',
     'is.integer',
     'length',
+    'lengths',
+    'sequence',
+    'sequence.default',
+    'inverse.rle',
+    'diffinv',
+    'sort.list',
+    'anyDuplicated',
     'levels',
     'ifelse',
     'list',
     'log',
+    'logb',
     'log10',
     'log2',
     'logical',
     'matrix',
     'max',
+    '.subset',
+    '.subset2',
+    'match',
     'pmax',
+    'pmax.int',
+    'anyNA',
     'pmin',
+    'pmin.int',
     'merge',
     'rbind',
     'cbind',
@@ -1091,9 +1235,19 @@ const analyzeRSource = (
     'rank',
     'rep',
     'rev',
+    ...nativeRepetitionCalls,
+    'append',
     'round',
+    '.bincode',
     'rownames',
+    'tabulate',
     'rowSums',
+    'findInterval',
+    '.rowSums',
+    'max.col',
+    '.colSums',
+    '.rowMeans',
+    '.colMeans',
     'rowMeans',
     'colMeans',
     'cor',
@@ -1102,6 +1256,7 @@ const analyzeRSource = (
     'seq_along',
     'seq_len',
     'signif',
+    'seq.int',
     'sin',
     'sinh',
     'slot',
@@ -3955,13 +4110,93 @@ const analyzeRSource = (
     if (name && ['head', 'tail'].includes(name))
       return primitiveHeadTailDependencies(expr, 'atomic') !== null
     if (name === 'is.double') return primitiveDoublePredicate(expr)
+    if (name === 'anyNA') return primitiveAnyMissingness(expr)
     if (name === 'as.double' || name === 'as.numeric') return primitiveDoubleCoercion(expr)
     if (name === 'which.min' || name === 'which.max') return primitiveExtremeIndex(expr)
     if (name === 'ifelse') return primitiveIfelse(expr)
     if (name === 'unname') return primitiveUnname(expr)
     if (name === '%in%') return primitiveMembership(expr)
-    if (name === 'sum' || name === 'all' || name === 'any' || name === 'prod')
+    if (
+      name === 'sum' ||
+      name === 'all' ||
+      name === 'any' ||
+      name === 'prod' ||
+      name === 'pmin' ||
+      name === 'pmax' ||
+      name === 'pmin.int' ||
+      name === 'pmax.int'
+    )
       return primitiveSummary(expr)
+    if (name === 'cut') return primitiveCutCodes(expr)
+    if (name === 'unique') return primitiveDistinctValues(expr)
+    if (name === 'rev') return primitiveReversal(expr)
+    if (name === 'append') return primitiveSegmentInsertion(expr)
+    if (name === '.bincode') return primitiveExposureBins(expr)
+    if (name === 'tabulate') return primitiveSpeciesCounts(expr)
+    if (name === 'findInterval') return primitiveEventAnchors(expr)
+    if (name === 'max.col') return primitiveDeterministicMaxColumn(expr)
+    if (name && nativeRepetitionCalls.has(name)) return primitiveNativeRepetition(expr)
+    if (name === 'seq.int') return primitiveScanSequence(expr)
+    if (name === 'duplicated' || name === 'anyDuplicated') return primitiveDuplicateInspection(expr)
+    if (name === 'is.unsorted') return primitiveOrderingInspection(expr)
+    if (name === 'sort.list') return primitiveSortList(expr)
+    if (name === 'diffinv') return primitiveDifferenceInversion(expr)
+    if (name === 'inverse.rle') return primitiveRunDecoding(expr)
+    if (name === 'sequence' || name === 'sequence.default') return primitiveSegmentSequence(expr)
+    if (name === 'lengths') return primitiveGroupCardinality(expr)
+    if (name === '.subset' || name === '.subset2') return primitiveVectorExtraction(expr)
+    if (name === 'match') return primitiveValueMatching(expr)
+    if (
+      [
+        'log1p',
+        'expm1',
+        'sqrt',
+        'abs',
+        'sin',
+        'cos',
+        'floor',
+        'ceiling',
+        'exp',
+        'log2',
+        'log10',
+        'sign',
+        'trunc',
+        'tan',
+        'atan',
+        'asin',
+        'acos',
+        'sinh',
+        'cosh',
+        'tanh',
+        'atanh',
+        'asinh',
+        'acosh',
+        'gamma',
+        'lgamma',
+        'digamma',
+        'trigamma'
+      ].includes(name ?? '')
+    )
+      return primitiveUnaryMathTransform(expr)
+    if (name === 'atan2') return primitiveBearingTransform(expr)
+    if (name === 'beta' || name === 'lbeta') return primitiveBetaNormalizer(expr)
+    if (name === 'besselJ' || name === 'besselY') return primitiveCylindricalWave(expr)
+    if (name === 'psigamma') return primitivePolygamma(expr)
+    if (name === 'besselI' || name === 'besselK') return primitiveScaledBessel(expr)
+    if (name === 'choose' || name === 'lchoose') return primitiveCombination(expr)
+    if (name === 'factorial' || name === 'lfactorial') return primitiveFactorialNormalizer(expr)
+    if (name === 'Mod' || name === 'Arg' || name === 'Conj' || name === 'Re' || name === 'Im')
+      return primitiveComplexProjection(expr)
+    if (name === 'log' || name === 'logb') return primitiveLogarithm(expr)
+    if (name === 'round' || name === 'signif') return primitiveRounding(expr)
+    if (name === 'zapsmall') return primitiveResidualCleanup(expr)
+    if (name === 'polyroot') return primitivePolynomialRoots(expr)
+    if (name && fastMatrixReductionCalls.has(name)) return primitiveFastMatrixReduction(expr)
+    if (name === 'norm') return primitiveMatrixNorm(expr)
+    if (name === '%%') return primitiveRemainder(expr)
+    if (name === 'fft') return primitiveFourierTransform(expr)
+    if (name === 'nextn') return primitiveFFTLength(expr)
+    if (name === 'convolve') return primitiveConvolution(expr)
     if (name === 'which') return primitiveWhich(expr)
     if (name === 'complete.cases') return primitiveCompleteCases(expr)
     if (name === 'order') return primitiveOrder(expr)
@@ -3973,6 +4208,17 @@ const analyzeRSource = (
     if (name && centralDistributionCalls.has(name)) return primitiveCentralDistribution(expr)
     if (name && gammaDistributionCalls.has(name)) return primitiveGammaDistribution(expr)
     if (name && poissonDistributionCalls.has(name)) return primitivePoissonDistribution(expr)
+    if (name && binomialDistributionCalls.has(name)) return primitiveBinomialDistribution(expr)
+    if (name && betaDistributionCalls.has(name)) return primitiveBetaDistribution(expr)
+    if (name && waitingDistributionCalls.has(name)) return primitiveWaitingDistribution(expr)
+    if (name && negativeBinomialDistributionCalls.has(name))
+      return primitiveNegativeBinomialDistribution(expr)
+    if (name && hypergeometricDistributionCalls.has(name))
+      return primitiveHypergeometricDistribution(expr)
+    if (name && exactRankDistributionCalls.has(name)) return primitiveExactRankDistribution(expr)
+    if (name && weibullDistributionCalls.has(name)) return primitiveWeibullDistribution(expr)
+    if (name && twoParameterDistributionCalls.has(name))
+      return primitiveTwoParameterDistribution(expr)
     if (name === 'pnorm' || name === 'dnorm' || name === 'qnorm')
       return primitiveNormalDistribution(expr)
     if (name === 'all.equal' || name === 'all.equal.numeric') return primitiveEquality(expr)
@@ -4040,6 +4286,15 @@ const analyzeRSource = (
     )
   }
 
+  const primitiveAnyMissingness = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'anyNA')) return false
+    const args = primitiveArguments(expr, ['x', 'recursive'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    // Unclassed atomic values bypass anyNA methods. Lists/classed values may
+    // dispatch; forcing an unproved recursive flag can run arbitrary code.
+    const recursive = args.get('recursive')
+    return !recursive || (recursive.kind === 'atomic' && recursive.logical !== undefined)
+  }
   const primitiveDoublePredicate = (expr: RExpr): boolean => {
     if (!isCall(expr) || !intactBaseCall(expr, 'is.double')) return false
     const args = primitiveArguments(expr, ['x'])
@@ -4111,13 +4366,13 @@ const analyzeRSource = (
     if (
       !isCall(expr) ||
       !name ||
-      !['sum', 'all', 'any', 'prod'].includes(name) ||
+      !['sum', 'all', 'any', 'prod', 'pmin', 'pmax', 'pmin.int', 'pmax.int'].includes(name) ||
       !intactBaseCall(expr, name)
     )
       return false
     let removeMissingSeen = false
-    // Unclassed inputs bypass Summary dispatch and return an unclassed summary.
-    // Keep option matching bounded; data arguments must be positional.
+    // Classless atomic inputs use native reduction/parallel-extrema paths.
+    // Keep data positional and na.rm literal; copy ownership is not type proof.
     return expr.args.every((arg, index) => {
       const name = expr.names[index]
       if (!name) return atomicValueExpression(arg)
@@ -4131,6 +4386,755 @@ const analyzeRSource = (
       removeMissingSeen = true
       return true
     })
+  }
+  const primitiveUnaryMathTransform = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      ![
+        'log1p',
+        'expm1',
+        'sqrt',
+        'abs',
+        'sin',
+        'cos',
+        'floor',
+        'ceiling',
+        'exp',
+        'log2',
+        'log10',
+        'sign',
+        'trunc',
+        'tan',
+        'atan',
+        'asin',
+        'acos',
+        'sinh',
+        'cosh',
+        'tanh',
+        'atanh',
+        'asinh',
+        'acosh',
+        'gamma',
+        'lgamma',
+        'digamma',
+        'trigamma'
+      ].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x'])
+    // These Math primitives dispatch only on explicit class objects. Classless
+    // atomic x bypasses implicit/default methods and produces an ordinary value.
+    return Boolean(args && atomicValueExpression(args.get('x')))
+  }
+  const primitiveBearingTransform = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'atan2')) return false
+    const args = primitiveArguments(expr, ['y', 'x'])
+    // The base wrapper forces both parameters. Unknown promises can run arbitrary
+    // code; only classless atomic operands prove an ordinary, bounded result.
+    return Boolean(
+      args && atomicValueExpression(args.get('y')) && atomicValueExpression(args.get('x'))
+    )
+  }
+  const primitiveBetaNormalizer = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!isCall(expr) || (name !== 'beta' && name !== 'lbeta') || !intactBaseCall(expr, name))
+      return false
+    const args = primitiveArguments(expr, ['a', 'b'])
+    // Both shape arguments are forced; either unknown promise can change files.
+    return Boolean(
+      args && atomicValueExpression(args.get('a')) && atomicValueExpression(args.get('b'))
+    )
+  }
+  const primitiveCylindricalWave = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!isCall(expr) || (name !== 'besselJ' && name !== 'besselY') || !intactBaseCall(expr, name))
+      return false
+    const args = primitiveArguments(expr, ['x', 'nu'])
+    // Both arguments are forced. The internal routines may preserve input class
+    // attributes, so only classless atomic operands prove an ordinary result.
+    return Boolean(
+      args && atomicValueExpression(args.get('x')) && atomicValueExpression(args.get('nu'))
+    )
+  }
+  const primitivePolygamma = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'psigamma')) return false
+    const args = primitiveArguments(expr, ['x', 'deriv'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    // The omitted order is native 0L. An explicit order is forced and may keep
+    // attributes; both operands must be classless before proving an atomic result.
+    const derivative = args.get('deriv')
+    return !derivative || atomicValueExpression(derivative)
+  }
+  const primitiveScaledBessel = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!isCall(expr) || (name !== 'besselI' && name !== 'besselK') || !intactBaseCall(expr, name))
+      return false
+    const args = primitiveArguments(expr, ['x', 'nu', 'expon.scaled'])
+    if (!args || !atomicValueExpression(args.get('x')) || !atomicValueExpression(args.get('nu')))
+      return false
+    // Base coerces an explicit scaling flag through as.logical. Classed flags
+    // may dispatch arbitrary methods; omission uses the native FALSE default.
+    const scaled = args.get('expon.scaled')
+    return !scaled || atomicValueExpression(scaled)
+  }
+  const primitiveCombination = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!isCall(expr) || (name !== 'choose' && name !== 'lchoose') || !intactBaseCall(expr, name))
+      return false
+    const args = primitiveArguments(expr, ['n', 'k'])
+    // Either delayed operand may execute arbitrary code when the wrapper forces it.
+    return Boolean(
+      args && atomicValueExpression(args.get('n')) && atomicValueExpression(args.get('k'))
+    )
+  }
+  const primitiveFactorialNormalizer = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      (name !== 'factorial' && name !== 'lfactorial') ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x'])
+    // Base evaluates x + 1 before gamma/lgamma. Classed x may invoke Ops as well
+    // as Math methods; only a classless atomic operand closes both dispatch paths.
+    return Boolean(args && atomicValueExpression(args.get('x')))
+  }
+  const primitiveExposureProduct = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'outer')) return false
+    const args = primitiveArguments(expr, ['X', 'Y', 'FUN'])
+    const fun = args?.get('FUN')
+    // Only the literal multiplication fast path closes over native vector
+    // coercion and tcrossprod. Other callbacks retain the general capture path.
+    // The owned matrix establishes no shape, field types, finiteness or success.
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('X')) &&
+      atomicValueExpression(args.get('Y')) &&
+      (!fun || (isCharacter(fun) && fun.value === '*'))
+    )
+  }
+  const primitiveGroupedReductionMethods = (expr: RExpr): string[] => {
+    const args = isCall(expr) ? primitiveArguments(expr, ['x', 'group', 'reorder', 'na.rm']) : null
+    const reorder = args?.get('reorder')
+    return [
+      ...(calledName(expr) === 'rowsum' ? atomicS3Methods('rowsum') : []),
+      ...atomicS3Methods('unique'),
+      ...(!reorder || (reorder.kind === 'atomic' && reorder.logical === true)
+        ? atomicS3Methods('sort')
+        : [])
+    ]
+  }
+  const primitiveGroupedReduction = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      (name !== 'rowsum' && name !== 'rowsum.default') ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'group', 'reorder', 'na.rm'])
+    // Ordinary vector operands bound grouping and native matrix accumulation.
+    // unique always dispatches; sorting dispatches only when reorder is enabled.
+    // The owned matrix result proves no field types, dimensions, group alignment,
+    // missingness policy, numerical accuracy or successful execution.
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('x')) &&
+      atomicValueExpression(args.get('group')) &&
+      ['reorder', 'na.rm'].every((key) => {
+        const value = args.get(key)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      }) &&
+      primitiveGroupedReductionMethods(expr).every((method) =>
+        contractAvailable(method, undefined, 'base')
+      )
+    )
+  }
+  const primitiveRunEncodingMethods = (): string[] => [
+    'diff.integer',
+    'diff.numeric',
+    'diff.double',
+    'diff.default'
+  ]
+  const primitiveRunEncoding = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'rle')) return false
+    const args = primitiveArguments(expr, ['x'])
+    // rle compares ordinary values but dispatches diff on generated numeric run
+    // boundaries. The result is an owned rle list, not an ordinary vector or a
+    // proof of stored field types, missing-value policy or successful execution.
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('x')) &&
+      primitiveRunEncodingMethods().every((method) => contractAvailable(method, undefined, 'base'))
+    )
+  }
+  const primitiveOrderingInspection = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'is.unsorted')) return false
+    const args = primitiveArguments(expr, ['x', 'na.rm', 'strictly'])
+    // The wrapper forces x and its options, and classed x can dispatch length,
+    // missingness, subsetting or internal ordering methods. Ordinary operands
+    // close those effects without depending on unused implicit-class methods.
+    // A logical result can be NA; ordering, flag validity and success are unproved.
+    return Boolean(args && args.has('x') && [...args.values()].every(atomicValueExpression))
+  }
+  const primitiveDuplicateInspection = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      (name !== 'duplicated' && name !== 'anyDuplicated') ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(
+      expr,
+      name === 'duplicated'
+        ? ['x', 'incomparables', 'fromLast', 'nmax']
+        : ['x', 'incomparables', 'fromLast']
+    )
+    // Both generics dispatch on ordinary implicit classes. Plain operands close
+    // default native comparisons and option forcing only while those methods
+    // remain intact. This proves logical flags or a numeric index, not their
+    // shape, duplicate equality policy, valid nmax or scientific interpretation.
+    return Boolean(
+      args &&
+      args.has('x') &&
+      [...args.values()].every(atomicValueExpression) &&
+      atomicS3Methods(name).every((method) => contractAvailable(method, undefined, 'base'))
+    )
+  }
+  const primitiveSortList = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'sort.list')) return false
+    const args = primitiveArguments(expr, ['x', 'partial', 'na.last', 'decreasing', 'method'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    const partial = args.get('partial'),
+      method = args.get('method')
+    // Quick sorting can call the generic sort, while classed radix keys can
+    // invoke xtfrm. Close only ordinary auto/shell/radix paths with literal
+    // flags and no partial sort. NA-dropping, abbreviated modes, tie order and
+    // the resulting permutation's validity are not inferred by this proof.
+    return (
+      (!partial || isNull(partial)) &&
+      ['na.last', 'decreasing'].every((name) => {
+        const value = args.get(name)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      }) &&
+      (!method || (isCharacter(method) && ['auto', 'shell', 'radix'].includes(method.value)))
+    )
+  }
+  const primitiveDifferenceInversion = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'diffinv', ['x', 'lag', 'differences', 'xi'])
+    if (!args) return false
+    const order = args.get('differences')
+    // Only the first-order vector path closes over native integration. Higher
+    // orders recurse through diff and need separate dispatch evidence. Ordinary
+    // operands bound integer/double coercion; generic S3 identities still matter.
+    // Valid lags, seed dimensions, ranges and numerical accuracy are not proved.
+    return Boolean(
+      (!order || (order.kind === 'atomic' && order.number === 1)) &&
+      [...args.values()].every(atomicValueExpression) &&
+      atomicS3Methods('diffinv').every((method) => contractAvailable(method, undefined, 'stats'))
+    )
+  }
+  const primitiveRunDecoding = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'inverse.rle')) return false
+    const args = primitiveArguments(expr, ['x']),
+      record = args?.get('x')
+    // Field access and length/repetition can dispatch on custom containers or
+    // elements. Close those paths only for an intact inline list with exactly
+    // two ordinary atomic fields. Stored encodings remain unproved; valid run
+    // counts, matching lengths and preservation of empty runs are not certified.
+    return Boolean(
+      record &&
+      isCall(record) &&
+      intactBaseCall(record, 'list') &&
+      record.args.length === 2 &&
+      record.names.includes('lengths') &&
+      record.names.includes('values') &&
+      record.args.every(atomicValueExpression)
+    )
+  }
+  const primitiveSegmentSequence = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      (name !== 'sequence' && name !== 'sequence.default') ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['nvec', 'from', 'by'])
+    // The default coerces each operand to integer before native concatenation.
+    // Plain values bound coercion, but sequence itself still uses caller-visible
+    // implicit S3 methods. Counts, truncation, recycling and range are not proved.
+    return Boolean(
+      args &&
+      args.has('nvec') &&
+      [...args.values()].every(atomicValueExpression) &&
+      (name === 'sequence.default' ||
+        atomicS3Methods('sequence').every((method) => contractAvailable(method, undefined, 'base')))
+    )
+  }
+  const primitiveGroupCardinality = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'lengths')) return false
+    const args = primitiveArguments(expr, ['x', 'use.names'])
+    if (!args?.has('x')) return false
+    const names = args.get('use.names'),
+      input = args.get('x')
+    if (names && (names.kind !== 'atomic' || names.logical === undefined)) return false
+    // lengths dispatches on the container and length on list elements. Ownership
+    // alone does not close either path. Only plain vectors or an intact inline
+    // list of plain elements are bounded; stored/nested lists stay unproved.
+    return Boolean(
+      atomicValueExpression(input) ||
+      (input &&
+        isCall(input) &&
+        intactBaseCall(input, 'list') &&
+        input.args.every(atomicValueExpression))
+    )
+  }
+  const primitiveVectorExtraction = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    // Native extraction bypasses bracket methods, but first forces operands.
+    // Limit the result/effect proof to one ordinary vector and one ordinary
+    // positional index. Lists, dimensions, named controls and missing indices
+    // remain unproved; index validity, length and missingness are not certified.
+    return Boolean(
+      isCall(expr) &&
+      (name === '.subset' || name === '.subset2') &&
+      intactBaseCall(expr, name) &&
+      expr.args.length === 2 &&
+      expr.names.every((name) => !name) &&
+      expr.args.every(atomicValueExpression)
+    )
+  }
+  const primitiveValueMatching = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'match')) return false
+    const args = primitiveArguments(expr, ['x', 'table', 'nomatch', 'incomparables'])
+    // Classed objects may invoke mtfrm, and any supplied promise may mutate
+    // files before failure. Plain operands close those effects and give integer
+    // positions; uniqueness, valid sentinels and missingness are not proved.
+    return Boolean(
+      args && args.has('x') && args.has('table') && [...args.values()].every(atomicValueExpression)
+    )
+  }
+  const primitiveScanSequence = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'seq.int')) return false
+    const args = primitiveArguments(expr, ['from', 'to', 'by', 'length.out'])
+    // This internal generic dispatches seq methods on the first supplied
+    // argument before matching. Prove every supplied value, not only from.
+    // Keep the one-argument/along.with forms and combined controls unproved;
+    // valid direction, count, finiteness and endpoint inclusion are not proved.
+    return Boolean(
+      args &&
+      args.has('from') &&
+      args.has('to') &&
+      !(args.has('by') && args.has('length.out')) &&
+      [...args.values()].every(atomicValueExpression)
+    )
+  }
+  const primitiveNativeRepetition = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!isCall(expr) || !name || !nativeRepetitionCalls.has(name) || !intactBaseCall(expr, name))
+      return false
+    const option = name === 'rep.int' ? 'times' : 'length.out'
+    const args = primitiveArguments(expr, ['x', option])
+    // Both internal generics force the input and repetition control. Ordinary
+    // values bypass class methods and give an ordinary vector; valid counts,
+    // lengths, finiteness and scalar-versus-vector repetition are not proved.
+    return Boolean(
+      args && atomicValueExpression(args.get('x')) && atomicValueExpression(args.get(option))
+    )
+  }
+  const primitiveMatrixConstruction = (expr: RExpr | null | undefined): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'matrix')) return false
+    if (
+      !['is.object', 'is.atomic', '!', '||', 'missing'].every((name) =>
+        contractAvailable(name, undefined, 'base')
+      )
+    )
+      return false
+    const args = primitiveArguments(expr, ['data', 'nrow', 'ncol', 'byrow', 'dimnames'])
+    if (
+      !args ||
+      ['data', 'nrow', 'ncol'].some(
+        (name) => args.has(name) && !atomicValueExpression(args.get(name))
+      )
+    )
+      return false
+    const byrow = args.get('byrow'),
+      labels = args.get('dimnames')
+    // Primitive data bypass as.vector dispatch. Default dimensions/flags and
+    // ordinary dimname vectors bound effects; dimensions and recycling are not
+    // validated here. An arbitrary owned list is not dimname/type evidence.
+    return Boolean(
+      (!byrow || (byrow.kind === 'atomic' && byrow.logical !== undefined)) &&
+      (!labels ||
+        isNull(labels) ||
+        (isCall(labels) &&
+          intactBaseCall(labels, 'list') &&
+          labels.args.every(atomicValueExpression)))
+    )
+  }
+  const primitiveDeterministicMaxColumn = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'max.col')) return false
+    const args = primitiveArguments(expr, ['m', 'ties.method']),
+      policy = args?.get('ties.method')
+    if (
+      !args ||
+      (!atomicValueExpression(args.get('m')) && !primitiveMatrixConstruction(args.get('m'))) ||
+      !isCharacter(policy) ||
+      !['first', 'last'].includes(policy.value)
+    )
+      return false
+    // as.matrix is an S3 generic even for unclassed matrices/vectors. Guard all
+    // implicit atomic classes and its default, not just explicit input classes.
+    // Bound inline constructors locally; stored matrices do not become proven
+    // vectors or require a new persistent/cross-cell matrix type channel.
+    // Omitted/random ties stay conservative because they may advance RNG state.
+    return [
+      'match.arg',
+      'which',
+      '==',
+      'eval',
+      'formals',
+      '[[',
+      'as.matrix',
+      'is.matrix',
+      'array',
+      'c',
+      'length',
+      'is.null',
+      'names',
+      'list',
+      ...[
+        'matrix',
+        'array',
+        'numeric',
+        'double',
+        'integer',
+        'logical',
+        'character',
+        'complex',
+        'raw',
+        'NULL',
+        'default'
+      ].map((name) => `as.matrix.${name}`)
+    ].every((name) => contractAvailable(name, undefined, 'base'))
+  }
+  const primitiveEventAnchors = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'findInterval')) return false
+    // The wrapper checks ordering before coercing vec and x. Ordinary values
+    // close ordering/coercion dispatch; literal flags bound their forcing.
+    // This proves neither sorted anchors nor finite events or valid indices.
+    if (
+      ![
+        'identical',
+        'is.unsorted',
+        'as.double',
+        'length',
+        '<=',
+        '!',
+        '&&',
+        'anyNA',
+        'is.na',
+        'any',
+        '['
+      ].every((name) => contractAvailable(name, undefined, 'base'))
+    )
+      return false
+    const args = primitiveArguments(expr, [
+      'x',
+      'vec',
+      'rightmost.closed',
+      'all.inside',
+      'left.open'
+    ])
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('x')) &&
+      atomicValueExpression(args.get('vec')) &&
+      ['rightmost.closed', 'all.inside', 'left.open'].every((name) => {
+        const flag = args.get(name)
+        return !flag || (flag.kind === 'atomic' && flag.logical !== undefined)
+      })
+    )
+  }
+  const primitiveSpeciesCounts = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'tabulate')) return false
+    // The wrapper checks/coerces bin and nbins and computes an omitted nbins
+    // through max. Classless operands close coercion, Ops and Summary dispatch;
+    // keep unproved inner identities conservative like other base wrappers.
+    if (
+      ![
+        'is.numeric',
+        'is.factor',
+        'as.integer',
+        'typeof',
+        'is.na',
+        'max',
+        '!',
+        '&&',
+        '!=',
+        '>',
+        '.Machine',
+        '$'
+      ].every((name) => contractAvailable(name, undefined, 'base'))
+    )
+      return false
+    const args = primitiveArguments(expr, ['bin', 'nbins'])
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('bin')) &&
+      (!args.has('nbins') || atomicValueExpression(args.get('nbins')))
+    )
+  }
+  const primitiveExposureBins = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, '.bincode')) return false
+    const args = primitiveArguments(expr, ['x', 'breaks', 'right', 'include.lowest'])
+    // This bare internal wrapper forces data, cut points and both flags. A
+    // bounded result does not prove sorted breaks, valid lengths, endpoint
+    // inclusion or nonmissing codes; those remain numerical/runtime questions.
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('x')) &&
+      atomicValueExpression(args.get('breaks')) &&
+      ['right', 'include.lowest'].every((name) => {
+        const flag = args.get(name)
+        return !flag || (flag.kind === 'atomic' && flag.logical !== undefined)
+      })
+    )
+  }
+  const primitiveSegmentInsertion = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'append')) return false
+    // The wrapper forces x through length, branches on after, then concatenates
+    // and possibly subsets. Keep unproved inner identities conservative, as for
+    // other base wrappers; ordinary operands close the method-dispatch paths.
+    if (
+      !['length', '!', '>=', 'c', '[', ':', '+'].every((name) =>
+        contractAvailable(name, undefined, 'base')
+      )
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'values', 'after'])
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('x')) &&
+      atomicValueExpression(args.get('values')) &&
+      (!args.has('after') || atomicValueExpression(args.get('after')))
+    )
+  }
+  const primitiveFastMatrixReduction = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !fastMatrixReductionCalls.has(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'm', 'n', 'na.rm'])
+    const removeMissing = args?.get('na.rm')
+    // The bare internal wrappers force data and both dimensions. Ordinary
+    // values and a literal flag bound effects and the atomic result; valid
+    // dimensions, lengths, finite values and numerical accuracy are not proved.
+    return Boolean(
+      args &&
+      ['x', 'm', 'n'].every((key) => atomicValueExpression(args.get(key))) &&
+      (!removeMissing || (removeMissing.kind === 'atomic' && removeMissing.logical !== undefined))
+    )
+  }
+  const primitiveMatrixNorm = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'norm')) return false
+    const args = primitiveArguments(expr, ['x', 'type'])
+    const option = args?.get('type')
+    const input = args?.get('x')
+    // The closed default chooses the one-norm. These literal aliases select
+    // native LAPACK paths; classless x excludes is.numeric class dispatch.
+    // Keep the SVD "2" branch and unproved selectors conservative. This bounds
+    // effects/result type, not matrix dimensions, finite values or accuracy.
+    return Boolean(
+      args &&
+      (atomicValueExpression(input) || Boolean(input && primitiveMatrixCrossProduct(input))) &&
+      (!option ||
+        (isCharacter(option) &&
+          ['O', 'o', '1', 'I', 'i', 'F', 'f', 'E', 'e', 'M', 'm'].includes(option.value)))
+    )
+  }
+  const primitiveMatrixCrossProduct = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['crossprod', 'tcrossprod'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'y'])
+    const right = args?.get('y')
+    // Both operands can force promises or dispatch S3/S4 matrixOps methods.
+    // Classless atomic operands exclude that dispatch; omitted/NULL y uses x.
+    // The result is an owned matrix, not an ordinary vector: downstream S3
+    // matrix methods remain visible. Dimensions, complex bilinear semantics
+    // and matprod numerical accuracy remain runtime concerns.
+    return Boolean(
+      args && atomicValueExpression(args.get('x')) && (!right || atomicValueExpression(right))
+    )
+  }
+  const primitiveComplexProjection = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['Mod', 'Arg', 'Conj', 'Re', 'Im'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['z'])
+    // Complex group primitives bypass implicit methods for classless atomic z.
+    // Explicit classes may dispatch arbitrary methods and return non-atomic data.
+    return Boolean(args && atomicValueExpression(args.get('z')))
+  }
+  const primitiveLogarithm = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!isCall(expr) || !name || !['log', 'logb'].includes(name) || !intactBaseCall(expr, name))
+      return false
+    // logb's base wrapper branches through missing(base) and calls log. Keep
+    // unproved inner identities conservative, even for a qualified wrapper.
+    if (
+      name === 'logb' &&
+      (!contractAvailable('log', undefined, 'base') ||
+        !contractAvailable('missing', undefined, 'base'))
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'base'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    // Native log is bounded for classless x and an omitted or literal base.
+    // Forcing an unknown base can perform I/O even when x is already primitive.
+    const base = args.get('base')
+    return !base || literalNumericOption(base) !== undefined
+  }
+  const primitiveRounding = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['round', 'signif'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'digits'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    // Math primitives bypass implicit/default methods for classless atomic x.
+    // Keep precision literal: a lazy or classed digits argument is not bounded.
+    const digits = args.get('digits')
+    return !digits || Number.isInteger(literalNumericOption(digits))
+  }
+  const primitiveResidualCleanup = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'zapsmall')) return false
+    const args = primitiveArguments(expr, ['x', 'digits', 'mFUN', 'min.d'])
+    if (!args || !atomicValueExpression(args.get('x')) || args.has('mFUN')) return false
+    // Bound the native max/abs callback and round dispatch with classless input.
+    // The omitted precision reads global options; explicit callbacks and lazy
+    // precision/floor arguments remain outside this value-type proof.
+    if (!Number.isInteger(literalNumericOption(args.get('digits')))) return false
+    const minimumDigits = args.get('min.d')
+    return !minimumDigits || Number.isInteger(literalNumericOption(minimumDigits))
+  }
+  const primitiveRemainder = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, '%%')) return false
+    const args = primitiveArguments(expr, ['e1', 'e2'])
+    // Remainder dispatches Ops for classed inputs. Proved ordinary operands
+    // retain an atomic result; unknown forcing and rebound operators do not.
+    return Boolean(args && ['e1', 'e2'].every((name) => atomicValueExpression(args.get(name))))
+  }
+  const primitivePolynomialRoots = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'polyroot')) return false
+    const args = primitiveArguments(expr, ['z'])
+    // Native root solving returns an ordinary complex vector. Unknown
+    // coefficients can still run arbitrary code while their promise is forced.
+    return Boolean(args && atomicValueExpression(args.get('z')))
+  }
+  const primitiveReversal = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'rev')) return false
+    const args = primitiveArguments(expr, ['x'])
+    // The default reverses by length/subsetting. Classless atomic inputs bound
+    // those primitives, but rev itself still resolves caller-visible S3 methods.
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('x')) &&
+      atomicS3Methods('rev').every((method) => contractAvailable(method, undefined, 'base'))
+    )
+  }
+  const primitiveDistinctValues = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'unique')) return false
+    const args = primitiveArguments(expr, ['x', 'incomparables', 'fromLast', 'nmax'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    const incomparables = args.get('incomparables'),
+      fromLast = args.get('fromLast'),
+      nmax = args.get('nmax')
+    // unique.default enters a native atomic path after generic dispatch. Keep
+    // coercible option objects and alternate incomparable sets unproved.
+    return (
+      (!incomparables || (incomparables.kind === 'atomic' && incomparables.logical === false)) &&
+      (!fromLast || (fromLast.kind === 'atomic' && fromLast.logical !== undefined)) &&
+      (!nmax || (nmax.kind === 'atomic' && Number.isInteger(nmax.number) && nmax.number! > 0)) &&
+      atomicS3Methods('unique').every((method) => contractAvailable(method, undefined, 'base'))
+    )
+  }
+  const primitiveCutMethods = (): string[] => [
+    ...atomicS3Methods('cut'),
+    ...implicitAtomicS3Methods('anyDuplicated')
+  ]
+  const primitiveCutCodes = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'cut')) return false
+    const args = primitiveArguments(expr, [
+      'x',
+      'breaks',
+      'labels',
+      'include.lowest',
+      'right',
+      'dig.lab',
+      'ordered_result'
+    ])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    const breaks = args.get('breaks'),
+      labels = args.get('labels')
+    // Bound only integer codes with literal ascending edges. A single break
+    // count enters range/diff dispatch; generated factor labels have their own
+    // formatting callbacks. Neither path inherits this proof.
+    if (
+      !isCall(breaks) ||
+      !intactBaseCall(breaks, 'c') ||
+      breaks.args.length < 2 ||
+      breaks.names.some(Boolean) ||
+      labels?.kind !== 'atomic' ||
+      labels.logical !== false
+    )
+      return false
+    let previous = -Infinity
+    for (const edge of breaks.args) {
+      if (
+        edge.kind !== 'atomic' ||
+        edge.number === undefined ||
+        !Number.isFinite(edge.number) ||
+        edge.number <= previous
+      )
+        return false
+      previous = edge.number
+    }
+    for (const name of ['include.lowest', 'right', 'ordered_result']) {
+      const value = args.get(name)
+      if (value && (value.kind !== 'atomic' || value.logical === undefined)) return false
+    }
+    const digits = args.get('dig.lab')
+    return (
+      (!digits ||
+        (digits.kind === 'atomic' && Number.isInteger(digits.number) && digits.number! > 0)) &&
+      primitiveCutMethods().every((method) => contractAvailable(method, undefined, 'base'))
+    )
   }
   const primitiveWhich = (expr: RExpr): boolean => {
     if (!isCall(expr) || !intactBaseCall(expr, 'which')) return false
@@ -4262,6 +5266,35 @@ const analyzeRSource = (
       return null
     const args = primitiveArguments(expr, parameters)
     return args && atomicValueExpression(args.get(inputName)) ? args : null
+  }
+  const primitiveFourierTransform = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'fft', ['z', 'inverse'], 'z')
+    // The native routine forces both operands and may preserve input classes.
+    // Ordinary real/complex input and a classless flag bound the result; the
+    // omitted flag is stats' native FALSE default, not a global option.
+    const inverse = args?.get('inverse')
+    return Boolean(args && (!inverse || atomicValueExpression(inverse)))
+  }
+  const primitiveFFTLength = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'nextn', ['n', 'factors'], 'n')
+    const factors = args?.get('factors')
+    // Both promises are forced by the native wrapper. Ordinary operands and
+    // the closed default factors bound effects and return an atomic vector;
+    // this does not establish valid or coprime factors or an optimal length.
+    return Boolean(args && (!factors || atomicValueExpression(factors)))
+  }
+  const primitiveConvolution = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'convolve', ['x', 'y', 'conj', 'type'])
+    if (!args || !atomicValueExpression(args.get('y'))) return false
+    const conjugate = args.get('conj')
+    const type = args.get('type')
+    // All four promises are forced by the stats wrapper. Ordinary operands
+    // bound FFT/arithmetic dispatch; literal modes bound match.arg. Omitted
+    // options use stats' TRUE/circular defaults without reading global state.
+    return Boolean(
+      (!conjugate || atomicValueExpression(conjugate)) &&
+      (!type || (isCharacter(type) && ['circular', 'open', 'filter'].includes(type.value)))
+    )
   }
   const primitiveInterquartileRange = (expr: RExpr): boolean => {
     const args = primitiveStatisticsArguments(expr, 'IQR', ['x', 'na.rm', 'type'])
@@ -4454,6 +5487,184 @@ const analyzeRSource = (
       })
     )
   }
+  const primitiveBinomialDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !binomialDistributionCalls.has(name)) return false
+    const input = name === 'dbinom' ? 'x' : name === 'pbinom' ? 'q' : 'p'
+    const flags = name === 'dbinom' ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(expr, name, [input, 'size', 'prob', ...flags], input)
+    // Native PMF/CDF routines force every parameter. Classless numeric values
+    // and literal logical options bound those effects; domain validity and
+    // vector recycling remain runtime checks rather than type guarantees.
+    return Boolean(
+      args &&
+      ['size', 'prob'].every((parameter) => atomicValueExpression(args.get(parameter))) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveWaitingDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !waitingDistributionCalls.has(name)) return false
+    const input = name.startsWith('d') ? 'x' : name.startsWith('p') ? 'q' : 'p'
+    const flags = name.startsWith('d') ? ['log'] : ['lower.tail', 'log.p']
+    const parameter = name.endsWith('geom') ? 'prob' : 'rate'
+    const args = primitiveStatisticsArguments(expr, name, [input, parameter, ...flags], input)
+    const value = args?.get(parameter)
+    // Exponential wrappers form 1/rate; geometric wrappers pass prob directly.
+    // Classless parameters bound forcing/coercion. Only rate has a closed
+    // default (1); success probability is required. Domains remain runtime checks.
+    return Boolean(
+      args &&
+      ((parameter === 'rate' && !value) || atomicValueExpression(value)) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveBetaDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !betaDistributionCalls.has(name)) return false
+    const input = name === 'dbeta' ? 'x' : name === 'pbeta' ? 'q' : 'p'
+    const flags = name === 'dbeta' ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(
+      expr,
+      name,
+      [input, 'shape1', 'shape2', 'ncp', ...flags],
+      input
+    )
+    const noncentrality = args?.get('ncp')
+    // Omitting ncp selects the central native routine; explicitly supplying it
+    // selects the noncentral routine even for zero. Both force their operands.
+    // Bound effects and result type without asserting valid domains or accuracy.
+    return Boolean(
+      args &&
+      ['shape1', 'shape2'].every((parameter) => atomicValueExpression(args.get(parameter))) &&
+      (!noncentrality || atomicValueExpression(noncentrality)) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveNegativeBinomialDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !negativeBinomialDistributionCalls.has(name)) return false
+    const input = name === 'dnbinom' ? 'x' : name === 'pnbinom' ? 'q' : 'p'
+    const flags = name === 'dnbinom' ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(
+      expr,
+      name,
+      [input, 'size', 'prob', 'mu', ...flags],
+      input
+    )
+    const probability = args?.get('prob')
+    const mean = args?.get('mu')
+    // The wrappers choose exactly one parameterization before forcing native
+    // operands. Require that choice and ordinary values; supplying both or
+    // neither gets no result proof. Domain validity remains a runtime concern.
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('size')) &&
+      Boolean(probability) !== Boolean(mean) &&
+      atomicValueExpression(probability ?? mean) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveExactRankDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !exactRankDistributionCalls.has(name)) return false
+    const input = name.startsWith('d') ? 'x' : name.startsWith('p') ? 'q' : 'p'
+    const flags = name.startsWith('d') ? ['log'] : ['lower.tail', 'log.p']
+    const sizes = name.endsWith('signrank') ? ['n'] : ['m', 'n']
+    const args = primitiveStatisticsArguments(expr, name, [input, ...sizes, ...flags], input)
+    // Exact rank-distribution wrappers force the observation/probability, each
+    // sample size and options. Ordinary operands bound effects without
+    // proving positive integer sizes, valid probabilities or finite results.
+    return Boolean(
+      args &&
+      sizes.every((parameter) => atomicValueExpression(args.get(parameter))) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveHypergeometricDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !hypergeometricDistributionCalls.has(name)) return false
+    const input = name === 'dhyper' ? 'x' : name === 'phyper' ? 'q' : 'p'
+    const flags = name === 'dhyper' ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(expr, name, [input, 'm', 'n', 'k', ...flags], input)
+    // Native sampling probabilities force all four numerical operands and
+    // flags. Bound effects with ordinary values; population/support validity
+    // and finite numerical results remain runtime concerns.
+    return Boolean(
+      args &&
+      ['m', 'n', 'k'].every((parameter) => atomicValueExpression(args.get(parameter))) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveWeibullDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !weibullDistributionCalls.has(name)) return false
+    const input = name === 'dweibull' ? 'x' : name === 'pweibull' ? 'q' : 'p'
+    const flags = name === 'dweibull' ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(
+      expr,
+      name,
+      [input, 'shape', 'scale', ...flags],
+      input
+    )
+    // The native wrappers force numerical operands and logical options.
+    // A missing scale uses the closed default 1; ordinary value proof bounds
+    // effects without asserting valid domains or finite numerical results.
+    const scale = args?.get('scale')
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('shape')) &&
+      (!scale || atomicValueExpression(scale)) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveTwoParameterDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !twoParameterDistributionCalls.has(name)) return false
+    const input = name.startsWith('d') ? 'x' : name.startsWith('p') ? 'q' : 'p'
+    const flags = name.startsWith('d') ? ['log'] : ['lower.tail', 'log.p']
+    const parameters = name.endsWith('lnorm')
+      ? ['meanlog', 'sdlog']
+      : name.endsWith('unif')
+        ? ['min', 'max']
+        : ['location', 'scale']
+    const args = primitiveStatisticsArguments(expr, name, [input, ...parameters, ...flags], input)
+    // All three parameter pairs use closed 0/1 defaults. Proved ordinary operands
+    // and literal logical options bound the native wrapper's effects, without
+    // asserting valid domains or finite numerical results.
+    return Boolean(
+      args &&
+      parameters.every((parameter) => {
+        const value = args.get(parameter)
+        return !value || atomicValueExpression(value)
+      }) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
   const primitivePValueAdjustment = (expr: RExpr): boolean => {
     const args = primitiveStatisticsArguments(expr, 'p.adjust', ['p', 'method', 'n'], 'p')
     if (!args) return false
@@ -4477,18 +5688,23 @@ const analyzeRSource = (
     const input = countArgs?.get('x')
     return !!input && atomicValueExpression(input)
   }
-  const primitiveMeanMethods = (): string[] =>
-    [
-      'double',
-      'numeric',
-      'integer',
-      'logical',
-      'complex',
-      'character',
-      'raw',
-      'NULL',
-      'default'
-    ].map((type) => 'mean.' + type)
+  const primitiveMeanMethods = (expr: RExpr): string[] => {
+    if (!isCall(expr)) return []
+    const args = primitiveArguments(expr, ['x', 'trim', 'na.rm'])
+    const trim = literalNumericOption(args?.get('trim'))
+    // mean.default delegates to median at half trimming, including its sort
+    // and mean calls. Smaller positive trims dispatch unique on cutoff indices.
+    // Those internal generic identities are lexical; implicit class methods
+    // remain caller-visible even when mean.default itself is qualified.
+    return [
+      ...(calledName(expr) === 'mean' ? atomicS3Methods('mean') : []),
+      ...(trim === 0.5
+        ? ['median', 'sort', 'mean'].flatMap(implicitAtomicS3Methods)
+        : trim !== undefined && trim > 0 && trim < 0.5
+          ? implicitAtomicS3Methods('unique')
+          : [])
+    ]
+  }
   const primitiveMean = (expr: RExpr): boolean => {
     const name = calledName(expr)
     if (
@@ -4496,8 +5712,7 @@ const analyzeRSource = (
       !name ||
       !['mean', 'mean.default'].includes(name) ||
       !intactBaseCall(expr, name) ||
-      (name === 'mean' &&
-        !primitiveMeanMethods().every((method) => contractAvailable(method, undefined, 'base')))
+      !primitiveMeanMethods(expr).every((method) => contractAvailable(method, undefined, 'base'))
     )
       return false
     const args = primitiveArguments(expr, ['x', 'trim', 'na.rm'])
@@ -5303,6 +6518,7 @@ const analyzeRSource = (
     if (primitiveInterquartileRange(expr)) return []
     if (
       primitiveDoublePredicate(expr) ||
+      primitiveAnyMissingness(expr) ||
       primitiveDoubleCoercion(expr) ||
       primitiveMedianDeviation(expr) ||
       primitiveQuantiles(expr) ||
@@ -5312,6 +6528,14 @@ const analyzeRSource = (
       primitiveCentralDistribution(expr) ||
       primitiveGammaDistribution(expr) ||
       primitivePoissonDistribution(expr) ||
+      primitiveBinomialDistribution(expr) ||
+      primitiveNegativeBinomialDistribution(expr) ||
+      primitiveBetaDistribution(expr) ||
+      primitiveWaitingDistribution(expr) ||
+      primitiveHypergeometricDistribution(expr) ||
+      primitiveExactRankDistribution(expr) ||
+      primitiveWeibullDistribution(expr) ||
+      primitiveTwoParameterDistribution(expr) ||
       primitiveMean(expr) ||
       primitiveVectorScale(expr) ||
       primitiveEquality(expr) ||
@@ -5324,6 +6548,108 @@ const analyzeRSource = (
     )
       return []
     const resultName = calledName(expr)
+    // Summary methods may return references or classed values. Only bounded
+    // primitive calls establish the ordinary reduction result contract.
+    if (
+      resultName === 'sum' ||
+      resultName === 'pmin' ||
+      resultName === 'pmax' ||
+      resultName === 'pmin.int' ||
+      resultName === 'pmax.int'
+    )
+      return primitiveSummary(expr) ? [] : null
+    if (resultName === 'cut') return primitiveCutCodes(expr) ? [] : null
+    if (resultName === 'unique') return primitiveDistinctValues(expr) ? [] : null
+    if (resultName === 'rev') return primitiveReversal(expr) ? [] : null
+    if (resultName === 'append') return primitiveSegmentInsertion(expr) ? [] : null
+    if (resultName === '.bincode') return primitiveExposureBins(expr) ? [] : null
+    if (resultName === 'tabulate') return primitiveSpeciesCounts(expr) ? [] : null
+    if (resultName === 'findInterval') return primitiveEventAnchors(expr) ? [] : null
+    if (resultName === 'matrix') return primitiveMatrixConstruction(expr) ? [] : null
+    if (resultName === 'max.col') return primitiveDeterministicMaxColumn(expr) ? [] : null
+    if (resultName && nativeRepetitionCalls.has(resultName))
+      return primitiveNativeRepetition(expr) ? [] : null
+    if (resultName === 'seq.int') return primitiveScanSequence(expr) ? [] : null
+    if (resultName === 'duplicated' || resultName === 'anyDuplicated')
+      return primitiveDuplicateInspection(expr) ? [] : null
+    if (resultName === 'rowsum' || resultName === 'rowsum.default')
+      return primitiveGroupedReduction(expr) ? [] : null
+    if (resultName === 'outer') return primitiveExposureProduct(expr) ? [] : null
+    if (resultName === 'rle') return primitiveRunEncoding(expr) ? [] : null
+    if (resultName === 'is.unsorted') return primitiveOrderingInspection(expr) ? [] : null
+    if (resultName === 'sort.list') return primitiveSortList(expr) ? [] : null
+    if (resultName === 'diffinv') return primitiveDifferenceInversion(expr) ? [] : null
+    if (resultName === 'inverse.rle') return primitiveRunDecoding(expr) ? [] : null
+    if (resultName === 'sequence' || resultName === 'sequence.default')
+      return primitiveSegmentSequence(expr) ? [] : null
+    if (resultName === 'lengths') return primitiveGroupCardinality(expr) ? [] : null
+    if (resultName === '.subset' || resultName === '.subset2')
+      return primitiveVectorExtraction(expr) ? [] : null
+    if (resultName === 'match') return primitiveValueMatching(expr) ? [] : null
+    if (
+      resultName === 'log1p' ||
+      resultName === 'expm1' ||
+      resultName === 'sqrt' ||
+      resultName === 'abs' ||
+      resultName === 'sin' ||
+      resultName === 'cos' ||
+      resultName === 'floor' ||
+      resultName === 'ceiling' ||
+      resultName === 'exp' ||
+      resultName === 'log2' ||
+      resultName === 'log10' ||
+      resultName === 'sign' ||
+      resultName === 'trunc' ||
+      resultName === 'tan' ||
+      resultName === 'atan' ||
+      resultName === 'asin' ||
+      resultName === 'acos' ||
+      resultName === 'sinh' ||
+      resultName === 'cosh' ||
+      resultName === 'tanh' ||
+      resultName === 'atanh' ||
+      resultName === 'asinh' ||
+      resultName === 'acosh' ||
+      resultName === 'gamma' ||
+      resultName === 'lgamma' ||
+      resultName === 'digamma' ||
+      resultName === 'trigamma'
+    )
+      return primitiveUnaryMathTransform(expr) ? [] : null
+    if (resultName === 'atan2') return primitiveBearingTransform(expr) ? [] : null
+    if (resultName === 'beta' || resultName === 'lbeta')
+      return primitiveBetaNormalizer(expr) ? [] : null
+    if (resultName === 'besselJ' || resultName === 'besselY')
+      return primitiveCylindricalWave(expr) ? [] : null
+    if (resultName === 'psigamma') return primitivePolygamma(expr) ? [] : null
+    if (resultName === 'besselI' || resultName === 'besselK')
+      return primitiveScaledBessel(expr) ? [] : null
+    if (resultName === 'choose' || resultName === 'lchoose')
+      return primitiveCombination(expr) ? [] : null
+    if (resultName === 'factorial' || resultName === 'lfactorial')
+      return primitiveFactorialNormalizer(expr) ? [] : null
+    if (
+      resultName === 'Mod' ||
+      resultName === 'Arg' ||
+      resultName === 'Conj' ||
+      resultName === 'Re' ||
+      resultName === 'Im'
+    )
+      return primitiveComplexProjection(expr) ? [] : null
+    if (resultName === 'log' || resultName === 'logb') return primitiveLogarithm(expr) ? [] : null
+    if (resultName === 'round' || resultName === 'signif')
+      return primitiveRounding(expr) ? [] : null
+    if (resultName === 'zapsmall') return primitiveResidualCleanup(expr) ? [] : null
+    if (resultName === 'polyroot') return primitivePolynomialRoots(expr) ? [] : null
+    if (resultName && fastMatrixReductionCalls.has(resultName))
+      return primitiveFastMatrixReduction(expr) ? [] : null
+    if (resultName === 'norm') return primitiveMatrixNorm(expr) ? [] : null
+    if (resultName === 'crossprod' || resultName === 'tcrossprod')
+      return primitiveMatrixCrossProduct(expr) ? [] : null
+    if (resultName === '%%') return primitiveRemainder(expr) ? [] : null
+    if (resultName === 'fft') return primitiveFourierTransform(expr) ? [] : null
+    if (resultName === 'nextn') return primitiveFFTLength(expr) ? [] : null
+    if (resultName === 'convolve') return primitiveConvolution(expr) ? [] : null
     if (resultName === 'data.frame' && !dataFrameDispatchAvailable(resultName)) return null
     if (resultName === 'venn.diagram' && ordinaryVennFilePlot(expr)) return []
     if (ordinaryVennDataCall(expr)) return []
@@ -5435,7 +6761,7 @@ const analyzeRSource = (
       return []
     if (
       resultName &&
-      ['nrow', 'ncol', 't', 'lengths'].includes(resultName) &&
+      ['nrow', 'ncol', 't'].includes(resultName) &&
       contractAvailable(resultName, qualifiedCall(expr)?.package, 'base') &&
       expr.args.length > 0 &&
       expr.args.every((arg) => copyOnModifySources(arg)?.length === 0)
@@ -5531,17 +6857,9 @@ const analyzeRSource = (
       transform &&
       (R_ATOMIC_VECTOR_CALLS.has(transform) ||
         R_BASE_STRING_CALLS.includes(transform) ||
-        [
-          'names',
-          'colnames',
-          'rownames',
-          'levels',
-          'duplicated',
-          'unlist',
-          'merge',
-          'rbind',
-          'cbind'
-        ].includes(transform)) &&
+        ['names', 'colnames', 'rownames', 'levels', 'unlist', 'merge', 'rbind', 'cbind'].includes(
+          transform
+        )) &&
       contractAvailable(transform, qualified?.package, 'base')
     ) {
       const sources = expr.args.map(copyOnModifySources)
@@ -5585,6 +6903,9 @@ const analyzeRSource = (
     const transformName = tabularTransformName(expr)
     if (transformName && tabularTransform.has(transformName) && expr.args.length >= 1) {
       const dataIndex = tabularDataIndex(expr)
+      // Named arguments for another function with the same name (such as
+      // stats::filter) do not supply a tabular input or prove a result value.
+      if (dataIndex < 0) return null
       const dataSources = copyOnModifySources(expr.args[dataIndex])
       return transformedTableSources(
         dataSources,
@@ -6434,6 +7755,22 @@ const analyzeRSource = (
     if (!isCall(expr)) return
     const op = callOperator(expr)
     if (
+      phase === 'deferred' &&
+      op === '!' &&
+      expr.args.length === 1 &&
+      isCall(expr.args[0]) &&
+      callOperator(expr.args[0]) === '!' &&
+      expr.args[0].args.length === 1
+    ) {
+      // aes/vars capture ordinary expressions, but !! and !!! evaluate their
+      // payload now in the caller environment, outside the eventual data mask.
+      let payload = expr.args[0].args[0]
+      if (isCall(payload) && callOperator(payload) === '!' && payload.args.length === 1)
+        payload = payload.args[0]
+      walk(payload, false)
+      return
+    }
+    if (
       op &&
       (op === '$' || op === '[[') &&
       expr.args.length >= 2 &&
@@ -6627,6 +7964,21 @@ const analyzeRSource = (
       '!=',
       '~'
     ]
+    // Share the file visitor's dispatch/callback boundary, including newly
+    // supported scientific families. No caller proof establishes a mask column.
+    const unprovedMaskEffects = Boolean(rFileCallbackPackage(expr))
+    if (unprovedMaskEffects && phase === 'immediate') {
+      // A mask can shadow an ordinary caller value with a classed column.
+      // Name-only contracts do not prove dispatch or argument effects here.
+      // Revoke serialized producers before forcing arguments and afterward;
+      // the file visitor independently revokes stale path authority.
+      invalidateSerializedValues()
+      unknown.push('external-state', 'opaque-call')
+    } else if (unprovedMaskEffects && expr.sourceOffset !== undefined) {
+      // Deferred aes/vars expressions do not invoke these calls now. The map
+      // entry records evaluation phase, not purity of the eventual mask input.
+      readOnlyMapCalls?.set(expr.sourceOffset, readOnlyMapCalls.get(expr.sourceOffset) !== false)
+    }
     if (resolvedOp && !syntax.includes(resolvedOp) && dependencyName) {
       used.push(dependencyName)
       if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
@@ -6634,6 +7986,7 @@ const analyzeRSource = (
       else unknown.push('opaque-call')
     }
     for (const arg of expr.args) walkDataMask(arg, trackEnvironment, phase)
+    if (unprovedMaskEffects && phase === 'immediate') invalidateSerializedValues()
   }
   const walkTabularArguments = (expr: Extract<RExpr, { kind: 'call' }>): void => {
     const dataIndex = tabularDataIndex(expr)
@@ -7025,63 +8378,139 @@ const analyzeRSource = (
       if (contractAvailable(method, undefined, 'utils')) safeCallNames.push(method)
       else unknown.push('opaque-call')
     }
-    if (calledName(expr) === 'order') {
+    if (
+      calledName(expr) === 'order' &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || intactBaseCall(expr, 'order'))
+    ) {
       const dependency = qualified ? qualified.package + '::order' : 'order'
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveOrder(expr)) safeCallNames.push(dependency)
-      else unknown.push('opaque-call')
+      const readOnly = primitiveOrder(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       for (const argument of expr.args) walk(argument)
+      if (!readOnly) invalidateSerializedValues()
       return
     }
     const robustStatistic = calledName(expr)
     if (
-      robustStatistic === 'all.equal' ||
-      robustStatistic === 'all.equal.numeric' ||
-      robustStatistic === 'isTRUE' ||
-      robustStatistic === 'isFALSE'
+      (robustStatistic === 'all.equal' || robustStatistic === 'all.equal.numeric') &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || intactBaseCall(expr, robustStatistic))
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveEquality(expr) || primitiveTruthPredicate(expr)) {
-        const methods = robustStatistic.startsWith('all.equal')
-          ? primitiveEqualityMethods(expr)
-          : []
+      const readOnly = primitiveEquality(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
+        const methods = primitiveEqualityMethods(expr)
         used.push(...methods)
         priorUsed.push(...methods.filter((name) => !defined.includes(name)))
         safeCallNames.push(dependency, ...methods)
-      } else unknown.push('opaque-call')
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
-    if (robustStatistic === 'scale' || robustStatistic === 'scale.default') {
+    if (
+      (robustStatistic === 'isTRUE' ||
+        robustStatistic === 'isFALSE' ||
+        robustStatistic === 'anyNA') &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || intactBaseCall(expr, robustStatistic))
+    ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveVectorScale(expr)) {
+      const readOnly =
+        robustStatistic === 'anyNA' ? primitiveAnyMissingness(expr) : primitiveTruthPredicate(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      (robustStatistic === 'scale' || robustStatistic === 'scale.default') &&
+      intactBaseCall(expr, robustStatistic)
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly = primitiveVectorScale(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
         const methods = primitiveScaleMethods(expr)
         used.push(...methods)
         priorUsed.push(...methods.filter((name) => !defined.includes(name)))
         safeCallNames.push(dependency, ...methods)
-      } else unknown.push('opaque-call')
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
-    if (robustStatistic === 'mean.default' || robustStatistic === 'mean') {
+    if (
+      (robustStatistic === 'mean.default' || robustStatistic === 'mean') &&
+      intactBaseCall(expr, robustStatistic)
+    ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveMean(expr)) {
+      const readOnly = primitiveMean(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
         safeCallNames.push(dependency)
-        if (robustStatistic === 'mean') {
-          const methods = primitiveMeanMethods()
-          used.push(...methods)
-          priorUsed.push(...methods.filter((method) => !defined.includes(method)))
-          safeCallNames.push(...methods)
-        }
-      } else unknown.push('opaque-call')
+        const methods = primitiveMeanMethods(expr)
+        used.push(...methods)
+        priorUsed.push(...methods.filter((method) => !defined.includes(method)))
+        safeCallNames.push(...methods)
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
     if (robustStatistic === 'is.double' && intactBaseCall(expr, 'is.double')) {
@@ -7102,40 +8531,449 @@ const analyzeRSource = (
       return
     }
     if (
-      robustStatistic === 'as.double' ||
-      (robustStatistic === 'as.numeric' &&
-        expr.args.some((argument) =>
-          ['scale', 'scale.default'].includes(calledName(argument) ?? '')
-        ))
+      (robustStatistic === 'as.double' || robustStatistic === 'as.numeric') &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || intactBaseCall(expr, robustStatistic))
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveDoubleCoercion(expr)) safeCallNames.push(dependency)
-      else unknown.push('opaque-call')
+      const readOnly = primitiveDoubleCoercion(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
-      return
-    }
-    if (robustStatistic === 'prod') {
-      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
-      used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveSummary(expr)) safeCallNames.push(dependency)
-      else unknown.push('opaque-call')
-      expr.args.forEach((argument) => walk(argument))
-      return
-    }
-    if (robustStatistic && cumulativeStatistics.has(robustStatistic)) {
-      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
-      used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveCumulativeStatistic(expr)) safeCallNames.push(dependency)
-      else unknown.push('opaque-call')
-      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
     if (
-      robustStatistic === 'p.adjust' ||
+      robustStatistic === 'diffinv' &&
+      !expr.staticBuiltinShadowed &&
+      (!qualified || qualified.package === 'stats') &&
+      (!!qualified || contractAvailable('diffinv', undefined, 'stats'))
+    ) {
+      const dependency = qualified ? 'stats::diffinv' : 'diffinv'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly = primitiveDifferenceInversion(expr)
+      if (expr.sourceOffset !== undefined)
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      if (readOnly) {
+        const methods = atomicS3Methods('diffinv')
+        safeCallNames.push(dependency, ...methods)
+        used.push(...methods)
+        priorUsed.push(...methods)
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      (robustStatistic === 'log1p' ||
+        robustStatistic === 'expm1' ||
+        robustStatistic === 'sqrt' ||
+        robustStatistic === 'abs' ||
+        robustStatistic === 'sin' ||
+        robustStatistic === 'cos' ||
+        robustStatistic === 'floor' ||
+        robustStatistic === 'ceiling' ||
+        robustStatistic === 'exp' ||
+        robustStatistic === 'log2' ||
+        robustStatistic === 'log10' ||
+        robustStatistic === 'sign' ||
+        robustStatistic === 'trunc' ||
+        robustStatistic === 'tan' ||
+        robustStatistic === 'atan' ||
+        robustStatistic === 'asin' ||
+        robustStatistic === 'acos' ||
+        robustStatistic === 'sinh' ||
+        robustStatistic === 'cosh' ||
+        robustStatistic === 'tanh' ||
+        robustStatistic === 'atanh' ||
+        robustStatistic === 'asinh' ||
+        robustStatistic === 'acosh' ||
+        robustStatistic === 'atan2' ||
+        robustStatistic === 'gamma' ||
+        robustStatistic === 'lgamma' ||
+        robustStatistic === 'digamma' ||
+        robustStatistic === 'trigamma' ||
+        robustStatistic === 'beta' ||
+        robustStatistic === 'lbeta' ||
+        robustStatistic === 'besselJ' ||
+        robustStatistic === 'besselY' ||
+        robustStatistic === 'psigamma' ||
+        robustStatistic === 'besselI' ||
+        robustStatistic === 'besselK' ||
+        robustStatistic === 'zapsmall' ||
+        robustStatistic === 'polyroot' ||
+        robustStatistic === 'append' ||
+        robustStatistic === '.bincode' ||
+        robustStatistic === 'tabulate' ||
+        robustStatistic === 'findInterval' ||
+        robustStatistic === 'matrix' ||
+        robustStatistic === 'max.col' ||
+        (robustStatistic && nativeRepetitionCalls.has(robustStatistic)) ||
+        robustStatistic === 'seq.int' ||
+        robustStatistic === 'sort.list' ||
+        robustStatistic === 'is.unsorted' ||
+        robustStatistic === 'inverse.rle' ||
+        robustStatistic === 'lengths' ||
+        robustStatistic === '.subset' ||
+        robustStatistic === '.subset2' ||
+        robustStatistic === 'match' ||
+        (robustStatistic && fastMatrixReductionCalls.has(robustStatistic)) ||
+        robustStatistic === 'norm' ||
+        robustStatistic === 'crossprod' ||
+        robustStatistic === 'tcrossprod' ||
+        robustStatistic === '%%' ||
+        robustStatistic === 'choose' ||
+        robustStatistic === 'lchoose' ||
+        robustStatistic === 'factorial' ||
+        robustStatistic === 'lfactorial' ||
+        robustStatistic === 'Mod' ||
+        robustStatistic === 'Arg' ||
+        robustStatistic === 'Conj' ||
+        robustStatistic === 'Re' ||
+        robustStatistic === 'Im' ||
+        robustStatistic === 'log' ||
+        robustStatistic === 'logb' ||
+        robustStatistic === 'round' ||
+        robustStatistic === 'signif') &&
+      (!qualified || qualified.package === 'base') &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || intactBaseCall(expr, robustStatistic))
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly =
+        robustStatistic === 'is.unsorted'
+          ? primitiveOrderingInspection(expr)
+          : robustStatistic === 'sort.list'
+            ? primitiveSortList(expr)
+            : robustStatistic === 'inverse.rle'
+              ? primitiveRunDecoding(expr)
+              : robustStatistic === 'lengths'
+                ? primitiveGroupCardinality(expr)
+                : robustStatistic === '.subset' || robustStatistic === '.subset2'
+                  ? primitiveVectorExtraction(expr)
+                  : robustStatistic === 'match'
+                    ? primitiveValueMatching(expr)
+                    : robustStatistic === 'seq.int'
+                      ? primitiveScanSequence(expr)
+                      : nativeRepetitionCalls.has(robustStatistic)
+                        ? primitiveNativeRepetition(expr)
+                        : robustStatistic === 'matrix'
+                          ? primitiveMatrixConstruction(expr)
+                          : robustStatistic === 'max.col'
+                            ? primitiveDeterministicMaxColumn(expr)
+                            : robustStatistic === 'findInterval'
+                              ? primitiveEventAnchors(expr)
+                              : robustStatistic === 'tabulate'
+                                ? primitiveSpeciesCounts(expr)
+                                : robustStatistic === '.bincode'
+                                  ? primitiveExposureBins(expr)
+                                  : robustStatistic === 'append'
+                                    ? primitiveSegmentInsertion(expr)
+                                    : robustStatistic === '%%'
+                                      ? primitiveRemainder(expr)
+                                      : robustStatistic === 'round' || robustStatistic === 'signif'
+                                        ? primitiveRounding(expr)
+                                        : robustStatistic === 'log' || robustStatistic === 'logb'
+                                          ? primitiveLogarithm(expr)
+                                          : robustStatistic === 'atan2'
+                                            ? primitiveBearingTransform(expr)
+                                            : robustStatistic === 'beta' ||
+                                                robustStatistic === 'lbeta'
+                                              ? primitiveBetaNormalizer(expr)
+                                              : robustStatistic === 'besselJ' ||
+                                                  robustStatistic === 'besselY'
+                                                ? primitiveCylindricalWave(expr)
+                                                : robustStatistic === 'psigamma'
+                                                  ? primitivePolygamma(expr)
+                                                  : robustStatistic === 'besselI' ||
+                                                      robustStatistic === 'besselK'
+                                                    ? primitiveScaledBessel(expr)
+                                                    : robustStatistic === 'zapsmall'
+                                                      ? primitiveResidualCleanup(expr)
+                                                      : fastMatrixReductionCalls.has(
+                                                            robustStatistic
+                                                          )
+                                                        ? primitiveFastMatrixReduction(expr)
+                                                        : robustStatistic === 'norm'
+                                                          ? primitiveMatrixNorm(expr)
+                                                          : robustStatistic === 'crossprod' ||
+                                                              robustStatistic === 'tcrossprod'
+                                                            ? primitiveMatrixCrossProduct(expr)
+                                                            : robustStatistic === 'polyroot'
+                                                              ? primitivePolynomialRoots(expr)
+                                                              : robustStatistic === 'choose' ||
+                                                                  robustStatistic === 'lchoose'
+                                                                ? primitiveCombination(expr)
+                                                                : robustStatistic === 'factorial' ||
+                                                                    robustStatistic === 'lfactorial'
+                                                                  ? primitiveFactorialNormalizer(
+                                                                      expr
+                                                                    )
+                                                                  : robustStatistic === 'Mod' ||
+                                                                      robustStatistic === 'Arg' ||
+                                                                      robustStatistic === 'Conj' ||
+                                                                      robustStatistic === 'Re' ||
+                                                                      robustStatistic === 'Im'
+                                                                    ? primitiveComplexProjection(
+                                                                        expr
+                                                                      )
+                                                                    : primitiveUnaryMathTransform(
+                                                                        expr
+                                                                      )
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      (robustStatistic === 'cut' ||
+        robustStatistic === 'unique' ||
+        robustStatistic === 'duplicated' ||
+        robustStatistic === 'anyDuplicated' ||
+        robustStatistic === 'rle' ||
+        robustStatistic === 'rowsum' ||
+        robustStatistic === 'rowsum.default' ||
+        robustStatistic === 'rev' ||
+        robustStatistic === 'sequence' ||
+        robustStatistic === 'sequence.default') &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || intactBaseCall(expr, robustStatistic))
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly =
+        robustStatistic === 'rowsum' || robustStatistic === 'rowsum.default'
+          ? primitiveGroupedReduction(expr)
+          : robustStatistic === 'rle'
+            ? primitiveRunEncoding(expr)
+            : robustStatistic === 'duplicated' || robustStatistic === 'anyDuplicated'
+              ? primitiveDuplicateInspection(expr)
+              : robustStatistic === 'sequence' || robustStatistic === 'sequence.default'
+                ? primitiveSegmentSequence(expr)
+                : robustStatistic === 'cut'
+                  ? primitiveCutCodes(expr)
+                  : robustStatistic === 'unique'
+                    ? primitiveDistinctValues(expr)
+                    : primitiveReversal(expr)
+      const methods =
+        robustStatistic === 'rowsum' || robustStatistic === 'rowsum.default'
+          ? primitiveGroupedReductionMethods(expr)
+          : robustStatistic === 'rle'
+            ? primitiveRunEncodingMethods()
+            : robustStatistic === 'sequence.default'
+              ? []
+              : robustStatistic === 'sequence'
+                ? atomicS3Methods('sequence')
+                : robustStatistic === 'cut'
+                  ? primitiveCutMethods()
+                  : atomicS3Methods(robustStatistic)
+      if (expr.sourceOffset !== undefined)
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      if (readOnly) {
+        safeCallNames.push(dependency, ...methods)
+        used.push(...methods)
+        priorUsed.push(...methods)
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      (robustStatistic === 'sum' ||
+        robustStatistic === 'any' ||
+        robustStatistic === 'all' ||
+        robustStatistic === 'prod' ||
+        robustStatistic === 'pmin' ||
+        robustStatistic === 'pmax' ||
+        robustStatistic === 'pmin.int' ||
+        robustStatistic === 'pmax.int') &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || intactBaseCall(expr, robustStatistic))
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly = primitiveSummary(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      robustStatistic &&
+      cumulativeStatistics.has(robustStatistic) &&
+      intactBaseCall(expr, robustStatistic)
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly = primitiveCumulativeStatistic(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      (robustStatistic === 'fft' ||
+        robustStatistic === 'convolve' ||
+        robustStatistic === 'nextn') &&
+      !expr.staticBuiltinShadowed &&
+      (!qualified || qualified.package === 'stats') &&
+      (!!qualified || contractAvailable(robustStatistic, undefined, 'stats'))
+    ) {
+      const dependency = qualified ? `stats::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly =
+        robustStatistic === 'fft'
+          ? primitiveFourierTransform(expr)
+          : robustStatistic === 'convolve'
+            ? primitiveConvolution(expr)
+            : primitiveFFTLength(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      robustStatistic &&
+      (waitingDistributionCalls.has(robustStatistic) ||
+        betaDistributionCalls.has(robustStatistic) ||
+        negativeBinomialDistributionCalls.has(robustStatistic) ||
+        binomialDistributionCalls.has(robustStatistic) ||
+        hypergeometricDistributionCalls.has(robustStatistic) ||
+        exactRankDistributionCalls.has(robustStatistic) ||
+        weibullDistributionCalls.has(robustStatistic) ||
+        twoParameterDistributionCalls.has(robustStatistic)) &&
+      !expr.staticBuiltinShadowed &&
+      (!qualified || qualified.package === 'stats') &&
+      (!!qualified || contractAvailable(robustStatistic, undefined, 'stats'))
+    ) {
+      const dependency = qualified ? `stats::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly = waitingDistributionCalls.has(robustStatistic)
+        ? primitiveWaitingDistribution(expr)
+        : betaDistributionCalls.has(robustStatistic)
+          ? primitiveBetaDistribution(expr)
+          : negativeBinomialDistributionCalls.has(robustStatistic)
+            ? primitiveNegativeBinomialDistribution(expr)
+            : binomialDistributionCalls.has(robustStatistic)
+              ? primitiveBinomialDistribution(expr)
+              : exactRankDistributionCalls.has(robustStatistic)
+                ? primitiveExactRankDistribution(expr)
+                : hypergeometricDistributionCalls.has(robustStatistic)
+                  ? primitiveHypergeometricDistribution(expr)
+                  : weibullDistributionCalls.has(robustStatistic)
+                    ? primitiveWeibullDistribution(expr)
+                    : primitiveTwoParameterDistribution(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      robustStatistic === 'p.adjust' &&
+      !expr.staticBuiltinShadowed &&
+      (!!qualified || contractAvailable('p.adjust', undefined, 'stats'))
+    ) {
+      const dependency = qualified ? `${qualified.package}::p.adjust` : 'p.adjust'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly = primitivePValueAdjustment(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
       robustStatistic === 'pnorm' ||
       robustStatistic === 'dnorm' ||
       robustStatistic === 'qnorm' ||
@@ -7147,90 +8985,151 @@ const analyzeRSource = (
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
       if (
-        robustStatistic === 'p.adjust'
-          ? primitivePValueAdjustment(expr)
-          : poissonDistributionCalls.has(robustStatistic)
-            ? primitivePoissonDistribution(expr)
-            : gammaDistributionCalls.has(robustStatistic)
-              ? primitiveGammaDistribution(expr)
-              : centralDistributionCalls.has(robustStatistic)
-                ? primitiveCentralDistribution(expr)
-                : primitiveNormalDistribution(expr)
+        poissonDistributionCalls.has(robustStatistic)
+          ? primitivePoissonDistribution(expr)
+          : gammaDistributionCalls.has(robustStatistic)
+            ? primitiveGammaDistribution(expr)
+            : centralDistributionCalls.has(robustStatistic)
+              ? primitiveCentralDistribution(expr)
+              : primitiveNormalDistribution(expr)
       )
         safeCallNames.push(dependency)
       else unknown.push('opaque-call')
       expr.args.forEach((argument) => walk(argument))
       return
     }
-    if (robustStatistic === 'median' || robustStatistic === 'rank') {
+    if (
+      (robustStatistic === 'median' &&
+        !expr.staticBuiltinShadowed &&
+        contractAvailable('median', qualified?.package, 'stats')) ||
+      (robustStatistic === 'rank' &&
+        !expr.staticBuiltinShadowed &&
+        (!!qualified || intactBaseCall(expr, 'rank')))
+    ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (robustStatistic === 'median' ? primitiveMedian(expr) : primitiveRanks(expr)) {
+      const readOnly = robustStatistic === 'median' ? primitiveMedian(expr) : primitiveRanks(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
         safeCallNames.push(dependency)
         if (robustStatistic === 'median') recordPrimitiveStatisticMethods(expr)
-      } else unknown.push('opaque-call')
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
     if (
-      robustStatistic === 'sd' ||
-      robustStatistic === 'var' ||
-      robustStatistic === 'cov' ||
-      robustStatistic === 'cor'
+      (robustStatistic === 'sd' ||
+        robustStatistic === 'var' ||
+        robustStatistic === 'cov' ||
+        robustStatistic === 'cor') &&
+      !expr.staticBuiltinShadowed &&
+      contractAvailable(robustStatistic, qualified?.package, 'stats')
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
       // Internal variance/coercion calls resolve in stats, not the caller's
       // global environment. Atomic inputs rule out class dispatch here.
-      if (primitiveSecondMoment(expr)) safeCallNames.push(dependency)
-      else unknown.push('opaque-call')
+      const readOnly = primitiveSecondMoment(expr)
+      if (expr.sourceOffset !== undefined) {
+        // Reuse the existing invocation proof channel for source-file effects.
+        // A prior unsafe visit must not be upgraded by a later control-flow path.
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
-    if (robustStatistic === 'weighted.mean' || robustStatistic === 'fivenum') {
+    if (
+      (robustStatistic === 'weighted.mean' || robustStatistic === 'fivenum') &&
+      !expr.staticBuiltinShadowed &&
+      contractAvailable(robustStatistic, qualified?.package, 'stats')
+    ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (
+      const readOnly =
         robustStatistic === 'weighted.mean'
           ? primitiveWeightedMean(expr)
           : primitiveFiveNumberSummary(expr)
-      ) {
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
         safeCallNames.push(dependency)
         recordPrimitiveStatisticMethods(expr)
-      } else unknown.push('opaque-call')
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
-    if (robustStatistic === 'mad' || robustStatistic === 'quantile') {
+    if (
+      (robustStatistic === 'mad' || robustStatistic === 'quantile' || robustStatistic === 'IQR') &&
+      !expr.staticBuiltinShadowed &&
+      contractAvailable(robustStatistic, qualified?.package, 'stats')
+    ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (robustStatistic === 'mad' ? primitiveMedianDeviation(expr) : primitiveQuantiles(expr)) {
+      const readOnly =
+        robustStatistic === 'mad'
+          ? primitiveMedianDeviation(expr)
+          : robustStatistic === 'quantile'
+            ? primitiveQuantiles(expr)
+            : primitiveInterquartileRange(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
         safeCallNames.push(dependency)
         recordPrimitiveStatisticMethods(expr)
-      } else unknown.push('opaque-call')
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
-    if (calledName(expr) === 'IQR') {
-      const dependency = qualified ? `${qualified.package}::IQR` : 'IQR'
-      used.push(dependency)
-      if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveInterquartileRange(expr)) {
-        safeCallNames.push(dependency)
-        recordPrimitiveStatisticMethods(expr)
-      } else unknown.push('opaque-call')
-      expr.args.forEach((argument) => walk(argument))
-      return
-    }
-    if (calledName(expr) === 'diff') {
+    if (calledName(expr) === 'diff' && intactBaseCall(expr, 'diff')) {
       const dependency = qualified ? `${qualified.package}::diff` : 'diff'
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      if (primitiveDifference(expr)) {
+      const readOnly = primitiveDifference(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
         const containsRange = (value: RExpr): boolean =>
           isCall(value) && (calledName(value) === 'range' || value.args.some(containsRange))
         const methods = [
@@ -7240,8 +9139,12 @@ const analyzeRSource = (
         safeCallNames.push(dependency, ...methods)
         used.push(...methods)
         priorUsed.push(...methods)
-      } else unknown.push('opaque-call')
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
       expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
       return
     }
     if (
@@ -7253,6 +9156,16 @@ const analyzeRSource = (
     ) {
       unknown.push('opaque-call')
       for (const argument of expr.args) walk(argument)
+      return
+    }
+    if (primitiveExposureProduct(expr)) {
+      const dependency = qualified ? 'base::outer' : 'outer'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      safeCallNames.push(dependency)
+      if (expr.sourceOffset !== undefined)
+        readOnlyMapCalls?.set(expr.sourceOffset, readOnlyMapCalls.get(expr.sourceOffset) !== false)
+      expr.args.forEach((argument) => walk(argument))
       return
     }
     const solverValue = [...R_OPAQUE_CALLBACK_CAPTURE_CALLS].find(
@@ -8373,9 +10286,18 @@ const analyzeRSource = (
                 ([
                   'dnorm',
                   'qnorm',
+                  'nextn',
                   ...centralDistributionCalls,
                   ...gammaDistributionCalls,
-                  ...poissonDistributionCalls
+                  ...poissonDistributionCalls,
+                  ...binomialDistributionCalls,
+                  ...negativeBinomialDistributionCalls,
+                  ...betaDistributionCalls,
+                  ...waitingDistributionCalls,
+                  ...hypergeometricDistributionCalls,
+                  ...exactRankDistributionCalls,
+                  ...weibullDistributionCalls,
+                  ...twoParameterDistributionCalls
                 ].includes(value.args[1].name)
                   ? 'stats'
                   : 'base') &&
@@ -9117,6 +11039,36 @@ const analyzeRSource = (
               callback.formulaParameters,
               op !== 'apply' && ordinaryInputs
             )?.effect === 'read'
+      // A direct reducer over an explicitly constructed primitive matrix slice
+      // has the same classless input proof as a literal vector. Carry that proof
+      // to the nested invocation; captured inputs and other callback bodies do
+      // not inherit the matrix's shape or class evidence.
+      if (op === 'apply' && readOnlyMapCallback && applyInputHasClosedCoercion(expr)) {
+        const reducer = expr.args[resolvedCallbackIndex]
+        const formals =
+          isCall(reducer) && callOperator(reducer) === 'function' ? reducer.args[0] : undefined
+        const body = isCall(reducer) ? reducer.args[1] : undefined
+        if (
+          formals?.kind === 'formals' &&
+          formals.names.length === 1 &&
+          formals.values.every((value) => value === null) &&
+          isCall(body) &&
+          calledName(body) === 'sum' &&
+          body.sourceOffset !== undefined &&
+          body.args.some((arg) => isSymbol(arg) && arg.name === formals.names[0]) &&
+          primitiveSummary({
+            ...body,
+            args: body.args.map((arg) =>
+              isSymbol(arg) && arg.name === formals.names[0] ? { kind: 'atomic', number: 1 } : arg
+            )
+          })
+        ) {
+          readOnlyMapCalls?.set(
+            body.sourceOffset,
+            readOnlyMapCalls.get(body.sourceOffset) !== false
+          )
+        }
+      }
       // The file pass must use this invocation's callback proof, not a whole-cell
       // safe-call name that could describe a different call or earlier binding.
       if (
@@ -9407,7 +11359,6 @@ const analyzeRSource = (
         'str',
         'summary',
         'unlist',
-        'lengths',
         'sign',
         ...R_SET_OPERATIONS,
         'is.finite',
@@ -11022,6 +12973,161 @@ const rTapplyMayInvokeCallback = (expr: Extract<RExpr, { kind: 'call' }>): boole
 
 const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | undefined => {
   const name = rCalledName(expr)
+  // Discretization, distinct values and reversal dispatch on x before their defaults.
+  // Default binning can also dispatch on breaks.
+  if (name === 'cut' || name === 'unique' || name === 'rev') return 'base'
+  // Math methods on explicit classes can change files and caller bindings.
+  if (
+    [
+      'log1p',
+      'expm1',
+      'sqrt',
+      'abs',
+      'sin',
+      'cos',
+      'floor',
+      'ceiling',
+      'exp',
+      'log2',
+      'log10',
+      'sign',
+      'trunc',
+      'tan',
+      'atan',
+      'asin',
+      'acos',
+      'sinh',
+      'cosh',
+      'tanh',
+      'atanh',
+      'asinh',
+      'acosh',
+      'atan2',
+      'gamma',
+      'lgamma',
+      'digamma',
+      'trigamma',
+      'beta',
+      'lbeta',
+      'besselJ',
+      'besselY',
+      'psigamma',
+      'besselI',
+      'besselK',
+      'zapsmall',
+      'polyroot',
+      '%%',
+      'choose',
+      'lchoose',
+      'factorial',
+      'lfactorial',
+      'Mod',
+      'Arg',
+      'Conj',
+      'Re',
+      'Im',
+      'log',
+      'logb',
+      'round',
+      'signif'
+    ].includes(name ?? '')
+  )
+    return 'base'
+  // Truth gates may dispatch length/is.na on classed logical scalars;
+  // short-circuit syntax does not establish the methods' file effects.
+  if (name === 'isTRUE' || name === 'isFALSE') return 'base'
+  // Both aliases dispatch as.double methods. Unknown class conversion can
+  // rebind caller paths or replace serialized contents before failure.
+  if (name === 'as.double' || name === 'as.numeric') return 'base'
+  // Agreement checks dispatch target methods and can invoke formatFUN even
+  // on ordinary numeric inputs. Formatting may mutate files before failure.
+  if (name === 'all.equal' || name === 'all.equal.numeric') return 'base'
+  // Multiple-testing correction coerces p through as.numeric/as.double.
+  // Custom coercion and lazy options can alter files before returning/failing.
+  if (name === 'p.adjust') return 'stats'
+  // Spectral wrappers force inputs/options before numerical execution.
+  if (name === 'fft' || name === 'convolve' || name === 'nextn') return 'stats'
+  // Deterministic distribution wrappers force numerical operands and flags.
+  if (
+    [
+      'dgeom',
+      'pgeom',
+      'qgeom',
+      'dexp',
+      'pexp',
+      'qexp',
+      'dbeta',
+      'pbeta',
+      'qbeta',
+      'dnbinom',
+      'pnbinom',
+      'qnbinom',
+      'dbinom',
+      'pbinom',
+      'qbinom',
+      'dhyper',
+      'phyper',
+      'qhyper',
+      'dwilcox',
+      'pwilcox',
+      'qwilcox',
+      'dsignrank',
+      'psignrank',
+      'qsignrank',
+      'dweibull',
+      'pweibull',
+      'qweibull',
+      'dunif',
+      'punif',
+      'qunif',
+      'dlogis',
+      'plogis',
+      'qlogis',
+      'dcauchy',
+      'pcauchy',
+      'qcauchy',
+      'dlnorm',
+      'plnorm',
+      'qlnorm'
+    ].includes(name ?? '')
+  )
+    return 'stats'
+  if (['.rowSums', '.colSums', '.rowMeans', '.colMeans'].includes(name ?? '')) return 'base'
+  if (name === 'anyNA') return 'base'
+  if (name === 'append') return 'base'
+  if (name === '.bincode') return 'base'
+  if (name === 'tabulate') return 'base'
+  if (name === 'findInterval') return 'base'
+  if (name === 'matrix' || name === 'max.col') return 'base'
+  if (name === 'rep.int' || name === 'rep_len') return 'base'
+  if (name === 'seq.int') return 'base'
+  if (name === 'duplicated' || name === 'anyDuplicated') return 'base'
+  if (name === 'rowsum' || name === 'rowsum.default') return 'base'
+  if (name === 'rle') return 'base'
+  if (name === 'is.unsorted') return 'base'
+  if (name === 'sort.list') return 'base'
+  if (name === 'diffinv') return 'stats'
+  if (name === 'inverse.rle') return 'base'
+  if (name === 'sequence' || name === 'sequence.default') return 'base'
+  if (name === 'lengths') return 'base'
+  if (name === '.subset' || name === '.subset2') return 'base'
+  if (name === 'match') return 'base'
+  // Reductions and parallel extrema can dispatch class methods; ordering can
+  // dispatch xtfrm. Unknown input does not bound file or binding effects.
+  if (
+    ['sum', 'any', 'all', 'prod', 'order', 'pmin', 'pmax', 'pmin.int', 'pmax.int'].includes(
+      name ?? ''
+    )
+  )
+    return 'base'
+  // Location and ranking operations can dispatch missingness, subsetting or
+  // generic methods before returning or failing. Primitive inputs are bounded
+  // separately by the existing invocation proof channel.
+  if (name === 'mean' || name === 'mean.default' || name === 'rank') return 'base'
+  if (name === 'median') return 'stats'
+  // Weighted means dispatch on x; five-number summaries dispatch missingness,
+  // sorting and subsetting. Unknown methods can change files before failure.
+  if (name === 'weighted.mean' || name === 'fivenum') return 'stats'
   // These solvers require callbacks; their numerical evaluations can still
   // perform arbitrary I/O or replace caller bindings before returning/failing.
   if (name === 'integrate' || name === 'optim' || name === 'uniroot' || name === 'optimize')
@@ -11040,6 +13146,7 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   if (name === 'by') return 'base'
   // rapply recurses over matching leaves and can invoke f repeatedly. A class
   // filter or replacement mode does not prove the supplied callback's effects.
+  if (name === 'norm' || name === 'crossprod' || name === 'tcrossprod') return 'base'
   if (name === 'rapply') return 'base'
   // combn invokes FUN on each combination (including m=0). Even FUN=NULL
   // can dispatch unknown input subsetting, so it does not certify file effects.
@@ -11123,6 +13230,63 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // Kernel smoothing subsets sorted inputs before native window evaluation.
   // Kernel and bandwidth options do not bound user subsetting methods.
   if (name === 'ksmooth') return 'stats'
+  // Isotonic regression converts coordinates through xy.coords. Unknown
+  // as.double methods can change files or caller bindings before fitting.
+  if (name === 'isoreg') return 'stats'
+  // Smoothing splines convert coordinates and can invoke nknots explicitly.
+  // Fixed smoothing parameters do not certify either source of effects.
+  if (name === 'smooth.spline') return 'stats'
+  // Hierarchical clustering converts members before its native linkage call.
+  // A fixed linkage method does not certify user as.double methods.
+  if (name === 'hclust') return 'stats'
+  // Second moments may coerce data frames or classed vectors. The source
+  // analyzer separately certifies primitive vector calls so those retain proof.
+  if (['cov', 'cor', 'var', 'sd'].includes(name ?? '')) return 'stats'
+  // Scaling converts inputs through as.matrix and may dispatch scale methods.
+  // Primitive vector calls retain the source analyzer's per-invocation proof.
+  if (name === 'scale' || name === 'scale.default') return 'base'
+  // Robust summaries subset, sort or coerce inputs before returning values.
+  // Primitive arguments retain the existing guarded method contracts.
+  if (name === 'quantile' || name === 'mad' || name === 'IQR') return 'stats'
+  // Differencing dispatches S3 methods; cumulative primitives dispatch Math.
+  // Their atomic-input proofs separately certify read-only invocations.
+  if (['diff', 'cumsum', 'cumprod', 'cummin', 'cummax'].includes(name ?? '')) return 'base'
+  // Empirical distributions and Q-Q data sort user inputs; KS also invokes
+  // supplied CDFs. Disabling plots or fixing the tail does not bound effects.
+  if (name === 'ecdf' || name === 'qqplot' || name === 'ks.test') return 'stats'
+  // Matrix decompositions dispatch conversion (and chol dispatches first).
+  // Disabling vectors or pivoting does not certify unknown input methods.
+  if (['svd', 'La.svd', 'eigen', 'chol', 'chol.default'].includes(name ?? '')) return 'base'
+  // Autoregression converts series and invokes na.action before fitting.
+  // A fixed order or estimator does not bound those user effects; ar forwards
+  // them to the selected implementation.
+  if (name === 'ar' || name === 'ar.ols' || name === 'ar.yw') return 'stats'
+  // Contingency tests convert data frames through as.matrix before checking
+  // counts. Exact tails or disabling simulation do not bound user methods.
+  if (name === 'chisq.test' || name === 'fisher.test') return 'stats'
+  // Rank tests dispatch on their inputs and subset observations before
+  // computing ranks. Exact p-values do not certify user subsetting effects.
+  if (name === 'wilcox.test' || name === 'cor.test') return 'stats'
+  // Grouped and complete-block rank tests subset observations before ranking.
+  // Fixed groups or blocks cannot certify user subsetting and factor methods.
+  if (name === 'kruskal.test' || name === 'friedman.test' || name === 'quade.test') return 'stats'
+  // Rotation normalizes rows through apply, which can dispatch as.matrix on
+  // an unknown loading object. Promax delegates to varimax before regression.
+  // Rotation options do not certify conversion effects or result ownership.
+  if (name === 'varimax' || name === 'promax') return 'stats'
+  // Time-series conversion can dispatch user as.ts methods. Decomposition
+  // reaches that conversion through filter, before seasonal estimation.
+  // Fixed filter weights or smoothing parameters do not bound those effects.
+  if (name === 'decompose' || name === 'HoltWinters') return 'stats'
+  // Unqualified positional filter calls also name dplyr's data-mask operation.
+  // Recognize convolution through its namespace or distinctive named formals;
+  // do not replace the existing tabular contract merely on the shared name.
+  if (
+    name === 'filter' &&
+    (rQualifiedCall(expr)?.package === 'stats' ||
+      expr.names.some((name) => name === 'x' || name === 'filter'))
+  )
+    return 'stats'
   // Short-circuit predicates and input [[ methods can change caller state.
   // Find also subsets the selected element after Position returns an index.
   if (name === 'Position' || name === 'Find') return 'base'

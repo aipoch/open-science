@@ -17,7 +17,7 @@ const workflows = [
     consumed: ['community'],
     states: [
       ['partial', 'complete', 'complete'],
-      ['partial', 'complete', 'complete'],
+      ['partial', 'partial', 'partial'],
       ['partial', 'complete', 'complete']
     ],
     language: 'r' as const,

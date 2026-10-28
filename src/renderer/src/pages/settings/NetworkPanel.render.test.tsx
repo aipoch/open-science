@@ -460,13 +460,13 @@ describe('NetworkPanel offline retry', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(container.textContent).toContain('Wi-Fi · 192.168.1.42')
+    expect(container.textContent).toContain('Wi-Fi / 192.168.1.42')
 
     await act(async () => {
       rejectFirst(new Error('stale'))
       await Promise.resolve()
     })
-    expect(container.textContent).toContain('Wi-Fi · 192.168.1.42')
+    expect(container.textContent).toContain('Wi-Fi / 192.168.1.42')
     expect(container.textContent).not.toContain('Could not load local network details.')
     expect(getInfo).toHaveBeenCalledTimes(2)
   })

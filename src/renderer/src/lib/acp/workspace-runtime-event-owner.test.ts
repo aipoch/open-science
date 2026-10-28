@@ -11,11 +11,13 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
+import { useDesktopRuntimeRecoveryStore } from '../../stores/desktop-runtime-recovery-store'
 import { getAgentLoadingPhase } from '../../pages/workspace/agent-loading-message'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 import * as runtimeWriterClient from './runtime-writer-client'
 import { createStoreSaver } from '../session-persistence/session-persistence'
 import {
+  drainWorkspaceRuntimeEventsForPersistence,
   processIncrementalWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,
   resetWorkspaceRuntimeEventOwnerForTests,
@@ -752,5 +754,41 @@ describe('live runtime event ingest', () => {
       awaitingFirstAgentOutput: undefined
     })
     unmount()
+  })
+})
+
+describe('persistence snapshot recovery boundary', () => {
+  afterEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'connected',
+      epoch: 0,
+      closing: false,
+      generation: undefined
+    })
+    resetWorkspaceRuntimeEventOwnerForTests()
+    vi.unstubAllGlobals()
+  })
+
+  it('does not reconcile a persistence pull completed in an old connection epoch', async () => {
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'connected',
+      epoch: 0,
+      closing: false,
+      generation: 'service-a'
+    })
+    let complete!: (snapshot: AcpStateSnapshot) => void
+    const pending = new Promise<AcpStateSnapshot>((resolve) => {
+      complete = resolve
+    })
+    vi.stubGlobal('window', { api: { acp: { getState: vi.fn(() => pending) } } })
+    const reconcile = vi.fn()
+    const draining = drainWorkspaceRuntimeEventsForPersistence(undefined, reconcile)
+    useDesktopRuntimeRecoveryStore.setState({ epoch: 2, generation: 'service-b' })
+    const replacement = createSnapshot({ revision: 5 })
+    expect(acceptAcpRuntimeSnapshotRevision(replacement)).toBe(true)
+    complete(createSnapshot({ revision: 99, agentPromptInFlightSessionIds: ['session-1'] }))
+    await expect(draining).rejects.toThrow('Desktop connection changed')
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(acceptAcpRuntimeSnapshotRevision(replacement)).toBe(true)
   })
 })

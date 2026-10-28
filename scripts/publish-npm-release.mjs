@@ -24,7 +24,15 @@ export async function releaseSource(runId, api) {
   assert.equal(run.path, '.github/workflows/release.yml')
   assert.equal(run.event, 'push')
   assert.equal(run.status, 'completed')
-  assert.equal(run.conclusion, 'success')
+  if (run.conclusion !== 'success') {
+    // Advisory desktop-regression lanes run continue-on-error, but a timed-out advisory job still
+    // records the whole run as cancelled after publish certified every artifact. Only a cancelled
+    // run gets a second chance, and only when its publish job certifies the release.
+    assert.equal(run.conclusion, 'cancelled')
+    const jobs = await api(`actions/runs/${runId}/jobs?per_page=100`)
+    const publish = (jobs?.jobs ?? []).find((job) => job.name === 'publish')
+    assert.equal(publish?.conclusion, 'success', 'Publish job must certify a cancelled Release run')
+  }
   assert.equal(run.repository?.full_name, 'aipoch/open-science')
   assert.equal(run.head_repository?.full_name, 'aipoch/open-science')
   assert.match(run.head_branch, /^v\d+\.\d+\.\d+$/, 'Expected a stable Release tag')

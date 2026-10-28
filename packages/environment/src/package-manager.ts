@@ -746,7 +746,10 @@ const summarize = (value) => {
     actions,
     archives,
     archiveEvidenceComplete,
-    diagnostics: canonicalDiagnostic ? [canonicalDiagnostic] : []
+    diagnostics: [
+      ...(canonicalDiagnostic ? [canonicalDiagnostic] : []),
+      ...(/unsupported request/iu.test(diagnostics) ? ['unsupported request'] : [])
+    ]
   }
 }
 
@@ -2055,6 +2058,24 @@ export async function installPackages(
   if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
 
   const condaPkgs = rCondaNames(req.packages)
+  const isWindowsBioconductorRequest =
+    (deps.micromambaEnv?.platform ?? process.platform) === 'win32' &&
+    condaPkgs.some((pkg) => pkg.startsWith('bioconductor-'))
+  const bioconductorFailureGuidance = (
+    result: SpawnResult,
+    classification: CondaFailureClassification
+  ): string | undefined => {
+    const diagnostics = stringValues(parseStructuredCondaResult(result)).join('\n')
+    // Bioconda IDs are not R package names. Do not pass a mixed request to CRAN or
+    // suggest another installer after a possibly partial transaction.
+    return isWindowsBioconductorRequest &&
+      classification.mutationRisk === 'none' &&
+      (classification.reason === 'package-not-found' ||
+        (classification.reason === 'unknown' && /unsupported request/iu.test(diagnostics)))
+      ? 'Bioconda does not support Windows. Retry the Bioconductor packages separately with ' +
+          'installer="biocmanager" and their case-sensitive R package names (for example, "GSVA").'
+      : undefined
+  }
   const installedRBaseIdentity = (deps.readCondaPackageIdentity ?? readCondaPackageIdentity)(
     prefix,
     'r-base'
@@ -2137,7 +2158,15 @@ export async function installPackages(
       ...classification,
       mutationRisk: 'none'
     })
-    if (!deps.requireConda && condaFallbackIsAuthorized(classification)) {
+    const bioconductorGuidance = bioconductorFailureGuidance(preflight, {
+      ...classification,
+      mutationRisk: 'none'
+    })
+    if (
+      !isWindowsBioconductorRequest &&
+      !deps.requireConda &&
+      condaFallbackIsAuthorized(classification)
+    ) {
       return cranFallback(preflight, condaAttempt)
     }
     return {
@@ -2149,7 +2178,7 @@ export async function installPackages(
       attempts: [condaAttempt],
       fallbackUsed: false,
       prefix,
-      error: condaFailureMessage('install', preflight)
+      error: bioconductorGuidance ?? condaFailureMessage('install', preflight)
     }
   }
 
@@ -2239,7 +2268,12 @@ export async function installPackages(
   const condaLog = [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n')
   const classification = classifyCondaFailure(conda)
   const condaAttempt = installerAttempt(0, 'conda', condaPkgs, conda, classification)
-  if (deps.requireConda || !condaFallbackIsAuthorized(classification)) {
+  const bioconductorGuidance = bioconductorFailureGuidance(conda, classification)
+  if (
+    isWindowsBioconductorRequest ||
+    deps.requireConda ||
+    !condaFallbackIsAuthorized(classification)
+  ) {
     return {
       ok: false,
       needsRestart: false,
@@ -2249,7 +2283,7 @@ export async function installPackages(
       attempts: [condaAttempt],
       fallbackUsed: false,
       prefix,
-      error: condaFailureMessage('install', conda)
+      error: bioconductorGuidance ?? condaFailureMessage('install', conda)
     }
   }
   return cranFallback(conda, condaAttempt, preflight)

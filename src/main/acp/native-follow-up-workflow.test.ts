@@ -23,6 +23,7 @@ const createWorkflow = (
       { turnToken: string; signal: AbortSignal; promptMessageId?: string } | undefined
     frameworkId?: 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
     openCodeHttp?: boolean
+    openCodeVersion?: 2
     providerSessionId?: string | null
     request?: (
       method: string,
@@ -61,7 +62,8 @@ const createWorkflow = (
         overrides.openCodeHttp
           ? Object.freeze({
               baseUrl: 'http://127.0.0.1:4096/',
-              authorization: 'Basic test'
+              authorization: 'Basic test',
+              version: overrides.openCodeVersion
             })
           : undefined,
       activeProviderSessionId: () =>
@@ -107,6 +109,39 @@ const createWorkflow = (
 }
 
 describe('AcpNativeFollowUpWorkflow', () => {
+  it('steers into the OpenCode 2.x inbox without starting a second runner', async () => {
+    const fetchImpl = vi.fn<FetchImpl>(async (url, init) => {
+      if (String(url) !== 'http://127.0.0.1:4096/api/session/provider-1/prompt')
+        return new Response('', { status: 404 })
+      const body = JSON.parse(String(init?.body))
+      expect(body).toEqual({ text: 'continue here', delivery: 'steer', resume: false })
+      return new Response(
+        JSON.stringify({
+          data: {
+            id: 'msg_1',
+            sessionID: 'provider-1',
+            type: 'user',
+            payload: { text: body.text },
+            delivery: 'steer'
+          }
+        })
+      )
+    })
+    const { workflow, request } = createWorkflow({
+      frameworkId: 'opencode',
+      advertised: false,
+      openCodeHttp: true,
+      openCodeVersion: 2,
+      fetchImpl
+    })
+    expect(
+      await workflow.steerFollowUp({ sessionId: 'app-1', text: 'continue here' })
+    ).toMatchObject({ injected: true })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(request).not.toHaveBeenCalled()
+    expect(published).toHaveLength(1)
+  })
+
   it('releases unsent follow-up preparation when its turn stops and closes late resources', async () => {
     const turn = new AbortController()
     let finishPreparation!: (value: { prompt: []; close: () => void }) => void

@@ -23,6 +23,7 @@ type ProductionFrameWorkspaceOptions = Readonly<{
 type ProductionFrameWorkspace = Readonly<{
   validateInput(identity: string, session: SessionKey): Promise<boolean>
   prepare(session: SessionKey, frameId: string, inputs: readonly string[]): Promise<{ cwd: string }>
+  deleteAttemptRuntime(session: SessionKey, attemptId: string): Promise<void>
   deleteSession(session: SessionKey): Promise<void>
   deleteProject(projectId: string): Promise<void>
 }>
@@ -159,6 +160,14 @@ const createProductionFrameWorkspace = (
         await rm(staging, { recursive: true, force: true }).catch(() => undefined)
       }
     },
+    async deleteAttemptRuntime(session: SessionKey, attemptId: string): Promise<void> {
+      const root = join(sessionRoot(session), 'runtime', safeSegment(attemptId, 'Attempt id'))
+      const scope = { ...session, attemptId }
+      await options.ownership?.recover(scope)
+      options.ownership?.assertClear(scope)
+      await makeTreeRemovable(root)
+      await rm(root, { recursive: true, force: true })
+    },
     async deleteSession(session: SessionKey): Promise<void> {
       await options.ownership?.recover(session)
       options.ownership?.assertClear(session)
@@ -178,6 +187,10 @@ const createProductionFrameWorkspace = (
   const ownership = options.ownership
   return Object.freeze({
     ...workspace,
+    deleteAttemptRuntime: (session, attemptId) =>
+      ownership.withWorkspace({ ...session, attemptId }, () =>
+        workspace.deleteAttemptRuntime(session, attemptId)
+      ),
     prepare: (session, frameId, inputs) =>
       ownership.withWorkspace({ ...session, frameId }, () =>
         workspace.prepare(session, frameId, inputs)

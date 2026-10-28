@@ -107,6 +107,22 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
 }
 
 describe('AcpConnectionCloseWorkflow', () => {
+  it('detaches an unexpected close after a process error so sessions can reconnect', () => {
+    let status: AcpStateSnapshot['status'] = 'error'
+    const { workflow, state, resources } = createWorkflow({ currentStatus: () => status })
+    state.setStatus.mockImplementation((next: AcpStateSnapshot['status']) => {
+      status = next
+    })
+
+    workflow.handleUnexpectedClose()
+    workflow.handleUnexpectedClose()
+
+    expect(resources.cleanupUnexpectedClose).toHaveBeenCalledOnce()
+    expect(state.detachSessionConnections).toHaveBeenCalledExactlyOnceWith(false)
+    expect(state.publishInterruptedPromptFailures).toHaveBeenCalledExactlyOnceWith(['prompt'])
+    expect(status).toBe('closed')
+  })
+
   it('coordinates expected teardown while preserving owner ordering', async () => {
     const { workflow, actions, resources, transitions, state } = createWorkflow()
 

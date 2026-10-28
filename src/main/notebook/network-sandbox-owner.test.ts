@@ -202,6 +202,69 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each(
+    (['darwin', 'linux', 'win32', 'wsl2'] as const).flatMap((target) =>
+      (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({ target, runtime }))
+    )
+  )(
+    'makes managed Skill resources read-only for $runtime on $target',
+    async ({ target, runtime }) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'sandbox-skill-resources-')))
+      fixtureDirectories.push(root)
+      const configRoot = join(root, 'config')
+      const skills = join(configRoot, 'codex', 'skills')
+      await mkdir(skills, { recursive: true })
+      const owner = new NotebookNetworkSandboxOwner({
+        configRoot,
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: target === 'wsl2' ? 'win32' : target,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        // A broad user grant must not turn the built-in Skill read grant into write access.
+        getGrantedLocalRoots: async () => [
+          { id: 'config', name: 'config', path: configRoot, access: 'rw' }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      try {
+        const wrapped = await owner.wrap({
+          ...(target === 'wsl2'
+            ? {
+                target: {
+                  kind: 'wsl2',
+                  profileId: 'wsl',
+                  distro: 'Ubuntu',
+                  user: 'researcher'
+                } as const
+              }
+            : {}),
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'read Skill reference',
+          sessionId: 'skill-session',
+          projectId: 'skill-project',
+          runtime,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+        expect(filesystem.readOnlyRoots).toContain(skills)
+        expect(filesystem.deniedWriteRoots).toContain(skills)
+        expect(filesystem.readWriteRoots).not.toContain(skills)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
   it.each([true, false])(
     'parks a Shell network request, deduplicates it, and releases only a live connection (%s)',
     async (connectionLive) => {
@@ -946,6 +1009,109 @@ describe('NotebookNetworkSandboxOwner', () => {
 
     await installer.cleanup('exit', { processesTerminated: true })
     await notebook.cleanup('exit', { processesTerminated: true })
+    await owner.dispose()
+  })
+
+  it.each(['bash', 'python', 'r', 'repl'] as const)(
+    'uses live session full access for %s without persisting or requesting approval',
+    async (runtime) => {
+      let fullSession: string | undefined = 'session-1'
+      let onFullAccess: ((allowed: boolean) => void) | undefined
+      const unsubscribe = vi.fn()
+      const requestDecision = vi.fn().mockResolvedValue('deny')
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        hasFullAccess: (sessionId) => sessionId === fullSession,
+        subscribeFullAccess: (sessionId, listener) => {
+          expect(sessionId).toBe('session-1')
+          onFullAccess = listener
+          return unsubscribe
+        },
+        persistAlwaysAllow,
+        requestDecision,
+        platform: 'linux'
+      })
+      const controller = new AbortController()
+      const wrapped = await owner.wrap({
+        signal: controller.signal,
+        executable: '/usr/bin/runtime',
+        args: [],
+        env: {},
+        cwd: '/workspace',
+        commandText: 'download dataset',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime,
+        executionReference: 'execution-1',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const request = backend.request!
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(false)
+      const end = wrapped.beginExecution?.()
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(true)
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      expect(requestDecision).not.toHaveBeenCalled()
+      backend.resetNetworkConnections.mockClear()
+      fullSession = 'other-session'
+      onFullAccess!(false)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      fullSession = 'session-1'
+      onFullAccess!(true)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      controller.abort()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      end?.()
+      expect(unsubscribe).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      expect(persistAlwaysAllow).not.toHaveBeenCalled()
+      expect(backend.updatePolicy).not.toHaveBeenCalled()
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it('answers explicit full-access requests without command context or durable grants', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('deny')
+    const persistAlwaysAllow = vi.fn()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      hasFullAccess: (sessionId) => sessionId === 'full-session',
+      persistAlwaysAllow,
+      requestDecision
+    })
+    const request = {
+      sessionId: 'full-session',
+      projectId: 'project',
+      hostname: 'data.example.org',
+      reason: 'Download'
+    }
+    await expect(owner.requestNetworkAccess(request)).resolves.toMatchObject({
+      status: 'alreadyAllowed'
+    })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, hostname: 'localhost' })
+    ).resolves.toMatchObject({ status: 'blocked' })
+    await expect(
+      owner.requestNetworkAccess({ ...request, signal: AbortSignal.abort() })
+    ).resolves.toMatchObject({ status: 'denied', decisionSource: 'aborted' })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, sessionId: 'other-session' })
+    ).resolves.toMatchObject({ status: 'denied' })
+    expect(requestDecision).toHaveBeenCalledOnce()
+    expect(persistAlwaysAllow).not.toHaveBeenCalled()
+    expect(backend.updatePolicy).not.toHaveBeenCalled()
     await owner.dispose()
   })
 

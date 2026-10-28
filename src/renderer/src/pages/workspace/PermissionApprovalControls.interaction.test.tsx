@@ -155,7 +155,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
     const global = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     ).find((item) => item.textContent?.includes('Global'))
     expect(global).toBeDefined()
     act(() => global?.click())
@@ -357,7 +357,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
 
-    const sessionItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
+    const sessionItem = Array.from(document.querySelectorAll('[role="menuitemradio"]')).find(
       (item) => item.textContent?.includes('This conversation')
     )
     expect(sessionItem?.textContent).toContain('Remembered for this conversation')
@@ -454,7 +454,7 @@ describe('PermissionApprovalControls interactions', () => {
     })
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
-    const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
+    const onceItem = Array.from(document.querySelectorAll('[role="menuitemradio"]')).find(
       (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
     ) as HTMLElement
     act(() => onceItem.click())
@@ -473,7 +473,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
     const sessionItem = Array.from(
-      container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
+      document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
     ).find((item) => item.textContent?.includes('This conversation'))
 
     expect(sessionItem).toBeDefined()
@@ -524,7 +524,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
     const project = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     ).find((item) => item.textContent?.includes('This project'))
     expect(project).toBeDefined()
     act(() => project?.click())
@@ -599,7 +599,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
     const global = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     ).find((item) => item.textContent?.includes('Global'))
     expect(global).toBeDefined()
     act(() => global?.click())
@@ -664,7 +664,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
     const project = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     ).find((item) => item.textContent?.includes('This project'))
     act(() => project?.click())
     act(() =>
@@ -700,7 +700,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
     const project = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     ).find((item) => item.textContent?.includes('This project'))
     act(() => project?.click())
     act(() =>
@@ -737,7 +737,7 @@ describe('PermissionApprovalControls interactions', () => {
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
     const project = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+      document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
     ).find((item) => item.textContent?.includes('This project'))
     act(() => project?.click())
     act(() =>
@@ -766,7 +766,7 @@ describe('PermissionApprovalControls interactions', () => {
     // Defaults to the available session scope.
     expect(container.textContent).toContain('Allow for this conversation')
     expect(container.querySelector('[data-testid="scope-chevron"]')).toBeNull()
-    expect(container.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="menu"]')).toBeNull()
     // Allowing sends the session option, never a mislabeled once grant.
     const allowBtn = container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement
     act(() => allowBtn.click())
@@ -787,7 +787,7 @@ describe('PermissionApprovalControls interactions', () => {
     })
 
     expect(container.querySelector('[data-testid="scope-chevron"]')).toBeNull()
-    expect(container.querySelector('[role="menu"]')).toBeNull()
+    expect(document.querySelector('[role="menu"]')).toBeNull()
     expect(
       (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).disabled
     ).toBe(true)
@@ -898,11 +898,11 @@ describe('PermissionApprovalControls interactions', () => {
     })
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
-    expect(container.querySelector('[role="menuitemradio"]')).not.toBeNull()
+    expect(document.querySelector('[role="menuitemradio"]')).not.toBeNull()
     act(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
+    expect(document.querySelector('[role="menuitemradio"]')).toBeNull()
   })
 
   it('focuses and navigates scope choices from the keyboard', async () => {
@@ -914,9 +914,7 @@ describe('PermissionApprovalControls interactions', () => {
     await act(async () => {
       chevron.click()
     })
-    const items = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
-    )
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
     // The menu opens with focus on the currently selected Session scope.
     expect(document.activeElement).toBe(items[1])
 
@@ -930,7 +928,7 @@ describe('PermissionApprovalControls interactions', () => {
       items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     })
     expect(container.textContent).toContain('Allow once')
-    expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
+    expect(document.querySelector('[role="menuitemradio"]')).toBeNull()
 
     act(() => chevron.click())
     act(() => {
@@ -949,9 +947,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
 
     await act(async () => chevron.click())
-    const items = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
-    )
+    const items = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
     act(() => {
       items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     })
@@ -1014,7 +1010,7 @@ describe('PermissionApprovalControls interactions', () => {
     })
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
-    const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
+    const onceItem = Array.from(document.querySelectorAll('[role="menuitemradio"]')).find(
       (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
     ) as HTMLElement
     act(() => onceItem.click())
@@ -1039,7 +1035,7 @@ describe('PermissionApprovalControls interactions', () => {
     // Scope reset to the default Session, menu closed, card re-expanded.
     expect(container.textContent).toContain('this conversation')
     expect(container.textContent).not.toContain('this call only')
-    expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
+    expect(document.querySelector('[role="menuitemradio"]')).toBeNull()
     const nextToggle = container.querySelector(
       '[data-testid="permission-code-toggle"]'
     ) as HTMLButtonElement
@@ -1055,9 +1051,9 @@ describe('PermissionApprovalControls interactions', () => {
     })
     // Enter/Space on a native button dispatches a click, not mousedown.
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
-    expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
+    expect(document.querySelector('[role="menuitemradio"]')).toBeNull()
     act(() => chevron.click())
-    expect(container.querySelector('[role="menuitemradio"]')).not.toBeNull()
+    expect(document.querySelector('[role="menuitemradio"]')).not.toBeNull()
     expect(chevron.getAttribute('aria-expanded')).toBe('true')
   })
 

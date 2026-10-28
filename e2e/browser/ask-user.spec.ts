@@ -346,18 +346,21 @@ for (const side of ['top', 'bottom'] as const) {
     const groupBox = (await group.boundingBox())!
     const menuBox = (await menu.boundingBox())!
     expect(Math.abs(menuBox.width - groupBox.width)).toBeLessThan(1)
-    expect(
-      Math.abs(
-        side === 'top'
-          ? menuBox.y + menuBox.height - groupBox.y
-          : menuBox.y - groupBox.y - groupBox.height
-      )
-    ).toBeLessThan(1)
+    const gap =
+      side === 'top'
+        ? groupBox.y - menuBox.y - menuBox.height
+        : menuBox.y - groupBox.y - groupBox.height
+    expect(gap).toBeLessThanOrEqual(0)
+    expect(gap).toBeGreaterThanOrEqual(-1.5)
     expect(menuBox.x).toBeGreaterThanOrEqual(0)
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(320)
     await expect
-      .poll(() => menu.evaluate((element) => getComputedStyle(element).clipPath))
-      .toBe('inset(0%)')
+      .poll(() =>
+        menu.evaluate((element) =>
+          Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+        )
+      )
+      .toBe(0)
     const radii = await group.evaluate((element) => {
       const style = getComputedStyle(element)
       return {
@@ -382,34 +385,53 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
   await page.goto('/ask-user.html?single=1')
   const trigger = page.getByRole('button', { name: 'More skip options' })
   const menu = page.getByTestId('question-skip-menu')
-  await page.evaluate(() => {
-    document.addEventListener('transitionrun', (event) => {
-      const target = event.target as HTMLElement
-      if (target.dataset.testid === 'question-skip-menu' && event.propertyName === 'clip-path') {
-        target.dataset.clipTransition = 'started'
-      }
-    })
-  })
   await trigger.click()
   await expect(menu).toBeVisible()
-  await expect(menu).toHaveAttribute('data-entered', 'true')
-  expect(await menu.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
-    '0.24s, 0.24s'
-  )
+  await expect(menu).toHaveAttribute('data-connected', 'true')
+  expect(
+    await menu.evaluate(
+      (element) =>
+        element
+          .getAnimations()
+          .find(
+            (animation) =>
+              animation.effect instanceof KeyframeEffect &&
+              animation.effect.getKeyframes().some((frame) => 'clipPath' in frame)
+          )
+          ?.effect?.getTiming().duration
+    )
+  ).toBe(240)
   expect(
     await trigger.locator('svg').evaluate((element) => getComputedStyle(element).transitionDuration)
   ).toBe('0.24s')
   await expect
-    .poll(() => menu.evaluate((element) => getComputedStyle(element).clipPath))
-    .toBe('inset(0%)')
-  await expect(menu).toHaveAttribute('data-clip-transition', 'started')
+    .poll(() =>
+      menu.evaluate((element) =>
+        Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+      )
+    )
+    .toBe(0)
   await menu.evaluate((element) => {
     ;(element as HTMLElement).dataset.instance = 'original'
   })
   await page.keyboard.press('Escape')
-  expect(await menu.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
-    '0.16s, 0.16s'
-  )
+  await expect
+    .poll(
+      () =>
+        menu.evaluate(
+          (element) =>
+            element
+              .getAnimations()
+              .find(
+                (animation) =>
+                  animation.effect instanceof KeyframeEffect &&
+                  animation.effect.getKeyframes().some((frame) => 'clipPath' in frame)
+              )
+              ?.effect?.getTiming().duration
+        ),
+      { intervals: [5], timeout: 100 }
+    )
+    .toBe(160)
   expect(
     await trigger.locator('svg').evaluate((element) => getComputedStyle(element).transitionDuration)
   ).toBe('0.16s')
@@ -424,8 +446,12 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
   expect(clip(after)).toBeLessThan(100)
   expect(Math.abs(clip(after) - clip(before))).toBeLessThan(35)
   await expect
-    .poll(() => menu.evaluate((element) => getComputedStyle(element).clipPath))
-    .toBe('inset(0%)')
+    .poll(() =>
+      menu.evaluate((element) =>
+        Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+      )
+    )
+    .toBe(0)
   await page.keyboard.press('Escape')
   await page.keyboard.press('ArrowDown')
   await expect(page.getByRole('menuitem', { name: 'Skip all' })).toBeFocused()
@@ -446,7 +472,11 @@ test('skip control honors reduced motion without delaying Escape focus return', 
   await expect(page.getByRole('menuitem', { name: 'Skip all' })).toBeFocused()
   expect(await menu.evaluate((element) => element.getAnimations().length)).toBe(0)
   expect(await trigger.locator('svg').evaluate((element) => element.getAnimations().length)).toBe(0)
-  await expect(menu).toHaveCSS('clip-path', 'inset(0%)')
+  expect(
+    await menu.evaluate((element) =>
+      Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+    )
+  ).toBe(0)
   await page.keyboard.press('Escape')
   await expect(menu).toHaveCount(0)
   await expect(trigger).toBeFocused()

@@ -59,7 +59,10 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
+import type {
+  DelegatedQuestionRequest,
+  PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
@@ -1060,7 +1063,7 @@ describe('ConversationPanel header spacing', () => {
     renderPanel()
     expect(getConversationHeader().textContent).toContain('New conversation')
     expect(
-      getConversationHeader().querySelector('[aria-label="Copying files… · View progress"]')
+      getConversationHeader().querySelector('[aria-label="Copying files… View progress"]')
     ).not.toBeNull()
 
     renderPanel({
@@ -1079,7 +1082,7 @@ describe('ConversationPanel header spacing', () => {
     })
     expect(getConversationHeader().textContent).toContain('Research Session')
     const progress = getConversationHeader().querySelector<HTMLButtonElement>(
-      '[aria-label="Copying files… · View progress"]'
+      '[aria-label="Copying files… View progress"]'
     )!
     act(() => progress.click())
     expect(usePackageOperationStore.getState().open).toBe(true)
@@ -3760,11 +3763,20 @@ describe('ConversationPanel composer intake', () => {
       const authority = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(activeSession)
       })
+      let waitingSession: PersistedChatSession = {
+        ...structuredClone(activeSession),
+        status: 'waiting-for-user',
+        activeRun: undefined
+      }
       const waitingAuthority = new AcpDurableContinuationContextOwner({
-        loadSessionForContinuation: async () => ({
-          ...structuredClone(activeSession),
-          status: 'waiting-for-user'
-        })
+        loadSessionForContinuation: async () => structuredClone(waitingSession),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          waitingSession = {
+            ...mutate(structuredClone(waitingSession)),
+            runtimeTranscriptOwner: 'main'
+          }
+          return structuredClone(waitingSession)
+        }
       })
       await expect(
         waitingAuthority.prepareElicitation({
@@ -3775,6 +3787,14 @@ describe('ConversationPanel composer intake', () => {
           action: 'decline'
         })
       ).resolves.toMatchObject({ request: { requestId: 'export-choice-request' } })
+      expect(waitingSession.activities![0].elicitation).toMatchObject({
+        state: 'declined',
+        continuationPending: true
+      })
+      expect(waitingSession.conversationGraph!.activities[0].elicitation).toEqual(
+        waitingSession.activities![0].elicitation
+      )
+      expect(activeSession.activities![0].elicitation?.state).toBe('pending')
       await expect(
         authority.prepareElicitation({
           projectId: activeSession.projectId,
@@ -5605,8 +5625,6 @@ describe('ConversationPanel composer intake', () => {
       expect.arrayContaining([
         'border-0',
         'bg-transparent',
-        'after:left-0',
-        'after:bg-primary-foreground/20',
         'active:translate-y-px',
         'motion-reduce:active:translate-y-0'
       ])
@@ -9432,6 +9450,10 @@ describe('ConversationPanel error box + report affordance', () => {
       [
         ['Internal error', 'Your conversation is preserved. Try Resume again.'],
         [
+          'Previous agent cleanup is unconfirmed.',
+          'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+        ],
+        [
           'Resume timed out',
           'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
         ],
@@ -10077,7 +10099,17 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
       }
     })
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Imported research history"]')).not.toBeNull()
+    const importedHistory = container.querySelector('[aria-label="Imported research history"]')
+    expect(importedHistory).not.toBeNull()
+    expect(importedHistory?.textContent).not.toContain('Read-only')
+    expect(importedHistory?.textContent).not.toContain(
+      'Code execution and continuation are disabled.'
+    )
+    expect(importedHistory?.querySelector('details')).toBeNull()
+    expect(importedHistory?.textContent).not.toContain('Package source')
+    expect(importedHistory?.textContent).not.toContain('Imported on')
+    expect(importedHistory?.textContent).toContain('View replay')
+    expect(importedHistory?.textContent).toContain('Fork to continue')
     expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
     expect(container.textContent).not.toContain('Asked by Researcher')
     expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()

@@ -1,3 +1,10 @@
+import type { TFunction } from 'i18next'
+import {
+  isAgentResultDeliveryAttribution,
+  isComputeJobCompletionAttribution,
+  isComputeJobCompletionPresentation,
+  type PersistedChatMessage
+} from '../../../../../shared/session-persistence'
 import { createContext, useContext, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -56,3 +63,19 @@ export const replayPresentationStyle = (config: ReplayPresentationConfig): CSSPr
     '--text-200': 'hsl(43 3% 42%)',
     '--text-300': 'hsl(43 3% 47%)'
   }) as CSSProperties
+
+export const replayAutomaticEvent = (
+  message: PersistedChatMessage | undefined,
+  t: TFunction
+): { title: string; description: string } | undefined => {
+  if (isAgentResultDeliveryAttribution(message?.attribution)) {
+    return { title: t('Background activity'), description: t('New task results are available') }
+  }
+  if (
+    isComputeJobCompletionAttribution(message?.attribution) ||
+    (message && isComputeJobCompletionPresentation(message))
+  ) {
+    return { title: t('Remote job completed'), description: t('Analysis started automatically') }
+  }
+  return undefined
+}

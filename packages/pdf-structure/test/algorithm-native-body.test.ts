@@ -20,22 +20,39 @@ const { tableTextToken } = await import(
 
 // Three actual native strokes close nested scopes; the two caption fragments
 // have disjoint used ink although their font-wide boxes overlap Output.
-function verticalScopeProgram(mode = ''): ReturnType<typeof JSON.parse> {
+function verticalScopeProgram(mode = '', dotted = false): ReturnType<typeof JSON.parse> {
   const f = sample(),
-    rows: [string, number, number, number][] = [
-      ['Input: values', 88.936, 85, 10],
-      ['for each sweep do', 88.936, 110, 10],
-      ['for each value do', 105.699, 123.55, 10],
-      ['Compute the next value', 122.461, 137.1, 10],
-      ['for adjacent pairs do', 105.699, 153.55, 10],
-      ['Swap the values', 122.461, 167.1, 10],
-      ['Record the state', 105.699, 180.65, 10],
-      ['Output: collected values', 88.936, 194.2, 10],
-      ['Algorithm S1: Collect values for a sample', 80.468, 204, 10],
-      ['state.', 80.468, 217.55, 10],
-      ['Independent explanation.', 80.468, 250, 10],
-      ['π ', 350, 300, 10]
-    ]
+    rows: [string, number, number, number][] = dotted
+      ? [
+          ['Algorithm 1 Update values', 50, 100, 10],
+          ['Input: values', 65, 125, 10],
+          ['1. Compute the initial value', 65, 145, 10],
+          ['x = 0', 100, 165, 10],
+          ['2. Update the value', 65, 185, 10],
+          ['y = x + 1', 100, 205, 10],
+          ['3. Set the result', 65, 225, 10],
+          ['z = y', 100, 245, 10],
+          ['Output: result', 65, 265, 10],
+          ['Independent explanation.', 50, 310, 10],
+          ['π', 400, 350, 10]
+        ]
+      : [
+          ['Input: values', 88.936, 85, 10],
+          ['for each sweep do', 88.936, 110, 10],
+          ['for each value do', 105.699, 123.55, 10],
+          ['Compute the next value', 122.461, 137.1, 10],
+          ['for adjacent pairs do', 105.699, 153.55, 10],
+          ['Swap the values', 122.461, 167.1, 10],
+          ['Record the state', 105.699, 180.65, 10],
+          ['Output: collected values', 88.936, 194.2, 10],
+          ['Algorithm S1: Collect values for a sample', 80.468, 204, 10],
+          ['state.', 80.468, 217.55, 10],
+          ['Independent explanation.', 80.468, 250, 10],
+          ['π ', 350, 300, 10]
+        ]
+  if (mode === 'dotted-gap') rows[4][0] = '4. Update the value'
+  if (mode === 'dotted-output') rows[8][0] = 'Result: result'
+  if (mode === 'dotted-tail') rows.splice(9, 0, ['Unrelated paragraph.', 65, 275, 10])
   if (mode === 'unclosed-control') rows[2][0] = 'for each value'
   if (mode === 'small-control') rows[2][3] = 7
   if (mode === 'foreign-control') rows.splice(3, 0, ['if value then', 122.461, 132, 10])
@@ -53,13 +70,19 @@ function verticalScopeProgram(mode = ''): ReturnType<typeof JSON.parse> {
       sourceItem: { pageNumber: 1, index, text: str }
     })),
     operators: { fnArray: number[]; argsArray: unknown[] } = { fnArray: [], argsArray: [] },
-    rules = [
-      [94.59, 114.065, 94.59, 184.715],
-      [111.352, 127.615, 111.352, 141.165],
-      [111.352, 157.615, 111.352, 171.165]
-    ]
+    rules = dotted
+      ? [
+          [50, 90, 350, 90],
+          [50, 110, 350, 110],
+          [50, 280, 350, 280]
+        ]
+      : [
+          [94.59, 114.065, 94.59, 184.715],
+          [111.352, 127.615, 111.352, 141.165],
+          [111.352, 157.615, 111.352, 171.165]
+        ]
   // Native trailing whitespace can represent a positioning gap, not a glyph.
-  items.at(-1)!.width -= 2
+  if (!dotted) items.at(-1)!.width -= 2
   for (const item of items) {
     operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
     operators.argsArray.push(
@@ -190,6 +213,35 @@ function verticalScopeProgram(mode = ''): ReturnType<typeof JSON.parse> {
   }
   return f
 }
+
+it('owns a complete dotted computational program between native input and output declarations', () => {
+  const f = verticalScopeProgram('', true),
+    before = JSON.stringify(f),
+    result = findNativeAlgorithmCandidates(f.page, f.context)
+  expect(result).toHaveLength(1)
+  expect(result[0].nativeBody.sourceItems).toEqual(
+    f.context.content.items.slice(1, 9).map((i: { sourceItem: unknown }) => i.sourceItem)
+  )
+  expect(result[0].caption.lines).toEqual(['Algorithm 1 Update values'])
+  expect(result[0].rect).toEqual([50, 89.8, 350, 280.2])
+  expect(JSON.stringify(f)).toBe(before)
+})
+
+it.each([
+  'dotted-gap',
+  'dotted-output',
+  'dotted-tail',
+  'missing-scope',
+  'duplicate-owner',
+  'alias-source',
+  'foreign-paint',
+  'missing-glyph'
+])('rejects incomplete native dotted input/output evidence: %s', (mode) => {
+  const f = verticalScopeProgram(mode, true),
+    before = JSON.stringify(f)
+  expect(findNativeAlgorithmCandidates(f.page, f.context)).toHaveLength(0)
+  expect(JSON.stringify(f)).toBe(before)
+})
 
 it('owns a complete vertical nested scope through actual source glyphs without losing caption or outside whitespace', () => {
   const f = verticalScopeProgram(),
@@ -1506,4 +1558,187 @@ it.each([
       (candidate: { nativeBody?: unknown }) => !candidate.nativeBody
     )
   ).toBe(true)
+})
+
+function nativeFramedLoop(): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number, string][] = [
+      ['Algorithm 1: Update values for a sample', 49.9, 100, 'bold'],
+      ['Input', 50, 120, 'bold'],
+      ['values', 80, 120, 'plain'],
+      ['Output', 50, 140, 'bold'],
+      ['result', 85, 140, 'plain'],
+      ['Initialize values', 50, 160, 'plain'],
+      ['for', 50, 180, 'bold'],
+      ['each value do', 70, 180, 'bold'],
+      ['Update current value', 65, 200, 'plain'],
+      ['for', 65, 220, 'bold'],
+      ['each pair do', 85, 220, 'bold'],
+      ['Store updated pair', 80, 240, 'plain'],
+      ['Record state', 65, 260, 'plain'],
+      ['Return', 50, 280, 'plain'],
+      ['result', 85, 280, 'plain'],
+      ['Independent explanation.', 50, 340, 'plain']
+    ],
+    items = rows.map(([str, x, y, fontName], index) => ({
+      str,
+      dir: 'ltr',
+      width: str.length * 4,
+      height: 10,
+      transform: [10, 0, 0, 10, x, 800 - y],
+      fontName,
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    operators: { fnArray: number[]; argsArray: unknown[] } = { fnArray: [], argsArray: [] },
+    rules = [
+      [50, 91, 500, 91],
+      [50, 105, 500, 105],
+      [50, 295, 500, 295],
+      [55, 185, 55, 265],
+      [70, 225, 70, 245],
+      [70.25, 244.75, 75.25, 244.75],
+      [55.25, 264.75, 60.25, 264.75]
+    ],
+    add = (op: number, args: unknown = null): void => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    }
+  for (const i of items) {
+    add(OPS.beginText)
+    add(OPS.setFont, [i.fontName, 10])
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, i.transform[4], i.transform[5]]])
+    add(OPS.showText, [
+      Array.from(i.str, (c) => ({
+        unicode: c,
+        fontChar: c,
+        width: 400,
+        isSpace: c === ' ',
+        isInFont: true,
+        accent: null
+      }))
+    ])
+    add(OPS.endText)
+  }
+  add(OPS.setLineWidth, [0.5])
+  const page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: items.map((i) => ({
+        text: i.str,
+        x: i.transform[4],
+        y: 800 - i.transform[5] - 10,
+        width: i.width,
+        height: 10,
+        fontSize: 10
+      })),
+      graphicsBounds: rules.map((r) => {
+        const operationIndex = operators.fnArray.length
+        add(OPS.constructPath, [
+          OPS.stroke,
+          [new Float32Array([0, r[0], 800 - r[1], 1, r[2], 800 - r[3]])],
+          new Float32Array([
+            Math.min(r[0], r[2]),
+            800 - Math.max(r[1], r[3]),
+            Math.max(r[0], r[2]),
+            800 - Math.min(r[1], r[3])
+          ])
+        ])
+        return {
+          kind: 'path',
+          operationIndex,
+          normalizedRect: r.map((x, i) => x / (i % 2 ? 800 : 600))
+        }
+      })
+    },
+    viewport = {
+      width: 600,
+      height: 800,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 800],
+      convertToViewportPoint: (x, y) => [x, 800 - y]
+    },
+    content = {
+      items,
+      styles: {
+        bold: { ascent: 0.8, descent: -0.2, vertical: false },
+        plain: { ascent: 0.8, descent: -0.2, vertical: false }
+      }
+    },
+    context = {
+      content,
+      viewport,
+      operators,
+      rules: collectTableRules(operators, viewport),
+      nativeGlyphContext: {
+        content,
+        viewport,
+        operators,
+        graphicsBounds: page.graphicsBounds,
+        glyphBounds: ['bold', 'plain'].map((fontName) => ({
+          fontName,
+          glyphs: [
+            ...new Set(
+              items.filter((i) => i.fontName === fontName).flatMap((i) => Array.from(i.str))
+            )
+          ].map((c) => ({
+            fontChar: c,
+            bounds: c === ' ' ? [0, 0, 0, 0] : [0.005, -0.01, 0.4, 0.7]
+          }))
+        })),
+        pageNumber: 1,
+        sourceSha256: 'a'.repeat(64)
+      }
+    }
+  return { page, context }
+}
+it('owns a complete optically hanging title and closed nested loop without claiming the caption', () => {
+  const f = nativeFramedLoop(),
+    r = findNativeAlgorithmCandidates(f.page, f.context)
+  expect(r).toHaveLength(1)
+  expect(r[0].nativeBody.sourceItems).toEqual(
+    f.context.content.items.slice(1, -1).map((i) => i.sourceItem)
+  )
+  expect(r[0].scopedGlyphProof.foreignGlyphs.length).toBeGreaterThan(0)
+})
+it.each([
+  'white-title',
+  'transparent-body',
+  'white-rule',
+  'unclosed-scope',
+  'second-overhang',
+  'unknown-clip'
+])('rejects incomplete framed-loop evidence: %s', (mode) => {
+  const f = nativeFramedLoop(),
+    o = f.context.operators
+  if (mode === 'white-title') {
+    o.fnArray.unshift(OPS.setFillRGBColor)
+    o.argsArray.unshift(['#ffffff'])
+  }
+  if (mode === 'transparent-body') {
+    o.fnArray.unshift(OPS.setGState)
+    o.argsArray.unshift([[['ca', 0.5]]])
+  }
+  if (mode === 'white-rule') {
+    const i = o.fnArray.indexOf(OPS.setLineWidth)
+    o.fnArray.splice(i, 0, OPS.setStrokeRGBColor)
+    o.argsArray.splice(i, 0, ['#ffffff'])
+  }
+  if (mode === 'unclosed-scope') {
+    o.fnArray.pop()
+    o.argsArray.pop()
+    f.page.graphicsBounds.pop()
+  }
+  if (mode === 'unknown-clip') {
+    o.fnArray.unshift(OPS.clip)
+    o.argsArray.unshift(null)
+  }
+  if (mode === 'second-overhang')
+    f.context.nativeGlyphContext.glyphBounds[0].glyphs.find((g) => g.fontChar === 'l').bounds[0] =
+      -1
+  expect(findNativeAlgorithmCandidates(f.page, f.context).some((c) => !!c.scopedGlyphProof)).toBe(
+    false
+  )
 })

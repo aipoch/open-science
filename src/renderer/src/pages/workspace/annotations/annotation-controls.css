@@ -62,18 +62,18 @@
   }
 }
 
-.annotation-style-trigger > svg {
+.annotation-style-trigger:not([data-split-trigger]) > svg {
   transition: transform var(--annotation-enter-duration) var(--annotation-enter-ease);
 }
-.annotation-style-trigger[data-state='open'] > svg {
+.annotation-style-trigger:not([data-split-trigger])[data-state='open'] > svg {
   transform: rotate(180deg);
 }
 
-.annotation-popover[data-state='open'] {
+.annotation-popover:not([data-split-panel])[data-state='open'] {
   animation: annotation-panel-enter var(--annotation-enter-duration) var(--annotation-enter-ease);
 }
 
-.annotation-popover[data-state='closed'] {
+.annotation-popover:not([data-split-panel])[data-state='closed'] {
   pointer-events: none;
   animation: annotation-panel-exit var(--annotation-exit-duration) var(--annotation-exit-ease);
 }
@@ -168,16 +168,16 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .annotation-popover[data-state='open'],
+  .annotation-popover:not([data-split-panel])[data-state='open'],
   .annotation-selection-toolbar[data-positioned='true'] {
     animation-name: annotation-fade-in;
     animation-duration: 100ms;
   }
-  .annotation-popover[data-state='closed'] {
+  .annotation-popover:not([data-split-panel])[data-state='closed'] {
     animation-name: annotation-fade-out;
     animation-duration: 75ms;
   }
-  .annotation-style-trigger > svg {
+  .annotation-style-trigger:not([data-split-trigger]) > svg {
     transition: none;
   }
   .pdf-area-action,

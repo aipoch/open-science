@@ -248,7 +248,7 @@ export function ConnectorApprovalDialog({
           active && pendingBroadScope && request.id === pendingBroadScope.requestId
             ? {
                 scope: pendingBroadScope.scope,
-                subject: `${displayName} (${request.connectorName ?? request.connector}${request.target ? ` · ${request.target}` : ''}) ${request.method}`,
+                subject: `${displayName} (${request.connectorName ?? request.connector}${request.target ? ` / ${request.target}` : ''}) ${request.method}`,
                 codeExecution: false
               }
             : undefined

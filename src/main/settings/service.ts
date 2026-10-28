@@ -40,7 +40,12 @@ import { ClassificationSettingsOwner } from './classification-settings'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
 
-import { createLogger, startDiagnosticOperation, type Logger } from '@aipoch/diagnostics/node'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  startDiagnosticOperation,
+  type Logger
+} from '@aipoch/diagnostics/node'
 import type { BundledSkill, SkillRegistry } from '@aipoch/skills'
 import type {
   AgentHomeSkillView,
@@ -244,6 +249,7 @@ export type SettingsServiceOptions = {
   withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
   onProviderHealthChanged?: () => Promise<void>
+  onNotebookNetworkDomainAllowed?: () => Promise<void>
   openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
@@ -465,6 +471,7 @@ class SettingsService {
   private readonly configRoot: string
   private readonly networkProxy: NetworkProxySettingsOwner
   private readonly notebookNetwork: NotebookNetworkSettingsOwner
+  private readonly onNotebookNetworkDomainAllowed?: () => Promise<void>
   private readonly withNotebookFolderPolicyChange: (commit: () => Promise<void>) => Promise<void>
   private notebookFolderPolicyWrite: Promise<unknown> = Promise.resolve()
   private readonly packageMirror: PackageMirrorSettingsOwner
@@ -534,6 +541,7 @@ class SettingsService {
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)
     })
+    this.onNotebookNetworkDomainAllowed = options.onNotebookNetworkDomainAllowed
     this.notebookNetwork = new NotebookNetworkSettingsOwner({
       repository: this.repository,
       apply: options.applyNotebookNetwork ?? (async () => undefined)
@@ -766,12 +774,22 @@ class SettingsService {
     return this.notebookNetwork.get()
   }
 
-  allowNotebookNetworkDomain(
+  async allowNotebookNetworkDomain(
     hostname: string,
     assertCurrent?: () => Promise<void>,
     finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
-    return this.notebookNetwork.allowDomain(hostname, assertCurrent, finalize)
+    const settings = await this.notebookNetwork.allowDomain(hostname, assertCurrent, finalize)
+    try {
+      await this.onNotebookNetworkDomainAllowed?.()
+    } catch (error) {
+      // Publication must not undo consent that has already committed.
+      this.log.warn(
+        'Network access saved, but settings publication failed.',
+        diagnosticErrorFields(error)
+      )
+    }
+    return settings
   }
 
   getNotebookNetworkStatus(): Promise<NotebookNetworkStatus> {

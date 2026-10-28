@@ -4,6 +4,7 @@ export type LiteratureTableColumn =
   | 'authors'
   | 'notes'
   | 'publication'
+  | 'readingStatus'
   | 'rating'
   | 'tags'
   | 'type'
@@ -11,6 +12,7 @@ export type LiteratureTableColumn =
   | 'year'
 
 const literatureTableColumns = [
+  'readingStatus',
   'abstract',
   'year',
   'publication',
@@ -27,6 +29,7 @@ const defaultLiteratureTableColumns = literatureTableColumns.filter(
 )
 
 export const literatureTableColumnWidths: Record<LiteratureTableColumn, number> = {
+  readingStatus: 144,
   type: 160,
   authors: 224,
   year: 80,
@@ -61,8 +64,10 @@ export const loadLiteratureTablePreferences = (): LiteratureTablePreferences => 
     const storedOrder = Array.isArray(parsed.order)
       ? parsed.order.filter(isLiteratureTableColumn)
       : []
+    const readingStatusAdded = !storedOrder.includes('readingStatus')
     const order = [
       ...new Set<LiteratureTableColumn>([
+        ...(readingStatusAdded ? (['readingStatus'] as const) : []),
         ...storedOrder,
         ...literatureTableColumns.filter((column) => !storedOrder.includes(column))
       ])
@@ -70,6 +75,7 @@ export const loadLiteratureTablePreferences = (): LiteratureTablePreferences => 
     const visible = Array.isArray(parsed.visible)
       ? parsed.visible.filter(isLiteratureTableColumn)
       : fallback.visible
+    if (readingStatusAdded && !visible.includes('readingStatus')) visible.push('readingStatus')
     return { order, visible }
   } catch {
     return fallback

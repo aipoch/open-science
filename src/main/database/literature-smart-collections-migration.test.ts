@@ -11,9 +11,8 @@ it('adds empty smart storage while preserving ordinary collections, membership a
   const client = createProjectDbClient(root)
   try {
     await createDatabaseAtReleasedManifest(client)
-    await client.literatureItem.create({
-      data: { id: 'paper', itemType: 'journalArticle', title: 'Existing paper' }
-    })
+    await client.$executeRaw`INSERT INTO "LiteratureItem" (id, "itemType", title, "updatedAt")
+      VALUES ('paper', 'journalArticle', 'Existing paper', CURRENT_TIMESTAMP)`
     await client.literatureCollection.create({
       data: {
         id: 'ordinary',
@@ -59,7 +58,8 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation'
+        '0050_literature_translation',
+        '0051_literature_reading_status'
       ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)

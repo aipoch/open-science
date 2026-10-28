@@ -1,21 +1,69 @@
+import type { UseCaseSource } from '../../../shared/use-cases'
+import { i18next as i18n } from '@/i18n'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
+import { stageUploadFile } from '@/lib/upload-transfer'
+import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 
 let importing = false
 
-export const importSessionPackage = async (projectId?: string, file?: File): Promise<void> => {
+const isWebSurface = (): boolean =>
+  document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) === 'true'
+
+// Web RPC cannot carry a File through JSON, so a caller without a file picks one here. The
+// hidden input stays inside the user gesture that opened it; a dismissal resolves undefined.
+const pickScienceFile = (): Promise<File | undefined> =>
+  new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.science,.SCIENCE'
+    input.style.display = 'none'
+    let settled = false
+    const finish = (file?: File): void => {
+      if (settled) return
+      settled = true
+      input.remove()
+      resolve(file)
+    }
+    input.addEventListener('change', () => finish(input.files?.[0]), { once: true })
+    input.addEventListener('cancel', () => finish(undefined), { once: true })
+    document.body.append(input)
+    input.click()
+  })
+
+export const importSessionPackage = async (
+  projectId?: string,
+  file?: File | UseCaseSource
+): Promise<void> => {
   if (!sessionPackageImportAvailable()) return
   if (importing || packageOperationActive(usePackageOperationStore.getState().operation)) {
     usePackageOperationStore.getState().setOpen(true)
     return
   }
-  usePackageOperationStore.setState({ errorKind: undefined })
+  usePackageOperationStore.setState({ errorKind: undefined, useCaseFailure: undefined })
   importing = true
   usePackageOperationStore.getState().setImportError(undefined)
   const previousId = usePackageOperationStore.getState().operation?.id
   try {
     const target = projectId === undefined ? {} : { projectId }
+    // Catalog sources are already serializable; only user-selected files require Web staging.
+    if (isWebSurface() && (!file || !('useCase' in file))) {
+      const selected = file ?? (await pickScienceFile())
+      // The user dismissed the picker: nothing was staged and there is nothing to report.
+      if (!selected) return
+      if (!/\.science$/i.test(selected.name))
+        throw new Error(i18n.t('Only .science packages can be imported.'))
+      const attachment = await stageUploadFile(selected, window.api.uploads, {
+        transferId: crypto.randomUUID(),
+        name: selected.name
+      })
+      const result = await window.api.sessions.importPackage(target, attachment.path)
+      if (result) {
+        await useProjectStore.getState().loadProjects()
+      }
+      return
+    }
     const result = await (file
       ? window.api.sessions.importPackage(target, file)
       : window.api.sessions.importPackage(target))
@@ -33,8 +81,12 @@ export const importSessionPackage = async (projectId?: string, file?: File): Pro
     if (current?.id !== previousId && current?.kind === 'import') {
       if (current.state === 'failed') {
         store.receive(current)
-        if (store.dismissedId !== current.id) store.setOpen(true)
+        if (!current.useCaseDownload && store.dismissedId !== current.id) store.setOpen(true)
       }
+      return
+    }
+    if (file && 'useCase' in file) {
+      usePackageOperationStore.setState({ useCaseFailure: file.useCase })
       return
     }
     usePackageOperationStore

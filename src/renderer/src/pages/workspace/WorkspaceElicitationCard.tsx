@@ -402,6 +402,7 @@ const WorkspaceElicitationCard = ({
         className="mt-1 rounded-[10px] bg-bg-000/60 p-2"
       >
         <div data-testid="elicitation-choice-review">
+          {questionAnswer?.status === 'skipped' ? <p>{displayAnswer(questionAnswer)}</p> : null}
           {question.choiceField.options?.map((option, index) => {
             const selected = isChoiceOptionSelected(question, reviewValues, option.value)
             return (
@@ -473,11 +474,7 @@ const WorkspaceElicitationCard = ({
                 <Check className="size-3" strokeWidth={2} aria-label={t('Selected')} />
               </span>
               <span className="min-h-4 min-w-0 flex-1 whitespace-pre-wrap break-words">
-                {displayValue(
-                  questionAnswer?.value ?? '',
-                  fieldsById.get(question.customField.id),
-                  t
-                )}
+                {questionAnswer ? displayAnswer(questionAnswer) : ''}
               </span>
             </div>
           ) : null}

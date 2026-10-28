@@ -236,7 +236,7 @@ function ConnectorNamedCredentialEditor({
                     {credentials.length > 0 ? (
                       credentials.map((credential) => (
                         <SelectItem key={credential.id} value={credential.id}>
-                          {credential.displayName} ·{' '}
+                          {credential.displayName}{' '}
                           {credential.kind === 'api_key' ? t('API key') : t('Access token')}
                         </SelectItem>
                       ))

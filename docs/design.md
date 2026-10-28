@@ -340,6 +340,47 @@ roles remain explicit in the tables above.
 - Loading commands expose `aria-busy` and preserve their existing disabled rules. Reduced motion disables the content animation and nested spinner rotation. Dense navigation, selection, send/stop and cancellation controls retain immediate feedback.
 - The Home update action reveals its label on hover and keyboard focus over 200ms. Touch, download progress and failures keep the label visible. Clicking always opens the existing update dialog once; revealing a label adds no disclosure state. The Session update action retains its persistent label.
 
+### SplitButton
+
+Use `@/components/ui/split-button` for a primary action with a separate dropdown arrow.
+Compose `SplitButtonGroup`, `SplitButtonPrimary`, `SplitButtonTrigger` and `SplitButtonContent`
+inside `SplitButton`. Labels arrive translated from the caller.
+
+```tsx
+<SplitButton disabled={disabled} busy={busy} hideMenu={!hasAlternatives}>
+  <SplitButtonGroup>
+    <SplitButtonPrimary className="border-0" onClick={onPrimary}>
+      {primaryLabel}
+    </SplitButtonPrimary>
+    <SplitButtonTrigger className="border-0" size="icon" aria-label={optionsLabel}>
+      <ChevronDown aria-hidden="true" />
+    </SplitButtonTrigger>
+  </SplitButtonGroup>
+  <SplitButtonContent matchWidth align="end">
+    <DropdownMenuItem onSelect={onAlternative}>{alternativeLabel}</DropdownMenuItem>
+  </SplitButtonContent>
+</SplitButton>
+```
+
+- Default `kind="menu"` accepts existing `DropdownMenuItem` and radio items. Use
+  `kind="popover"` for search, session pickers and custom panels; retain their focus and keyboard
+  behavior. Options, selection, hover/pinning and effects belong to the caller.
+- Use `open` / `onOpenChange` for controlled state, or `defaultOpen` for uncontrolled state.
+  Root `disabled` or `busy` disables both buttons; each segment also accepts `disabled`.
+  `hideMenu` removes the arrow and panel when only the primary action is needed.
+- Both segments accept Button props, including `variant`, `size`, `className`, `ref` and
+  `asChild`. Preserve existing colors and icons; custom filled segments use `border-0` to avoid
+  transparent gaps. Keep the shared separator and neutral panel background.
+- Use `matchWidth` for short menus. Give larger panels their own width and `align="start"` or
+  `"end"`; content retains positioning, collision, portal `container` and layer props.
+  The component handles connected corners, final placement and reversible 240/160 ms animation.
+  Let the component manage panel mounting; do not conditionally render or key content by `open`,
+  or override its animation.
+- Examples: [QuestionSkipButton](../src/renderer/src/pages/workspace/QuestionSkipButton.tsx)
+  for actions, [PermissionScopeButton](../src/renderer/src/pages/workspace/PermissionScopeButton.tsx)
+  for radio choices, and [LibraryChatButton](../src/renderer/src/pages/workspace/previews/LibraryChatButton.tsx)
+  for search and hover/pinning. Preserve the Tooltip focus guard described in `AGENTS.md`.
+
 ### External Link
 
 - Ordinary external text links use the shared `ExternalTextLink` component: an underlined `text-primary` label trailed by a lucide `ArrowUpRight` icon. Do not use a bare `<a>` or a Unicode `↗` for those links. Specialized branded controls (the GitHub badge), actionable consent flows (startup issue submission), and Agent Markdown links retain their own owners, accessible names, activation checks and navigation policy; their different visual treatment is intentional. This exception does not cover ordinary help, documentation or resource links.
@@ -1040,6 +1081,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Personal and Imported directories are the writable source of truth. The app scans those two sources into one central catalog; agent frameworks do not independently scan them in place. The user-Skill catalog observer watches `<configRoot>/skills`, coalesces bursts to at most one running and one pending reconciliation, and falls back to reconciliation every 30 seconds when recursive watching is unavailable. A catalog fingerprint change refreshes Settings and retires the current agent runtime generation. An active turn finishes against its existing generation, while every later turn resumes through a freshly provisioned generation.
 - User-Skill compatibility hashing is incremental. A rebuildable index at `<configRoot>/runtime-support/user-skill-compatibility-v1.json` stores only relative package/file paths, file size and timestamps, and SHA-256 hashes; it never stores file contents or absolute paths. Unchanged files reuse their hashes, changed files are streamed through the hasher, deleted entries are pruned, and a missing or corrupt index is rebuilt from the Personal and Imported sources. The index lives outside `<configRoot>/skills`, so persisting it cannot trigger the catalog observer.
 - Before an agent runtime starts, the enabled central catalog is copied into that framework's isolated, rebuildable Skill projection. Claude keeps its private profile at `<configRoot>/claude` and publishes Agent-readable Skills at `<configRoot>/runtime-support/agent-skills/claude/v1/<revision>/.claude/skills/<skill-name>`. Shared, isolated, and custom Claude sessions mount that revision as an additional directory for supporting-file access while keeping the workspace `project` settings source disabled. A primary-session-only, allowlisted loader aliases Claude's native `Skill { skill, args? }` call to the selected immutable package; its short always-loaded tool description points Claude to scoped canonical names and descriptions encoded as described constants in the `skill` input schema, avoiding Claude Code's per-tool-description truncation while keeping Featured, Personal, Imported, Connector, and Compute Skills discoverable without enabling workspace project settings. Discovery metadata is bounded to 256 Skills and 64 KiB per session; overflow packages remain explicitly invocable by canonical name through the schema's string fallback. Its Agent-facing server name is the neutral `skills`, so discovery and invocation expose neither an application plugin namespace nor an `os-` catalog marker. Reviewer, Side chat, and restricted inference sessions do not receive this loader or catalog: Claude gets an isolated empty projection, while OpenCode and Codex skip application Skill and Connector materialization before their restricted profiles are applied. Specialists see only their exact Skill scope. The projection root permits only `.claude/skills`, preventing project settings, hooks, agents, commands, or `CLAUDE.md` from entering through this mount. OpenCode and Codex continue to project primary-session content into `<configRoot>/opencode/config/opencode/skills/os-<catalog-id>`, `<configRoot>/codex/skills/os-<catalog-id>`, or `<configRoot>/codex-subscription/skills/os-<catalog-id>`; for those backends the internal `os-<catalog-id>` directory remains a projection identity, not the user package name. Projections are normalized and made read-only while preserving executable bits; the Personal/Imported source package remains authoritative. Claude revisions are immutable snapshots so a running session never observes a half-updated Skill tree. The single-instance desktop runtime retains every revision published by its current process for active-session safety, then removes those rebuildable revisions on the next process's first provision.
+- Notebook processes receive built-in read-only access to existing application-managed Skill projections: `<configRoot>/codex/skills`, `codex-subscription/skills`, `opencode/config/opencode/skills`, `runtime-support/agent-skills/claude`, and `codebuddy/skill-runtime/.claude/skills`. This directory policy makes supporting references, scripts, and assets readable without a folder grant; it does not filter files by the current Agent's Skill discovery scope. Provider credentials and private profile directories are outside the built-in grant. Missing projections are skipped, and symlinked/junction projection paths are not promoted into grants. Protected execution retains explicit write denials even under a broader writable folder grant; Windows standard mode retains its existing OS-permission behavior. Existing processes receive the policy when restarted; no permission records, migration, or new persisted state are introduced.
 - Specialist switching follows the provider's identity boundary. Claude replaces its provider Session because Specialist identity and Skill metadata are Session-level, then the renderer replays the bounded visible conversation history on the next turn. Codex and OpenCode retain their provider Session and do not replay history; every Specialist turn declares the current identity and exact scope as superseding all earlier Specialist identities and scopes, while every Main turn carries a compact declaration that revokes any earlier Specialist identity and Specialist-only Skill or Connector scope. If a switch wins while compatible resume is in flight, these turn-prefix routes re-resolve the latest binding locally and publish the already-resumed provider Session without a second resume, disposal, or replay.
 - Names beginning with `os-` or `mcp-`, names matching a bundled Featured/Internal Skill, Specialist sidecar IDs colliding with a bundled ID, and duplicate user sidecar IDs are logged and excluded so app-owned packages and user identities stay authoritative. Unsafe sidecar IDs are ignored. Existing newest-wins behavior remains for out-of-band Personal/Imported name duplicates; normal create/import flows prevent those collisions.
 - The Skills header shows Installed count, Browse Marketplace and Add skill. Source, Agent, Tag and search filters share the next wrapping row. Each category owns Select multiple / Done; selection happens in the current catalog, not a separate Manage page.

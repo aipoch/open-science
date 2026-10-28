@@ -1173,7 +1173,7 @@ describe('SpecialistsPanel', () => {
     expect(document.body.textContent).toContain('Local changes will be permanently replaced')
     expect(document.body.textContent).toContain('Current local edits are not recoverable')
     expect(document.body.textContent).toContain('Current version1.4.0')
-    expect(document.body.textContent).toContain('Incoming version1.3.0 · downgrade')
+    expect(document.body.textContent).toContain('Incoming version1.3.0 / downgrade')
     expect(document.body.textContent).toContain('Local edits will be replaced by this import.')
     expect(document.body.textContent).toContain('Export current version first')
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
@@ -1232,7 +1232,7 @@ describe('SpecialistsPanel', () => {
     expect(metadata?.textContent).toContain('Imported ZIP')
     expect(metadata?.textContent).toContain('Version 1.2.0')
     expect(metadata?.textContent).toContain('Modified locally')
-    expect(metadata?.textContent).not.toContain(' · ')
+    expect(metadata?.textContent).not.toContain(' / ')
 
     await act(async () => {
       root.render(
@@ -1531,7 +1531,7 @@ describe('SpecialistsPanel', () => {
       )
     })
     expect(document.body.textContent).toContain('Builtin Curator')
-    expect(document.body.textContent).toContain('Built-in · Version 1.2.0')
+    expect(document.body.textContent).toContain('Built-in: Version 1.2.0')
     expect(document.body.textContent).toContain('Read-only')
     expect(document.body.textContent).toContain('literature-review')
     expect(document.body.querySelector('input')).toBeNull()

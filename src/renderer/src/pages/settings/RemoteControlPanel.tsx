@@ -362,7 +362,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
 
   const approve = (requestId: string, decision: RemotePairingDecision): void => {
     const request = snapshot?.pendingRequests.find((entry) => entry.id === requestId)
-    const requestLabel = request ? `${request.browser} · ${request.platform}` : null
+    const requestLabel = request ? `${request.browser} / ${request.platform}` : null
     void run(`approve:${requestId}`, () =>
       window.api.remoteAccess.approve({ requestId, decision })
     ).then((ok) => {
@@ -903,13 +903,13 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-medium text-foreground">
-                            {request.browser} · {request.platform}
+                            {request.browser} / {request.platform}
                           </div>
                           <div className="mt-1 text-xs text-muted-foreground">
                             {t('Requested {{time}}', {
                               time: formatDate(request.requestedAt, 'dateTime')
                             })}
-                            {request.address ? ` · ${request.address}` : ''}
+                            {request.address ? ` / ${request.address}` : ''}
                           </div>
                           <span
                             className={cn(
@@ -1015,7 +1015,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                     <Laptop className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-foreground">
-                        {browser.browser} · {browser.platform}
+                        {browser.browser} / {browser.platform}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {t('Last used {{time}}', {
@@ -1077,7 +1077,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
                     '{{browser}} must complete two-step verification again on its next visit. The 180-day trust ends immediately.',
                     {
                       browser: browserToRevoke
-                        ? `${browserToRevoke.browser} · ${browserToRevoke.platform}`
+                        ? `${browserToRevoke.browser} / ${browserToRevoke.platform}`
                         : ''
                     }
                   )}

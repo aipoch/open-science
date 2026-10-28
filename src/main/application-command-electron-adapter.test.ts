@@ -104,6 +104,7 @@ const validatedChannels = [
   'sessions:set-delegation-policy',
   'sessions:unlink-pdf-context',
   'sessions:update-archive',
+  'sessions:use-case-catalog',
   'settings:get-settings',
   'tags:create',
   'tags:delete',

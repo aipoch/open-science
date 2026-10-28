@@ -18,7 +18,11 @@ export function serializeWorkerResult(result) {
       result,
       (key, value) =>
         key === 'sourceTokens' ||
-        (omitOrigins && (key === 'sourceItems' || key === 'sourceSegments' || key === 'nativeBody'))
+        (omitOrigins &&
+          (key === 'sourceItems' ||
+            key === 'sourceSegments' ||
+            key === 'nativeBody' ||
+            key === 'unreliableMathSourceItems'))
           ? undefined
           : value,
       2

@@ -5,6 +5,59 @@ import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import type { OpenCodeUsageSnapshot } from './opencode-turn-usage'
 
 describe('ACP OpenCode turn adapter', () => {
+  it('verifies 2.x compaction from SDK-compatible metadata when usage is unavailable', async () => {
+    const adapter = new AcpOpenCodeTurnAdapter(vi.fn(async () => undefined))
+    const probe = await adapter.begin({ providerSessionId: 'session', cwd: '/workspace' })
+    for (const status of ['started', 'completed'])
+      probe.observe?.({
+        sessionId: 'session',
+        update: {
+          sessionUpdate: 'session_info_update',
+          _meta: { 'opencode/compaction': { status, messageId: 'summary', reason: 'manual' } }
+        }
+      })
+    expect(await probe.finalize({ response: { stopReason: 'end_turn' } })).toEqual({
+      compaction: { succeeded: true }
+    })
+  })
+
+  it('ignores replayed, unrelated, unpaired and cancelled 2.x compaction notifications', async () => {
+    const snapshot = { assistantMessageIds: new Set(['old']), usageByMessageId: new Map() }
+    const probe = await new AcpOpenCodeTurnAdapter(async () => snapshot).begin({
+      providerSessionId: 'session',
+      cwd: '/workspace'
+    })
+    const notify = (sessionId: string, messageId: string, status: string): void =>
+      probe.observe?.({
+        sessionId,
+        update: {
+          sessionUpdate: 'session_info_update',
+          _meta: { 'opencode/compaction': { messageId, status } }
+        }
+      })
+    notify('session', 'old', 'started')
+    notify('session', 'old', 'completed')
+    notify('other', 'new', 'started')
+    notify('other', 'new', 'completed')
+    notify('session', 'unpaired', 'completed')
+    expect(await probe.finalize({ response: { stopReason: 'end_turn' } })).toEqual({})
+    const cancelled = await new AcpOpenCodeTurnAdapter(async () => undefined).begin({
+      providerSessionId: 'session',
+      cwd: '/workspace'
+    })
+    cancelled.cancel?.()
+    cancelled.observe?.({
+      sessionId: 'session',
+      update: {
+        sessionUpdate: 'session_info_update',
+        _meta: {
+          'opencode/compaction': { messageId: 'new', status: 'failed', error: { message: 'late' } }
+        }
+      }
+    })
+    expect(await cancelled.finalize({ response: { stopReason: 'cancelled' } })).toEqual({})
+  })
+
   it('ignores historical compaction errors and returns only the current summary outcome', async () => {
     const before = { assistantMessageIds: new Set(['old']), usageByMessageId: new Map() }
     const after = {

@@ -85,7 +85,10 @@ import {
   nativeRecoveredCellOrigins,
   recoverNativeFirstRecordContinuations
 } from './literature-pdf-native-leaf-record-repair.mjs'
-import { recoverNativeScalarRecordPlan } from './literature-pdf-native-scalar-record-grid.mjs'
+import {
+  recoverNativeScalarRecordPlan,
+  recoverNativeSignedScalarRecords
+} from './literature-pdf-native-scalar-record-grid.mjs'
 import {
   recoverNativeTextRecordGrid,
   completeNativeTableVisualCrop,
@@ -19845,7 +19848,8 @@ export function recoverCaptionedRuledTables(
   pageNumber,
   existing = [],
   runs = [],
-  rulePaintBounds
+  rulePaintBounds,
+  renderEvidence
 ) {
   const recovered = recoverExistingCaptionedRuledTables(
     items,
@@ -19888,7 +19892,17 @@ export function recoverCaptionedRuledTables(
       continue
     const proof =
       recoverNativeTinyConfigurationRecords({ cropRect: crop }, items, rules) ??
-      recoverNativeMeasuredHeaderRecords({ cropRect: crop }, items, captions, rules, runs)
+      recoverNativeMeasuredHeaderRecords({ cropRect: crop }, items, captions, rules, runs) ??
+      ([...existing, ...recovered].every((t) => !t.cropRect || intersect(t.cropRect, crop) === 0)
+        ? recoverNativeSignedScalarRecords(
+            { cropRect: crop },
+            items,
+            captions,
+            rules,
+            rulePaintBounds,
+            renderEvidence
+          )
+        : undefined)
     if (!proof) continue
     const rows = proof.groups.map((g) => [
       crop[0],

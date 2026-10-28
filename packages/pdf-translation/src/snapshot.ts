@@ -49,6 +49,7 @@ export const pdfTranslationLayoutSnapshotSchema = z
             sourceOnly: z.literal(true).optional(),
             figure: z.literal(true).optional(),
             preserve: z.enum(['formula', 'code', 'literal', 'reference']).optional(),
+            referenceBoundary: z.literal(true).optional(),
             fragments: z
               .array(
                 z

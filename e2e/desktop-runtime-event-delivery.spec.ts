@@ -35,6 +35,8 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
     // This direct launcher does not run the shared fixture's locale setup.
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe('en')
+    await page.evaluate(() => window.api.settings.markOnboardingComplete())
+    await page.reload({ waitUntil: 'domcontentloaded' })
     const additionalWindow = application.waitForEvent('window')
     await application.evaluate(({ app }) => {
       const { createRequire } = process.getBuiltinModule('node:module')
@@ -103,8 +105,15 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       })
       expect(result).toEqual({ connected: true })
       await expect.poll(() => secondPage.evaluate(() => document.documentElement.lang)).toBe('de')
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await expect(
+        page
+          .getByTestId('local-service-recovery')
+          .getByRole('button', { name: 'Retry', exact: true })
+      ).toBeVisible()
+      await page
+        .getByTestId('local-service-recovery')
+        .getByRole('button', { name: 'Retry', exact: true })
+        .click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
@@ -174,7 +183,7 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
           )!
         pipe.destroy()
       })
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      // The service attachment now recovers automatically; keep the real replay barrier.
       await expect
         .poll(() =>
           application.evaluate(
@@ -253,7 +262,11 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
           )
         )
         .toBe(true)
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
+      await expect(
+        page
+          .getByTestId('local-service-recovery')
+          .getByRole('button', { name: 'Retry', exact: true })
+      ).toBeVisible()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'disconnected' })
@@ -263,7 +276,10 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       expect(
         (await secondPage.evaluate(() => window.api.settings.getSettings())).closePreference
       ).toBe('quit')
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await page
+        .getByTestId('local-service-recovery')
+        .getByRole('button', { name: 'Retry', exact: true })
+        .click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'connected' })
@@ -321,15 +337,18 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
     })
     await test.step('allows recovery after canceling Quit while renderer acknowledgements are pending', async () => {
       // Hold real renderer ACKs during a new recovery, then cancel an actual Quit attempt.
-      await application.evaluate(({ ipcMain, dialog }) => {
+      await application.evaluate(({ ipcMain }) => {
         const handlers = Reflect.get(ipcMain, '_invokeHandlers') as Map<
           string,
           (...args: unknown[]) => Promise<unknown>
         >
         const original = handlers.get('desktop-runtime:reconciled')!
-        const probe = { acknowledgements: 0, confirmations: 0, release: (): void => undefined }
+        const probe = { acknowledgements: 0, release: (): void => undefined }
         const gate = new Promise<void>((resolve) => {
-          probe.release = resolve
+          probe.release = () => {
+            handlers.set('desktop-runtime:reconciled', original)
+            resolve()
+          }
         })
         ;(globalThis as typeof globalThis & { quitRace: typeof probe }).quitRace = probe
         handlers.set('desktop-runtime:reconciled', async (...args) => {
@@ -337,11 +356,6 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
           await gate
           return original(...args)
         })
-        dialog.showMessageBox = (async () => {
-          probe.confirmations++
-          handlers.set('desktop-runtime:reconciled', original)
-          return { response: 0, checkboxChecked: false }
-        }) as typeof dialog.showMessageBox
         const pipe = (
           process as NodeJS.Process & {
             _getActiveHandles(): {
@@ -360,7 +374,6 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
         if (!pipe) throw new Error('Recovery race pipe missing')
         pipe.destroy()
       })
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
       await expect
         .poll(() =>
           application.evaluate(
@@ -373,38 +386,33 @@ test('keeps real desktop RPC connected when a window rejects event delivery', as
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ phase: 'reconciling' })
-      // Recovery hides its buttons while reconciling; native Quit remains available.
       await application.evaluate(({ app }) => app.quit())
-      await expect
-        .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-        .toMatchObject({ phase: 'disconnected', closing: false })
-      expect(
-        await application.evaluate(
-          () =>
-            (globalThis as typeof globalThis & { quitRace: { confirmations: number } }).quitRace
-              .confirmations
-        )
-      ).toBe(1)
+      await page
+        .getByRole('alertdialog', { name: 'Saving is not finished' })
+        .getByRole('button', { name: 'Stay', exact: true })
+        .click()
       await application.evaluate(() =>
         (globalThis as typeof globalThis & { quitRace: { release(): void } }).quitRace.release()
       )
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
       for (const current of [page, secondPage]) {
         await expect
           .poll(() => current.evaluate(() => window.api.desktopRuntime?.getState()))
           .toMatchObject({ phase: 'connected', closing: false })
-        await current.evaluate(() => window.api.settings.getSettings())
       }
     })
   } finally {
     // Stop only the backend registered beneath this test's unique storage root.
-    const stopping = promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
-      env: {
-        ...launchEnvironment(roots.storageRoot),
-        OPEN_SCIENCE_USER_DATA: roots.userDataRoot
-      },
-      timeout: 30000
-    }).then(
+    const stopping = promisify(execFile)(
+      process.execPath,
+      [resolve('cli/index.mjs'), 'stop', '--force'],
+      {
+        env: {
+          ...launchEnvironment(roots.storageRoot),
+          OPEN_SCIENCE_USER_DATA: roots.userDataRoot
+        },
+        timeout: 30000
+      }
+    ).then(
       () => true,
       () => false
     )

@@ -260,7 +260,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     })
 
     await poller.tick()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await poller.pause()
 
     // Only one update call (the status=error write), no notifiedAt write
     expect(update).toHaveBeenCalledOnce()
@@ -309,7 +309,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     })
 
     await poller.tick()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await poller.pause()
 
     // notifiedAt written and broadcast fired for the error job
     expect(claimNotification).toHaveBeenCalledWith('job-1', expect.any(Date))
@@ -371,7 +371,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const t2 = poller.tick()
     releaseUpdate()
     await Promise.all([t1, t2])
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await poller.pause()
 
     // Only ONE emit despite two overlapping ticks selecting the same unnotified row.
     expect(claimNotification).toHaveBeenCalledTimes(1)

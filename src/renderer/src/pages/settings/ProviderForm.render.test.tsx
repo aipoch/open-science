@@ -392,7 +392,7 @@ describe('ProviderForm field switching', () => {
       const onChange = vi.fn()
       render(value, { onChange })
 
-      expect(container.querySelector('code')?.textContent).toBe('Default model: grok-4.7 · 500K')
+      expect(container.querySelector('code')?.textContent).toBe('Default model: grok-4.7: 500K')
       expect(value.model).toBe(model)
       expect(onChange).not.toHaveBeenCalled()
     }

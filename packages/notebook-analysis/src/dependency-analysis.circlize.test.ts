@@ -81,13 +81,13 @@ it.each([0, 1, 3, 4])('analyzes reported circlize cell %s', async (index) => {
   const result = await project([script])
   const files = await analyzeNotebookSourceFileAccess('r', script)
   expect(result.stalenessByRunId['run-0']).toMatchObject({
-    state: index >= 1 ? 'unknown' : 'clear'
+    state: 'unknown'
   })
   expect(files).toMatchObject({
     reads: ['inputs/edge-weights-222222222222.xlsx'],
-    readState: index >= 1 ? 'partial' : 'complete',
-    writeState: index >= 1 ? 'partial' : 'complete',
-    externalState: index >= 1 ? 'partial' : 'complete'
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial'
   })
   if (index >= 3)
     expect(files.writes).toEqual(
@@ -108,12 +108,12 @@ it.each([0, 1, 2, 3, 4, 5, 6, 8, 9])(
           : [explorationCells[0]!, explorationCells[2]!, explorationCells[index]!]
     const result = await project(scripts)
     expect(result.stalenessByRunId[`run-${scripts.length - 1}`]).toMatchObject({
-      state: index >= 3 ? 'unknown' : 'clear'
+      state: index >= 1 ? 'unknown' : 'clear'
     })
     expect(await analyzeNotebookSourceFileAccess('r', scripts.join('\n'))).toMatchObject({
-      readState: index >= 3 ? 'partial' : 'complete',
-      writeState: index >= 3 ? 'partial' : 'complete',
-      externalState: index >= 3 ? 'partial' : 'complete',
+      readState: index >= 1 ? 'partial' : 'complete',
+      writeState: index >= 1 ? 'partial' : 'complete',
+      externalState: index >= 1 ? 'partial' : 'complete',
       reads: ['inputs/edge-weights-222222222222.xlsx']
     })
   }
@@ -124,13 +124,13 @@ it.each([0, 3, 4, 7])('captures reported device-copy cell %s', async (index) => 
   const result = await project([script])
   const files = await analyzeNotebookSourceFileAccess('r', script)
   expect(result.stalenessByRunId['run-0']).toMatchObject({
-    state: index >= 4 ? 'unknown' : 'clear'
+    state: index >= 3 ? 'unknown' : 'clear'
   })
   expect(files).toMatchObject({
     reads: ['inputs/edge-weights-222222222222.xlsx'],
-    readState: index >= 4 ? 'partial' : 'complete',
-    writeState: index >= 4 ? 'partial' : 'complete',
-    externalState: index >= 4 ? 'partial' : 'complete'
+    readState: index >= 3 ? 'partial' : 'complete',
+    writeState: index >= 3 ? 'partial' : 'complete',
+    externalState: index >= 3 ? 'partial' : 'complete'
   })
   if (index >= 4) expect(files.writes).toEqual(['chord_diagram.png'])
 })
@@ -195,7 +195,7 @@ it.each([0, 2, 4, 6])('analyzes reported package replay cell %s', async (index) 
   expect(result.stalenessByRunId['run-0']).toMatchObject({
     state: index >= 4 ? 'unknown' : 'clear'
   })
-  expect(files.readState).toBe(index >= 4 ? 'partial' : 'complete')
+  expect(files.readState).toBe(index >= 3 ? 'partial' : 'complete')
 })
 
 it.each([
@@ -343,7 +343,7 @@ it.each([
   expect([files.readState, files.writeState, files.externalState]).toContain('partial')
 })
 
-it('retains the preparation chain while leaving mean-based drawing uncertain', async () => {
+it('withholds preparation and drawing edges after unproved distinct methods', async () => {
   const result = await project([
     explorationCells[0]!,
     explorationCells[1]!,
@@ -357,7 +357,8 @@ it('retains the preparation chain while leaving mean-based drawing uncertain', a
   expect(result.dependenciesByRunId?.['run-3']).toBeUndefined()
   const drawFacts = (await analyzeRNotebookSource(explorationCells[3]!)).facts
   expect(drawFacts.state === 'unknown' ? drawFacts.reasons : []).toContain('opaque-call')
-  expect(result.dependenciesByRunId?.['run-2']).toContain('run-0')
+  expect(result.dependenciesByRunId?.['run-2']).toBeUndefined()
+  expect(result.stalenessByRunId['run-2']?.state).toBe('unknown')
 })
 
 it('keeps mean-based redraw uncertain after a failed palette cell', async () => {

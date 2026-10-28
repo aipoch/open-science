@@ -263,7 +263,7 @@ const ProviderList = ({
           const canDelete = true
           // The chat endpoint(s) this provider speaks; defaults to Anthropic when unset (older/custom).
           const endpoint = {
-            path: providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' · '),
+            path: providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' / '),
             full:
               providerRoutes.map((route) => ENDPOINT_PATHS[route]).join(' and ') +
               (providerRoutes.length > 1 ? ' endpoints' : ' endpoint')

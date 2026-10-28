@@ -7,7 +7,6 @@
     "src/renderer/src/pages/workspace/PermissionApprovalControls.tsx",
     "src/renderer/src/pages/workspace/PermissionScopeConfirmationDialog.tsx",
     "src/renderer/src/pages/workspace/QuestionSkipButton.tsx",
-    "src/renderer/src/pages/workspace/question-skip-button.css",
     "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
     "src/renderer/src/pages/workspace/WorkspaceElicitationCard.tsx",
     "src/renderer/src/pages/workspace/permission-request-presentation.test.ts",
@@ -85,5 +84,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Question skip controls now use the shared split button instead of their reviewed stylesheet; retain complete validation until the changed permission control boundary is reviewed and reclassified."
 }

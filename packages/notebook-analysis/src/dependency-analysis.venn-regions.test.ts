@@ -11,15 +11,19 @@ import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 it.each([0, 1, 2, 3, 4, 5, 6])('analyzes reported region cell %s', async (index) => {
   const { facts } = await analyzeRNotebookSource(cells[index])
   expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual(
-    index === 2 ? [] : ['external-state']
+    index === 2
+      ? []
+      : [1, 3, 4, 5, 6].includes(index)
+        ? ['external-state', 'function-scope', 'opaque-call']
+        : ['external-state']
   )
   expect(
     await analyzeNotebookSourceFileAccess('r', cells[index]),
     JSON.stringify(facts)
   ).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: [1, 3, 4, 5, 6].includes(index) ? 'partial' : 'complete',
+    writeState: [1, 3, 4, 5, 6].includes(index) ? 'partial' : 'complete',
+    externalState: [1, 3, 4, 5, 6].includes(index) ? 'partial' : 'complete',
     reads: index === 2 ? [] : ['inputs/set-membership-111111111111.xlsx'],
     writes:
       index === 3
@@ -93,7 +97,7 @@ it.each([
   ])
 })
 
-it('recovers independent outputs after a failed list-column CSV export', async () => {
+it('keeps CSV retry uncertainty when replacements repeat unproved distinct methods', async () => {
   const root = await mkdtemp(join(tmpdir(), 'venn-regions-'))
   const runs: NotebookRunRecord[] = cells.map((script, index) => ({
     runId: String(index),
@@ -111,6 +115,8 @@ it('recovers independent outputs after a failed list-column CSV export', async (
     outputs: [],
     workingFiles: []
   }))
+  // Separate earlier unproved reductions from the CSV export retry epoch.
+  for (const run of runs.slice(3)) run.kernelEpochId = 'independent-output'
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       const analyzer = new NotebookDependencyAnalyzer({
@@ -118,11 +124,13 @@ it('recovers independent outputs after a failed list-column CSV export', async (
         repository: { readSessionRuns: async () => runs }
       })
       const result = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '6' })
+      expect(result.stalenessByRunId['4']).toBeUndefined()
       for (const index of [3, 5, 6]) {
-        expect(result.stalenessByRunId[String(index)], JSON.stringify(result)).toEqual({
-          state: 'clear'
+        expect(result.stalenessByRunId[String(index)], JSON.stringify(result)).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['opaque-call'])
         })
-        expect(result.dependenciesByRunId?.[String(index)]).toEqual([])
+        expect(result.dependenciesByRunId?.[String(index)]).toBeUndefined()
       }
     }
   } finally {

@@ -11,6 +11,7 @@ import {
 import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
 
+const selectiveRendererPath = 'src/renderer/src/lib/format-star-count.ts'
 const full = classifyChanges([{ path: 'package.json', status: 'modified' }])
 const changes = (path: string): Array<{ path: string; status: string }> => [
   { path, status: 'modified' }
@@ -22,7 +23,13 @@ describe('platform risk execution policy', () => {
     ['unknown owner', 'A', 'src/shared/new-unregistered-contract.ts'],
     ['destructive change', 'D', 'src/shared/app-config.ts'],
     ['global input', 'M', 'package.json'],
-    ['CI policy', 'M', '.github/workflows/pr-gate.yml']
+    ['CI policy', 'M', '.github/workflows/pr-gate.yml'],
+    ['renderer UI boundary', 'M', 'src/renderer/src/components/ui/button.tsx'],
+    [
+      'permission control boundary',
+      'M',
+      'src/renderer/src/pages/workspace/PermissionScopeButton.tsx'
+    ]
   ])(
     'defers %s full portable validation to acceptance without weakening other checks',
     (_, status, path) => {
@@ -73,7 +80,7 @@ describe('platform risk execution policy', () => {
         ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
         { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
         {
-          execute: () => Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0'),
+          execute: () => Buffer.from(`M\0${selectiveRendererPath}\0`),
           write: () => undefined
         }
       )
@@ -293,9 +300,7 @@ it.each(['pull_request', 'merge_group'])(
       { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
       {
         execute: () =>
-          Buffer.from(
-            'M\0src/renderer/src/components/ui/button.tsx\0M\0scripts/ci/pr-gate-workflow.test.ts\0'
-          ),
+          Buffer.from(`M\0${selectiveRendererPath}\0M\0scripts/ci/pr-gate-workflow.test.ts\0`),
         write: () => undefined
       }
     )
@@ -308,7 +313,7 @@ it.each(['pull_request', 'merge_group'])(
 )
 
 it('applies the platform policy only when explicitly enabled', () => {
-  const changes = Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0')
+  const changes = Buffer.from(`M\0${selectiveRendererPath}\0`)
   for (const policy of [undefined, 'risk-v1']) {
     const { plan } = runModuleImpactAuthorityCli(
       ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],

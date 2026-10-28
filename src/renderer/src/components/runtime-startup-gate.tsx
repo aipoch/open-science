@@ -173,14 +173,14 @@ export const RuntimeStartupGate = ({ children }: { children: ReactNode }): React
               ? t('Your projects are safe. Try again, or save a report so we can help.')
               : legacyService
                 ? t(
-                    'Open-Science needs to close it before opening your projects. Finish any work in other Open-Science windows first.'
+                    'Stopping the local service may interrupt App, CLI, and Web tasks and lose unsaved progress. Open-Science will force-stop the verified service if normal shutdown does not finish.'
                   )
                 : recovery
                   ? t(
                       'The previous session has not passed safety checks. Check again before opening the app. Interrupted tasks will not restart automatically.'
                     )
                   : t(
-                      'The running version differs from this app. Finish any work in other Open-Science windows, then stop the service to continue.'
+                      'Stopping the local service may interrupt App, CLI, and Web tasks and lose unsaved progress. Open-Science will force-stop the verified service if normal shutdown does not finish.'
                     )
   const fallback = busy && stalled
   const actionable = !busy || fallback

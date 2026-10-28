@@ -19,7 +19,11 @@ import type {
 } from '../../shared/notebook'
 import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
 import type { UploadedAttachment } from '../../shared/uploads'
-import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework/types'
+import type {
+  AgentFramework,
+  AgentProcessSpawner,
+  ResolvedAgentBackend
+} from '../agent-framework/types'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { LiteratureLibraryDiscovery } from '../literature/discovery-contract'
@@ -96,6 +100,8 @@ export type AcpRuntimeOptions = {
   // Replaces only physical process creation. Backend identity and initialization material still come
   // from resolveBackend when it is available.
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  spawnProcess?: AgentProcessSpawner
+  registerOpenCodeStoreRelease?: (release: () => void) => void
   // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
   // provider switch takes effect on reconnect.
   resolveBackend?: (context: {

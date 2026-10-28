@@ -5,6 +5,7 @@ import { sessionReplayMigration } from './migrations/0047-session-replay'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
 import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { literatureTranslationMigration } from './migrations/0050-literature-translation'
+import { literatureReadingStatusMigration } from './migrations/0051-literature-reading-status'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -936,6 +937,17 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...literatureReadingStatusMigration,
+    checksum: checksumMigrationPayload(
+      literatureReadingStatusMigration.id,
+      literatureReadingStatusMigration.statements,
+      literatureReadingStatusMigration.verifiers,
+      literatureReadingStatusMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1339,6 +1351,7 @@ const currentApplicationSchemaExtensions = {
 const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
   await verifyCurrentRuntimeSchema(client, currentApplicationSchemaExtensions)
   await runMigrationVerifiers(client, literatureTranslationMigration.verifiers)
+  await runMigrationVerifiers(client, literatureReadingStatusMigration.verifiers)
   // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
   // the exact stronger expressions from the immutable suffix.
   await runMigrationVerifiers(

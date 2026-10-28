@@ -152,6 +152,50 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.getByRole('button', { name: 'Show navigation', exact: true }).click()
   await expect(notesSidebar).toBeVisible()
   const toolbar = page.getByRole('tablist', { name: 'PDF reading mode' })
+  // Exercise the production split controls in Electron, including the PDF-specific hover pin.
+  const markTrigger = page.getByRole('button', { name: 'Mark style', exact: true })
+  await markTrigger.hover()
+  const splitPanel = page.locator('[data-split-panel][data-state="open"]')
+  await expect(splitPanel).toBeVisible()
+  await expect(splitPanel).toHaveAttribute('data-connected', 'true')
+  await expect(splitPanel).toHaveCSS('animation-name', 'split-button-present')
+  await expect(splitPanel).toHaveCSS('transform', 'none')
+  await markTrigger.click()
+  await page.mouse.move(10, 700)
+  await expect(splitPanel).toBeVisible()
+  await splitPanel.getByRole('button', { name: 'Underline', exact: true }).click()
+  await expect(splitPanel.getByRole('button', { name: 'Underline', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await splitPanel.getByRole('button', { name: 'Blue', exact: true }).click()
+  await expect(splitPanel.getByRole('button', { name: 'Blue', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await splitPanel.getByRole('button', { name: 'Highlight', exact: true }).click()
+  await splitPanel.getByRole('button', { name: 'Yellow', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('connected-pdf-mark-panel.png') })
+  await page.keyboard.press('Escape')
+  await expect(splitPanel).toHaveCount(0)
+  const areaTrigger = page.getByRole('button', { name: 'Area selection actions' })
+  await areaTrigger.focus()
+  await areaTrigger.press('ArrowDown')
+  await expect(
+    page.getByRole('menuitem', { name: 'Select area to annotate', exact: true })
+  ).toBeVisible()
+  await expect(page.locator('[data-split-panel][data-state="open"]')).toHaveAttribute(
+    'data-connected',
+    'true'
+  )
+  // The first disabled item exposes its reason in a tooltip; move to the available action.
+  await page.keyboard.press('ArrowDown')
+  await expect(
+    page.getByRole('menuitem', { name: 'Select area to annotate', exact: true })
+  ).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(areaTrigger).toBeFocused()
+  await page.getByRole('button', { name: 'Annotate selected text' }).click()
   await expect(
     toolbar.getByRole('button', { name: 'Hide notes sidebar', exact: true })
   ).toBeEnabled()

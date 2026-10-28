@@ -162,6 +162,10 @@ it.each([
   ['wildcard export', "export * from './pdf-annotations/document-store'"],
   ['namespace export', "export * as store from './pdf-annotations/document-store'"],
   ['require', "const store = require('./pdf-annotations/document-store')"],
+  [
+    'escaped require identifier',
+    String.raw`const store = requ\u0069re('./pdf-annotations/docu\u006dent-store')`
+  ],
   ['typed require', "const store = require<unknown>('./pdf-annotations/document-store')"],
   ['template require', 'const store = require(`./pdf-annotations/document-store`)'],
   ['dynamic import', "const store = import('./pdf-annotations/document-store')"],

@@ -546,7 +546,7 @@ describe('PermissionsPanel', () => {
     expect(document.body.textContent).toContain('any call')
     expect(document.body.textContent).toContain('Project: Example project')
     expect(
-      document.body.querySelector('[aria-label="Revoke python · Project: Example project"]')
+      document.body.querySelector('[aria-label="Revoke python / Project: Example project"]')
     ).not.toBeNull()
     expect(document.body.querySelector('h3')?.className).toContain('text-[17px]')
     const permissionRow = document.body.querySelector<HTMLElement>('[data-slot="permission-row"]')
@@ -585,7 +585,7 @@ describe('PermissionsPanel', () => {
     expect(document.body.textContent).toContain('Session: Analyze samples')
     expect(document.body.textContent).toContain('Also allowed for this project')
     expect(
-      document.body.querySelector('[aria-label="Revoke Shell · Session: Analyze samples"]')
+      document.body.querySelector('[aria-label="Revoke Shell / Session: Analyze samples"]')
     ).not.toBeNull()
   })
 
@@ -620,7 +620,7 @@ describe('PermissionsPanel', () => {
 
     await act(async () => {
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell · Session: Analyze samples"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell / Session: Analyze samples"]')
         ?.click()
     })
 
@@ -641,14 +641,14 @@ describe('PermissionsPanel', () => {
 
     await act(async () => {
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell · Session: Analyze samples"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell / Session: Analyze samples"]')
         ?.click()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('database locked')
     expect(document.body.textContent).toContain('Shell')
     expect(
-      document.body.querySelector('[aria-label="Revoke Shell · Session: Analyze samples"]')
+      document.body.querySelector('[aria-label="Revoke Shell / Session: Analyze samples"]')
     ).not.toBeNull()
   })
 
@@ -702,7 +702,7 @@ describe('PermissionsPanel', () => {
     ).toBe(true)
     expect(
       document.body.querySelector<HTMLButtonElement>(
-        '[aria-label="Revoke Shell · Session: Analyze samples"]'
+        '[aria-label="Revoke Shell / Session: Analyze samples"]'
       )?.disabled
     ).toBeFalsy()
   })

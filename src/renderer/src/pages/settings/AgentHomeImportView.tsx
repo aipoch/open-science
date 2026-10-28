@@ -346,7 +346,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                     <span className="min-w-0 flex-1 px-1 py-1">
                       <span className="block truncate text-sm text-foreground">{skill.name}</span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {skill.description || skill.slug} · {source.path}
+                        {skill.description || skill.slug} / {source.path}
                       </span>
                     </span>
                     <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">

@@ -12,7 +12,7 @@ it.each(cells.filter((c) => c.kernelKind === 'r' && c.status === 'completed'))(
   'captures reported finite volcano cell $runId',
   async ({ script, runId }) => {
     const { facts } = await analyzeRNotebookSource(script)
-    if (runId === '6' || runId === '8') {
+    if (['6', '7', '8'].includes(runId)) {
       expect(facts, JSON.stringify(facts)).toMatchObject({
         state: 'unknown',
         reasons: expect.arrayContaining(['opaque-call'])
@@ -111,9 +111,9 @@ it('does not infer a primitive finite mask from table ownership', async () => {
   })
 })
 
-it('preserves table ownership after a transformed column assignment', async () => {
+it('preserves table ownership after transforming an extracted numeric column', async () => {
   const { facts } = await analyzeRNotebookSource(
-    'd<-read.csv("input.csv");d$y<--log10(d$x);print(head(d))'
+    'd<-utils::read.csv("input.csv",colClasses=c("numeric","integer"),stringsAsFactors=FALSE);values<-d$x;d$y<--log10(values);print(head(d))'
   )
   expect(facts.copyOnModifyNames).toContain('d')
   expect(
@@ -128,15 +128,38 @@ it.each([
   'log10(d$x)',
   'sqrt(abs(d$x))',
   'round(expm1(d$x))',
+  'round(log1p(d$x))',
   'pmin(d$x, max(d$x, na.rm=TRUE))',
   'pmax(d$x, min(d$x, na.rm=TRUE))',
   'range(d$x)[1]',
   'base::log10(d$x)',
   'base::max(d$x)'
-])('preserves ordinary column values through %s', async (expression) => {
-  const { facts } = await analyzeRNotebookSource(
-    `d<-read.csv("input.csv");d$y<-${expression};print(head(d))`
-  )
+])('bounds column transform proof through %s', async (expression) => {
+  const source = `d<-read.csv("input.csv");d$y<-${expression};print(head(d))`
+  const { facts } = await analyzeRNotebookSource(source)
+  if (
+    expression.startsWith('pmin(') ||
+    expression.startsWith('pmax(') ||
+    expression.includes('expm1(') ||
+    expression.includes('log1p(') ||
+    expression.includes('sqrt(') ||
+    expression.includes('log(') ||
+    expression.includes('log2(') ||
+    expression.includes('log10(')
+  ) {
+    expect(facts.copyOnModifyNames ?? []).not.toContain('d')
+    expect(facts).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['input.csv'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    return
+  }
   expect(facts.copyOnModifyNames).toContain('d')
   expect(
     facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],

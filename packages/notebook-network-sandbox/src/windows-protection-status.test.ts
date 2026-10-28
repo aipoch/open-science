@@ -36,6 +36,9 @@ vi.mock('node:child_process', async (original) => ({
           })
         )
         child.emit('close', 0)
+      } else if (args[0] === 'configured') {
+        child.stdout.write('true')
+        child.emit('close', 0)
       } else {
         const spec = JSON.parse(Buffer.from(args[3]!, 'base64url').toString()) as {
           arguments: string[]
@@ -74,6 +77,37 @@ afterEach(async () => {
   helper.outsideProbeExitCode = 33
   helper.fenceInstalled = true
   await Promise.all(servers.splice(0).map(close))
+})
+
+it('reads configuration without waiting for runtime initialization to finish probing', async () => {
+  const allocation = await listen(0)
+  helper.port = (allocation.address() as { port: number }).port
+  await close(allocation)
+  let release!: () => void
+  helper.hold = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+  const sandbox = new NotebookNetworkSandbox({
+    policy: { allowedDomains: [], deniedDomains: [] },
+    resources: { root: process.cwd() }
+  })
+  const initializing = sandbox.initialize()
+  let result: boolean | 'pending' = 'pending'
+  try {
+    await expect.poll(() => helper.statusCalls).toBeGreaterThan(0)
+    result = await Promise.race([
+      sandbox.isWindowsProtectionConfigured(),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 250))
+    ])
+  } finally {
+    release()
+    await initializing
+    await sandbox.dispose()
+    Object.defineProperty(process, 'platform', platform)
+  }
+  expect(result).toBe(true)
 })
 
 it('shares an in-flight fence probe and rechecks actual port occupancy after it finishes', async () => {

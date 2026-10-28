@@ -109,7 +109,7 @@ describe('SpecialistEditor', () => {
     })
 
     expect(document.body.textContent).toContain('selected-conflict')
-    expect(document.body.textContent).toContain('Missing · unavailable')
+    expect(document.body.textContent).toContain('Missing: unavailable')
     expect(document.body.textContent).not.toContain('Selected conflict package')
 
     await act(async () => {
@@ -192,9 +192,9 @@ describe('SpecialistEditor', () => {
 
     // Skills tab is active by default. Both persisted selections render, including the
     // Main-disabled (still usable here) and a stale missing ID.
-    expect(document.body.textContent).toContain('Main disabled · available here')
+    expect(document.body.textContent).toContain('Main disabled: available here')
     expect(document.body.textContent).toContain('missing-stable-id')
-    expect(document.body.textContent).toContain('Missing · unavailable')
+    expect(document.body.textContent).toContain('Missing: unavailable')
     expect(document.body.textContent).not.toContain('Hard enforced')
     expect(document.body.textContent).not.toContain('Guidance only')
 

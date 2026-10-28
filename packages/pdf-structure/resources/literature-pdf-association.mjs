@@ -1,3 +1,8 @@
+import { nativeOrderedRasterSubcaptionCrop } from './literature-pdf-figure-native-ordered-raster-subcaptions.mjs'
+import { nativeOrderedFormRasterCrop } from './literature-pdf-figure-native-ordered-form-rasters.mjs'
+import { nativeIsolatedFormFigureCrop } from './literature-pdf-figure-native-isolated-form.mjs'
+import { nativeIsolatedRasterFigureCrop } from './literature-pdf-figure-native-isolated-raster.mjs'
+import { nativeRecoveryFigureCrop } from './literature-pdf-figure-native-whole-paint-scope.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Shared offline association; candidate geometry does not prove semantic correctness.
 import assert from 'node:assert/strict'
@@ -61,7 +66,8 @@ import {
 } from './literature-pdf-figure-connected-keyed-legend.mjs'
 import {
   nativeAttachedPlotLabels,
-  nativeAxisTitlePacket
+  nativeAxisTitlePacket,
+  nativePageTextPacketInventory
 } from './literature-pdf-figure-native-plot-labels.mjs'
 import {
   completeNativePanelParagraphs,
@@ -77,6 +83,9 @@ import { nativeCaptionLiteralFragments } from './literature-pdf-native-caption-s
 import { nativeBraceFigureLabel } from './literature-pdf-figure-native-brace-label.mjs'
 import { nativeMaskedPlotBounds } from './literature-pdf-figure-masked-plot.mjs'
 import { nativeCompleteFormCrop } from './literature-pdf-figure-native-complete-form.mjs'
+import { nativeClosedSaveFigureCrop } from './literature-pdf-figure-native-closed-save.mjs'
+import { nativeClosedProgramFigureCrop } from './literature-pdf-figure-native-closed-program.mjs'
+import { nativeGroupedSymbolAxisCrop } from './literature-pdf-figure-native-symbol-axis.mjs'
 import { nativeBottomLegendCrop } from './literature-pdf-figure-native-bottom-legend.mjs'
 import { nativeStackedRasterCrop } from './literature-pdf-figure-native-stacked-raster.mjs'
 import { nativeRasterGridCrop } from './literature-pdf-figure-native-raster-grid.mjs'
@@ -1580,7 +1589,7 @@ function nativeRasterFramePaints(page, frames, context) {
   return owned
 }
 
-export function associateFigures(
+function associateNativeFigures(
   page,
   candidates,
   tableRects = [],
@@ -2626,7 +2635,8 @@ export function associateFigures(
         return retained
       })
       // Complete a whole native drawing only after all existing text-ownership
-      // decisions. This adds crop pixels, never graph text ownership.
+      // decisions. A closed raster-title chain may also supply its complete
+      // native owners; the extractor rechecks their final rendered bounds.
       .map((figure, index, figures) => {
         const complete =
           nativeCompleteFormCrop(
@@ -2685,6 +2695,9 @@ export function associateFigures(
           ? {
               ...figure,
               rect: complete.rect,
+              ...(complete.sourceItems?.length && !figure.sourceItems?.length
+                ? { sourceItems: complete.sourceItems }
+                : {}),
               formCropRaster: {
                 ...complete.formCropRaster,
                 foreignPaints: [
@@ -2699,13 +2712,343 @@ export function associateFigures(
           : figure
       })
   const result = finalizeFigures(completed)
-  if (!completed.some((figure) => figure.fallbackFigure)) return result
+  const independentRasters = (figures) =>
+    figures.map((figure, index) => {
+      const symbolAxis = nativeGroupedSymbolAxisCrop(
+        page,
+        figure,
+        candidates,
+        tableRects,
+        nativeTokens,
+        operatorContext,
+        (rect) =>
+          figures.some(
+            (other, n) => n !== index && other.rect && intersection(other.rect, rect) > 0
+          )
+      )
+      if (symbolAxis) return { ...figure, ...symbolAxis, fallbackFigure: figure }
+      const proof = nativeIndependentFramedRaster(
+        page,
+        figure,
+        candidates,
+        tableRects,
+        nativeTokens,
+        operatorContext
+      )
+      return proof &&
+        !figures.some(
+          (other, n) => n !== index && other.rect && intersection(other.rect, proof.rect) > 0
+        )
+        ? { ...figure, ...proof, fallbackFigure: figure }
+        : figure
+    })
+  if (!completed.some((figure) => figure.fallbackFigure)) return independentRasters(result)
   // Complete the ordinary alternatives together, preserving all peer checks.
   // Scope admission is disabled explicitly on the single bounded retry above.
   const fallback = finalizeFigures(completed.map((figure) => figure.fallbackFigure ?? figure))
-  return result.map((figure, index) =>
-    completed[index].fallbackFigure ? { ...figure, fallbackFigure: fallback[index] } : figure
+  return independentRasters(
+    result.map((figure, index) =>
+      completed[index].fallbackFigure ? { ...figure, fallbackFigure: fallback[index] } : figure
+    )
   )
+}
+
+export function associateFigures(...args) {
+  const figures = associateNativeFigures(...args)
+  if (!args[6]) return figures
+  return figures.map((figure, index) => {
+    const closedSave = nativeClosedSaveFigureCrop(
+      args[0],
+      figure,
+      args[1],
+      args[2],
+      args[5],
+      args[6]
+    )
+    const program = closedSave
+      ? undefined
+      : nativeClosedProgramFigureCrop(args[0], figure, args[1], args[2], args[5], args[6])
+    const orderedForms =
+      closedSave || program
+        ? undefined
+        : nativeOrderedFormRasterCrop(args[0], figure, args[1], args[2], args[5], args[6])
+    const isolatedForm =
+      closedSave || program || orderedForms
+        ? undefined
+        : nativeIsolatedFormFigureCrop(args[0], figure, args[1], args[2], args[5], args[6])
+    const priorComplete =
+      closedSave ??
+      program ??
+      orderedForms ??
+      isolatedForm ??
+      nativeOrderedRasterSubcaptionCrop(
+        args[0],
+        figure,
+        args[1],
+        args[2],
+        args[5],
+        args[6],
+        args[6].dualApiEvidence
+      )
+    const isolatedRaster = priorComplete
+      ? undefined
+      : nativeIsolatedRasterFigureCrop(args[0], figure, args[1], args[2], args[5], args[6])
+    const recovery =
+      priorComplete || isolatedRaster
+        ? undefined
+        : nativeRecoveryFigureCrop(args[0], figure, args[1], args[2], args[5], args[6])
+    const complete = priorComplete ?? isolatedRaster ?? recovery
+    if (
+      !complete ||
+      figures.some(
+        (other, n) => n !== index && other.rect && intersection(other.rect, complete.rect) > 0
+      )
+    )
+      return figure
+    const retained = { ...figure }
+    if (closedSave || program || orderedForms || isolatedForm || isolatedRaster || recovery) {
+      delete retained.reason
+      delete retained.issue
+    }
+    return {
+      ...retained,
+      ...complete,
+      ...(program || orderedForms || isolatedForm || isolatedRaster || recovery
+        ? { fallbackFigure: figure }
+        : {})
+    }
+  })
+}
+
+// A complete raster frame cannot own the ruled table above it. The generic
+// mixed-strip selector remains the fallback whenever any native source, corner,
+// paint or final PNG footprint is incomplete; this creates no text ownership.
+function nativeIndependentFramedRaster(page, figure, captions, tables, tokens, context) {
+  try {
+    if (
+      figure.reason !== 'native-raster-vector-strip' ||
+      !figure.rect ||
+      figure.sourceItems?.length ||
+      figure.fallbackFigure ||
+      figure.formCropRaster ||
+      page.rotation !== 0 ||
+      page.invalidGraphicsBounds !== 0
+    )
+      return
+    const o = context?.operators,
+      v = context?.viewport,
+      allowed = new Set(
+        [
+          'setFillRGBColor',
+          'setStrokeRGBColor',
+          'beginText',
+          'dependency',
+          'setFont',
+          'setTextMatrix',
+          'moveText',
+          'showText',
+          'endText',
+          'save',
+          'transform',
+          'setDash',
+          'setLineCap',
+          'setLineWidth',
+          'constructPath',
+          'restore',
+          'setGState',
+          'paintImageXObject'
+        ].map((name) => OPS[name])
+      ),
+      valid = (r) =>
+        Array.isArray(r) &&
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[2] > r[0] &&
+        r[3] > r[1],
+      inside = (a, b) => b.every((n, i) => (i < 2 ? n >= a[i] - 1e-6 : n <= a[i] + 1e-6)),
+      expand = (r, n) => [r[0] - n, r[1] - n, r[2] + n, r[3] + n]
+    if (
+      !Array.isArray(o?.fnArray) ||
+      !Array.isArray(o.argsArray) ||
+      o.fnArray.some((op) => !allowed.has(op)) ||
+      v?.scale !== 1 ||
+      v.rotation !== 0 ||
+      v.width !== page.width ||
+      v.height !== page.height ||
+      !Array.isArray(v.transform) ||
+      v.transform.length !== 6 ||
+      v.transform.some((n, i) => n !== [1, 0, 0, -1, 0, page.height][i])
+    )
+      return
+    let strokeColor = '#000000'
+    const colors = [],
+      strokeColors = new Map()
+    for (let i = 0; i < o.fnArray.length; i++) {
+      const op = o.fnArray[i],
+        a = o.argsArray[i]
+      if (op === OPS.save) colors.push(strokeColor)
+      else if (op === OPS.restore) {
+        if (!colors.length) return
+        strokeColor = colors.pop()
+      } else if (op === OPS.setStrokeRGBColor) strokeColor = a?.[0]
+      else if (op === OPS.constructPath) strokeColors.set(i, strokeColor)
+      else if (op === OPS.setGState && JSON.stringify(a) !== '[[["SMask",false]]]') return
+    }
+    if (colors.length) return
+    const packet = nativePageTextPacketInventory(page, tokens, context, true)
+    if (!packet) return
+    const images = packet.evidence.images.filter((im) => inside(figure.rect, im.rect))
+    if (images.length !== 1) return
+    for (const im of packet.evidence.images) {
+      const a = o.argsArray[im.operationIndex]
+      if (
+        o.fnArray[im.operationIndex] !== OPS.paintImageXObject ||
+        typeof a?.[0] !== 'string' ||
+        !Number.isSafeInteger(a[1]) ||
+        a[1] <= 0 ||
+        !Number.isSafeInteger(a[2]) ||
+        a[2] <= 0
+      )
+        return
+    }
+    const paths = []
+    for (const [operationIndex, s] of packet.evidence.paths) {
+      const a = o.argsArray[operationIndex],
+        p = a?.[1]?.[0],
+        m = s.transform
+      if (
+        a?.[0] !== OPS.stroke ||
+        a[1]?.length !== 1 ||
+        !(Array.isArray(p) || ArrayBuffer.isView(p)) ||
+        p.length !== 6 ||
+        !Array.from(p).every(Number.isFinite) ||
+        p[0] !== 0 ||
+        p[3] !== 1 ||
+        m[0] !== 1 ||
+        m[3] !== 1 ||
+        m[1] !== 0 ||
+        m[2] !== 0 ||
+        s.lineCap !== 0 ||
+        !s.solidStroke ||
+        s.strokeAlpha !== 1 ||
+        !(s.lineWidth > 0) ||
+        !/^#[0-9a-f]{6}$/iu.test(strokeColors.get(operationIndex)) ||
+        strokeColors.get(operationIndex).toLowerCase() === '#ffffff'
+      )
+        return
+      const start = [p[1], p[2]],
+        end = [p[4], p[5]],
+        w = s.lineWidth
+      for (const q of [start, end]) {
+        Util.applyTransform(q, m)
+        Util.applyTransform(q, v.transform)
+      }
+      const horizontal = start[1] === end[1]
+      if (!horizontal && start[0] !== end[0]) return
+      const rect = horizontal
+        ? [
+            Math.min(start[0], end[0]),
+            start[1] - w / 2,
+            Math.max(start[0], end[0]),
+            start[1] + w / 2
+          ]
+        : [
+            start[0] - w / 2,
+            Math.min(start[1], end[1]),
+            start[0] + w / 2,
+            Math.max(start[1], end[1])
+          ]
+      if (!valid(rect) || !valid(s.clip) || !inside(s.clip, rect)) return
+      paths.push({ operationIndex, rect, horizontal, start, w })
+    }
+    const graphics = page.graphicsBounds
+    if (
+      graphics.length !== paths.length + packet.evidence.images.length ||
+      new Set(graphics.map((g) => g.operationIndex)).size !== graphics.length ||
+      graphics.some(
+        (g) =>
+          ![...paths, ...packet.evidence.images].some((p) => p.operationIndex === g.operationIndex)
+      )
+    )
+      return
+    const image = images[0],
+      ir = image.rect,
+      sides = paths.filter((p) => intersection(p.rect, expand(ir, p.w)) > 0),
+      hs = sides.filter((p) => p.horizontal).sort((a, b) => a.start[1] - b.start[1]),
+      vs = sides.filter((p) => !p.horizontal).sort((a, b) => a.start[0] - b.start[0])
+    if (
+      sides.length !== 4 ||
+      hs.length !== 2 ||
+      vs.length !== 2 ||
+      hs[0].start[1] > ir[1] ||
+      hs[1].start[1] < ir[3] ||
+      vs[0].start[0] > ir[0] ||
+      vs[1].start[0] < ir[2]
+    )
+      return
+    for (const h of hs)
+      for (const v of vs) {
+        if (
+          Math.max(h.rect[0], v.rect[0]) > Math.min(h.rect[2], v.rect[2]) + 1e-6 ||
+          Math.max(h.rect[1], v.rect[1]) > Math.min(h.rect[3], v.rect[3]) + 1e-6
+        )
+          return
+      }
+    const frame = union(sides.map((p) => p.rect)),
+      scale = Math.ceil(page.width * 1.5) / page.width,
+      rect = expand(frame, 2 / scale),
+      prior = captions.filter(
+        (c) =>
+          c.page === page.pageNumber &&
+          /^Table\s+\d+[.:]/iu.test(c.lines?.[0] ?? '') &&
+          c.rect[3] <= figure.rect[1]
+      ),
+      boundCaption = (c) =>
+        packet.records
+          .filter((r) => inside(c.rect, r.rect))
+          .map((r) => r.r.str)
+          .join('')
+          .replace(/\s/gu, '') === c.lines.join('').replace(/\s/gu, '')
+    if (
+      !inside(frame, ir) ||
+      !inside([0, 0, page.width, page.height], expand(rect, 2 / scale)) ||
+      prior.length !== 1 ||
+      !boundCaption(prior[0]) ||
+      !boundCaption(figure.caption) ||
+      !paths.some((p) => p.rect[1] >= prior[0].rect[3] && p.rect[3] < frame[1]) ||
+      captions.some((c) => c.page === page.pageNumber && intersection(c.rect, rect) > 0) ||
+      tables.some((t) => intersection(t, rect) > 0)
+    )
+      return
+    const owned = new Set(sides.map((p) => p.operationIndex)),
+      foreignPaints = [
+        ...paths
+          .filter((p) => !owned.has(p.operationIndex))
+          .map((p) => ({ rect: p.rect, floor: 0.5 })),
+        ...packet.evidence.images
+          .filter((im) => im !== image)
+          .map((im) => ({ rect: im.rect, floor: 0 })),
+        ...packet.records
+          .flatMap((r) => [r.rect, ...r.part.map((p) => p.g.ink)])
+          .filter(valid)
+          .map((rect) => ({ rect, floor: 0 })),
+        ...tables.map((rect) => ({ rect, floor: 0 }))
+      ]
+    if (
+      foreignPaints.some(
+        (p) => intersection(expand(rect, 2 / scale), expand(p.rect, (p.floor + 2) / scale)) > 0
+      )
+    )
+      return
+    return {
+      rect,
+      graphicsCount: 5,
+      reason: 'native-independent-framed-raster',
+      formCropRaster: { ownedRects: [ir, ...sides.map((p) => p.rect)], foreignPaints }
+    }
+  } catch {
+    return
+  }
 }
 
 function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
@@ -4199,28 +4542,6 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
       caption.rect[1] - rect[3] <= maximumCaptionGap &&
       (aboveBarrier === undefined || rect[1] >= aboveBarrier - edgeTolerance)
   )
-  const hasUpperPlate =
-    upperPlate.filter(
-      ({ graphic, rect }) =>
-        graphic.kind === 'image' && area(rect) >= page.width * page.height * 0.001
-    ).length >= 2 ||
-    upperPlate.some(
-      ({ graphic, rect }) =>
-        graphic.kind === 'path' && area(rect) >= page.width * page.height * 0.02
-    ) ||
-    upperPlate.some(
-      ({ graphic, rect }) =>
-        graphic.kind === 'image' &&
-        graphic.paintedNormalizedRect &&
-        !graphic.imageHash &&
-        area(rect) >= page.width * page.height * 0.02
-    ) ||
-    upperPlate.filter(
-      ({ graphic, rect }) =>
-        graphic.kind === 'path' &&
-        rect[2] - rect[0] >= page.width * 0.15 &&
-        caption.rect[1] - rect[3] <= 120
-    ).length >= 2
   const nextCaptionOwnsLowerPlate =
     belowBarrier !== undefined &&
     laneGraphics.some(
@@ -4238,7 +4559,7 @@ function recoverConservativeFigureRect(page, figure, tableRects, candidates) {
         // A lower plate followed by its own caption cannot be claimed by an
         // unresolved caption above it. Preserve ambiguity instead of silently
         // assigning the next figure's content to both captions.
-        (!hasUpperPlate || !nextCaptionOwnsLowerPlate)
+        !nextCaptionOwnsLowerPlate
     ),
     sideGraphics('left'),
     sideGraphics('right')
@@ -5421,6 +5742,50 @@ function associateFigureFaces(
       sidePlots[index].push(r)
     }
   }
+  // Page geometry is fixed here. Reuse caption witnesses across individual path marks.
+  const captionSideFrames = new Map()
+  const sideFrames = (caption) => {
+    let frames = captionSideFrames.get(caption)
+    if (frames) return frames
+    frames = []
+    for (const graphic of page.graphicsBounds) {
+      if (graphic.kind !== 'path') continue
+      const frame = graphic.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+      if (
+        area(frame) < page.width * page.height * 0.35 &&
+        intersection(frame, caption.rect) / area(caption.rect) > 0.8
+      )
+        frames.push(frame)
+    }
+    captionSideFrames.set(caption, frames)
+    return frames
+  }
+  const priorityWitnesses = new Map()
+  const captionPriorityWitnesses = (caption) => {
+    if (priorityWitnesses.has(caption)) return priorityWitnesses.get(caption)
+    let rasterBelow = false,
+      graphicAbove = false
+    const c = caption.rect
+    for (const graphic of page.graphicsBounds) {
+      const r = graphic.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+      if (
+        graphic.kind === 'image' &&
+        area(graphic.normalizedRect) > 0.02 &&
+        r[1] >= c[3] &&
+        r[1] - c[3] <= 36 &&
+        r[0] < c[2] &&
+        r[2] > c[0] &&
+        !pageCaptions.some((other) => other !== caption && intersection(other.rect, r) > 0)
+      )
+        rasterBelow = true
+      if (area(r) > page.width * page.height * 0.02 && r[3] <= c[1] && r[2] > c[0] && r[0] < c[2])
+        graphicAbove = true
+      if (rasterBelow && graphicAbove) break
+    }
+    const result = { rasterBelow, graphicAbove }
+    priorityWitnesses.set(caption, result)
+    return result
+  }
   // Match both caption directions; intervening prose/captions block association.
   const fullHeightPublisherStrips = page.graphicsBounds.filter(
     (strip) =>
@@ -5778,16 +6143,7 @@ function associateFigureFaces(
               rect[3] <= r[3] + 24
           )
         const framedSide =
-          side &&
-          page.graphicsBounds.some((g) => {
-            const frame = g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
-            return (
-              g.kind === 'path' &&
-              area(frame) < page.width * page.height * 0.35 &&
-              intersection(frame, rect) / area(rect) > 0.95 &&
-              intersection(frame, c) / area(c) > 0.8
-            )
-          })
+          side && sideFrames(caption).some((frame) => intersection(frame, rect) / area(rect) > 0.95)
         const beside =
           side &&
           (sidePlot ||
@@ -5950,18 +6306,7 @@ function associateFigureFaces(
               choice.gap > 24 &&
               rect[3] <= choice.caption.rect[1] &&
               choices.some((other) => !other.side && rect[1] >= other.caption.rect[3]) &&
-              page.graphicsBounds.some((g) => {
-                const r = g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
-                return (
-                  g.kind === 'image' &&
-                  area(g.normalizedRect) > 0.02 &&
-                  r[1] >= choice.caption.rect[3] &&
-                  r[1] - choice.caption.rect[3] <= 36 &&
-                  r[0] < choice.caption.rect[2] &&
-                  r[2] > choice.caption.rect[0] &&
-                  !pageCaptions.some((c) => c !== choice.caption && intersection(c.rect, r) > 0)
-                )
-              })
+              captionPriorityWitnesses(choice.caption).rasterBelow
             ? 2
             : // Two stacked, captioned figures can have a wide gap before the second
               // legend. Once the upper legend already has a graphic above it, the
@@ -5972,17 +6317,7 @@ function associateFigureFaces(
                   (other) =>
                     !other.side &&
                     rect[3] <= other.caption.rect[1] + edgeTolerance &&
-                    page.graphicsBounds.some((g) => {
-                      const r = g.normalizedRect.map(
-                        (v, i) => v * (i % 2 ? page.height : page.width)
-                      )
-                      return (
-                        area(r) > page.width * page.height * 0.02 &&
-                        r[3] <= choice.caption.rect[1] &&
-                        r[2] > choice.caption.rect[0] &&
-                        r[0] < choice.caption.rect[2]
-                      )
-                    })
+                    captionPriorityWitnesses(choice.caption).graphicAbove
                 )
               ? 2
               : choice.gap <= 24 &&

@@ -31,6 +31,26 @@ For historical releases that predate this directory, the mirror workflow preserv
 it reads and condenses the GitHub Release body into English notes. A historical release therefore does
 not need a repository directory unless localized backfill is wanted.
 
+## Contributor recognition
+
+Before publishing, review the merged PRs and associated issues in the release range for contributor
+credit, including documentation, translations, testing, and bug reports. The release workflow uses
+`en.md` directly; it does not automatically append GitHub's generated contributor list.
+
+- When there are contributions to acknowledge, retain or add a concise **Acknowledgements** section or credit the
+  person beside the relevant change. Link their public GitHub profile and the supporting PR or issue.
+- Verify attribution against the original contribution. Do not infer a person's employer or label
+  them as internal or external from their profile, and do not invent names or contributions.
+- Respect preferred public identities and requests for anonymity. For security reports, coordinate
+  credit and disclosure timing through the [security policy](../SECURITY.md).
+- Keep credited identities and contribution links consistent in every translation supplied for the
+  release. A missing translation uses the existing English fallback.
+- Finalize acknowledgements in `en.md` before publishing the stable tag: it is also the GitHub Release
+  body and Zenodo description. Do not rely on a later GitHub body edit to update the archived record.
+
+See [Contributor recognition](../CONTRIBUTING.md#contributor-recognition) for authorship and
+co-author handling during review and merge.
+
 ## Scope, safety, and privacy disclosures
 
 Review each release for changes to functional boundaries, security controls, and data handling.

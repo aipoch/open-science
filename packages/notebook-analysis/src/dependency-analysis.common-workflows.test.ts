@@ -16,7 +16,7 @@ const commonAnalysisScripts = [
   [
     'r',
     'table row labels',
-    'counts <- data.frame(group=c("Ctrl", "IRI"), n=c(33, 33))\nfor (i in seq_len(nrow(counts))) { pct <- counts$n[i] / sum(counts$n) * 100; print(sprintf("%.1f%%", pct)) }'
+    'values <- c(33, 33)\ncounts <- data.frame(group=c("Ctrl", "IRI"), n=values)\nfor (i in seq_len(nrow(counts))) { pct <- counts$n[i] / sum(values) * 100; print(sprintf("%.1f%%", pct)) }'
   ],
   [
     'r',
@@ -154,6 +154,17 @@ it.each(commonAnalysisScripts)('resolves common %s %s', async (language, _name, 
       storageRoot: root,
       repository: { readSessionRuns: async () => [run] }
     }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
+    if (language === 'r' && _name === 'table proportions') {
+      // A table's class reaches Math dispatch; ordinary table ownership is not
+      // a classless atomic proof for the rounding operation.
+      expect(projection.stalenessByRunId.run).toMatchObject({ state: 'unknown' })
+      expect(await analyzeNotebookSourceFileAccess(language, script)).toMatchObject({
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      return
+    }
     expect(projection.stalenessByRunId.run).toEqual({ state: 'clear' })
     expect(await analyzeNotebookSourceFileAccess(language, script)).toMatchObject({
       readState: 'complete',

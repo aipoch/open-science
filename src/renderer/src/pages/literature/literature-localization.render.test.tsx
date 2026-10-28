@@ -112,6 +112,7 @@ it('retranslates shared rating labels without replacing focused row controls or 
       selectionStore={createLiteratureSelectionStore()}
       visibleOrderedTableColumns={['rating']}
       tableColumnLabels={{
+        readingStatus: 'Status',
         type: 'Type',
         authors: 'Authors',
         year: 'Year',
@@ -142,6 +143,7 @@ it('retranslates shared rating labels without replacing focused row controls or 
       rowActions={{
         current: {
           persistInlineItem,
+          setReadingStatus: vi.fn(),
           openSelectedItemDetail: vi.fn(),
           previewFirstAttachment: vi.fn(),
           setItemsLifecycle: vi.fn(),

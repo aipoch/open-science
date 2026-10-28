@@ -1,3 +1,10 @@
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
+  SplitButtonContent
+} from '@/components/ui/split-button'
 import { SinglePagePdfPreview } from './SinglePagePdfPreview'
 import { desktopRuntimeWritable } from '@/stores/desktop-runtime-recovery-store'
 import { isPdfTranslationLanguageSupported } from '@aipoch/pdf-translation/text'
@@ -66,12 +73,7 @@ import { PdfTranslationEditions } from './PdfTranslationEditions'
 
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import {
   Popover,
@@ -680,57 +682,55 @@ const PdfInteractionControls = ({
             </Tooltip>
           ))}
           <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
-          <div
-            className="annotation-style-split flex shrink-0 items-center rounded-md"
-            data-open={styleOpen}
+          <SplitButton
+            kind="popover"
+            open={styleOpen}
+            onOpenChange={(open) => {
+              cancelOptionsHover()
+              setStyleOpen(open)
+            }}
           >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant={mode === 'text-annotation' ? 'secondary' : 'ghost'}
-                  size="icon-sm"
-                  className={cn(
-                    'annotation-style-apply size-7 rounded-r-none p-0',
-                    !canAnnotateText && 'opacity-50 cursor-not-allowed'
-                  )}
-                  aria-disabled={!canAnnotateText}
-                  aria-label={t('Annotate selected text')}
-                  aria-pressed={mode === 'text-annotation'}
-                  onClick={() => {
-                    if (!canAnnotateText) return
-                    cancelOptionsHover()
-                    setStyleOpen(false)
-                    onModeChange(mode === 'text-annotation' ? 'select' : 'text-annotation')
-                  }}
-                >
-                  <span
-                    className="inline-flex size-6 items-center justify-center rounded-sm text-neutral-900"
-                    style={{
-                      backgroundColor: `var(--color-${textMarkStyle.color === 'yellow' ? 'amber' : textMarkStyle.color === 'pink' ? 'rose' : textMarkStyle.color}-300)`
+            <SplitButtonGroup className="annotation-style-split">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SplitButtonPrimary
+                    type="button"
+                    variant={mode === 'text-annotation' ? 'secondary' : 'ghost'}
+                    size="icon-sm"
+                    className={cn(
+                      'annotation-style-apply size-7 p-0',
+                      !canAnnotateText && 'opacity-50 cursor-not-allowed'
+                    )}
+                    aria-disabled={!canAnnotateText}
+                    aria-label={t('Annotate selected text')}
+                    aria-pressed={mode === 'text-annotation'}
+                    onClick={() => {
+                      if (!canAnnotateText) return
+                      cancelOptionsHover()
+                      setStyleOpen(false)
+                      onModeChange(mode === 'text-annotation' ? 'select' : 'text-annotation')
                     }}
                   >
-                    <MarkIcon className="size-4" aria-hidden="true" />
-                  </span>
-                </Button>
-              </TooltipTrigger>
-              <PdfToolbarTooltip
-                label={t('Annotate')}
-                plain={!canAnnotateText}
-                description={
-                  canAnnotateText
-                    ? t('Select text to annotate. Press Esc to exit.')
-                    : annotationUnavailableReason
-                }
-              />
-            </Tooltip>
-            <Popover
-              open={styleOpen}
-              onOpenChange={(open) => {
-                cancelOptionsHover()
-                setStyleOpen(open)
-              }}
-            >
+                    <span
+                      className="inline-flex size-6 items-center justify-center rounded-sm text-neutral-900"
+                      style={{
+                        backgroundColor: `var(--color-${textMarkStyle.color === 'yellow' ? 'amber' : textMarkStyle.color === 'pink' ? 'rose' : textMarkStyle.color}-300)`
+                      }}
+                    >
+                      <MarkIcon className="size-4" aria-hidden="true" />
+                    </span>
+                  </SplitButtonPrimary>
+                </TooltipTrigger>
+                <PdfToolbarTooltip
+                  label={t('Annotate')}
+                  plain={!canAnnotateText}
+                  description={
+                    canAnnotateText
+                      ? t('Select text to annotate. Press Esc to exit.')
+                      : annotationUnavailableReason
+                  }
+                />
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger
                   asChild
@@ -738,40 +738,38 @@ const PdfInteractionControls = ({
                     if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
                   }}
                 >
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className={cn(
-                        'annotation-style-trigger h-7 w-6 rounded-l-none text-muted-foreground',
-                        !canAnnotateText && 'opacity-50 cursor-not-allowed'
-                      )}
-                      aria-disabled={!canAnnotateText}
-                      aria-label={t('Mark style')}
-                      onPointerEnter={(event) => {
-                        cancelOptionsHover()
-                        if (event.pointerType === 'touch' || !canAnnotateText || styleOpen) return
-                        optionsHoverTimer.current = setTimeout(() => {
-                          optionsOpenedByHover.current = true
-                          setStyleOpen(true)
-                        }, 120)
-                      }}
-                      onPointerLeave={closeHoveredOptions}
-                      onClick={(event) => {
-                        if (!canAnnotateText) {
-                          event.preventDefault()
-                          return
-                        }
-                        cancelOptionsHover()
-                        // Clicking an already hover-open panel pins it for keyboard/touch use.
-                        if (styleOpen && optionsOpenedByHover.current) event.preventDefault()
-                        optionsOpenedByHover.current = false
-                      }}
-                    >
-                      <ChevronDown className="size-3" aria-hidden="true" />
-                    </Button>
-                  </PopoverTrigger>
+                  <SplitButtonTrigger
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className={cn(
+                      'annotation-style-trigger h-7 w-6 text-muted-foreground',
+                      !canAnnotateText && 'opacity-50 cursor-not-allowed'
+                    )}
+                    aria-disabled={!canAnnotateText}
+                    aria-label={t('Mark style')}
+                    onPointerEnter={(event) => {
+                      cancelOptionsHover()
+                      if (event.pointerType === 'touch' || !canAnnotateText || styleOpen) return
+                      optionsHoverTimer.current = setTimeout(() => {
+                        optionsOpenedByHover.current = true
+                        setStyleOpen(true)
+                      }, 120)
+                    }}
+                    onPointerLeave={closeHoveredOptions}
+                    onClick={(event) => {
+                      if (!canAnnotateText) {
+                        event.preventDefault()
+                        return
+                      }
+                      cancelOptionsHover()
+                      // Clicking an already hover-open panel pins it for keyboard/touch use.
+                      if (styleOpen && optionsOpenedByHover.current) event.preventDefault()
+                      optionsOpenedByHover.current = false
+                    }}
+                  >
+                    <ChevronDown className="size-3" aria-hidden="true" />
+                  </SplitButtonTrigger>
                 </TooltipTrigger>
                 <PdfToolbarTooltip
                   label={t('Mark style')}
@@ -779,90 +777,88 @@ const PdfInteractionControls = ({
                   description={canAnnotateText ? undefined : annotationUnavailableReason}
                 />
               </Tooltip>
-              <PopoverContent
-                align="start"
-                onPointerEnter={cancelOptionsHover}
-                onPointerLeave={closeHoveredOptions}
-                onKeyDownCapture={() => {
-                  optionsOpenedByHover.current = false
-                }}
-                onEscapeKeyDown={(event) => event.stopPropagation()}
-                onOpenAutoFocus={(event) => {
-                  if (optionsOpenedByHover.current) event.preventDefault()
-                }}
-                onCloseAutoFocus={(event) => {
-                  if (optionsOpenedByHover.current) event.preventDefault()
-                }}
-                sideOffset={8}
-                collisionPadding={8}
-                className="annotation-popover z-[110] w-fit max-w-[calc(100vw-1rem)] space-y-3 rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
-              >
-                <PdfTextMarkControls
-                  value={textMarkStyle}
-                  onChange={(style) => {
-                    onTextMarkStyleChange(style)
-                    onModeChange('text-annotation')
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
-          </div>
-          {canSelectArea || canAnnotateArea ? (
-            <div
-              className="pdf-area-split annotation-style-split flex shrink-0 items-center rounded-md"
-              data-open={areaOpen}
+            </SplitButtonGroup>
+            <SplitButtonContent
+              align="start"
+              onPointerEnter={cancelOptionsHover}
+              onPointerLeave={closeHoveredOptions}
+              onKeyDownCapture={() => {
+                optionsOpenedByHover.current = false
+              }}
+              onEscapeKeyDown={(event) => event.stopPropagation()}
+              onOpenAutoFocus={(event) => {
+                if (optionsOpenedByHover.current) event.preventDefault()
+              }}
+              onCloseAutoFocus={(event) => {
+                if (optionsOpenedByHover.current) event.preventDefault()
+              }}
+              sideOffset={8}
+              collisionPadding={8}
+              className="annotation-popover z-[110] w-fit max-w-[calc(100vw-1rem)] space-y-3 rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
             >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'}
-                    size="icon-sm"
-                    className="pdf-area-action annotation-style-apply size-7 rounded-r-none p-0"
-                    disabled={!canAnnotateArea && !canSelectArea}
-                    aria-pressed={mode === 'area' || mode === 'area-annotation'}
-                    aria-label={
+              <PdfTextMarkControls
+                value={textMarkStyle}
+                onChange={(style) => {
+                  onTextMarkStyleChange(style)
+                  onModeChange('text-annotation')
+                }}
+              />
+            </SplitButtonContent>
+          </SplitButton>
+          {canSelectArea || canAnnotateArea ? (
+            <SplitButton
+              open={areaOpen}
+              onOpenChange={(open) => {
+                cancelOptionsHover()
+                setOpenOptions(open ? 'area' : undefined)
+              }}
+            >
+              <SplitButtonGroup className="pdf-area-split annotation-style-split">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SplitButtonPrimary
+                      type="button"
+                      variant={
+                        mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'
+                      }
+                      size="icon-sm"
+                      className="pdf-area-action annotation-style-apply size-7 p-0"
+                      disabled={!canAnnotateArea && !canSelectArea}
+                      aria-pressed={mode === 'area' || mode === 'area-annotation'}
+                      aria-label={
+                        mode === 'area-annotation' || !canSelectArea
+                          ? t('Select area to annotate')
+                          : t('Select area for Agent')
+                      }
+                      onClick={() => {
+                        cancelOptionsHover()
+                        setOpenOptions(undefined)
+                        onModeChange(
+                          mode === 'area-annotation' || !canSelectArea ? 'area-annotation' : 'area'
+                        )
+                      }}
+                    >
+                      {mode === 'area-annotation' || !canSelectArea ? (
+                        <SquareDashedMousePointer className="size-3.5" aria-hidden="true" />
+                      ) : (
+                        <Scan className="size-3.5" aria-hidden="true" />
+                      )}
+                    </SplitButtonPrimary>
+                  </TooltipTrigger>
+                  <PdfToolbarTooltip
+                    label={
                       mode === 'area-annotation' || !canSelectArea
                         ? t('Select area to annotate')
                         : t('Select area for Agent')
                     }
-                    onClick={() => {
-                      cancelOptionsHover()
-                      setOpenOptions(undefined)
-                      onModeChange(
-                        mode === 'area-annotation' || !canSelectArea ? 'area-annotation' : 'area'
-                      )
-                    }}
-                  >
-                    {mode === 'area-annotation' || !canSelectArea ? (
-                      <SquareDashedMousePointer className="size-3.5" aria-hidden="true" />
-                    ) : (
-                      <Scan className="size-3.5" aria-hidden="true" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <PdfToolbarTooltip
-                  label={
-                    mode === 'area-annotation' || !canSelectArea
-                      ? t('Select area to annotate')
-                      : t('Select area for Agent')
-                  }
-                  plain={usesAreaAnnotation ? !canAnnotateArea : !canSelectArea}
-                  description={
-                    mode === 'area-annotation' || !canSelectArea
-                      ? t('Drag to annotate an area · Esc to cancel')
-                      : t('Drag to send an area to Agent · Esc to cancel')
-                  }
-                />
-              </Tooltip>
-              <DropdownMenu
-                modal={false}
-                open={areaOpen}
-                onOpenChange={(open) => {
-                  cancelOptionsHover()
-                  setOpenOptions(open ? 'area' : undefined)
-                }}
-              >
+                    plain={usesAreaAnnotation ? !canAnnotateArea : !canSelectArea}
+                    description={
+                      mode === 'area-annotation' || !canSelectArea
+                        ? t('Drag to annotate an area · Esc to cancel')
+                        : t('Drag to send an area to Agent · Esc to cancel')
+                    }
+                  />
+                </Tooltip>
                 <Tooltip>
                   <TooltipTrigger
                     asChild
@@ -870,101 +866,97 @@ const PdfInteractionControls = ({
                       if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
                     }}
                   >
-                    <DropdownMenuTrigger
-                      asChild
+                    <SplitButtonTrigger
                       onPointerDown={(event) => {
                         cancelOptionsHover()
                         if (areaOpen && optionsOpenedByHover.current) event.preventDefault()
                         optionsOpenedByHover.current = false
                       }}
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="pdf-area-menu-trigger annotation-style-trigger h-7 w-6 text-muted-foreground"
+                      aria-label={t('Area selection actions')}
+                      onPointerEnter={(event) => {
+                        cancelOptionsHover()
+                        if (event.pointerType === 'touch' || areaOpen) return
+                        optionsHoverTimer.current = setTimeout(() => {
+                          optionsOpenedByHover.current = true
+                          setOpenOptions('area')
+                        }, 120)
+                      }}
+                      onPointerLeave={closeHoveredOptions}
                     >
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="pdf-area-menu-trigger annotation-style-trigger h-7 w-6 rounded-l-none text-muted-foreground"
-                        aria-label={t('Area selection actions')}
-                        onPointerEnter={(event) => {
-                          cancelOptionsHover()
-                          if (event.pointerType === 'touch' || areaOpen) return
-                          optionsHoverTimer.current = setTimeout(() => {
-                            optionsOpenedByHover.current = true
-                            setOpenOptions('area')
-                          }, 120)
-                        }}
-                        onPointerLeave={closeHoveredOptions}
-                      >
-                        <ChevronDown className="size-3" aria-hidden="true" />
-                      </Button>
-                    </DropdownMenuTrigger>
+                      <ChevronDown className="size-3" aria-hidden="true" />
+                    </SplitButtonTrigger>
                   </TooltipTrigger>
                   <PdfToolbarTooltip label={t('Area selection actions')} />
                 </Tooltip>
-                <DropdownMenuContent
-                  align="start"
-                  sideOffset={8}
-                  collisionPadding={8}
-                  className="annotation-popover z-[110]"
-                  onPointerEnter={cancelOptionsHover}
-                  onPointerLeave={closeHoveredOptions}
-                  onKeyDownCapture={() => {
-                    optionsOpenedByHover.current = false
-                  }}
-                  onEscapeKeyDown={(event) => event.stopPropagation()}
-                  onInteractOutside={(event) => {
-                    if (
-                      event.target instanceof Element &&
-                      event.target.closest('.pdf-area-menu-trigger')
-                    )
-                      event.preventDefault()
-                  }}
-                  onCloseAutoFocus={(event) => {
-                    if (optionsOpenedByHover.current) event.preventDefault()
-                  }}
-                >
-                  {[
-                    {
-                      mode: 'area' as const,
-                      available: canSelectArea,
-                      label: t('Select area for Agent'),
-                      icon: Scan,
-                      reason: areaAgentUnavailableReason
-                    },
-                    {
-                      mode: 'area-annotation' as const,
-                      available: canAnnotateArea,
-                      label: t('Select area to annotate'),
-                      icon: SquareDashedMousePointer,
-                      reason: annotationUnavailableReason
-                    }
-                  ].map(({ mode: actionMode, available, label, icon: Icon, reason }) => (
-                    <Tooltip key={actionMode}>
-                      <TooltipTrigger asChild>
-                        <DropdownMenuItem
-                          aria-disabled={!available}
-                          className={!available ? 'cursor-not-allowed opacity-50' : undefined}
-                          onSelect={(event) => {
-                            if (!available) event.preventDefault()
-                            else onModeChange(actionMode)
-                          }}
-                        >
-                          <Icon className="mr-2 size-4" aria-hidden="true" />
-                          {label}
-                        </DropdownMenuItem>
-                      </TooltipTrigger>
-                      {!available ? (
-                        <PdfToolbarTooltip
-                          label={label}
-                          plain={!available}
-                          description={reason}
-                          side="right"
-                        />
-                      ) : null}
-                    </Tooltip>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+              </SplitButtonGroup>
+              <SplitButtonContent
+                align="start"
+                sideOffset={8}
+                collisionPadding={8}
+                className="annotation-popover z-[110]"
+                onPointerEnter={cancelOptionsHover}
+                onPointerLeave={closeHoveredOptions}
+                onKeyDownCapture={() => {
+                  optionsOpenedByHover.current = false
+                }}
+                onEscapeKeyDown={(event) => event.stopPropagation()}
+                onInteractOutside={(event) => {
+                  if (
+                    event.target instanceof Element &&
+                    event.target.closest('.pdf-area-menu-trigger')
+                  )
+                    event.preventDefault()
+                }}
+                onCloseAutoFocus={(event) => {
+                  if (optionsOpenedByHover.current) event.preventDefault()
+                }}
+              >
+                {[
+                  {
+                    mode: 'area' as const,
+                    available: canSelectArea,
+                    label: t('Select area for Agent'),
+                    icon: Scan,
+                    reason: areaAgentUnavailableReason
+                  },
+                  {
+                    mode: 'area-annotation' as const,
+                    available: canAnnotateArea,
+                    label: t('Select area to annotate'),
+                    icon: SquareDashedMousePointer,
+                    reason: annotationUnavailableReason
+                  }
+                ].map(({ mode: actionMode, available, label, icon: Icon, reason }) => (
+                  <Tooltip key={actionMode}>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuItem
+                        aria-disabled={!available}
+                        className={!available ? 'cursor-not-allowed opacity-50' : undefined}
+                        onSelect={(event) => {
+                          if (!available) event.preventDefault()
+                          else onModeChange(actionMode)
+                        }}
+                      >
+                        <Icon className="mr-2 size-4" aria-hidden="true" />
+                        {label}
+                      </DropdownMenuItem>
+                    </TooltipTrigger>
+                    {!available ? (
+                      <PdfToolbarTooltip
+                        label={label}
+                        plain={!available}
+                        description={reason}
+                        side="right"
+                      />
+                    ) : null}
+                  </Tooltip>
+                ))}
+              </SplitButtonContent>
+            </SplitButton>
           ) : null}
           <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
           <Tooltip>

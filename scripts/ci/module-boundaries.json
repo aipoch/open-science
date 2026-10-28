@@ -5138,7 +5138,8 @@
         "src/renderer/src/components/notice.tsx",
         "src/renderer/src/lib/utils.ts",
         "src/renderer/src/pages/literature/imports/LiteratureImportDialogFrame.tsx",
-        "src/renderer/src/components/ui/workflow-dialog-frame.tsx"
+        "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
+        "src/renderer/src/components/ui/split-button.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -5173,7 +5174,8 @@
         "src/renderer/src/components/notice.tsx": "presentation-adapter",
         "src/renderer/src/lib/utils.ts": "presentation-model",
         "src/renderer/src/pages/literature/imports/LiteratureImportDialogFrame.tsx": "presentation-adapter",
-        "src/renderer/src/components/ui/workflow-dialog-frame.tsx": "presentation-adapter"
+        "src/renderer/src/components/ui/workflow-dialog-frame.tsx": "presentation-adapter",
+        "src/renderer/src/components/ui/split-button.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -5185,7 +5187,8 @@
         "src/renderer/src/components/ui/resizable.modal-isolation.test.tsx",
         "src/renderer/src/components/ui/resizable.test.tsx",
         "src/renderer/src/components/ui/use-retained-dialog-value.test.tsx",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/renderer/src/components/ui/split-button.test.tsx"
       ],
       "externalImports": [
         "@shadcn/react/message-scroller",
@@ -5200,7 +5203,10 @@
       ],
       "pureExternalImports": {
         "src/renderer/src/lib/utils.ts": ["clsx", "tailwind-merge"]
-      }
+      },
+      "resourcePaths": ["src/renderer/src/components/ui/split-button.css"],
+      "resourceImports": ["src/renderer/src/components/ui/split-button.css"],
+      "resourceTests": ["src/renderer/src/components/ui/split-button.test.tsx"]
     },
     "renderer_utilities": {
       "sources": [
@@ -7722,6 +7728,7 @@
     "workspace_tool_model": {
       "sources": [
         "src/renderer/src/pages/workspace/agent-loading-message.ts",
+        "src/renderer/src/pages/workspace/authorized-directories-presentation.ts",
         "src/renderer/src/pages/workspace/handoff-lifecycle-projection.ts",
         "src/renderer/src/pages/workspace/session-notebook-projection.ts",
         "src/renderer/src/pages/workspace/subagent-release-projection.ts",
@@ -7747,7 +7754,8 @@
         "src/renderer/src/pages/workspace/workspace-tool-activity-details.ts": "presentation-adapter",
         "src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts": "presentation-adapter",
         "src/renderer/src/pages/workspace/workspace-tool-activity-style.ts": "presentation-adapter",
-        "src/renderer/src/pages/workspace/workspace-web-search-details.ts": "presentation-adapter"
+        "src/renderer/src/pages/workspace/workspace-web-search-details.ts": "presentation-adapter",
+        "src/renderer/src/pages/workspace/authorized-directories-presentation.ts": "presentation-model"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -9088,6 +9096,7 @@
     },
     "workspace_tool_presentation": {
       "sources": [
+        "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx",
         "src/renderer/src/pages/workspace/LiteratureCandidateStatus.tsx",
         "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx",
         "src/renderer/src/pages/workspace/WorkspaceLiteratureToolCard.tsx",
@@ -9111,10 +9120,12 @@
         "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx": "presentation-adapter",
-        "src/renderer/src/pages/workspace/LiteratureToolReferenceList.tsx": "presentation-adapter"
+        "src/renderer/src/pages/workspace/LiteratureToolReferenceList.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
+        "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.test.tsx",
         "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
         "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.render.test.tsx",
         "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
@@ -9325,8 +9336,6 @@
         "src/renderer/src/pages/workspace/session-permissions.ts": "presentation-model",
         "src/renderer/src/pages/workspace/PermissionScopeButton.tsx": "presentation-adapter"
       },
-      "resourcePaths": ["src/renderer/src/pages/workspace/question-skip-button.css"],
-      "resourceImports": ["src/renderer/src/pages/workspace/question-skip-button.css"],
       "resourceTests": [
         "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx"
       ],

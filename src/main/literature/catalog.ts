@@ -47,6 +47,7 @@ import {
   literatureCandidateInputSchema,
   literatureCandidateOriginSchema,
   literaturePdfProvenanceSchema,
+  literatureReadingStatusSchema,
   type LiteratureCandidateInput,
   type LiteratureCatalogCommand,
   type LiteratureCatalogReceipt,
@@ -275,6 +276,7 @@ const toItemView = (row: LiteratureItemRow): LiteratureItemView => ({
   })),
   projectIds: row.projects.map(({ projectId }) => projectId),
   collectionIds: row.collections.map(({ collectionId }) => collectionId),
+  readingStatus: literatureReadingStatusSchema.parse(row.readingStatus),
   metadataRevision: row.metadataRevision,
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime(),
@@ -909,6 +911,8 @@ class LiteratureCatalog {
       predicates.push(
         Prisma.sql`EXISTS (SELECT 1 FROM "TagAssignment" t WHERE t."resourceType" = 'literature.item' AND t."resourceId" = i.id AND t."tagId" = ${tagId})`
       )
+    if (filter?.readingStatus !== undefined)
+      predicates.push(Prisma.sql`i."readingStatus" = ${filter.readingStatus}`)
     if (filter?.itemTypes?.length)
       predicates.push(Prisma.sql`i."itemType" IN (${Prisma.join(filter.itemTypes)})`)
     if (filter?.yearFrom !== undefined)
@@ -1801,6 +1805,8 @@ class LiteratureCatalog {
         return this.setProjectItem(command)
       case 'set-project-items':
         return this.setProjectItems(command)
+      case 'set-reading-status':
+        return this.setReadingStatus(command)
       case 'set-item-lifecycle':
         return this.setItemLifecycle(command)
       case 'delete-items-permanently':
@@ -2007,6 +2013,25 @@ class LiteratureCatalog {
     const client = await this.getClient()
     return this.commit(client, (tx) => this.domain(tx).setProjectItems(command), {
       itemIds: [...new Set(command.itemIds)]
+    })
+  }
+
+  private async setReadingStatus(
+    command: Extract<LiteratureCatalogCommand, { kind: 'set-reading-status' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    return withDataRootWrite(async () => {
+      const client = await this.getClient()
+      const receipt = await client.$transaction((tx) => this.domain(tx).setReadingStatus(command), {
+        maxWait: 30_000
+      })
+      // Personal reading state is not metadata or screening evidence. Publish after commit
+      // without invalidating duplicate groups or scheduling automatic AI screening.
+      try {
+        this.onChanged?.({ itemIds: receipt.itemIds!, revision: ++this.revision })
+      } catch (error) {
+        log.warn('Could not publish committed literature reading status', { error })
+      }
+      return receipt
     })
   }
 
@@ -2449,6 +2474,13 @@ class LiteratureCatalog {
           where: { projectId, itemId: { in: [...ids] } }
         })
       },
+      setReadingStatus: async (ids, readingStatus) =>
+        (
+          await transaction.literatureItem.updateMany({
+            where: { id: { in: [...ids] }, deletedAt: null, mergedIntoItemId: null },
+            data: { readingStatus }
+          })
+        ).count,
       setLifecycle: async (ids, state) =>
         (
           await transaction.literatureItem.updateMany({

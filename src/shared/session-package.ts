@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { useCaseSourceSchema } from './use-cases'
 import { PROJECT_NAME_MAX_LENGTH } from './projects'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
@@ -163,6 +164,7 @@ export type PackageOperationSnapshot = {
   importTarget?: SessionPackageImportRequest
   presentationRevision?: number
   importRequestId?: string
+  useCaseDownload?: { slug: string; completedBytes: number; totalBytes?: number }
   importFilename?: string
   importPreview?: SessionPackagePreview
   pendingImports?: { id: string; filename: string }[]
@@ -349,6 +351,14 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
     importTarget: sessionPackageImportRequestSchema.optional(),
     presentationRevision: z.number().int().nonnegative().optional(),
     importRequestId: identity.optional(),
+    useCaseDownload: z
+      .object({
+        slug: useCaseSourceSchema.shape.useCase,
+        completedBytes: z.number().int().nonnegative(),
+        totalBytes: z.number().int().positive().optional()
+      })
+      .strict()
+      .optional(),
     importFilename: z.string().optional(),
     importPreview: sessionPackagePreviewSchema.optional(),
     pendingImports: z
@@ -519,10 +529,14 @@ export const sessionPackageCommandContracts = {
         .tuple([
           sessionPackageImportRequestSchema.optional(),
           z
-            .string()
-            .min(1)
-            .max(32768)
-            .regex(/\.science$/i)
+            .union([
+              z
+                .string()
+                .min(1)
+                .max(32768)
+                .regex(/\.science$/i),
+              useCaseSourceSchema
+            ])
             .optional(),
           z
             .object({ nonInteractive: z.literal(true) })

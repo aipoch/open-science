@@ -223,8 +223,8 @@ describe('CredentialsPanel', () => {
         await Promise.resolve()
       })
 
-      expect(document.body.textContent).toContain(`API key · ${expectedStatus}`)
-      expect(document.body.textContent).not.toContain('API key · Stored')
+      expect(document.body.textContent).toContain(`API key / ${expectedStatus}`)
+      expect(document.body.textContent).not.toContain('API key: Stored')
     }
   )
 
