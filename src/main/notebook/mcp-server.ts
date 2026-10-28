@@ -230,7 +230,7 @@ const INSPECT_PACKAGES_DOC = [
 const MANAGE_PACKAGES_DOC = [
   'Install only through this tool in the session-bound runtime. Set language="python" or language="r"; usePip=true only for PyPI-only packages; channels only when needed.',
   'Managed R: installer="biocmanager" takes Bioconductor names; installer="github" takes owner/repository or owner/repository@ref. Both verify the target R library inventory after installation.',
-  'conda defaults to conda-forge + bioconda. Pass plain CRAN names ("dplyr" → r-dplyr). Bioconda does not support Windows. On Windows, use installer="biocmanager" with case-sensitive R package names (for example, "GSVA"); request Bioconductor packages separately from conda packages. On Linux/macOS, conda accepts lowercase Bioconda IDs (DESeq2 → "bioconductor-deseq2") without an r- prefix.',
+  'conda: conda-forge + bioconda; CRAN names → r-*. Bioconda does not support Windows. On Windows, use installer="biocmanager" separately with case-sensitive R package names. Linux/macOS: lowercase bioconductor-* without r-.',
   'There is no per-call environment: bind/switch first. Default runtimes are additive-only (bare name or exact name==version); uninstall, ranges, URLs, extras, and downgrades require a named environment. External runtimes may refuse writes; surface that result.',
   'operation:"uninstall" is named-only. Results include a target receipt. unchanged means only target distribution metadata is unchanged; verify imports with notebook_execute. Use notebook_restart when needsRestart.',
   'Never use apt, brew, sudo, curl | bash, subprocess installs, %pip, !pip, or install.packages(), and never substitute another library. Report required OS dependencies to the user instead of installing them.'
