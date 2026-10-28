@@ -29,6 +29,8 @@ files:
   - '!**/{.worktree,.worktrees,.codegraph,.agents}{,/**/*}'
   # Runtime source builds, diagnostic traces and internal plans are local-only artifacts.
   - '!tmp{,/**/*}'
+  # An output-directory override only excludes that destination. Never package old default outputs.
+  - '!dist{,/**/*}'
   # electron-builder does not apply .gitignore: local papers, model spikes, screenshots and
   # traces must never enter an installer built from a developer checkout.
   - '!docs/{internal,superpowers}{,/**/*}'

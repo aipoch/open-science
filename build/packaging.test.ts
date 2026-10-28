@@ -8,6 +8,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -105,6 +106,73 @@ function findNsisCompiler(): string | undefined {
 }
 
 const nsisCompiler = findNsisCompiler()
+
+describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
+  it('runs the upstream check with native PowerShell on AMD64', () => {
+    const root = mkdtempSync(join(tmpdir(), 'nsis-app-check-'))
+    try {
+      const executable = join(root, 'check.exe')
+      const output = join(root, 'result.txt')
+      const source = join(root, 'check.nsi')
+      // An uncreated, unique executable name keeps this test on the no-process path.
+      const name = `unused-${root.split(/[/\\]/).at(-1)}.exe`
+      writeFileSync(
+        source,
+        [
+          'Unicode true',
+          'RequestExecutionLevel user',
+          'SilentInstall silent',
+          `OutFile "${executable}"`,
+          `InstallDir "${join(root, 'app')}"`,
+          `!addincludedir "${join(appBuilderLibRoot, 'templates/nsis/include')}"`,
+          '!include LogicLib.nsh',
+          '!define isUpdated "0 == 1"',
+          `!define APP_EXECUTABLE_FILENAME "${name}"`,
+          `!include "${join(repoRoot, 'build/windows-app-running.nsh')}"`,
+          '!include allowOnlyOneInstallerInstance.nsh',
+          `LoadLanguageFile "${join(dirname(nsisCompiler!), 'Contrib/Language files/English.nlf')}"`,
+          'LangString appRunning 1033 "Fixture running"',
+          'LangString appClosing 1033 "Closing fixture"',
+          'LangString appCannotBeClosed 1033 "Fixture cannot close"',
+          'Section',
+          '!insertmacro CHECK_APP_RUNNING',
+          `nsExec::ExecToStack '"$PowerShellPath" -NoProfile -NonInteractive -Command "[Environment]::Is64BitProcess"'`,
+          'Pop $2',
+          'Pop $1',
+          `FileOpen $0 "${output}" w`,
+          'FileWrite $0 "code=$2$\\r$\\nbitness=$1host=$PowerShellPath$\\r$\\n"',
+          '${If} ${IsNativeAMD64}',
+          'FileWrite $0 "nativeAMD64=true"',
+          '${Else}',
+          'FileWrite $0 "nativeAMD64=false"',
+          '${EndIf}',
+          'FileClose $0',
+          'SectionEnd'
+        ].join('\n')
+      )
+      const compiled = spawnSync(nsisCompiler!, ['/V2', source], {
+        windowsHide: true,
+        encoding: 'utf8',
+        timeout: 30_000,
+        env: { ...process.env, NSISDIR: dirname(nsisCompiler!) }
+      })
+      expect(compiled.status, compiled.stderr).toBe(0)
+      const run = spawnSync(executable, ['/S'], { windowsHide: true, timeout: 30_000 })
+      expect(run.error).toBeUndefined()
+      expect(run.status).toBe(0)
+      const result = readFileSync(output, 'utf8')
+      expect(result).toContain('code=0')
+      if (result.includes('nativeAMD64=true')) {
+        expect(result).toContain('bitness=True')
+        expect(result).toMatch(/host=.*\\Sysnative\\WindowsPowerShell/)
+      } else {
+        expect(result).not.toContain('\\Sysnative\\')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
 
 describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(
   'NSIS data preservation native behavior (%s)',
@@ -220,6 +288,29 @@ SectionEnd
 )
 
 describe('packaging config', () => {
+  it('excludes previous dist artifacts when the output directory is overridden', () => {
+    const config = load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
+      files: string[]
+    }
+    const { FileMatcher } = appBuilderRequire('./out/fileMatcher')
+    const matcher = new FileMatcher(
+      repoRoot,
+      join(tmpdir(), 'external-package-output'),
+      (s: string) => s,
+      ['**/*', ...config.files]
+    )
+    const filter = matcher.createFilter()
+    const file = statSync(join(repoRoot, 'package.json'))
+    const directory = statSync(repoRoot)
+    expect(filter(join(repoRoot, 'dist'), directory)).toBe(false)
+    expect(filter(join(repoRoot, 'dist', 'old-setup.exe'), file)).toBe(false)
+    expect(filter(join(repoRoot, 'dist', 'win-unpacked', 'resources', 'app.asar'), file)).toBe(
+      false
+    )
+    expect(filter(join(repoRoot, 'out', 'main', 'index.js'), file)).toBe(true)
+    expect(filter(join(repoRoot, 'node_modules', 'zod', 'dist', 'index.js'), file)).toBe(true)
+  })
+
   it('loads both tiktoken WASM encodings from a packed ASAR in Electron', async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'tiktoken-asar-')))
     try {

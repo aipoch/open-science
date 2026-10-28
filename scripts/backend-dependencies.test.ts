@@ -1,9 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   assertBackendImports,
@@ -16,6 +26,7 @@ import {
   isElectronPackage,
   isBackendRuntimeDependency,
   isShippableDependencyPath,
+  inlineDesktopDependencyMaps,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
 
@@ -46,6 +57,144 @@ describe('generated native Prisma payload', () => {
       }
     }
   })
+})
+
+it('embeds audited dependency maps without changing executable bytes or mapped exceptions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-inline-map-'))
+  try {
+    const manifest = { name: 'ajv', version: '8.20.0' }
+    const code = 'throw new Error("mapped fixture")\n//# sourceMappingURL=entry.cjs.map\n'
+    const map = JSON.stringify({
+      version: 3,
+      sources: ['original.ts'],
+      sourcesContent: ['throw new Error("mapped fixture")'],
+      names: [],
+      mappings: 'AAAA'
+    })
+    await writeFile(join(root, 'entry.cjs'), code)
+    await writeFile(join(root, 'entry.cjs.map'), map)
+    const stack = async (): Promise<string> => {
+      try {
+        await promisify(execFile)(process.execPath, [
+          '--enable-source-maps',
+          join(root, 'entry.cjs')
+        ])
+        throw new Error('Expected fixture failure')
+      } catch (error) {
+        return (error as { stderr: string }).stderr
+      }
+    }
+    const before = await stack()
+    expect(before).toContain('original.ts:1:1')
+    expect(await inlineDesktopDependencyMaps({ ...manifest, version: '8.20.1' }, root)).toBe(0)
+    expect(await readFile(join(root, 'entry.cjs'), 'utf8')).toBe(code)
+    expect(await inlineDesktopDependencyMaps(manifest, root)).toBe(1)
+    expect(await stack()).toBe(before)
+    const after = await readFile(join(root, 'entry.cjs'), 'utf8')
+    expect(after).toBe(
+      code.replace(
+        'entry.cjs.map',
+        `data:application/json;base64,${Buffer.from(map).toString('base64')}`
+      )
+    )
+    expect(await readdir(root)).toEqual(['entry.cjs'])
+    expect(await inlineDesktopDependencyMaps(manifest, root)).toBe(0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('preserves every real audited module and diagnostic map byte when embedding maps', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-real-maps-'))
+  try {
+    for (const [name, count] of [
+      ['@modelcontextprotocol/sdk', 174],
+      ['ajv', 106],
+      ['tar', 62],
+      ['@agentclientprotocol/sdk', 55]
+    ] as const) {
+      const source = join(process.cwd(), 'node_modules', name)
+      const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+      const target = join(root, name)
+      const includes = createDesktopDependencyFilter(manifest)
+      await cp(source, target, {
+        recursive: true,
+        dereference: true,
+        filter: async (file) => {
+          const path = relative(source, file)
+          return (
+            backendDependencyIncludes(manifest, path) &&
+            includes(path, (await stat(file)).isDirectory())
+          )
+        }
+      })
+      const before = new Map<string, Buffer>()
+      for (const file of await readdir(target, { recursive: true })) {
+        if ((await stat(join(target, file))).isFile())
+          before.set(file, await readFile(join(target, file)))
+      }
+      expect(await inlineDesktopDependencyMaps(manifest, target)).toBe(count)
+      let changed = 0
+      for (const [file, bytes] of before) {
+        const current = await readFile(join(target, file)).catch((error) => {
+          if (error.code !== 'ENOENT') throw error
+          return undefined
+        })
+        if (!current) {
+          expect(file).toMatch(/\.(?:js|mjs|cjs)\.map$/)
+          expect(before.has(file.slice(0, -4))).toBe(true)
+          continue
+        }
+        if (current.equals(bytes)) continue
+        const code = bytes.toString('utf8')
+        const map = before.get(`${file}.map`)!
+        const match = code.match(/\/\/# sourceMappingURL=([^\s]+)(\r?\n)?$/)!
+        expect(current.toString('utf8')).toBe(
+          code.slice(0, match.index) +
+            match[0].replace(match[1], `data:application/json;base64,${map.toString('base64')}`)
+        )
+        changed++
+      }
+      expect(changed).toBe(count)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30000)
+
+it('preserves unsupported and non-adjacent maps and untouched package versions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-map-fallback-'))
+  try {
+    for (const [file, text] of Object.entries({
+      'remote.js': '//# sourceMappingURL=https://example.test/remote.js.map',
+      'parent.js': '//# sourceMappingURL=../parent.js.map',
+      'missing.js': '//# sourceMappingURL=missing.js.map',
+      'indexed.js': '//# sourceMappingURL=indexed.js.map',
+      'indexed.js.map': JSON.stringify({ version: 3, sections: [] }),
+      'invalid.js': '//# sourceMappingURL=invalid.js.map',
+      'invalid.js.map': '{}',
+      'malformed.js': '//# sourceMappingURL=malformed.js.map',
+      'malformed.js.map': 'not JSON',
+      'null.js': '//# sourceMappingURL=null.js.map',
+      'null.js.map': 'null',
+      'LICENSE.map': 'redistribution notice'
+    }))
+      await writeFile(join(root, file), text)
+    const snapshot = await Promise.all(
+      (await readdir(root)).map(async (file) => [file, await readFile(join(root, file), 'utf8')])
+    )
+    expect(
+      await inlineDesktopDependencyMaps({ name: '@aipoch/test', version: '8.20.0' }, root)
+    ).toBe(0)
+    expect(await inlineDesktopDependencyMaps({ name: 'ajv', version: '8.20.0' }, root)).toBe(0)
+    expect(
+      await Promise.all(
+        (await readdir(root)).map(async (file) => [file, await readFile(join(root, file), 'utf8')])
+      )
+    ).toEqual(snapshot)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 describe('desktop-only dependency contents', () => {
@@ -86,7 +235,9 @@ describe('desktop-only dependency contents', () => {
         'dist/ort.min.js',
         'lib/onnxjs/backend.ts'
       ]) {
-        expect(createDesktopDependencyFilter(ort)(file, false)).toBe(true)
+        // Audited TypeScript sources are unused in either mode. Runtime WebGPU bundles
+        // must still remain available when the dedicated WASM worker is not selected.
+        expect(createDesktopDependencyFilter(ort)(file, false)).toBe(!file.startsWith('lib/'))
         expect(
           createDesktopDependencyFilter(ort, { localTranslationWasm: true })(
             file.replaceAll('/', separator),
@@ -224,7 +375,12 @@ describe('desktop-only dependency contents', () => {
       await writeFile(join(root, file), content)
     }
     try {
-      for (const file of ['scripts/stage-backend.mjs', 'scripts/backend-dependencies.mjs'])
+      for (const file of [
+        'scripts/stage-backend.mjs',
+        'scripts/backend-dependencies.mjs',
+        'scripts/desktop-pdf-lib.mjs',
+        'scripts/desktop-dependency-chains.mjs'
+      ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
@@ -488,6 +644,194 @@ describe('desktop-only dependency contents', () => {
     expect(wildcard('schema.d.ts', false)).toBe(true)
     expect(desktop('examples/directory.d.ts', true)).toBe(true)
   })
+
+  it.each([
+    ['@huggingface/transformers', '4.2.0', 'src'],
+    ['onnxruntime-web', '1.26.0-dev.20260416-b7804b056c', 'lib'],
+    ['ajv', '8.20.0', 'lib'],
+    ['onnxruntime-common', '1.24.3', 'lib'],
+    ['flatbuffers', '25.9.23', 'ts'],
+    ['entities', '6.0.1', 'src']
+  ])('omits audited source trees from desktop %s only', (name, version, source) => {
+    const manifest = JSON.parse(readFileSync(`node_modules/${name}/package.json`, 'utf8'))
+    expect(manifest.version).toBe(version)
+    const desktop = createDesktopDependencyFilter(manifest)
+    for (const separator of ['/', '\\']) {
+      const file = [source, 'nested', 'implementation.js'].join(separator)
+      expect(desktop(file, false)).toBe(false)
+      expect(backendDependencyIncludes(manifest, file)).toBe(true)
+      expect(createDesktopDependencyFilter({ ...manifest, version: '99.0.0' })(file, false)).toBe(
+        true
+      )
+      expect(desktop([source, 'nested', 'LICENSE.txt'].join(separator), false)).toBe(true)
+      expect(desktop(source, true)).toBe(true)
+      const exported = { ...manifest, exports: { './source/*': `./${source}/*` } }
+      expect(createDesktopDependencyFilter(exported)(file, false)).toBe(true)
+    }
+    for (const file of [
+      manifest.main.replace(/^\.\//, ''),
+      'dist/ort-wasm-simd-threaded.wasm',
+      'dist/ort-wasm-simd-threaded.mjs',
+      'LICENSE'
+    ])
+      expect(desktop(file, false)).toBe(true)
+  })
+
+  it('keeps Zod runtime subpaths without shipping its opt-in development sources or locale types', () => {
+    const manifest = JSON.parse(readFileSync('node_modules/zod/package.json', 'utf8'))
+    expect(manifest.version).toBe('4.6.5')
+    const desktop = createDesktopDependencyFilter(manifest)
+    for (const separator of ['/', '\\']) {
+      for (const file of [
+        'src/index.ts',
+        'src/v4/core/core.ts',
+        'v4/locales/en.d.cts',
+        'v4/locales/en.d.ts'
+      ]) {
+        const path = file.replaceAll('/', separator)
+        expect(desktop(path, false)).toBe(false)
+        expect(backendDependencyIncludes(manifest, path)).toBe(true)
+        expect(createDesktopDependencyFilter({ ...manifest, version: '99' })(path, false)).toBe(
+          true
+        )
+      }
+      for (const file of [
+        'index.cjs',
+        'index.js',
+        'compile.js',
+        'v3/index.cjs',
+        'v4/core/index.js',
+        'v4/locales/en.js',
+        'v4/locales/en.cjs',
+        'src/LICENSE'
+      ])
+        expect(desktop(file.replaceAll('/', separator), false)).toBe(true)
+    }
+    // A new runtime export into src is not the audited development-only condition.
+    const exports = { ...manifest.exports, './runtime': './src/runtime.js' }
+    expect(createDesktopDependencyFilter({ ...manifest, exports })('src/runtime.js', false)).toBe(
+      true
+    )
+    const additionalCondition = { ...manifest, exports: { '.': { unknown: './src/index.ts' } } }
+    expect(createDesktopDependencyFilter(additionalCondition)('src/index.ts', false)).toBe(true)
+  })
+
+  it('runs schema and binary consumers from isolated pruned dependency trees', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-pruned-schemas-'))
+    const dependencies = await realpath('node_modules')
+    const { createRequire } = await import('node:module')
+    const copied = new Set<string>()
+    const copy = async (name: string, from: string): Promise<void> => {
+      let source = dirname(createRequire(join(from, 'package.json')).resolve(name))
+      while (
+        JSON.parse(await readFile(join(source, 'package.json'), 'utf8').catch(() => '{}')).name !==
+        name
+      ) {
+        const parent = dirname(source)
+        if (parent === source) throw new Error(`Missing package: ${name}`)
+        source = parent
+      }
+      if (copied.has(source)) return
+      copied.add(source)
+      const path = relative(dependencies, source)
+      if (isAbsolute(path) || path.split(sep).includes('..'))
+        throw new Error('Dependency outside installed tree')
+      const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+      const desktop = createDesktopDependencyFilter(manifest)
+      await cp(source, join(root, 'node_modules', path), {
+        recursive: true,
+        filter: async (file) =>
+          backendDependencyIncludes(manifest, relative(source, file)) &&
+          desktop(relative(source, file), (await stat(file)).isDirectory())
+      })
+      for (const child of Object.keys(manifest.dependencies ?? {})) await copy(child, source)
+    }
+    try {
+      for (const name of [
+        'zod',
+        'ajv',
+        'ajv-formats',
+        'onnxruntime-common',
+        'flatbuffers',
+        'entities'
+      ])
+        await copy(name, process.cwd())
+      await expect(readFile(join(root, 'node_modules/zod/src/index.ts'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      await expect(
+        readFile(join(root, 'node_modules/zod/v4/locales/en.d.cts'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      const probe = `
+        import assert from 'node:assert/strict';
+        import {createRequire} from 'node:module';
+        import {readdirSync} from 'node:fs';
+        const require = createRequire(import.meta.url);
+        for (const load of [name=>import(name), async name=>require(name)]) {
+          const z = await load('zod');
+          const core = await load('zod/v4/core');
+          assert.equal(z.globalRegistry, core.globalRegistry);
+          assert.equal(z.ZodObject, (await load('zod/v4')).ZodObject);
+          const shape = z.object({name:z.string().min(2),age:z.number().int()});
+          assert.deepEqual(shape.parse({name:'科学',age:2}), {name:'科学',age:2});
+          assert.equal(shape.safeParse({name:'x',age:'2'}).success,false);
+          z.globalRegistry.add(shape,{id:'probe-schema'});
+          assert.equal(core.globalRegistry.get(shape).id,'probe-schema');
+          z.globalRegistry.remove(shape);
+          assert.equal(z.toJSONSchema(shape).properties.age.type,'integer');
+          const v3 = await load('zod/v3');
+          assert.equal(v3.string().safeParse(4).success,false);
+          for(const name of ['zod/mini','zod/v4-mini','zod/v4/mini']) {
+            const mini = await load(name); assert.equal(mini.parse(mini.string(),'ok'),'ok');
+          }
+          for(const name of ['zod/locales','zod/v4/locales']) assert.equal(typeof (await load(name)).en,'function');
+        }
+        for(const name of readdirSync(new URL('node_modules/zod/v4/locales/',import.meta.url)).filter(name=>/\\.(?:cjs|js)$/.test(name)))
+          await import('zod/v4/locales/'+name);
+        for(const entry of ['ajv','ajv/dist/2019.js','ajv/dist/2020.js']) {
+          const Ajv = require(entry);
+          const ajv = new Ajv({code:{source:true}});
+          require('ajv-formats')(ajv);
+          const validate = ajv.compile({type:'object',properties:{name:{type:'string',minLength:2},email:{type:'string',format:'email'}},required:['name'],additionalProperties:false});
+          assert.equal(validate({name:'科学',email:'a@example.test'}),true);
+          assert.equal(validate({name:'x',email:'bad'}),false);
+          const standalone = require('ajv/dist/standalone/index.js')(ajv,validate);
+          const module = {exports:{}};
+          new Function('module','exports','require',standalone)(module,module.exports,require);
+          assert.equal(module.exports({name:'ok'}),true);
+          assert.equal(module.exports({name:4}),false);
+        }
+        const JTD = require('ajv/dist/jtd.js');
+        const jtd = new JTD(); const definition={properties:{name:{type:'string'}}};
+        assert.deepEqual(jtd.compileParser(definition)(jtd.compileSerializer(definition)({name:'科学'})),{name:'科学'});
+        const ort = require('onnxruntime-common');
+        const tensor = new ort.Tensor('float32',new Float32Array([2,4,8]),[3]);
+        assert.deepEqual(tensor.reshape([1,3]).dims,[1,3]);
+        const fb = require('flatbuffers'); const builder = new fb.Builder(64);
+        builder.finish(builder.createString('科学'));
+        assert.equal(new fb.ByteBuffer(builder.asUint8Array()).__string(0),'科学');
+        for (const api of [require('entities'),await import('entities')])
+          assert.equal(api.decodeHTML('&lt;科学 &amp; data&gt;'),'<科学 & data>');
+        assert.equal(require('entities/decode').decodeHTML('&amp;'),'&');
+        assert.equal((await import('entities/escape')).escapeText('<&>'),'&lt;&amp;&gt;');
+        // Opt-in compiler activation still updates the same registry, only when explicitly loaded.
+        assert.equal((await import('zod/v4/core')).globalConfig.postProcessor,undefined);
+        assert.equal(require('zod/v4/core').globalConfig.postProcessor,undefined);
+        for(const load of [name=>import(name),async name=>require(name)]) {
+          const core = await load('zod/v4/core');
+          await load('zod/compile'); assert.equal(typeof core.globalConfig.postProcessor,'function');
+          const z=await load('zod'); assert.equal(z.string().parse('ok'),'ok');
+        }
+        console.log('Isolated pruned schemas, registries, code generation and binary consumers passed');
+      `
+      const file = join(root, 'probe.mjs')
+      await writeFile(file, probe)
+      const { stdout } = await promisify(execFile)(process.execPath, [file], { timeout: 30_000 })
+      expect(stdout).toContain('binary consumers passed')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
 
   it('copies a real dependency tree with nested notices and loadable runtime assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-dependency-'))
