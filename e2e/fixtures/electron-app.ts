@@ -620,28 +620,76 @@ const launchOpenScience = async (
   await mkdir(join(dirname(storageRoot), 'isolated home', 'AppData', 'Roaming'), {
     recursive: true
   })
-  const application = await electron.launch({
-    ...electronLaunchTarget(userDataRoot),
-    args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
-    cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
-    env: {
-      ...launchEnvironment(
-        storageRoot,
-        fakeAgentEnabled ? fakeAgentBinRoot : undefined,
-        process.env,
-        fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
-        windowMode,
-        sessionPerformanceTrace
-      ),
-      ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
-        ? {
-            NODE_OPTIONS: `--require=${JSON.stringify(resolve(APP_ROOT, 'e2e/fixtures/mock-node-credentials.cjs'))}`
-          }
-        : {}),
-      OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
-      OPEN_SCIENCE_USER_DATA: userDataRoot
+  // Read native startup failures from the isolated packaged process before launch times out.
+  const startupObserver =
+    process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_EXECUTABLE
+      ? spawn(
+          'powershell.exe',
+          [
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$seen = @{}
+while ($true) {
+  $targets = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:OPEN_SCIENCE_E2E_EXECUTABLE })
+  foreach ($target in $targets) {
+    $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $target.Id)
+    $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+    foreach ($window in $windows) {
+      if ($window.Current.ClassName -ne '#32770') { continue }
+      $text = @($window.Current.Name)
+      foreach ($child in $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+        if ($child.Current.Name) { $text += $child.Current.Name }
+      }
+      $message = $text -join ' | '
+      if (!$seen.ContainsKey($message)) { $seen[$message] = $true; Write-Output $message }
     }
-  })
+  }
+  Start-Sleep -Milliseconds 500
+}
+`
+          ],
+          { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
+        )
+      : undefined
+  startupObserver?.stdout?.on('data', (chunk) =>
+    console.log('Packaged startup dialog:', String(chunk))
+  )
+  startupObserver?.stderr?.on('data', (chunk) =>
+    console.log('Packaged startup observer:', String(chunk))
+  )
+  startupObserver?.on('error', (error) => console.log('Packaged startup observer:', error.message))
+  let application: ElectronApplication
+  try {
+    application = await electron.launch({
+      ...electronLaunchTarget(userDataRoot),
+      args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
+      cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
+      env: {
+        ...launchEnvironment(
+          storageRoot,
+          fakeAgentEnabled ? fakeAgentBinRoot : undefined,
+          process.env,
+          fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
+          windowMode,
+          sessionPerformanceTrace
+        ),
+        ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
+          ? {
+              NODE_OPTIONS: `--require=${JSON.stringify(resolve(APP_ROOT, 'e2e/fixtures/mock-node-credentials.cjs'))}`
+            }
+          : {}),
+        OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
+        OPEN_SCIENCE_USER_DATA: userDataRoot
+      }
+    })
+  } finally {
+    startupObserver?.kill()
+  }
 
   // Linux source certification requires an unlocked Secret Service on its test D-Bus session.
   // Both ordinary Node and Electron use that same vault; no plaintext test fallback.
