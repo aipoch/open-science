@@ -81,17 +81,28 @@ Var publicationOutput
   StrCmp $publicationResult "0" 0 publication_failed
   StrCpy $R1 0
   publication_copy:
-    ClearErrors
-    CopyFiles /SILENT "$publicationDirectory\*" "$INSTDIR"
-    IfErrors publication_retry
+    # Shell CopyFiles rejects long destination paths even when extraction succeeded. Robocopy
+    # supports them without changing Windows policy. Copy data/attributes/times only, retaining
+    # destination ACL inheritance and unrelated files (never mirror/purge or use backup mode).
+    # Force same/tweaked/change-time-only files too: matching metadata does not prove the bytes.
+    # The outer loop owns retries; quiet copies must not be killed by an inactivity timeout.
+    nsExec::ExecToStack '"$SYSDIR\robocopy.exe" "$publicationDirectory" "$INSTDIR" /E /COPY:DAT /DCOPY:DA /IS /IT /IM /R:0 /W:0 /XJ /XX /NP /NJH /NJS /NFL /NDL /FP /UNICODE'
+    Pop $publicationResult
+    Pop $publicationOutput
+    # Exact comparisons reject launch errors/timeouts as well as nonzero failure bits. Codes
+    # 0..3 mean successful/no-op copying, possibly with extra destination files. Mismatches
+    # (bit 4) are not acceptable for an application payload, even without the failure bit (8).
+    StrCmp $publicationResult "0" publication_copied
+    StrCmp $publicationResult "1" publication_copied
+    StrCmp $publicationResult "2" publication_copied
+    StrCmp $publicationResult "3" publication_copied publication_retry
+  publication_copied:
     ClearErrors
     Call cleanupInstallPublication
     IfErrors publication_failed
     Goto publication_done
 
   publication_retry:
-    StrCpy $publicationResult "copy-failed"
-    StrCpy $publicationOutput "NSIS CopyFiles could not replace the remaining application files."
     IntOp $R1 $R1 + 1
     # Retain bounded upstream copy retries, but never replace a failed copy with unchecked
     # extraction into the live target. Already moved directories remain available for verification.
@@ -100,7 +111,7 @@ Var publicationOutput
       Goto publication_copy
     ${endif}
     IfSilent publication_failed
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY publication_copy
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Open-Science could not copy its application files.$\r$\n$INSTDIR$\r$\n$\r$\nCopy result: $publicationResult$\r$\n$publicationOutput" /SD IDCANCEL IDRETRY publication_copy
 
   publication_failed:
     DetailPrint "Payload installation failed: $publicationResult $publicationOutput"

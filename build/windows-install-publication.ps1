@@ -21,7 +21,7 @@ function Get-Descriptor([string]$Path, [bool]$Directory) {
   return $acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Access, Owner, Group')
 }
 
-function Assert-OrdinaryTree([string]$Path, [bool]$CheckPermissions, $State) {
+function Assert-OrdinaryTree([string]$Path, [bool]$CheckPermissions, $State, [bool]$CheckDestination) {
   $Path = '\\?\' + $Path
   $pending = [Collections.Generic.Stack[string]]::new()
   $pending.Push($Path)
@@ -31,6 +31,20 @@ function Assert-OrdinaryTree([string]$Path, [bool]$CheckPermissions, $State) {
       $attributes = [IO.File]::GetAttributes($entry)
       if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse point in payload: $entry" }
       $isDirectory = ($attributes -band [IO.FileAttributes]::Directory) -ne 0
+      if ($CheckDestination) {
+        # Robocopy excludes junctions, including destination entries. Reject overlapping links
+        # before copying so a skipped payload cannot be reported as a successful installation.
+        # Inspect only payload destinations; unrelated user-data trees remain untouched.
+        $destination = '\\?\' + $State.root + $entry.Substring($Path.Length)
+        try {
+          $targetAttributes = [IO.File]::GetAttributes($destination)
+          if (($targetAttributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse point at payload destination: $destination" }
+        } catch [IO.FileNotFoundException] {
+          # The copy will create this file under the destination's existing permissions.
+        } catch [IO.DirectoryNotFoundException] {
+          # An absent parent will be created by the copy as well.
+        }
+      }
       if ($CheckPermissions) {
         $expected = if ($isDirectory) { $State.directoryAcl } else { $State.fileAcl }
         if ((Get-Descriptor $entry $isDirectory) -cne $expected) { throw "Unexpected payload permissions: $entry" }
@@ -107,7 +121,7 @@ try {
   $stageHandle = [InstallDirectory]::Hold($stage)
   if ($state.stageIdentity -ne [InstallDirectory]::Identity($stageHandle)) { throw 'Staging identity changed' }
   if ($Action -eq 'publish' -and $state.directoryAcl -cne (Get-Descriptor $stage $true)) { throw 'Staging permissions changed' }
-  Assert-OrdinaryTree $stage ($Action -eq 'publish' -and $state.useMove) $state
+  Assert-OrdinaryTree $stage ($Action -eq 'publish' -and $state.useMove) $state ($Action -eq 'publish')
 
   if ($Action -eq 'publish') {
     if (!$state.useMove) { exit 0 }

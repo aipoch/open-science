@@ -7,6 +7,7 @@ import {
   readdirSync,
   symlinkSync,
   unlinkSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -33,7 +34,7 @@ const powershell = join(
 )
 
 // Node 24.14's native cpSync directory path corrupts Unicode on this Windows host. Individual
-// fs calls preserve it. This only prepares fixtures; the native test executes NSIS CopyFiles.
+// fs calls preserve it. This only prepares fixtures; the native test executes the production macro.
 function copyFixture(source: string, target: string): void {
   mkdirSync(target, { recursive: true })
   for (const entry of readdirSync(source, { withFileTypes: true })) {
@@ -112,6 +113,18 @@ function setFixtureAcl(path: string, nonPropagating = false): void {
   )
   expect(result.error).toBeUndefined()
   expect(result.status, result.stderr).toBe(0)
+}
+
+function readFixtureAcl(path: string, directory = false): string {
+  const command = `[IO.${directory ? 'Directory' : 'File'}]::GetAccessControl('${path.replaceAll("'", "''")}').GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Access, Owner, Group')`
+  const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30_000
+  })
+  expect(result.error).toBeUndefined()
+  expect(result.status, result.stderr).toBe(0)
+  return result.stdout.trim()
 }
 
 describe.skipIf(process.platform !== 'win32')('real Windows payload publication', () => {
@@ -280,6 +293,9 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
       'valid',
       'unicode-profile',
       'copy-fallback',
+      'copy-replacement',
+      'destination-junction',
+      'destination-type-conflict',
       'truncated',
       'corrupt',
       'long-path',
@@ -288,7 +304,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
       'warning',
       'cancelled',
       'launch-failure',
-      'fallback-boundary',
+      'long-source-copy',
       'universal-x64'
     ])(
       'handles %s archives through the production installer macro',
@@ -296,25 +312,63 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         const f = fixture()
         setFixtureAcl(
           f.install,
-          mode === 'copy-fallback' || mode === 'long-copy-fallback' || mode === 'fallback-boundary'
+          ['copy-fallback', 'copy-replacement', 'long-copy-fallback', 'long-source-copy'].includes(
+            mode
+          )
         )
-        const boundaryRelative = 'resources/' + 'nested-'.repeat(7) + 'leaf.txt'
+        const sourceRelative = 'resources/' + 'nested-'.repeat(6) + '/source-only.txt'
         const temporary = join(
           f.root,
-          mode === 'unicode-profile' ? 'profile 数据 with spaces/Temp' : 'temp-' + 't'.repeat(45)
+          mode === 'unicode-profile'
+            ? 'profile 数据 with spaces/Temp'
+            : 'temp-' + 't'.repeat(Math.max(1, 200 - f.root.length - 6))
         )
         if (mode === 'unicode-profile') mkdirSync(temporary, { recursive: true })
-        if (mode === 'fallback-boundary') {
+        if (mode === 'long-source-copy') {
           mkdirSync(temporary)
-          mkdirSync(join(f.payload, boundaryRelative, '..'), { recursive: true })
-          writeFileSync(join(f.payload, boundaryRelative), 'fallback boundary payload')
+          mkdirSync(join(f.payload, sourceRelative, '..'), { recursive: true })
+          writeFileSync(join(f.payload, sourceRelative), 'long source payload')
         }
 
-        const longRelative = 'resources/' + 'nested-folder-'.repeat(10) + '/leaf.txt'
-        if (mode.startsWith('long-')) {
+        // Derive the boundary from this checkout: native CI and a developer worktree have
+        // different root lengths. Keep each component legal while exceeding MAX_PATH overall.
+        const longRelative =
+          'resources/' +
+          'nested-'.repeat(
+            Math.ceil(Math.max(7, 280 - join(f.install, 'resources/leaf.txt').length) / 7)
+          ) +
+          '/leaf.txt'
+        if (mode === 'long-path' || mode === 'long-copy-fallback') {
           mkdirSync(join(f.payload, longRelative, '..'), { recursive: true })
           writeFileSync(join(f.payload, longRelative), 'long path payload')
         }
+        if (mode === 'copy-replacement') {
+          const timestamp = new Date('2026-01-01T00:00:00Z')
+          writeFileSync(join(f.install, 'app.exe'), 'X'.repeat('synthetic executable'.length))
+          for (const root of [f.payload, f.install])
+            utimesSync(join(root, 'app.exe'), timestamp, timestamp)
+          for (const name of ['OpenScience', 'Open-Science', 'unrelated']) {
+            mkdirSync(join(f.install, name))
+            writeFileSync(join(f.install, name, 'keep.txt'), name)
+          }
+          mkdirSync(join(f.payload, 'empty'))
+          writeFileSync(join(f.install, 'permission-reference.txt'), 'permission reference')
+          writeFileSync(join(f.payload, 'new.txt'), 'new file')
+        }
+        const originalAcl =
+          mode === 'copy-replacement'
+            ? {
+                directory: readFixtureAcl(f.install, true),
+                existing: readFixtureAcl(join(f.install, 'app.exe')),
+                inherited: readFixtureAcl(join(f.install, 'permission-reference.txt'))
+              }
+            : undefined
+        if (mode === 'destination-junction') {
+          mkdirSync(join(f.root, 'external'))
+          writeFileSync(join(f.root, 'external/en.pak'), 'external data')
+          symlinkSync(join(f.root, 'external'), join(f.install, 'locales'), 'junction')
+        }
+        if (mode === 'destination-type-conflict') mkdirSync(join(f.install, 'app.exe'))
         const archive = join(f.root, 'payload.7z')
         const pack = spawnSync(sevenZip!, ['a', '-t7z', '-m0=lzma2', '-mf=off', archive, '.'], {
           cwd: f.payload,
@@ -385,7 +439,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               `!define BUILD_RESOURCES_DIR "${resolve('build')}"`,
               '!macro quitFailedUpdate',
               'FileOpen $0 "$EXEDIR\\failure.txt" w',
-              'FileWrite $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
+              'FileWriteUTF16LE $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
               'FileClose $0',
               'Call cleanupInstallPublication',
               'SetErrorLevel 2',
@@ -438,7 +492,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
                 encoding: 'utf8',
                 windowsHide: true,
                 timeout: 60_000,
-                ...(['fallback-boundary', 'unicode-profile'].includes(mode)
+                ...(['long-source-copy', 'unicode-profile'].includes(mode)
                   ? { env: { ...process.env, TEMP: temporary, TMP: temporary } }
                   : {})
               })
@@ -451,14 +505,16 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           'valid',
           'unicode-profile',
           'copy-fallback',
+          'copy-replacement',
           'long-path',
-          'fallback-boundary',
+          'long-copy-fallback',
+          'long-source-copy',
           'universal-x64'
         ].includes(mode)
         expect(
           run.status,
           existsSync(join(f.root, 'failure.txt'))
-            ? readFileSync(join(f.root, 'failure.txt'), 'utf8')
+            ? readFileSync(join(f.root, 'failure.txt'), 'utf16le')
             : run.stdout + run.stderr
         ).toBe(success ? 0 : 2)
         expect(existsSync(join(f.root, 'success.txt'))).toBe(success)
@@ -469,20 +525,34 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           expect(readFileSync(join(f.install, 'resources/backend/index.js'), 'utf8')).toBe(
             'synthetic backend'
           )
-        if (mode === 'long-path')
+        if (mode === 'long-path' || mode === 'long-copy-fallback') {
+          expect(join(f.install, longRelative).length).toBeGreaterThan(260)
           expect(readFileSync(join(f.install, longRelative), 'utf8')).toBe('long path payload')
-        if (mode === 'fallback-boundary') {
+        }
+        if (mode === 'long-source-copy') {
           const pluginDirectory = readFileSync(join(f.root, 'plugin-directory.txt'), 'utf8')
-          expect(join(pluginDirectory, '7z-out', boundaryRelative).length).toBeLessThan(260)
-          expect(
-            join(pluginDirectory, '.open-science-install-' + '0'.repeat(32), boundaryRelative)
-              .length
-          ).toBeGreaterThan(260)
-          expect(readFileSync(join(f.install, boundaryRelative), 'utf8')).toBe(
-            'fallback boundary payload'
-          )
+          expect(join(pluginDirectory, '7z-out', sourceRelative).length).toBeGreaterThan(260)
+          expect(join(f.install, sourceRelative).length).toBeLessThan(260)
+          expect(readFileSync(join(f.install, sourceRelative), 'utf8')).toBe('long source payload')
+        }
+        if (mode === 'copy-replacement') {
+          expect(readFileSync(join(f.install, 'app.exe'), 'utf8')).toBe('synthetic executable')
+          expect(readdirSync(join(f.install, 'empty'))).toEqual([])
+          for (const name of ['OpenScience', 'Open-Science', 'unrelated'])
+            expect(readFileSync(join(f.install, name, 'keep.txt'), 'utf8')).toBe(name)
+          expect(readFixtureAcl(f.install, true)).toBe(originalAcl!.directory)
+          expect(readFixtureAcl(join(f.install, 'app.exe'))).toBe(originalAcl!.existing)
+          expect(readFixtureAcl(join(f.install, 'new.txt'))).toBe(originalAcl!.inherited)
+        }
+        if (mode === 'destination-junction') {
+          expect(readFileSync(join(f.root, 'external/en.pak'), 'utf8')).toBe('external data')
+          unlinkSync(join(f.install, 'locales'))
         }
         if (mode === 'locked-root') {
+          const failure = readFileSync(join(f.root, 'failure.txt'), 'utf16le')
+          expect(Number.parseInt(failure, 10)).toBeGreaterThanOrEqual(8)
+          expect(failure).toContain('0x00000020')
+          expect(failure).toContain('app.exe')
           expect(readFileSync(join(f.install, 'app.exe'), 'utf8')).toBe('occupied original')
           expect(readFileSync(join(f.install, 'resources/backend/index.js'), 'utf8')).toBe(
             'synthetic backend'
