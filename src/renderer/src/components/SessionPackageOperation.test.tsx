@@ -2595,3 +2595,63 @@ it('shows weighted overall import progress through checking, publication and suc
   )
   expect(bar()).toBeNull()
 })
+
+it('releases a failed local Web upload when explicitly closing its result', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  const failed: PackageOperationSnapshot = {
+    id: 'failed-upload',
+    kind: 'import',
+    state: 'failed',
+    progress: { phase: 'importing' },
+    importRequestId: 'upload-1',
+    error: 'Import failed'
+  }
+  const respond = vi.fn(async () => failed)
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: respond
+    }
+  })
+  usePackageOperationStore.setState({ operation: failed, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  respond.mockClear()
+  await act(async () => button('Close').click())
+  expect(respond).toHaveBeenCalledWith({
+    action: 'discard-import',
+    operationId: 'failed-upload',
+    requestId: 'upload-1'
+  })
+  expect(usePackageOperationStore.getState().dismissedId).toBe('failed-upload')
+})
+
+it('uses the browser picker to choose another package after a local Web import fails', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  const failed: PackageOperationSnapshot = {
+    id: 'failed-upload',
+    kind: 'import',
+    state: 'failed',
+    progress: { phase: 'validating' },
+    importRequestId: 'upload-1',
+    error: 'Import failed'
+  }
+  const importPackage = vi.fn()
+  vi.stubGlobal('api', {
+    sessions: {
+      importPackage,
+      onPackageOperation: () => () => undefined,
+      packageOperation: async () => failed
+    }
+  })
+  usePackageOperationStore.setState({ operation: failed, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  await act(async () => button('Choose another package').click())
+  const picker = document.querySelector<HTMLInputElement>('input[type="file"]')
+  expect(picker).not.toBeNull()
+  await act(async () => {
+    picker!.dispatchEvent(new Event('cancel'))
+  })
+  expect(importPackage).not.toHaveBeenCalled()
+})

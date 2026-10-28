@@ -60,8 +60,6 @@ export const importSessionPackage = async (projectId?: string, file?: File): Pro
       })
       const result = await window.api.sessions.importPackage(target, attachment.path)
       if (result) {
-        // A failed import keeps the staged file: main-side retry-import reuses this path.
-        await window.api.uploads.deleteUpload({ path: attachment.path }).catch(() => undefined)
         await useProjectStore.getState().loadProjects()
       }
       return

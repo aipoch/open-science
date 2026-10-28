@@ -1,7 +1,7 @@
 import { createSessionRecoveryFolderCommand } from '../session-persistence/ipc'
 import { createCompletionHandoffCommands } from '../agents/completion-handoff-ipc'
 import type { composeAgentCompletion } from './agent-completion'
-import type { UploadTransferProgress } from '../../shared/uploads'
+import { PENDING_UPLOAD_SESSION_ID, type UploadTransferProgress } from '../../shared/uploads'
 import type { LocalePreferenceOwner } from '../locale/owner'
 import { createNetworkCommandOwner } from '../network-ipc'
 import type { SideChatCommandOwner } from '../side-chat/command-owner'
@@ -57,6 +57,7 @@ export function composeCommandDependencies({
   settingsBootstrap,
   storageStartup,
   managedFileVersionService,
+  uploadRepository,
   runtimeRef,
   sessionFoundation,
   sessionPackages,
@@ -282,15 +283,40 @@ export function composeCommandDependencies({
               ? { stageDownload: true }
               : undefined
           ),
-        importSessionPackage: (invocation) =>
-          sessionPackageSurfaces.sessionPackageDesktop.import(
+        importSessionPackage: async (invocation) => {
+          const source = invocation.args[1]
+          const stagedPath =
+            invocation.callerContext.surface === 'web' && source
+              ? await uploadRepository.resolveManagedUploadPath(
+                  { path: source },
+                  { sessionId: PENDING_UPLOAD_SESSION_ID }
+                )
+              : undefined
+          return sessionPackageSurfaces.sessionPackageDesktop.import(
             invocation.callerContext.clientId,
             invocation.callerContext.lifecycleClientId,
             invocation.args[0],
-            invocation.args[1],
+            stagedPath ?? source,
             false,
-            invocation.args[2]
-          ),
+            {
+              ...invocation.args[2],
+              ...(stagedPath
+                ? {
+                    onReleased: async () => {
+                      await withDataRootWrite(() =>
+                        uploadRepository.deleteUpload({ path: stagedPath })
+                      ).catch((error) =>
+                        createLogger('session-package').warn(
+                          'Could not release staged package upload',
+                          diagnosticErrorFields(error)
+                        )
+                      )
+                    }
+                  }
+                : {})
+            }
+          )
+        },
         exportConversationFromInvokingWindow: (invocation) =>
           sessionPackageSurfaces.conversationExportService.exportConversation(
             invocation.args[0],

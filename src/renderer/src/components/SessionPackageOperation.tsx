@@ -1,3 +1,4 @@
+import { importSessionPackage } from '@/lib/session-package-import'
 import {
   packageOperationPresentation,
   primaryBrowserTransfer
@@ -663,7 +664,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     open,
     receive,
     setOpen,
-    dismiss
+    dismiss: dismissLocal
   } = usePackageOperationStore()
   const operation = packageOperationPresentation(sourceOperation, browserReceipt)
   const destinationName = useProjectStore(
@@ -774,6 +775,30 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       })
     }
   }
+  const dismiss = (): void => {
+    if (
+      isWeb &&
+      operation.kind === 'import' &&
+      operation.state === 'failed' &&
+      operation.importRequestId &&
+      !operation.cleanupPending &&
+      !operation.result?.recovery
+    ) {
+      void window.api.sessions
+        .packageOperation({
+          action: 'discard-import',
+          operationId: operation.id,
+          requestId: operation.importRequestId
+        })
+        .then(dismissLocal)
+        .catch((caught) =>
+          setError({
+            id: errorId,
+            message: caught instanceof Error ? caught.message : String(caught)
+          })
+        )
+    } else dismissLocal()
+  }
   const retry = async (
     chooseAnotherPackage = false,
     allowSensitiveContent = false
@@ -801,6 +826,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
         else await window.api.sessions.exportPackage(operation.session)
       } else if (operation.importRequestId && !chooseAnotherPackage)
         await respond({ action: 'retry-import', operationId: operation.id })
+      else if (isWeb) await importSessionPackage(operation.importTarget?.projectId)
       else await window.api.sessions.importPackage(operation.importTarget)
     } catch (caught) {
       setError({
