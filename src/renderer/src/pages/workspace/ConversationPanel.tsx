@@ -2277,27 +2277,15 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-xl border border-border bg-muted/50 px-4 py-3"
+                        className="relative z-10 rounded-2xl bg-bg-200 p-2"
                         aria-label={t('Imported research history')}
                       >
-                        <p className="text-sm font-medium text-foreground">
-                          {t('Imported research history')}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {t('Imported on {{date}}', {
-                            date: new Date(activeSession.packageOrigin.importedAt).toLocaleString()
-                          })}
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          {t(
-                            'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
-                          )}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {sessionForkAvailable() ? (
                             <Button
                               variant="outline"
                               size="sm"
+                              className="px-2 text-xs"
                               onClick={() => {
                                 void forkSession(activeSession)
                               }}
@@ -2309,6 +2297,7 @@ const ConversationPanel = ({
                           <Button
                             variant="outline"
                             size="sm"
+                            className="px-2 text-xs"
                             aria-controls="right-panel"
                             onClick={() => {
                               usePreviewWorkbenchStore
@@ -2331,30 +2320,23 @@ const ConversationPanel = ({
                             sessionId={activeSession.id}
                           />
                         </div>
-                        <details className="mt-2 text-xs leading-5 text-muted-foreground">
-                          <summary className="cursor-pointer">{t('Package source')}</summary>
-                          <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-                            <dt>{t('Source project')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceProjectId}
-                            </dd>
-                            <dt>{t('Source Session')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceSessionId}
-                            </dd>
-                          </dl>
-                          <p className="mt-1">
-                            {t(
-                              'Original evidence is retained separately; local references and evidence hashes are derived during import.'
-                            )}
-                          </p>
-                        </details>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
-                          <details className="mt-2 text-xs text-muted-foreground">
-                            <summary className="cursor-pointer">
-                              {t('Not included in this package')}
-                            </summary>
-                            <ul className="mt-1 max-h-36 list-disc overflow-y-auto pl-4">
+                          <details className="group/exclusions mt-1 text-xs text-muted-foreground">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              className="justify-start px-2 text-xs"
+                            >
+                              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                <ChevronRight
+                                  className="size-4 transition-transform group-open/exclusions:rotate-90 motion-reduce:transition-none"
+                                  aria-hidden="true"
+                                />
+                                {t('Not included in this package')}
+                              </summary>
+                            </Button>
+                            <ul className="mx-2 mb-2 mt-1 max-h-36 list-disc overflow-y-auto pl-4">
                               {[
                                 ...new Set(
                                   activeSession.packageOrigin.excludedFiles.map(

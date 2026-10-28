@@ -470,6 +470,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "extra" TEXT NOT NULL DEFAULT '',
     "rating" INTEGER NOT NULL DEFAULT 0,
     "personalNote" TEXT NOT NULL DEFAULT '',
+    "readingStatus" TEXT NOT NULL DEFAULT 'unread',
     "typeFieldsJson" TEXT NOT NULL DEFAULT '{}',
     "metadataRevision" INTEGER NOT NULL DEFAULT 1,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

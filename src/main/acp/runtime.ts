@@ -911,8 +911,10 @@ class AcpRuntime {
     request: AcpResumeSessionRequest,
     writerTransfer?: AcpSessionWriterTransfer
   ): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(async () => {
-      const resumed = await this.providerSessionResumer.resume(request, writerTransfer)
+    const resume = async (
+      isCurrent: () => boolean = () => true
+    ): Promise<AcpCreateSessionResponse> => {
+      const resumed = await this.providerSessionResumer.resume(request, writerTransfer, isCurrent)
       const session = this.activeSessionFor(request.sessionId)
       if (session) await this.options.authorizedDirectories?.initialize(session)
       if (resumed.contextReset) {
@@ -930,7 +932,14 @@ class AcpRuntime {
       return this.restoredContinuationContextResetSessionIds?.has(request.sessionId)
         ? { ...resumed, contextReset: true }
         : resumed
-    })
+    }
+    return this.withOperationLease(() =>
+      this.activeSessionFor(request.sessionId)
+        ? this.enqueuePermissionChange(request.sessionId, (state, revision) =>
+            resume(() => state.revision === revision)
+          )
+        : resume()
+    )
   }
 
   captureSessionResumeCleanup(response: AcpCreateSessionResponse): () => Promise<void> {
@@ -1074,6 +1083,14 @@ class AcpRuntime {
     return this.withOperationLease(() => this.contextCompactionWorkflow.compact(request))
   }
 
+  hasFullAccess(sessionId: string): boolean {
+    return this.permissionContext.hasFullAccess(sessionId)
+  }
+
+  subscribeFullAccess(sessionId: string, listener: (allowed: boolean) => void): () => void {
+    return this.permissionContext.subscribeFullAccess(sessionId, listener)
+  }
+
   // Serializes changes per Session and coalesces queued requests so only the latest selection can
   // commit or release a pending provider request. The operation lease covers time spent in the queue.
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
@@ -1083,25 +1100,51 @@ class AcpRuntime {
   private enqueuePermissionProfileChange(
     request: AcpSetPermissionProfileRequest
   ): Promise<AcpStateSnapshot> {
-    const state = this.permissionProfileChanges.get(request.sessionId) ?? {
+    const attachment = this.sessionRegistry.lookup(request.sessionId)?.attachment
+    const connection = this.connection
+    return this.enqueuePermissionChange(request.sessionId, async (state, revision) => {
+      try {
+        return await this.setPermissionProfileOperation(request, state, revision)
+      } catch (error) {
+        const entry = this.sessionRegistry.lookup(request.sessionId)
+        const profile = entry?.aggregate.snapshot().permissionProfile
+        if (
+          state.revision === revision &&
+          this.connection === connection &&
+          attachment &&
+          entry?.attachment === attachment &&
+          profile
+        ) {
+          this.permissionContext.setLivePermissionProfile(request.sessionId, {
+            ...profile,
+            availableModeIds: [...profile.availableModeIds]
+          })
+        }
+        throw error
+      }
+    })
+  }
+
+  private enqueuePermissionChange<Result>(
+    sessionId: string,
+    work: (state: { revision: number }, revision: number) => Promise<Result>
+  ): Promise<Result> {
+    const state = this.permissionProfileChanges.get(sessionId) ?? {
       revision: 0,
       tail: Promise.resolve()
     }
     const revision = ++state.revision
-    const operation = state.tail.then(() =>
-      this.setPermissionProfileOperation(request, state, revision)
-    )
+    // Revoke before queueing: an earlier provider mode request may never settle.
+    this.permissionContext.invalidatePermissionProfile(sessionId)
+    const operation = state.tail.then(() => work(state, revision))
     state.tail = operation.then(
       () => undefined,
       () => undefined
     )
-    this.permissionProfileChanges.set(request.sessionId, state)
+    this.permissionProfileChanges.set(sessionId, state)
     void state.tail.then(() => {
-      if (
-        this.permissionProfileChanges.get(request.sessionId) === state &&
-        state.revision === revision
-      ) {
-        this.permissionProfileChanges.delete(request.sessionId)
+      if (this.permissionProfileChanges.get(sessionId) === state && state.revision === revision) {
+        this.permissionProfileChanges.delete(sessionId)
       }
     })
 

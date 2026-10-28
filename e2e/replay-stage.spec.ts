@@ -129,6 +129,7 @@ test('independent 1280×720 Stage paints the same frame by sequential advance an
   const stage = page.getByTestId('replay-stage')
   await expect(stage).toHaveCSS('width', '1280px')
   await expect(stage).toHaveCSS('height', '720px')
+  await expect(stage.locator('footer')).toHaveText(/^Step \d+$/)
   await expect(page.getByText('Mean: 4.50', { exact: false })).toBeVisible()
   await expect(stage.locator('img')).toHaveCount(1)
   expect(
@@ -412,12 +413,11 @@ for (const locale of ['en', 'de']) {
     const popover = page.getByRole('dialog', { name: 'A reproducible observation study' })
     await expect(popover).toBeVisible()
     await expect(popover.getByText('original-project', { exact: true })).not.toBeVisible()
-    await popover
-      .locator('summary')
-      .filter({ hasText: locale === 'de' ? 'Technische Details' : 'Technical details' })
-      .click()
-    await expect(popover.getByText('original-project', { exact: true })).toBeVisible()
-    await expect(popover.getByText('original-session', { exact: true })).toBeVisible()
+    await expect(popover.locator('summary')).toHaveCount(1)
+    await popover.locator('summary').click()
+    await expect(popover.getByText('large-original.csv', { exact: true })).toBeVisible()
+    await expect(popover.getByText('original-project', { exact: true })).toHaveCount(0)
+    await expect(popover.getByText('original-session', { exact: true })).toHaveCount(0)
     const bounds = (await popover.boundingBox())!
     const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
     expect(bounds.x).toBeGreaterThanOrEqual(0)
@@ -486,7 +486,9 @@ test('generated files reuse type icons and return to the archived Files list at 
     name: 'Preview generated file observations.svg (Version 1)',
     exact: true
   })
-  await expect(conversation.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
+  await expect(
+    conversation.getByRole('group', { name: 'Generated files', exact: true })
+  ).toHaveCount(1)
   const generated = conversation.getByRole('button', { name: /^Preview generated file/ })
   const bounds = await generated.evaluateAll((nodes) =>
     nodes.map((node) => ({
@@ -1565,12 +1567,16 @@ test('reveals recorded files immediately and keeps the gallery stable through de
     await expect(progress).toHaveAttribute('aria-valuenow', String(position))
   }
   await seekPanel(10000)
-  await expect(transcript.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
+  await expect(transcript.getByRole('group', { name: 'Generated files', exact: true })).toHaveCount(
+    1
+  )
   const cards = transcript.getByRole('button', { name: /^Preview generated file/ })
   await expect(cards.nth(0)).toBeEnabled()
   await expect(cards.nth(1)).toBeEnabled()
   await seekPanel(10300)
-  await expect(transcript.getByText('GENERATED · 2', { exact: true })).toHaveCount(1)
+  await expect(transcript.getByRole('group', { name: 'Generated files', exact: true })).toHaveCount(
+    1
+  )
   await expect(cards.nth(0)).toBeEnabled()
   await expect(cards.nth(1)).toBeEnabled()
   await seekPanel(10600)
@@ -1578,7 +1584,9 @@ test('reveals recorded files immediately and keeps the gallery stable through de
   await progress.focus()
   await page.keyboard.press('End')
   await expect(progress).toHaveAttribute('aria-valuenow', '12000')
-  await expect(transcript.getByText('GENERATED · 3', { exact: true })).toHaveCount(1)
+  await expect(transcript.getByRole('group', { name: 'Generated files', exact: true })).toHaveCount(
+    1
+  )
   await expect(cards).toHaveCount(3)
   await expect(cards.locator('img')).toHaveCount(0)
   expect(await transcript.evaluate((node) => node.scrollWidth)).toBe(

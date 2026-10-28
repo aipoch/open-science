@@ -26,7 +26,6 @@ for (const viewport of [
     await expect(dialog.getByRole('status')).toHaveText('Waiting for a save location…')
     await expectLayoutSettled(dialog)
     const bounds = await dialog.boundingBox()
-    const stepBounds = await steps.boundingBox()
     expect(bounds!.height).toBeLessThanOrEqual(viewport.height * 0.85)
     expect(bounds!.width).toBe(selectionBounds!.width)
     const stages: Partial<PackageOperationSnapshot>[] = [
@@ -62,7 +61,7 @@ for (const viewport of [
         })
         if (stage.state === 'running' || stage.state === 'cancelling')
           expect(current.height).toBe(bounds!.height)
-        expect(await steps.boundingBox()).toEqual(stepBounds)
+        await expect(steps).toHaveCount(0)
       }).toPass()
       await expect(
         dialog.getByRole('button', { name: /^(Cancel|Close|Run in background)$/ }).last()
@@ -71,14 +70,13 @@ for (const viewport of [
         true
       )
       if (['failed', 'cancelled', 'cancelling'].includes(stage.state!)) {
-        await expect(steps.locator('[aria-current]')).toHaveCount(0)
-        await expect(steps.locator('svg')).toHaveCount(0)
+        await expect(steps).toHaveCount(0)
       }
       await page.screenshot({
         path: testInfo.outputPath(`export-${stage.state}-${stage.progress!.phase}.png`)
       })
     }
-    await expect(steps.locator('svg')).toHaveCount(3)
+    await expect(steps).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(dialog).toHaveCount(0)
     await page.evaluate(() => {
@@ -103,7 +101,6 @@ for (const viewport of [
     await expectLayoutSettled(dialog)
     const original = await dialog.elementHandle()
     const bounds = await dialog.boundingBox()
-    const stepBounds = await steps.boundingBox()
     const publish = async (detail: Partial<PackageOperationSnapshot>): Promise<void> => {
       await page.evaluate((detail) => {
         window.dispatchEvent(new CustomEvent('package-fixture-progress', { detail }))
@@ -113,7 +110,7 @@ for (const viewport of [
       await expect(async () => {
         expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
         expect(await dialog.boundingBox()).toEqual(bounds)
-        expect(await steps.boundingBox()).toEqual(stepBounds)
+        await expect(steps).toHaveCount(0)
       }).toPass()
       expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
         true
@@ -181,8 +178,7 @@ for (const viewport of [
         ).toBeInViewport()
       } else if (state === 'cancelling') await expectCompact()
       else expect((await dialog.boundingBox())!.y).toBe(bounds!.y)
-      await expect(steps.locator('[aria-current]')).toHaveCount(0)
-      await expect(steps.locator('svg')).toHaveCount(state === 'succeeded' ? 3 : 0)
+      await expect(steps).toHaveCount(0)
     }
     await expectFooterFits(dialog)
     await dialog.screenshot({ path: testInfo.outputPath('import-stable-result.png') })
@@ -464,25 +460,20 @@ for (const scenario of [
 }
 
 for (const flow of [
-  { query: '', labels: ['选择内容', '生成包', '保存包'] },
-  { query: 'import=review&', labels: ['检查包', '确认内容', '导入'] }
+  { query: '', primary: '选择保存位置…' },
+  { query: 'import=review&', primary: '导入' }
 ]) {
-  test(`Chinese package step labels fit at 320px: ${flow.labels[0]}`, async ({ page }) => {
+  test(`Chinese package actions fit without a redundant stepper at 320px: ${flow.primary}`, async ({
+    page
+  }) => {
     await page.setViewportSize({ width: 320, height: 740 })
     await page.goto(`/session-package.html?${flow.query}locale=zh-Hans`)
-    const steps = page.getByRole('list', { name: '包处理步骤' })
-    for (const label of flow.labels) {
-      const text = steps.getByText(label, { exact: true })
-      await expect(text).toBeVisible()
-      expect(
-        await text.evaluate((element) => {
-          const range = document.createRange()
-          range.selectNodeContents(element)
-          return range.getClientRects().length
-        })
-      ).toBe(1)
-    }
-    expect(await steps.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByRole('list', { name: '包处理步骤' })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: flow.primary, exact: true })).toBeInViewport()
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true
+    )
   })
 }
 
@@ -492,14 +483,14 @@ for (const width of [1280, 320]) {
     await page.goto('/session-package.html?import=checking')
     const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
     await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
-    await expect(dialog.locator('[aria-current="step"]')).toContainText('Check package')
+    await expect(dialog.locator('[aria-current="step"]')).toHaveCount(0)
     await expect(dialog.getByText('18.0 MiB / 42.0 MiB')).toBeVisible()
     await expect(dialog.getByRole('progressbar')).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Hide progress', exact: true }).click()
     const indicator = page.getByRole('region', { name: 'Package progress', exact: true })
     await expect(indicator.getByRole('status')).toHaveText('Checking Session package…')
     await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
-    await expect(dialog.locator('[aria-current="step"]')).toContainText('Review contents')
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
     await expect(dialog.getByText('Cancer immunotherapy', { exact: true })).toBeVisible()
     const confirm = dialog.getByRole('button', { name: 'Import', exact: true })
     await confirm.focus()
@@ -509,7 +500,7 @@ for (const width of [1280, 320]) {
       'aria-valuetext',
       'Importing research…: 42%'
     )
-    await expect(dialog.locator('[aria-current="step"]')).toContainText('Import')
+    await expect(dialog.locator('[aria-current="step"]')).toHaveCount(0)
     expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true
     )
@@ -594,7 +585,7 @@ for (const width of [1280, 320]) {
     await page.setViewportSize({ width, height: 800 })
     await page.goto('/session-package.html?background=running')
     await expect(page.getByRole('region', { name: 'Package progress' })).toHaveCount(0)
-    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    const progressButton = page.getByRole('button', { name: /Copying files… View progress/ })
     await expect(progressButton).toBeVisible()
     await expect(progressButton).toBeInViewport()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -613,7 +604,7 @@ test('New conversation keeps background export accessible in the workspace heade
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/session-package.html?background=running&surface=new-conversation')
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
-  const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+  const progressButton = page.getByRole('button', { name: /Copying files… View progress/ })
   await expect(progressButton).toBeVisible()
   await progressButton.click()
   await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
@@ -626,7 +617,7 @@ for (const width of [1280, 414, 320]) {
     await page.setViewportSize({ width, height: 800 })
     await page.goto('/session-package.html?background=running&surface=home')
     await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
-    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    const progressButton = page.getByRole('button', { name: /Copying files… View progress/ })
     await expect(progressButton).toBeVisible()
     expect(
       await progressButton.evaluate((element) =>
@@ -655,7 +646,7 @@ test('full and compact presets simplify selection while retaining evidence', asy
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   await expect(dialog.getByRole('radio', { name: 'Essential export', exact: true })).toBeChecked()
   await expect(dialog.getByRole('radio').first()).toHaveAccessibleName('Essential export')
-  await expect(dialog.getByText('Optional files: 0 / 29 selected · 0 B')).toBeVisible()
+  await expect(dialog.getByText('Optional files: 0 / 29 selected')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('presets-compact.png') })
   await dialog.getByRole('button', { name: 'Customize contents', exact: true }).click()
   const required = dialog.getByRole('checkbox', { name: 'research-result-0.csv', exact: true })
@@ -672,7 +663,7 @@ test('full and compact presets simplify selection while retaining evidence', asy
   await expect(dialog).toHaveAttribute('data-state', 'open')
   await page.screenshot({ path: testInfo.outputPath('presets-custom.png') })
   await dialog.getByRole('radio', { name: 'Full export', exact: true }).check()
-  await expect(dialog.getByText('Optional files: 29 / 29 selected · 464.0 KiB')).toBeVisible()
+  await expect(dialog.getByText('Optional files: 29 / 29 selected')).toBeVisible()
   await expect(dialog.getByLabel('Search optional files', { exact: true })).toHaveCount(0)
 })
 

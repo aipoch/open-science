@@ -1,3 +1,13 @@
+import { ResourceTagBadges, ResourceTagMenu } from '../../settings/ResourceTagControls'
+import { LiteratureReadingStatusLabel } from '../LiteratureReadingStatusLabel'
+import type { LiteratureReadingStatus } from '../workflows/useLiteratureReadingStatus'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { LiteratureRelatedLookup } from './LiteratureRelatedLookup'
 import { LiteratureSupplementLookup } from './LiteratureSupplementLookup'
 import type { LiteraturePreviewItem } from '../renderer-host'
@@ -70,9 +80,13 @@ const hasLiteratureDetailChildLayer = (): boolean =>
   )
 export function LiteratureDetailDialog({
   detailController,
+  setReadingStatus,
+  readingStatusError,
+  isBatching,
   previewItem,
   selectedItemDialogRef,
   detailTagMenuOpenRef,
+  handleDetailTagMenuOpenChange,
   detailSelectOpenRef,
   childLayerDismissGuardUntilRef,
   closeSelectedItemDetail: closeDetail,
@@ -102,9 +116,13 @@ export function LiteratureDetailDialog({
   renderOverview
 }: {
   detailController: LiteratureDetailController
+  setReadingStatus: (status: LiteratureReadingStatus, itemIds?: string[]) => Promise<void>
+  readingStatusError: { itemId: string; message: string } | undefined
+  isBatching: boolean
   previewItem: LiteraturePreviewItem | undefined
   selectedItemDialogRef: React.RefObject<HTMLDivElement | null>
   detailTagMenuOpenRef: React.RefObject<boolean>
+  handleDetailTagMenuOpenChange: (open: boolean) => void
   detailSelectOpenRef: React.RefObject<boolean>
   childLayerDismissGuardUntilRef: React.RefObject<number>
   closeSelectedItemDetail: () => void
@@ -240,7 +258,9 @@ export function LiteratureDetailDialog({
                         metadata.mode === 'supplements' ||
                         metadata.mode === 'related'
                         ? 'h-[min(720px,calc(100vh-2rem))]'
-                        : 'h-[min(840px,calc(100vh-2rem))]'
+                        : metadata.mode === 'view'
+                          ? 'max-h-[min(840px,calc(100vh-2rem))]'
+                          : 'h-[min(840px,calc(100vh-2rem))]'
                     )
                   )}
                   onInteractOutside={(event) => {
@@ -321,12 +341,66 @@ export function LiteratureDetailDialog({
                           </>
                         ) : (
                           <>
-                            <div className="mb-1.5 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                              <span className="rounded bg-bg-200 px-1.5 py-0.5 font-medium text-foreground">
+                            <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                              <span className="inline-flex h-6 items-center rounded border-0 bg-bg-200 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-none">
                                 {itemTypeLabels[selectedItem.item.itemType]}
                               </span>
+                              <Select
+                                value={selectedItem.readingStatus ?? 'unread'}
+                                disabled={isBatching}
+                                onOpenChange={handleDetailSelectOpenChange}
+                                onValueChange={(value) =>
+                                  void setReadingStatus(value as LiteratureReadingStatus, [
+                                    selectedItem.id
+                                  ])
+                                }
+                              >
+                                <SelectTrigger
+                                  aria-label={t('Reading status')}
+                                  className="h-6 w-auto gap-1 rounded border-0 bg-bg-200 px-1.5 py-0.5 text-xs font-medium shadow-none hover:bg-bg-200 data-[state=open]:bg-bg-200"
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="unread">
+                                    <LiteratureReadingStatusLabel status="unread" />
+                                  </SelectItem>
+                                  <SelectItem value="reading">
+                                    <LiteratureReadingStatusLabel status="reading" />
+                                  </SelectItem>
+                                  <SelectItem value="read">
+                                    <LiteratureReadingStatusLabel status="read" />
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                                <ResourceTagMenu
+                                  reference={{
+                                    resourceType: 'literature.item',
+                                    resourceId: selectedItem.id
+                                  }}
+                                  onOpenChange={handleDetailTagMenuOpenChange}
+                                  keepOpenOnSelect
+                                />
+                                <ResourceTagBadges
+                                  reference={{
+                                    resourceType: 'literature.item',
+                                    resourceId: selectedItem.id
+                                  }}
+                                  limit={Number.POSITIVE_INFINITY}
+                                />
+                              </div>
+                              {readingStatusError?.itemId === selectedItem.id ? (
+                                <ErrorNotice
+                                  inline
+                                  role="alert"
+                                  className="w-full"
+                                  tone="amber"
+                                  description={readingStatusError.message}
+                                />
+                              ) : null}
                               {publicationSummary(selectedItem.item) ? (
-                                <span className="min-w-0 break-words">
+                                <span className="w-full min-w-0 break-words">
                                   {publicationSummary(selectedItem.item)}
                                 </span>
                               ) : null}

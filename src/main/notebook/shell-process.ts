@@ -3,6 +3,7 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'n
 import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
+import { augmentedPathEnv } from '../settings/shell-path'
 import { ShellCellSession } from './shell-cell-session'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
@@ -95,7 +96,10 @@ const buildShellEnv = (
   workloadCacheEnv?: NodeJS.ProcessEnv,
   binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform)
 ): NodeJS.ProcessEnv => {
-  const env = buildShellProcessEnvironment(platform, sourceEnv)
+  const env = buildShellProcessEnvironment(
+    platform,
+    platform === 'darwin' ? augmentedPathEnv(sourceEnv) : sourceEnv
+  )
   // Handoff and PowerShell bootstrap variables are the Notebook host's protocol.
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   if (platform === 'win32' && env.PSModulePath) env.OPEN_SCIENCE_PSMODULEPATH = env.PSModulePath

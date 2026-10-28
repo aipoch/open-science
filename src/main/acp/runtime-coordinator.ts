@@ -166,6 +166,7 @@ class AcpRuntimeCoordinator {
   >()
   private readonly retiredRuntimes = new Set<AcpRuntime>()
   private readonly sessionRuntimes = new Map<string, AcpRuntime>()
+  private readonly fullAccessSubscriptions = new Map<string, Set<() => void>>()
   private readonly sessionConnectionStatuses = new Map<string, AcpStateSnapshot['status']>()
   private readonly permissionRuntimes = new Map<string, AcpRuntime>()
   // A cold decision is committed before runtime restoration. This single-use claim survives a
@@ -920,7 +921,7 @@ class AcpRuntimeCoordinator {
       response.sessionId !== request.sessionId &&
       this.sessionRuntimes.get(request.sessionId) === owner
     ) {
-      this.sessionRuntimes.delete(request.sessionId)
+      this.setSessionRuntime(request.sessionId, undefined)
       this.sessionConnectionStatuses.delete(request.sessionId)
     }
     this.sessionWriterTransfers.delete(request.sessionId)
@@ -1917,7 +1918,7 @@ class AcpRuntimeCoordinator {
     // concurrent resume may have transferred the same app session to a new generation while the old
     // agent delete was in flight; preserve that new owner and its connection status in full.
     if (ownerAfterDelete === runtime || (!ownerAfterDelete && !ownedBeforeDelete)) {
-      this.sessionRuntimes.delete(request.sessionId)
+      this.setSessionRuntime(request.sessionId, undefined)
       this.sessionConnectionStatuses.delete(request.sessionId)
       this.latestPromptRequests.delete(request.sessionId)
       this.clearApplicationSessionEvents(request.sessionId)
@@ -1995,6 +1996,45 @@ class AcpRuntimeCoordinator {
 
   async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
     return this.runtimeForSession(input.sessionId).requestAppPermission(input)
+  }
+
+  hasFullAccess(sessionId: string): boolean {
+    return this.findRuntimeForSession(sessionId)?.hasFullAccess(sessionId) ?? false
+  }
+
+  subscribeFullAccess(sessionId: string, listener: (allowed: boolean) => void): () => void {
+    let previous = this.hasFullAccess(sessionId)
+    let owner: AcpRuntime | undefined
+    let unsubscribeRuntime: (() => void) | undefined
+    let active = true
+    const notify = (): void => {
+      if (!active) return
+      const allowed = this.sessionRuntimes.get(sessionId)?.hasFullAccess(sessionId) ?? false
+      if (allowed === previous) return
+      previous = allowed
+      listener(allowed)
+    }
+    const rebind = (): void => {
+      const next = this.sessionRuntimes.get(sessionId)
+      if (!active || owner === next) return
+      unsubscribeRuntime?.()
+      owner = next
+      unsubscribeRuntime = next?.subscribeFullAccess(sessionId, () => {
+        if (owner === next && this.sessionRuntimes.get(sessionId) === next) notify()
+      })
+      notify()
+    }
+    const subscriptions = this.fullAccessSubscriptions.get(sessionId) ?? new Set()
+    subscriptions.add(rebind)
+    this.fullAccessSubscriptions.set(sessionId, subscriptions)
+    rebind()
+    return () => {
+      if (!active) return
+      active = false
+      unsubscribeRuntime?.()
+      subscriptions.delete(rebind)
+      if (!subscriptions.size) this.fullAccessSubscriptions.delete(sessionId)
+    }
   }
 
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpRuntimeState> {
@@ -2422,7 +2462,7 @@ class AcpRuntimeCoordinator {
         runtime.getSnapshot().sessionIds.includes(sessionId)
     )
     if (discovered) {
-      this.sessionRuntimes.set(sessionId, discovered)
+      this.setSessionRuntime(sessionId, discovered)
       return discovered
     }
 
@@ -2442,9 +2482,16 @@ class AcpRuntimeCoordinator {
     ])
   }
 
+  private setSessionRuntime(sessionId: string, runtime: AcpRuntime | undefined): void {
+    if (this.sessionRuntimes.get(sessionId) === runtime) return
+    if (runtime) this.sessionRuntimes.set(sessionId, runtime)
+    else this.sessionRuntimes.delete(sessionId)
+    for (const rebind of this.fullAccessSubscriptions.get(sessionId) ?? []) rebind()
+  }
+
   private bindSessionRuntime(sessionId: string, runtime: AcpRuntime): void {
     this.sessionWriterTransfers.delete(sessionId)
-    this.sessionRuntimes.set(sessionId, runtime)
+    this.setSessionRuntime(sessionId, runtime)
     if (!this.isolatedRuntimes.has(runtime)) return
     // Creation starts before the provider assigns an id. Replace its provisional scope so future
     // resumes and background continuations select this same process, never a sibling's process.
@@ -2657,7 +2704,7 @@ class AcpRuntimeCoordinator {
         owner === runtime ||
         (this.retiredRuntimes.has(owner) && !this.retiredRuntimes.has(runtime))
       ) {
-        this.sessionRuntimes.set(sessionId, runtime)
+        this.setSessionRuntime(sessionId, runtime)
         this.sessionConnectionStatuses.set(sessionId, state.status)
       }
     }
@@ -2674,7 +2721,7 @@ class AcpRuntimeCoordinator {
       const adoption = this.pendingSessionAdoptions.get(sessionId)
       if (adoption && adoption.runtime !== runtime) continue
 
-      this.sessionRuntimes.delete(sessionId)
+      this.setSessionRuntime(sessionId, undefined)
       this.pendingResumeReconciliations.delete(sessionId)
       if (state.status === 'closed' || state.status === 'error') {
         this.sessionConnectionStatuses.set(sessionId, state.status)
@@ -2702,7 +2749,7 @@ class AcpRuntimeCoordinator {
     this.retiredRuntimes.delete(runtime)
     for (const [sessionId, owner] of this.sessionRuntimes) {
       if (owner !== runtime) continue
-      this.sessionRuntimes.delete(sessionId)
+      this.setSessionRuntime(sessionId, undefined)
       if (retiredStatus === 'closed' || retiredStatus === 'error') {
         this.sessionConnectionStatuses.set(sessionId, retiredStatus)
       } else {
@@ -2885,7 +2932,9 @@ class AcpRuntimeCoordinator {
     this.sessionWriterTransfers.clear()
     this.retiredRuntimes.clear()
     this.targetedRuntimes.clear()
-    this.sessionRuntimes.clear()
+    for (const sessionId of [...this.sessionRuntimes.keys()]) {
+      this.setSessionRuntime(sessionId, undefined)
+    }
     this.pendingSessionCreations.clear()
     this.pendingSessionAdoptions.clear()
     this.pendingResumeReconciliations.clear()

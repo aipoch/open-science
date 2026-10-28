@@ -178,8 +178,10 @@ const composeAcpRuntimeProviderSessionOwners = (
     capabilityPolicy,
     configurator: base.sessionConfigurator,
     adopter: providerSessionAdopter,
-    clearLivePermissionProfile: (sessionId) =>
-      session.permissionContext.clearLivePermissionProfile(sessionId),
+    invalidatePermissionProfile: (sessionId) =>
+      session.permissionContext.invalidatePermissionProfile(sessionId),
+    setLivePermissionProfile: (sessionId, profile) =>
+      session.permissionContext.setLivePermissionProfile(sessionId, profile),
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,

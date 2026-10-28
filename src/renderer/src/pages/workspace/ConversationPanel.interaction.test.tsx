@@ -1063,7 +1063,7 @@ describe('ConversationPanel header spacing', () => {
     renderPanel()
     expect(getConversationHeader().textContent).toContain('New conversation')
     expect(
-      getConversationHeader().querySelector('[aria-label="Copying files… · View progress"]')
+      getConversationHeader().querySelector('[aria-label="Copying files… View progress"]')
     ).not.toBeNull()
 
     renderPanel({
@@ -1082,7 +1082,7 @@ describe('ConversationPanel header spacing', () => {
     })
     expect(getConversationHeader().textContent).toContain('Research Session')
     const progress = getConversationHeader().querySelector<HTMLButtonElement>(
-      '[aria-label="Copying files… · View progress"]'
+      '[aria-label="Copying files… View progress"]'
     )!
     act(() => progress.click())
     expect(usePackageOperationStore.getState().open).toBe(true)
@@ -10101,7 +10101,17 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
       }
     })
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Imported research history"]')).not.toBeNull()
+    const importedHistory = container.querySelector('[aria-label="Imported research history"]')
+    expect(importedHistory).not.toBeNull()
+    expect(importedHistory?.textContent).not.toContain('Read-only')
+    expect(importedHistory?.textContent).not.toContain(
+      'Code execution and continuation are disabled.'
+    )
+    expect(importedHistory?.querySelector('details')).toBeNull()
+    expect(importedHistory?.textContent).not.toContain('Package source')
+    expect(importedHistory?.textContent).not.toContain('Imported on')
+    expect(importedHistory?.textContent).toContain('View replay')
+    expect(importedHistory?.textContent).toContain('Fork to continue')
     expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
     expect(container.textContent).not.toContain('Asked by Researcher')
     expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()

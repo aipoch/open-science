@@ -2,6 +2,8 @@ import type {
   UpdateApplyOptions,
   UpdateBlocker,
   UpdateDownloadOptions,
+  UpdateInstaller,
+  UpdateInstallerRevealResult,
   UpdateStatus
 } from '../../shared/update'
 
@@ -148,6 +150,8 @@ export interface UpdateStrategy {
   recheck?(): Promise<UpdateStatus>
   recover?(): Promise<UpdateStatus>
   getStatus(): UpdateStatus
+  getInstaller(): Promise<UpdateInstaller | null>
+  revealInstaller(): Promise<UpdateInstallerRevealResult>
   check(): Promise<UpdateStatus>
   download(options?: UpdateDownloadOptions): Promise<UpdateStatus>
   // Aborts an in-flight download, stops network activity, and returns the reset status (back to

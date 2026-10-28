@@ -1049,7 +1049,7 @@ describe('replay readiness clock', () => {
 })
 
 describe('replay source metadata and final results', () => {
-  it('keeps imported package origin and excluded files inspectable beside the replay', async () => {
+  it('shows omitted files without exposing import diagnostics', async () => {
     const document = makeDocument()
     document.source.packageOrigin = {
       importId: 'import',
@@ -1066,10 +1066,20 @@ describe('replay source metadata and final results', () => {
     trigger.focus()
     fireEvent.click(trigger)
     expect(screen.getByRole('dialog', { name: 'Archived research' })).toBeTruthy()
-    expect(screen.getByText('Recorded steps: 3; files: 2')).toBeTruthy()
-    expect(screen.getByText('original-project')).toBeTruthy()
-    expect(screen.getByText('original-session')).toBeTruthy()
+    const stats = screen.getByText('Steps').closest('dl')!
+    expect(within(stats).getByText('Steps').nextElementSibling?.textContent).toBe('3')
+    expect(within(stats).getByText('Files').nextElementSibling?.textContent).toBe('2')
+    const details = screen.getByText('Not included in this package').closest('details')!
+    expect(details.open).toBe(false)
     fireEvent.click(screen.getByText('Not included in this package'))
+    expect(details.open).toBe(true)
+    expect(screen.queryByText('original-project')).toBeNull()
+    expect(screen.queryByText('original-session')).toBeNull()
+    expect(screen.queryByText('Source fingerprint')).toBeNull()
+    expect(
+      screen.queryByText('Presentation timing is reconstructed; recorded results are unchanged.')
+    ).toBeNull()
+    expect(screen.getByText('Not included in this package')).toBeTruthy()
     expect(screen.getByText('large-dataset.csv')).toBeTruthy()
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -1077,7 +1087,31 @@ describe('replay source metadata and final results', () => {
     expect(screen.queryByText('original-project')).toBeNull()
     chooseBranch('Other branch')
     fireEvent.click(trigger)
-    expect(screen.getByText('Recorded steps: 1; files: 2')).toBeTruthy()
+    expect(screen.getByText('Steps').nextElementSibling?.textContent).toBe('1')
+    expect(
+      within(screen.getByRole('dialog')).getByText('Files').nextElementSibling?.textContent
+    ).toBe('2')
+    await act(async () => {})
+  })
+
+  it('shows only counts when an imported package has no omitted files', async () => {
+    const document = makeDocument()
+    document.source.packageOrigin = {
+      importId: 'import',
+      sourceProjectId: 'original-project',
+      sourceSessionId: 'original-session',
+      importedAt: 1700000000000,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    render(<ReplayPanel document={document} {...callbacks()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Session information: Archived research' }))
+    const information = screen.getByRole('dialog', { name: 'Archived research' })
+    expect(within(information).getByText('Steps').nextElementSibling?.textContent).toBe('3')
+    expect(within(information).getByText('Files').nextElementSibling?.textContent).toBe('2')
+    expect(information.querySelector('details')).toBeNull()
+    expect(information.textContent).not.toContain('original-project')
+    expect(information.textContent).not.toContain('original-session')
+    expect(information.textContent).not.toContain('Imported on')
     await act(async () => {})
   })
 
@@ -1412,8 +1446,8 @@ it('identifies artifact versions and opens normal records without an intermediat
   render(<ReplayPanel document={source} {...props} />)
   fireEvent.click(screen.getByRole('button', { name: 'Browse steps' }))
   const directory = screen.getByRole('dialog', { name: 'Browse steps' })
-  expect(within(directory).getByText('result.png · Version 1')).toBeTruthy()
-  expect(within(directory).getByText('result.png · Version 2')).toBeTruthy()
+  expect(within(directory).getByText('result.png (Version 1)')).toBeTruthy()
+  expect(within(directory).getByText('result.png (Version 2)')).toBeTruthy()
   fireEvent.click(
     within(directory).getByRole('button', { name: 'Open original evidence for step 2' })
   )
@@ -1530,7 +1564,7 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   ]
   render(<ReplayPanel document={source} {...callbacks()} expanded />)
   seekProgress(3000)
-  expect(screen.getAllByText('GENERATED · 2')).toHaveLength(1)
+  expect(screen.getAllByRole('group', { name: 'Generated files' })).toHaveLength(1)
   const cards = screen.getAllByRole('button', { name: /Preview generated file/ })
   expect(cards).toHaveLength(2)
   expect(cards[0].parentElement).toBe(cards[1].parentElement)
@@ -1539,7 +1573,7 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   expect(screen.getByRole('button', { name: 'Preview generated file v1.txt' })).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Preview generated file v2.txt' })).toBeNull()
   seekProgress(2000)
-  expect(screen.getAllByText('GENERATED · 2')).toHaveLength(1)
+  expect(screen.getAllByRole('group', { name: 'Generated files' })).toHaveLength(1)
   expect(
     screen.getByRole('button', { name: 'Preview generated file v1.txt' }).hasAttribute('disabled')
   ).toBe(false)

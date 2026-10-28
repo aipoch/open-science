@@ -54,7 +54,6 @@ import { PackageFileSelection } from './PackageFileSelection'
 import {
   formatPackageBytes as bytes,
   PACKAGE_IO_RATE_OPTIONS,
-  PACKAGE_IMPORT_STAGES,
   packageImportPercent
 } from '../../../shared/session-package'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -87,82 +86,6 @@ const isImportCheck = (operation: PackageOperationSnapshot): boolean =>
   operation.kind === 'import' &&
   operation.state === 'running' &&
   ['preparing', 'copying', 'validating'].includes(operation.progress.phase)
-
-const PackageOperationSteps = ({
-  operation
-}: {
-  operation: PackageOperationSnapshot
-}): React.JSX.Element | null => {
-  const { t } = useTranslation()
-  if (operation.browserReceiptOnly || operation.kind === 'fork') return null
-  const importing = operation.kind === 'import'
-  const steps = importing
-    ? [t('Check package'), t('Review contents'), t('Import')]
-    : [t('Choose contents'), t('Create package'), t('Save package')]
-  const phase = operation.progress.phase
-  const current =
-    operation.state === 'succeeded'
-      ? steps.length
-      : !['running', 'awaiting-selection'].includes(operation.state) || phase === 'cleaning'
-        ? -1
-        : importing
-          ? phase === 'importing'
-            ? 2
-            : phase === 'confirming'
-              ? 1
-              : 0
-          : phase === 'saving'
-            ? 2
-            : ['preparing', 'selecting', 'choosing-location'].includes(phase)
-              ? 0
-              : 1
-  return (
-    <ol aria-label={t('Package steps')} className="flex shrink-0 items-start text-xs">
-      {steps.map((label, index) => (
-        <li
-          key={label}
-          aria-current={
-            index === current && ['running', 'awaiting-selection'].includes(operation.state)
-              ? 'step'
-              : undefined
-          }
-          className="flex min-w-0 flex-auto items-start last:flex-none"
-        >
-          <span
-            className={cn(
-              'flex min-w-0 items-start gap-1.5 leading-5',
-              index === current ? 'font-medium text-foreground' : 'text-muted-foreground'
-            )}
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                'flex size-5 shrink-0 items-center justify-center rounded-full text-[11px] font-medium tabular-nums',
-                index === current
-                  ? 'bg-primary text-primary-foreground'
-                  : index < current
-                    ? 'bg-primary/10 text-primary'
-                    : 'bg-muted text-muted-foreground'
-              )}
-            >
-              {index < current ? <Check className="size-3" /> : index + 1}
-            </span>
-            <span className="min-w-0">{label}</span>
-          </span>
-          {index < steps.length - 1 ? (
-            <span
-              aria-hidden="true"
-              className={cn(
-                'mx-1.5 mt-2.5 h-px min-w-2 flex-1 sm:mx-3',
-                index < current ? 'bg-primary/30' : 'bg-border'
-              )}
-            />
-          ) : null}
-        </li>
-      ))}
-    </ol>
-  )
-}
 
 const operationStatus = (
   operation: PackageOperationSnapshot,
@@ -232,11 +155,7 @@ const operationStatus = (
           : operation.progress.phase === 'choosing-location'
             ? t('Choose where to save the package in the system dialog.')
             : t('Choose package contents')
-        : isImportCheck(operation)
-          ? t('Review the package contents next. No Session has been created yet.')
-          : busy
-            ? t('Keep the app open. You can work in other Sessions while this finishes.')
-            : undefined
+        : undefined
   return { phase, status, waiting, busy, description }
 }
 
@@ -278,9 +197,7 @@ const PackageProgressMeter = ({
       <div className="space-y-2">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-xs text-muted-foreground">{stageLabel}</span>
-          <span className={`${compact ? 'text-sm' : 'text-xl'} font-semibold tabular-nums`}>
-            {percent}%
-          </span>
+          <span className={'text-sm font-semibold tabular-nums'}>{percent}%</span>
         </div>
         <div
           role="progressbar"
@@ -297,19 +214,6 @@ const PackageProgressMeter = ({
             className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out motion-reduce:transition-none"
           />
         </div>
-        {!compact ? (
-          <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
-            <span>{t('Overall import progress (estimated)')}</span>
-            {importStage ? (
-              <span>
-                {t('Stage {{current}} of {{total}}', {
-                  current: Object.keys(PACKAGE_IMPORT_STAGES).indexOf(importStage) + 1,
-                  total: Object.keys(PACKAGE_IMPORT_STAGES).length
-                })}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
       </div>
     )
   }
@@ -366,9 +270,7 @@ const PackageProgressMeter = ({
           {compact ? `${bytes(completedBytes)} / ${bytes(totalBytes)}` : phase}
         </span>
         {percent !== undefined ? (
-          <span className={`${compact ? 'text-sm' : 'text-xl'} font-semibold tabular-nums`}>
-            {percent}%
-          </span>
+          <span className={'text-sm font-semibold tabular-nums'}>{percent}%</span>
         ) : null}
       </div>
       <progress
@@ -522,8 +424,8 @@ export const PackageExportProgressButton = ({
         'h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground',
         iconOnly && 'size-9 max-w-none p-0'
       )}
-      aria-label={`${iconOnly ? `${t('Export Session package')} · ` : ''}${status} · ${t('View progress')}`}
-      title={iconOnly ? `${t('Export Session package')} · ${status}` : status}
+      aria-label={`${iconOnly ? `${t('Export Session package')}: ` : ''}${status} ${t('View progress')}`}
+      title={iconOnly ? `${t('Export Session package')}: ${status}` : status}
       onClick={() => setOpen(true)}
     >
       <Icon
@@ -587,11 +489,6 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
           aria-hidden="true"
         />
         <p role="status" className="min-w-0 flex-1 basis-48 text-sm">
-          {waiting ? (
-            <span className="mr-2 text-xs font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground">
-              {t('Waiting for you')}
-            </span>
-          ) : null}
           {status}
         </p>
         <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -1131,7 +1028,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     <Dialog.Title
                       ref={titleRef}
                       tabIndex={-1}
-                      className={`${dialogTitleClassName} min-w-0 flex-1 break-words py-0.5 leading-6 outline-none`}
+                      className={cn(
+                        dialogTitleClassName,
+                        'min-w-0 flex-1 break-words py-0.5 text-base leading-6 outline-none'
+                      )}
                     >
                       {title}
                     </Dialog.Title>
@@ -1171,13 +1071,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                       {operation.importFilename}
                     </p>
                   ) : null}
-                  <Dialog.Description
-                    className={
-                      operation.kind !== 'fork' || (active && !selecting)
-                        ? 'sr-only'
-                        : 'text-sm leading-relaxed text-muted-foreground'
-                    }
-                  >
+                  <Dialog.Description className={'sr-only'}>
                     {operation.kind === 'export'
                       ? t('Research history is always included.')
                       : operation.kind === 'fork'
@@ -1187,7 +1081,6 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                         : t('Import creates a new read-only Session. No code runs automatically.')}
                   </Dialog.Description>
                 </div>
-                <PackageOperationSteps operation={operation} />
               </div>
               {!selecting ? (
                 <div
@@ -1215,23 +1108,17 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                                 />
                               </div>
                               <div className="min-w-0 flex-1 space-y-1.5">
-                                {waiting ? (
-                                  <p className="text-xs font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                                    {t('Waiting for you')}
-                                  </p>
-                                ) : null}
                                 <p role="status" className="text-base font-semibold leading-6">
                                   {status}
                                 </p>
-                                {description || (operation.kind === 'export' && !active) ? (
+                                {description ? (
                                   <p
                                     className={cn(
                                       'text-sm leading-relaxed text-muted-foreground',
                                       operation.kind === 'import' && 'leading-5'
                                     )}
                                   >
-                                    {description ??
-                                      t('The Session is unlocked. You can continue your research.')}
+                                    {description}
                                   </p>
                                 ) : null}
                               </div>

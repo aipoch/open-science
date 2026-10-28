@@ -2131,9 +2131,11 @@ describe('production delegated-work composition', () => {
           additionalProperties: false
         }
       })
-      await expect.poll(() => harness.controls.size).toBe(1)
+      // Workspace preparation and durable writes can exceed the default 1s poll on Windows.
+      const waitOptions = { timeout: 10_000 }
+      await expect.poll(() => harness.controls.size, waitOptions).toBe(1)
       const control = [...harness.controls.values()][0]
-      await expect.poll(() => control.prompts).toHaveLength(1)
+      await expect.poll(() => control.prompts, waitOptions).toHaveLength(1)
       await expect(
         readFile(join(control.input.workspaceCwd!, 'inputs', '01-framework-input.txt'), 'utf8')
       ).resolves.toBe('framework evidence\n')
