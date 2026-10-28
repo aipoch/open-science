@@ -37,7 +37,7 @@ it
       ),
       join(configRoot, 'codebuddy', 'skill-runtime', '.claude', 'skills')
     ]
-    const references = skillRoots.map((path) => join(path, 'research', 'references', 'nsfc.md'))
+    const references = skillRoots.map((path) => join(path, 'research', 'references', 'guide.md'))
     await mkdir(workspace)
     for (const reference of references) {
       await mkdir(dirname(reference), { recursive: true })
