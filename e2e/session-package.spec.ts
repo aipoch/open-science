@@ -108,7 +108,7 @@ test('distinguishes package checks from confirmed import progress without a meas
   await expect(meter).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('import-validating.png') })
   await dialog.getByRole('button', { name: 'Run in background' }).click()
-  const background = page.getByRole('region', { name: 'Package progress', exact: true })
+  const background = page.getByRole('group', { name: 'Package progress', exact: true })
   await expect(background.getByRole('status')).toHaveText('Checking Session package…')
   await expect(background.getByRole('progressbar')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('import-background.png') })
@@ -225,7 +225,7 @@ test('presents waiting, measurable work and cleanup through native progress even
     exact: true
   })
   await expect(dialog).toBeHidden()
-  await expect(page.getByRole('region', { name: 'Package progress', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Package progress', exact: true })).toHaveCount(0)
   await expect(compactProgress).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('transfer-background-fixture.png'),
@@ -396,7 +396,7 @@ test('exports a Session package and opens its research workspace and read-only s
   await page.screenshot({ path: testInfo.outputPath('session-package-selection-narrow.png') })
   await page.setViewportSize(viewport)
   await operation.getByRole('button', { name: 'Hide progress' }).click()
-  await expect(page.getByRole('region', { name: 'Package progress', exact: true })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'Package progress', exact: true })).toBeVisible()
   await expect(
     page.getByTestId('conversation-header').getByRole('button', { name: 'Export Session package' })
   ).toHaveCount(0)
@@ -415,8 +415,8 @@ test('exports a Session package and opens its research workspace and read-only s
     .getByRole('button', { name: new RegExp(`Session status:.*${prompt}`) })
     .click()
   await page
-    .getByRole('region', { name: 'Package progress', exact: true })
-    .getByRole('button', { name: 'Continue setup', exact: true })
+    .getByRole('group', { name: 'Package progress', exact: true })
+    .getByRole('button', { name: /Continue setup$/ })
     .click()
   await expect(operation.getByText(/Optional files: 1 \/ 2 selected/)).toBeVisible()
   await operation.getByRole('button', { name: 'Customize contents' }).click()
@@ -456,8 +456,9 @@ test('exports a Session package and opens its research workspace and read-only s
   await page.screenshot({ path: testInfo.outputPath('session-package-import-progress.png') })
   await importing.getByRole('button', { name: 'Hide progress' }).click()
   await expect(importing).not.toBeVisible()
-  const backgroundImport = page.getByRole('region', { name: 'Package progress', exact: true })
-  await expect(backgroundImport.getByText('Waiting for import confirmation…')).toBeVisible()
+  const backgroundImport = page.getByRole('group', { name: 'Package progress', exact: true })
+  await expect(backgroundImport).toBeVisible()
+  await expect(backgroundImport.getByRole('status')).toHaveText('Waiting for import confirmation…')
   await page.screenshot({ path: testInfo.outputPath('session-package-import-background.png') })
   await backgroundImport.getByRole('button', { name: 'View progress' }).click()
   await importing.getByRole('button', { name: 'Import', exact: true }).click()
