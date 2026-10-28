@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import type { DownloadedUpdateHelper as SdkDownloadHelper } from 'electron-updater/out/DownloadedUpdateHelper'
-import { expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   ElectronUpdaterStrategy,
   type MinimalAutoUpdater,
@@ -39,6 +39,14 @@ const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
 const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }
+
+// NodeHttpExecutor does not honor NO_PROXY, so ambient proxy settings can redirect this
+// file's loopback fixtures. Keep the real SDK transport and restore the environment per test.
+beforeEach(() => {
+  vi.stubEnv('http_proxy', undefined)
+  vi.stubEnv('https_proxy', undefined)
+})
+afterEach(() => vi.unstubAllEnvs())
 
 type RealCacheSession = {
   strategy: ElectronUpdaterStrategy

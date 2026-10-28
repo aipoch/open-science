@@ -41,6 +41,28 @@ import {
   type ToolCompletionEnvelope
 } from './completion-gate'
 
+vi.mock('../notebook/working-file-observer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../notebook/working-file-observer')>()
+  return {
+    ...actual,
+    // These cases verify real executeControl completion and handoff ordering.
+    // Use bounded snapshots to isolate native watcher shutdown latency while preserving real evidence writes.
+    // working-file-observer.analysis-contract.integration.test.ts retains native watcher coverage.
+    startWorkingFileObservation: (
+      request: Parameters<typeof actual.startWorkingFileObservation>[0],
+      dependencies: Parameters<typeof actual.startWorkingFileObservation>[1]
+    ) =>
+      actual.startWorkingFileObservation(request, {
+        ...dependencies,
+        watchDirectory: () => {
+          throw Object.assign(new Error('Native watcher unavailable in this fixture.'), {
+            code: 'ENOSYS'
+          })
+        }
+      })
+  }
+})
+
 type ExecuteControlHarness = {
   server: NotebookLocalRpcServer
   service: NotebookRuntimeService

@@ -17,6 +17,28 @@ import {
 } from './session-operation.test-support'
 import type { ManagedExecutionProvenance } from './managed-execution-output'
 
+vi.mock('./working-file-observer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./working-file-observer')>()
+  return {
+    ...actual,
+    // These cases verify real managed execution entrypoints, Runs and Artifact publication.
+    // Use bounded snapshots to isolate native watcher shutdown latency while preserving real evidence writes.
+    // working-file-observer.analysis-contract.integration.test.ts retains native watcher coverage.
+    startWorkingFileObservation: (
+      request: Parameters<typeof actual.startWorkingFileObservation>[0],
+      dependencies: Parameters<typeof actual.startWorkingFileObservation>[1]
+    ) =>
+      actual.startWorkingFileObservation(request, {
+        ...dependencies,
+        watchDirectory: () => {
+          throw Object.assign(new Error('Native watcher unavailable in this fixture.'), {
+            code: 'ENOSYS'
+          })
+        }
+      })
+  }
+})
+
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true },
   safeStorage: { isEncryptionAvailable: () => false },

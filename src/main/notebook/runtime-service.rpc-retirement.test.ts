@@ -16,6 +16,28 @@ import {
   type NotebookExecutorLifecycleCallbacks
 } from './runtime-service'
 
+vi.mock('./working-file-observer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./working-file-observer')>()
+  return {
+    ...actual,
+    // These cases verify real REPL retirement, RPC authority and epoch isolation. Use bounded
+    // snapshots to isolate native watcher shutdown latency while preserving real evidence writes.
+    // working-file-observer.analysis-contract.integration.test.ts retains native watcher coverage.
+    startWorkingFileObservation: (
+      request: Parameters<typeof actual.startWorkingFileObservation>[0],
+      dependencies: Parameters<typeof actual.startWorkingFileObservation>[1]
+    ) =>
+      actual.startWorkingFileObservation(request, {
+        ...dependencies,
+        watchDirectory: () => {
+          throw Object.assign(new Error('Native watcher unavailable in this fixture.'), {
+            code: 'ENOSYS'
+          })
+        }
+      })
+  }
+})
+
 const cleanups: (() => Promise<unknown>)[] = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()

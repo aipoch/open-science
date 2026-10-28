@@ -97,7 +97,8 @@
   "packages/notebook-syntax/assets/web-tree-sitter.wasm": ["packages/notebook-syntax/src/index.ts"],
   "resources/notebook/python_loop.py": [
     "src/main/notebook/kernel-executor.ts",
-    "src/main/notebook/runtime-service.ts"
+    "src/main/notebook/runtime-service.ts",
+    "src/main/notebook/kernel-executor.folder-authority.integration.test.ts"
   ],
   "resources/notebook/r_loop.R": [
     "src/main/notebook/kernel-executor.ts",
