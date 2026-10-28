@@ -63,7 +63,7 @@ describe('Project archive revision', () => {
         '0049_pascalcase_table_names',
         '0050_literature_translation',
         '0051_literature_reading_status',
-        '0051_session_research_membership'
+        '0052_session_research_membership'
       ]
     })
     expect(

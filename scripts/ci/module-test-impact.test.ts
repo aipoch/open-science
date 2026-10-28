@@ -1919,7 +1919,7 @@ it.each([
     id: 'user_skills_repository',
     path: 'src/main/skills/catalog.ts',
     reason:
-      'The user_skills_repository owner retains 50 explicit research consumer obligations beyond its reviewed source-derived edges, including research-reproduction.integration.test.ts, local-service.macos.integration.test.ts, research-service.macos.integration.test.ts. 45 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes. Saved GitHub Skill sources expand the reviewed source boundary with persistent bookmarks and Settings navigation; retain full CI validation until this boundary is reviewed and reclassified.'
+      'Saved GitHub Skill sources expand the reviewed source boundary with persistent bookmarks and Settings navigation; retain full CI validation until this boundary is reviewed and reclassified.'
   },
   {
     id: 'settings_provider_accounts',

@@ -178,5 +178,5 @@
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime",
-  "fullTestReason": "Headless portable package operations extend the reviewed package owner across import recovery, authorization, restart and shutdown lifecycles; retain full validation of desktop, CLI and browser consumers. Catalog persistence and verified remote archive downloads expand the package import boundary; retain full CI validation until these sources and runtime consumers are reviewed."
+  "fullTestReason": "Catalog persistence and verified remote archive downloads expand the package import boundary; retain full CI validation until these sources and runtime consumers are reviewed."
 }

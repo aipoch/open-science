@@ -38,11 +38,11 @@ it('upgrades the prior translation schema without changing its saved records and
   )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0049_pascalcase_table_names',
-    to: '0051_session_research_membership',
+    to: '0052_session_research_membership',
     applied: [
       '0050_literature_translation',
       '0051_literature_reading_status',
-      '0051_session_research_membership'
+      '0052_session_research_membership'
     ]
   })
   expect(

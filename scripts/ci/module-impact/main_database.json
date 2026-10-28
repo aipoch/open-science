@@ -94,7 +94,7 @@
     "src/main/database/literature-translation-migration.test.ts",
     "src/main/database/workspace-pdf-translation-migration.test.ts",
     "scripts/database-migration-ledger-smoke.test.ts",
-    "src/main/database/migrations/0051-session-research-membership.ts",
+    "src/main/database/migrations/0052-session-research-membership.ts",
     "src/main/database/session-research-membership-migration.test.ts",
     "src/main/database/migrations/0051-literature-reading-status.ts",
     "src/main/database/literature-reading-status-migration.test.ts"
@@ -107,7 +107,7 @@
     "src/main/database/migration-sql-executor.ts",
     "src/main/database/migrations/0047-session-replay.ts",
     "test/fixtures/application-database.ts",
-    "src/main/database/migrations/0051-session-research-membership.ts"
+    "src/main/database/migrations/0052-session-research-membership.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -593,5 +593,5 @@
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime",
-  "fullTestReason": "Research membership adds a persisted database migration and session lifecycle state outside the reviewed database source boundary; validate all migration, restart and persistence consumers in full. Literature reading status adds a persisted column and migration beyond the reviewed database source boundary; retain full CI validation until the expanded migration and consumer contracts are reviewed."
+  "fullTestReason": "Literature reading status adds a persisted column and migration beyond the reviewed database source boundary; retain full CI validation until the expanded migration and consumer contracts are reviewed."
 }
