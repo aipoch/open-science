@@ -1845,15 +1845,17 @@ describe('production delegated-work composition', () => {
         )
       ).rejects.toMatchObject({ code: 'admission_rejection' })
       expect(harness.execution.reservationCounts()).toEqual([])
+      // Verify naming after collection without a separate startup polling deadline.
+      harness.execution.plan({ status: 'completed', response: 'first complete' })
+      harness.execution.plan({ status: 'completed', response: 'second complete' })
       const first = await harness.composition.host.delegate(
         { ...harness.caller, toolInvocationId: 'call-codex-named' },
         { task, name: 'Source audit' },
         { wait: false }
       )
-      await expect.poll(() => harness.execution.controls()).toHaveLength(1)
-      harness.execution.controls()[0].accept()
-      harness.execution.controls()[0].complete('first complete')
-      await harness.composition.host.collect(harness.caller, [first.children[0].frameId])
+      await expect(
+        harness.composition.host.collect(harness.caller, [first.children[0].frameId])
+      ).resolves.toMatchObject([{ status: 'completed', response: 'first complete' }])
       const reopened = harness.reopen()
       compositions.push(reopened)
       const second = await reopened.host.delegate(
@@ -1861,10 +1863,9 @@ describe('production delegated-work composition', () => {
         { task, name: 'Source audit 2' },
         { wait: false }
       )
-      await expect.poll(() => harness.execution.controls()).toHaveLength(2)
-      harness.execution.controls()[1].accept()
-      harness.execution.controls()[1].complete('second complete')
-      await reopened.host.collect(harness.caller, [second.children[0].frameId])
+      await expect(
+        reopened.host.collect(harness.caller, [second.children[0].frameId])
+      ).resolves.toMatchObject([{ status: 'completed', response: 'second complete' }])
 
       expect(first).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit' }] })
       expect(second).toMatchObject({ kind: 'receipts', children: [{ name: 'Source audit 2' }] })
