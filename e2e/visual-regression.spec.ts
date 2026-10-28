@@ -26,7 +26,7 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
   // The live catalog changes independently of the app; home-use-cases.spec.ts covers its layout.
   await page.addStyleTag({
     content:
-      'section:has(a[href="https://aipoch.com/open-science/use-cases"]) { display: none !important; }'
+      'section[aria-labelledby]:has(> div > h2 > a[href="https://aipoch.com/open-science/use-cases"]) { display: none !important; }'
   })
 }
 
