@@ -187,6 +187,7 @@
     "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
+    "Only .science packages can be imported.": "Solo se pueden importar paquetes .science.",
     "{{count}} steps remaining_one": "Queda {{count}} paso",
     "{{count}} steps remaining_many": "Quedan {{count}} pasos",
     "{{count}} steps remaining_other": "Quedan {{count}} pasos",

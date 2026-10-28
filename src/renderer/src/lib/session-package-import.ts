@@ -1,3 +1,4 @@
+import { i18next as i18n } from '@/i18n'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
@@ -21,17 +22,11 @@ const pickScienceFile = (): Promise<File | undefined> =>
     const finish = (file?: File): void => {
       if (settled) return
       settled = true
-      window.removeEventListener('focus', onFocus)
       input.remove()
       resolve(file)
     }
-    const onFocus = (): void => {
-      // Older engines never emit cancel; the window regains focus when the picker closes.
-      window.setTimeout(() => finish(undefined), 0)
-    }
     input.addEventListener('change', () => finish(input.files?.[0]), { once: true })
     input.addEventListener('cancel', () => finish(undefined), { once: true })
-    window.addEventListener('focus', onFocus)
     document.body.append(input)
     input.click()
   })
@@ -53,7 +48,7 @@ export const importSessionPackage = async (projectId?: string, file?: File): Pro
       // The user dismissed the picker: nothing was staged and there is nothing to report.
       if (!selected) return
       if (!/\.science$/i.test(selected.name))
-        throw new Error(`Only .science packages can be imported, not ${selected.name}.`)
+        throw new Error(i18n.t('Only .science packages can be imported.'))
       const attachment = await stageUploadFile(selected, window.api.uploads, {
         transferId: crypto.randomUUID(),
         name: selected.name
