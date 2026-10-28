@@ -2686,3 +2686,51 @@ it('cancels and releases only the browser source owned by the import queue', asy
     await service.close()
   }
 })
+
+it.each(['retry', 'discard'] as const)(
+  'releases a staged Web import exactly once after %s',
+  async (action) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    const source = join(fixture.storageRoot, 'staged.science')
+    await writeFile(source, 'package')
+    const importFrom = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Temporary import failure'))
+      .mockResolvedValue({ projectId: 'p', sessionId: 's' })
+    const released = vi.fn(async () => {
+      await fsPromises.rm(source)
+    })
+    const desktop = createDesktop({
+      service: { importFrom } as unknown as SessionPackageService,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined
+    })
+    try {
+      await expect(
+        desktop.import(undefined, undefined, { projectId: 'p' }, source, false, {
+          onReleased: released
+        })
+      ).rejects.toThrow()
+      expect(released).not.toHaveBeenCalled()
+      const failed = desktop.operations.snapshot!
+      if (action === 'retry') {
+        desktop.respond({ action: 'retry-import', operationId: failed.id })
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+      } else {
+        await desktop.respond({
+          action: 'discard-import',
+          operationId: failed.id,
+          requestId: failed.importRequestId!
+        })
+      }
+      await vi.waitFor(() => expect(released).toHaveBeenCalledOnce())
+      await expect(stat(source)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await desktop.close()
+    }
+    expect(released).toHaveBeenCalledOnce()
+  }
+)

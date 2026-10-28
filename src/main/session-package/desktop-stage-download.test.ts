@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { dialog } from 'electron'
 import { basename, dirname, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { englishNativeTranslator } from '../locale/main-process-messages'
 import type { SessionPackageRequest } from '../../shared/session-package'
 import { SessionPackageDesktop } from './desktop'
@@ -49,7 +49,7 @@ type ExportTo = (
 ) => Promise<void>
 
 const request = { projectId: 'project-1', sessionId: 'session-1' }
-const stagingDirectory = join(tmpdir(), 'open-science-package-exports')
+const stagingDirectory = tmpdir()
 const temporaryDirectories: string[] = []
 
 const createTemporaryDirectory = async (): Promise<string> => {
@@ -128,7 +128,7 @@ it('stages the .science download for stageDownload callers without a native dial
     const first = await desktop.export(request, undefined, undefined, { stageDownload: true })
     expect(first).toMatchObject({ saved: true })
     const firstPath = first.filePath!
-    expect(dirname(firstPath)).toBe(stagingDirectory)
+    expect(dirname(dirname(dirname(firstPath)))).toBe(stagingDirectory)
     expect(extname(firstPath)).toBe('.science')
     expect(basename(firstPath)).toContain('Web Session')
     expect(basename(firstPath)).toContain(dateStamp())
@@ -142,9 +142,9 @@ it('stages the .science download for stageDownload callers without a native dial
 
     const second = await desktop.export(request, undefined, undefined, { stageDownload: true })
     expect(second).toMatchObject({ saved: true })
-    // Same day and title: the collision suffix keeps the first download intact.
+    // Same day and title: private export directories preserve both downloads.
     expect(second.filePath).not.toBe(firstPath)
-    expect(dirname(second.filePath!)).toBe(stagingDirectory)
+    expect(dirname(second.filePath!)).not.toBe(dirname(firstPath))
     expect(dialog.showSaveDialog).not.toHaveBeenCalled()
   } finally {
     await desktop.close()
@@ -187,7 +187,7 @@ it('keeps the sensitive-content retry on the staged path instead of the native d
     expect(exportTo.mock.calls[1][2].allowSensitiveContent).toBe(true)
     expect(dialog.showSaveDialog).not.toHaveBeenCalled()
     const stagedPath = desktop.operations.snapshot!.result!.filePath!
-    expect(dirname(stagedPath)).toBe(stagingDirectory)
+    expect(dirname(dirname(dirname(stagedPath)))).toBe(stagingDirectory)
     expect(extname(stagedPath)).toBe('.science')
     expect(await readFile(stagedPath, 'utf8')).toBe('package-bytes')
   } finally {
@@ -237,31 +237,31 @@ it('keeps explicit-destination CLI exports dialog-free and outside the staging d
   }
 })
 
-it('prunes staged downloads older than one hour before staging a new one', async () => {
-  await mkdir(stagingDirectory, { recursive: true })
-  const stale = join(stagingDirectory, 'stale-check.science')
-  const fresh = join(stagingDirectory, 'fresh-check.science')
-  await writeFile(stale, 'stale')
-  await writeFile(fresh, 'fresh')
-  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
-  await utimes(stale, twoHoursAgo, twoHoursAgo)
-  const exportTo = vi.fn(
-    async (_request: SessionPackageRequest, archive: string, options: ExportToOptions) => {
-      await selectEverything(options, 'Prune Session')
-      await writeArchive(archive)
-    }
-  )
-  const { desktop } = createDesktop(exportTo)
+it('isolates hosts and prunes only their own expired export directories', async () => {
+  const exportTo: ExportTo = async (_request, archive, options) => {
+    await selectEverything(options, 'Same title')
+    await writeArchive(archive)
+  }
+  const first = createDesktop(exportTo).desktop
+  const second = createDesktop(exportTo).desktop
   try {
-    const result = await desktop.export(request, undefined, undefined, { stageDownload: true })
-    expect(result).toMatchObject({ saved: true })
-    expect(dirname(result.filePath!)).toBe(stagingDirectory)
-    await expect(stat(stale)).rejects.toMatchObject({ code: 'ENOENT' })
-    expect((await stat(fresh)).isFile()).toBe(true)
+    const [a, b] = await Promise.all([
+      first.export(request, undefined, undefined, { stageDownload: true }),
+      second.export(request, undefined, undefined, { stageDownload: true })
+    ])
+    expect(a.filePath).not.toBe(b.filePath)
+    expect(basename(a.filePath!)).toBe(basename(b.filePath!))
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    await utimes(dirname(a.filePath!), old, old)
+    await utimes(dirname(b.filePath!), old, old)
+    await first.export(request, undefined, undefined, { stageDownload: true })
+    await expect(stat(a.filePath!)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(b.filePath!, 'utf8')).toBe('package-bytes')
+    await first.close()
+    expect(await readFile(b.filePath!, 'utf8')).toBe('package-bytes')
   } finally {
-    await desktop.close()
-    await rm(stale, { force: true })
-    await rm(fresh, { force: true })
+    await first.close()
+    await second.close()
   }
 })
 

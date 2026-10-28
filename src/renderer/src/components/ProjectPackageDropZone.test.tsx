@@ -435,7 +435,7 @@ it('advertises and routes package import on local Web through chunk staging', as
     )
   )
   expect(beginTransfer).toHaveBeenCalledOnce()
-  expect(deleteUpload).toHaveBeenCalledWith({ path: '/uploads/study.science' })
+  expect(deleteUpload).not.toHaveBeenCalled()
 })
 
 it('enables destination-free import on local Web', () => {

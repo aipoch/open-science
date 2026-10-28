@@ -174,9 +174,8 @@ describe('Web session package import', () => {
       { projectId: 'existing-project' },
       '/uploads/research.science'
     )
-    expect(uploads.deleteUpload).toHaveBeenCalledExactlyOnceWith({
-      path: '/uploads/research.science'
-    })
+    // The main owner releases the staged source, including after retries.
+    expect(uploads.deleteUpload).not.toHaveBeenCalled()
     expect(usePackageOperationStore.getState().importError).toBeUndefined()
   })
 
