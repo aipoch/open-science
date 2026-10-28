@@ -118,7 +118,9 @@ test('downloads on the card, retries and cancels, then imports verified bytes th
   await dialog.getByRole('button', { name: 'Import', exact: true }).click()
   await expect(dialog.getByRole('status').filter({ hasText: /^Session imported$/ })).toBeVisible()
   await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await expect(section.getByRole('article')).toHaveCount(3)
   expect(

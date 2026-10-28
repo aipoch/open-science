@@ -1,6 +1,19 @@
 'use strict'
 /* eslint-disable @typescript-eslint/no-require-imports -- Isolated Node network fixture for the real Electron journey. */
 // Replace only public catalog HTTP responses; the preload bridge, downloader, filesystem and importer stay real.
+// Covers are renderer requests, so intercept them before every window, including restarts.
+if (process.versions.electron && process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) {
+  const { app, session } = require('electron')
+  app.whenReady().then(() => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="#e7e5df"/></svg>'
+    session.defaultSession.webRequest.onBeforeRequest(
+      { urls: ['https://statics.aipoch.com/open-science/usecases/example-*/cover.png'] },
+      (_details, callback) =>
+        callback({ redirectURL: `data:image/svg+xml,${encodeURIComponent(svg)}` })
+    )
+  })
+}
 if (!process.versions.electron && process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) {
   const { readFileSync, existsSync, appendFileSync } = require('node:fs')
   const { join } = require('node:path')
