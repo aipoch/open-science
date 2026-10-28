@@ -180,6 +180,7 @@ export async function composeSettingsBootstrap({
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      configRoot: resolveConfigRoot(),
       windowsRuntimeRoot: join(resolveConfigRoot(), 'notebook-runtimes'),
       packaged: runtimeMetadata().packaged,
       allowRuntimeAccessPrompt: !headless,

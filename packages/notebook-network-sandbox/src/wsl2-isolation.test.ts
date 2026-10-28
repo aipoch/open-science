@@ -185,6 +185,7 @@ describe('WSL2 sandbox adapter', () => {
   })
 
   it('compiles Windows policy into a gateway-only bwrap Bash launch', async () => {
+    const skillRoot = 'C:\\Open-Science\\config 路径\\codex\\skills'
     const cacheEnvironment = cacheEnvironmentFixture(
       'C:\\Open-Science\\runtime 路径\\cache\\notebook'
     )
@@ -230,7 +231,7 @@ describe('WSL2 sandbox adapter', () => {
       },
       filesystem: {
         privateRoot: 'C:\\private',
-        readOnlyRoots: ['/usr', '/bin', 'C:\\Open-Science\\inputs'],
+        readOnlyRoots: ['/usr', '/bin', 'C:\\Open-Science\\inputs', skillRoot],
         readWriteRoots: [
           'C:\\Open-Science\\Workspace 路径',
           'C:\\Open-Science\\handoff',
@@ -238,7 +239,7 @@ describe('WSL2 sandbox adapter', () => {
           npmPrefix
         ],
         deniedReadRoots: ['C:\\private'],
-        deniedWriteRoots: []
+        deniedWriteRoots: [skillRoot]
       },
       reconcileGuest: reconciled,
       mapPath,
@@ -331,6 +332,18 @@ describe('WSL2 sandbox adapter', () => {
         (value, index) =>
           value === '--bind' && launch.argv[index + 1] === '/mnt/c/Open-Science/inputs'
       )
+    ).toBe(false)
+    const guestSkills = '/mnt/c/Open-Science/config 路径/codex/skills'
+    expect(
+      launch.argv.some(
+        (arg, index) =>
+          arg === '--ro-bind' &&
+          launch.argv[index + 1] === guestSkills &&
+          launch.argv[index + 2] === guestSkills
+      )
+    ).toBe(true)
+    expect(
+      launch.argv.some((arg, index) => arg === '--bind' && launch.argv[index + 1] === guestSkills)
     ).toBe(false)
     expect(launch.env.PATH).toBeUndefined()
     expect(launch.env.AWS_SECRET_ACCESS_KEY).toBeUndefined()

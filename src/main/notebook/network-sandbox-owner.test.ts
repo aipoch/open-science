@@ -202,6 +202,69 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each(
+    (['darwin', 'linux', 'win32', 'wsl2'] as const).flatMap((target) =>
+      (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({ target, runtime }))
+    )
+  )(
+    'makes managed Skill resources read-only for $runtime on $target',
+    async ({ target, runtime }) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'sandbox-skill-resources-')))
+      fixtureDirectories.push(root)
+      const configRoot = join(root, 'config')
+      const skills = join(configRoot, 'codex', 'skills')
+      await mkdir(skills, { recursive: true })
+      const owner = new NotebookNetworkSandboxOwner({
+        configRoot,
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: target === 'wsl2' ? 'win32' : target,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        // A broad user grant must not turn the built-in Skill read grant into write access.
+        getGrantedLocalRoots: async () => [
+          { id: 'config', name: 'config', path: configRoot, access: 'rw' }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      try {
+        const wrapped = await owner.wrap({
+          ...(target === 'wsl2'
+            ? {
+                target: {
+                  kind: 'wsl2',
+                  profileId: 'wsl',
+                  distro: 'Ubuntu',
+                  user: 'researcher'
+                } as const
+              }
+            : {}),
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'read Skill reference',
+          sessionId: 'skill-session',
+          projectId: 'skill-project',
+          runtime,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+        expect(filesystem.readOnlyRoots).toContain(skills)
+        expect(filesystem.deniedWriteRoots).toContain(skills)
+        expect(filesystem.readWriteRoots).not.toContain(skills)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
   it.each([true, false])(
     'parks a Shell network request, deduplicates it, and releases only a live connection (%s)',
     async (connectionLive) => {

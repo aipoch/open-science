@@ -203,6 +203,7 @@ it('keeps explicit protection setup and status failures observable after a conve
 it('uses the live protection policy, trust bundle and granted roots at execution time', async () => {
   const settings = await bootstrap()
   const options = fixture.networkOptions!
+  expect(options.configRoot).toBe('/config')
   await expect(options.getSettings()).resolves.toMatchObject({ allowedDomains: [] })
   await expect(options.getFolderRestrictionEnabled!()).resolves.toBe(true)
   await expect(options.getCaBundlePath!()).resolves.toBe('/ca.pem')

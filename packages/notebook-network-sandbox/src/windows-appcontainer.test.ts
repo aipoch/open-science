@@ -444,6 +444,40 @@ describe('Windows AppContainer launch', () => {
     expect(launch.env.LOCALAPPDATA).toBe(localAppData)
   })
 
+  it('passes managed Skill read grants and write denials to the native Windows host', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'windows-skill-policy-')))
+    const skills = join(root, 'Application data 科研', 'codex', 'skills')
+    mkdirSync(skills, { recursive: true })
+    try {
+      const launch = windowsLaunch({
+        command: 'read Skill reference',
+        executable: process.execPath,
+        args: [],
+        cwd: root,
+        gatewayPort: 49700,
+        gatewayCredentials: { username: 'command', password: 'secret' },
+        env: {},
+        filesystem: {
+          readOnlyRoots: [skills],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: [skills]
+        },
+        hostPath: join(root, 'notebook-sandbox-host.exe'),
+        installationId: '0123456789abcdef01234567',
+        ownershipRoot: root
+      })
+      const specification = JSON.parse(
+        Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+      )
+      expect(specification.readOnlyRoots).toEqual([skills])
+      expect(specification.deniedWriteRoots).toEqual([skills])
+      expect(specification.readWriteRoots).toEqual([root])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('launches a structured executable directly instead of through PowerShell', () => {
     const launch = windowsLaunch({
       command: "& '/runtime/python.exe' '/app/python_loop.py'",

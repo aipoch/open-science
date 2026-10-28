@@ -20,6 +20,7 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
+import { managedSkillReadRoots } from './managed-skill-read-roots'
 import {
   configureWindowsNotebookRuntime,
   type WindowsNotebookRuntime
@@ -192,6 +193,7 @@ const blockedDestinationKey = (sessionId: string, hostname: string): string =>
   `${sessionId}\0${hostname}`
 
 type NotebookNetworkSandboxOwnerOptions = Readonly<{
+  configRoot?: string
   windowsRuntimeRoot?: string
   packaged?: boolean
   resourceRoot: string
@@ -520,6 +522,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
     const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+    const skillReadRoots = this.options.configRoot
+      ? await managedSkillReadRoots(this.options.configRoot)
+      : []
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(target)
     this.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {
@@ -588,6 +593,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           privateRoot: homedir(),
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,
+            ...skillReadRoots,
             ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
               ? []
               : environmentPathRoots(env, this.platform)),
@@ -610,6 +616,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           deniedReadRoots: invocation.filesystem.deniedReadRoots,
           deniedWriteRoots: [
             ...invocation.filesystem.deniedWriteRoots,
+            ...skillReadRoots,
             ...protectedWriteRoots([
               ...invocation.filesystem.readWriteRoots,
               ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
