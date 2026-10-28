@@ -698,9 +698,7 @@ export class SessionPackageDesktop {
     destinationPath?: string,
     options?: { stageDownload?: boolean }
   ): Promise<SessionPackageExportResult> {
-    // Every top-level export resets the remembered policy; respond()'s sensitive-content retry
-    // passes no options and reuses this field instead of falling into the native dialog branch.
-    this.stageDownloadForRetries = options?.stageDownload ?? false
+    // Admission records the policy so a rejected concurrent export cannot change retries.
     return this.exportWithPolicy(
       request,
       callerId,
@@ -724,6 +722,7 @@ export class SessionPackageDesktop {
     return this.operations
       .run('export', request, async (signal) => {
         operationSignal = signal
+        this.stageDownloadForRetries = stage
         this.options.assertCanStart?.()
         if (destinationPath)
           this.lastExport = {
