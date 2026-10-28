@@ -45,6 +45,41 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.j
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it.each(['deadline', 'abort'] as const)(
+    'stops abandoned credential startup and its helper after %s',
+    async (mode) => {
+      const root = await mkdtemp(join(tmpdir(), 'desktop-abandoned-credentials-'))
+      roots.push(root)
+      const entry = join(root, 'fixture.cjs')
+      await writeFile(
+        entry,
+        `const fs = require('node:fs'), path = require('node:path');
+      process.send({protocolVersion:1,attemptId:process.env.OPEN_SCIENCE_STARTUP_ATTEMPT,stage:'credentials',kind:'progress'});
+      require('node:child_process').spawnSync(process.execPath, ['-e', "setTimeout(() => require('node:fs').writeFileSync(require('node:path').join(process.env.OPEN_SCIENCE_CONFIG_ROOT, 'late-startup'), 'continued'), 900)"]);
+      setInterval(() => {}, 1000);`
+      )
+      const cancellation = new AbortController()
+      await expect(
+        startOrAttachDesktopBackend({
+          configRoot: root,
+          profilePath: root,
+          version: 'test',
+          command: process.execPath,
+          entry,
+          packaged: true,
+          timeoutMs: mode === 'deadline' ? 300 : 5000,
+          signal: cancellation.signal,
+          onStatus() {
+            if (mode === 'abort') cancellation.abort()
+          }
+        })
+      ).rejects.toMatchObject(
+        mode === 'deadline' ? { stage: 'credentials', canRetry: true } : { name: 'AbortError' }
+      )
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      expect(await readdir(root)).not.toContain('late-startup')
+    }
+  )
   it('allows credential authorization beyond the ordinary startup deadline and retains retry after exit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-credential-wait-'))
     roots.push(root)

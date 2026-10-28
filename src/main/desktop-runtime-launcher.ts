@@ -5,6 +5,7 @@ import {
   type ServiceLifetimeRecord
 } from './local-service-lifetime'
 import { terminateVerifiedService } from './verified-service-stop'
+import { terminateProcessTree } from './process-tree'
 import { connectDesktopRuntime } from './desktop-runtime-client'
 import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from './desktop-runtime-info'
@@ -731,6 +732,25 @@ export async function startOrAttachDesktopBackend(options: {
       logs,
       status
     )
+  } catch (error) {
+    if (
+      status?.stage === 'credentials' &&
+      child.exitCode === null &&
+      child.signalCode === null &&
+      (options.signal?.aborted || (error instanceof DesktopBackendStartupError && !error.canRetry))
+    ) {
+      // A blocked credential helper must not outlive an abandoned launch attempt.
+      const stopped = await terminateProcessTree(child, 'SIGKILL')
+      if (stopped.reaped && error instanceof DesktopBackendStartupError)
+        throw new DesktopBackendStartupError(
+          `Node backend startup timed out. See ${logs}.`,
+          status.stage,
+          true,
+          logs,
+          status
+        )
+    }
+    throw error
   } finally {
     child.off('message', onMessage)
     if (child.connected) child.disconnect()
