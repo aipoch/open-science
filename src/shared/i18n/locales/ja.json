@@ -7640,6 +7640,15 @@
     "Linux": "Linux",
     "Branches": "ブランチ",
     "Optional files: {{selected}} / {{total}} selected": "任意のファイル：{{selected}} / {{total}} 件を選択",
-    "Steps": "ステップ"
+    "Steps": "ステップ",
+    "Use Case Gallery": "活用事例ギャラリー",
+    "Random examples": "ランダムな事例",
+    "Previous examples": "前の事例",
+    "Next examples": "次の事例",
+    "Preparing download…": "ダウンロードを準備中…",
+    "Verifying download…": "ダウンロードを検証中…",
+    "Example download progress": "事例のダウンロード進捗",
+    "Could not cancel download. Try again.": "ダウンロードをキャンセルできませんでした。もう一度お試しください。",
+    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。"
   }
 }

@@ -225,8 +225,6 @@ arXiv 프리프린트 · [v1](https://arxiv.org/abs/2610.17110v1) · 2026년 10�
 
 아래는 2026년 8~10월에 보고된 과거 결과이며, 현재 릴리스를 새로 평가한 결과가 아닙니다.
 
-출처 보고서: [9월 29일](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [10월 12일](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (접근 권한이 필요할 수 있습니다).
-
 ### 🏆 AstaBench LitQA2-FullText-Search — 대상 논문 10/10 검색 성공
 
 AIPOCH Open-Science는 **DeepSeek v4-flash(max)**, 문헌 검색 스페셜리스트와 스킬을 활용해 공식 검증 세트 10문항에서 **100% recall@30**을 기록했습니다. 모든 대상 논문이 검색 결과 상위 30개에 포함되었습니다. 보고서에 실린 공개 검증 결과 3개보다 높으며, 그중 최고인 **80%보다 20%포인트 높습니다**. 로컬 반복 테스트 3회를 보고했으며, 이 과학 질문 세트에서 대상 논문을 찾는 능력을 보여줍니다.

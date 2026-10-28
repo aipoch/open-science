@@ -7976,6 +7976,15 @@
     "Linux": "Linux",
     "Branches": "Ramas",
     "Optional files: {{selected}} / {{total}} selected": "Archivos opcionales: {{selected}} / {{total}} seleccionados",
-    "Steps": "Pasos"
+    "Steps": "Pasos",
+    "Use Case Gallery": "Galería de casos de uso",
+    "Random examples": "Ejemplos aleatorios",
+    "Previous examples": "Ejemplos anteriores",
+    "Next examples": "Ejemplos siguientes",
+    "Preparing download…": "Preparando la descarga…",
+    "Verifying download…": "Verificando la descarga…",
+    "Example download progress": "Progreso de descarga del ejemplo",
+    "Could not cancel download. Try again.": "No se pudo cancelar la descarga. Inténtelo de nuevo.",
+    "Could not download this example. Try again.": "No se pudo descargar este ejemplo. Inténtelo de nuevo."
   }
 }

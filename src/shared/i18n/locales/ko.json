@@ -7638,6 +7638,15 @@
     "Linux": "Linux",
     "Branches": "분기",
     "Optional files: {{selected}} / {{total}} selected": "선택적 파일: {{selected}} / {{total}}개 선택",
-    "Steps": "단계"
+    "Steps": "단계",
+    "Use Case Gallery": "활용 사례 갤러리",
+    "Random examples": "무작위 사례",
+    "Previous examples": "이전 사례",
+    "Next examples": "다음 사례",
+    "Preparing download…": "다운로드 준비 중…",
+    "Verifying download…": "다운로드 검증 중…",
+    "Example download progress": "사례 다운로드 진행률",
+    "Could not cancel download. Try again.": "다운로드를 취소하지 못했습니다. 다시 시도해 주세요.",
+    "Could not download this example. Try again.": "이 사례를 다운로드하지 못했습니다. 다시 시도해 주세요."
   }
 }

@@ -208,20 +208,22 @@ const isWindowsProtectionConfigured = async (
   installationId: string,
   ownershipRoot: string
 ): Promise<boolean> => {
-  const status = await readAppContainerStatus(hostPath, installationId, ownershipRoot)
-  if (status.ownershipState !== 'unowned') return true
-  if (
-    status.owned ||
-    status.profileExists ||
-    status.loopbackAllowed ||
-    status.networkFenceReady ||
-    status.gatewayPort !== null
-  ) {
+  const result = await runCapture(hostPath, ['configured', installationId, ownershipRoot], {
+    timeout: 5_000,
+    maxBuffer: 64 * 1024
+  })
+  if (result.code !== 0) {
     throw new Error(
-      'Windows protection ownership is inconsistent. Repair protected mode before running R.'
+      result.stderr.trim() ||
+        (result.code === null
+          ? 'Windows protection configuration check was terminated. Retry the operation.'
+          : `AppContainer host exited with code ${result.code}.`)
     )
   }
-  return false
+  const configured: unknown = JSON.parse(result.stdout)
+  if (typeof configured !== 'boolean')
+    throw new Error('AppContainer host returned an invalid protection configuration payload.')
+  return configured
 }
 
 const connectionProbeSpecification = (port: number): string => {

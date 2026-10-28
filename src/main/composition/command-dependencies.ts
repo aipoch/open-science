@@ -1,3 +1,4 @@
+import { UseCaseCatalog } from '../session-package/use-case-catalog'
 import { createSessionRecoveryFolderCommand } from '../session-persistence/ipc'
 import { createCompletionHandoffCommands } from '../agents/completion-handoff-ipc'
 import type { composeAgentCompletion } from './agent-completion'
@@ -134,6 +135,8 @@ export function composeCommandDependencies({
   reviewerCommandOwner: Awaited<ReturnType<typeof registerReviewerComposition>>
   listAppIconPreviews: (() => import('../../shared/settings').AppIconPreview[]) | undefined
 }): { applicationCommandDependencies: ApplicationCommandCompositionDependencies } {
+  const useCaseCatalog = new UseCaseCatalog(resolveConfigRoot())
+  void useCaseCatalog.refresh()
   const sessionReplay = new SessionReplayService(
     new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
     {
@@ -251,6 +254,7 @@ export function composeCommandDependencies({
       clearAll: () => researchCatalog.memoryService.clearAll()
     },
     dataContent: {
+      useCaseCatalog,
       officePreviewCommands,
       fileSaveCommands,
       reproducibility: artifactSurfaces.reproducibilityCommands,
@@ -286,7 +290,7 @@ export function composeCommandDependencies({
         importSessionPackage: async (invocation) => {
           const source = invocation.args[1]
           const stagedPath =
-            invocation.callerContext.surface === 'web' && source
+            invocation.callerContext.surface === 'web' && typeof source === 'string'
               ? await uploadRepository.resolveManagedUploadPath(
                   { path: source },
                   { sessionId: PENDING_UPLOAD_SESSION_ID }

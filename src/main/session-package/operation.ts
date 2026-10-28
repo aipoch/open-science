@@ -70,6 +70,26 @@ export class SessionPackageOperation {
     return this.current?.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
   }
 
+  // Download presentation stays on the originating card until verified bytes are handed to import.
+  reportUseCaseDownload(completedBytes: number, totalBytes: number): void {
+    if (!this.current?.useCaseDownload || !this.controller) return
+    const firstBytes = this.current.useCaseDownload.completedBytes === 0 && completedBytes > 0
+    this.current = {
+      ...this.current,
+      useCaseDownload: { ...this.current.useCaseDownload, completedBytes, totalBytes }
+    }
+    if (firstBytes || completedBytes === totalBytes || Date.now() - this.lastProgressAt >= 150) {
+      this.lastProgressAt = Date.now()
+      this.publish()
+    }
+  }
+
+  finishUseCaseDownload(): void {
+    if (!this.current?.useCaseDownload) return
+    this.current = { ...this.current, useCaseDownload: undefined }
+    this.publish()
+  }
+
   reportIo = (ioBytesPerSecond: number): void => {
     if (!this.current || !this.controller) return
     this.current = { ...this.current, ioBytesPerSecond }
@@ -439,7 +459,8 @@ export class SessionPackageOperation {
     session: SessionPackageRequest | undefined,
     work: (signal: AbortSignal) => Promise<T>,
     importTarget?: PackageOperationSnapshot['importTarget'],
-    requiresRecovery?: () => boolean
+    requiresRecovery?: () => boolean,
+    downloadSlug?: string
   ): Promise<T> {
     if (this.controller) throw new Error('A Session package operation is already in progress.')
     const controller = new AbortController()
@@ -450,6 +471,7 @@ export class SessionPackageOperation {
       session,
       importTarget,
       state: 'running',
+      ...(downloadSlug ? { useCaseDownload: { slug: downloadSlug, completedBytes: 0 } } : {}),
       progress: { phase: 'preparing' }
     }
     this.diagnostic = startDiagnosticOperation(createLogger('session-package'), {

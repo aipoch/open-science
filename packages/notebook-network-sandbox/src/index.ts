@@ -378,7 +378,7 @@ class NotebookNetworkSandbox {
   async isWindowsProtectionConfigured(): Promise<boolean> {
     if (process.platform !== 'win32')
       throw new Error('Windows protection is only available on Windows.')
-    if (this.#initializing) await this.#initializing
+    // Configuration is independent of runtime readiness, including an in-flight fence probe.
     return isWindowsProtectionConfigured(createRuntimeConfig(this.#options))
   }
 

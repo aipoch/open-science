@@ -1,3 +1,5 @@
+import { downloadUseCase } from './use-case-download'
+import type { UseCaseSource } from '../../shared/use-cases'
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
 import { PACKAGE_REQUIRES_UPDATE } from './archive'
 import {
@@ -69,6 +71,12 @@ export class SessionPackageDesktop {
   private stageDownloadForRetries = false
   private downloadDirectory?: string
   private lastImportFile?: NativeImportFile
+  private pendingUseCase?: {
+    requestId: string
+    source: UseCaseSource
+    callerId?: string
+    originClientId?: string
+  }
   private enqueueing: Promise<void> = Promise.resolve()
   private busy = false
   private readonly pendingCleanup = new Set<() => Promise<void>>()
@@ -310,6 +318,12 @@ export class SessionPackageDesktop {
         if (this.activeFile || this.operations.active || this.operations.snapshot?.cleanupPending)
           throw new Error('Wait for the current package operation to finish.')
         if (request.action === 'retry-import') {
+          const pending = this.pendingUseCase
+          if (pending && pending.requestId === this.operations.snapshot?.importRequestId) {
+            return this.import(pending.callerId, pending.originClientId, {}, pending.source).then(
+              () => this.operations.snapshot
+            )
+          }
           if (
             !this.lastImportFile ||
             this.operations.snapshot?.importRequestId !== this.lastImportFile.id
@@ -838,10 +852,12 @@ export class SessionPackageDesktop {
     callerId?: string,
     originClientId?: string,
     target: import('../../shared/session-package').SessionPackageImportRequest = {},
-    sourcePath?: string,
+    source?: string | UseCaseSource,
     validateBeforeTarget = false,
     options?: { readonly nonInteractive?: true; readonly onReleased?: () => Promise<void> }
   ): Promise<SessionPackageImportResult> {
+    let sourcePath = typeof source === 'string' ? source : undefined
+    const useCase = typeof source === 'object' ? source.useCase : undefined
     const nonInteractive = options?.nonInteractive === true
     let released: Promise<void> | undefined
     const releaseSource = options?.onReleased
@@ -898,6 +914,29 @@ export class SessionPackageDesktop {
         undefined,
         async (signal) => {
           operationSignal = signal
+          // Catalog downloads share the operation lock, progress, cancellation and retry ownership.
+          if (useCase) {
+            this.options.assertCanStart?.()
+            const requestId = randomUUID()
+            this.pendingUseCase = { requestId, source: { useCase }, callerId, originClientId }
+            this.operations.setImportSource(requestId, `${useCase}.science`, target)
+            const downloaded = await downloadUseCase(
+              useCase,
+              signal,
+              (completedBytes, totalBytes) =>
+                this.operations.reportUseCaseDownload(completedBytes, totalBytes)
+            ).catch((error) => this.failOperation(error))
+            this.pendingUseCase = undefined
+            sourcePath = downloaded.path
+            rememberSource(sourcePath)
+            this.lastImportFile!.onReleased = () => {
+              void this.acceptCleanup(() =>
+                withPackageCleanup(async () => undefined, downloaded.release)
+              ).catch(() => undefined)
+            }
+            validateBeforeTarget = true
+            this.operations.finishUseCaseDownload()
+          }
           if (
             sourcePath &&
             (!isAbsolute(sourcePath) || extname(sourcePath).toLowerCase() !== '.science')
@@ -948,13 +987,14 @@ export class SessionPackageDesktop {
             }
           }
           if (sourcePath && validateBeforeTarget) {
+            const inspectionPath = sourcePath
             // Browser uploads are untrusted bytes: reuse archive inspection before target selection.
             // importFrom still revalidates the staged archive and owns packageOrigin/receipt.json.
             this.options.assertCanStart?.()
             this.operations.report({ phase: 'validating' })
             try {
               await this.acceptCleanup(() =>
-                this.options.service.inspect(sourcePath, signal, (progress) =>
+                this.options.service.inspect(inspectionPath, signal, (progress) =>
                   this.operations.report({
                     ...progress,
                     overallPercent: (packageImportPercent(progress) ?? 0) / 4
@@ -1062,7 +1102,8 @@ export class SessionPackageDesktop {
           }
         },
         target,
-        () => Boolean(importFile?.recovery)
+        () => Boolean(importFile?.recovery),
+        useCase
       )
       .then(async (result) => {
         await importFile?.onReleased?.()

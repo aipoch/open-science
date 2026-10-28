@@ -584,12 +584,19 @@ mod windows_host {
 
     impl OperationLock {
         fn acquire(installation_id: &str) -> Result<Self> {
+            Self::acquire_with_timeout(installation_id, INFINITE)
+        }
+
+        fn acquire_with_timeout(installation_id: &str, timeout: u32) -> Result<Self> {
             let name = wide(&format!("{OPERATION_MUTEX}.{installation_id}"));
             let handle = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }
                 .context("create AppContainer operation lock")?;
-            let wait = unsafe { WaitForSingleObject(handle, INFINITE) };
+            let wait = unsafe { WaitForSingleObject(handle, timeout) };
             if wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED {
                 unsafe { CloseHandle(handle) }.ok();
+                if wait == WAIT_TIMEOUT {
+                    bail!("Windows protection configuration is changing; retry after the operation completes");
+                }
                 bail!("wait for AppContainer operation lock");
             }
             Ok(Self(handle))
@@ -1024,6 +1031,19 @@ mod windows_host {
             }
         }
         Ok(())
+    }
+
+    pub fn configured(installation_id: &str, requested_root: &str) -> Result<bool> {
+        let root = ownership_directory(installation_id, requested_root)?;
+        // ACL grants and probes do not change these records. Keep configuration reads independent
+        // of that work, while retaining the same ownership/schema validation as full status.
+        if ownership_record(installation_id, &root)?.is_some() {
+            return Ok(true);
+        }
+        // Absence may be a transient gap while setup replaces a journal. Never interpret a busy
+        // mutation as permission to run unprotected; confirm absence without waiting behind it.
+        let _lock = OperationLock::acquire_with_timeout(installation_id, 0)?;
+        Ok(ownership_record(installation_id, &root)?.is_some())
     }
 
     pub fn status(installation_id: &str, requested_root: &str) -> Result<()> {
@@ -4032,6 +4052,31 @@ mod windows_host {
         use crate::WINDOWS_ACL_TARGET_MISSING_MARKER;
 
         #[test]
+        fn configured_rejects_unconfirmed_absence_during_a_mutation() {
+            let installation_id = &new_resource_key().unwrap()[..24];
+            let parent = unique_test_root("configured-transition");
+            let root = parent.join(installation_id);
+            let requested = root.to_string_lossy();
+            assert!(!configured(installation_id, &requested).unwrap());
+            {
+                let _lock = OperationLock::acquire(installation_id).unwrap();
+                // A different thread must not treat a writer's temporarily absent journal as off.
+                let result = std::thread::scope(|scope| {
+                    scope.spawn(|| configured(installation_id, &requested)).join().unwrap()
+                });
+                assert!(format!("{:#}", result.unwrap_err()).contains("configuration is changing"));
+                prepare_setup(installation_id, &requested).unwrap();
+                let result = std::thread::scope(|scope| {
+                    scope.spawn(|| configured(installation_id, &requested)).join().unwrap()
+                });
+                assert!(result.unwrap());
+            }
+            cancel_setup(installation_id, &requested).unwrap();
+            assert!(!configured(installation_id, &requested).unwrap());
+            fs::remove_dir_all(parent).unwrap();
+        }
+
+        #[test]
         fn profile_process_stop_accepts_an_already_exited_process() {
             use std::os::windows::process::CommandExt;
 
@@ -6189,6 +6234,15 @@ fn run() -> Result<i32> {
                 &protected_file,
                 &protected_directory,
             )?;
+            Ok(0)
+        }
+        Some("configured") => {
+            let installation_id = args.next().context("missing installation identity")?;
+            let ownership_root = args.next().context("missing ownership root")?;
+            if args.next().is_some() {
+                bail!("unexpected configured argument");
+            }
+            println!("{}", windows_host::configured(&installation_id, &ownership_root)?);
             Ok(0)
         }
         Some("status") => {

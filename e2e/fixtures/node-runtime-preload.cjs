@@ -85,6 +85,7 @@ if (process.versions.electron) {
   process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(childPreload)}`
 } else {
   require('./session-outcome-preload.cjs')
+  if (process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) require('./use-case-download-preload.cjs')
   if (process.platform === 'darwin') require('./mock-node-credentials.cjs')
   const fs = require('node:fs/promises')
   const statfs = fs.statfs

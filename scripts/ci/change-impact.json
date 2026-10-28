@@ -431,6 +431,7 @@
         "e2e/windows-window-system.spec.ts",
         "e2e/wsl-setup-conversation.spec.ts",
         "e2e/session-package.spec.ts",
+        "e2e/home-use-cases.spec.ts",
         "e2e/session-package-drop.spec.ts",
         "e2e/session-fork.spec.ts",
         "e2e/session-diagnostics.spec.ts",
@@ -590,6 +591,7 @@
         "e2e/fixtures/native-quit-dialog.ts",
         "e2e/fixtures/node-runtime-child-preload.cjs",
         "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
         "e2e/fixtures/project.ts",
         "e2e/fixtures/renderer-failure-gate.ts",
         "e2e/fixtures/research-analysis.mjs",
@@ -683,6 +685,7 @@
       "role": "overlay",
       "paths": [
         "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/mock-node-credentials.cjs",
         "e2e/fixtures/mock-credential-identity.cjs",
@@ -697,6 +700,7 @@
       "paths": [
         "e2e/fixtures/native-quit-dialog.ts",
         "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
         "e2e/fixtures/node-runtime-child-preload.cjs",
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/mock-node-credentials.cjs"

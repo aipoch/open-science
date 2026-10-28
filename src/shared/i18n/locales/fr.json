@@ -7976,6 +7976,15 @@
     "Linux": "Linux",
     "Branches": "Branches",
     "Optional files: {{selected}} / {{total}} selected": "Fichiers facultatifs : {{selected}} / {{total}} sélectionnés",
-    "Steps": "Étapes"
+    "Steps": "Étapes",
+    "Use Case Gallery": "Galerie de cas d’utilisation",
+    "Random examples": "Exemples aléatoires",
+    "Previous examples": "Exemples précédents",
+    "Next examples": "Exemples suivants",
+    "Preparing download…": "Préparation du téléchargement…",
+    "Verifying download…": "Vérification du téléchargement…",
+    "Example download progress": "Progression du téléchargement de l’exemple",
+    "Could not cancel download. Try again.": "Impossible d’annuler le téléchargement. Réessayez.",
+    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez."
   }
 }

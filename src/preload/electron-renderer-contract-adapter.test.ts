@@ -478,3 +478,15 @@ describe('electron renderer contract adapter', () => {
     expect(port.removeListener).toHaveBeenCalledWith(channel, wrappedListener)
   })
 })
+
+it('passes a catalog slug to main without treating it as a dropped File', async () => {
+  const port = createPort()
+  port.invoke.mockResolvedValue({ ok: true, result: null })
+  await createElectronRendererContractAdapter(port).invoke(
+    'sessions.importPackage',
+    {},
+    { useCase: 'research' }
+  )
+  expect(port.getPathForFile).not.toHaveBeenCalled()
+  expect(port.invoke).toHaveBeenCalledWith('sessions:import-package', {}, { useCase: 'research' })
+})

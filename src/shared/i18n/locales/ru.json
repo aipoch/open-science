@@ -8120,6 +8120,15 @@
     "Linux": "Linux",
     "Branches": "Ветви",
     "Optional files: {{selected}} / {{total}} selected": "Необязательные файлы: выбрано {{selected}} из {{total}}",
-    "Steps": "Шаги"
+    "Steps": "Шаги",
+    "Use Case Gallery": "Галерея примеров использования",
+    "Random examples": "Случайные примеры",
+    "Previous examples": "Предыдущие примеры",
+    "Next examples": "Следующие примеры",
+    "Preparing download…": "Подготовка загрузки…",
+    "Verifying download…": "Проверка загрузки…",
+    "Example download progress": "Ход загрузки примера",
+    "Could not cancel download. Try again.": "Не удалось отменить загрузку. Повторите попытку.",
+    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку."
   }
 }

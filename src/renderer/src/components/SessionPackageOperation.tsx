@@ -83,6 +83,7 @@ const openPackageSession = (operation: PackageOperationSnapshot): boolean => {
 
 const isImportCheck = (operation: PackageOperationSnapshot): boolean =>
   !operation.browserReceiptOnly &&
+  !operation.useCaseDownload &&
   operation.kind === 'import' &&
   operation.state === 'running' &&
   ['preparing', 'copying', 'validating'].includes(operation.progress.phase)
@@ -91,21 +92,31 @@ const operationStatus = (
   operation: PackageOperationSnapshot,
   t: TFunction
 ): { phase: string; status: string; waiting: boolean; busy: boolean; description?: string } => {
-  const phase = {
-    preparing: operation.kind === 'fork' ? t('Preparing fork…') : t('Preparing package…'),
-    selecting:
-      operation.kind === 'import'
-        ? t('Choose a destination project')
-        : t('Choose package contents'),
-    copying: t('Copying files…'),
-    validating: t('Validating package…'),
-    compressing: t('Compressing package…'),
-    saving: t('Saving package…'),
-    importing: operation.kind === 'fork' ? t('Copying research…') : t('Importing research…'),
-    'choosing-location': t('Waiting for a save location…'),
-    confirming: t('Waiting for import confirmation…'),
-    cleaning: t('Cleaning temporary files…')
-  }[operation.progress.phase]
+  const download = operation.useCaseDownload
+  const downloadPercent = download?.totalBytes
+    ? Math.min(100, Math.floor((download.completedBytes / download.totalBytes) * 100))
+    : undefined
+  const phase = download
+    ? downloadPercent === undefined
+      ? t('Preparing download…')
+      : downloadPercent === 100
+        ? t('Verifying download…')
+        : t('Downloading {{percent}}%', { percent: downloadPercent })
+    : {
+        preparing: operation.kind === 'fork' ? t('Preparing fork…') : t('Preparing package…'),
+        selecting:
+          operation.kind === 'import'
+            ? t('Choose a destination project')
+            : t('Choose package contents'),
+        copying: t('Copying files…'),
+        validating: t('Validating package…'),
+        compressing: t('Compressing package…'),
+        saving: t('Saving package…'),
+        importing: operation.kind === 'fork' ? t('Copying research…') : t('Importing research…'),
+        'choosing-location': t('Waiting for a save location…'),
+        confirming: t('Waiting for import confirmation…'),
+        cleaning: t('Cleaning temporary files…')
+      }[operation.progress.phase]
   const receiptState = primaryBrowserTransfer(operation)?.state
   const status = operation.browserReceiptOnly
     ? receiptState === 'preparing'
@@ -169,7 +180,7 @@ const PackageProgressMeter = ({
   const { t } = useTranslation()
   const { waiting, phase } = operationStatus(operation, t)
   const importPercent =
-    operation.kind === 'import' && !operation.browserReceiptOnly
+    operation.kind === 'import' && !operation.browserReceiptOnly && !operation.useCaseDownload
       ? (operation.progress.overallPercent ?? packageImportPercent(operation.progress))
       : undefined
   if ((operation.state !== 'running' && operation.state !== 'succeeded') || waiting) return null
@@ -450,7 +461,12 @@ export const PackageOperationIndicator = ({
     dismissedId,
     setOpen
   } = usePackageOperationStore()
-  const operation = packageOperationPresentation(sourceOperation, browserReceipt)
+  const awayFromHome = useNavigationStore((state) => state.view !== 'home')
+  const operation = packageOperationPresentation(
+    sourceOperation,
+    browserReceipt,
+    awayFromHome || open
+  )
   if (
     !operation ||
     open ||
@@ -634,7 +650,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     setOpen,
     dismiss: dismissLocal
   } = usePackageOperationStore()
-  const operation = packageOperationPresentation(sourceOperation, browserReceipt)
+  const awayFromHome = useNavigationStore((state) => state.view !== 'home')
+  const operation = packageOperationPresentation(
+    sourceOperation,
+    browserReceipt,
+    awayFromHome || open
+  )
   const destinationName = useProjectStore(
     (state) =>
       state.projects.find(

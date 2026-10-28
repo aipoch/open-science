@@ -258,6 +258,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.setDelegationPolicy': 'sessions:set-delegation-policy',
   'sessions.unlinkPdfContext': 'sessions:unlink-pdf-context',
   'sessions.updateArchive': 'sessions:update-archive',
+  'sessions.useCaseCatalog': 'sessions:use-case-catalog',
   'settings.addCustomServer': 'settings:add-custom-server',
   'settings.addSkillSource': 'settings:add-skill-source',
   'settings.authenticateCustomServer': 'settings:authenticate-custom-server',

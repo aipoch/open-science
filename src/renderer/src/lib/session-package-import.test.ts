@@ -249,3 +249,16 @@ describe('Web session package import', () => {
     expect(importPackage).not.toHaveBeenCalled()
   })
 })
+
+it.each(['native', 'local'] as const)(
+  'imports a catalog source without file staging on %s',
+  async (surface) => {
+    if (surface === 'local') enableWeb('local')
+    const importPackage = vi.fn(async () => null)
+    const uploads = stubWebApi(importPackage)
+    await importSessionPackage(undefined, { useCase: 'research-example' })
+    expect(importPackage).toHaveBeenCalledExactlyOnceWith({}, { useCase: 'research-example' })
+    expect(uploads.beginTransfer).not.toHaveBeenCalled()
+    expect(document.querySelector('input[type="file"]')).toBeNull()
+  }
+)

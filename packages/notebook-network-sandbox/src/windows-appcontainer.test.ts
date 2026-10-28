@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   connectionProbeSpecification,
+  isWindowsProtectionConfigured,
   windowsElevationScript,
   windowsLaunch,
   windowsSupervisedLaunch,
@@ -30,6 +31,49 @@ import {
 } from '../runtime/src/platform/electron-as-node-launch-policy.js'
 
 afterEach(() => vi.unstubAllEnvs())
+
+describe.runIf(process.platform === 'win32')('Windows native protection configuration', () => {
+  it('validates existing receipts and journals without requiring installed runtime resources', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'os-configured-'))
+    const installation = randomUUID().replaceAll('-', '').slice(0, 24)
+    const root = join(parent, installation)
+    const host = join(
+      process.cwd(),
+      `packages/notebook-network-sandbox/vendor/windows/${process.arch}/notebook-appcontainer-host.exe`
+    )
+    const configured = (): Promise<boolean> =>
+      isWindowsProtectionConfigured(host, installation, root)
+    try {
+      await expect(configured()).resolves.toBe(false)
+      const prepared = spawnSync(host, ['prepare-setup', installation, root], {
+        encoding: 'utf8',
+        windowsHide: true
+      })
+      expect(prepared.status, prepared.stderr).toBe(0)
+      const journalPath = join(root, 'creating.json')
+      const receiptPath = join(root, 'receipt.json')
+      const journal = JSON.parse(readFileSync(journalPath, 'utf8'))
+      await expect(configured()).resolves.toBe(true)
+      for (const schemaVersion of [4, 5]) {
+        writeFileSync(receiptPath, JSON.stringify({ ...journal, schemaVersion, state: 'owned' }))
+        rmSync(journalPath, { force: true })
+        await expect(configured()).resolves.toBe(true)
+      }
+      writeFileSync(journalPath, '{incomplete')
+      await expect(configured()).rejects.toThrow('read ownership record')
+      writeFileSync(journalPath, JSON.stringify({ ...journal, installationId: '0'.repeat(24) }))
+      await expect(configured()).rejects.toThrow('does not match this installation')
+      rmSync(journalPath)
+      writeFileSync(receiptPath, JSON.stringify({ ...journal, state: 'creating' }))
+      await expect(configured()).rejects.toThrow('invalid state')
+      rmSync(receiptPath)
+      await expect(configured()).resolves.toBe(false)
+    } finally {
+      // prepare-setup creates only our journal; no elevation, profile or ACL grant was installed.
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+})
 
 describe.runIf(process.platform === 'win32')('Windows native Shell control pipe', () => {
   it.each([false, true])(

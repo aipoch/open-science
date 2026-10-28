@@ -224,8 +224,6 @@ If you use AIPOCH Open-Science in your research, you can cite the preprint:
 
 These results are historical reports from August–October 2026, not a new evaluation of the current release.
 
-Source reports: [September 29](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [October 12](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (access may be required).
-
 ### 🏆 AstaBench LitQA2-FullText-Search — 10/10 target-paper hits
 
 AIPOCH Open-Science achieved **100% recall@30** on the official 10-query validation split using **DeepSeek v4-flash (max)** with literature-retrieval specialists and Skills. Every target paper appeared among the first 30 returned results. The score exceeds the three public validation results listed in the report, **20 percentage points** above the highest reference of **80%**. Three local repeats were reported, demonstrating target-paper retrieval on this set of scientific questions.

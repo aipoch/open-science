@@ -7640,6 +7640,15 @@
     "Linux": "Linux",
     "Branches": "分支",
     "Optional files: {{selected}} / {{total}} selected": "可选文件：已选择 {{selected}} / {{total}}",
-    "Steps": "步骤"
+    "Steps": "步骤",
+    "Use Case Gallery": "案例广场",
+    "Random examples": "随机案例",
+    "Previous examples": "上一组案例",
+    "Next examples": "下一组案例",
+    "Preparing download…": "正在准备下载…",
+    "Verifying download…": "正在校验下载文件…",
+    "Example download progress": "案例下载进度",
+    "Could not cancel download. Try again.": "无法取消下载，请重试。",
+    "Could not download this example. Try again.": "无法下载此案例，请重试。"
   }
 }
