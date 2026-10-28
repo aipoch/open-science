@@ -4775,7 +4775,7 @@
     "The distribution installation failed. Check Windows setup, then try again.": "Die Installation der Distribution ist fehlgeschlagen. Prüfen Sie die Windows-Einrichtung und versuchen Sie es erneut.",
     "Windows did not confirm the distribution installation. Check again before retrying.": "Windows hat die Installation der Distribution nicht bestätigt. Prüfen Sie erneut, bevor Sie den Vorgang wiederholen.",
     "The distribution terminal could not be opened. Check again, then retry.": "Das Distributionsterminal konnte nicht geöffnet werden. Prüfen Sie erneut und versuchen Sie es dann noch einmal.",
-    "Set WSL networkingMode to mirrored, shut down WSL, then check again.": "Setzen Sie WSL networkingMode auf mirrored, beenden Sie WSL und prüfen Sie dann erneut.",
+    "WSL2 Bash requires Windows 11 22H2 or later with mirrored networking. On older Windows, use PowerShell. On supported Windows, enable mirrored networking and restart WSL, then check again.": "WSL2 Bash erfordert Windows 11 22H2 oder neuer mit gespiegeltem Netzwerk. Verwenden Sie auf älteren Windows-Versionen PowerShell. Aktivieren Sie auf unterstützten Windows-Versionen das gespiegelte Netzwerk, starten Sie WSL neu und prüfen Sie erneut.",
     "Choose the exact WSL2 distribution and non-root Linux user Open-Science should verify. Selection alone never enables WSL2 Bash.": "Wählen Sie genau die WSL2-Distribution und den Linux-Benutzer ohne Root-Rechte aus, die Open-Science prüfen soll. Die Auswahl allein aktiviert WSL2 Bash nie.",
     "Checking WSL2 readiness…": "WSL2-Bereitschaft wird geprüft…",
     "WSL2 status has not been checked yet.": "Der WSL2-Status wurde noch nicht geprüft.",

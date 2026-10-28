@@ -4535,7 +4535,7 @@
     "The distribution installation failed. Check Windows setup, then try again.": "发行版安装失败。请检查 Windows 设置，然后重试。",
     "Windows did not confirm the distribution installation. Check again before retrying.": "Windows 未确认发行版安装。请先重新检查，再重试。",
     "The distribution terminal could not be opened. Check again, then retry.": "无法打开发行版终端。请重新检查，然后重试。",
-    "Set WSL networkingMode to mirrored, shut down WSL, then check again.": "将 WSL networkingMode 设置为 mirrored，关闭 WSL，然后重新检查。",
+    "WSL2 Bash requires Windows 11 22H2 or later with mirrored networking. On older Windows, use PowerShell. On supported Windows, enable mirrored networking and restart WSL, then check again.": "WSL2 Bash 需要 Windows 11 22H2 或更高版本，并启用镜像网络。旧版 Windows 请使用 PowerShell。支持的 Windows 版本请启用镜像网络并重启 WSL，然后重新检查。",
     "Choose the exact WSL2 distribution and non-root Linux user Open-Science should verify. Selection alone never enables WSL2 Bash.": "选择要由 Open-Science 检查的确切 WSL2 发行版和非 root Linux 用户。仅选择配置绝不会启用 WSL2 Bash。",
     "Checking WSL2 readiness…": "正在检查 WSL2 就绪状态…",
     "WSL2 status has not been checked yet.": "尚未检查 WSL2 状态。",

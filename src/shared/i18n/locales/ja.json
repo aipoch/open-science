@@ -4534,7 +4534,7 @@
     "The distribution installation failed. Check Windows setup, then try again.": "ディストリビューションのインストールに失敗しました。Windows の設定を確認して、もう一度お試しください。",
     "Windows did not confirm the distribution installation. Check again before retrying.": "Windows でディストリビューションのインストールを確認できませんでした。再試行する前にもう一度確認してください。",
     "The distribution terminal could not be opened. Check again, then retry.": "ディストリビューションのターミナルを開けませんでした。もう一度確認してから再試行してください。",
-    "Set WSL networkingMode to mirrored, shut down WSL, then check again.": "WSL の networkingMode を mirrored に設定し、WSL を終了してから再確認してください。",
+    "WSL2 Bash requires Windows 11 22H2 or later with mirrored networking. On older Windows, use PowerShell. On supported Windows, enable mirrored networking and restart WSL, then check again.": "WSL2 Bash には、ミラーネットワークを有効にした Windows 11 22H2 以降が必要です。古い Windows では PowerShell を使用してください。対応する Windows ではミラーネットワークを有効にして WSL を再起動し、再確認してください。",
     "Choose the exact WSL2 distribution and non-root Linux user Open-Science should verify. Selection alone never enables WSL2 Bash.": "Open-Science が検証する WSL2 ディストリビューションと root 以外の Linux ユーザーを正確に選択してください。選択だけで WSL2 Bash が有効になることはありません。",
     "Checking WSL2 readiness…": "WSL2 の準備状態を確認中…",
     "WSL2 status has not been checked yet.": "WSL2 の状態はまだ確認されていません。",
