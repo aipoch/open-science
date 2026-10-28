@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   packageVerificationPlan,
   packageRegistry,
@@ -203,3 +205,47 @@ it('verifies the private test-impact tool without selecting application packages
     { script: 'check:test-impact-package', packages: ['test-impact'] }
   ])
 })
+
+it.each([false, true])(
+  'dispatches every family with explicit source-test evidence (skip=%s)',
+  (skip) => {
+    const directory = mkdtempSync(join(tmpdir(), 'package-dispatch-'))
+    try {
+      const npm = join(directory, 'npm.cjs')
+      const calls = join(directory, 'calls.jsonl')
+      const output = join(directory, 'report.json')
+      writeFileSync(
+        npm,
+        "require('node:fs').appendFileSync(process.env.PACKAGE_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n')"
+      )
+      execFileSync(
+        process.execPath,
+        ['scripts/check-packages.mjs', `--output=${output}`, ...(skip ? ['--skip-tests'] : [])],
+        {
+          env: { ...process.env, npm_execpath: npm, PACKAGE_TEST_CALLS: calls }
+        }
+      )
+      const commands = verificationCommands(verificationPlanFromArguments([], {}))
+      expect(
+        readFileSync(calls, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      ).toEqual(
+        commands.map(({ script, packages }: { script: string; packages: string[] }) => [
+          'run',
+          script,
+          '--',
+          `--packages=${packages.join(',')}`,
+          ...(skip ? ['--skip-tests'] : [])
+        ])
+      )
+      const report = JSON.parse(readFileSync(output, 'utf8'))
+      expect(report.sourceTests).toBe(!skip)
+      expect(report.runs).toHaveLength(commands.length)
+      expect(report.runs.every(({ exitCode }: { exitCode: number }) => exitCode === 0)).toBe(true)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }
+)

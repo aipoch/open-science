@@ -61,6 +61,7 @@ const lockHash = createHash('sha256')
   .update(await readFile(join(root, 'package-lock.json')))
   .digest('hex')
 const resume = process.argv.includes('--resume')
+const sourceTests = !process.argv.includes('--skip-tests')
 const forced = new Set(
   (process.argv.find((a) => a.startsWith('--force=')) ?? '').slice(8).split(',').filter(Boolean)
 )
@@ -143,6 +144,7 @@ for (const e of entries) {
   if (
     resume &&
     r.consumer === 'exports, declarations, private paths passed' &&
+    (!sourceTests || r.source === 'build and tests passed') &&
     !r.error &&
     !forced.has(name) &&
     JSON.stringify(r.inputs) === JSON.stringify(inputs)
@@ -150,6 +152,7 @@ for (const e of entries) {
     continue
   r.inputs = inputs
   delete r.error
+  delete r.tests
   r.source = 'pending'
   r.consumer = 'pending'
   try {
@@ -190,19 +193,21 @@ for (const e of entries) {
       r.consumer = 'build prerequisite only'
       continue
     }
-    await run(
-      'npm',
-      ['test', '--', '--reporter=default', '--reporter=json', '--outputFile=test-report.json'],
-      dir,
-      'isolated-' + name + '-test'
-    )
-    r.source = 'build and tests passed'
-    const test = JSON.parse(await readFile(join(dir, 'test-report.json'), 'utf8'))
-    r.tests = {
-      total: test.numTotalTests,
-      passed: test.numPassedTests,
-      failed: test.numFailedTests,
-      pending: test.numPendingTests
+    if (sourceTests) {
+      await run(
+        'npm',
+        ['test', '--', '--reporter=default', '--reporter=json', '--outputFile=test-report.json'],
+        dir,
+        'isolated-' + name + '-test'
+      )
+      r.source = 'build and tests passed'
+      const test = JSON.parse(await readFile(join(dir, 'test-report.json'), 'utf8'))
+      r.tests = {
+        total: test.numTotalTests,
+        passed: test.numPassedTests,
+        failed: test.numFailedTests,
+        pending: test.numPendingTests
+      }
     }
     const consumer = join(attempt, 'consumer')
     await mkdir(consumer, { recursive: true })

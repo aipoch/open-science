@@ -65,7 +65,9 @@ console.log(
     source
   )
 )
-for (const script of ['build', 'typecheck', 'test']) console.log(run(npm, ['run', script], source))
+const sourceTests = !process.argv.includes('--skip-tests')
+for (const script of ['build', 'typecheck', ...(sourceTests ? ['test'] : [])])
+  console.log(run(npm, ['run', script], source))
 const [packed] = JSON.parse(
   run(npm, ['pack', '--json', '--pack-destination', work, ...cacheArgs], source)
 )
@@ -169,7 +171,7 @@ console.log(
   )
 )
 console.log(
-  `PASS: isolated source build/tests, npm pack contents, clean runtime and TypeScript consumer (${packed.filename})`
+  `PASS: isolated source build${sourceTests ? '/tests' : ' (source tests not selected)'}, npm pack contents, clean runtime and TypeScript consumer (${packed.filename})`
 )
 
 await writeFile(

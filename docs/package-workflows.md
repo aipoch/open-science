@@ -27,7 +27,10 @@ belong in each package's README, such as [Providers](../packages/providers/READM
 Online installation is the default; `--offline` requires a populated npm cache. A missing cached
 archive is an environment failure. Results are saved to `test-results/package-verification.json`.
 For CI diagnostics, use the manual **Package test policy dry-run** (`packages=all` selects every
-registered package).
+registered package). Set `source_tests=false` to exercise the merge-queue installed-consumer path;
+the default retains complete isolated source tests. Locally, `check:packages -- --skip-tests` selects
+the same consumer path, retaining source installation/build/type checks and all tarball assertions.
+Timing reports record `sourceTests`; consumer-only evidence cannot satisfy a later full source run.
 
 ## Package and host test layers
 
@@ -42,7 +45,11 @@ evidence retain broader checks. Explicit root `npm test` always runs the complet
 use [affected selection](testing.md#final-local-test-impact-set) for ordinary changes.
 
 PRs run bounded package and host tests on separate runners. Merge queue adds blocking downstream
-coverage and selected installed-tarball checks. Source Regression runs complete portable and installed
+coverage and selected installed-tarball checks, without repeating source suites inside the tarball
+verifier. When the general portable suite is deferred, two blocking package-only source shards retain
+selected package behavior checks in PR and queue. Host database schema and migration-smoke inputs do
+not select independent library suites; package README changes still verify their own archive.
+Source Regression runs complete portable and installed
 package verification on schedule or manually; full-suite failures can therefore first appear after
 merge. See [CI coverage](ci.md#pr-merge-queue-and-scheduled-coverage) and
 [package selection policy](ci.md#independent-package-tests) for routing and fallback rules.

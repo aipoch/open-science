@@ -291,6 +291,13 @@ Shared changes or uncertain evidence retain all package tests. Local `npm test` 
 Registry changes require CI owner review.
 
 Installed package checks run selectively in merge queue and fully in scheduled Source Regression.
+Queue retains isolated builds and all installed-consumer assertions but omits the verifier's source
+Vitest rerun. Source suites run in the portable package shards; when platform policy defers the general
+portable suite, two blocking package-only shards run the trusted selected packages instead. They do
+not allocate host test shards or duplicate an already selected portable job. Scheduled/manual full
+verification retains complete isolated source suites. Isolation-only source failures can therefore
+first appear in scheduled certification. The existing aggregate gate also rejects failed, cancelled
+or unexpectedly skipped selected package-source shards.
 Use the manual package dry-run for focused diagnostics; see [Package workflows](package-workflows.md).
 
 For pure registered-package edits, the default `queue` tier can further omit host tests added only

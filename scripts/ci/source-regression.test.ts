@@ -663,7 +663,15 @@ it('shares complete installed-consumer checks with queue/manual runs and reports
   expect(
     manual.jobs.isolation.steps.find((step) => step.uses === './.github/actions/verify-packages')
       ?.with
-  ).toEqual({ selection: '${{ inputs.packages }}' })
+  ).toEqual({ selection: '${{ inputs.packages }}', 'source-tests': '${{ inputs.source_tests }}' })
+  const action = load(readFileSync('.github/actions/verify-packages/action.yml', 'utf8')) as {
+    inputs: Record<string, { default: string }>
+  }
+  expect(action.inputs['source-tests'].default).toBe('true')
+  expect(
+    scheduled.jobs.packages.steps.find((step) => step.uses === './.github/actions/verify-packages')
+      ?.with?.['source-tests']
+  ).toBeUndefined()
 })
 
 it('runs complete portable discovery with no package exclusions and defers thresholds until all host and package reports', () => {

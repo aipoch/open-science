@@ -6,6 +6,10 @@ on:
         description: Comma-separated independent package names, or all
         type: string
         default: diagnostics
+      source_tests:
+        description: Include complete isolated source suites (false exercises merge queue consumers)
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
@@ -118,3 +122,4 @@ jobs:
         uses: ./.github/actions/verify-packages
         with:
           selection: ${{ inputs.packages }}
+          source-tests: ${{ inputs.source_tests }}

@@ -12,7 +12,7 @@ const packageGlobalInput =
 
 // Fixture records and unrelated scripts are test evidence for another lane. They do not alter
 // the independently published package contracts, so changing them must not run every package.
-const packageExemptInput = /^(?:test\/fixtures\/|scripts\/)/
+const packageExemptInput = /^(?:test\/fixtures\/|scripts\/|prisma\/schema\.prisma$)/
 
 // These packages run through module/host contracts and dedicated platform or CLI lanes.
 // They are downstream of independent libraries, never inputs to those libraries' suites.
@@ -61,7 +61,7 @@ export const verificationFamilies = [
 const verificationSharedInput =
   /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|vitest[^/]*|tsconfig[^/]*|patches\/|scripts\/(?:(?:check-packages|package-verification-plan|build-dev-packages|build-packages)\.mjs$|ci\/(?:package-test-boundaries\.json$|(?:package-test-impact|npm-ci)\.mjs$))|\.github\/actions\/(?:select-package-tests|verify-packages)\/)/
 const verificationUnrelatedInput =
-  /^(?:src\/|docs\/|e2e\/|\.github\/|test\/(?:config|fixtures)\/|scripts\/runtime-archives\.mjs$|scripts\/ci\/windows-test-sequencer\.ts$|scripts\/ci\/(?:module-|classify-pr-|evaluate-pr-|check-module-|audit-module-)|(?:electron|vite\.)[^/]*|[^/]+\.md$)|\.test\.[cm]?[jt]sx?$/
+  /^(?:src\/|docs\/|e2e\/|prisma\/schema\.prisma$|scripts\/database-migration-ledger-smoke\.mjs$|\.github\/|test\/(?:config|fixtures)\/|scripts\/runtime-archives\.mjs$|scripts\/ci\/windows-test-sequencer\.ts$|scripts\/ci\/(?:module-|classify-pr-|evaluate-pr-|check-module-|audit-module-)|(?:electron|vite\.)[^/]*|[^/]+\.md$)|\.test\.[cm]?[jt]sx?$/
 
 function verificationPaths(paths, roots) {
   return paths.flatMap((path) => {

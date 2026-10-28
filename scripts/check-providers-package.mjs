@@ -62,7 +62,7 @@ try {
     npm(['run', 'build'], source)
     npm(['run', 'typecheck'], source)
     // Upstream builds do not rerun unchanged upstream unit suites.
-    if (name === 'providers') npm(['test'], source)
+    if (name === 'providers' && !process.argv.includes('--skip-tests')) npm(['test'], source)
     const packed = JSON.parse(
       execFileSync(process.execPath, [npmCli, 'pack', '--json', '--pack-destination', work], {
         cwd: source,

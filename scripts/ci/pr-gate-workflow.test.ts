@@ -120,7 +120,8 @@ describe('PR Gate workflow', () => {
           head: string,
           event = 'pull_request',
           dir = trustedDir,
-          trustedBase = base
+          trustedBase = base,
+          bundles = ['unit']
         ): string[] => {
           const output = join(cwd, 'output')
           writeFileSync(output, '')
@@ -130,6 +131,7 @@ describe('PR Gate workflow', () => {
             env: {
               ...process.env,
               EVENT_NAME: event,
+              EXECUTION_PLAN: JSON.stringify({ bundles }),
               BASE_SHA: base,
               HEAD_SHA: head,
               TRUSTED_BASE_SHA: trustedBase,
@@ -139,7 +141,11 @@ describe('PR Gate workflow', () => {
             }
           })
           expect(result.status, result.stderr).toBe(0)
-          const matrix = JSON.parse(readFileSync(output, 'utf8').trim().slice('matrix='.length))
+          const [matrixLine, sourceLine] = readFileSync(output, 'utf8').trim().split('\n')
+          const matrix = JSON.parse(matrixLine.slice('matrix='.length))
+          expect(sourceLine).toBe(
+            `package_sources=${['pull_request', 'merge_group'].includes(event) && !bundles.includes('unit') && matrix.include.some(({ scope }: { scope: string }) => scope === 'packages')}`
+          )
           return matrix.include.map(
             ({ scope, shard, total }: { scope: string; shard: number; total: number }) =>
               `${scope}:${shard}/${total}`
@@ -167,7 +173,11 @@ describe('PR Gate workflow', () => {
           // Candidate selector code cannot authorize a skip.
           write('scripts/ci/package-test-impact.mjs', 'throw new Error("candidate executed")')
           for (const event of ['pull_request', 'merge_group']) {
-            expect(run(head, event), `${event}: ${path}`).toEqual(selected ? both : host)
+            // Exercise ordinary portable coverage and deferred host coverage without duplicating fixtures.
+            const bundles = event === 'pull_request' ? ['unit'] : []
+            expect(run(head, event, trustedDir, base, bundles), `${event}: ${path}`).toEqual(
+              selected ? both : host
+            )
           }
         }
         git('reset', '--hard', base)
@@ -700,7 +710,8 @@ describe('PR Gate workflow', () => {
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
       windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}',
-      portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}'
+      portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}',
+      package_sources: '${{ steps.portable_matrix.outputs.package_sources }}'
     })
 
     for (const bundle of manifest.bundleOrder) {
@@ -974,6 +985,8 @@ describe('PR Gate workflow', () => {
           RUNTIME_REQUIRED: 'false',
           RUNTIME_RESULT: 'skipped',
           PACKAGE_RESULT: 'skipped',
+          PACKAGE_SOURCE_REQUIRED: 'false',
+          PACKAGE_SOURCE_RESULT: 'skipped',
           EVENT_NAME: 'pull_request',
           PR_GATE_PLAN: planJson,
           PR_GATE_NEEDS: needsJson,
@@ -1012,7 +1025,8 @@ describe('PR Gate workflow', () => {
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
       windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}',
-      portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}'
+      portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}',
+      package_sources: '${{ steps.portable_matrix.outputs.package_sources }}'
     })
     expect(prepare?.['continue-on-error']).toBeUndefined()
     // The authority marks a trusted base; the whole base tree is exported, never a file list.
@@ -2543,7 +2557,23 @@ it('verifies installed packages only in the queue and skips installation for an 
   })
   const check = job.steps!.find((step) => step.uses === './.github/actions/verify-packages')!
   expect(check.if).toBe("${{ env.OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS != '[]' }}")
-  expect(check.with).toEqual({ selection: 'ci' })
+  expect(check.with).toEqual({ selection: 'ci', 'source-tests': 'false' })
+  const sources = workflow.jobs.package_source
+  expect(sources.if).toBe(
+    "${{ needs.preflight.result == 'success' && needs.preflight.outputs.package_sources == 'true' }}"
+  )
+  expect(sources).toMatchObject({
+    strategy: { 'fail-fast': false, matrix: { shard: [1, 2] } },
+    env: { VITEST_PORTABLE_CI: '1', OPEN_SCIENCE_CI_PORTABLE_SCOPE: 'packages' }
+  })
+  expect(
+    sources.steps!.find((step) => step.uses === './.github/actions/select-package-tests')?.with
+  ).toMatchObject({ 'trusted-base': '${{ needs.preflight.outputs.trusted_base }}' })
+  expect(
+    sources.steps!.find((step) => step.name === 'Test selected package sources')?.run
+  ).toContain('vitest run --shard=${{ matrix.shard }}/2')
+  expect(workflow.jobs.gate.needs).toContain('package_source')
+
   expect(job.steps!.indexOf(selector)).toBeLessThan(job.steps!.indexOf(check))
   expect(workflow.jobs.gate.needs).toEqual(
     expect.arrayContaining(['runtime_checks', 'package_verification'])
@@ -2570,12 +2600,16 @@ it.each(['failure', 'cancelled', 'skipped', ''])(
           RUNTIME_REQUIRED: 'true',
           RUNTIME_RESULT: 'success',
           PACKAGE_RESULT: 'success',
+          PACKAGE_SOURCE_REQUIRED: 'true',
+          PACKAGE_SOURCE_RESULT: 'success',
           ...extra
         }
       }).status
     expect(run({})).toBe(0)
     expect(run({ RUNTIME_RESULT: outcome })).toBe(1)
     expect(run({ PACKAGE_RESULT: outcome })).toBe(1)
+    expect(run({ PACKAGE_SOURCE_RESULT: outcome })).toBe(1)
+    expect(run({ PACKAGE_SOURCE_REQUIRED: 'false', PACKAGE_SOURCE_RESULT: 'skipped' })).toBe(0)
     expect(
       run({
         EVENT_NAME: 'pull_request',
