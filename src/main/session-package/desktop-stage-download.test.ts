@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { dialog } from 'electron'
 import { basename, dirname, extname, join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -8,6 +8,18 @@ import type { SessionPackageRequest } from '../../shared/session-package'
 import { SessionPackageDesktop } from './desktop'
 import { PackageSensitiveContentError, buildSensitiveContentEvidence } from './sensitive-content'
 import type { SessionPackageService } from './service'
+
+const testTemporaryRoot = await vi.hoisted(async () => {
+  const { mkdtemp } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  return mkdtemp(join(tmpdir(), 'package-download-tests-'))
+})
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:os')>()),
+  tmpdir: () => testTemporaryRoot
+}))
+afterAll(() => rm(testTemporaryRoot, { recursive: true, force: true }))
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true },
@@ -250,5 +262,27 @@ it('prunes staged downloads older than one hour before staging a new one', async
     await desktop.close()
     await rm(stale, { force: true })
     await rm(fresh, { force: true })
+  }
+})
+
+it('keeps the admitted export policy when a concurrent desktop export is rejected', async () => {
+  let release!: () => void
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const { desktop } = createDesktop(async (_request, archive, options) => {
+    await blocked
+    await selectEverything(options, 'Concurrent Session')
+    await writeArchive(archive)
+  })
+  try {
+    const pending = desktop.export(request, undefined, undefined, { stageDownload: true })
+    await expect(desktop.export(request)).rejects.toThrow('already in progress')
+    expect(stageDownloadPolicy(desktop)).toBe(true)
+    release()
+    await pending
+  } finally {
+    release()
+    await desktop.close()
   }
 })
