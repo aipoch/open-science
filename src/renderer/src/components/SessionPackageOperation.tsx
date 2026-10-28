@@ -473,6 +473,7 @@ export const PackageOperationIndicator = ({
     dismissedId === operation.id ||
     ((operation.state === 'cancelled' || operation.state === 'succeeded') &&
       !operation.cleanupPending &&
+      !operation.result?.imported &&
       !operation.result?.recovery &&
       !operation.importQueueFull &&
       !operation.pendingImports?.length) ||

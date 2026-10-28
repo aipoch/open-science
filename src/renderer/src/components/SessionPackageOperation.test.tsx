@@ -2675,6 +2675,22 @@ it.each(['cancelled', 'succeeded'] as const)(
   }
 )
 
+it('keeps a completed imported result available in the background', async () => {
+  const operation: PackageOperationSnapshot = {
+    id: 'completed-import',
+    kind: 'import',
+    state: 'succeeded',
+    progress: { phase: 'importing' },
+    result: { imported: { projectId: 'project', sessionId: 'session' } }
+  }
+  usePackageOperationStore.setState({ operation, open: false })
+  await act(async () => root.render(<PackageOperationIndicator iconOnly />))
+  const indicator = document.querySelector('[aria-label="Package progress"]')
+  expect(indicator).not.toBeNull()
+  await act(async () => (indicator?.querySelector('button') as HTMLButtonElement).click())
+  expect(usePackageOperationStore.getState().open).toBe(true)
+})
+
 it.each(['running', 'cancelling', 'failed', 'awaiting-selection'] as const)(
   'keeps %s background imports discoverable',
   async (state) => {
