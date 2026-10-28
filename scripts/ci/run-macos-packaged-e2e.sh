@@ -49,4 +49,4 @@ security add-generic-password -a 'Open-Science Key' -s 'Open-Science Safe Storag
   -w "$(openssl rand -base64 32)" -T "$OPEN_SCIENCE_E2E_EXECUTABLE" \
   -T "$credential_helper" "$keychain"
 
-"$@"
+OPEN_SCIENCE_E2E_MACOS_KEYCHAIN="$keychain" "$@"

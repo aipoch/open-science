@@ -5,7 +5,7 @@ import {
 } from './local-service-cleanup'
 import { expect, test as base, type TestInfo } from '@playwright/test'
 import { buildShellProcessEnvironment } from '@aipoch/environment'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
   appendFile,
   chmod,
@@ -607,6 +607,19 @@ const hasFixtureReconnected = (
   after.epoch > before.epoch &&
   previousGeneration === currentGeneration
 
+const configurePackagedMacKeychain = async (environment: NodeJS.ProcessEnv): Promise<void> => {
+  const keychain = environment.OPEN_SCIENCE_E2E_MACOS_KEYCHAIN
+  if (process.platform !== 'darwin' || !environment.OPEN_SCIENCE_E2E_EXECUTABLE || !keychain) return
+  // Keychain search preferences follow HOME, so configure only this fixture's isolated home.
+  if (!environment.HOME) throw new Error('Packaged Keychain setup requires an isolated HOME.')
+  await mkdir(join(environment.HOME, 'Library', 'Preferences'), { recursive: true })
+  execFileSync('/usr/bin/security', ['list-keychains', '-d', 'user', '-s', keychain], {
+    env: environment,
+    timeout: 10_000,
+    stdio: 'pipe'
+  })
+}
+
 const launchOpenScience = async (
   { storageRoot, userDataRoot, fakeAgentBinRoot }: LaunchRoots,
   fakeAgentEnabled: boolean,
@@ -624,19 +637,21 @@ const launchOpenScience = async (
       mkdir(directory, { recursive: true })
     )
   )
+  const environment = launchEnvironment(
+    storageRoot,
+    fakeAgentEnabled ? fakeAgentBinRoot : undefined,
+    process.env,
+    fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
+    windowMode,
+    sessionPerformanceTrace
+  )
+  await configurePackagedMacKeychain(environment)
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
     args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
     env: {
-      ...launchEnvironment(
-        storageRoot,
-        fakeAgentEnabled ? fakeAgentBinRoot : undefined,
-        process.env,
-        fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
-        windowMode,
-        sessionPerformanceTrace
-      ),
+      ...environment,
       ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
         ? {
             NODE_OPTIONS: `--require=${JSON.stringify(resolve(APP_ROOT, 'e2e/fixtures/mock-node-credentials.cjs'))}`
@@ -2148,6 +2163,7 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
 })
 
 export {
+  configurePackagedMacKeychain,
   runWithCleanup,
   closeElectronApplicationForCleanup,
   installRestartPersistenceRetry,

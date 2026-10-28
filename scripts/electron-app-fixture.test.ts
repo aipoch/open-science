@@ -4,14 +4,19 @@ import { EventEmitter } from 'node:events'
 import { dirname, join, resolve, sep } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { execFileSync } from 'node:child_process'
+import * as childProcess from 'node:child_process'
+import * as fsPromises from 'node:fs/promises'
 import { runInNewContext } from 'node:vm'
 import type { ElectronApplication } from 'playwright'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: {} }))
+vi.mock('node:child_process', { spy: true })
+vi.mock('node:fs/promises', { spy: true })
 
 import {
+  configurePackagedMacKeychain,
   closeElectronApplicationForCleanup,
   disconnectFixtureServiceConnection,
   setFixtureServiceReconnectBlocked,
@@ -20,6 +25,55 @@ import {
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
+
+it('binds only packaged macOS launches to the hosted test Keychain under isolated HOME', async () => {
+  const execute = vi.spyOn(childProcess, 'execFileSync').mockReturnValue(Buffer.alloc(0))
+  const makeDirectory = vi.spyOn(fsPromises, 'mkdir').mockResolvedValue(undefined)
+  const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+    HOME: '/operator',
+    OPEN_SCIENCE_E2E_EXECUTABLE: '/test/Open-Science',
+    OPEN_SCIENCE_E2E_MACOS_KEYCHAIN: '/test/test.keychain-db'
+  })
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const setPlatform = (value: string): void => {
+    Object.defineProperty(process, 'platform', { value })
+  }
+  try {
+    setPlatform('darwin')
+    await configurePackagedMacKeychain(environment)
+    expect(makeDirectory).toHaveBeenCalledExactlyOnceWith(
+      resolve('fixture/isolated home/Library/Preferences'),
+      { recursive: true }
+    )
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      '/usr/bin/security',
+      ['list-keychains', '-d', 'user', '-s', '/test/test.keychain-db'],
+      { env: environment, timeout: 10_000, stdio: 'pipe' }
+    )
+    expect(environment.HOME).toBe(resolve('fixture/isolated home'))
+    execute.mockClear()
+    setPlatform('linux')
+    await configurePackagedMacKeychain(environment)
+    setPlatform('win32')
+    await configurePackagedMacKeychain(environment)
+    setPlatform('darwin')
+    await configurePackagedMacKeychain({ ...environment, OPEN_SCIENCE_E2E_EXECUTABLE: undefined })
+    await configurePackagedMacKeychain({
+      ...environment,
+      OPEN_SCIENCE_E2E_MACOS_KEYCHAIN: undefined
+    })
+    expect(execute).not.toHaveBeenCalled()
+    execute.mockImplementation(() => {
+      throw new Error('Keychain setup failed')
+    })
+    await expect(configurePackagedMacKeychain(environment)).rejects.toThrow('Keychain setup failed')
+  } finally {
+    Object.defineProperty(process, 'platform', originalPlatform)
+    execute.mockReset()
+    makeDirectory.mockReset()
+    vi.restoreAllMocks()
+  }
+})
 
 it.each(['LOCALAPPDATA', 'localappdata'])(
   'preserves the Windows OS profile path from %s while isolating user state',

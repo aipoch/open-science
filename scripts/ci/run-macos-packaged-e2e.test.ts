@@ -53,7 +53,7 @@ if (process.env.KEYCHAIN_TEST_SCENARIO === 'restore-failure' && args.includes('-
             resolve('scripts/ci/run-macos-packaged-e2e.sh'),
             process.execPath,
             '-e',
-            `require('node:fs').writeFileSync(${JSON.stringify(join(root, 'ran'))}, 'yes'); process.exit(${scenario === 'test-failure' ? 9 : 0})`
+            `require('node:fs').writeFileSync(${JSON.stringify(join(root, 'ran'))}, process.env.OPEN_SCIENCE_E2E_MACOS_KEYCHAIN); process.exit(${scenario === 'test-failure' ? 9 : 0})`
           ],
           {
             env: {
@@ -117,6 +117,8 @@ if (process.env.KEYCHAIN_TEST_SCENARIO === 'restore-failure' && args.includes('-
           false
         )
         expect(readdirSync(root).includes('ran')).toBe(scenario !== 'setup-failure')
+        if (scenario !== 'setup-failure')
+          expect(readFileSync(join(root, 'ran'), 'utf8')).toBe(created)
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
