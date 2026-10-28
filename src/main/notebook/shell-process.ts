@@ -5,6 +5,7 @@ import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { createManagedOutputRedactor, redactManagedOutput } from './managed-output-redaction'
 import { resolveManagedShellExecutionCapability } from './managed-shell-execution'
+import { augmentedPathEnv } from '../settings/shell-path'
 import { ShellCellSession } from './shell-cell-session'
 import { assertShellSearchScope } from './shell-search-scope'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
@@ -107,7 +108,10 @@ const buildShellEnv = (
   workloadCacheEnv?: NodeJS.ProcessEnv,
   binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform)
 ): NodeJS.ProcessEnv => {
-  const env = buildShellProcessEnvironment(platform, sourceEnv)
+  const env = buildShellProcessEnvironment(
+    platform,
+    platform === 'darwin' ? augmentedPathEnv(sourceEnv) : sourceEnv
+  )
   // Handoff and PowerShell bootstrap variables are the Notebook host's protocol.
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   if (platform === 'win32' && env.PSModulePath) env.OPEN_SCIENCE_PSMODULEPATH = env.PSModulePath
@@ -327,13 +331,15 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
+  let windowsProtectionRequired: boolean | undefined
   if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
     try {
-      await options.processSandbox?.resolveWindowsRuntime?.({
+      const runtime = await options.processSandbox?.resolveWindowsRuntime?.({
         runtime: 'bash',
         binding: runtimeBinding,
         signal: options.signal
       })
+      if (runtime !== undefined) windowsProtectionRequired = runtime !== null
     } catch (error) {
       throw new ShellPreparationError({
         stdout: '',
@@ -480,11 +486,12 @@ const prepareShellLaunchOptions = async (
           sessionId: options.sessionId,
           projectId: options.projectId,
           runtime: 'bash',
+          ...(windowsProtectionRequired !== undefined ? { windowsProtectionRequired } : {}),
           ...(options.windowsShellControlPipe
             ? { windowsShellControlPipe: options.windowsShellControlPipe }
             : {}),
           ...(platform === 'win32' && runtimeBinding.kind === 'powershell'
-            ? { superviseProcessTree: true, windowsProtectionRequired: true }
+            ? { superviseProcessTree: true }
             : {}),
           filesystem: managed
             ? {

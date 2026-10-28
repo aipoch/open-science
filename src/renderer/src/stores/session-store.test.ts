@@ -7744,6 +7744,7 @@ describe('session store public contract', () => {
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
       'src/renderer/src/components/SessionPackageOperation.tsx',
+      'src/renderer/src/components/desktop-runtime-recovery.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/hooks/useApplicationEventBindings.ts',
       'src/renderer/src/hooks/useLifecycleSync.ts',
@@ -8716,6 +8717,20 @@ describe('truncateSessionFromMessage', () => {
     activeQuestionIndex: 0,
     values: { question_0_custom: 'Unsubmitted text' }
   }
+
+  it('keeps a structured skip when switching away from an unfinished choice', () => {
+    seedEditableElicitation()
+    useSessionStore.getState().setElicitationEditDraft('session-1', 'choice-1', 'request-1', {
+      ...editSnapshot,
+      values: { question_0: { status: 'skipped' } }
+    })
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['choice-1'].values
+    ).toEqual({
+      question_0: { status: 'skipped' },
+      question_0_custom: undefined
+    })
+  })
 
   it('keeps bounded elicitation edits in memory across save acknowledgements', () => {
     seedEditableElicitation()

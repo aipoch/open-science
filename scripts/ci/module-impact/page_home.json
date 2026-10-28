@@ -7,7 +7,12 @@
     "src/renderer/src/pages/home/ProjectFormDialog.behavior.test.tsx",
     "src/renderer/src/pages/home/ProjectFormDialog.tsx",
     "src/renderer/src/pages/home/home-dialogs.render.test.tsx",
-    "src/renderer/src/pages/home/use-recent-sessions.ts"
+    "src/renderer/src/pages/home/use-recent-sessions.ts",
+    "src/renderer/src/pages/home/UseCaseCarousel.tsx",
+    "src/renderer/src/pages/home/UseCaseCarousel.test.tsx",
+    "src/renderer/src/pages/home/UseCaseCover.tsx",
+    "src/renderer/src/pages/home/use-case-gallery-store.ts",
+    "src/renderer/src/pages/home/use-case-cover-cache.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/home/DeleteProjectDialog.tsx",
@@ -20,7 +25,8 @@
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
       "src/renderer/src/pages/home/ProjectFormDialog.behavior.test.tsx",
-      "src/renderer/src/pages/home/home-dialogs.render.test.tsx"
+      "src/renderer/src/pages/home/home-dialogs.render.test.tsx",
+      "src/renderer/src/pages/home/UseCaseCarousel.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -140,5 +146,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "The page_home owner retains 24 explicit research consumer obligations beyond its reviewed source-derived edges, including use-research-run-launcher.test.tsx, ReplayPanel.layout.test.tsx, RecordedRunObservationPreview.test.tsx. 24 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
+  "fullTestReason": "The page_home owner retains 24 explicit research consumer obligations beyond its reviewed source-derived edges, including use-research-run-launcher.test.tsx, ReplayPanel.layout.test.tsx, RecordedRunObservationPreview.test.tsx. 24 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes. The use-case gallery adds remote catalog presentation and import entry points; retain full CI validation until the expanded source boundary is reviewed."
 }

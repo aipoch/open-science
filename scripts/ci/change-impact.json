@@ -283,7 +283,9 @@
         "src/main/notifications/desktop-attention.ts",
         "src/main/notifications/desktop-badge.ts",
         "src/main/permission-grants/capability.ts",
+        "src/main/process-birth-identity.ts",
         "src/main/process-tree.ts",
+        "src/main/runtime-entry-identity.ts",
         "src/main/runtime-ownership.ts",
         "src/main/remote-access/remoteit.ts",
         "src/main/session-diagnostics/environment.ts",
@@ -437,6 +439,7 @@
         "e2e/windows-window-system.spec.ts",
         "e2e/wsl-setup-conversation.spec.ts",
         "e2e/session-package.spec.ts",
+        "e2e/home-use-cases.spec.ts",
         "e2e/session-package-drop.spec.ts",
         "e2e/session-fork.spec.ts",
         "e2e/session-diagnostics.spec.ts",
@@ -452,6 +455,7 @@
       "paths": [
         "e2e/launch-environment.spec.ts",
         "e2e/message-tool-layout-stability.spec.ts",
+        "e2e/message-tool-collapse-scroll.spec.ts",
         "e2e/workspace-project-switcher.spec.ts",
         "e2e/workspace-conversation.spec.ts",
         "e2e/workspace-files.spec.ts",
@@ -467,6 +471,7 @@
       "paths": [
         "e2e/desktop-composer-draft-restart.spec.ts",
         "e2e/desktop-runtime-lifetime.spec.ts",
+        "e2e/local-service-lifecycle.spec.ts",
         "e2e/desktop-runtime-backpressure.spec.ts",
         "e2e/desktop-runtime-event-delivery.spec.ts",
         "e2e/desktop-runtime-recovery.spec.ts",
@@ -585,6 +590,7 @@
         "e2e/fixtures/brand-storage-data.ts",
         "e2e/fixtures/conversation.ts",
         "e2e/fixtures/electron-app.ts",
+        "e2e/fixtures/local-service-cleanup.ts",
         "e2e/fixtures/fake-opencode.mjs",
         "e2e/fixtures/fake-remoteit.cjs",
         "e2e/fixtures/mock-credential-identity.cjs",
@@ -594,6 +600,7 @@
         "e2e/fixtures/native-quit-dialog.ts",
         "e2e/fixtures/node-runtime-child-preload.cjs",
         "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
         "e2e/fixtures/project.ts",
         "e2e/fixtures/renderer-failure-gate.ts",
         "e2e/fixtures/research-analysis.mjs",
@@ -672,10 +679,22 @@
       "capabilities": ["desktop_e2e_unit_readers"]
     },
     {
+      "id": "desktop_e2e_reader_local_service_cleanup",
+      "role": "overlay",
+      "paths": ["e2e/fixtures/local-service-cleanup.ts"],
+      "tests": [
+        "scripts/electron-app-fixture.test.ts",
+        "scripts/electron-fixture-teardown.test.ts",
+        "scripts/local-service-cleanup.test.ts"
+      ],
+      "capabilities": ["desktop_e2e_unit_readers"]
+    },
+    {
       "id": "desktop_e2e_reader_preload",
       "role": "overlay",
       "paths": [
         "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/mock-node-credentials.cjs",
         "e2e/fixtures/mock-credential-identity.cjs",
@@ -690,6 +709,7 @@
       "paths": [
         "e2e/fixtures/native-quit-dialog.ts",
         "e2e/fixtures/node-runtime-preload.cjs",
+        "e2e/fixtures/use-case-download-preload.cjs",
         "e2e/fixtures/node-runtime-child-preload.cjs",
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/mock-node-credentials.cjs"
@@ -1022,6 +1042,21 @@
     {
       "paths": ["test/fixtures/pdf-figure-selections/*.json"],
       "tests": ["src/renderer/src/pages/workspace/previews/renderers/pdf-figure-selections.test.ts"]
+    },
+    {
+      "paths": [
+        "test/fixtures/docx-table-styles.ts",
+        "test/fixtures/docx-report.md",
+        "test/fixtures/docx-report.docx"
+      ],
+      "tests": [
+        "src/renderer/src/pages/workspace/previews/docx-table-styles.test.ts",
+        "src/main/skills/docx-generation.test.ts"
+      ]
+    },
+    {
+      "paths": ["test/docx-generation/*.py"],
+      "tests": ["src/main/skills/docx-generation.test.ts"]
     }
   ]
 }

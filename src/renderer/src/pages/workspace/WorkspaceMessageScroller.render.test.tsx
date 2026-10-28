@@ -18,6 +18,20 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
 import type { TurnOutcomeActions } from './TurnOutcomeNotice'
 
+// SSR cannot click disclosures; row-presentation cases explicitly opt into an expanded group.
+const groupPresentation = vi.hoisted(() => ({ expanded: false }))
+vi.mock('./WorkspaceActivityGroup', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./WorkspaceActivityGroup')>()
+  return {
+    WorkspaceActivityGroup: (props: React.ComponentProps<typeof actual.WorkspaceActivityGroup>) => (
+      <actual.WorkspaceActivityGroup
+        {...props}
+        isExpanded={groupPresentation.expanded || props.isExpanded}
+      />
+    )
+  }
+})
+
 const reviewStoreMock = vi.hoisted(() => ({ loadError: undefined as string | undefined }))
 
 vi.mock('./WorkspaceRunMarks', () => ({
@@ -60,6 +74,7 @@ vi.mock('@/components/ui/message-scroller', () => {
     MessageScrollerItem: Item,
     MessageScrollerButton: Button,
     useMessageScroller: () => ({
+      stopAutoScroll: vi.fn(),
       scrollToEnd: vi.fn(),
       scrollToMessage: vi.fn(),
       scrollToStart: vi.fn()
@@ -233,6 +248,15 @@ const renderScroller = async (
       onSendEditedMessage={vi.fn()}
     />
   )
+}
+
+const renderExpandedScroller: typeof renderScroller = async (...args) => {
+  groupPresentation.expanded = true
+  try {
+    return await renderScroller(...args)
+  } finally {
+    groupPresentation.expanded = false
+  }
 }
 
 const turnOutcomeActions: TurnOutcomeActions = {
@@ -2065,7 +2089,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('renders search activities as compact chips with details collapsed by default', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2147,7 +2171,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('renders a closed search permission as neutral and inactive', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2178,7 +2202,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('keeps Claude web search payload links collapsed by default', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2220,7 +2244,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('infers ToolSearch activity groups from runtime titles when tool kind is missing', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'running',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2252,13 +2276,12 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).toContain('Ran 2 searches')
-    expect(html).toContain('2 steps')
+    expect(html).toContain('Using tool: Web Search')
+    expect(html).toContain('2 steps remaining')
     expect(html).not.toContain('Used tool: ToolSearch')
     expect(html).toContain('Web Search')
     expect(html).toContain('latest typhoon updates July 2026')
     expect(html).toContain('typhoon 2026 national weather bureau latest forecast')
-    expect(html).not.toContain('&quot;latest typhoon updates July 2026&quot;')
     expect(html).not.toContain('&quot;typhoon 2026 national weather bureau latest forecast&quot;')
     expect(html).not.toContain('Using tool: &quot;latest typhoon updates July 2026&quot;')
     expect(html).not.toContain(
@@ -2267,7 +2290,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('renders ACP WebSearch fetch activities as web search entries after tool selection', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2315,7 +2338,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('does not infer quoted non-search activities from earlier explicit search activities', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2346,7 +2369,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('renders Claude Grep search-kind activities as ordinary tools without leaking title details', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2371,7 +2394,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('does not infer quoted non-search activities from an earlier ToolSearch wrapper', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2404,7 +2427,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('does not infer completed quoted fetch activities without search payload evidence', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2437,7 +2460,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('does not infer completed quoted fetch activities from ordinary link content', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2481,7 +2504,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   })
 
   it('does not infer active quoted WebFetch activities from an earlier ToolSearch wrapper', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'running',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2506,7 +2529,6 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).toContain('Ran a tool search, fetched a page')
     expect(html).toContain('Using tool: WebFetch')
     expect(html).not.toContain('https://example.com/resource')
     expect(html).not.toContain('Ran 1 search')
@@ -2516,7 +2538,7 @@ describe('WorkspaceMessageScroller loading render', () => {
 
 describe('WorkspaceMessageScroller agent images', () => {
   it('renders bounded ACP message images as data URLs alongside text', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [
@@ -2538,7 +2560,7 @@ describe('WorkspaceMessageScroller agent images', () => {
 
 describe('WorkspaceMessageScroller tool detail rows', () => {
   it('renders execute tool activities collapsed by default', async () => {
-    const html = await renderScroller(
+    const html = await renderExpandedScroller(
       createSession({
         status: 'idle',
         messages: [createMessage({ id: 'prompt-1' })],
@@ -2970,3 +2992,67 @@ it.each(['fork', 'branch'] as const)(
     }
   }
 )
+
+describe('settled process presentation', () => {
+  it.each(
+    (['completed', 'failed'] as const).flatMap((kind) =>
+      (['text', 'image', 'artifact'] as const).map((output) => ({ kind, output }))
+    )
+  )(
+    'collapses $kind intermediate output and retains the final $output reply',
+    async ({ kind, output }) => {
+      const input = createSession({
+        status: kind === 'failed' ? 'error' : 'idle',
+        artifacts: [
+          {
+            id: 'artifact-final',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt',
+            mimeType: 'text/plain',
+            size: 100,
+            mtimeMs: 500
+          }
+        ],
+        messages: [
+          createMessage({
+            id: 'prompt',
+            role: 'user',
+            turnOutcome: { kind, settledAt: 500 },
+            sortIndex: 0
+          }),
+          createMessage({
+            id: 'progress',
+            role: 'agent',
+            content: 'Intermediate explanation',
+            responseToMessageId: 'prompt',
+            sortIndex: 1
+          }),
+          createMessage({
+            id: 'final',
+            role: 'agent',
+            content: output === 'text' ? 'Final explanation' : '',
+            images:
+              output === 'image'
+                ? [{ id: 'image-final', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
+                : undefined,
+            artifactIds: output === 'artifact' ? ['artifact-final'] : undefined,
+            responseToMessageId: 'prompt',
+            sortIndex: 2,
+            completedAt: 500
+          })
+        ]
+      })
+      const html = await renderScroller(input, { turnOutcomeActions })
+      expect(html).toContain('aria-expanded="false"')
+      expect(html).not.toContain('Intermediate explanation')
+      expect(html).toContain('data-message-id="final"')
+      if (output === 'text') expect(html).toContain('Final explanation')
+      if (output === 'image') expect(html).toContain('src="data:image/png;base64,AQID"')
+      if (output === 'artifact') expect(html).toContain('result.txt')
+      if (kind === 'failed') expect(html).toContain('Failed')
+      const isolated = await renderScroller(input)
+      expect(isolated).toContain('Intermediate explanation')
+    }
+  )
+})

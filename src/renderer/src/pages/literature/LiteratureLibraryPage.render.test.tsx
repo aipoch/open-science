@@ -7,7 +7,7 @@ import { literatureDeletionError } from '../../../../shared/literature-deletion'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
@@ -101,7 +101,9 @@ vi.mock('../workspace/FilePreviewDialog', () => ({
           ) : null}
         </div>
       </FocusScope>
-    ) : null
+    ) : (
+      <span hidden data-testid="literature-preview-ready" />
+    )
   }
 }))
 
@@ -243,6 +245,14 @@ const openReferenceDetail = async (trigger: Element): Promise<HTMLElement> => {
 }
 
 describe('LiteratureLibraryPage', () => {
+  beforeAll(async () => {
+    // Settle the real lazy adapter before any test measures preview updates.
+    const Preview = literatureRendererHost.FilePreviewDialog
+    const preview = render(<Preview item={undefined} onClose={() => undefined} />)
+    await screen.findByTestId('literature-preview-ready')
+    preview.unmount()
+  })
+
   const search = vi.fn()
   const get = vi.fn()
   const formatReferences = vi.fn()
@@ -428,6 +438,12 @@ describe('LiteratureLibraryPage', () => {
         saveBlobFile,
         literature: {
           related: vi.fn(),
+          publicationCheck: vi.fn(
+            async (request: { itemId: string; expectedMetadataRevision: number }) => ({
+              itemId: request.itemId,
+              metadataRevision: request.expectedMetadataRevision
+            })
+          ),
           supplements: vi.fn(),
           supplementAttachment: vi.fn(),
           supplementAttachmentProgress: vi.fn().mockResolvedValue(null),
@@ -567,6 +583,387 @@ describe('LiteratureLibraryPage', () => {
       expect(useSessionStore.getState().selectedSessionId).toBe('older')
     }
   )
+
+  describe('reading status', () => {
+    const filterUnread = async (): Promise<void> => {
+      fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+      fireEvent.click(screen.getByRole('combobox', { name: 'Reading status' }))
+      fireEvent.click(screen.getByRole('option', { name: 'Unread' }))
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Reading status' }), { key: 'Escape' })
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(
+          expect.objectContaining({ filter: expect.objectContaining({ readingStatus: 'unread' }) })
+        )
+      )
+    }
+    const chooseBatchStatus = async (): Promise<void> => {
+      fireEvent.click(screen.getByRole('combobox', { name: 'Set reading status' }))
+      fireEvent.click(screen.getByRole('option', { name: 'Read' }))
+      await act(async () => {})
+    }
+    const mockReadingLibrary = (records: LiteratureItemView[]): void => {
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope !== 'library') return { entries: [] }
+        const matching = records.filter(
+          (item) =>
+            (!request.projectId || item.projectIds.includes(request.projectId)) &&
+            (!request.filter?.readingStatus ||
+              (item.readingStatus ?? 'unread') === request.filter.readingStatus)
+        )
+        if (request.allItemIds)
+          return { entries: [], itemIds: matching.map(({ id }) => id), totalCount: matching.length }
+        const offset = request.offset ?? 0
+        const end = offset + (request.limit ?? 25)
+        return {
+          entries: matching.slice(offset, end).map((item) => structuredClone(item)),
+          totalCount: matching.length,
+          nextOffset: end < matching.length ? end : undefined
+        }
+      })
+      get.mockImplementation(async (id) => structuredClone(records.find((item) => item.id === id)))
+      transact.mockImplementation(async (command) => {
+        literatureCatalogCommandSchema.parse(command)
+        if (command.kind === 'set-reading-status') {
+          for (const record of records)
+            if (command.itemIds.includes(record.id)) record.readingStatus = command.readingStatus
+        }
+        return { kind: 'item', itemIds: command.itemIds, state: 'present' }
+      })
+    }
+
+    it.each([false, true])(
+      'edits reading status directly in the table (failure: %s)',
+      async (fails) => {
+        const records = [structuredClone(libraryItem)]
+        mockReadingLibrary(records)
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const write = transact.getMockImplementation()!
+        transact.mockImplementation(async (command) => {
+          await gate
+          if (fails) throw new Error('Write failed')
+          return write(command)
+        })
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        const name = `Reading status: ${libraryItem.item.title}`
+        const select = await screen.findByRole('combobox', { name })
+        fireEvent.click(select)
+        fireEvent.click(screen.getByRole('option', { name: 'Read' }))
+        await waitFor(() => expect(select).toHaveProperty('disabled', true))
+        expect(transact).toHaveBeenCalledExactlyOnceWith({
+          kind: 'set-reading-status',
+          itemIds: ['item-1'],
+          readingStatus: 'read'
+        })
+        expect(screen.queryByRole('dialog')).toBeNull()
+        await act(async () => {
+          release()
+          await gate
+        })
+        await waitFor(() =>
+          expect(screen.getByRole('combobox', { name })).toHaveProperty('disabled', false)
+        )
+        expect(screen.getByRole('combobox', { name }).textContent).toBe(fails ? 'Unread' : 'Read')
+        expect(screen.getByLabelText(`Select ${libraryItem.item.title}`)).toHaveProperty(
+          'checked',
+          false
+        )
+        if (fails)
+          expect(await screen.findByText('Literature could not be updated.')).not.toBeNull()
+      }
+    )
+
+    it('upgrades old columns and preserves hidden and reordered reading status across remounts', async () => {
+      const key = 'open-science:literature-table-preferences'
+      localStorage.setItem(key, JSON.stringify({ order: ['year'], visible: ['year'] }))
+      const records = (['unread', 'reading', 'read'] as const).map((readingStatus, index) => ({
+        ...createLibraryItem(index + 1),
+        readingStatus
+      }))
+      mockReadingLibrary(records)
+      let view = render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByRole('button', { name: records[0].item.title })
+      const statusIndex = (): number =>
+        screen
+          .getAllByRole('columnheader')
+          .indexOf(screen.getByRole('columnheader', { name: 'Status' }))
+      const statusCells = (): string[] =>
+        records.map((record) => {
+          const row = screen.getByRole('button', { name: record.item.title }).closest('tr')!
+          const cells = within(row).getAllByRole('cell')
+          expect(cells).toHaveLength(screen.getAllByRole('columnheader').length)
+          return cells[statusIndex()].textContent!
+        })
+      expect(statusIndex()).toBe(3)
+      expect(statusCells()).toEqual(['Unread', 'Reading', 'Read'])
+      expect(screen.queryByRole('columnheader', { name: 'Rating' })).toBeNull()
+      const shownWidth = screen.getByRole('table').style.minWidth
+      fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Status: Hide column' }))
+      expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull()
+      expect(screen.getByRole('table').style.minWidth).not.toBe(shownWidth)
+      view.unmount()
+      view = render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByRole('button', { name: records[0].item.title })
+      expect(screen.queryByRole('columnheader', { name: 'Status' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Status: Show column' }))
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Move Status' }), {
+        key: 'ArrowDown'
+      })
+      expect(statusIndex()).toBe(4)
+      expect(statusCells()).toEqual(['Unread', 'Reading', 'Read'])
+      view.unmount()
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByRole('button', { name: records[0].item.title })
+      expect(statusIndex()).toBe(4)
+      expect(statusCells()).toEqual(['Unread', 'Reading', 'Read'])
+    })
+
+    it('shows the default status and saves a single status without replacing concurrent metadata', async () => {
+      const records = [structuredClone(libraryItem)]
+      mockReadingLibrary(records)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      expect(await screen.findByText('Unread')).not.toBeNull()
+      const headers = screen.getAllByRole('columnheader')
+      const statusColumn = headers.indexOf(screen.getByRole('columnheader', { name: 'Status' }))
+      const row = screen.getByRole('button', { name: libraryItem.item.title }).closest('tr')!
+      const cells = within(row).getAllByRole('cell')
+      expect(cells).toHaveLength(headers.length)
+      expect(cells[statusColumn].textContent).toBe('Unread')
+      expect(cells[statusColumn - 1].textContent).toBe(libraryItem.item.title)
+      const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+      const select = within(dialog).getByRole('combobox', { name: 'Reading status' })
+      expect(select.textContent).toBe('Unread')
+      records[0].item = {
+        ...records[0].item,
+        title: 'Concurrent metadata title',
+        personalNote: 'Keep this note'
+      }
+      records[0].metadataRevision = 2
+      fireEvent.click(select)
+      fireEvent.click(screen.getByRole('option', { name: 'Reading' }))
+      await waitFor(() => expect(select.textContent).toBe('Reading'))
+      expect(transact).toHaveBeenCalledExactlyOnceWith({
+        kind: 'set-reading-status',
+        itemIds: ['item-1'],
+        readingStatus: 'reading'
+      })
+      expect(
+        within(dialog).getByRole('heading', { name: 'Concurrent metadata title' })
+      ).not.toBeNull()
+      expect(records[0].metadataRevision).toBe(2)
+      expect(records[0].item.personalNote).toBe('Keep this note')
+    })
+
+    it.each(['write', 'readback'] as const)(
+      'shows a single reading status %s failure inside the detail',
+      async (phase) => {
+        const records = [structuredClone(libraryItem)]
+        mockReadingLibrary(records)
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        if (phase === 'write')
+          transact.mockRejectedValueOnce(new Error('Status could not be saved'))
+        else get.mockRejectedValueOnce(new Error('Readback failed'))
+        const select = within(dialog).getByRole('combobox', { name: 'Reading status' })
+        fireEvent.click(select)
+        fireEvent.click(screen.getByRole('option', { name: 'Reading' }))
+        const error = await within(dialog).findByRole('alert')
+        expect(error.textContent).toContain(
+          phase === 'write'
+            ? 'Literature could not be updated.'
+            : 'The reference was saved, but could not be reloaded.'
+        )
+        await waitFor(() => expect(select.hasAttribute('disabled')).toBe(false))
+        expect(select.textContent).toBe('Unread')
+        expect(records[0].readingStatus).toBe(phase === 'write' ? undefined : 'reading')
+      }
+    )
+
+    it('resets pagination when reading status changes or filters are cleared', async () => {
+      const records = Array.from({ length: 30 }, (_, index) => ({
+        ...createLibraryItem(index),
+        readingStatus: index < 5 ? ('read' as const) : ('unread' as const)
+      }))
+      mockReadingLibrary(records)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Next page' }))
+      await screen.findByText('Reference 29')
+      await filterUnread()
+      await screen.findByText('Reference 5')
+      expect(screen.queryByRole('button', { name: 'Next page' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
+      fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(expect.objectContaining({ offset: 0, filter: {} }))
+      )
+    })
+
+    it('snapshots all filtered targets before batching and preserves excluded references', async () => {
+      const records = Array.from({ length: 225 }, (_, index) => createLibraryItem(index))
+      mockReadingLibrary(records)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText('Reference 0')
+      await filterUnread()
+      fireEvent.click(await screen.findByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 225' }))
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Select Reference 0' }))
+      await chooseBatchStatus()
+      await waitFor(() => expect(screen.queryByText('224 selected')).toBeNull())
+      const writes = transact.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command.kind === 'set-reading-status')
+      expect(writes.map((command) => command.itemIds.length)).toEqual([200, 24])
+      expect(writes.flatMap((command) => command.itemIds)).toEqual(
+        records.slice(1).map(({ id }) => id)
+      )
+      expect(records[0].readingStatus).toBeUndefined()
+      expect(records.slice(1).every((record) => record.readingStatus === 'read')).toBe(true)
+      const snapshotIndex = search.mock.calls.findIndex(([request]) => request.allItemIds)
+      expect(search.mock.invocationCallOrder[snapshotIndex]).toBeLessThan(
+        transact.mock.invocationCallOrder[0]
+      )
+      expect(search.mock.calls.filter(([request]) => request.allItemIds)).toHaveLength(1)
+      expect(await screen.findByText('Unread')).not.toBeNull()
+    })
+
+    it('keeps only the failed reading status batch selected for retry', async () => {
+      const records = Array.from({ length: 225 }, (_, index) => createLibraryItem(index))
+      mockReadingLibrary(records)
+      const write = transact.getMockImplementation()!
+      let failed = false
+      transact.mockImplementation(async (command) => {
+        if (
+          command.kind === 'set-reading-status' &&
+          command.itemIds.includes('item-224') &&
+          !failed
+        ) {
+          failed = true
+          throw new Error('Second batch failed')
+        }
+        return write(command)
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await screen.findByText('Reference 0')
+      await filterUnread()
+      fireEvent.click(await screen.findByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 225' }))
+      await chooseBatchStatus()
+      await screen.findByText('25 selected')
+      await screen.findByText('Literature could not be updated.')
+      await chooseBatchStatus()
+      await waitFor(() => expect(screen.queryByText('25 selected')).toBeNull())
+      const writes = transact.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command.kind === 'set-reading-status')
+      expect(writes.map((command) => command.itemIds.length)).toEqual([200, 25, 25])
+      expect(writes[2].itemIds).toEqual(records.slice(200).map(({ id }) => id))
+    })
+
+    it.each([false, true])(
+      'locks selection and pagination until a reading status write settles (failure: %s)',
+      async (fails) => {
+        const records = Array.from({ length: 30 }, (_, index) => createLibraryItem(index))
+        mockReadingLibrary(records)
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const write = transact.getMockImplementation()!
+        transact.mockImplementation(async (command) => {
+          if (command.kind === 'set-reading-status') {
+            await gate
+            if (fails) throw new Error('Write failed')
+          }
+          return write(command)
+        })
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        const selected = await screen.findByLabelText('Select Reference 0')
+        fireEvent.click(selected)
+        await chooseBatchStatus()
+        await waitFor(() => expect(transact).toHaveBeenCalledOnce())
+        expect(selected).toHaveProperty('disabled', true)
+        expect(screen.getByLabelText('Select all references')).toHaveProperty('disabled', true)
+        expect(
+          screen.getByRole('button', { name: 'Next page' }).closest('fieldset')
+        ).toHaveProperty('disabled', true)
+        await act(async () => {
+          release()
+          await gate
+        })
+        await waitFor(() => expect(selected).toHaveProperty('disabled', false))
+        expect(screen.getByLabelText('Select all references')).toHaveProperty('disabled', false)
+        expect(
+          screen.getByRole('button', { name: 'Next page' }).closest('fieldset')
+        ).toHaveProperty('disabled', false)
+        if (fails) {
+          expect(selected).toHaveProperty('checked', true)
+          expect(screen.getByText('1 selected')).not.toBeNull()
+        } else {
+          expect(selected).toHaveProperty('checked', false)
+          expect(screen.queryByText('1 selected')).toBeNull()
+        }
+      }
+    )
+
+    it.each(['selection read', 'first write'] as const)(
+      'rejects old reading status work after a scope round trip during %s',
+      async (phase) => {
+        const records = Array.from({ length: 225 }, (_, index) => createLibraryItem(index))
+        mockReadingLibrary(records)
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const read = search.getMockImplementation()!
+        search.mockImplementation(async (request) => {
+          if (phase === 'selection read' && request.allItemIds) await gate
+          return read(request)
+        })
+        const write = transact.getMockImplementation()!
+        transact.mockImplementation(async (command) => {
+          if (phase === 'first write' && command.kind === 'set-reading-status') await gate
+          return write(command)
+        })
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        fireEvent.click(await screen.findByLabelText('Select all references'))
+        fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 225' }))
+        await chooseBatchStatus()
+        if (phase === 'first write') await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        fireEvent.click(screen.getByRole('button', { name: 'Retrieval research' }))
+        await screen.findByRole('heading', { name: 'Retrieval research' })
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        await screen.findByText('Reference 0')
+        await act(async () => {
+          release()
+          await gate
+        })
+        await waitFor(() =>
+          expect(
+            screen.getByRole('button', { name: /^Filters/ }).closest('fieldset')?.disabled
+          ).not.toBe(true)
+        )
+        expect(
+          transact.mock.calls.filter(([command]) => command.kind === 'set-reading-status')
+        ).toHaveLength(phase === 'selection read' ? 0 : 1)
+        expect(screen.queryByText('Literature could not be updated.')).toBeNull()
+      }
+    )
+  })
 
   it('opens All references for an explicit user-level Literature section intent', async () => {
     search.mockImplementation(async ({ scope }: { scope?: string }) =>
@@ -1374,10 +1771,12 @@ describe('LiteratureLibraryPage', () => {
       )
       useNavigationStore.setState({ pendingLiteratureCollectionId: collection.id })
       render(<LiteratureLibraryPage />)
-      await screen.findByRole('button', { name: 'Smart trial 0' })
+      // Scope role queries to the relevant row instead of computing names for 100 rows.
+      const first = (await screen.findByText('Smart trial 0')).closest('tr')!
       await act(async () => {})
-      const first = screen.getByRole('button', { name: 'Smart trial 0' }).closest('tr')!
-      const second = screen.getByRole('button', { name: 'Smart trial 1' }).closest('tr')!
+      const second = screen.getByText('Smart trial 1').closest('tr')!
+      expect(within(first).getByRole('button', { name: 'Smart trial 0' })).toBeTruthy()
+      expect(within(second).getByRole('button', { name: 'Smart trial 1' })).toBeTruthy()
       delayReads = true
       await act(async () => {
         window.dispatchEvent(new Event('focus'))
@@ -1422,10 +1821,12 @@ describe('LiteratureLibraryPage', () => {
         stalePanel({ kind: 'collection', id: collection.id, smart: view })
       })
       if (refreshFailed) {
-        await screen.findByText(
-          'Decision saved, but results could not be refreshed. Reload the collection to see the latest results.'
-        )
-        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        const notice = (
+          await screen.findByText(
+            'Decision saved, but results could not be refreshed. Reload the collection to see the latest results.'
+          )
+        ).closest('section')!
+        fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }))
         await waitFor(() =>
           expect(
             screen.queryByText(
@@ -1436,7 +1837,9 @@ describe('LiteratureLibraryPage', () => {
         expect(transact.mock.calls.filter(([c]) => c.action === 'override')).toHaveLength(1)
       } else {
         expect(
-          within(screen.getByRole('button', { name: /^Smart trials/ })).getByText('99')
+          within(
+            screen.getByText('Smart trials', { selector: 'button span' }).closest('button')!
+          ).getByText('99')
         ).toBeTruthy()
       }
       expect(screen.queryByText('1 selected')).toBeNull()
@@ -2845,6 +3248,41 @@ describe('LiteratureLibraryPage', () => {
     reveal.mockRestore()
   })
 
+  it.each([false, true])(
+    'omits empty publication details while retaining identifiers: %s',
+    async (hasIdentifier) => {
+      get.mockResolvedValue({
+        ...libraryItem,
+        item: {
+          ...libraryItem.item,
+          issuedYear: undefined,
+          issuedText: '',
+          containerTitle: '',
+          language: '',
+          typeFields: {},
+          url: '',
+          identifiers: hasIdentifier ? libraryItem.item.identifiers : []
+        }
+      })
+      useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
+      render(<LiteratureLibraryPage />)
+      const detail = within(await screen.findByRole('dialog'))
+      expect(detail.getAllByText('Journal article')).toHaveLength(1)
+      expect(detail.queryByText('Reference type')).toBeNull()
+      expect(Boolean(detail.queryByText('Publication metadata'))).toBe(hasIdentifier)
+      if (hasIdentifier)
+        expect(detail.getByRole('link', { name: 'DOI: 10.0000/example' })).not.toBeNull()
+      expect(
+        detail
+          .getByRole('button', { name: 'Manage Tags' })
+          .compareDocumentPosition(detail.getByRole('heading', { name: libraryItem.item.title })) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+      expect(detail.getByRole('button', { name: 'References' })).not.toBeNull()
+      expect(detail.getByRole('button', { name: 'Cited by' })).not.toBeNull()
+    }
+  )
+
   it('offers stored metadata sources from reference details', async () => {
     get.mockResolvedValue(libraryItem)
     useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
@@ -3911,6 +4349,7 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
+  // Cover the 200+1 import boundary and both full pages on slower coverage workers.
   it('keeps the committed records and only the linked project subset after a later import batch fails', async () => {
     const importedItems = Array.from({ length: 201 }, (_, index) => {
       const item = createLibraryItem(index)
@@ -4082,7 +4521,7 @@ describe('LiteratureLibraryPage', () => {
     expect(importRecords.mock.calls.filter(([request]) => request.mode === 'commit')).toHaveLength(
       1
     )
-  })
+  }, 60_000)
 
   it('cleans up a cancelled desktop stage that returns a managed file late', async () => {
     search.mockImplementation(async (request: { scope: string }) =>
@@ -6028,7 +6467,7 @@ describe('LiteratureLibraryPage', () => {
       within(dialog)
         .getAllByText('Journal article')
         .filter((element) => !element.className.includes('sr-only'))
-    ).toHaveLength(2)
+    ).toHaveLength(1)
     expect(within(dialog).getByText('Open Research Press')).not.toBeNull()
 
     const headings = within(dialog)
@@ -6132,7 +6571,7 @@ describe('LiteratureLibraryPage', () => {
     expect(authors.className).not.toContain('truncate')
     expect(authors.className).toContain('line-clamp-5')
     expect(authors.closest('section')?.parentElement?.className).toContain('overflow-y-auto')
-    expect(within(dialog).getAllByText('Review')).toHaveLength(2)
+    expect(within(dialog).getAllByText('Review')).toHaveLength(1)
   })
 
   it('collapses an overflowing author list until the reader expands it', async () => {
@@ -6655,6 +7094,9 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByText('Fields to add: 4')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Use Crossref' }))
 
+    // The catalog read after a successful commit observes the saved metadata.
+    const committed = await completeMetadata.getMockImplementation()!({ mode: 'commit' })
+    get.mockResolvedValue(committed.item)
     fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
     await waitFor(() =>
       expect(completeMetadata).toHaveBeenCalledWith({
@@ -7314,8 +7756,8 @@ describe('LiteratureLibraryPage', () => {
         .getAllByRole('columnheader')
         .map((header) => header.textContent)
         .filter(Boolean)
-        .slice(0, 8)
-    ).toEqual(['#', 'Title', 'Year', 'Publication', 'Authors', 'Type', 'Tags', 'Rating'])
+        .slice(0, 9)
+    ).toEqual(['#', 'Title', 'Status', 'Year', 'Publication', 'Authors', 'Type', 'Tags', 'Rating'])
     expect(document.querySelector('[data-row-number="1"]')?.textContent).toBe('1')
     expect(screen.queryByRole('columnheader', { name: 'Publisher' })).toBeNull()
     expect(screen.getByRole('columnheader', { name: 'Rating' })).not.toBeNull()
@@ -7403,8 +7845,8 @@ describe('LiteratureLibraryPage', () => {
         .getAllByRole('columnheader')
         .map((header) => header.textContent)
         .filter(Boolean)
-        .slice(0, 4)
-    ).toEqual(['#', 'Title', 'Year', 'Abstract'])
+        .slice(0, 5)
+    ).toEqual(['#', 'Title', 'Status', 'Year', 'Abstract'])
     expect(screen.getByRole('columnheader', { name: 'Abstract' })).not.toBeNull()
     expect(screen.getByRole('columnheader', { name: 'Rating' })).not.toBeNull()
     expect(screen.getByRole('columnheader', { name: 'Notes' })).not.toBeNull()
@@ -7474,8 +7916,8 @@ describe('LiteratureLibraryPage', () => {
         .getAllByRole('columnheader')
         .map((header) => header.textContent)
         .filter(Boolean)
-        .slice(0, 4)
-    ).toEqual(['#', 'Title', 'Year', 'Abstract'])
+        .slice(0, 5)
+    ).toEqual(['#', 'Title', 'Status', 'Year', 'Abstract'])
     expect(document.querySelector('[data-slot="literature-column-drop-indicator"]')).toBeNull()
   })
 
@@ -9665,6 +10107,96 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(filePreviewRenderCount.value).toBe(0)
+  })
+
+  it('loads publication checks only in the secondary view and restores the overview without checking', async () => {
+    get.mockResolvedValue(libraryItem)
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    expect(within(dialog).queryByRole('region', { name: 'Retractions and corrections' })).toBeNull()
+    await act(async () => {
+      vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+        listener({ revision: 2, itemIds: [libraryItem.id] })
+      )
+    })
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalled()
+
+    await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
+    expect(within(dialog).queryByText('Publication metadata')).toBeNull()
+    await within(dialog).findByText('Not checked')
+    expect(window.api.literature.publicationCheck).toHaveBeenCalledWith({
+      mode: 'get',
+      itemId: libraryItem.id,
+      expectedMetadataRevision: libraryItem.metadataRevision
+    })
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'check' })
+    )
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }))
+    expect(within(dialog).getByText('Publication metadata')).toBeTruthy()
+    expect(within(dialog).queryByRole('region', { name: 'Retractions and corrections' })).toBeNull()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(dialog).getByRole('button', { name: 'More actions' })
+      )
+    )
+    vi.mocked(window.api.literature.publicationCheck).mockClear()
+    await act(async () => {
+      vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+        listener({ revision: 3, itemIds: [libraryItem.id] })
+      )
+    })
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalled()
+
+    await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
+    await within(dialog).findByText('Not checked')
+    expect(window.api.literature.publicationCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'get' })
+    )
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    vi.mocked(window.api.literature.publicationCheck).mockClear()
+    const reopened = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    expect(within(reopened).getByText('Publication metadata')).toBeTruthy()
+    expect(
+      within(reopened).queryByRole('region', { name: 'Retractions and corrections' })
+    ).toBeNull()
+    expect(window.api.literature.publicationCheck).not.toHaveBeenCalled()
+  })
+
+  it('keeps manual publication checks and retry failures inside the secondary view', async () => {
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+    await openMenu(within(dialog).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Retractions and corrections' }))
+    await within(dialog).findByText('Not checked')
+    const check = vi.mocked(window.api.literature.publicationCheck)
+    check.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check now' }))
+    await within(dialog).findByText('Could not load the publication check. Try again.')
+    expect(check).toHaveBeenLastCalledWith({
+      mode: 'check',
+      itemId: libraryItem.id,
+      expectedMetadataRevision: libraryItem.metadataRevision
+    })
+    check.mockRejectedValueOnce(new Error('offline'))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(check).toHaveBeenCalledTimes(3))
+    expect(check).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'check' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }))
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(within(dialog).getByText('Publication metadata')).toBeTruthy()
   })
 
   it('opens the Add menu only after an explicit click without rerendering the Literature page', async () => {
@@ -12457,6 +12989,7 @@ describe('LiteratureLibraryPage', () => {
         fireEvent.change(screen.getByLabelText('Title'), {
           target: { value: 'Keep this newer draft' }
         })
+        if (operation === 'completion') get.mockResolvedValue(updated)
         await act(async () => pending.resolve(updated))
         expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
           'Keep this newer draft'

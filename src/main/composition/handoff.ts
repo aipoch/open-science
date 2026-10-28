@@ -36,6 +36,7 @@ import { type ReviewerRuntimeShutdownOwner } from './reviewer'
 
 export async function composeHandoff({
   managedExecution,
+  holdUpdateAdmission,
   declareElectronAdapter,
   webSessionPersistenceFlush,
   settingsService,
@@ -53,6 +54,7 @@ export async function composeHandoff({
   modules
 }: {
   managedExecution?: import('./managed-execution').ManagedExecutionComposition
+  holdUpdateAdmission: () => () => void
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   webSessionPersistenceFlush: ReturnType<typeof createWebSessionPersistenceFlush>
   settingsService: SettingsService
@@ -120,12 +122,15 @@ export async function composeHandoff({
     log: createLogger('shutdown')
   })
   const durableBackendHandoffGate = createDurableInstallGate(
-    (options) =>
-      shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
+    async (options) => {
+      releaseAgentUpdateAdmission ??= runtime.holdUpdateAdmission()
+      return shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
         holdSideChatAdmission: true,
         legacyShellRecoveryToken: options?.legacyShellRecoveryToken
-      }),
-    () => confirmRendererDurability()
+      })
+    },
+    () => confirmRendererDurability(),
+    true
   )
   const detectResearchBlockers = (): UpdateBlocker[] => {
     const blockers: UpdateBlocker[] = detectActiveSessions({
@@ -167,8 +172,14 @@ export async function composeHandoff({
   // Construct update handling only after its backend-shutdown gate exists. The in-place strategy owns
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
+  let releaseAgentUpdateAdmission: (() => void) | undefined
+  let releaseUpdateAdmission: (() => void) | undefined
   let releaseSettingsInstallAdmission: (() => void) | undefined
   const abortUpdateHandoff = (): void => {
+    releaseUpdateAdmission?.()
+    releaseUpdateAdmission = undefined
+    releaseAgentUpdateAdmission?.()
+    releaseAgentUpdateAdmission = undefined
     managedExecution?.resume()
     packageHandoffHeld.current = false
     const releaseAdmission = releaseSettingsInstallAdmission
@@ -214,7 +225,16 @@ export async function composeHandoff({
     if (sessionPackageDesktopLifecycle.isActive())
       throw new Error('Wait for the Session package operation to finish before updating.')
     releaseSettingsInstallAdmission ??= settingsService.holdInstallAdmission()
-    const gateResult = await updateInstallGate(options)
+    releaseUpdateAdmission ??= holdUpdateAdmission()
+    let gateResult: InstallReadiness
+    try {
+      gateResult = await updateInstallGate(options)
+      if ((!gateResult.completed || !gateResult.reaped) && !gateResult.stopAuthorized)
+        abortUpdateHandoff()
+    } catch (error) {
+      abortUpdateHandoff()
+      throw error
+    }
     const result = {
       ...gateResult,
       canForce: !options?.force && canForceUpdateBlockers(gateResult.blockedBy ?? [])

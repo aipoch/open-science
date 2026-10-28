@@ -145,7 +145,7 @@ export type ApplicationRuntimeInterfaces = {
   startBrowserPackageImportDiscovery: (port?: number) => Promise<void>
   applicationCommands: Pick<
     ApplicationCommandComposition,
-    'localWeb' | 'remoteWeb' | 'task' | 'desktop'
+    'localWeb' | 'remoteWeb' | 'task' | 'desktop' | 'beginStopping'
   >
   applicationEvents: ApplicationEventSource
   permissionApprovalPresence: PermissionApprovalPresence
@@ -229,6 +229,11 @@ export const createApplicationModules = async (
   )
   const permissionApprovalPresence = new PermissionApprovalPresence()
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
+  // Session reads and permission scope validation both need a late-bound view of ACP ownership:
+  // startup runs before the runtime exists, while later reads must preserve live prompt state.
+  const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
+    current: undefined
+  }
   const settingsBootstrap = await composeSettingsBootstrap({
     applicationEvents,
     permissionApprovalPresence,
@@ -270,11 +275,6 @@ export const createApplicationModules = async (
     composition
   })
   const uploadStorage = await composeUploadStorage({ storageStartup })
-  // Session reads and permission scope validation both need a late-bound view of ACP ownership:
-  // startup runs before the runtime exists, while later reads must preserve live prompt state.
-  const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
-    current: undefined
-  }
   const backgroundResults = await composeBackgroundResults({
     applicationEvents,
     ...settingsBootstrap,
@@ -609,6 +609,7 @@ export const createApplicationModules = async (
     modules
   })
   const handoff = await composeHandoff({
+    holdUpdateAdmission: () => applicationCommandComposition.holdUpdateAdmission(),
     loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
     managedExecution,
     declareElectronAdapter,
@@ -886,6 +887,7 @@ export const createApplicationModules = async (
     startBrowserPackageImportDiscovery: (port) =>
       sessionPackageSurfaces.browserPackageImport.startDiscovery(port),
     applicationCommands: {
+      beginStopping: applicationCommandComposition.beginStopping,
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,
       task: applicationCommandComposition.task,

@@ -1,3 +1,8 @@
+import {
+  getPublicationCheckDoi,
+  literaturePublicationCheckSnapshotSchema,
+  type LiteraturePublicationCheckSnapshot
+} from '@aipoch/literature-discovery/contracts'
 import { journalBindingIdentity } from '@aipoch/journal-catalog/contracts'
 import {
   LibraryTransaction,
@@ -20,6 +25,7 @@ import {
 import { bindLiteraturePdfVersion } from '../pdf-annotations/source-bindings'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import type { ContentRepository } from '../storage/content-repository'
+import { withDataRootWrite } from '../storage/migration-state'
 import type { JournalAttributes } from './journal-attributes'
 import { boundedLiteraturePage } from './response-page'
 import type { LiteratureScreening } from './screening-adapter'
@@ -41,6 +47,7 @@ import {
   literatureCandidateInputSchema,
   literatureCandidateOriginSchema,
   literaturePdfProvenanceSchema,
+  literatureReadingStatusSchema,
   type LiteratureCandidateInput,
   type LiteratureCatalogCommand,
   type LiteratureCatalogReceipt,
@@ -269,6 +276,7 @@ const toItemView = (row: LiteratureItemRow): LiteratureItemView => ({
   })),
   projectIds: row.projects.map(({ projectId }) => projectId),
   collectionIds: row.collections.map(({ collectionId }) => collectionId),
+  readingStatus: literatureReadingStatusSchema.parse(row.readingStatus),
   metadataRevision: row.metadataRevision,
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime(),
@@ -903,6 +911,8 @@ class LiteratureCatalog {
       predicates.push(
         Prisma.sql`EXISTS (SELECT 1 FROM "TagAssignment" t WHERE t."resourceType" = 'literature.item' AND t."resourceId" = i.id AND t."tagId" = ${tagId})`
       )
+    if (filter?.readingStatus !== undefined)
+      predicates.push(Prisma.sql`i."readingStatus" = ${filter.readingStatus}`)
     if (filter?.itemTypes?.length)
       predicates.push(Prisma.sql`i."itemType" IN (${Prisma.join(filter.itemTypes)})`)
     if (filter?.yearFrom !== undefined)
@@ -1314,6 +1324,58 @@ class LiteratureCatalog {
         ? undefined
         : requested
     return row ? (await this.itemViews([row]))[0] : undefined
+  }
+
+  async savePublicationCheck(
+    input: {
+      itemId: string
+      expectedMetadataRevision: number
+      snapshot: LiteraturePublicationCheckSnapshot
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const snapshot = literaturePublicationCheckSnapshotSchema.parse(input.snapshot)
+    await withDataRootWrite(async () => {
+      signal?.throwIfAborted()
+      const client = await this.getClient()
+      await client.$transaction(
+        async (transaction) => {
+          // Do not resolve merged IDs here: the request must still own its original reference.
+          const row = await transaction.literatureItem.findUnique({
+            where: { id: input.itemId },
+            include: { identifiers: true }
+          })
+          if (!row || row.deletedAt || row.mergedIntoItemId) {
+            throw new Error('Literature Item is unavailable.')
+          }
+          const doi = getPublicationCheckDoi(
+            row.identifiers.map(({ scheme, rawValue }) => ({ scheme, value: rawValue }))
+          )
+          if (row.metadataRevision !== input.expectedMetadataRevision || doi !== snapshot.doi) {
+            throw new Error('Literature Item revision conflict.')
+          }
+          signal?.throwIfAborted()
+          await this.attachSource(transaction, {
+            itemId: input.itemId,
+            source: {
+              provider: 'crossref-publication-check',
+              externalId: snapshot.doi,
+              sourceUrl: `https://api.crossref.org/works/${encodeURIComponent(snapshot.doi)}`,
+              rawMetadata: snapshot
+            }
+          })
+          signal?.throwIfAborted()
+        },
+        { maxWait: 30_000 }
+      )
+      // This source-only write does not change screening evidence or metadata. In particular,
+      // publishChanged/commit would unnecessarily schedule automatic AI screening.
+      try {
+        this.onChanged?.({ itemIds: [input.itemId], revision: ++this.revision })
+      } catch (error) {
+        log.warn('Could not publish committed publication check', { error })
+      }
+    })
   }
 
   async sources(itemId: string): Promise<LiteratureSourceRecordView[]> {
@@ -1743,6 +1805,8 @@ class LiteratureCatalog {
         return this.setProjectItem(command)
       case 'set-project-items':
         return this.setProjectItems(command)
+      case 'set-reading-status':
+        return this.setReadingStatus(command)
       case 'set-item-lifecycle':
         return this.setItemLifecycle(command)
       case 'delete-items-permanently':
@@ -1949,6 +2013,25 @@ class LiteratureCatalog {
     const client = await this.getClient()
     return this.commit(client, (tx) => this.domain(tx).setProjectItems(command), {
       itemIds: [...new Set(command.itemIds)]
+    })
+  }
+
+  private async setReadingStatus(
+    command: Extract<LiteratureCatalogCommand, { kind: 'set-reading-status' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    return withDataRootWrite(async () => {
+      const client = await this.getClient()
+      const receipt = await client.$transaction((tx) => this.domain(tx).setReadingStatus(command), {
+        maxWait: 30_000
+      })
+      // Personal reading state is not metadata or screening evidence. Publish after commit
+      // without invalidating duplicate groups or scheduling automatic AI screening.
+      try {
+        this.onChanged?.({ itemIds: receipt.itemIds!, revision: ++this.revision })
+      } catch (error) {
+        log.warn('Could not publish committed literature reading status', { error })
+      }
+      return receipt
     })
   }
 
@@ -2391,6 +2474,13 @@ class LiteratureCatalog {
           where: { projectId, itemId: { in: [...ids] } }
         })
       },
+      setReadingStatus: async (ids, readingStatus) =>
+        (
+          await transaction.literatureItem.updateMany({
+            where: { id: { in: [...ids] }, deletedAt: null, mergedIntoItemId: null },
+            data: { readingStatus }
+          })
+        ).count,
       setLifecycle: async (ids, state) =>
         (
           await transaction.literatureItem.updateMany({

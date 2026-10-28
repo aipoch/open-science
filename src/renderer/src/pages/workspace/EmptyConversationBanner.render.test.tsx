@@ -3,12 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../shared/web-event-connection'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
 
 import { EmptyConversationBanner } from './EmptyConversationBanner'
 
 afterEach(() => {
   vi.unstubAllGlobals()
   document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+  document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
 })
 
 describe('EmptyConversationBanner', () => {
@@ -105,13 +107,27 @@ describe('EmptyConversationBanner', () => {
       )
     ).not.toContain('data-testid="session-package-entry"')
 
-    // Web surface never advertises desktop import.
+    // Remote Web never advertises desktop import.
     vi.stubGlobal('api', { sessions: { importPackage: vi.fn() } })
     document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
     expect(
       renderToStaticMarkup(
         <EmptyConversationBanner sessionImport={{ projectId: 'project-1', canImport: true }} />
       )
     ).not.toContain('data-testid="session-package-entry"')
+  })
+
+  it('renders the session-package entry row for local Web when import is available', () => {
+    vi.stubGlobal('api', { sessions: { importPackage: vi.fn() } })
+    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+
+    const html = renderToStaticMarkup(
+      <EmptyConversationBanner sessionImport={{ projectId: 'project-1', canImport: true }} />
+    )
+
+    expect(html).toContain('data-testid="session-package-entry"')
+    expect(html).toContain('Import previous research')
   })
 })

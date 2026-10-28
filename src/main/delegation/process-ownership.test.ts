@@ -38,6 +38,68 @@ const setup = async (): Promise<DelegatedProcessOwnership> => {
 }
 
 describe('durable delegated process ownership', () => {
+  it('recovers a runtime process group without admitting another owner or stopping a sibling Attempt', async () => {
+    const owner = await setup()
+    const launch = owner.createProcessSpawner(scope)
+    const args = ['-e', 'process.stdin.resume();setInterval(()=>{},1000)']
+    const options = { stdio: 'pipe' as const, env: process.env }
+    const first = launch(process.execPath, args, options)
+    const second = launch(process.execPath, args, options)
+    const siblingScope = { ...scope, attemptId: 'sibling-attempt' }
+    const sibling = owner.spawn(siblingScope, process.execPath, args, options)
+    children.push(first, second, sibling)
+    expect(owner.receipts(scope)).toHaveLength(2)
+    expect(() => owner.spawn(scope, process.execPath, args, options)).toThrow(
+      'cleanup is unconfirmed'
+    )
+    expect(() => owner.createProcessSpawner(scope)(process.execPath, args, options)).toThrow(
+      'cleanup is unconfirmed'
+    )
+    expect(() =>
+      new DelegatedProcessOwnership(directory!).createProcessSpawner(scope)(
+        process.execPath,
+        args,
+        options
+      )
+    ).toThrow('cleanup is unconfirmed')
+    await owner.recover(scope, true)
+    await expect
+      .poll(() =>
+        [first, second].every((child) => child.exitCode !== null || child.signalCode !== null)
+      )
+      .toBe(true)
+    expect(owner.receipts(scope)).toEqual([])
+    expect(sibling.exitCode).toBeNull()
+    expect(sibling.signalCode).toBeNull()
+    expect(owner.receipts(siblingScope)).toHaveLength(1)
+  })
+
+  it('refuses another runtime process while recovery or cleanup debt is pending', async () => {
+    const owner = await setup()
+    const launch = owner.createProcessSpawner(scope)
+    const args = ['-e', 'process.stdin.resume();setInterval(()=>{},1000)']
+    const options = { stdio: 'pipe' as const, env: process.env }
+    children.push(launch(process.execPath, args, options))
+    const reap = Promise.withResolvers<{ reaped: boolean }>()
+    const terminate = vi
+      .spyOn(processTree, 'terminateProcessTree')
+      .mockReturnValueOnce(reap.promise)
+    const recovering = owner.recover(scope, true)
+    const rejection = expect(recovering).rejects.toThrow('recovery is incomplete')
+    try {
+      expect(() => launch(process.execPath, args, options)).toThrow('cleanup is unconfirmed')
+      reap.resolve({ reaped: false })
+      await rejection
+      owner.recordFailure(scope)
+      expect(() => launch(process.execPath, args, options)).toThrow('cleanup is unconfirmed')
+      expect(() => owner.assertClear(scope)).toThrow('cleanup is unconfirmed')
+    } finally {
+      reap.resolve({ reaped: false })
+      await recovering.catch(() => undefined)
+      terminate.mockRestore()
+    }
+  })
+
   it.each(['deleteSession', 'deleteProject', 'prepare'] as const)(
     'preserves real files after reconstruction before %s',
     async (operation) => {
@@ -237,6 +299,52 @@ describe('durable delegated process ownership', () => {
     await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
     expect(owner.receipts(scope)).toEqual([])
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'stops a matching live historical writer even with retained stronger-proof debt',
+    async () => {
+      const owner = await setup()
+      const child = owner.spawn(
+        scope,
+        process.execPath,
+        ['-e', 'process.stdout.write("ready");setInterval(()=>{},1000)'],
+        { stdio: 'pipe', env: process.env, windowsHide: true }
+      )
+      children.push(child)
+      await once(child.stdout, 'data')
+      owner.recordMainAgentContext(child, 'context-with-live-writer')
+      const [receipt] = owner.receipts(scope)
+      expect(receipt.providerSessionIds).toEqual(['context-with-live-writer'])
+      const path = join(
+        directory!,
+        'delegation-process-ownership',
+        scope.projectId,
+        scope.sessionId,
+        `${receipt.receiptId}.json`
+      )
+      await writeFile(
+        path,
+        JSON.stringify({
+          ...receipt,
+          phase: 'cleanup-pending',
+          cleanupDiagnostics: {
+            failureCategory: 'ownership-candidate-unresolved',
+            recovery: 'stronger-ownership-proof-required',
+            ownedIdentityCount: 1,
+            ambiguousIdentityCount: 1
+          }
+        })
+      )
+      const cold = new DelegatedProcessOwnership(directory!)
+      const outcome = cold.assertMainAgentSessionResumeAllowed(
+        scope.frameworkId,
+        'context-with-live-writer'
+      )
+      await expect.poll(() => child.exitCode !== null || child.signalCode !== null).toBe(true)
+      await expect(outcome).resolves.toBeUndefined()
+      expect(cold.receipts(scope)).toHaveLength(1)
+    }
+  )
 
   it('preserves cleanup evidence across reconstruction and removes it after proven teardown', async () => {
     const owner = await setup()
@@ -520,6 +628,222 @@ describe('durable delegated process ownership', () => {
     await expect(cold.recover(scope)).rejects.toThrow('Delegated process recovery is incomplete')
     expect(cold.receipts(scope)[0].cleanupDiagnostics).toEqual(diagnostics)
   })
+
+  it('limits known old-context ownership to its recorded context, preserving other sessions', async () => {
+    const owner = await setup()
+    owner.recordFailure(scope)
+    const [receipt] = owner.receipts(scope)
+    const path = join(
+      directory!,
+      'delegation-process-ownership',
+      scope.projectId,
+      scope.sessionId,
+      `${receipt.receiptId}.json`
+    )
+    await writeFile(path, JSON.stringify({ ...receipt, providerSessionIds: ['context-a'] }))
+    const before = await readFile(path, 'utf8')
+    await expect(
+      owner.assertMainAgentSessionResumeAllowed(scope.frameworkId, 'context-b')
+    ).resolves.toBeUndefined()
+    await expect(
+      owner.assertMainAgentSessionResumeAllowed(scope.frameworkId, 'context-a')
+    ).rejects.toThrow()
+    expect(await readFile(path, 'utf8')).toBe(before)
+  })
+
+  describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(
+    'old provider-session recovery with retained candidate evidence',
+    () => {
+      const candidate = async (owner: DelegatedProcessOwnership): Promise<string> => {
+        owner.recordFailure(scope)
+        const [receipt] = owner.receipts(scope)
+        const path = join(
+          directory!,
+          'delegation-process-ownership',
+          scope.projectId,
+          scope.sessionId,
+          `${receipt.receiptId}.json`
+        )
+        await writeFile(
+          path,
+          JSON.stringify({
+            ...receipt,
+            ownership: {
+              platform: process.platform,
+              token: '00000000-0000-0000-0000-000000000001',
+              leader: {
+                pid: 1000,
+                birthToken:
+                  process.platform === 'darwin'
+                    ? 'darwin-proc-uniqueid:100'
+                    : 'linux-proc-starttime:100'
+              }
+            },
+            cleanupDiagnostics: {
+              failureCategory: 'ownership-candidate-unresolved',
+              recovery: 'stronger-ownership-proof-required',
+              ownedIdentityCount: 5,
+              ambiguousIdentityCount: 2
+            }
+          }) + '\n'
+        )
+        return path
+      }
+
+      it('admits a fresh connection after read-only proof while preserving byte-exact legacy receipts and strict cleanup gates', async () => {
+        const owner = await setup()
+        const path = await candidate(owner)
+        const before = await readFile(path, 'utf8')
+        const proof = vi
+          .spyOn(processTree, 'proveRecordedPosixLeaderGone')
+          .mockResolvedValue('gone')
+        try {
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).resolves.toBeUndefined()
+          expect(proof).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ pid: 1000 }),
+            expect.any(String),
+            expect.any(Number),
+            undefined,
+            undefined,
+            { terminateLive: false }
+          )
+          expect(await readFile(path, 'utf8')).toBe(before)
+          expect(() => owner.assertClear(scope)).toThrow()
+          await expect(owner.recover()).rejects.toThrow('recovery is incomplete')
+        } finally {
+          proof.mockRestore()
+        }
+      })
+
+      it.each([
+        ['starting', undefined],
+        ['owned', undefined],
+        [undefined, ''],
+        [undefined, 'not-an-identity'],
+        [
+          undefined,
+          process.platform === 'darwin' ? 'linux-proc-starttime:100' : 'darwin-proc-uniqueid:100'
+        ]
+      ])(
+        'rejects an impossible phase or malformed birth identity (%s / %s)',
+        async (phase, birthToken) => {
+          const owner = await setup()
+          const path = await candidate(owner)
+          const receipt = JSON.parse(await readFile(path, 'utf8'))
+          if (phase) receipt.phase = phase
+          if (birthToken !== undefined) receipt.ownership.leader.birthToken = birthToken
+          await writeFile(path, JSON.stringify(receipt))
+          const proof = vi
+            .spyOn(processTree, 'proveRecordedPosixLeaderGone')
+            .mockResolvedValue('gone')
+          try {
+            await expect(
+              owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+            ).rejects.toThrow()
+            expect(proof).not.toHaveBeenCalled()
+          } finally {
+            proof.mockRestore()
+          }
+        }
+      )
+
+      it.each([
+        'leader-identity-unavailable',
+        'process-table-history-incomplete',
+        'owned-processes-still-running'
+      ])('does not relax %s evidence', async (failureCategory) => {
+        const owner = await setup()
+        const path = await candidate(owner)
+        const receipt = JSON.parse(await readFile(path, 'utf8'))
+        receipt.cleanupDiagnostics.failureCategory = failureCategory
+        await writeFile(path, JSON.stringify(receipt))
+        const proof = vi
+          .spyOn(processTree, 'proveRecordedPosixLeaderGone')
+          .mockResolvedValue('gone')
+        try {
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).rejects.toThrow()
+          expect(proof).not.toHaveBeenCalled()
+        } finally {
+          proof.mockRestore()
+        }
+      })
+
+      it('checks all receipts instead of letting a permitted candidate bypass an identity-less failure', async () => {
+        const owner = await setup()
+        await candidate(owner)
+        owner.recordFailure({ ...scope, attemptId: 'another-attempt' })
+        const proof = vi
+          .spyOn(processTree, 'proveRecordedPosixLeaderGone')
+          .mockResolvedValue('gone')
+        try {
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).rejects.toThrow()
+          expect(owner.receipts()).toHaveLength(2)
+        } finally {
+          proof.mockRestore()
+        }
+      })
+
+      it('does not block another framework with parseable unresolved evidence', async () => {
+        const owner = await setup()
+        owner.recordFailure(scope)
+        await expect(owner.assertMainAgentSessionResumeAllowed('opencode')).resolves.toBeUndefined()
+        await expect(owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)).rejects.toThrow()
+      })
+
+      it('rechecks the proof for every connection and blocks a newly observable owned survivor', async () => {
+        const owner = await setup()
+        const path = await candidate(owner)
+        const before = await readFile(path, 'utf8')
+        const proof = vi
+          .spyOn(processTree, 'proveRecordedPosixLeaderGone')
+          .mockResolvedValueOnce('gone')
+          .mockResolvedValueOnce('blocked')
+        try {
+          await owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).rejects.toThrow()
+          expect(proof).toHaveBeenCalledTimes(2)
+          expect(await readFile(path, 'utf8')).toBe(before)
+        } finally {
+          proof.mockRestore()
+        }
+      })
+
+      it('rejects receipt changes during the asynchronous process scan', async () => {
+        const owner = await setup()
+        await candidate(owner)
+        let release!: (value: 'gone') => void
+        let entered!: () => void
+        const scanning = new Promise<void>((resolve) => {
+          entered = resolve
+        })
+        const proof = vi
+          .spyOn(processTree, 'proveRecordedPosixLeaderGone')
+          .mockImplementation(() => {
+            entered()
+            return new Promise((resolve) => {
+              release = resolve
+            })
+          })
+        try {
+          const admission = owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          await scanning
+          owner.recordFailure({ ...scope, attemptId: 'new-unconfirmed-attempt' })
+          release('gone')
+          await expect(admission).rejects.toThrow()
+        } finally {
+          proof.mockRestore()
+        }
+      })
+    }
+  )
 
   // ── D1: reboot-proof clears receipts with a matching boot-session id ─────────────────────────
 

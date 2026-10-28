@@ -49,7 +49,11 @@
     "src/main/update/windows-update-handoff.ts",
     "src/main/update/windows-update-handoff.test.ts",
     "scripts/windows-install-publication.test.ts",
-    "scripts/windows-installer-extractor.test.ts"
+    "scripts/windows-installer-extractor.test.ts",
+    "src/main/update/installation-file-occupancy.integration.test.ts",
+    "src/main/update/current-installer.ts",
+    "src/main/update/current-installer.test.ts",
+    "src/main/update/installer-reveal.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -100,14 +104,17 @@
       "src/main/update/installation-preparation.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "scripts/windows-install-publication.test.ts",
-      "scripts/windows-installer-extractor.test.ts"
+      "scripts/windows-installer-extractor.test.ts",
+      "src/main/update/installation-file-occupancy.integration.test.ts",
+      "src/main/update/current-installer.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
       "build/packaging.test.ts",
-      "scripts/windows-update-handoff-uninstall.test.ts"
+      "scripts/windows-update-handoff-uninstall.test.ts",
+      "src/main/update/installer-reveal.test.ts"
     ],
     "consumer": [
       "src/main/desktop-runtime-recovery.integration.test.ts",
@@ -152,7 +159,11 @@
       "src/main/composition/managed-execution.integration.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
       "src/main/research-demos/owner.macos.integration.test.ts",
-      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts"
+      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts",
+      "src/renderer/src/components/ManualUpdate.test.tsx",
+      "src/renderer/src/components/UpdateDialog.render.test.tsx",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/pages/settings/AppVersionSection.render.test.tsx"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

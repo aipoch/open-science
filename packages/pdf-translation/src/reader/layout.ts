@@ -1,6 +1,22 @@
+import { nativeBoundedReferencePackets } from './bounded-reference-packets.js'
+import {
+  nativeClosedUnheadedReferencePackets,
+  nativeSuperscriptReferencePackets
+} from './unheaded-reference-packets.js'
+import { nativeRuledAlgorithmOwners } from './ruled-algorithm-packets.js'
+import {
+  nativeWrappedSectionProse,
+  type NativeSectionFontEvidence
+} from './wrapped-section-prose.js'
 import { resolveInlineFractions } from '../../resources/math-fractions.mjs'
 import { numberedSourcePackets } from './numbered-source.js'
 import { nativeNumberedReferenceColumns } from './reference-columns.js'
+import { nativeDividedReferenceSuffix } from './divided-reference-suffix.js'
+import {
+  nativeCompoundAppendixBoundaries,
+  nativeSupplementCaptionOwners
+} from './compound-reference-boundary.js'
+import type { NativeReferenceEvidence } from './native-reference-evidence.js'
 
 const durationStatistic = /^\d+(?:\.\d+)?±\d+(?:\.\d+)?(?:ms|s)(?:\s*\(\d+(?:\.\d+)?%\))?$/u
 
@@ -19,6 +35,11 @@ export type PdfLayoutTextItem = {
   fontVertical?: boolean
 }
 export type PdfLayoutPage = {
+  nativeCommandAdvances?: Record<string, number>
+  nativeReferenceEvidence?: NativeReferenceEvidence
+  nativeDisplayMathEvidence?: NativeReferenceEvidence
+  nativeNumberedPacketEvidence?: NativeReferenceEvidence
+  nativeSectionFontEvidence?: NativeSectionFontEvidence
   page: number
   width: number
   height: number
@@ -69,6 +90,7 @@ type LayoutPage = {
 type LayoutUnit = {
   id: string
   kind: 'prose-candidate' | 'heading-candidate' | 'other'
+  referenceBoundary?: true
   source: string
   sourceOnly?: true
   preserve?: 'formula' | 'code' | 'literal' | 'reference'
@@ -934,6 +956,116 @@ function runningHeaderItems(pages: PdfLayoutPage[]): Set<string> {
       continue
     for (const value of values) result.add(`${value.page}:${value.index}`)
   }
+  return result
+}
+
+function completeRunningHeaderItems(pages: PdfLayoutPage[]): Set<string> {
+  const result = new Set<string>()
+  // Complete first-line bands also cover small capitals split across native
+  // text objects. Repetition alone is insufficient: the entire upper margin,
+  // the empty body gutter and independently repeated body type must agree.
+  const bands = new Map<string, { page: number; keys: string[] }[]>()
+  for (const page of pages) {
+    if (page.rotation !== 0 || ![page.width, page.height].every((v) => Number.isFinite(v) && v > 0))
+      continue
+    const entries = page.items.flatMap((item, index) => (item.str.trim() ? [{ item, index }] : [])),
+      top = Math.max(...entries.map(({ item }) => item.transform[5])),
+      row = entries.filter(({ item }) => Math.abs(item.transform[5] - top) < item.height * 0.05),
+      title = row
+        .filter(({ item }) => item.str !== String(page.page))
+        .sort((a, b) => a.item.transform[4] - b.item.transform[4])
+    if (!title.length || title.some(({ item }) => !nativeContentsUpright(item))) continue
+    const first = title[0].item,
+      last = title.at(-1)!.item,
+      h = Math.max(...title.map(({ item }) => item.height)),
+      left = first.transform[4],
+      right = last.transform[4] + last.width,
+      text = title.map(({ item }) => item.str).join('')
+    if (
+      page.height - top < h * 2 ||
+      page.height - top > page.height * 0.12 ||
+      right - left < page.width * 0.2 ||
+      right - left > page.width * 0.65 ||
+      Math.abs((left + right - page.width) / 2) > h * 2 ||
+      text.length < 16 ||
+      wordCount(text) > 12 ||
+      !/^[\p{L}][\p{L}\p{N} ,:&–—()-]+$/u.test(text) ||
+      title.some(
+        ({ item }, n) =>
+          item.height < h * 0.65 ||
+          (n > 0 &&
+            (title[n].index <= title[n - 1].index ||
+              item.transform[4] < title[n - 1].item.transform[4] + title[n - 1].item.width ||
+              item.transform[4] - title[n - 1].item.transform[4] - title[n - 1].item.width >
+                h * 0.65))
+      )
+    )
+      continue
+    const titleIndices = new Set(title.map(({ index }) => index)),
+      other = entries.filter(({ index }) => !titleIndices.has(index)),
+      pageNumbers = row.filter(({ index }) => !titleIndices.has(index))
+    if (
+      pageNumbers.length > 1 ||
+      pageNumbers.some(
+        ({ item }) =>
+          !nativeContentsUpright(item) ||
+          item.str !== String(page.page) ||
+          item.height > h * 1.05 ||
+          !(item.transform[4] + item.width < left - h * 2 || item.transform[4] > right + h * 2)
+      )
+    )
+      continue
+    const numberIndices = new Set(pageNumbers.map(({ index }) => index)),
+      remainder = other.filter(({ index }) => !numberIndices.has(index)),
+      body = remainder.filter(
+        ({ item }) =>
+          nativeContentsUpright(item) && item.width > page.width * 0.3 && wordCount(item.str) >= 8
+      ),
+      heights = new Map<number, number>()
+    for (const { item } of body) heights.set(item.height, (heights.get(item.height) ?? 0) + 1)
+    const [bodyHeight, count] = [...heights].sort((a, b) => b[1] - a[1])[0] ?? []
+    if (
+      !bodyHeight ||
+      count < 3 ||
+      h > bodyHeight * 1.01 ||
+      title.reduce((sum, { item }) => sum + item.width * item.height, 0) /
+        title.reduce((sum, { item }) => sum + item.width, 0) >=
+        bodyHeight * 0.9
+    )
+      continue
+    const domains = remainder.map(({ item }) => nativeAffineTextDomain(item))
+    if (domains.some((d) => !d)) continue
+    const bottom = Math.min(
+        ...title.map(({ item }) => item.transform[5] + item.fontDescent! * item.height)
+      ),
+      bodyTop = Math.max(...domains.map((d) => d!.bottom))
+    if (
+      !Number.isFinite(bodyTop) ||
+      bottom - bodyTop < bodyHeight ||
+      bottom - bodyTop > bodyHeight * 6 ||
+      remainder.some(({ item }) => item.transform[5] >= top || !Number.isFinite(item.transform[5]))
+    )
+      continue
+    const key = JSON.stringify([
+        page.width,
+        page.height,
+        title.map(({ item }) => [
+          item.str,
+          item.fontName,
+          item.width,
+          item.height,
+          item.fontAscent,
+          item.fontDescent,
+          ...item.transform
+        ])
+      ]),
+      repeated = bands.get(key) ?? []
+    repeated.push({ page: page.page, keys: title.map(({ index }) => `${page.page}:${index}`) })
+    bands.set(key, repeated)
+  }
+  for (const band of bands.values())
+    if (band.length >= 3 && new Set(band.map((b) => b.page)).size === band.length)
+      for (const value of band) for (const key of value.keys) result.add(key)
   return result
 }
 function extractPage(
@@ -8596,7 +8728,15 @@ function continuousBodyWrap(
 
 const terminal = (text: string): boolean => /[.!?:;][”’"')\]]?$/.test(text.trim())
 const wordCount = (text: string): number => text.trim().split(/\s+/).length
+const boundedFigureProseReference = (text: string): boolean =>
+  /^(?:Figure|Fig\.)\s*\d+(?:\s*\([a-z]\))?\s+tests\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\d+)\s+\p{L}/iu.test(
+    text
+  ) ||
+  /^(?:Figure|Fig\.)\s*\d+(?:\s*\([a-z]\))?\s+on\s+the\s+(?:(?:upper|lower)\s+)?(?:left|right)\s+(?:(?:also|further)\s+)?(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu.test(
+    text
+  )
 export const isPdfTranslationCaption = (text: string): boolean =>
+  !boundedFigureProseReference(text) &&
   /^(?:Table|Tab\.|Figure|Fig\.)\s*\d/i.test(text) &&
   // A sentence referring to a figure/table is body prose. Only exclude an
   // explicit finite verb without the punctuation that introduces a caption.
@@ -10628,6 +10768,17 @@ export function groupPdfTranslationPages(raw: {
   // in its original layout. Only explicit section headings end it; running headers
   // and numbered entries are not new sections. The narrow native-column proof below
   // can restore a broken reference word while retaining its first ID and all regions.
+  // This additional proof changes only already independent whole owners. Keep
+  // their native navigation order and IDs; never split a body to protect a title.
+  const boundedReferencePackets = nativeBoundedReferencePackets(units, raw.pages)
+  const unheadedReferencePackets = nativeClosedUnheadedReferencePackets(units, raw.pages)
+  const superscriptReferencePackets = nativeSuperscriptReferencePackets(units, raw.pages)
+  const wrappedSectionProse = nativeWrappedSectionProse(units, raw.pages)
+  const supplementCaptionOwners = nativeSupplementCaptionOwners(units, raw.pages)
+  const conditionalRunningHeaders = completeRunningHeaderItems(raw.pages)
+  for (const unit of units)
+    if (unit.items.length && unit.items.every((key) => conditionalRunningHeaders.has(key)))
+      unit.sourceOnly = true
   const firstContent = new Map<number, LayoutUnit>()
   for (const unit of units) {
     const fragment = unit.fragments[0]
@@ -10636,6 +10787,7 @@ export function groupPdfTranslationPages(raw: {
       fragment.rect.y < page.height * 0.055 ||
       fragment.rect.bottom > page.height * 0.96 ||
       unit.items.every((key) => runningHeaders.has(key)) ||
+      unit.items.every((key) => conditionalRunningHeaders.has(key)) ||
       /^\d{1,4}$/u.test(unit.source)
     )
       continue
@@ -10691,7 +10843,12 @@ export function groupPdfTranslationPages(raw: {
         nativeEntryRect(candidate)!.bottom < rect.y &&
         nativeEntryRect(candidate)!.font >= rect.font * 0.95
     )
-    if (headings.length !== 1) return nativeContinuedContentsEntry(unit, units, raw.pages)
+    if (headings.length !== 1) {
+      if (nativeContinuedContentsEntry(unit, units, raw.pages)) return true
+      if (!nativeSingleContentsTail(unit, units, raw.pages)) return false
+      unit.referenceBoundary = true
+      return true
+    }
     const numbers = samePage.filter((candidate) => /^\d{1,4}$/.test(candidate.source.trim()))
     const pairs = samePage
       .flatMap((candidate) => {
@@ -10738,6 +10895,101 @@ export function groupPdfTranslationPages(raw: {
   }
   let references = false
   let referenceHeading: LayoutUnit | undefined
+  // A numbered section may resume after the bibliography. Its number alone is
+  // not evidence: require the earlier section sequence, the same native heading
+  // type, a new-page first heading and a complete independently owned body.
+  const nativeNumberedSectionBoundary = (unit: LayoutUnit, index: number): boolean => {
+    const ordinal = /^(\d{1,2})\. [A-Z][A-Za-z0-9 ,:()–—-]{2,79}$/u.exec(unit.source),
+      fragment = unit.fragments[0],
+      reference = referenceHeading?.fragments[0],
+      body = units[index + 1],
+      bf = body?.fragments[0]
+    if (
+      !ordinal ||
+      !reference ||
+      unit.sourceOnly ||
+      unit.risks.length ||
+      unit.kind !== 'heading-candidate' ||
+      unit.fragments.length !== 1 ||
+      fragment.page <= reference.page ||
+      firstContent.get(fragment.page) !== unit ||
+      fragment.rect.font < bodyFont * 1.15 ||
+      body?.kind !== 'prose-candidate' ||
+      body.sourceOnly ||
+      body.risks.length ||
+      body.fragments.length !== 1 ||
+      bf?.page !== fragment.page ||
+      Math.abs(bf.rect.x - fragment.rect.x) > bodyFont * 0.2 ||
+      bf.rect.right - bf.rect.x < pages.find((p) => p.page === fragment.page)!.width * 0.5 ||
+      Math.abs(bf.rect.font - bodyFont) > bodyFont * 0.055 ||
+      bf.rect.y - fragment.rect.bottom < bodyFont * 0.4 ||
+      bf.rect.y - fragment.rect.bottom > bodyFont * 3 ||
+      wordCount(body.source) < 24 ||
+      !terminal(body.source) ||
+      /^(?:\[\d|\(?\d+[.)])/u.test(body.source)
+    )
+      return false
+    const native = rawItems.get(fragment.page)!,
+      title = unit.items.map((key) => native[Number(key.split(':')[1])]),
+      heading = title[0]
+    if (
+      !heading?.fontName ||
+      fragment.rect.y > pages.find((p) => p.page === fragment.page)!.height * 0.16
+    )
+      return false
+    const earlier = units.slice(0, index).filter((candidate) => {
+      const match = /^(\d{1,2})\. [A-Z]/u.exec(candidate.source),
+        f = candidate.fragments[0]
+      if (
+        !match ||
+        Number(match[1]) !== Number(ordinal[1]) - 1 ||
+        candidate.kind !== 'heading-candidate' ||
+        candidate.fragments.length !== 1 ||
+        f.page >= reference.page ||
+        candidate.risks.length ||
+        Math.abs(f.rect.font - fragment.rect.font) > bodyFont * 0.02
+      )
+        return false
+      return candidate.items.every((key) => {
+        const [page, at] = key.split(':').map(Number),
+          item = rawItems.get(page)?.[at]
+        return (
+          item !== undefined &&
+          item.fontName === heading.fontName &&
+          nativeContentsUpright(item) &&
+          Math.abs(item.height - heading.height) < bodyFont * 0.02
+        )
+      })
+    })
+    if (earlier.length !== 1) return false
+    const keys = new Set([...unit.items, ...body.items]),
+      source = rawItems.get(fragment.page)!
+    if (keys.size !== unit.items.length + body.items.length) return false
+    for (const owner of [unit, body]) {
+      if (owner.items.length !== owner.originalStrings.length) return false
+      for (const [at, key] of owner.items.entries()) {
+        const item = source[Number(key.split(':')[1])]
+        if (
+          !key.startsWith(fragment.page + ':') ||
+          !item ||
+          !nativeContentsUpright(item) ||
+          item.str !== owner.originalStrings[at] ||
+          units.filter((u) => u.items.includes(key)).length !== 1 ||
+          (owner === unit &&
+            (item.fontName !== heading.fontName ||
+              Math.abs(item.height - heading.height) > bodyFont * 0.02))
+        )
+          return false
+      }
+    }
+    const domain = nativeProseProofDomain([...keys].map((key) => source[Number(key.split(':')[1])]))
+    return (
+      !!domain &&
+      !source.some(
+        (item, at) => !keys.has(fragment.page + ':' + at) && nativeTextOverlapsProof(item, domain)
+      )
+    )
+  }
   const referenceOverrides = new Map<LayoutUnit, LayoutUnit>()
   let wrappedSupplementStyle:
     { body: string; section: string; size: number; headingSize: number } | undefined
@@ -11299,6 +11551,146 @@ export function groupPdfTranslationPages(raw: {
     )
       unit.sourceOnly = true
   }
+  // A wrapped lettered section needs its calibrated section font, complete
+  // hanging title, separately captioned float and following section/body flow.
+  // Bibliographic titles and author initials cannot release reference mode.
+  const nativeWrappedLetteredBoundary = (unit: LayoutUnit, index: number): boolean => {
+    const tail = units[index + 1],
+      caption = units[index + 2],
+      footer = units[index + 3],
+      body = units[index + 4],
+      section = units[index + 5]
+    if (
+      !referenceHeading ||
+      !tail ||
+      !caption ||
+      !footer ||
+      !body ||
+      !section ||
+      [unit, tail, caption, body, section].some((u) => u.sourceOnly || u.fragments.length !== 1) ||
+      unit.risks.length ||
+      tail.risks.length ||
+      section.risks.length
+    )
+      return false
+    const a = nativeCaptionItems(unit),
+      b = nativeCaptionItems(tail),
+      ref = nativeCaptionItems(referenceHeading),
+      e = nativeCaptionItems(section),
+      f = nativeCaptionItems(footer),
+      start = unit.fragments[0],
+      end = tail.fragments[0],
+      page = pages.find((p) => p.page === start.page)!,
+      nextPage = pages.find((p) => p.page === start.page + 1),
+      titleSize = start.rect.font,
+      titleFont = a[0]?.fontName,
+      label = /^([A-Y])\.$/u.exec(a[0]?.str ?? ''),
+      number = /^Fig\. ([1-9]\d*) [–—-] /u.exec(caption.source)
+    if (
+      a.length !== 2 ||
+      b.length !== 2 ||
+      !label ||
+      !number ||
+      !nextPage ||
+      !/^\p{Lu}[\p{L}\p{M} ,–—-]+$/u.test(a[1].str) ||
+      b.some((i) => !/^[\p{L}\p{M} ,–—-]+$/u.test(i.str)) ||
+      unit.source !== a[0].str + ' ' + a[1].str ||
+      [tail, caption, footer].some(
+        (u) => u.fragments.length !== 1 || u.fragments[0].page !== start.page
+      ) ||
+      [body, section].some((u) => u.fragments[0].page !== start.page + 1) ||
+      start.page < referenceHeading.fragments[0].page ||
+      titleSize <= bodyFont * 1.15 ||
+      titleFont !== ref[0]?.fontName ||
+      Math.abs(titleSize - referenceHeading.fragments[0].rect.font) > bodyFont * 0.02 ||
+      Math.abs(start.rect.x - referenceHeading.fragments[0].rect.x) > bodyFont * 0.2 ||
+      a
+        .concat(b)
+        .some(
+          (i) => i.fontName !== titleFont || Math.abs(i.height - titleSize) > bodyFont * 0.02
+        ) ||
+      a[0].hasEOL !== false ||
+      a[1].hasEOL !== true ||
+      b[0].hasEOL !== true ||
+      b[1].hasEOL !== false ||
+      Math.abs(a[0].transform[5] - a[1].transform[5]) > bodyFont * 0.02 ||
+      a[1].transform[4] - a[0].transform[4] - a[0].width < titleSize * 0.5 ||
+      b.some((i) => Math.abs(i.transform[4] - a[1].transform[4]) > bodyFont * 0.05) ||
+      [a[1].transform[5] - b[0].transform[5], b[0].transform[5] - b[1].transform[5]].some(
+        (g) => g < titleSize * 1.2 || g > titleSize * 1.8
+      ) ||
+      Math.abs(a[1].transform[4] + a[1].width - b[0].transform[4] - b[0].width) > bodyFont * 0.2 ||
+      b[1].width >= b[0].width ||
+      caption.fragments[0].rect.y <= end.rect.bottom ||
+      caption.fragments[0].rect.font > bodyFont * 1.05 ||
+      wordCount(caption.source) < 18 ||
+      !terminal(caption.source) ||
+      !new RegExp('\\bfigure\\s*' + number[1] + '\\b', 'iu').test(body.source) ||
+      body.kind !== 'prose-candidate' ||
+      wordCount(body.source) < 24 ||
+      !terminal(body.source) ||
+      Math.abs(body.fragments[0].rect.font - bodyFont) > bodyFont * 0.055 ||
+      body.fragments[0].rect.right - body.fragments[0].rect.x < nextPage.width * 0.5 ||
+      body.fragments[0].rect.y > nextPage.height * 0.16 ||
+      section.kind !== 'heading-candidate' ||
+      e.length !== 2 ||
+      e[0].str !== String.fromCharCode(label[1].charCodeAt(0) + 1) + '.' ||
+      !/^\p{Lu}[\p{L}\p{M} 0-9–—-]+$/u.test(e[1].str) ||
+      e.some((i) => i.fontName !== titleFont || Math.abs(i.height - titleSize) > bodyFont * 0.02) ||
+      Math.abs(section.fragments[0].rect.x - start.rect.x) > bodyFont * 0.2 ||
+      section.fragments[0].rect.y - body.fragments[0].rect.bottom < bodyFont * 0.5 ||
+      section.fragments[0].rect.y - body.fragments[0].rect.bottom > bodyFont * 4 ||
+      f.length !== 1 ||
+      f[0].str !== String(start.page) ||
+      footer.fragments[0].rect.y < page.height * 0.92 ||
+      Math.abs((footer.fragments[0].rect.x + footer.fragments[0].rect.right) / 2 - page.width / 2) >
+        bodyFont ||
+      body.items[0] !== `${start.page + 1}:0`
+    )
+      return false
+    const closed = (owners: LayoutUnit[], p: LayoutPage): boolean => {
+      const raw = rawItems.get(p.page)!,
+        keys = owners.flatMap((u) => u.items),
+        items = owners.flatMap(nativeCaptionItems),
+        domain = nativeProseProofDomain(items)
+      return (
+        !!domain &&
+        new Set(keys).size === keys.length &&
+        items.every(
+          (i) =>
+            completeNativeText(i) &&
+            i.transform.length === 6 &&
+            i.dir === 'ltr' &&
+            i.fontAscent! > 0 &&
+            i.fontAscent! <= 1 &&
+            i.fontDescent! >= -1 &&
+            i.fontDescent! <= 0 &&
+            Math.abs(i.transform[3] - i.height) < 1e-6
+        ) &&
+        keys.every((k) => p.blocks.filter((b) => b.items.includes(k)).length === 1) &&
+        owners.every((u) => {
+          const r = u.fragments[0].rect
+          return r.x >= 0 && r.y >= 0 && r.right <= p.width && r.bottom <= p.height
+        }) &&
+        !raw.some((i, n) => !keys.includes(`${p.page}:${n}`) && nativeTextOverlapsProof(i, domain))
+      )
+    }
+    if (
+      !closed([unit, tail], page) ||
+      !closed([caption], page) ||
+      !closed([body, section], nextPage)
+    )
+      return false
+    const indexes = unit.items.concat(tail.items).map((k) => Number(k.split(':')[1])),
+      raw = rawItems.get(start.page)!
+    return (
+      indexes.every((n, i) => !i || n > indexes[i - 1]) &&
+      !raw
+        .slice(indexes[0], indexes.at(-1)! + 1)
+        .some((i, offset) => i.str.trim() && !indexes.includes(indexes[0] + offset))
+    )
+  }
+
   // A wrapped supplement title needs a closed quotation, an independently
   // complete overview and its numbered section. A citation title alone cannot
   // release bibliography mode. These are native text-flow bounds, not ink.
@@ -11945,8 +12337,10 @@ export function groupPdfTranslationPages(raw: {
       )
     )
   }
+  const compoundAppendices = nativeCompoundAppendixBoundaries(units, raw.pages)
   const legendProse = nativeLegendProseOwners(units, raw.pages)
   for (const [index, unit] of units.entries()) {
+    const wasReferences = references
     if (nativeCaptionPanel(unit, index)) delete unit.sourceOnly
     const heading = unit.source
       .trim()
@@ -11967,10 +12361,14 @@ export function groupPdfTranslationPages(raw: {
       references &&
       // Only appendix/supplement headings allow a subtitle. A citation such as
       // "8. Funding: A study ..." must not end the bibliography.
-      (nativePostReferenceSections(unit, pages, rawItems) ||
+      (compoundAppendices.has(unit) ||
+        nativeReferenceContentsBoundary(unit, referenceHeading, raw.pages) ||
+        nativePostReferenceSections(unit, pages, rawItems) ||
+        nativeNumberedSectionBoundary(unit, index) ||
         nativeMethodsBoundary(unit, index) ||
         nativeSupplementBoundary(unit, index) ||
         nativeWrappedSupplementBoundary(unit, index) ||
+        nativeWrappedLetteredBoundary(unit, index) ||
         supplementaryTitleBoundary(unit) ||
         (unit.kind === 'heading-candidate' &&
           (/^[A-Z] [A-Z][A-Z0-9 ,:()–—-]{3,100}$/.test(heading) ||
@@ -12052,6 +12450,8 @@ export function groupPdfTranslationPages(raw: {
       )
         references = false
     }
+    // Carry the existing native section proof through display preparation.
+    if (wasReferences && !references) unit.referenceBoundary = true
     // A References heading in the right column can precede left-column prose
     // in this intermediate array. Reference mode starts in its own column.
     const referenceAnchor = referenceHeading?.fragments[0]
@@ -12445,9 +12845,289 @@ export function groupPdfTranslationPages(raw: {
       if (prefix.preserve === 'reference') delete prefix.preserve
     }
   }
+  for (const reference of units)
+    if (!reference.sourceOnly && boundedReferencePackets.has(reference.items.join('|')))
+      Object.assign(reference, { sourceOnly: true, preserve: 'reference' })
+  for (const reference of nativeHeadedReferenceSpan(units, raw.pages))
+    Object.assign(reference, { sourceOnly: true, preserve: 'reference' })
+  for (const unit of units)
+    if (
+      (wrappedSectionProse.has(unit.items.join('|')) ||
+        supplementCaptionOwners.has(unit.items.join('|'))) &&
+      unit.preserve === 'reference'
+    ) {
+      delete unit.sourceOnly
+      delete unit.preserve
+    }
   for (const reference of nativeUnheadedReferenceSuffix(units, raw.pages))
     reference.sourceOnly = true
+  for (const reference of nativeDividedReferenceSuffix(units, raw.pages, nativeContentsUpright))
+    reference.sourceOnly = true
+  for (const reference of units)
+    if (
+      !reference.sourceOnly &&
+      !reference.preserve &&
+      (unheadedReferencePackets.has(reference.items.join('|')) ||
+        superscriptReferencePackets.has(reference.items.join('|')))
+    )
+      Object.assign(reference, { sourceOnly: true, preserve: 'reference' })
+  for (const page of raw.pages) {
+    const equations = nativeClosedDisplayEquationOwners(units, page)
+    for (const unit of units)
+      if (!unit.sourceOnly && !unit.preserve && equations.has(unit.items.join('|')))
+        Object.assign(unit, { sourceOnly: true, preserve: 'formula' })
+  }
+  const algorithms = nativeRuledAlgorithmOwners(units, raw.pages)
+  for (const unit of units)
+    if (!unit.sourceOnly && !unit.preserve && algorithms.has(unit.items.join('|')))
+      Object.assign(unit, { sourceOnly: true, preserve: 'code' })
   return { bodyFont, pages, units: units.filter((unit) => !joinedReferenceTails.has(unit)), joins }
+}
+
+// Whole native owners in an independently closed numbered display equation.
+// Keep the generic word classifier unchanged; native index attachments and the
+// existing strict rule evidence prove otherwise ambiguous Roman labels.
+function nativeClosedDisplayEquationOwners(
+  units: LayoutUnit[],
+  page: PdfLayoutPage
+): ReadonlySet<string> {
+  type Entry = { item: PdfLayoutTextItem; index: number; key: string; owner: LayoutUnit }
+  type Box = [number, number, number, number]
+  const evidence = page.nativeDisplayMathEvidence
+  if (!evidence?.complete || page.rotation !== 0) return new Set<string>()
+  const counts = new Map<string, number>(),
+    owners = new Map<string, LayoutUnit>()
+  for (const owner of units)
+    for (const key of owner.items) {
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+      owners.set(key, owner)
+    }
+  const entries: Entry[] = page.items.flatMap((item, index) =>
+    item.str.trim()
+      ? [{ item, index, key: page.page + ':' + index, owner: owners.get(page.page + ':' + index)! }]
+      : []
+  )
+  const valid = (e: Entry): boolean => {
+    const i = e.item,
+      font = evidence.fonts[i.fontName!]
+    return (
+      e.owner &&
+      counts.get(e.key) === 1 &&
+      e.owner.originalStrings[e.owner.items.indexOf(e.key)] === i.str &&
+      i.dir === 'ltr' &&
+      i.fontVertical === false &&
+      font?.nativeMetrics === true &&
+      font.ascent === i.fontAscent &&
+      font.descent === i.fontDescent &&
+      i.width > 0 &&
+      i.height > 0 &&
+      [...i.transform, i.width, i.height, i.fontAscent, i.fontDescent].every(Number.isFinite) &&
+      i.transform.length === 6 &&
+      i.transform[0] > 0 &&
+      i.transform[3] === i.height &&
+      i.transform[1] === 0 &&
+      i.transform[2] === 0
+    )
+  }
+  if (!entries.every(valid)) return new Set<string>()
+  const box = (e: Entry): Box => {
+    const i = e.item
+    return [
+      i.transform[4],
+      i.transform[5] + i.fontDescent! * i.height,
+      i.transform[4] + i.width,
+      i.transform[5] + i.fontAscent! * i.height
+    ]
+  }
+  const inside = (b: Box): boolean =>
+    b[0] >= 0 && b[1] >= 0 && b[2] <= page.width && b[3] <= page.height
+  if (!entries.every((e) => inside(box(e)))) return new Set<string>()
+  const overlap = (a: Box, b: Box): boolean =>
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+  const result = new Set<string>()
+  for (const [at, anchor] of entries.entries()) {
+    const h = anchor.item.height,
+      y = anchor.item.transform[5],
+      x = anchor.item.transform[4]
+    if (
+      !/^\([1-9]\d{0,3}\)$/u.test(anchor.item.str) ||
+      anchor.item.hasEOL !== true ||
+      !anchor.owner.sourceOnly ||
+      anchor.owner.preserve !== 'formula' ||
+      anchor.owner.items.length !== 1
+    )
+      continue
+    let first = at
+    while (first > 0) {
+      const i = entries[first - 1].item
+      if (
+        Math.abs(i.transform[5] - y) > h * 1.55 ||
+        i.transform[4] >= x ||
+        i.height < h * 0.45 ||
+        i.height > h * 1.05
+      )
+        break
+      first--
+    }
+    const packet = entries.slice(first, at + 1),
+      math = packet.slice(0, -1),
+      selected = new Set(packet.map((e) => e.key))
+    if (
+      math.length < 3 ||
+      !math.some((e) => e.item.str.includes('=')) ||
+      math.some((e) => box(e)[2] > x - h) ||
+      (entries[at + 1] && Math.abs(entries[at + 1].item.transform[5] - y) < h * 1.55)
+    )
+      continue
+    const bounds: Box = [
+      Math.min(...packet.map((e) => box(e)[0])),
+      Math.min(...packet.map((e) => box(e)[1])),
+      Math.max(...packet.map((e) => box(e)[2])),
+      Math.max(...packet.map((e) => box(e)[3]))
+    ]
+    if (entries.some((e) => !selected.has(e.key) && overlap(box(e), bounds))) continue
+    const wholeOwners = [...new Set(packet.map((e) => e.owner))]
+    if (
+      wholeOwners.some(
+        (u) =>
+          u.items.some((k) => !selected.has(k)) ||
+          (u.preserve && !['formula', 'literal'].includes(u.preserve))
+      )
+    )
+      continue
+    const provedScripts = new Set<Entry>()
+    let complete = true
+    for (const [position, e] of math.entries()) {
+      const i = e.item
+      if (
+        !/[A-Za-z]{3,}/u.test(i.str) ||
+        /^(?:lim|max|min|log|ln|exp|sin|cos|tan|det)$/u.test(i.str)
+      )
+        continue
+      if (
+        !/^[A-Za-z]{3,20}$/u.test(i.str) ||
+        i.height >= h * 0.85 ||
+        i.height <= h * 0.5 ||
+        y - i.transform[5] < h * 0.08 ||
+        y - i.transform[5] > h * 0.55
+      ) {
+        complete = false
+        break
+      }
+      let run = position
+      while (run > 0) {
+        const a = math[run - 1].item,
+          b = math[run].item
+        if (
+          a.height >= h * 0.85 ||
+          Math.abs(a.transform[5] - i.transform[5]) > h * 0.03 ||
+          b.transform[4] - a.transform[4] - a.width > h * 0.15 ||
+          b.transform[4] - a.transform[4] - a.width < -h * 0.1
+        )
+          break
+        run--
+      }
+      const start = math[run].item
+      const parents = math.slice(0, run).filter((parent) => {
+        const p = parent.item,
+          gap = start.transform[4] - p.transform[4] - p.width
+        return (
+          /^[A-Za-z\p{Script=Greek}]{1,2}$/u.test(p.str) &&
+          Math.abs(p.height - h) < h * 0.05 &&
+          Math.abs(p.transform[5] - y) < h * 0.05 &&
+          gap >= -h * 0.1 &&
+          gap < h * 0.2 &&
+          math
+            .slice(math.indexOf(parent) + 1, run)
+            .every(
+              (part) =>
+                part.item.height < h * 0.85 &&
+                /^[\d,.;+−-]+$/u.test(part.item.str) &&
+                Math.abs(part.item.transform[5] - y) < h * 0.55 &&
+                Math.abs(part.item.transform[4] - p.transform[4] - p.width) < h * 0.3
+            )
+        )
+      })
+      if (parents.length !== 1) {
+        complete = false
+        break
+      }
+      provedScripts.add(e)
+    }
+    if (
+      !complete ||
+      !symbolicExpression(math.map((e) => (provedScripts.has(e) ? '' : e.item.str)).join(' '))
+    )
+      continue
+    const fractions: { numerator: number; denominator: number; ruleOperators: number[] }[] = []
+    for (const e of math.filter(
+      (e) =>
+        !e.owner.sourceOnly &&
+        e.item.height >= h * 0.85 &&
+        Math.abs(e.item.transform[5] - y) > h * 0.05
+    )) {
+      const numerator = e.item
+      if (
+        !/^[A-Za-z\p{Script=Greek}\d]$/u.test(numerator.str) ||
+        numerator.transform[5] <= y ||
+        numerator.transform[5] - y > h * 0.75
+      ) {
+        complete = false
+        break
+      }
+      const candidates = math.filter(
+        (d) =>
+          d !== e &&
+          /^\d{1,3}$/u.test(d.item.str) &&
+          Math.abs(d.item.height - numerator.height) < h * 0.05 &&
+          y - d.item.transform[5] >= h * 0.2 &&
+          y - d.item.transform[5] <= h * 0.75 &&
+          Math.abs((box(e)[0] + box(e)[2] - box(d)[0] - box(d)[2]) / 2) < h * 0.1
+      )
+      if (candidates.length !== 1) {
+        complete = false
+        break
+      }
+      const denominator = candidates[0],
+        bars = evidence.rules.filter(
+          (rule) =>
+            rule.baseline + rule.halfHeight < box(e)[1] &&
+            rule.baseline - rule.halfHeight > box(denominator)[3] &&
+            rule.left <= Math.min(box(e)[0], box(denominator)[0]) + h * 0.05 &&
+            rule.right >= Math.max(box(e)[2], box(denominator)[2]) - h * 0.05 &&
+            rule.right - rule.left < Math.max(numerator.width, denominator.item.width) * 1.2
+        )
+      if (bars.length !== 1) {
+        complete = false
+        break
+      }
+      fractions.push({
+        numerator: e.index,
+        denominator: denominator.index,
+        ruleOperators: bars[0].operators
+      })
+    }
+    if (!complete) continue
+    // No unrelated native rule may cross the closed source envelope.
+    if (
+      evidence.rules.some(
+        (rule) =>
+          overlap(
+            [
+              rule.left,
+              rule.baseline - rule.halfHeight,
+              rule.right,
+              rule.baseline + rule.halfHeight
+            ],
+            bounds
+          ) && !fractions.some((f) => f.ruleOperators.some((n) => rule.operators.includes(n)))
+      )
+    )
+      continue
+    for (const owner of wholeOwners)
+      if (!owner.sourceOnly && !owner.preserve) result.add(owner.items.join('|'))
+  }
+  return result
 }
 
 // A headingless bibliography needs a complete initial-author/publication suffix,
@@ -15150,4 +15830,574 @@ function nativeSquareCitationProse(
       item.transform[5] > y - font * 0.5 &&
       item.transform[5] < peer.transform[5] + font * 0.5
   )
+}
+
+// Font/metric source bounds only; no glyph repaint or citation reconstruction.
+function nativeReferenceText(items: PdfLayoutTextItem[]): boolean {
+  return (
+    items.length > 0 &&
+    items.length <= 4096 &&
+    !!nativeProseProofDomain(items) &&
+    items.every(
+      (i) =>
+        nativeContentsUpright(i) &&
+        i.width > 0 &&
+        !!i.fontName &&
+        i.fontAscent! > 0 &&
+        i.fontAscent! <= 1 &&
+        i.fontDescent! >= -1 &&
+        i.fontDescent! <= 0
+    )
+  )
+}
+
+function nativeReferenceRows(items: PdfLayoutTextItem[]): PdfLayoutTextItem[][] | undefined {
+  if (!nativeReferenceText(items)) return
+  const rows: PdfLayoutTextItem[][] = []
+  for (const item of items) {
+    const row = rows.at(-1),
+      last = row?.at(-1)
+    if (last && Math.abs(last.transform[5] - item.transform[5]) < item.height * 0.01) {
+      if (item.transform[4] < last.transform[4] + last.width - item.height * 0.05) return
+      row!.push(item)
+    } else {
+      if (last && item.transform[5] >= last.transform[5] - item.height * 0.5) return
+      rows.push([item])
+    }
+  }
+  return rows
+}
+
+// An explicit native References heading can share a grouped owner with its
+// first entry. Keep that complete owner and the closed hanging span intact;
+// neither an author-shaped paragraph nor an unbounded suffix establishes it.
+function nativeHeadedReferenceSpan(units: LayoutUnit[], pages: PdfLayoutPage[]): LayoutUnit[] {
+  const native = (u: LayoutUnit): PdfLayoutTextItem[] => nativeReferenceItems(u, pages)
+  const footer = (u: LayoutUnit): boolean =>
+    u.fragments.length === 1 &&
+    /^\d+$/u.test(u.source) &&
+    !!pages[u.fragments[0].page - 1] &&
+    u.fragments[0].rect.y > pages[u.fragments[0].page - 1].height * 0.9 &&
+    Math.abs(
+      (u.fragments[0].rect.x + u.fragments[0].rect.right) / 2 -
+        pages[u.fragments[0].page - 1].width / 2
+    ) < u.fragments[0].rect.font
+  const ownership = new Map<string, number>()
+  for (const unit of units)
+    for (const key of unit.items) ownership.set(key, (ownership.get(key) ?? 0) + 1)
+  const passes: LayoutUnit[][] = []
+  for (const [index, unit] of units.entries()) {
+    if (unit.preserve === 'reference' || unit.fragments.length !== 1) continue
+    const items = native(unit),
+      title = items[0],
+      first = items[1],
+      start = unit.fragments[0]
+    if (
+      !title ||
+      !first ||
+      !/^(?:References|Bibliography)$/u.test(title.str) ||
+      !nativeReferenceText(items) ||
+      title.fontName === first.fontName ||
+      Math.abs(title.height - first.height) > title.height * 0.02 ||
+      Math.abs(title.transform[4] - first.transform[4]) > title.height * 0.05 ||
+      title.transform[5] - first.transform[5] < title.height ||
+      title.transform[5] - first.transform[5] > title.height * 1.6
+    )
+      continue
+    const end = units.findIndex((candidate, n) => {
+      if (
+        n <= index ||
+        n - index > 256 ||
+        candidate.fragments.length !== 1 ||
+        candidate.risks.length ||
+        candidate.kind !== 'heading-candidate'
+      )
+        return false
+      const a = native(candidate),
+        r = candidate.fragments[0],
+        p = pages[r.page - 1]
+      return (
+        !!p &&
+        r.page > start.page &&
+        r.page <= start.page + 8 &&
+        r.rect.y < p.height * 0.16 &&
+        a.length === 1 &&
+        /^[\p{Lu}][\p{L} ]{3,70}$/u.test(candidate.source) &&
+        a[0].fontName === title.fontName &&
+        Math.abs(a[0].height - title.height) < title.height * 0.02 &&
+        Math.abs(a[0].transform[4] - title.transform[4]) < title.height * 0.05 &&
+        nativeReferenceText(a) &&
+        p.items
+          .filter((i) => i.str.trim())
+          .every((i) => i === a[0] || i.transform[5] < a[0].transform[5] - title.height * 0.5)
+      )
+    })
+    if (end < 0) continue
+    const boundary = units[end],
+      body = units[end + 1]
+    if (
+      !body ||
+      body.fragments.length !== 1 ||
+      body.kind !== 'prose-candidate' ||
+      body.risks.length ||
+      body.fragments[0].page !== boundary.fragments[0].page ||
+      wordCount(body.source) < 40 ||
+      !terminal(body.source)
+    )
+      continue
+    const bodyItems = native(body),
+      b = body.fragments[0],
+      h = boundary.fragments[0]
+    if (
+      !nativeReferenceText(bodyItems) ||
+      bodyItems.some(
+        (i) =>
+          i.fontName !== first.fontName || Math.abs(i.height - first.height) > first.height * 0.02
+      ) ||
+      b.rect.y - h.rect.bottom < first.height * 0.5 ||
+      b.rect.y - h.rect.bottom > first.height * 3 ||
+      b.rect.right - b.rect.x < pages[b.page - 1].width * 0.5 ||
+      b.rect.x < title.transform[4] - first.height * 0.05 ||
+      b.rect.x > title.transform[4] + first.height * 4
+    )
+      continue
+    const span = units.slice(index, end).filter((u) => !footer(u)),
+      packet = span.flatMap(native),
+      keys = new Set(span.flatMap((u) => u.items))
+    if (
+      span.length < 6 ||
+      packet.length > 4096 ||
+      packet.length !== keys.size ||
+      !nativeReferenceText(packet) ||
+      span.some((u) => u.items.some((k) => ownership.get(k) !== 1))
+    )
+      continue
+    let valid = true,
+      starts = 0,
+      wraps = 0
+    for (const page of pages.slice(start.page - 1, h.page - 1)) {
+      const owned = span
+        .flatMap((u) => u.items)
+        .filter((k) => k.startsWith(page.page + ':'))
+        .map((k) => Number(k.split(':')[1]))
+        .sort((a, b) => a - b)
+      const text = owned.map((n) => page.items[n]),
+        rows = nativeReferenceRows(text),
+        domain = nativeProseProofDomain(text)
+      if (
+        !owned.length ||
+        !rows ||
+        !domain ||
+        domain.x < 0 ||
+        domain.y < 0 ||
+        domain.right > page.width ||
+        domain.bottom > page.height ||
+        page.items.some(
+          (i, n) =>
+            i.str.trim() && !keys.has(page.page + ':' + n) && nativeTextOverlapsProof(i, domain)
+        ) ||
+        page.items
+          .slice(owned[0], owned.at(-1)! + 1)
+          .some((i, n) => i.str.trim() && !keys.has(page.page + ':' + (owned[0] + n)))
+      ) {
+        valid = false
+        break
+      }
+      for (const row of rows) {
+        if (row[0] === title) {
+          if (row.length !== 1) valid = false
+          continue
+        }
+        const x = row[0].transform[4],
+          left = title.transform[4],
+          delta = x - left
+        if (
+          delta < -first.height * 0.05 ||
+          row.some(
+            (i) =>
+              Math.abs(i.height - first.height) > first.height * 0.02 ||
+              i.fontName === title.fontName
+          )
+        ) {
+          valid = false
+          break
+        }
+        if (Math.abs(delta) < first.height * 0.05) starts++
+        else if (delta > first.height && delta < first.height * 3) wraps++
+        else {
+          valid = false
+          break
+        }
+      }
+    }
+    if (valid && starts >= 3 && wraps >= 3) passes.push(span)
+  }
+  return passes.length === 1 ? passes[0] : []
+}
+
+// A post-bibliography Contents page must point back to complete native section
+// headings. Typography and dotted rows alone cannot close a bibliography.
+function nativeReferenceContentsBoundary(
+  unit: LayoutUnit,
+  reference: LayoutUnit | undefined,
+  pages: PdfLayoutPage[]
+): boolean {
+  if (
+    !reference ||
+    unit.source !== 'Contents' ||
+    unit.kind !== 'heading-candidate' ||
+    unit.risks.length ||
+    unit.fragments.length !== 1
+  )
+    return false
+  const native = (u: LayoutUnit): PdfLayoutTextItem[] => nativeReferenceItems(u, pages)
+  const title = native(unit),
+    ref = native(reference),
+    fragment = unit.fragments[0],
+    page = pages[fragment.page - 1],
+    h = title[0]?.height
+  if (
+    title.length !== 1 ||
+    !nativeReferenceText(title) ||
+    !ref.length ||
+    title[0].fontName !== ref[0].fontName ||
+    Math.abs(h - reference.fragments[0].rect.font) > h * 0.02 ||
+    fragment.page <= reference.fragments[0].page ||
+    fragment.rect.y > page.height * 0.16 ||
+    Math.abs(title[0].transform[4] - ref[0].transform[4]) > h * 0.05
+  )
+    return false
+  const text = page.items
+    .filter((i) => i.str.trim())
+    .filter(
+      (i) =>
+        !(
+          /^\d+$/u.test(i.str) &&
+          i.transform[5] < page.height * 0.08 &&
+          Math.abs(i.transform[4] + i.width / 2 - page.width / 2) < h
+        )
+    )
+  const rows = nativeReferenceRows(text)
+  const contentsDomain = nativeProseProofDomain(text)
+  if (
+    !rows ||
+    rows[0].length !== 1 ||
+    rows[0][0] !== title[0] ||
+    rows.length < 6 ||
+    !contentsDomain ||
+    contentsDomain.x < 0 ||
+    contentsDomain.y < 0 ||
+    contentsDomain.right > page.width ||
+    contentsDomain.bottom > page.height
+  )
+    return false
+  const entries: { label: string; title: string; page: number; items: PdfLayoutTextItem[] }[] = [],
+    size = rows[1][0].height,
+    left = title[0].transform[4]
+  const columns = new Map<number, number>([[0, left]])
+  for (let n = 1; n < rows.length; n++) {
+    const row = rows[n],
+      last = row.at(-1)!,
+      label = row[0].str
+    if (row.some((i) => Math.abs(i.height - size) > size * 0.02) || size >= h / 1.15) return false
+    const destination =
+      /^[1-9]\d*$/u.test(last.str) && last.transform[4] > page.width * 0.75
+        ? Number(last.str)
+        : undefined
+    const head = /^(?:[A-Z](?:\.\d+)*|[1-9]\d*(?:\.\d+)*)$/u.test(label)
+    if (head) {
+      const depth = label.split('.').length - 1
+      const x = row[0].transform[4],
+        column = columns.get(depth),
+        parent = columns.get(depth - 1)
+      if (
+        row.length < 2 ||
+        depth > 3 ||
+        x > page.width * 0.35 ||
+        (column !== undefined
+          ? Math.abs(x - column) > size * 0.05
+          : parent === undefined || x < parent + size * 0.5)
+      )
+        return false
+      columns.set(depth, x)
+      entries.push({
+        label,
+        title: row
+          .slice(1, destination === undefined ? undefined : -1)
+          .map((i) => i.str)
+          .join(' ')
+          .replace(/(?:\s*\.\s*){2,}/gu, ' ')
+          .trim(),
+        page: destination ?? 0,
+        items: row
+      })
+    } else {
+      const prior = entries.at(-1)
+      if (
+        !prior ||
+        prior.page ||
+        !prior.title.endsWith('-') ||
+        row[0].transform[4] <= left + size * 0.5 ||
+        !destination
+      )
+        return false
+      prior.title =
+        prior.title.slice(0, -1) +
+        row
+          .slice(0, -1)
+          .map((i) => i.str)
+          .join(' ')
+      prior.page = destination
+      prior.items.push(...row)
+    }
+  }
+  if (
+    new Set(entries.map((e) => e.label)).size !== entries.length ||
+    entries.some((e) => !e.page || e.page > pages.length || !e.title || /[.!?]$/u.test(e.title))
+  )
+    return false
+  let anchors = 0
+  for (const e of entries.filter(
+    (e) => /^[1-9]\d*$/u.test(e.label) && e.page < reference.fragments[0].page
+  )) {
+    const target = pages[e.page - 1]
+    if (!target) continue
+    const tt = target.items.filter((i) => i.str.trim()),
+      matches = tt.flatMap((item, n) => {
+        const pair = tt.slice(n, n + 2),
+          r = nativeReferenceRows(pair)
+        if (
+          !r ||
+          r.length !== 1 ||
+          r[0][0].str !== e.label ||
+          r[0]
+            .slice(1)
+            .map((i) => i.str)
+            .join(' ') !== e.title ||
+          r[0].some((i) => i.fontName !== title[0].fontName || Math.abs(i.height - h) > h * 0.02) ||
+          Math.abs(item.transform[4] - left) > h * 0.05
+        )
+          return []
+        const domain = nativeProseProofDomain(pair)!
+        if (
+          domain.x < 0 ||
+          domain.y < 0 ||
+          domain.right > target.width ||
+          domain.bottom > target.height
+        )
+          return []
+        return target.items.some(
+          (i) => i.str.trim() && !pair.includes(i) && nativeTextOverlapsProof(i, domain)
+        )
+          ? []
+          : [pair]
+      })
+    if (matches.length !== 1) continue
+    anchors++
+  }
+  return anchors >= 3
+}
+
+// Sparse-page analysis inputs have no authority to establish a complete native
+// reference interval. Refuse them rather than reading an unrelated page/index.
+function nativeReferenceItems(unit: LayoutUnit, pages: PdfLayoutPage[]): PdfLayoutTextItem[] {
+  const items: PdfLayoutTextItem[] = []
+  for (const key of unit.items) {
+    const [page, index] = key.split(':').map(Number)
+    const nativePage = pages[page - 1],
+      item = nativePage?.items[index]
+    if (!nativePage || nativePage.page !== page || !item) return []
+    items.push(item)
+  }
+  return items
+}
+
+// A final contents row may continue alone above the next page's first section.
+// Prove the whole preceding contents page, its destinations and the real heading.
+function nativeSingleContentsTail(
+  unit: LayoutUnit,
+  units: LayoutUnit[],
+  pages: PdfLayoutPage[]
+): boolean {
+  if (unit.fragments.length !== 1 || unit.items.length !== 1 || unit.originalStrings.length !== 1)
+    return false
+  const page = pages[unit.fragments[0].page - 1],
+    previous = pages[unit.fragments[0].page - 2]
+  if (
+    !page ||
+    !previous ||
+    page.rotation !== 0 ||
+    previous.rotation !== 0 ||
+    page.page !== previous.page + 1 ||
+    page.width !== previous.width ||
+    page.height !== previous.height
+  )
+    return false
+  const target = nativeReferenceItems(unit, pages)[0],
+    h = target?.height
+  if (
+    !target ||
+    !nativeContentsUpright(target) ||
+    target.str !== unit.source ||
+    target.str !== unit.originalStrings[0] ||
+    !/^(?:References|Bibliography)$/u.test(target.str)
+  )
+    return false
+  const rowsOf = (items: PdfLayoutTextItem[]): PdfLayoutTextItem[][] => {
+    const rows: PdfLayoutTextItem[][] = []
+    for (const item of items) {
+      const row = rows.at(-1)
+      if (row && Math.abs(row[0].transform[5] - item.transform[5]) < h * 0.01) row.push(item)
+      else rows.push([item])
+    }
+    return rows
+  }
+  const sameSize = (item: PdfLayoutTextItem): boolean =>
+    nativeContentsUpright(item) &&
+    Math.abs(item.height - h) < h * 0.01 &&
+    item.fontAscent === target.fontAscent &&
+    item.fontDescent === target.fontDescent
+  const current = page.items.filter((i) => i.str.trim()),
+    number = current[1]
+  if (
+    current[0] !== target ||
+    !number ||
+    !sameSize(number) ||
+    !/^[1-9]\d{0,3}$/u.test(number.str) ||
+    Math.abs(number.transform[5] - target.transform[5]) > h * 0.01 ||
+    target.transform[5] < page.height * 0.85 ||
+    number.transform[4] < page.width * 0.75 ||
+    number.transform[4] - target.transform[4] - target.width < h * 8
+  )
+    return false
+  const destination = Number(number.str)
+  if (destination <= page.page || destination > pages.length) return false
+  const before = previous.items.filter((i) => i.str.trim()),
+    head = before[0],
+    folio = before.at(-1)!
+  if (
+    !head ||
+    !sameSize(head) ||
+    head.fontName !== target.fontName ||
+    head.str !== 'CONTENTS' ||
+    !sameSize(folio) ||
+    folio.str !== String(previous.page) ||
+    folio.transform[5] > previous.height * 0.08 ||
+    Math.abs(folio.transform[4] + folio.width / 2 - previous.width / 2) > h ||
+    head.transform[5] < previous.height * 0.85
+  )
+    return false
+  const packet = before.slice(1, -1),
+    rows = rowsOf(packet)
+  if (
+    rows.length < 8 ||
+    packet.some((i) => !sameSize(i)) ||
+    rows.some(
+      (r, n) =>
+        n &&
+        (rows[n - 1][0].transform[5] - r[0].transform[5] < h * 0.9 ||
+          rows[n - 1][0].transform[5] - r[0].transform[5] > h * 4)
+    )
+  )
+    return false
+  const entries: { text: string; destination: number; textItems: PdfLayoutTextItem[] }[] = []
+  const right = number.transform[4] + number.width
+  for (let n = 0; n < rows.length; n++) {
+    const first = rows[n]
+    if (!/^[IVXLCDM]+(?:\.[A-Z0-9]+)*\. \p{Lu}/u.test(first[0].str)) return false
+    const textItems = [first[0]]
+    let last = first.at(-1)!
+    if (first.length === 1) {
+      const continuation = rows[++n]
+      if (
+        !continuation ||
+        continuation.length !== 2 ||
+        !/^[a-z][a-z ]+$/u.test(continuation[0].str) ||
+        continuation[0].fontName !== first[0].fontName ||
+        continuation[0].transform[4] <= first[0].transform[4] + h * 0.5
+      )
+        return false
+      textItems.push(continuation[0])
+      last = continuation[1]
+    } else if (first.length !== 2) return false
+    if (
+      !/^[1-9]\d{0,3}$/u.test(last.str) ||
+      last.fontName !== number.fontName ||
+      textItems.some((i) => i.fontName !== target.fontName && i.fontName !== number.fontName) ||
+      Math.abs(last.transform[4] + last.width - right) > h * 0.05 ||
+      last.transform[4] - textItems.at(-1)!.transform[4] - textItems.at(-1)!.width < h * 0.3 ||
+      Number(last.str) > pages.length ||
+      Number(last.str) < page.page ||
+      (entries.length && Number(last.str) < entries.at(-1)!.destination)
+    )
+      return false
+    entries.push({
+      text: textItems.map((i) => i.str).join(' '),
+      destination: Number(last.str),
+      textItems
+    })
+  }
+  if (
+    entries.at(-1)!.destination > destination ||
+    packet.at(-1)!.transform[5] > previous.height * 0.12
+  )
+    return false
+  const owned = (p: PdfLayoutPage, items: PdfLayoutTextItem[]): boolean => {
+    const keys = new Set(items.map((i) => p.page + ':' + p.items.indexOf(i))),
+      owners = units.filter((u) => u.items.some((k) => keys.has(k)))
+    return (
+      owners.length > 0 &&
+      owners.every(
+        (u) =>
+          u.items.every((k) => keys.has(k)) &&
+          nativeReferenceItems(u, pages).length === u.items.length
+      ) &&
+      owners.flatMap((u) => u.items).length === keys.size &&
+      [...keys].every((k) => units.filter((u) => u.items.includes(k)).length === 1)
+    )
+  }
+  if (!owned(previous, before) || !owned(page, [target, number])) return false
+  const clear = (p: PdfLayoutPage, items: PdfLayoutTextItem[]): boolean => {
+    const domain = nativeProseProofDomain(items)
+    return (
+      !!domain &&
+      domain.x >= 0 &&
+      domain.y >= 0 &&
+      domain.right <= p.width &&
+      domain.bottom <= p.height &&
+      !p.items.some((i) => !items.includes(i) && nativeTextOverlapsProof(i, domain))
+    )
+  }
+  if (!clear(previous, [head, ...packet]) || !clear(page, [target, number])) return false
+  const matches = (text: string, p: number): LayoutUnit[] =>
+    units.filter(
+      (u) =>
+        u.fragments.every((f) => f.page === p) &&
+        u.originalStrings.join(' ').toUpperCase() === text.toUpperCase() &&
+        nativeReferenceItems(u, pages).every(
+          (i) => sameSize(i) && i.fontName === target.fontName
+        ) &&
+        nativeReferenceItems(u, pages).length === u.items.length &&
+        clear(pages[p - 1], nativeReferenceItems(u, pages))
+    )
+  const main = entries.filter((e) => /^[IVXLCDM]+\. /u.test(e.text)),
+    anchors = main.filter((e) => matches(e.text, e.destination).length === 1)
+  if (
+    main.length < 3 ||
+    main[0].destination !== page.page ||
+    matches(main[0].text, page.page).length !== 1 ||
+    new Set(anchors.map((e) => e.destination)).size < 3 ||
+    matches(target.str, destination).length !== 1
+  )
+    return false
+  if (
+    pages[destination - 1].items.filter(
+      (i) =>
+        i.str.toUpperCase() === target.str.toUpperCase() &&
+        sameSize(i) &&
+        i.fontName === target.fontName
+    ).length !== 1
+  )
+    return false
+  return true
 }

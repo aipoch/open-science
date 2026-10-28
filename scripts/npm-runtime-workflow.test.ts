@@ -2,8 +2,9 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
+import { runInNewContext } from 'node:vm'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { load } from 'js-yaml'
 const workflow = (name: string): any =>
   load(readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'))
@@ -403,5 +404,59 @@ ${step.run}`
       expect(patterns).toContain('artifacts/*.zip')
     }
     expect(JSON.stringify(flow)).not.toContain('NPM_TOKEN')
+  })
+})
+
+describe('installed npm registry proxy', () => {
+  const source = readFileSync(new URL('./test-npm-installed.mjs', import.meta.url), 'utf8')
+  const proxySource = source.slice(
+    source.indexOf('// The staged entry package'),
+    source.indexOf('const server =')
+  )
+  const setup = (): {
+    body: Buffer
+    fetch: ReturnType<typeof vi.fn>
+    proxy: (path: string, response: unknown) => Promise<void>
+    response: { writeHead: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
+  } => {
+    const body = Buffer.from([0x1f, 0x8b, 0x00, 0xff])
+    const fetch = vi.fn().mockResolvedValue({
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/octet-stream' }),
+      arrayBuffer: async () => body
+    })
+    const proxy = runInNewContext(`${proxySource}; upstreamRegistry`, { fetch, Buffer })
+    const response = { writeHead: vi.fn(), end: vi.fn() }
+    return { body, fetch, proxy, response }
+  }
+
+  it.each([
+    'isexe',
+    '@modelcontextprotocol/sdk',
+    'isexe/-/isexe-2.0.0.tgz',
+    '@modelcontextprotocol/sdk/-/sdk-1.0.0.tgz'
+  ])('forwards dependency request %s without changing bytes', async (path) => {
+    const { body, fetch, proxy, response } = setup()
+    await proxy(path, response)
+    expect(fetch).toHaveBeenCalledWith(`https://registry.npmjs.org/${path}`)
+    expect(response.writeHead).toHaveBeenCalledWith(200, {
+      'content-type': 'application/octet-stream'
+    })
+    expect(response.end).toHaveBeenCalledWith(body)
+  })
+
+  it.each([
+    '//evil.example/archive.tgz',
+    'https://evil.example/archive.tgz',
+    'isexe/-/../../archive.tgz',
+    'isexe/-/archive.tgz?redirect=evil',
+    'isexe/-/archive.zip',
+    '@scope/pkg/-/nested/archive.tgz'
+  ])('rejects invalid registry path %s before fetching', async (path) => {
+    const { fetch, proxy, response } = setup()
+    await proxy(path, response)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(response.writeHead).toHaveBeenCalledWith(404)
+    expect(response.end).toHaveBeenCalledWith('{"error":"not_found"}')
   })
 })

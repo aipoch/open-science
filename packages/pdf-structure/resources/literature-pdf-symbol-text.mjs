@@ -1026,6 +1026,18 @@ const reviewedSubsetSymbols = (font, name) => {
   )
     return new Map([[3, ['\uf0b3', '≥', 549]]])
   if (font.type !== 'Type1' || !Array.isArray(font.differences)) return undefined
+  // These legacy check/cross slots retain numeric encoding names. Match the
+  // native slot and advance below; ordinary numeral fonts remain unchanged.
+  if (
+    ['Dingbats', 'ZapfDingbats'].includes(name) &&
+    font.differences.length === 0 &&
+    font.defaultEncoding?.[51] === 'three' &&
+    font.defaultEncoding?.[55] === 'seven'
+  )
+    return new Map([
+      [51, ['3', '✓', 755]],
+      [55, ['7', '✗', 571]]
+    ])
   const matches = (length, entries) =>
     font.differences.length === length &&
     font.differences.filter(Boolean).length === entries.length &&
@@ -1384,6 +1396,7 @@ export async function repairPdfSymbolText(page, content, operators) {
     )
   operators ??= await page.getOperatorList()
   const mappings = new Map()
+  const isolatedDingbats = new Set()
   const fontStack = []
   let font
   for (let index = 0; index < operators.fnArray.length; index++) {
@@ -1396,6 +1409,7 @@ export async function repairPdfSymbolText(page, content, operators) {
       const fontInfo = page.commonObjs?.get(font) ?? {}
       const name = symbolFontName(fontInfo.name)
       const reviewed = reviewedSubsetSymbols(fontInfo, name)
+      if (reviewed && ['Dingbats', 'ZapfDingbats'].includes(name)) isolatedDingbats.add(font)
       // These legacy Pi subsets label mathematical outlines with Latin glyph
       // names. Require the complete observed encoding as well as each glyph's
       // original code, Unicode and width; other subsets remain untouched.
@@ -1637,8 +1651,21 @@ export async function repairPdfSymbolText(page, content, operators) {
         items: content.items.map((item) => {
           const map = mappings.get(item.fontName)
           if (!('str' in item) || !map) return item
+          // Match the Reader's isolated-run policy; a compound numeric string
+          // does not establish one check/cross mark per native text item.
+          if (isolatedDingbats.has(item.fontName) && !/^[37]$/u.test(item.str)) return item
           const str = [...item.str].map((char) => map.get(char) ?? char).join('')
-          return str === item.str ? item : { ...item, str, inlineSymbol: [...str].length === 1 }
+          if (str === item.str) return item
+          const canonicalSource =
+            isolatedDingbats.has(item.fontName) &&
+            item.sourceItem?.text === item.str &&
+            Number.isSafeInteger(item.sourceItem.pageNumber) &&
+            item.sourceItem.pageNumber > 0 &&
+            Number.isSafeInteger(item.sourceItem.index) &&
+            item.sourceItem.index >= 0
+              ? { sourceItem: { ...item.sourceItem, text: str } }
+              : {}
+          return { ...item, str, ...canonicalSource, inlineSymbol: [...str].length === 1 }
         })
       },
       operators,

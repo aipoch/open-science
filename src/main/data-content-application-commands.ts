@@ -1,3 +1,5 @@
+import type { UseCaseCatalog } from './session-package/use-case-catalog'
+import { useCaseCatalogContract, type UseCase } from '../shared/use-cases'
 import type { OfficePreviewCommands } from './office-preview/application-commands'
 import type { FileSaveCommands } from './file-save'
 import type { ArtifactReproducibilityCommands } from './artifacts/artifact-reproducibility-commands'
@@ -165,7 +167,7 @@ type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
   ) => Promise<SessionPackage.SessionPackageExportResult>
   importSessionPackage: (
     request?: SessionPackage.SessionPackageImportRequest,
-    sourcePath?: string,
+    sourcePath?: string | import('../shared/use-cases').UseCaseSource,
     options?: { readonly nonInteractive: true }
   ) => Promise<SessionPackage.SessionPackageImportResult>
   sessionPackageOperation: (
@@ -210,6 +212,7 @@ type UploadApplicationCommandOwner = InvocationOwner<{
 type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Result>
 
 type DataContentApplicationCommandDependencies = Readonly<{
+  useCaseCatalog: UseCaseCatalog
   officePreviewCommands: OfficePreviewCommands
   fileSaveCommands: FileSaveCommands
   reproducibility: ArtifactReproducibilityCommands
@@ -241,6 +244,11 @@ const electronCommand = invocationCommandFor<ElectronDataContentApplicationComma
 const uploadCommand = invocationCommandFor<UploadApplicationCommandOwner>()
 
 const dataContentApplicationCommands = Object.freeze({
+  useCaseCatalog: defineApplicationCommand<
+    'sessions:use-case-catalog',
+    readonly ['cached' | 'refreshed'],
+    UseCase[]
+  >('sessions:use-case-catalog', useCaseCatalogContract),
   officePreviewOpen: invocationCommandFor<OfficePreviewCommands>()('office-preview:open', 'open'),
   officePreviewAttachFrame: invocationCommandFor<OfficePreviewCommands>()(
     'office-preview:attach-frame',
@@ -694,6 +702,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
     dataContentApplicationCommands.sessionPackageOperation,
+    dataContentApplicationCommands.useCaseCatalog,
     dataContentApplicationCommands.sessionFilterPdfContextCandidates,
     dataContentApplicationCommands.sessionLinkPdfContext,
     dataContentApplicationCommands.sessionList,
@@ -1062,6 +1071,12 @@ const registerDataContentApplicationCommands = (
           dataContentApplicationCommands.sessionImportPackage.name
         )
         return dependencies.electron.importSessionPackage(invocation)
+      },
+      'sessions:use-case-catalog': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.useCaseCatalog.name)
+        return invocation.args[0] === 'cached'
+          ? dependencies.useCaseCatalog.cached()
+          : dependencies.useCaseCatalog.refresh()
       },
       'sessions:package-operation': (invocation) => {
         assertElectronOrLocalWebCaller(

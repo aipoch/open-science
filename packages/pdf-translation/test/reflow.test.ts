@@ -1547,6 +1547,185 @@ it('remaps page labels, print ranges, unreferenced named destinations and openin
   }
 })
 
+async function blankPageAnchorFixture(): Promise<{
+  pdf: PDFDocument
+  units: PdfTranslationPdfRequest['units']
+}> {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const source of ['First original paragraph.', 'Second original paragraph.'])
+    pdf.addPage([400, 500]).drawText(source, { font, x: 40, y: 440, size: 12 })
+  pdf.catalog.set(
+    PDFName.of('Names'),
+    pdf.context.obj({
+      Dests: {
+        Names: pdf
+          .getPages()
+          .flatMap((page, index) => [
+            PDFString.of(`page.${index + 1}`),
+            [page.ref, 'XYZ', 40, 490, null]
+          ])
+      }
+    })
+  )
+  return {
+    pdf,
+    units: [
+      {
+        source: 'First original paragraph.',
+        translation: 'A translated first paragraph.',
+        fragments: [fragment(1, 0.08)]
+      },
+      {
+        source: 'Second original paragraph.',
+        translation: 'Second original paragraph.',
+        fragments: [fragment(2, 0.08)]
+      }
+    ]
+  }
+}
+
+it('maps a complete native page anchor from a blank top strip to its emitted first paragraph', async () => {
+  const { pdf, units } = await blankPageAnchorFixture(),
+    output = await generate(pdf, units)
+  expect(output.layoutFailures).toEqual([])
+  expect(output.reflow?.originalPageNumbers).toEqual([2])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      first = await parsed.getDestination('page.1'),
+      second = await parsed.getDestination('page.2')
+    expect(first?.slice(1)).toEqual([{ name: 'XYZ' }, 44, 797.89, null])
+    expect(await parsed.getPageIndex(first![0])).toBe(0)
+    expect(second?.slice(1)).toEqual([{ name: 'XYZ' }, 40, 490, null])
+    expect(await parsed.getPageIndex(second![0])).toBe(1)
+    const text = await (await parsed.getPage(1)).getTextContent()
+    expect(text.items.map((item) => ('str' in item ? item.str : '')).join('')).toContain(
+      'A translated first paragraph.'
+    )
+  } finally {
+    await task.destroy()
+  }
+})
+
+it.each([
+  'missing family member',
+  'wrong source page',
+  'duplicate name',
+  'relative coordinate',
+  'non-null zoom',
+  'named alias',
+  'generic XYZ',
+  'top path',
+  'top image',
+  'top annotation',
+  'unsupported form',
+  'incomplete first owner',
+  'foreign first-owner paint',
+  'first owner not emitted as text',
+  'multiple output pages',
+  'joined first owner'
+])('retains the source page when the blank page anchor lacks %s evidence', async (variant) => {
+  const { pdf, units: originalUnits } = await blankPageAnchorFixture(),
+    names = pdf.catalog.lookup(PDFName.of('Names'), PDFDict).lookup(PDFName.of('Dests'), PDFDict),
+    entries = names.lookup(PDFName.of('Names'), PDFArray),
+    first = entries.lookup(1, PDFArray)
+  let units = originalUnits
+  switch (variant) {
+    case 'missing family member':
+      entries.remove(3)
+      entries.remove(2)
+      break
+    case 'wrong source page':
+      entries.lookup(3, PDFArray).set(0, pdf.getPage(0).ref)
+      break
+    case 'duplicate name':
+      entries.set(2, PDFString.of('page.1'))
+      break
+    case 'relative coordinate':
+      first.set(2, pdf.context.obj(null))
+      break
+    case 'non-null zoom':
+      first.set(4, pdf.context.obj(1))
+      break
+    case 'named alias':
+      entries.set(3, PDFString.of('page.1'))
+      break
+    case 'generic XYZ':
+      entries.push(PDFString.of('section.1'))
+      entries.push(first)
+      break
+    case 'top path':
+      pdf.getPage(0).drawRectangle({ x: 200, y: 480, width: 10, height: 10 })
+      break
+    case 'top image': {
+      const canvas = createCanvas(2, 2)
+      canvas.getContext('2d').fillRect(0, 0, 2, 2)
+      const image = await pdf.embedPng(canvas.toBuffer('image/png'))
+      pdf.getPage(0).drawImage(image, { x: 200, y: 480, width: 10, height: 10 })
+      break
+    }
+    case 'top annotation':
+      link(pdf, 1, [40, 485, 100, 495], {
+        A: { S: 'URI', URI: PDFString.of('https://example.org') }
+      })
+      break
+    case 'unsupported form': {
+      const form = await pdf.embedPage(pdf.getPage(1))
+      pdf.getPage(0).drawPage(form, { x: 200, y: 100, width: 100, height: 125 })
+      break
+    }
+    case 'incomplete first owner':
+      units = [
+        {
+          ...units[0],
+          fragments: [{ pageNumber: 1, rect: { x: 0.1, y: 0.08, width: 0.02, height: 0.05 } }]
+        },
+        units[1]
+      ]
+      break
+    case 'foreign first-owner paint':
+      pdf.getPage(0).drawRectangle({ x: 45, y: 441, width: 2, height: 2 })
+      break
+    case 'first owner not emitted as text':
+      pdf.getPage(0).drawText('Another original paragraph.', {
+        font: await pdf.embedFont(StandardFonts.Helvetica),
+        x: 40,
+        y: 380,
+        size: 12
+      })
+      units = [
+        { ...units[0], translation: units[0].source },
+        units[1],
+        {
+          source: 'Another original paragraph.',
+          translation: 'Another translated paragraph.',
+          fragments: [fragment(1, 0.2)]
+        }
+      ]
+      break
+    case 'multiple output pages':
+      units = [
+        { ...units[0], translation: 'An expanded translated paragraph. '.repeat(1000) },
+        units[1]
+      ]
+      break
+    case 'joined first owner':
+      units = [{ ...units[0], fragments: [...units[0].fragments, fragment(2, 0.08)] }, units[1]]
+      break
+  }
+  const output = await generate(pdf, units)
+  if (variant === 'duplicate name') {
+    expect(output.data).toEqual(await pdf.save())
+    expect(output.layoutFailures).toEqual([expect.objectContaining({ code: 'document-structure' })])
+    return
+  }
+  expect(output.layoutFailures).toEqual(
+    expect.arrayContaining([expect.objectContaining({ code: 'annotations' })])
+  )
+  expect(output.reflow?.originalPageNumbers).toContain(1)
+})
+
 it('preserves a named FitR target on its original page with a valid output page reference', async () => {
   const pdf = await PDFDocument.create(),
     font = await pdf.embedFont(StandardFonts.Helvetica)

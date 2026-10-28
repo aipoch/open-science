@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "helpers": [
+    {
+      "id": "docx-generation",
+      "language": "python",
+      "interfaceRevision": 1,
+      "implementation": "kernel.py",
+      "exports": ["prepare_docx_conversion"],
+      "dependencies": []
+    }
+  ]
+}

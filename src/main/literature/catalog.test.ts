@@ -27,6 +27,7 @@ import { TagRepository } from '../tags/repository'
 import { TagResourceCatalog } from '../tags/resource-catalog'
 import { TagService } from '../tags/service'
 import { LiteratureCatalog } from './catalog'
+import type { LiteratureScreening } from './screening-adapter'
 import { createLiteratureCommandOwner } from './command-owner'
 import { ContentRepository } from '../storage/content-repository'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
@@ -103,6 +104,216 @@ describe('LiteratureCatalog', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Research' } })
     return new LiteratureCatalog(async () => client!)
   }
+
+  it('saves reading status without metadata conflicts, screening or source changes', async () => {
+    const catalog = await setup()
+    const created = await catalog.transact({ kind: 'create-item', item: candidate().item })
+    const original = (await catalog.get(created.id))!
+    expect(original.readingStatus).toBe('unread')
+    const events = vi.fn(),
+      schedule = vi.fn()
+    const observed = new LiteratureCatalog(
+      async () => client!,
+      undefined,
+      undefined,
+      undefined,
+      events,
+      { schedule } as unknown as LiteratureScreening
+    )
+    await expect(
+      observed.transact({
+        kind: 'set-reading-status',
+        itemIds: [created.id],
+        readingStatus: 'reading'
+      })
+    ).resolves.toEqual({ kind: 'item', id: created.id, itemIds: [created.id], state: 'present' })
+    expect(await catalog.get(created.id)).toMatchObject({
+      item: original.item,
+      metadataRevision: original.metadataRevision,
+      readingStatus: 'reading'
+    })
+    expect(events).toHaveBeenCalledExactlyOnceWith({ revision: 1, itemIds: [created.id] })
+    expect(schedule).not.toHaveBeenCalled()
+    expect(await catalog.sources(created.id)).toEqual([])
+    // A metadata editor holding the pre-status snapshot can still save its note.
+    await catalog.transact({
+      kind: 'update-item',
+      itemId: created.id,
+      expectedMetadataRevision: original.metadataRevision,
+      item: { ...original.item, personalNote: 'Reviewed evidence' }
+    })
+    await observed.transact({
+      kind: 'set-reading-status',
+      itemIds: [created.id],
+      readingStatus: 'read'
+    })
+    expect(await catalog.get(created.id)).toMatchObject({
+      readingStatus: 'read',
+      metadataRevision: original.metadataRevision + 1,
+      item: { personalNote: 'Reviewed evidence' }
+    })
+    expect(schedule).not.toHaveBeenCalled()
+    const restarted = new LiteratureCatalog(async () => client!)
+    expect((await restarted.get(created.id))!.readingStatus).toBe('read')
+    await catalog.importItems([candidate().item], undefined, 'fill-missing')
+    expect((await catalog.get(created.id))!.readingStatus).toBe('read')
+  })
+
+  it('uses reading status in counts, all IDs, selected IDs, pagination, collections and projects', async () => {
+    const catalog = await setup()
+    const ids: string[] = []
+    for (const title of ['A read', 'B read', 'C reading', 'D unread'])
+      ids.push(
+        (
+          await catalog.transact({
+            kind: 'create-item',
+            item: { ...candidate().item, title, identifiers: [] }
+          })
+        ).id
+      )
+    await catalog.transact({
+      kind: 'set-reading-status',
+      itemIds: ids.slice(0, 2),
+      readingStatus: 'read'
+    })
+    await catalog.transact({
+      kind: 'set-reading-status',
+      itemIds: [ids[2]],
+      readingStatus: 'reading'
+    })
+    const collection = await catalog.transact({ kind: 'create-collection', name: 'Reading list' })
+    for (const id of [ids[0], ids[2], ids[3]])
+      await catalog.transact({
+        kind: 'set-collection-item',
+        collectionId: collection.id,
+        itemId: id,
+        included: true
+      })
+    await catalog.transact({
+      kind: 'set-project-items',
+      projectId: 'project-1',
+      itemIds: [ids[1], ids[2], ids[3]],
+      included: true,
+      source: 'manual'
+    })
+    const request = {
+      scope: 'library' as const,
+      filter: { readingStatus: 'read' as const },
+      sortBy: 'title' as const,
+      limit: 1
+    }
+    expect(await catalog.search(request)).toMatchObject({
+      entries: [{ id: ids[0], readingStatus: 'read' }],
+      totalCount: 2,
+      nextOffset: 1
+    })
+    expect(await catalog.search({ ...request, offset: 1 })).toMatchObject({
+      entries: [{ id: ids[1] }],
+      totalCount: 2,
+      nextOffset: undefined
+    })
+    expect(await catalog.search({ ...request, countOnly: true })).toEqual({
+      entries: [],
+      totalCount: 2
+    })
+    expect(await catalog.search({ ...request, allItemIds: true })).toMatchObject({
+      entries: [],
+      itemIds: ids.slice(0, 2),
+      totalCount: 2
+    })
+    expect(
+      await catalog.search({ ...request, itemIds: [ids[0], ids[2]], allItemIds: true })
+    ).toMatchObject({ itemIds: [ids[0]], totalCount: 1 })
+    for (const readingStatus of ['unread', 'reading'] as const)
+      expect(
+        await catalog.search({ ...request, filter: { readingStatus }, allItemIds: true })
+      ).toMatchObject({ itemIds: [ids[readingStatus === 'reading' ? 2 : 3]], totalCount: 1 })
+    for (const scope of [
+      { collectionId: collection.id },
+      { filter: { readingStatus: 'read' as const, collectionId: collection.id } }
+    ])
+      expect(await catalog.search({ ...request, ...scope, allItemIds: true })).toMatchObject({
+        itemIds: [ids[0]],
+        totalCount: 1
+      })
+    for (const scope of [
+      { projectId: 'project-1' },
+      { filter: { readingStatus: 'read' as const, projectId: 'project-1' } }
+    ])
+      expect(await catalog.search({ ...request, ...scope, allItemIds: true })).toMatchObject({
+        itemIds: [ids[1]],
+        totalCount: 1
+      })
+  })
+
+  it('rejects mixed unavailable status batches atomically and preserves the merge survivor status', async () => {
+    const catalog = await setup()
+    const ids: string[] = []
+    for (const title of ['Survivor', 'Duplicate', 'Deleted'])
+      ids.push(
+        (
+          await catalog.transact({
+            kind: 'create-item',
+            item: { ...candidate().item, title, identifiers: [] }
+          })
+        ).id
+      )
+    await catalog.transact({
+      kind: 'set-reading-status',
+      itemIds: [ids[0]],
+      readingStatus: 'reading'
+    })
+    await catalog.transact({ kind: 'set-reading-status', itemIds: [ids[1]], readingStatus: 'read' })
+    const reviewed = await Promise.all(ids.slice(0, 2).map((id) => catalog.get(id)))
+    await catalog.transact({
+      kind: 'merge-items',
+      survivorId: ids[0],
+      duplicateIds: [ids[1]],
+      expectedMetadataRevision: reviewed[0]!.metadataRevision,
+      expectedItems: reviewed.map((view) => ({
+        id: view!.id,
+        metadataRevision: view!.metadataRevision,
+        updatedAt: view!.updatedAt
+      })),
+      item: reviewed[0]!.item
+    })
+    expect((await catalog.get(ids[0]))!.readingStatus).toBe('reading')
+    expect((await catalog.get(ids[1]))!.readingStatus).toBe('reading')
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [ids[2]], state: 'deleted' })
+    const events = vi.fn(),
+      schedule = vi.fn()
+    const observed = new LiteratureCatalog(
+      async () => client!,
+      undefined,
+      undefined,
+      undefined,
+      events,
+      { schedule } as unknown as LiteratureScreening
+    )
+    for (const unavailable of ['missing', ids[1], ids[2]])
+      await expect(
+        observed.transact({
+          kind: 'set-reading-status',
+          itemIds: [ids[0], unavailable],
+          readingStatus: 'read'
+        })
+      ).rejects.toThrow('unavailable')
+    expect((await catalog.get(ids[0]))!.readingStatus).toBe('reading')
+    expect(
+      (await client!.literatureItem.findUniqueOrThrow({ where: { id: ids[2] } })).readingStatus
+    ).toBe('unread')
+    expect(events).not.toHaveBeenCalled()
+    expect(schedule).not.toHaveBeenCalled()
+    // Selected aliases filter on the survivor, matching the existing selection contract.
+    expect(
+      await catalog.search({
+        scope: 'library',
+        itemIds: [ids[1]],
+        filter: { readingStatus: 'reading' },
+        allItemIds: true
+      })
+    ).toMatchObject({ itemIds: [ids[1]], totalCount: 1 })
+  })
 
   it('deduplicates manually discovered Semantic Scholar papers and preserves dismissal and provenance', async () => {
     const catalog = await setup()

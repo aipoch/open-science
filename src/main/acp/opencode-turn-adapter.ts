@@ -5,6 +5,7 @@ import type {
   AcpProviderTurnResult
 } from './provider-turn-adapter'
 import { diffOpenCodeTurnUsage, type OpenCodeUsageSnapshot } from './opencode-turn-usage'
+import { isRecord } from '../value-guards'
 
 export type OpenCodeUsageSnapshotReader = (
   providerSessionId: string,
@@ -56,26 +57,65 @@ export class AcpOpenCodeTurnAdapter implements AcpProviderTurnAdapter {
     let reader: OpenCodeUsageSnapshotReader | undefined = this.readUsageSnapshot
     let before = await readSnapshotBestEffort(reader, providerSessionId, cwd)
     let closed = false
+    let compactionId: string | undefined
+    let observedCompaction: AcpProviderTurnResult['compaction']
 
     const close = (): void => {
       closed = true
       before = undefined
       reader = undefined
+      compactionId = undefined
+      observedCompaction = undefined
     }
 
     return Object.freeze({
+      observe: (message: unknown) => {
+        if (closed || !isRecord(message) || message.sessionId !== providerSessionId) return
+        const update = message.update
+        if (
+          !isRecord(update) ||
+          update.sessionUpdate !== 'session_info_update' ||
+          !isRecord(update._meta)
+        )
+          return
+        const marker = update._meta['opencode/compaction']
+        if (
+          !isRecord(marker) ||
+          typeof marker.messageId !== 'string' ||
+          before?.assistantMessageIds.has(marker.messageId)
+        )
+          return
+        if (marker.status === 'started') {
+          compactionId = marker.messageId
+          observedCompaction = undefined
+        } else if (marker.status === 'completed' && marker.messageId === compactionId) {
+          observedCompaction = { succeeded: true }
+        } else if (
+          marker.status === 'failed' &&
+          (!compactionId || marker.messageId === compactionId)
+        ) {
+          observedCompaction = {
+            succeeded: false,
+            ...(isRecord(marker.error) && typeof marker.error.message === 'string'
+              ? { error: marker.error.message.slice(0, 2000) }
+              : {})
+          }
+        }
+      },
       finalize: async () => {
         if (closed || !reader) return EMPTY_RESULT
         const baseline = before
         const finalReader = reader
+        const observed = observedCompaction
         close()
         const after = await readSnapshotBestEffort(finalReader, providerSessionId, cwd)
         const compaction =
-          baseline && after
+          observed ??
+          (baseline && after
             ? [...(after.compactionByMessageId ?? [])]
                 .filter(([id]) => !baseline.assistantMessageIds.has(id))
                 .at(-1)?.[1]
-            : undefined
+            : undefined)
         return { ...normalizeTurnUsage(baseline, after), ...(compaction ? { compaction } : {}) }
       },
       cancel: close

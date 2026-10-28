@@ -619,6 +619,7 @@ model LiteratureItem {
   extra                    String                            @default("")
   rating                   Int                               @default(0)
   personalNote             String                            @default("")
+  readingStatus            String                            @default("unread")
   typeFieldsJson           String                            @default("{}")
   metadataRevision         Int                               @default(1)
   createdAt                DateTime                          @default(now())

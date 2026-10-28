@@ -201,6 +201,76 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
 })
 
+it('leaves the save-location wait while processing files after destination selection', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  const request = { projectId: 'project-1', sessionId: 'session-1' }
+  await fixture.client.project.create({ data: { id: request.projectId, name: 'Research' } })
+  await new SessionRepository(fixture.storageRoot).saveSession({
+    id: request.sessionId,
+    projectId: request.projectId,
+    title: 'Research',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: []
+  })
+  const source = join(
+    fixture.storageRoot,
+    'notebooks',
+    request.projectId,
+    request.sessionId,
+    'data.bin'
+  )
+  await mkdir(dirname(source), { recursive: true })
+  await writeFile(source, Buffer.alloc(64 * 1024))
+  const filePath = join(fixture.storageRoot, 'research.science')
+  let selected = false
+  vi.mocked(dialog.showSaveDialog).mockImplementation(async () => {
+    selected = true
+    return { canceled: false, filePath }
+  })
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: async () => undefined,
+    onOperationChanged: (snapshot) => {
+      if (snapshot.state === 'awaiting-selection')
+        queueMicrotask(() =>
+          desktop.respond({
+            action: 'select',
+            operationId: snapshot.id,
+            excludedStorageKeys: []
+          })
+        )
+    }
+  })
+  const digest = fileIo.digestFileWithinBudget
+  const phases: string[] = []
+  vi.spyOn(fileIo, 'digestFileWithinBudget').mockImplementation((...args) => {
+    // Observe real post-picker file processing without replacing hashing or the service.
+    if (selected) phases.push(desktop.operations.snapshot!.progress.phase)
+    return digest(...args)
+  })
+  try {
+    await expect(desktop.export(request)).resolves.toEqual({ saved: true, filePath })
+    expect(dialog.showSaveDialog).toHaveBeenCalledOnce()
+    expect(phases.length).toBeGreaterThan(0)
+    expect(phases).not.toContain('choosing-location')
+  } finally {
+    await desktop.close()
+    await service.close()
+    initDataRoot(undefined)
+  }
+})
+
 it.each([
   {
     name: 'unversioned reference',
@@ -2640,3 +2710,163 @@ it('cancels and releases only the browser source owned by the import queue', asy
     await service.close()
   }
 })
+
+it.each(['existing', 'new', 'cancelled'] as const)(
+  'downloads a catalog package with a %s destination outcome',
+  async (destination) => {
+    const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
+    fixtures.push(fixture)
+    await fixture.client.project.create({ data: { id: 'source', name: 'Source' } })
+    await fixture.client.project.create({ data: { id: 'target', name: 'Target' } })
+    const repo = new SessionRepository(fixture.storageRoot)
+    await repo.saveSession({
+      id: 'session',
+      projectId: 'source',
+      title: 'Catalog research',
+      cwd: '',
+      status: 'idle',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const archive = join(fixture.storageRoot, 'catalog.science')
+    await service.exportTo({ projectId: 'source', sessionId: 'session' }, archive)
+    const bytes = await readFile(archive)
+    const { createHash } = await import('node:crypto')
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(
+        Response.json([
+          {
+            name: 'catalog',
+            title: 'Catalog research',
+            cover: { file_name: 'cover.png' },
+            case: {
+              file_name: 'catalog.science',
+              bytes: bytes.length,
+              sha256: createHash('sha256').update(bytes).digest('hex')
+            }
+          }
+        ])
+      )
+      .mockResolvedValueOnce(new Response(bytes))
+    const inspect = vi.spyOn(service, 'inspect')
+    const desktop = createDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined,
+      onOperationChanged: (snapshot) => {
+        if (snapshot.state === 'awaiting-selection' && !snapshot.importPreview)
+          queueMicrotask(() =>
+            desktop.respond(
+              destination === 'cancelled'
+                ? { action: 'cancel', operationId: snapshot.id }
+                : {
+                    action: 'select-project',
+                    operationId: snapshot.id,
+                    target:
+                      destination === 'existing'
+                        ? { projectId: 'target' }
+                        : { projectName: 'Imported example' }
+                  }
+            )
+          )
+      }
+    })
+    try {
+      await expect(
+        desktop.import(undefined, 'client', {}, { useCase: 'catalog' })
+      ).rejects.toThrow()
+      expect(desktop.operations.snapshot?.state).toBe('failed')
+      // A download failure retries the same catalog source, without opening the native picker.
+      await desktop.respond({
+        action: 'retry-import',
+        operationId: desktop.operations.snapshot!.id
+      })
+      if (destination === 'cancelled') {
+        expect(desktop.operations.snapshot?.state).toBe('cancelled')
+        expect(desktop.operations.snapshot?.result?.imported).toBeUndefined()
+      } else {
+        expect(desktop.operations.snapshot?.state).toBe('succeeded')
+        const result = desktop.operations.snapshot!.result!.imported!
+        expect((await repo.loadSession(result.projectId, result.sessionId))?.title).toBe(
+          'Catalog research'
+        )
+        if (destination === 'existing') expect(result.projectId).toBe('target')
+        else
+          expect(
+            (await fixture.client.project.findUnique({ where: { id: result.projectId } }))?.name
+          ).toBe('Imported example')
+      }
+      expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      const downloadPath = inspect.mock.calls[0][0]
+      await vi.waitFor(async () =>
+        expect(
+          await stat(downloadPath).then(
+            () => true,
+            () => false
+          )
+        ).toBe(false)
+      )
+    } finally {
+      await desktop.close()
+      await service.close()
+    }
+  }
+)
+
+it.each(['retry', 'discard'] as const)(
+  'releases a staged Web import exactly once after %s',
+  async (action) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    const source = join(fixture.storageRoot, 'staged.science')
+    await writeFile(source, 'package')
+    const importFrom = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Temporary import failure'))
+      .mockResolvedValue({ projectId: 'p', sessionId: 's' })
+    const released = vi.fn(async () => {
+      await fsPromises.rm(source)
+    })
+    const desktop = createDesktop({
+      service: { importFrom } as unknown as SessionPackageService,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined
+    })
+    try {
+      await expect(
+        desktop.import(undefined, undefined, { projectId: 'p' }, source, false, {
+          onReleased: released
+        })
+      ).rejects.toThrow()
+      expect(released).not.toHaveBeenCalled()
+      const failed = desktop.operations.snapshot!
+      if (action === 'retry') {
+        desktop.respond({ action: 'retry-import', operationId: failed.id })
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+      } else {
+        await desktop.respond({
+          action: 'discard-import',
+          operationId: failed.id,
+          requestId: failed.importRequestId!
+        })
+      }
+      await vi.waitFor(() => expect(released).toHaveBeenCalledOnce())
+      await expect(stat(source)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await desktop.close()
+    }
+    expect(released).toHaveBeenCalledOnce()
+  }
+)

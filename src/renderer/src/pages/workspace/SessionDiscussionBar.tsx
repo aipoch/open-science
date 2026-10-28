@@ -101,8 +101,8 @@ export const SessionDiscussionBar = ({
                 <span className="truncate">
                   {step.branchIndex === undefined
                     ? ''
-                    : `${t('Branch {{index}}', { index: step.branchIndex + 1 })} · `}
-                  {step.stepNumber ? `${t('Step {{step}}', { step: step.stepNumber })} · ` : ''}
+                    : `${t('Branch {{index}}', { index: step.branchIndex + 1 })}: `}
+                  {step.stepNumber ? `${t('Step {{step}}', { step: step.stepNumber })}: ` : ''}
                   {step.title || title}
                 </span>
               </Button>
@@ -141,7 +141,7 @@ export const SessionDiscussionBar = ({
             </Button>
           </TooltipTrigger>
           <TooltipContent data-session-discussion-tooltip="true" className="max-w-72 truncate">
-            {`${t('View replay')} · ${title} · ${scope === 'session' ? t('Entire research') : (selectionLabel ?? t('Selected steps'))}`}
+            {`${t('View replay')}: ${title}, ${scope === 'session' ? t('Entire research') : (selectionLabel ?? t('Selected steps'))}`}
           </TooltipContent>
         </Tooltip>
         <Tooltip>

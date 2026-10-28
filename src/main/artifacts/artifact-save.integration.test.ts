@@ -13,7 +13,17 @@ import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-litera
 import * as boundedIo from '../bounded-file-io'
 import { defaultFileDurability } from '@aipoch/durable-files'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, readdir, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  truncate,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createArtifactSaveFixture } from './save-test-fixtures'
@@ -353,6 +363,89 @@ describe('Main-issued Artifact expected content', () => {
 })
 
 describe('complete Artifact save over the production local RPC', () => {
+  it.each(['ro', 'rw'] as const)(
+    'imports absolute files using current %s folder grants and rejects revoked grants',
+    async (access) => {
+      const f = await setup()
+      const workspace = join(f.storageRoot, 'workspace')
+      const downloads = join(f.storageRoot, 'Downloads')
+      await mkdir(workspace)
+      await mkdir(join(downloads, 'nested'), { recursive: true })
+      const sourcePath = join(downloads, 'nested', 'download.txt')
+      await writeFile(sourcePath, 'downloaded bytes')
+      const env = await f.environment(
+        { allowedImportRoots: [workspace], workspaceCwd: workspace },
+        { notebookSessionId: 'notebook-1' }
+      )
+      const input = {
+        filename: 'download.txt',
+        source: { kind: 'localPath' as const, path: sourcePath }
+      }
+      await expect(
+        writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
+      ).rejects.toThrow('outside allowed artifact import roots')
+      await f.grantedRoots.upsertByPath({
+        id: 'downloads',
+        path: await realpath(downloads),
+        name: 'Downloads',
+        access
+      })
+      const result = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
+      expect(await readFile(result.path, 'utf8')).toBe('downloaded bytes')
+      expect(result.producerRunId).toBeUndefined()
+      await expect(
+        writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
+          ...input,
+          producerRunId: 'invented-notebook-run'
+        })
+      ).rejects.toThrow('Notebook producer source could not be verified')
+      // A grant added after capability issuance works, but never becomes a relative search base.
+      for (const path of ['download.txt', '../Downloads/nested/download.txt']) {
+        await expect(
+          writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
+            ...input,
+            source: { kind: 'localPath', path }
+          })
+        ).rejects.toThrow()
+      }
+      await f.grantedRoots.remove('downloads')
+      await expect(
+        writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
+      ).rejects.toThrow('outside allowed artifact import roots')
+      expect(await readFile(result.path, 'utf8')).toBe('downloaded bytes')
+      expect(await readFile(sourcePath, 'utf8')).toBe('downloaded bytes')
+      expect(await f.client.artifactVersion.count()).toBe(1)
+    }
+  )
+
+  it('does not accept external folder grants forged in RPC parameters', async () => {
+    const f = await setup()
+    const sourcePath = join(f.storageRoot, 'private.txt')
+    await writeFile(sourcePath, 'private')
+    const env = await f.environment()
+    const context = JSON.parse(await readFile(env.currentRunFile, 'utf8'))
+    const response = await fetch(f.connection.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${context.rpcCapabilityToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        method: 'artifactSaveVersion',
+        params: {
+          ...f.binding,
+          filename: 'private.txt',
+          writeOperationId: 'forged-grant',
+          source: { kind: 'localPath', path: sourcePath },
+          sourceScope: { allowedImportRoots: [f.storageRoot], grantedImportRoots: [f.storageRoot] }
+        }
+      })
+    })
+    expect(response.ok).toBe(false)
+    expect(await response.text()).toContain('outside allowed artifact import roots')
+    expect(await f.client.artifactVersion.count()).toBe(0)
+  })
+
   it('delivers bounded redacted diagnostics with the committed Version identity over RPC and MCP', async () => {
     const f = await setup()
     const env = await f.environment()
@@ -725,57 +818,71 @@ describe('complete Artifact save over the production local RPC', () => {
     expect(await f.client.artifactVersion.count()).toBe(2)
   })
 
-  it('resolves prepared literature in main, checks its digest, and gives explicit literature precedence', async () => {
-    const f = await setup()
-    const workspace = join(f.storageRoot, 'workspace')
-    await mkdir(workspace)
-    const env = await f.environment({ allowedImportRoots: [workspace], workspaceCwd: workspace })
-    await f.client.literatureItem.create({
-      data: { id: 'paper', title: 'A cited paper', itemType: 'journalArticle' }
-    })
-    await f.client.literatureItem.create({
-      data: {
-        id: 'paper-alias',
-        title: 'Merged paper',
-        itemType: 'journalArticle',
-        mergedIntoItemId: 'paper',
-        deletedAt: new Date('2026-01-01T00:00:00.000Z')
+  it.each(['workspace', 'granted-folder'])(
+    'resolves prepared literature from %s, checks its digest, and gives explicit literature precedence',
+    async (location) => {
+      const f = await setup()
+      const workspace = join(f.storageRoot, 'workspace')
+      await mkdir(workspace)
+      const env = await f.environment(
+        location === 'workspace'
+          ? { allowedImportRoots: [workspace], workspaceCwd: workspace }
+          : undefined
+      )
+      if (location === 'granted-folder')
+        await f.grantedRoots.upsertByPath({
+          id: 'reports',
+          path: await realpath(workspace),
+          name: 'Reports',
+          access: 'ro'
+        })
+      await f.client.literatureItem.create({
+        data: { id: 'paper', title: 'A cited paper', itemType: 'journalArticle' }
+      })
+      await f.client.literatureItem.create({
+        data: {
+          id: 'paper-alias',
+          title: 'Merged paper',
+          itemType: 'journalArticle',
+          mergedIntoItemId: 'paper',
+          deletedAt: new Date('2026-01-01T00:00:00.000Z')
+        }
+      })
+      const bytes = Buffer.from(zipSync({ 'main.tex': strToU8('Scientific report') }))
+      const path = join(workspace, 'report.zip')
+      await writeFile(path, bytes)
+      const literature = {
+        styleId: 'apa',
+        locale: 'en-US',
+        citations: [{ citationId: 'cite-1', itemId: 'paper-alias' }]
       }
-    })
-    const bytes = Buffer.from(zipSync({ 'main.tex': strToU8('Scientific report') }))
-    const path = join(workspace, 'report.zip')
-    await writeFile(path, bytes)
-    const literature = {
-      styleId: 'apa',
-      locale: 'en-US',
-      citations: [{ citationId: 'cite-1', itemId: 'paper-alias' }]
+      const sidecar = {
+        schemaVersion: 1,
+        contentChecksum: createHash('sha256').update(bytes).digest('hex'),
+        literature
+      }
+      await writeFile(path + ARTIFACT_LITERATURE_SIDECAR_SUFFIX, JSON.stringify(sidecar))
+      const input = { filename: 'report.zip', source: { kind: 'localPath' as const, path } }
+      const result = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
+      const row = await f.client.artifactVersion.findUniqueOrThrow({
+        where: { id: result.versionId },
+        include: { literatureManifest: true }
+      })
+      expect(row.literatureManifest?.manifestJson).toContain('A cited paper')
+      expect(JSON.parse(row.literatureManifest!.manifestJson).references[0].itemId).toBe(
+        'paper-alias'
+      )
+      await writeFile(
+        path + ARTIFACT_LITERATURE_SIDECAR_SUFFIX,
+        JSON.stringify({ ...sidecar, contentChecksum: '0'.repeat(64) })
+      )
+      await expect(
+        writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
+      ).rejects.toThrow('Prepared citation metadata does not match')
+      await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, { ...input, literature })
+      expect(await f.client.artifactVersion.count()).toBe(2)
     }
-    const sidecar = {
-      schemaVersion: 1,
-      contentChecksum: createHash('sha256').update(bytes).digest('hex'),
-      literature
-    }
-    await writeFile(path + ARTIFACT_LITERATURE_SIDECAR_SUFFIX, JSON.stringify(sidecar))
-    const input = { filename: 'report.zip', source: { kind: 'localPath' as const, path } }
-    const result = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
-    const row = await f.client.artifactVersion.findUniqueOrThrow({
-      where: { id: result.versionId },
-      include: { literatureManifest: true }
-    })
-    expect(row.literatureManifest?.manifestJson).toContain('A cited paper')
-    expect(JSON.parse(row.literatureManifest!.manifestJson).references[0].itemId).toBe(
-      'paper-alias'
-    )
-    await writeFile(
-      path + ARTIFACT_LITERATURE_SIDECAR_SUFFIX,
-      JSON.stringify({ ...sidecar, contentChecksum: '0'.repeat(64) })
-    )
-    await expect(
-      writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
-    ).rejects.toThrow('Prepared citation metadata does not match')
-    await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, { ...input, literature })
-    expect(await f.client.artifactVersion.count()).toBe(2)
-  })
+  )
 
   it('rejects oversized prepared sidecars before pending mutation and leaves the next save usable', async () => {
     const f = await setup()

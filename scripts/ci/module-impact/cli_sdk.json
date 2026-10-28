@@ -34,7 +34,11 @@
     "cli/run-observation-contract.test.ts",
     "packages/open-science/run-observations.test.ts",
     "packages/open-science/project-recordings.test.ts",
-    "packages/open-science/research-replays.test.ts"
+    "packages/open-science/research-replays.test.ts",
+    "packages/open-science/mcp.mjs",
+    "packages/open-science/mcp.test.ts",
+    "packages/open-science/mcp.integration.test.ts",
+    "packages/open-science/runtime-control.test.ts"
   ],
   "interfacePaths": [
     "packages/open-science/cli.mjs",
@@ -50,7 +54,8 @@
     "packages/open-science/installation-startup.cjs",
     "packages/open-science/installation-startup.d.cts",
     "packages/open-science/browser-import.mjs",
-    "packages/open-science/browser-import.d.ts"
+    "packages/open-science/browser-import.d.ts",
+    "packages/open-science/mcp.mjs"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -68,9 +73,13 @@
       "cli/run-observation-contract.test.ts",
       "packages/open-science/run-observations.test.ts",
       "packages/open-science/project-recordings.test.ts",
-      "packages/open-science/research-replays.test.ts"
+      "packages/open-science/research-replays.test.ts",
+      "packages/open-science/runtime-control.test.ts"
     ],
-    "contract": [],
+    "contract": [
+      "packages/open-science/mcp.test.ts",
+      "packages/open-science/mcp.integration.test.ts"
+    ],
     "consumer": [
       "src/main/desktop-runtime-recovery.integration.test.ts",
       "cli/config-root.test.ts",

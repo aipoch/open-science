@@ -12,6 +12,7 @@ import {
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 import {
   createWorkspaceConversationTimeline,
+  resolveCollapsibleTurnProcesses,
   resolveCurrentTurnOutcomeItem,
   resolveForkBoundaryItemId
 } from './workspace-conversation-timeline'
@@ -1087,4 +1088,166 @@ it('anchors a branch with a hidden head to its last visible ancestor', () => {
   })
   const timeline = createWorkspaceConversationTimeline(input).filter((item) => item.id !== 'hidden')
   expect(resolveForkBoundaryItemId(input, timeline)).toBe('visible')
+})
+
+describe('settled turn process disclosure', () => {
+  const fixture = (kind: 'completed' | 'failed' = 'completed'): ChatSession =>
+    session({
+      messages: [
+        message({ turnOutcome: { kind, settledAt: 600 }, sortIndex: 0 }),
+        message({
+          id: 'progress',
+          role: 'agent',
+          content: 'Checking data',
+          responseToMessageId: 'prompt-1',
+          sortIndex: 1
+        }),
+        message({
+          id: 'answer',
+          role: 'agent',
+          content: 'Result',
+          responseToMessageId: 'prompt-1',
+          sortIndex: 4,
+          completedAt: 600
+        })
+      ],
+      activities: [activity({ sortIndex: 2 })]
+    })
+  const groups = (
+    input: ChatSession,
+    presenting: string[] = []
+  ): ReturnType<typeof resolveCollapsibleTurnProcesses> =>
+    resolveCollapsibleTurnProcesses(
+      input,
+      createWorkspaceConversationTimeline(input),
+      new Set(presenting)
+    )
+
+  it.each(['completed', 'failed'] as const)(
+    'keeps the final reply and completion outside %s process',
+    (kind) => {
+      const result = groups(fixture(kind))
+      expect(result.get('progress')).toMatchObject({
+        promptMessageId: 'prompt-1',
+        outcome: kind,
+        messageCount: 1
+      })
+      expect(result.has('answer')).toBe(false)
+      expect(result.has('prompt-1')).toBe(false)
+      expect(result.has('turn-completion-answer')).toBe(false)
+    }
+  )
+
+  it('counts only hidden messages, regardless of tool activity count', () => {
+    const input = fixture()
+    input.activities = [
+      activity({ id: 'tool-1', sortIndex: 2 }),
+      activity({ id: 'tool-2', sortIndex: 3 })
+    ]
+    const result = groups(input)
+    const group = result.get('progress')!
+    expect(group.messageCount).toBe(1)
+    expect(group.itemIds.length).toBeGreaterThan(1)
+    expect(group.itemIds).not.toContain('answer')
+    input.messages.splice(
+      2,
+      0,
+      message({ id: 'progress-2', role: 'agent', responseToMessageId: 'prompt-1', sortIndex: 3.5 })
+    )
+    expect(groups(input).get('progress')?.messageCount).toBe(2)
+  })
+
+  it.each(['completed', 'failed'] as const)(
+    'keeps image-only and artifact-only final replies outside the %s process',
+    (kind) => {
+      for (const output of [
+        {
+          images: [{ id: 'image-1', mimeType: 'image/png' as const, data: 'AQID', byteLength: 3 }]
+        },
+        { artifactIds: ['artifact-1'] }
+      ]) {
+        const input = fixture(kind)
+        input.messages[2] = { ...input.messages[2], content: '', ...output }
+        const result = groups(input)
+        expect(result.get('progress')).toMatchObject({ messageCount: 1 })
+        expect(result.has('answer')).toBe(false)
+      }
+    }
+  )
+
+  it('ignores an empty trailing fragment when selecting the final output', () => {
+    const input = fixture()
+    input.messages.push(
+      message({
+        id: 'empty-fragment',
+        role: 'agent',
+        content: ' ',
+        images: [],
+        artifactIds: [],
+        responseToMessageId: 'prompt-1',
+        sortIndex: 5
+      })
+    )
+    const result = groups(input)
+    expect(result.has('answer')).toBe(false)
+    expect(result.has('empty-fragment')).toBe(false)
+    expect(result.get('progress')?.messageCount).toBe(1)
+  })
+
+  it('does not hide running, revealing, cancelled, interrupted or unknown outcomes', () => {
+    const input = fixture()
+    expect(groups(input, ['answer']).size).toBe(0)
+    expect(groups({ ...input, agentPromptInFlight: true }).size).toBe(0)
+    expect(groups({ ...input, status: 'waiting-for-user' }).size).toBe(0)
+    for (const outcome of [
+      undefined,
+      { kind: 'cancelled' as const, settledAt: 600, recovery: 'resume' as const },
+      {
+        kind: 'interrupted' as const,
+        settledAt: 600,
+        cause: 'app-restart' as const,
+        recovery: 'resume' as const
+      }
+    ]) {
+      expect(
+        groups({
+          ...input,
+          messages: input.messages.map((m, i) => (i ? m : { ...m, turnOutcome: outcome }))
+        }).size
+      ).toBe(0)
+    }
+  })
+
+  it('keeps tool-only turns expanded because there are no previous messages', () => {
+    for (const kind of ['completed', 'failed'] as const) {
+      const input = fixture(kind)
+      input.messages = input.messages.slice(0, 1)
+      expect(groups(input).size).toBe(0)
+    }
+  })
+
+  it('retains routed user replies and unowned legacy messages', () => {
+    const input = fixture()
+    input.messages.splice(
+      2,
+      0,
+      message({ id: 'steering', role: 'user', responseToMessageId: 'prompt-1', sortIndex: 2 }),
+      message({ id: 'legacy', role: 'agent', sortIndex: 3 })
+    )
+    const result = groups(input)
+    expect(result.has('steering')).toBe(false)
+    expect(result.has('legacy')).toBe(false)
+    expect(result.has('progress')).toBe(true)
+  })
+
+  it('does not collapse a different branch or alter the authoritative timeline', () => {
+    const input = fixture()
+    const timeline = createWorkspaceConversationTimeline(input)
+    const before = JSON.stringify(timeline)
+    expect(
+      resolveCollapsibleTurnProcesses({ ...input, messages: [] }, timeline, new Set()).size
+    ).toBe(0)
+    resolveCollapsibleTurnProcesses(input, timeline, new Set())
+    expect(JSON.stringify(timeline)).toBe(before)
+  })
 })

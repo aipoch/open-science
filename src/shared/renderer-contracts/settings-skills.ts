@@ -1,5 +1,10 @@
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type {
+  SavedSkillSource,
+  AddSkillSourceRequest,
+  RemoveSkillSourceRequest
+} from '../skill-sources'
+import type {
   SkillMarketplaceCatalog,
   SkillMarketplaceCatalogRequest,
   SkillMarketplaceBatch,
@@ -169,6 +174,15 @@ export const settingsRespondSkillImportApprovalContracts = {
 } as const
 
 export const settingsScanRepoSkillsContracts = {
+  'settings.listSkillSources': callable<() => Promise<SavedSkillSource[]>>()('settings', [
+    'settings:list-skill-sources'
+  ]),
+  'settings.addSkillSource': callable<
+    (request: AddSkillSourceRequest) => Promise<SavedSkillSource[]>
+  >()('settings', ['settings:add-skill-source']),
+  'settings.removeSkillSource': callable<
+    (request: RemoveSkillSourceRequest) => Promise<SavedSkillSource[]>
+  >()('settings', ['settings:remove-skill-source']),
   'settings.scanRepoSkills': callable<(request: ScanRepoRequest) => Promise<ScanRepoResult>>()(
     'settings',
     ['settings:scan-repo-skills']

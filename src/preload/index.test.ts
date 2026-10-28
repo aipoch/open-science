@@ -117,6 +117,9 @@ type PreloadApi = {
     loginIsolatedClaudeBrowser: () => unknown
     cancelIsolatedClaudeLogin: () => unknown
     logoutIsolatedClaude: () => unknown
+    listSkillSources: () => unknown
+    addSkillSource: (request: unknown) => unknown
+    removeSkillSource: (request: unknown) => unknown
     previewGitHubSkill: (request: unknown) => unknown
     previewAgentHomeSkill: (request: unknown) => unknown
     exportSkill: (request: unknown) => unknown
@@ -401,6 +404,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.journals',
       'literature.lookupMetadata',
       'literature.onChanged',
+      'literature.publicationCheck',
       'literature.related',
       'literature.search',
       'literature.sources',
@@ -669,7 +673,9 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
+      'sessions.useCaseCatalog',
       'settings.addCustomServer',
+      'settings.addSkillSource',
       'settings.authenticateCustomServer',
       'settings.authenticateDeviceCredential',
       'settings.beginXaiOAuthLogin',
@@ -727,6 +733,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.listConnectors',
       'settings.listDeviceCredentials',
       'settings.listSkillMarketplace',
+      'settings.listSkillSources',
       'settings.listSkills',
       'settings.loginIsolatedClaude',
       'settings.loginIsolatedClaudeBrowser',
@@ -759,6 +766,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.removeDeviceCredential',
       'settings.removeGitHubToken',
       'settings.removeNotebookNetwork',
+      'settings.removeSkillSource',
       'settings.replayConnectorApproval',
       'settings.replayPendingConnectorApprovals',
       'settings.replayPendingConnectorCredentialRequests',
@@ -890,11 +898,13 @@ describe('preload bridge — public surface inventory', () => {
       'update.check',
       'update.download',
       'update.getAppInfo',
+      'update.getInstaller',
       'update.getStatus',
       'update.onProgress',
       'update.onStatus',
       'update.recheck',
       'update.recover',
+      'update.revealInstaller',
       'uploads.abortTransfer',
       'uploads.appendTransfer',
       'uploads.beginTransfer',
@@ -1793,6 +1803,24 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.previewAgentHomeSkill(sampleAgentHomePreview),
     channel: 'settings:preview-agent-home-skill',
     args: [sampleAgentHomePreview]
+  },
+  {
+    name: 'settings.listSkillSources',
+    invoke: (a) => a.settings.listSkillSources(),
+    channel: 'settings:list-skill-sources',
+    args: []
+  },
+  {
+    name: 'settings.addSkillSource',
+    invoke: (a) => a.settings.addSkillSource({ repository: 'o/r' }),
+    channel: 'settings:add-skill-source',
+    args: [{ repository: 'o/r' }]
+  },
+  {
+    name: 'settings.removeSkillSource',
+    invoke: (a) => a.settings.removeSkillSource({ id: 'saved' }),
+    channel: 'settings:remove-skill-source',
+    args: [{ id: 'saved' }]
   },
   // command-line launcher install/uninstall/status
   {

@@ -58,6 +58,68 @@ const attachAndPublish = (
 }
 
 describe('AcpConnectionResourceOwner', () => {
+  it.each([true, false])(
+    'waits for companion cleanup and releases storage only when all writers are reaped: %s',
+    async (reaped) => {
+      const owner = new AcpConnectionResourceOwner()
+      const deferred = createDeferred()
+      const storeRelease = vi.fn()
+      await owner.connect(async (attempt) => {
+        attempt.attach({
+          process: process('opencode'),
+          connection: { close: vi.fn() } as unknown as ClientConnection,
+          framework: 'opencode',
+          bridgeLease: undefined,
+          openCodeService: {
+            release: async () => {
+              await deferred.promise
+              return { reaped }
+            }
+          },
+          openCodeStore: { release: storeRelease }
+        })
+        return attempt.publish({ close: false, delete: false, resume: true, steering: false })
+      })
+      const shutdown = owner.beginAwaitableShutdown(true)
+      owner.cleanupUnexpectedClose(owner.epoch)
+      let finished = false
+      const result = shutdown.finish().then((value) => {
+        finished = true
+        return value
+      })
+      await Promise.resolve()
+      expect(finished).toBe(false)
+      expect(storeRelease).not.toHaveBeenCalled()
+      deferred.resolve()
+      expect(await result).toEqual({ reaped })
+      expect(storeRelease).toHaveBeenCalledTimes(reaped ? 1 : 0)
+    }
+  )
+
+  it.each(['teardown', 'unexpected-close', 'shutdown'] as const)(
+    'releases the OpenCode companion on %s without touching a successor',
+    async (path) => {
+      const owner = new AcpConnectionResourceOwner()
+      const release = vi.fn(async () => ({ reaped: true }))
+      const handle = await owner.connect(async (attempt) => {
+        attempt.attach({
+          process: process('old'),
+          connection: { close: vi.fn() } as unknown as ClientConnection,
+          framework: 'opencode',
+          bridgeLease: undefined,
+          openCodeService: { release }
+        })
+        return attempt.publish({ close: true, delete: true, resume: true, steering: false })
+      })
+      if (path === 'teardown') await owner.teardown(handle.epoch)
+      else if (path === 'unexpected-close') owner.cleanupUnexpectedClose(handle.epoch)
+      else owner.shutdownSynchronously(() => undefined)
+      await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+      await owner.teardown(handle.epoch)
+      expect(release).toHaveBeenCalledOnce()
+    }
+  )
+
   it('shares one publication attempt across concurrent connect callers', async () => {
     const owner = new AcpConnectionResourceOwner()
     const canPublish = createDeferred()

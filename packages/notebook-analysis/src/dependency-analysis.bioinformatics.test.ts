@@ -221,8 +221,8 @@ it('retains unproven BH coercion and downstream volcano uncertainty across cells
       })
       expect(await analyzeNotebookSourceFileAccess('r', run.script, context)).toMatchObject({
         readState: 'partial',
-        writeState: run.runId === '0' ? 'partial' : 'complete',
-        externalState: run.runId === '0' ? 'partial' : 'complete',
+        writeState: 'partial',
+        externalState: 'partial',
         reads: run.runId === '0' ? ['bioqa_logexpr.csv', 'bioqa_meta.csv'] : [],
         writes: run.runId === '0' ? [] : ['bioqa_de.csv', 'bioqa_volcano.png']
       })

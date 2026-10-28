@@ -134,7 +134,7 @@ test('distinguishes package checks from confirmed import progress without a meas
   await expect(meter.locator('[aria-hidden="true"]')).toHaveCSS('animation-name', 'none')
   await page.screenshot({ path: testInfo.outputPath('import-reduced-motion.png') })
   await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'confirming' } })
-  await expect(dialog.getByText('Waiting for you', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Waiting for you', { exact: true })).toHaveCount(0)
   await expect(meter).toHaveCount(0)
 })
 
@@ -221,7 +221,7 @@ test('presents waiting, measurable work and cleanup through native progress even
   await dialog.getByText('Transfer details', { exact: true }).click()
   await dialog.getByRole('button', { name: 'Run in background' }).click()
   const compactProgress = page.getByRole('button', {
-    name: 'Export Session package · Copying files… · View progress',
+    name: 'Export Session package: Copying files… View progress',
     exact: true
   })
   await expect(dialog).toBeHidden()
@@ -240,7 +240,7 @@ test('presents waiting, measurable work and cleanup through native progress even
     animations: 'disabled'
   })
   await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'choosing-location' } })
-  await expect(dialog.getByText('Waiting for you', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Waiting for you', { exact: true })).toHaveCount(0)
   await expect(dialog.getByRole('progressbar')).toHaveCount(0)
   await page.screenshot({
     path: testInfo.outputPath('transfer-waiting-fixture.png'),
@@ -712,14 +712,15 @@ for (const launch of ['cold', 'warm'] as const) {
           return checkBrowserImportAvailability({ port })
         }, discoveryPort)
       ).toEqual({ status: 'available' })
-      const url = await website.evaluate(async () => {
+      const transferPort = await findBrowserImportPort()
+      const url = await website.evaluate(async (port) => {
         const sdkPath = '/browser-import.mjs'
         const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
         const blob = await (await fetch('/study.science')).blob()
-        const transfer = prepareBrowserImport(blob, { filename: 'study.science' })
+        const transfer = prepareBrowserImport(blob, { filename: 'study.science', port })
         Object.assign(window, { browserPackageTransfer: transfer, browserPackageBlob: blob })
         return transfer.url as string
-      })
+      }, transferPort)
       const page = launch === 'cold' ? await app.restartWithPackage(url) : app.page
       if (launch === 'warm') await app.emitBrowserImport(url)
       const result = await website.evaluate(async () => {

@@ -68,5 +68,20 @@ export default defineConfig(
     files: ['resources/notebook/*.js', 'resources/find-overlay/*.js'],
     rules: typescriptRulesOff
   },
+  {
+    files: [
+      'src/main/node-entry.ts',
+      'src/main/node-fatal-errors.ts',
+      'src/main/local-service-lifetime.ts',
+      'src/main/verified-service-stop.ts',
+      'src/main/service-process-recovery.ts',
+      'src/main/acp/main-agent-process-ownership.ts',
+      'src/main/delegation/process-ownership.ts',
+      'src/main/application-runtime.ts',
+      'src/main/acp/runtime-coordinator.ts'
+    ],
+    languageOptions: { parserOptions: { project: './tsconfig.node.json' } },
+    rules: { '@typescript-eslint/no-floating-promises': 'error' }
+  },
   eslintConfigPrettier
 )

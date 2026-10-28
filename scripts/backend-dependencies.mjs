@@ -31,6 +31,17 @@ export const prismaEngineFilenames = (platform = process.platform, arch = proces
 const packageName = (specifier) =>
   specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
 
+// Called only after staging verifies the generated client uses the native library engine.
+export function generatedPrismaIncludes(relativePath, { desktop = false, ...target } = {}) {
+  const file = relativePath.replaceAll('\\', '/')
+  if (file === 'query_engine_bg.wasm') return false
+  if (desktop && /\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(file)) return false
+  return (
+    !file.includes('query_engine-') ||
+    prismaEngineFilenames(target.platform, target.arch).includes(file)
+  )
+}
+
 // These renderer imports are already compiled into out/web. Only omit their direct backend
 // roots: the dependency walker must still retain them if another runtime package needs them.
 export function desktopBackendDependencies(dependencies, metafiles) {
@@ -98,7 +109,18 @@ export const isShippableDependencyPath = (relativePath) => {
 // extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
-export function createDesktopDependencyFilter(manifest) {
+export function createDesktopDependencyFilter(manifest, { localTranslationWasm = false } = {}) {
+  // These alternate distributions have no consumers in the packaged application. Keep the
+  // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
+  const unusedDistributions = {
+    'openchemlib@9.25.0': /^dist\/openchemlib\.debug\.js(?:\.map)?$/,
+    'web-tree-sitter@0.26.13': /^debug\/web-tree-sitter\.(?:js|cjs|wasm)(?:\.map)?$/,
+    'styled-exceljs@0.21.6':
+      /^dist\/xlsx\.(?:extendscript|(?:full|core|mini)\.min)\.(?:js(?:\.map)?|map)$/,
+    '@embedpdf/pdfium@2.15.1': /^dist\/index\.browser\.js(?:\.map)?$/,
+    'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
+    'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/
+  }[`${manifest.name}@${manifest.version}`]
   const runtimeEntries = []
   const collect = (value) => {
     if (typeof value === 'string') runtimeEntries.push(value.replace(/^\.\//, ''))
@@ -125,6 +147,17 @@ export function createDesktopDependencyFilter(manifest) {
     const path = parts.join('/')
     if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
       return true
+    if (unusedDistributions?.test(path)) return false
+    // The fallback Transformers entry still imports WebGPU. Prune these only after the
+    // dedicated worker has replaced it with the existing WASM implementation.
+    if (
+      localTranslationWasm &&
+      manifest.name === 'onnxruntime-web' &&
+      manifest.version === '1.26.0-dev.20260416-b7804b056c' &&
+      (/^dist\/ort(?:\.(?:all|webgl|webgpu|jspi))?(?:\.bundle)?\.min\.(?:js|mjs)$/.test(path) ||
+        /^lib\/.*\.ts$/.test(path))
+    )
+      return false
     if (runtimeEntries.some((entry) => posix.matchesGlob(path, entry))) return true
     if (/\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(path)) return false
     return (
@@ -174,6 +207,24 @@ export function backendDependencyIncludes(
   const top = parts[0]
   if (!isShippableDependencyPath(relativePath)) return false
   const name = manifest.name
+  // These audited Node entry points never load the parallel browser distributions. The Web UI
+  // is built separately before staging; keep both Node import/require entries and their assets.
+  const path = parts.join('/')
+  // Keep traversing the directories so redistribution notices cannot be hidden by a parent rule.
+  if (name === 'pdf-lib' && manifest.version === '1.17.1' && /^dist\/[^/]+\.js$/.test(path))
+    return false
+  if (
+    name === 'fontkit' &&
+    manifest.version === '2.0.4' &&
+    /^dist\/browser(?:-module\.mjs|\.cjs)(?:\.map)?$/.test(path)
+  )
+    return false
+  if (
+    name === '@bokuweb/zstd-wasm' &&
+    manifest.version === '0.0.27' &&
+    /^dist\/(?:web|esm)\/.*\.(?:js|wasm|map)$/.test(path)
+  )
+    return false
   if (
     [
       'pdfjs-dist',

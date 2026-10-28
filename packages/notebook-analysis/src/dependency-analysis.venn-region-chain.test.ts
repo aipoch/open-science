@@ -34,11 +34,15 @@ it('reconstructs the reported Excel, set-cleaning and Venn region chain', async 
       })
       const result = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '4' })
       for (const id of ['2', '3', '4'])
-        expect(result.stalenessByRunId[id], JSON.stringify(result)).toEqual({ state: 'clear' })
+        expect(result.stalenessByRunId[id], JSON.stringify(result)).toMatchObject({
+          state: id === '2' ? 'clear' : 'unknown'
+        })
       const required = new Set(['4'])
       for (const id of required)
         for (const upstream of result.dependenciesByRunId?.[id] ?? []) required.add(upstream)
-      expect([...required].sort()).toEqual(['2', '3', '4'])
+      expect([...required].sort()).toEqual(['4'])
+      expect(result.dependenciesByRunId?.['3']).toBeUndefined()
+      expect(result.dependenciesByRunId?.['4']).toBeUndefined()
       for (const index of [2, 3, 4]) {
         const context = await analyzer.sourceFileAccessContext({
           projectId: 'p',
@@ -51,9 +55,9 @@ it('reconstructs the reported Excel, set-cleaning and Venn region chain', async 
         expect(
           await analyzeNotebookSourceFileAccess('r', cells[index]!.script, context)
         ).toMatchObject({
-          readState: 'complete',
-          writeState: 'complete',
-          externalState: 'complete',
+          readState: index === 2 ? 'complete' : 'partial',
+          writeState: index === 2 ? 'complete' : 'partial',
+          externalState: index === 2 ? 'complete' : 'partial',
           reads: index === 2 ? ['inputs/set-membership-111111111111.xlsx'] : [],
           writes: index === 4 ? ['proportional_venn_5sets.png'] : []
         })
@@ -77,7 +81,9 @@ it('analyzes the reported R chain in one cell', async () => {
       .join('\n')
   )
   expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual([
-    'external-state'
+    'external-state',
+    'function-scope',
+    'opaque-call'
   ])
 })
 

@@ -1,3 +1,4 @@
+import type { LiteratureReadingStatus } from '../workflows/useLiteratureReadingStatus'
 import { useLiteratureHost } from '../renderer-host'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type {
@@ -64,6 +65,7 @@ export function useLiteratureQuery({
   filterYearFrom,
   filterYearTo,
   filterHasPdf,
+  filterReadingStatus,
   journalAttributeFilters,
   tableScrollRef,
   setError,
@@ -86,6 +88,7 @@ export function useLiteratureQuery({
   filterYearFrom: string
   filterYearTo: string
   filterHasPdf: 'with' | 'all' | 'without'
+  filterReadingStatus: LiteratureReadingStatus | 'all'
   journalAttributeFilters: ReturnType<typeof useLiteratureTable>['journalAttributeFilters']
   tableScrollRef: React.RefObject<HTMLDivElement | null>
   setError: React.Dispatch<React.SetStateAction<string | undefined>>
@@ -219,6 +222,7 @@ export function useLiteratureQuery({
         filterYearFrom,
         filterYearTo,
         filterHasPdf,
+        filterReadingStatus,
         journalAttributeFilters,
         entriesPageSize
       }),
@@ -227,6 +231,7 @@ export function useLiteratureQuery({
       smartFilter,
       smartDecisionSource,
       filterHasPdf,
+      filterReadingStatus,
       journalAttributeFilters,
       entriesPageSize,
       filterItemType,
@@ -274,6 +279,7 @@ export function useLiteratureQuery({
               ...(filterYearFrom ? { yearFrom: Number(filterYearFrom) } : {}),
               ...(filterYearTo ? { yearTo: Number(filterYearTo) } : {}),
               ...(filterHasPdf !== 'all' ? { hasFullText: filterHasPdf === 'with' } : {}),
+              ...(filterReadingStatus !== 'all' ? { readingStatus: filterReadingStatus } : {}),
               ...(journalAttributeFilters.length
                 ? { journalAttributes: journalAttributeFilters }
                 : {})
@@ -289,6 +295,7 @@ export function useLiteratureQuery({
       entriesOffset,
       entriesPageSize,
       filterHasPdf,
+      filterReadingStatus,
       journalAttributeFilters,
       filterItemType,
       filterYearFrom,

@@ -7,7 +7,7 @@ test('recovers historical records only after confirmation in the update dialog',
   const dialog = page.getByRole('dialog', { name: 'Update available' })
   await page
     .getByTestId('runtime-update-dialog')
-    .getByRole('button', { name: 'Restart to update', exact: true })
+    .getByRole('button', { name: 'Update', exact: true })
     .click()
   const recover = dialog.getByRole('button', { name: 'Back up records and retry', exact: true })
   await expect(recover).toBeInViewport()
@@ -45,7 +45,7 @@ test('keeps the update dialog open when Escape arrives during recovery autofocus
   const dialog = page.getByRole('dialog', { name: 'Update available' })
   await page
     .getByTestId('runtime-update-dialog')
-    .getByRole('button', { name: 'Restart to update', exact: true })
+    .getByRole('button', { name: 'Update', exact: true })
     .click()
   const recover = dialog.getByRole('button', { name: 'Back up records and retry', exact: true })
   const confirmation = page.getByRole('alertdialog', { name: 'Back up records and retry' })
@@ -90,7 +90,7 @@ test('shows a refused restart reason without scrolling through release notes', a
   const dialog = page.getByRole('dialog', { name: 'Update available' })
   await page
     .getByTestId('runtime-update-dialog')
-    .getByRole('button', { name: 'Restart to update', exact: true })
+    .getByRole('button', { name: 'Update', exact: true })
     .click()
   const error = dialog.getByRole('alert')
   await expect(error).toContainText('Could not fully stop background processes before updating.')
@@ -159,7 +159,7 @@ test(`keeps one update dialog and release notes through download and preparation
   await expect(dialog).toContainText(notes)
   await dialog.getByRole('button', { name: /^Download update/ }).click()
   const restart = dialog.getByRole('button', {
-    name: 'Restart to update',
+    name: 'Update',
     exact: true
   })
   await expect(restart).toBeVisible()
@@ -185,7 +185,7 @@ test('keeps the shared restart action visible with long notes in a small window'
   await page.goto('/update-dialog.html?continuous')
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: /^Download update/ }).click()
-  const restart = dialog.getByRole('button', { name: 'Restart to update', exact: true })
+  const restart = dialog.getByRole('button', { name: 'Update', exact: true })
   await expect(restart).toBeInViewport()
   await expect(dialog).toContainText('Release note 35:')
   await dialog.getByText('Release note 35:', { exact: false }).scrollIntoViewIfNeeded()
@@ -244,7 +244,7 @@ test(`keeps status copy on one line and scrolls long notes independently`, async
   const dialog = page.getByRole('dialog')
   const status = page.getByTestId('update-status')
   const body = page.getByTestId('update-scroll-body')
-  const action = dialog.getByRole('button')
+  const action = dialog.getByRole('button', { name: 'Installing update…', exact: true })
   await expect(status).toBeVisible()
   const description = status.locator('p')
   expect(
@@ -278,3 +278,254 @@ test('keeps provider check feedback visible without download or installation act
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog).toBeHidden()
 })
+
+for (const width of [320, 560]) {
+  test(`keeps manual resources fixed and aligned above update controls at ${width}px`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width, height: 620 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/update-dialog.html?continuous&stage=downloading')
+    const dialog = page.getByRole('dialog')
+    const resources = dialog.getByTestId('manual-update-links')
+    const website = resources.getByRole('link', { name: 'Download from website', exact: true })
+    const instructions = resources.getByRole('button', {
+      name: 'Installation instructions',
+      exact: true
+    })
+    const primary = dialog.getByRole('button', { name: 'Downloading 50%', exact: true })
+    await expect(website).toHaveAttribute('href', 'https://aipoch.com/open-science/download')
+    await expect(website).toBeInViewport()
+    await expect(instructions).toBeInViewport()
+    const before = await resources.boundingBox()
+    const linkBox = (await instructions.boundingBox())!
+    const primaryBox = (await primary.boundingBox())!
+    expect(Math.abs(linkBox.x + linkBox.width - primaryBox.x - primaryBox.width)).toBeLessThan(1)
+    expect(linkBox.y + linkBox.height).toBeLessThanOrEqual(primaryBox.y)
+    await dialog.getByText('Release note 35:', { exact: false }).scrollIntoViewIfNeeded()
+    expect(await resources.boundingBox()).toEqual(before)
+    await expect(instructions).toBeInViewport()
+    expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+  })
+}
+
+test('switches instructions in the same dialog and returns focus with the latest download state', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?continuous&stage=downloading')
+  const dialog = page.getByRole('dialog')
+  const original = await dialog.elementHandle()
+  const instructions = dialog
+    .getByTestId('manual-update-links')
+    .getByRole('button', { name: 'Installation instructions', exact: true })
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
+  await instructions.focus()
+  await page.keyboard.press('Enter')
+  const back = dialog.getByRole('button', { name: 'Back to update', exact: true })
+  await expect(back).toBeFocused()
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  await expect(dialog).toHaveAccessibleName('Installation instructions')
+  await page.evaluate(() => {
+    const fixture = (
+      window as unknown as { updateFixture: { setStatus(status: { state: 'ready' }): void } }
+    ).updateFixture
+    fixture.setStatus({ state: 'ready' })
+  })
+  await page.keyboard.press('Escape')
+  await expect(instructions).toBeFocused()
+  await expect(dialog.getByRole('button', { name: 'Update', exact: true })).toBeVisible()
+  expect(
+    await original!.evaluate((node) => node === document.querySelector('[role="dialog"]'))
+  ).toBe(true)
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { updateFixture: { actions: Record<string, number> } }).updateFixture
+          .actions
+    )
+  ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 0 })
+})
+
+test('keeps manual instructions and package reveal available during restricted installation recovery', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?continuous&short&stage=unknown&package')
+  const dialog = page.getByRole('dialog')
+  const resources = dialog.getByTestId('manual-update-links')
+  const reveal = resources.getByRole('button', { name: 'Show in Finder', exact: true })
+  await expect(reveal).toBeVisible()
+  await reveal.click()
+  await resources.getByRole('button', { name: 'Installation instructions', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('An installer may still be running')
+  await expect(dialog.getByText('Open-Science-1.0.12-mac-arm64.zip', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Unzip the file.', { exact: false })).toBeVisible()
+  await dialog.getByRole('button', { name: 'Back to update', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeVisible()
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { updateFixture: { actions: Record<string, number> } }).updateFixture
+          .actions
+    )
+  ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 1 })
+})
+
+test('returns from About instructions on Escape without closing Settings', async ({ page }) => {
+  await page.goto('/update-dialog.html?settings&continuous&short')
+  const dialog = page.getByRole('dialog', { name: 'General', exact: true })
+  const instructions = dialog
+    .getByTestId('manual-update-links')
+    .getByRole('button', { name: 'Installation instructions', exact: true })
+  await instructions.click()
+  await expect(dialog.getByRole('button', { name: 'Back to settings', exact: true })).toBeFocused()
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeVisible()
+  await expect(instructions).toBeFocused()
+  await expect(dialog.getByText('About', { exact: true })).toBeVisible()
+})
+
+test('offers manual links in check failure prose and preserves retry without release notes', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?continuous&stage=check-error')
+  const dialog = page.getByRole('dialog')
+  const notice = dialog.locator('section').filter({ has: page.getByRole('alert') })
+  await expect(notice).toContainText('Could not reach the update server.')
+  await expect(
+    notice.getByRole('link', { name: 'download from the website', exact: true })
+  ).toBeVisible()
+  await expect(
+    notice.getByRole('button', { name: 'installation instructions', exact: true })
+  ).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('region', { name: "What's new" })).toHaveCount(0)
+  await expect(dialog.getByTestId('manual-update-links')).toBeVisible()
+})
+
+for (const query of ['continuous&stage=downloading', 'short']) {
+  test(`returns from instructions when Escape arrives during Back autofocus (${query})`, async ({
+    page
+  }) => {
+    await page.goto(`/update-dialog.html?${query}`)
+    const dialog = page.getByRole('dialog')
+    const instructions = dialog
+      .getByTestId('manual-update-links')
+      .getByRole('button', { name: 'Installation instructions', exact: true })
+    await page.evaluate(() => {
+      const escapeOnFocus = (event: FocusEvent): void => {
+        const target = event.target
+        if (
+          !(target instanceof HTMLButtonElement) ||
+          target.getAttribute('aria-label') !== 'Back to update'
+        )
+          return
+        document.removeEventListener('focusin', escapeOnFocus, true)
+        target.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      }
+      document.addEventListener('focusin', escapeOnFocus, true)
+    })
+    await instructions.click()
+    await expect(dialog.getByRole('button', { name: 'Back to update', exact: true })).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await expect(instructions).toBeFocused()
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { updateFixture: { actions: Record<string, number> } })
+            .updateFixture.actions
+      )
+    ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 0 })
+  })
+}
+
+for (const width of [320, 560]) {
+  test(`aligns About manual links with version text at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 620 })
+    await page.goto('/update-dialog.html?settings&continuous&short')
+    const dialog = page.getByRole('dialog', { name: 'General', exact: true })
+    const appName = dialog.getByText('Open-Science', { exact: true })
+    const resources = dialog.getByTestId('manual-update-links')
+    const website = resources.getByRole('link', { name: 'Download from website', exact: true })
+    const identityBox = (await appName.boundingBox())!
+    const linkBox = (await website.boundingBox())!
+    expect(Math.abs(identityBox.x - linkBox.x)).toBeLessThan(1)
+    expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+  })
+}
+
+test('keeps instructions open when a background update leaves the legacy error surface', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?continuous&stage=ready&short')
+  await page.evaluate(() => {
+    const fixture = (
+      window as unknown as {
+        updateFixture: { setStatus(status: { state: 'ready'; error: string }): void }
+      }
+    ).updateFixture
+    fixture.setStatus({ state: 'ready', error: 'The update action could not be completed.' })
+  })
+  const dialog = page.getByRole('dialog')
+  await dialog
+    .getByTestId('manual-update-links')
+    .getByRole('button', { name: 'Installation instructions', exact: true })
+    .click()
+  await page.evaluate(() => {
+    const fixture = (
+      window as unknown as {
+        updateFixture: { setStatus(status: { state: 'available'; error: undefined }): void }
+      }
+    ).updateFixture
+    fixture.setStatus({ state: 'available', error: undefined })
+  })
+  await expect(dialog).toHaveAccessibleName('Installation instructions')
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+  const back = dialog.getByRole('button', { name: 'Back to update', exact: true })
+  await expect(back).toBeFocused()
+  await back.click()
+  await expect(
+    dialog
+      .getByTestId('manual-update-links')
+      .getByRole('button', { name: 'Installation instructions', exact: true })
+  ).toBeFocused()
+  await expect(dialog.getByRole('button', { name: /^Download update/ })).toBeVisible()
+})
+
+for (const navigation of ['keyboard', 'pointer']) {
+  test(`returns from About instructions after ${navigation} focus leaves the guide`, async ({
+    page
+  }, testInfo) => {
+    await page.goto('/update-dialog.html?settings&continuous&short')
+    const dialog = page.getByRole('dialog', { name: 'General', exact: true })
+    const instructions = dialog
+      .getByTestId('manual-update-links')
+      .getByRole('button', { name: 'Installation instructions', exact: true })
+    await instructions.click()
+    await expect(
+      dialog.getByRole('button', { name: 'Back to settings', exact: true })
+    ).toBeFocused()
+    const surroundingControl = dialog.getByRole('button', { name: 'Appearance', exact: true })
+    if (navigation === 'keyboard') await page.keyboard.press('Shift+Tab')
+    else await surroundingControl.click()
+    await expect(surroundingControl).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Back to settings', exact: true })).toHaveCount(
+      0
+    )
+    await expect(instructions).toBeFocused()
+    await page.screenshot({
+      path: testInfo.outputPath(`settings-guide-escape-after-${navigation}.png`)
+    })
+  })
+}

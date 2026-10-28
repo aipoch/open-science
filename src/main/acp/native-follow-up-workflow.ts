@@ -653,15 +653,19 @@ class AcpNativeFollowUpWorkflow {
     const fetchImpl = this.options.fetchImpl ?? fetch
     try {
       const base = api.baseUrl.endsWith('/') ? api.baseUrl : `${api.baseUrl}/`
-      const url = new URL(openCodeHttpFollowUpPath(providerSessionId).replace(/^\//, ''), base)
-      if (cwd) url.searchParams.set('directory', cwd)
+      const url = new URL(
+        openCodeHttpFollowUpPath(providerSessionId, api.version).replace(/^\//, ''),
+        base
+      )
+      if (cwd && api.version !== 2) url.searchParams.set('directory', cwd)
+      const body = buildOpenCodeHttpFollowUpBody(parts, api.version)
       const response = await fetchImpl(url, {
         method: 'POST',
         headers: {
           authorization: api.authorization,
           'content-type': 'application/json'
         },
-        body: JSON.stringify(buildOpenCodeHttpFollowUpBody(parts)),
+        body: JSON.stringify(body),
         signal
       })
       if (!response.ok) return false
@@ -671,7 +675,12 @@ class AcpNativeFollowUpWorkflow {
       } catch {
         return false
       }
-      return parseOpenCodeHttpFollowUp(result, firstOpenCodeFollowUpText(parts))
+      return parseOpenCodeHttpFollowUp(
+        result,
+        'text' in body ? body.text : firstOpenCodeFollowUpText(parts),
+        api.version,
+        providerSessionId
+      )
     } catch {
       return false
     }

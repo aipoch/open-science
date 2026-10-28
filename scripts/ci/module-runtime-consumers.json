@@ -264,5 +264,6 @@
   ],
   "src/renderer/src/pages/workspace/replay/results/RecordedResourcePreview.tsx": [
     "src/main/replay-viewer/recorded-resource-context-menu.integration.test.ts"
-  ]
+  ],
+  "packages/open-science/cli.mjs": ["packages/open-science/mcp.integration.test.ts"]
 }

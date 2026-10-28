@@ -420,7 +420,12 @@ export const sanitizeSession = (
   if (
     sanitized.status === 'waiting-for-user' &&
     !activities.some(
-      (activity) => activity.elicitation?.state === 'pending' && activity.elicitation.durable
+      (activity) =>
+        activity.elicitation &&
+        (activity.elicitation.state === 'pending' ||
+          activity.elicitation.continuationPending ||
+          activity.elicitation.continuationRecovery) &&
+        activity.elicitation.durable
     )
   ) {
     // A user-input wait is restorable only while its durable question remains actionable.

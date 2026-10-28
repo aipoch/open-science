@@ -3,7 +3,7 @@ import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/compone
 import { ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ReplayScene, ReplayStep } from '../../../../../shared/replay'
-import { useReplayTranslation } from './replay-presentation'
+import { replayAutomaticEvent, useReplayTranslation } from './replay-presentation'
 import { replayExcerpt } from './replay-content'
 import type { RecordedExecutionState } from '@/lib/replay/recorded-execution'
 import { ReplayExecutionState } from './ReplayExecutionState'
@@ -33,6 +33,10 @@ export function ReplayCurrentContext({
     .filter((step) => step.message)
     .at(-1)
   const message = latest?.message
+  const automaticEvent = replayAutomaticEvent(message, t)
+  const stepAutomaticEvent = replayAutomaticEvent(scene.step?.message, t)
+  const messageContent = automaticEvent?.description ?? message?.content ?? ''
+  const messageLabel = automaticEvent?.title ?? (message?.role === 'user' ? t('User') : t('Agent'))
   const description =
     scene.step?.kind === 'notebook'
       ? t('Notebook')
@@ -64,7 +68,11 @@ export function ReplayCurrentContext({
                   : t('Research replay')}
               </span>
               <span className="min-w-0 flex-1 truncate text-left">
-                {scene.step?.title || (message ? replayExcerpt(message.content, 180) : description)}
+                {stepAutomaticEvent?.title ||
+                  scene.step?.title ||
+                  (message
+                    ? (automaticEvent?.title ?? replayExcerpt(messageContent, 180))
+                    : description)}
               </span>
               <ChevronDown size={12} className="shrink-0 text-text-300" aria-hidden="true" />
             </Button>
@@ -78,7 +86,9 @@ export function ReplayCurrentContext({
             </p>
             <p className="whitespace-pre-wrap break-words">
               {message
-                ? replayExcerpt(message.content, 6000)
+                ? automaticEvent
+                  ? `${automaticEvent.title}: ${automaticEvent.description}`
+                  : replayExcerpt(messageContent, 6000)
                 : t('No original conversation is saved for this step.')}
             </p>
             {executionState ? (
@@ -135,9 +145,9 @@ export function ReplayCurrentContext({
         <p
           className={`${expanded ? 'max-h-32 overflow-auto whitespace-pre-wrap' : 'line-clamp-2'} mt-1 break-words text-text-200`}
         >
-          <span className="font-medium">{message.role === 'user' ? t('User') : t('Agent')}</span>
+          <span className="font-medium">{messageLabel}</span>
           {': '}
-          {replayExcerpt(message.content, expanded ? 6000 : 400)}
+          {replayExcerpt(messageContent, expanded ? 6000 : 400)}
         </p>
       ) : (
         <p className="mt-1 text-text-300">

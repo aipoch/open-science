@@ -80,15 +80,21 @@ async function fixture(timeoutMs?: number, candidateId?: string) {
     }
   )
   let attempts = 0
+  let recoveryTimeoutMs = timeoutMs
   const recovery = createDesktopRuntimeRecovery({
     client: first,
     connect: async () => (attempts++ === 0 ? candidate : attach(id)),
     activate,
     onState: () => {},
-    timeoutMs
+    get timeoutMs() {
+      return recoveryTimeoutMs
+    }
   })
   recovery.disconnect(first)
   return {
+    restoreRecoveryTimeout: () => {
+      recoveryTimeoutMs = undefined
+    },
     first,
     candidate,
     recovery,
@@ -170,6 +176,8 @@ it('keeps the cleanup fence on deadline and allows a fresh attempt after settlem
   expect(value.releaseAdmission).not.toHaveBeenCalled()
   value.finish()
   await vi.waitFor(() => expect(value.releaseAdmission).toHaveBeenCalledOnce())
+  // Only the blocked attempt has a forced deadline; real pipe reattachment uses its normal budget.
+  value.restoreRecoveryTimeout()
   await value.recovery.reconnect()
   expect(value.recovery.state().phase).toBe('connected')
   const recovered = value.activate.mock.calls[0][0] as DesktopRuntimeClient

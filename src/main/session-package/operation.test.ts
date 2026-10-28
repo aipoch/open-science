@@ -379,3 +379,28 @@ it('keeps weighted import progress monotonic through stage changes and resets fo
     expect(owner.snapshot?.progress.overallPercent).toBe(4)
   })
 })
+
+it('publishes catalog download ownership from the first snapshot and hands off only when cleared', async () => {
+  const snapshots: import('../../shared/session-package').PackageOperationSnapshot[] = []
+  const owner = new SessionPackageOperation((snapshot) => snapshots.push(snapshot))
+  await owner.run(
+    'import',
+    undefined,
+    async () => {
+      expect(snapshots[0].useCaseDownload).toEqual({ slug: 'research', completedBytes: 0 })
+      owner.reportUseCaseDownload(0, 100)
+      owner.reportUseCaseDownload(35, 100)
+      expect(snapshots.at(-1)?.useCaseDownload?.completedBytes).toBe(35)
+      expect(owner.snapshot?.useCaseDownload).toEqual({
+        slug: 'research',
+        completedBytes: 35,
+        totalBytes: 100
+      })
+      owner.finishUseCaseDownload()
+      expect(owner.snapshot?.useCaseDownload).toBeUndefined()
+    },
+    {},
+    undefined,
+    'research'
+  )
+})

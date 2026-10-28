@@ -52,7 +52,7 @@ export type ChatArtifact = PersistedArtifact & { isPublished?: boolean }
 
 export type ElicitationEditDraft = {
   requestId: string
-  values: Record<string, ElicitationValue | undefined>
+  values: Record<string, ElicitationValue | { status: 'skipped' } | undefined>
   activeQuestionIndex: number
 }
 

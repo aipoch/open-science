@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.test.tsx",
+    "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx",
     "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
     "src/renderer/src/pages/workspace/LiteratureCandidateStatus.tsx",
     "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.render.test.tsx",
@@ -19,6 +21,7 @@
     "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx"
   ],
   "interfacePaths": [
+    "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx",
     "src/renderer/src/pages/workspace/LiteratureCandidateStatus.tsx",
     "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceLiteratureToolCard.tsx",
@@ -32,6 +35,7 @@
   ],
   "testFiles": {
     "owner": [
+      "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",

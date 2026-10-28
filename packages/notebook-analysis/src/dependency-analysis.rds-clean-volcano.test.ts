@@ -12,11 +12,9 @@ import cells from './reported-rds-clean-volcano.fixture.json'
 // Owned keys can still dispatch xtfrm; unproven ordering keeps effects partial.
 // Known paths and producer/consumer evidence remain checked independently.
 
-it('captures the producer and records ordinary ownership at saveRDS', async () => {
+it('withholds producer ownership after unproved distinct-value methods', async () => {
   const { facts } = await analyzeRNotebookSource(cells[7].script)
-  expect(facts.serializedValueWrites).toEqual([
-    { path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }
-  ])
+  expect(facts.serializedValueWrites ?? []).toEqual([])
   expect(await analyzeNotebookSourceFileAccess('r', cells[7].script)).toMatchObject({
     readState: 'partial',
     writeState: 'partial',
@@ -37,9 +35,10 @@ it('requires matching generation evidence for the RDS reader', async () => {
       verifiedSerializedValues: [{ path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }]
     })
   ).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    // RDS ownership does not prove the column class used by abs.
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     reads: ['diff_df_clean.rds'],
     writes: ['diagonal_volcano.png']
   })
@@ -92,7 +91,15 @@ it.each([
   async (newEpoch, provenProducer) => {
     const root = await mkdtemp(join(tmpdir(), 'rds-clean-history-'))
     const runs = cells.map((c) => makeRun(c.index))
-    if (provenProducer) runs[7].script = 'df <- data.frame(x=1:3);saveRDS(df,"diff_df_clean.rds")'
+    if (provenProducer) {
+      runs[7].script = 'df <- data.frame(x=1:3);saveRDS(df,"diff_df_clean.rds")'
+      runs[8].script = 'df <- readRDS("diff_df_clean.rds");head(df)'
+    }
+    // Isolate RDS proof from earlier unproved scientific methods.
+    if (provenProducer) {
+      runs[7].kernelEpochId = 'producer-epoch'
+      runs[8].kernelEpochId = 'producer-epoch'
+    }
     if (newEpoch) runs[8].kernelEpochId = 'new-epoch'
     try {
       await evidence(root, runs[7], 'created', 'a'.repeat(64))
@@ -125,7 +132,10 @@ it.each([
       expect(context?.verifiedSerializedValues ?? []).toEqual(
         provenProducer ? [{ path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }] : []
       )
-      if (provenProducer)
+      if (provenProducer) {
+        expect(
+          (await analyzeRNotebookSource(runs[8].script, context)).facts.copyOnModifyNames
+        ).toContain('df')
         expect(
           (
             await analyzeNotebookSourceFileAccess(
@@ -135,9 +145,12 @@ it.each([
             )
           ).externalState
         ).toBe('complete')
+      }
       await evidence(root, runs[8], 'present-before', 'b'.repeat(64))
       const changed = await reopened.project({ projectId: 'p', sessionId: 's', throughRunId: '8' })
-      expect(changed.stalenessByRunId['8'].state).toBe('unknown')
+      // A plain reader remains read-only; changed generations withdraw its
+      // ordinary-value proof rather than make reading itself an opaque call.
+      expect(changed.stalenessByRunId['8'].state).toBe(provenProducer ? 'clear' : 'unknown')
       const changedContext = await reopened.sourceFileAccessContext({
         projectId: 'p',
         sessionId: 's',
@@ -147,6 +160,11 @@ it.each([
         kernelEpochId: runs[8].kernelEpochId!
       })
       expect(changedContext?.verifiedSerializedValues ?? []).toEqual([])
+      if (provenProducer)
+        expect(
+          (await analyzeRNotebookSource(runs[8].script, changedContext)).facts.copyOnModifyNames ??
+            []
+        ).not.toContain('df')
     } finally {
       generations.delete(root)
       await rm(root, { recursive: true, force: true })

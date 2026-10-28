@@ -2203,6 +2203,9 @@ describe('manage_packages tool', () => {
     // Routing, restart, and the stop-and-report boundary are all stated.
     expect(doc).toContain('language="python"')
     expect(doc).toContain('language="r"')
+    expect(doc).toContain('Bioconda does not support Windows')
+    expect(doc).toContain('On Windows, use installer="biocmanager"')
+    expect(doc).toContain('case-sensitive R package names')
     expect(doc).toContain('notebook_restart')
     expect(doc).toMatch(/report .*user|tell the user/i)
   })

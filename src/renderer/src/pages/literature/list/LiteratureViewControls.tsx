@@ -1,3 +1,4 @@
+import type { LiteratureReadingStatus } from '../workflows/useLiteratureReadingStatus'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -40,6 +41,8 @@ export function LiteratureViewControls({
   itemTypeLabels,
   filterHasPdf,
   setFilterHasPdf,
+  filterReadingStatus,
+  setFilterReadingStatus,
   journalFilterDatasets,
   journalAttributeFilters,
   setJournalAttributeFilters,
@@ -123,6 +126,8 @@ export function LiteratureViewControls({
     >
   >
   itemTypeLabels: Record<LiteratureItemType, string>
+  filterReadingStatus: LiteratureReadingStatus | 'all'
+  setFilterReadingStatus: React.Dispatch<React.SetStateAction<LiteratureReadingStatus | 'all'>>
   filterHasPdf: 'with' | 'all' | 'without'
   setFilterHasPdf: React.Dispatch<React.SetStateAction<'with' | 'all' | 'without'>>
   journalFilterDatasets: JournalDataset[]
@@ -240,6 +245,8 @@ export function LiteratureViewControls({
             itemTypeLabels={itemTypeLabels}
             hasPdf={filterHasPdf}
             onHasPdfChange={setFilterHasPdf}
+            readingStatus={filterReadingStatus}
+            onReadingStatusChange={setFilterReadingStatus}
             yearFilter={yearFilter}
             datasets={journalFilterDatasets}
             journalFilters={journalAttributeFilters}

@@ -20,6 +20,7 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
+import { managedSkillReadRoots } from './managed-skill-read-roots'
 import {
   configureWindowsNotebookRuntime,
   type WindowsNotebookRuntime
@@ -192,11 +193,14 @@ const blockedDestinationKey = (sessionId: string, hostname: string): string =>
   `${sessionId}\0${hostname}`
 
 type NotebookNetworkSandboxOwnerOptions = Readonly<{
+  configRoot?: string
   windowsRuntimeRoot?: string
   packaged?: boolean
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
+  hasFullAccess?: (sessionId: string) => boolean
+  subscribeFullAccess?: (sessionId: string, listener: (allowed: boolean) => void) => () => void
   getFolderRestrictionEnabled?: () => Promise<boolean>
   persistAlwaysAllow: (hostname: string) => Promise<NotebookNetworkSettings>
   requestDecision: (request: NotebookNetworkDecisionRequest) => Promise<NotebookNetworkDecision>
@@ -458,9 +462,20 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       throw new Error('Notebook local service directory requires an explicit write grant.')
     }
     if (
+      this.platform === 'win32' &&
+      invocation.target?.kind !== 'wsl2' &&
+      invocation.windowsProtectionRequired === undefined
+    ) {
+      // Capture mode before validating interpreter identity, and keep it through launch.
+      invocation = {
+        ...invocation,
+        windowsProtectionRequired: await this.windowsProtectionConfigured()
+      }
+    }
+    if (
       this.windowsRuntime &&
       invocation.target?.kind !== 'wsl2' &&
-      (await this.windowsProtectionConfigured())
+      invocation.windowsProtectionRequired
     ) {
       if (invocation.runtime === 'bash' || invocation.runtime === 'repl') {
         const runtime = this.windowsRuntime.get()
@@ -505,10 +520,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
 
   private async prepare(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
     const preparationStartedAt = performance.now()
+    const nativeWindows = this.platform === 'win32' && invocation.target?.kind !== 'wsl2'
+    const windowsProtectionRequired = nativeWindows
+      ? invocation.windowsProtectionRequired
+      : undefined
     const restrictFolders =
       invocation.confinement !== undefined ||
-      (this.platform === 'win32' && invocation.target?.kind !== 'wsl2') ||
-      (await this.options.getFolderRestrictionEnabled?.()) !== false
+      (nativeWindows
+        ? windowsProtectionRequired
+        : (await this.options.getFolderRestrictionEnabled?.()) !== false)
     if (
       invocation.windowsProtectionRequired === true &&
       this.platform === 'win32' &&
@@ -528,6 +548,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const grantedRoots = invocation.confinement
       ? []
       : ((await this.options.getGrantedLocalRoots?.()) ?? [])
+    const skillReadRoots =
+      !invocation.confinement && this.options.configRoot
+        ? await managedSkillReadRoots(this.options.configRoot)
+        : []
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(target)
     this.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {
@@ -538,6 +562,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       TMP: commandTempRoot
     }
     let activeExecutionGrants: ReadonlySet<string> = new Set()
+    let unsubscribeFullAccess: (() => void) | undefined
     let executionActive = false
     let activeCommandText = invocation.commandText
     let activeExecutionId = invocation.executionReference
@@ -577,7 +602,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ? { executable: invocation.executable, args: invocation.args }
           : {}),
         ...(invocation.electronAsNode ? { electronAsNode: true } : {}),
-        windowsProtectionRequired: invocation.windowsProtectionRequired,
+        windowsProtectionRequired,
         windowsRuntimeAccessRequired: invocation.windowsRuntimeAccessRequired,
         cwd: invocation.cwd,
         env,
@@ -597,6 +622,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           privateRoot: homedir(),
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,
+            ...skillReadRoots,
             ...(invocation.confinement ||
             invocation.target?.kind === 'wsl2' ||
             this.platform === 'win32'
@@ -621,6 +647,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           deniedReadRoots: invocation.filesystem.deniedReadRoots,
           deniedWriteRoots: [
             ...invocation.filesystem.deniedWriteRoots,
+            ...skillReadRoots,
             ...protectedWriteRoots([
               ...invocation.filesystem.readWriteRoots,
               ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
@@ -630,6 +657,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         },
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
+          if (activeSignal?.aborted) return false
           const confinement = invocation.confinement
           if (
             confinement &&
@@ -825,6 +853,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       retry: () => cleanup(cleanupReason!, cleanupOutcome!)
     }
     const cleanup: NotebookSandboxedSpawn['cleanup'] = (reason, processOutcome) => {
+      unsubscribeFullAccess?.()
+      unsubscribeFullAccess = undefined
       cleanupReason ??= reason
       cleanupOutcome ??= processOutcome
       if (cleanupPromise) return cleanupPromise
@@ -941,7 +971,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ? { requestProcessTreeTermination: wrapped.requestProcessTreeTermination }
         : {}),
       ...(wrapped.confirmProcessState ? { confirmProcessState: wrapped.confirmProcessState } : {}),
-      ...(this.platform === 'win32' && invocation.windowsProtectionRequired !== undefined
+      ...(windowsProtectionRequired !== undefined
         ? {
             beginSpawn: () => {
               if (
@@ -965,6 +995,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         }
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
+        unsubscribeFullAccess = this.options.subscribeFullAccess?.(
+          invocation.sessionId,
+          (allowed) => {
+            if (!allowed) wrapped.resetNetworkConnections()
+          }
+        )
         executionActive = true
         activeCommandText = request?.commandText ?? invocation.commandText
         activeExecutionId = request?.executionReference ?? invocation.executionReference
@@ -1003,6 +1039,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           if (ended) return
           ended = true
           activeExecutionGrants = new Set()
+          unsubscribeFullAccess?.()
+          unsubscribeFullAccess = undefined
           executionActive = false
           wrapped.setExecutionActive(false)
           wrapped.resetNetworkConnections()
@@ -1029,6 +1067,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (!normalized.ok) {
       return this.networkAccessResult(request.hostname, 'blocked', request.runtime, {
         validationReason: normalized.reason
+      })
+    }
+    if (!request.signal?.aborted && this.options.hasFullAccess?.(request.sessionId)) {
+      return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime, {
+        message:
+          'The current session allows public network access without approval. Private-network and address checks still apply.'
       })
     }
     const settings = normalizeNotebookNetworkSettings(
@@ -2112,6 +2156,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (request.signal.aborted) return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
+    // The gateway still enforces private-address and explicit-deny rules. Read live authority
+    // on every connection/probe so another session or a later downgrade cannot inherit access.
+    if (this.options.hasFullAccess?.(sessionId)) return Promise.resolve(true)
     if (allowedNetworkHosts.has(normalized.hostname)) return Promise.resolve(true)
     if (commandGrants.has(normalized.hostname)) return Promise.resolve(true)
     if (request.purpose === 'probe') return Promise.resolve(false)

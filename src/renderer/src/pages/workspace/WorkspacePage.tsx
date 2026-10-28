@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import {
   LibraryReferenceActionsContext,
   LibraryPreviewNavigationContext
@@ -670,6 +671,18 @@ const WorkspacePage = ({
     !activeSession?.importedResearch &&
     !activeSessionHasSendPreparation &&
     activeSession?.status !== 'waiting-plan-approval'
+  const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
+  const [hadPersistenceReady, setHadPersistenceReady] = useState(isSessionPersistenceReady)
+  if (isSessionPersistenceReady && !hadPersistenceReady) setHadPersistenceReady(true)
+  // The local draft is already scoped and persisted independently of the service. Keep its editor
+  // focusable while reconnecting; submission, attachments and session mutations keep their gates.
+  const canEditLocalDraft =
+    canEditDraft ||
+    (hadPersistenceReady &&
+      recoveryPhase !== 'connected' &&
+      !activeSession?.packageOrigin &&
+      !activeSessionHasSendPreparation &&
+      activeSession?.status !== 'waiting-plan-approval')
   const composerHistoryPolicy = useMemo(
     () => ({
       catalogSkillIds,
@@ -1957,6 +1970,7 @@ const WorkspacePage = ({
                   retryResearchSourceContext: retrySourceContext,
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
+                  canEditLocalDraft,
                   persistenceBlocked: persistenceBlockedSessionIds.includes(
                     activeSession?.id ?? ''
                   ),

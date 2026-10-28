@@ -951,6 +951,167 @@ describe('installPackages', () => {
     })
   })
 
+  it.each(
+    [
+      'unsupported request',
+      'bioconductor-gsva does not exist (perhaps a typo or a missing channel).'
+    ].flatMap((problem) => [
+      { problem, approvedPlan: false },
+      { problem, approvedPlan: true }
+    ])
+  )(
+    'explains how to retry unavailable Windows Bioconductor packages: $problem (approved plan: $approvedPlan)',
+    async ({ problem, approvedPlan }) => {
+      // Replay the Windows GSVA dry-run response through the real bounded process
+      // capture used by production before invoking the public installer.
+      const solverFailure = await defaultSpawn(
+        process.execPath,
+        [
+          '-e',
+          `process.stdout.write(${JSON.stringify(JSON.stringify({ solver_problems: [problem], success: false }))}); process.exitCode = 1`
+        ],
+        undefined,
+        undefined,
+        undefined,
+        true
+      )
+      const { spawn, calls } = scriptedSpawn([
+        ...(approvedPlan ? [safeRPlan] : []),
+        solverFailure,
+        fail
+      ])
+      const result = await installPackages(
+        { language: 'r', packages: ['dplyr', 'bioconductor-gsva'] },
+        {
+          ...base,
+          spawn,
+          micromambaEnv: {
+            platform: 'win32',
+            env: { PATH: 'C:\\Windows' },
+            selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+          }
+        }
+      )
+
+      expect(result.fallbackUsed).toBe(false)
+      expect(result.error).toContain('Bioconda does not support Windows')
+      expect(result.error).toContain('installer="biocmanager"')
+      expect(result.error).toContain('GSVA')
+      expect(result).toMatchObject({
+        ok: false,
+        needsRestart: false,
+        method: 'conda',
+        fallbackUsed: false,
+        attempts: [expect.objectContaining({ status: 'failed', mutationRisk: 'none' })]
+      })
+      expect(result.log).toContain(problem)
+      expect(calls).toHaveLength(approvedPlan ? 2 : 1)
+      if (approvedPlan) expect(result.log).toContain('r-requested-package')
+    }
+  )
+
+  it('retains Windows Bioconductor guidance when the solver response exceeds the log limit', async () => {
+    const solverFailure = await defaultSpawn(
+      process.execPath,
+      [
+        '-e',
+        `process.stdout.write(JSON.stringify({ solver_problems: ['unsupported request'], success: false, padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}) })); process.exitCode = 1`
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+    expect(solverFailure.stdoutDroppedBytes).toBeGreaterThan(0)
+    const { spawn, calls } = scriptedSpawn([safeRPlan, solverFailure])
+    const result = await installPackages(
+      { language: 'r', packages: ['bioconductor-gsva'] },
+      {
+        ...base,
+        spawn,
+        micromambaEnv: {
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows' },
+          selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+        }
+      }
+    )
+
+    expect(result.error).toContain('installer="biocmanager"')
+    expect(result.fallbackUsed).toBe(false)
+    expect(calls).toHaveLength(2)
+  })
+
+  it.each([
+    ['Access denied', 'permission'],
+    ['HTTP 503 while fetching repodata', 'network'],
+    ['unsatisfiable dependency constraints', 'solver-failed']
+  ])(
+    'keeps unrelated Windows Bioconductor failures separate from installer guidance: %s',
+    async (diagnostic, reason) => {
+      const { spawn, calls } = scriptedSpawn([
+        {
+          code: 1,
+          stdout: JSON.stringify({ solver_problems: [diagnostic], success: false }),
+          stderr: ''
+        }
+      ])
+      const result = await installPackages(
+        { language: 'r', packages: ['bioconductor-gsva'] },
+        {
+          ...base,
+          spawn,
+          micromambaEnv: {
+            platform: 'win32',
+            env: { PATH: 'C:\\Windows' },
+            selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+          }
+        }
+      )
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: 'conda install failed.',
+        fallbackUsed: false
+      })
+      expect(result.log).toContain(diagnostic)
+      expect(result.attempts).toEqual([expect.objectContaining({ reason })])
+      expect(calls).toHaveLength(1)
+    }
+  )
+
+  it('does not suggest another installer after a possibly partial Windows Bioconductor transaction', async () => {
+    const { spawn, calls } = scriptedSpawn([
+      safeRPlan,
+      {
+        code: 1,
+        stdout: JSON.stringify({
+          success: false,
+          solver_problems: ['unsupported request'],
+          actions: { LINK: [{ name: 'r-dplyr', version: '1.0.0' }] }
+        }),
+        stderr: ''
+      }
+    ])
+    const result = await installPackages(
+      { language: 'r', packages: ['dplyr', 'bioconductor-gsva'] },
+      {
+        ...base,
+        spawn,
+        micromambaEnv: {
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows' },
+          selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+        }
+      }
+    )
+
+    expect(result).toMatchObject({ ok: false, error: 'conda install failed.', fallbackUsed: false })
+    expect(result.attempts).toEqual([expect.objectContaining({ mutationRisk: 'possible' })])
+    expect(result.log).toContain('unsupported request')
+    expect(calls).toHaveLength(2)
+  })
+
   it.skipIf(!process.env.OPEN_SCIENCE_TEST_R_ENV).each([false, true])(
     'uses the configured CRAN mirror for mixed BiocManager installation (bootstrap: %s)',
     async (bootstrap) => {

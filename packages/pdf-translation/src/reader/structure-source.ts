@@ -6,7 +6,10 @@ import type { PdfTranslationExtraction } from './extraction.js'
 
 /** Prepare cached structure, or project safe crops onto an existing translation snapshot. */
 export async function applyCachedPdfStructureSources(
-  args: Parameters<typeof applyCachedPdfTableSources>[0] & { preserveUnitIdentity?: boolean }
+  args: Parameters<typeof applyCachedPdfTableSources>[0] &
+    Pick<Parameters<typeof applyCachedPdfFigureSources>[0], 'nativeDocumentFactory'> & {
+      preserveUnitIdentity?: boolean
+    }
 ): Promise<{ extraction: PdfTranslationExtraction; retainedUnitIds: readonly string[] }> {
   const original = args.extraction
   // Existing heuristic crops are not evidence for suppressing saved translations.
@@ -46,13 +49,25 @@ export async function applyCachedPdfStructureSources(
     .map((unit) => unit.id)
   if (!retainedUnitIds.length) return { extraction: original, retainedUnitIds: [] }
   const retained = new Set(retainedUnitIds)
+  const originalRegions = original.source.originalRegions ?? []
+  // Rechecking a saved edition must not append an already retained native crop.
+  const additionalRegions = regions.filter(
+    (region) =>
+      !originalRegions.some(
+        (existing) =>
+          existing.pageNumber === region.pageNumber &&
+          (['x', 'y', 'width', 'height'] as const).every(
+            (key) => existing.rect[key] === region.rect[key]
+          )
+      )
+  )
   return {
     retainedUnitIds: Object.freeze(retainedUnitIds),
     extraction: Object.freeze({
       ...original,
       source: createPdfTranslationSource({
         ...original.source,
-        originalRegions: [...(original.source.originalRegions ?? []), ...regions],
+        originalRegions: [...originalRegions, ...additionalRegions],
         units: original.source.units.map((unit) =>
           retained.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
         )

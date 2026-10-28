@@ -102,6 +102,7 @@ it('preserves every value, ID, relationship, receipt and unrelated trigger acros
     applied: [
       '0049_pascalcase_table_names',
       '0050_literature_translation',
+      '0051_literature_reading_status',
       '0051_session_research_membership'
     ]
   })
@@ -167,6 +168,7 @@ it('rolls back names, records and the ledger on failure and restores FK enforcem
     applied: [
       '0049_pascalcase_table_names',
       '0050_literature_translation',
+      '0051_literature_reading_status',
       '0051_session_research_membership'
     ]
   })

@@ -39,6 +39,7 @@ it('installs the Bookmark table with durable ownership, JSON, and paging constra
       '0048_pdf_annotation_sharing',
       '0049_pascalcase_table_names',
       '0050_literature_translation',
+      '0051_literature_reading_status',
       '0051_session_research_membership'
     ]
   })

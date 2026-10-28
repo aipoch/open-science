@@ -1,7 +1,9 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RuntimeStopError } from './runtime-stop-confirmation'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
-import type { UpdateStatus } from '../shared/update'
+import { UpdateLifecycleError, type UpdateStatus } from '../shared/update'
 import type { InstallationUpdateRecord } from './update/installation-protection'
 const state = vi.hoisted(() => ({
   record: undefined as InstallationUpdateRecord | undefined,
@@ -11,15 +13,17 @@ const state = vi.hoisted(() => ({
   finish: vi.fn(),
   check: vi.fn(),
   availability: vi.fn(),
+  exitOutcome: vi.fn(async () => 'clean'),
   alive: vi.fn(() => false)
 }))
+vi.mock('electron', () => ({}))
 vi.mock('./update/installation-reboot-recovery', () => ({
   recoverInstallationAfterSystemRestart: state.reboot
 }))
 vi.mock('./update/installation-protection', () => ({
   inspectInstallationUpdate: () => state.record,
   inspectInstallationAvailability: state.availability,
-  installationRootForEntry: () => '/tmp',
+  installationRootForEntry: () => tmpdir(),
   installationRecoveryStatus: (record: InstallationUpdateRecord) => ({
     phase: record.phase,
     runtime: record.stoppedClean ? 'stopped-clean' : 'running',
@@ -34,13 +38,14 @@ vi.mock('./update/installation-protection', () => ({
 }))
 vi.mock('./runtime-stop-confirmation', async (original) => ({
   ...(await original<typeof import('./runtime-stop-confirmation')>()),
-  isRuntimeProcessAlive: state.alive
+  isRuntimeProcessAlive: state.alive,
+  readRuntimeExitOutcome: state.exitOutcome
 }))
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 const config = {
-  configRoot: '/tmp/config',
-  dataRoot: '/tmp/data',
-  profilePath: '/tmp/profile',
+  configRoot: join(tmpdir(), 'config'),
+  dataRoot: join(tmpdir(), 'data'),
+  profilePath: join(tmpdir(), 'profile'),
   host: '127.0.0.1' as const,
   port: 44100,
   credentialStore: 'os' as const
@@ -56,7 +61,10 @@ function setup(
   verifyInstallerReady?: () => Promise<void>,
   legacyInstall?: (status: UpdateStatus) => boolean,
   preparation: Partial<
-    Pick<Parameters<typeof createDesktopUpdateIntegration>[0], 'flushRenderer'>
+    Pick<
+      Parameters<typeof createDesktopUpdateIntegration>[0],
+      'flushRenderer' | 'allowedProcessIds'
+    >
   > = {}
 ): {
   setClosing: ReturnType<typeof vi.fn>
@@ -77,7 +85,7 @@ function setup(
     launch,
     control: 'granted',
     generation: 'gen',
-    entryPath: '/tmp/entry',
+    entryPath: join(tmpdir(), 'entry'),
     startupOptions: config
   }))
   const reconnect = vi.fn().mockResolvedValue(undefined)
@@ -88,7 +96,7 @@ function setup(
       launch,
       control: 'granted',
       generation: 'gen',
-      entryPath: '/tmp/entry',
+      entryPath: join(tmpdir(), 'entry'),
       startupOptions: config
     }),
     processId: () => 123,
@@ -102,7 +110,7 @@ function setup(
   const verifyArtifact = vi.fn().mockResolvedValue({ version: '2', files: {} })
   const onHandoff = vi.fn()
   const hooks = createDesktopUpdateIntegration({
-    location: { installationRoot: '/tmp' },
+    location: { installationRoot: tmpdir() },
     client: () => client,
     currentVersion: '1',
     allowedProcessIds: () => [],
@@ -142,8 +150,8 @@ beforeEach(() => {
   state.availability.mockResolvedValue(undefined)
   state.begin.mockImplementation(async () => (state.record = { ...base }))
   state.advance.mockImplementation(
-    (_location, _id, phase, stoppedClean) =>
-      (state.record = { ...state.record!, phase, stoppedClean })
+    (_location, _id, phase, stoppedClean, runtimeExited) =>
+      (state.record = { ...state.record!, phase, stoppedClean, runtimeExited })
   )
   state.check.mockResolvedValue('unchanged')
   state.finish.mockReturnValue(config)
@@ -154,7 +162,7 @@ describe('Desktop installation orchestration', () => {
     state.reboot.mockResolvedValue({ intent: 'cancel', startupOptions: config })
     const { hooks, stop, restart } = setup()
     expect((await hooks.recoverInstall!()).outcome).toBe('recovered')
-    expect(state.reboot).toHaveBeenCalledWith({ installationRoot: '/tmp' }, 'op', {
+    expect(state.reboot).toHaveBeenCalledWith({ installationRoot: tmpdir() }, 'op', {
       version: '1',
       allowedProcessIds: expect.any(Function)
     })
@@ -205,7 +213,7 @@ describe('Desktop installation orchestration', () => {
     await hooks.prepareInstall!(status, {})
     await hooks.installGate!({})
     const result = await hooks.cancelInstall!()
-    expect(state.finish).toHaveBeenCalledWith({ installationRoot: '/tmp' }, 'op', 'cancel')
+    expect(state.finish).toHaveBeenCalledWith({ installationRoot: tmpdir() }, 'op', 'cancel')
     expect(restart).toHaveBeenCalledWith(config)
     expect(invoke).not.toHaveBeenCalledWith('desktop:update-abort')
     expect(result.outcome).toBe('cancelled')
@@ -342,7 +350,7 @@ describe('Desktop installation orchestration', () => {
     const { hooks, stop, restart, progress } = setup()
     const evidence = { processExited: true, lockHeld: false, exitRecord: 'failed' as const }
     stop.mockRejectedValueOnce(new RuntimeStopError('runtime-stop-unclean', evidence))
-    await expect(hooks.recoverInstall!()).rejects.toThrow('remaining processes')
+    await expect(hooks.recoverInstall!()).rejects.toThrow('directory ownership')
     expect(progress).toHaveBeenCalledWith({
       diagnostics: expect.stringContaining('"exitRecord": "failed"')
     })
@@ -358,6 +366,18 @@ describe('Desktop installation orchestration', () => {
     })
     expect(stop).toHaveBeenCalledOnce()
     expect(state.record?.stoppedClean).toBe(true)
+  })
+  it('accepts proven exit and directory release without inventing a clean receipt', async () => {
+    state.record = { ...base, phase: 'stopping' }
+    state.exitOutcome.mockResolvedValueOnce('failed')
+    const { hooks, stop } = setup()
+    expect(await hooks.recheckInstall!()).toMatchObject({
+      reason: undefined,
+      recovery: { phase: 'stopped' }
+    })
+    expect(stop).toHaveBeenCalledWith(undefined, false)
+    expect(state.record?.stoppedClean).toBe(false)
+    expect(state.record?.runtimeExited).toBe(true)
   })
   it('recovers a verified rollback through the core terminal-proof check', async () => {
     state.record = { ...base, phase: 'handoff', stoppedClean: true }
@@ -454,6 +474,140 @@ describe('legacy install for uncertified channels', () => {
     expect(setClosing).not.toHaveBeenCalledWith(true)
   })
 
+  it.each(['other-runtime', 'occupancy-unknown'] as const)(
+    'blocks %s after service exit and retries without contacting the stopped host',
+    async (detail) => {
+      const metrics = vi.fn(() => [process.pid, 789])
+      const flushRenderer = vi.fn(async () => {})
+      const { hooks, invoke, stop, refresh, onHandoff } = setup('desktop', undefined, legacy, {
+        allowedProcessIds: metrics,
+        flushRenderer
+      })
+      invoke.mockResolvedValue({ completed: false, reaped: false, stopAuthorized: true })
+      await hooks.prepareInstall!(status, {})
+      expect(await hooks.installGate!({})).toMatchObject({ runtimeStopped: true, reaped: false })
+      const busy = new UpdateLifecycleError(
+        'installation-busy',
+        'Another process is using this installation.',
+        {
+          phase: 'preparing',
+          runtime: 'running',
+          installation: 'unchanged',
+          canCancel: true,
+          canRecover: false,
+          canRetryInstall: false,
+          detail
+        }
+      )
+      state.availability.mockRejectedValue(busy)
+      await expect(hooks.beforeInstallHandoff!(status)).rejects.toMatchObject({
+        reason: 'installation-busy',
+        recovery: { runtime: 'stopped-unclean', canRecover: true, canRetryInstall: false, detail }
+      })
+      expect(onHandoff).not.toHaveBeenCalled()
+      expect(await hooks.recheckInstall!()).toMatchObject({
+        reason: 'installation-busy',
+        canForce: undefined,
+        recovery: { runtime: 'stopped-unclean', canRecover: true, canRetryInstall: false, detail }
+      })
+      await expect(hooks.prepareInstall!(status, { force: true })).rejects.toMatchObject({
+        reason: 'installation-busy'
+      })
+      expect(refresh).not.toHaveBeenCalled()
+      expect(invoke).toHaveBeenCalledTimes(1)
+      state.availability.mockImplementation(async (options) => {
+        expect(options).not.toHaveProperty('runtime')
+        expect(options.allowedProcessIds).toBe(metrics)
+        expect(options.allowedProcessIds()).toEqual([process.pid, 789])
+      })
+      expect(await hooks.recheckInstall!()).toMatchObject({
+        reason: undefined,
+        recovery: { runtime: 'stopped-unclean', canRetryInstall: true }
+      })
+      await hooks.prepareInstall!(status, {})
+      expect(await hooks.installGate!({})).toMatchObject({ runtimeStopped: true, reaped: false })
+      await hooks.beforeInstallHandoff!(status)
+      expect(onHandoff).toHaveBeenCalledOnce()
+      expect(stop).toHaveBeenCalledOnce()
+      expect(invoke).toHaveBeenCalledTimes(1)
+      expect(flushRenderer).toHaveBeenCalledTimes(2)
+      expect(refresh).not.toHaveBeenCalled()
+    }
+  )
+
+  it('restores the runtime through strategy handoff release and refuses retries while restoration is pending', async () => {
+    const { hooks, invoke, stop, restart, onHandoff, setClosing } = setup(
+      'desktop',
+      undefined,
+      legacy
+    )
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    state.availability.mockRejectedValue(new UpdateLifecycleError('installation-busy', 'occupied'))
+    await expect(hooks.beforeInstallHandoff!(status)).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    let restored!: () => void
+    restart.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          restored = resolve
+        })
+    )
+    hooks.releaseInstallHandoff!()
+    await vi.waitFor(() => expect(restart).toHaveBeenCalledWith(config))
+    await expect(hooks.prepareInstall!(status, {})).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    restored()
+    await vi.waitFor(() => expect(setClosing).toHaveBeenLastCalledWith(false))
+    state.availability.mockResolvedValue(undefined)
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    await hooks.beforeInstallHandoff!(status)
+    expect(stop).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(onHandoff).toHaveBeenCalledOnce()
+  })
+
+  it.each(['cancelInstall', 'recoverInstall'] as const)(
+    'keeps stopped configuration available for %s after a busy handoff',
+    async (action) => {
+      const { hooks, invoke, restart, onHandoff } = setup('desktop', undefined, legacy)
+      await hooks.prepareInstall!(status, {})
+      await hooks.installGate!({})
+      state.availability.mockRejectedValue(
+        new UpdateLifecycleError('installation-busy', 'occupied')
+      )
+      await expect(hooks.beforeInstallHandoff!(status)).rejects.toMatchObject({
+        reason: 'installation-busy'
+      })
+      expect(await hooks[action]!()).toMatchObject({ outcome: 'cancelled' })
+      expect(restart).toHaveBeenCalledWith(config)
+      expect(invoke).toHaveBeenCalledTimes(1)
+      expect(onHandoff).not.toHaveBeenCalled()
+    }
+  )
+
+  it('reports a failed runtime restoration after the strategy releases a blocked legacy handoff', async () => {
+    const { hooks, restart, progress, onHandoff, setClosing } = setup('desktop', undefined, legacy)
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    state.availability.mockRejectedValue(new UpdateLifecycleError('installation-busy', 'occupied'))
+    await expect(hooks.beforeInstallHandoff!(status)).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    restart.mockRejectedValue(new Error('restore failed'))
+    hooks.releaseInstallHandoff!()
+    await vi.waitFor(() =>
+      expect(progress).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'runtime-not-controlled', error: 'restore failed' })
+      )
+    )
+    expect(setClosing).toHaveBeenLastCalledWith(false)
+    expect(onHandoff).not.toHaveBeenCalled()
+  })
+
   it('restarts the runtime and releases admission when the installer cannot start', async () => {
     const { hooks, restart, setClosing } = setup('desktop', undefined, legacy)
     await hooks.prepareInstall!(status, {})
@@ -506,7 +660,7 @@ it.each([true, false])('saves before stopping the runtime (legacy=%s)', async (l
     expect(h.progress).toHaveBeenLastCalledWith({
       recovery: expect.objectContaining({
         phase: 'handoff',
-        runtime: 'stopped-clean',
+        runtime: 'stopped-unclean',
         canCancel: false
       })
     })

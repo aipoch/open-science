@@ -1634,69 +1634,76 @@ it('captures each same-render font glyph path once and retains only isolated num
   )
   expect(matched.glyphBounds).toEqual(snapshot.glyphBounds)
 })
-it.each(['ordinary', 'type3', 'invalid-font', 'missing-file', 'non-space', 'unknown-font-flags'])(
-  'binds renderer-skipped spaces to the exact native show instance: %s',
-  (mode) => {
-    const f = renderContextInput(),
-      ops = f.render._internalRenderTask.operatorList
-    const glyph = {
-      fontChar: ' ',
-      unicode: mode === 'non-space' ? '?' : ' ',
-      width: 250,
-      isSpace: true,
-      isInFont: false
-    }
-    const at = ops.fnArray.length
-    ops.fnArray.push(OPS.setFont, OPS.showText, OPS.showText)
-    ops.argsArray.push(['first-font', 10], [[glyph]], [[{ ...glyph, isInFont: true }]])
-    const bounds = [0.1, 0, 0.6, 0.8]
-    const objects = {
-      get: (name: string): unknown => ({
-        loadedName: name,
-        missingFile: mode === 'missing-file',
-        isType3Font: mode === 'type3',
-        isInvalidPDFjsFont: mode === 'unknown-font-flags' ? undefined : mode === 'invalid-font',
-        getPathGenerator: (): unknown => ({ getBounds: (): number[] => bounds })
-      })
-    }
-    const snapshot = captureNativeFigureRenderContext(
-      f.render,
-      f.page,
-      f.content,
-      f.viewport,
-      f.graphics,
-      f.checksum,
-      objects
-    )
-    const expected =
-      mode === 'ordinary'
-        ? [
-            {
-              operationIndex: at + 1,
-              glyphIndex: 0,
-              fontName: 'first-font',
-              fontChar: ' ',
-              width: 250
-            }
-          ]
-        : undefined
-    expect(snapshot.skippedSpaceGlyphs).toEqual(expected)
-    if (mode === 'ordinary') {
-      // A painted instance of the same font character keeps its nonempty outline.
-      expect(snapshot.glyphBounds[0].glyphs[0].bounds).toEqual(bounds)
-      expect(
-        matchNativeFigureRenderContext(
-          snapshot,
-          f.page,
-          f.content,
-          f.viewport,
-          f.graphics,
-          f.checksum
-        ).skippedSpaceGlyphs
-      ).toEqual(expected)
-    }
+it.each([
+  'ordinary',
+  'unencoded-space',
+  'unknown-space-flag',
+  'type3',
+  'invalid-font',
+  'missing-file',
+  'non-space',
+  'unknown-font-flags'
+])('binds renderer-skipped spaces to the exact native show instance: %s', (mode) => {
+  const f = renderContextInput(),
+    ops = f.render._internalRenderTask.operatorList
+  const glyph = {
+    fontChar: mode === 'unencoded-space' ? '!' : ' ',
+    unicode: mode === 'non-space' ? '?' : ' ',
+    width: 250,
+    isSpace: mode === 'unencoded-space' ? false : mode === 'unknown-space-flag' ? undefined : true,
+    isInFont: false
   }
-)
+  const at = ops.fnArray.length
+  ops.fnArray.push(OPS.setFont, OPS.showText, OPS.showText)
+  ops.argsArray.push(['first-font', 10], [[glyph]], [[{ ...glyph, isInFont: true }]])
+  const bounds = [0.1, 0, 0.6, 0.8]
+  const objects = {
+    get: (name: string): unknown => ({
+      loadedName: name,
+      missingFile: mode === 'missing-file',
+      isType3Font: mode === 'type3',
+      isInvalidPDFjsFont: mode === 'unknown-font-flags' ? undefined : mode === 'invalid-font',
+      getPathGenerator: (): unknown => ({ getBounds: (): number[] => bounds })
+    })
+  }
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum,
+    objects
+  )
+  const expected =
+    mode === 'ordinary' || mode === 'unencoded-space'
+      ? [
+          {
+            operationIndex: at + 1,
+            glyphIndex: 0,
+            fontName: 'first-font',
+            fontChar: glyph.fontChar,
+            width: 250,
+            ...(mode === 'unencoded-space' ? { isSpace: false } : {})
+          }
+        ]
+      : undefined
+  expect(snapshot.skippedSpaceGlyphs).toEqual(expected)
+  if (mode === 'ordinary' || mode === 'unencoded-space') {
+    // A painted instance of the same font character keeps its nonempty outline.
+    expect(snapshot.glyphBounds[0].glyphs[0].bounds).toEqual(bounds)
+    expect(
+      matchNativeFigureRenderContext(
+        snapshot,
+        f.page,
+        f.content,
+        f.viewport,
+        f.graphics,
+        f.checksum
+      ).skippedSpaceGlyphs
+    ).toEqual(expected)
+  }
+})
 it.each(['missing-font', 'invalid-bounds', 'over-budget'])(
   'leaves the legacy snapshot intact when optional glyph proof is %s',
   (failure) => {

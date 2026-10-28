@@ -1038,11 +1038,28 @@ describe('website mirror publication intent', () => {
 })
 
 describe('build verification throughput', () => {
+  it('uses bundled ONNX CPU binaries in every verification job without changing packaging', () => {
+    for (const name of ['verify', 'verify_tests', 'verify_coverage', 'verify_macos']) {
+      const job = workflow('build.yml').jobs[name]
+      expect(step(job, 'Install dependencies').env).toEqual({ ONNXRUNTIME_NODE_INSTALL: 'skip' })
+      expect(step(job, 'Verify ONNX native loading').run).toBe(
+        `node -e "require('onnxruntime-node')"`
+      )
+    }
+    expect(
+      step(workflow('build.yml').jobs.build, 'Install dependencies').env?.ONNXRUNTIME_NODE_INSTALL
+    ).toBeUndefined()
+  })
+
   it('runs Ubuntu static checks independently from six complete portable shards', () => {
     const { verify, verify_tests: tests, verify_macos: macos } = workflow('build.yml').jobs
     expect(verify['runs-on']).toBe('ubuntu-latest')
     expect(verify.needs).toBeUndefined()
     expect(tests.needs).toBeUndefined()
+    expect(step(tests, 'Install dependencies').env).toEqual({ ONNXRUNTIME_NODE_INSTALL: 'skip' })
+    expect(step(tests, 'Verify ONNX native loading').run).toBe(
+      `node -e "require('onnxruntime-node')"`
+    )
     expect(tests['runs-on']).toBe('ubuntu-latest')
     expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3, 4, 5, 6])
     expect(tests['timeout-minutes']).toBe(60)

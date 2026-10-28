@@ -311,6 +311,18 @@
     "./kegg": {
       "types": "./dist/kegg.d.ts",
       "default": "./dist/kegg.js"
+    },
+    "./research-datasets": {
+      "types": "./dist/research-datasets.d.ts",
+      "default": "./dist/research-datasets.js"
+    },
+    "./molecular-data": {
+      "types": "./dist/molecular-data.d.ts",
+      "default": "./dist/molecular-data.js"
+    },
+    "./literature-europepmc": {
+      "types": "./dist/literature-europepmc.d.ts",
+      "default": "./dist/literature-europepmc.js"
     }
   },
   "files": [

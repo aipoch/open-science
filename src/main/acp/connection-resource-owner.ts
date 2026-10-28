@@ -2,6 +2,8 @@ import type { ClientConnection } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import type { OpenCodeStoreLease } from './opencode-store'
+import type { OpenCodeServiceLease } from './opencode-service'
 import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { terminateProcessTree } from '../process-tree'
@@ -34,6 +36,8 @@ export type AcpAttachedConnectionResource = {
   bridgeLease: ResponsesTransportLease
   messagesBridgeLease?: MessagesBridgeLease
   providerTransportLease?: ProviderTransportLease
+  openCodeService?: OpenCodeServiceLease
+  openCodeStore?: OpenCodeStoreLease
 }
 
 export type AcpConnectionResourceReadyHandle = Readonly<{
@@ -58,6 +62,8 @@ export type AcpUnattachedConnectionResource = Readonly<{
   bridgeLease?: ResponsesTransportLease
   messagesBridgeLease?: MessagesBridgeLease
   providerTransportLease?: ProviderTransportLease
+  openCodeService?: OpenCodeServiceLease
+  openCodeStore?: OpenCodeStoreLease
 }>
 
 export type AcpConnectionShutdownHandle = Readonly<{
@@ -91,6 +97,7 @@ export class AcpConnectionResourceOwner {
   private readonly releasedBridgeLeases = new WeakSet<object>()
   private shuttingDown = false
   private lastTreeKillReaped = true
+  private readonly pendingOpenCodeCleanup = new Set<Promise<void>>()
 
   constructor(private readonly options: AcpConnectionResourceOwnerOptions = {}) {}
 
@@ -183,14 +190,17 @@ export class AcpConnectionResourceOwner {
       this.reportCleanupFailure(onFailure, 'connection', error)
     }
 
+    let reaped = false
     try {
-      await this.reapProcessTree(resource.process)
+      reaped = await this.reapProcessTree(resource.process)
     } catch (error) {
       this.reportCleanupFailure(onFailure, 'agent-process', error)
     }
     await this.releaseBridgeLease(resource.bridgeLease)
     await this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
     await this.releaseProviderTransportLease(resource.providerTransportLease)
+    const serviceReaped = await this.releaseOpenCodeService(resource.openCodeService)
+    if (reaped && serviceReaped) resource.openCodeStore?.release()
   }
 
   async cleanupUnattached(
@@ -205,9 +215,10 @@ export class AcpConnectionResourceOwner {
       this.reportCleanupFailure(onFailure, 'connection', error)
     }
 
+    let reaped = !resource.process
     if (resource.process) {
       try {
-        await this.reapProcessTree(resource.process)
+        reaped = await this.reapProcessTree(resource.process)
       } catch (error) {
         this.reportCleanupFailure(onFailure, 'agent-process', error)
       }
@@ -215,15 +226,21 @@ export class AcpConnectionResourceOwner {
     await this.releaseBridgeLease(resource.bridgeLease)
     await this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
     await this.releaseProviderTransportLease(resource.providerTransportLease)
+    const serviceReaped = await this.releaseOpenCodeService(resource.openCodeService)
+    if (reaped && serviceReaped) resource.openCodeStore?.release()
   }
 
   cleanupUnexpectedClose(expectedEpoch: number): void {
     const resource = this.detach(expectedEpoch)
     if (!resource) return
     this.expectedProcessExits.add(resource.process)
-    void this.reapProcessTree(resource.process).catch((error) => {
-      safeLogCleanupError('agent process cleanup after unexpected close failed', error)
-    })
+    if (resource.openCodeStore || resource.openCodeService) {
+      this.trackOpenCodeCleanup(resource)
+    } else {
+      void this.reapProcessTree(resource.process).catch((error) => {
+        safeLogCleanupError('agent process cleanup after unexpected close failed', error)
+      })
+    }
     void this.releaseBridgeLease(resource.bridgeLease)
     void this.releaseMessagesBridgeLease(resource.messagesBridgeLease)
     void this.releaseProviderTransportLease(resource.providerTransportLease)
@@ -252,6 +269,8 @@ export class AcpConnectionResourceOwner {
       void this.releaseBridgeLease(resource?.bridgeLease)
       void this.releaseMessagesBridgeLease(resource?.messagesBridgeLease)
       void this.releaseProviderTransportLease(resource?.providerTransportLease)
+      if (resource && (resource.openCodeStore || resource.openCodeService))
+        this.trackOpenCodeCleanup(resource)
       void this.closeMcp()
     }
   }
@@ -264,6 +283,7 @@ export class AcpConnectionResourceOwner {
     return Object.freeze({
       finish: async () => {
         if (inFlight) await inFlight.catch(() => undefined)
+        await Promise.all(this.pendingOpenCodeCleanup)
         return { reaped: this.lastTreeKillReaped }
       }
     })
@@ -367,10 +387,16 @@ export class AcpConnectionResourceOwner {
       : selectSkills(text, catalog, signal)
   }
 
-  private async reapProcessTree(process: ChildProcessWithoutNullStreams): Promise<void> {
+  private async reapProcessTree(process: ChildProcessWithoutNullStreams): Promise<boolean> {
     this.expectedProcessExits.add(process)
-    const result = await terminateProcessTree(process, undefined, log)
-    this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
+    try {
+      const result = await terminateProcessTree(process, undefined, log)
+      this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
+      return result.reaped
+    } catch (error) {
+      this.lastTreeKillReaped = false
+      throw error
+    }
   }
 
   private async releaseBridgeLease(lease: ResponsesTransportLease): Promise<void> {
@@ -401,6 +427,34 @@ export class AcpConnectionResourceOwner {
     } catch (error) {
       safeLogCleanupError('provider transport lease release failed', error)
     }
+  }
+
+  private async releaseOpenCodeService(lease: OpenCodeServiceLease | undefined): Promise<boolean> {
+    if (!lease) return true
+    try {
+      const result = await lease.release()
+      this.lastTreeKillReaped = this.lastTreeKillReaped && result.reaped
+      return result.reaped
+    } catch (error) {
+      this.lastTreeKillReaped = false
+      safeLogCleanupError('OpenCode HTTP service release failed', error)
+      return false
+    }
+  }
+
+  private trackOpenCodeCleanup(resource: AcpAttachedConnectionResource): void {
+    const cleanup = Promise.all([
+      this.reapProcessTree(resource.process).catch((error) => {
+        safeLogCleanupError('OpenCode process cleanup failed', error)
+        return false
+      }),
+      this.releaseOpenCodeService(resource.openCodeService)
+    ]).then(([processReaped, serviceReaped]) => {
+      // Keep ownership if a writer may still be alive; releasing would permit unsafe migration.
+      if (processReaped && serviceReaped) resource.openCodeStore?.release()
+    })
+    this.pendingOpenCodeCleanup.add(cleanup)
+    void cleanup.finally(() => this.pendingOpenCodeCleanup.delete(cleanup))
   }
 
   private reportCleanupFailure(

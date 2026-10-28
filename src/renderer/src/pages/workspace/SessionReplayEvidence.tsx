@@ -279,7 +279,7 @@ export const SessionReplayEvidence = ({
                 <SelectContent>
                   {step.runs.map((run) => (
                     <SelectItem key={run.runId} value={run.runId}>
-                      {t('Notebook')} · {run.kernelKind} · {step.runs.indexOf(run) + 1}
+                      {t('Notebook')} ({run.kernelKind}, {step.runs.indexOf(run) + 1})
                     </SelectItem>
                   ))}
                 </SelectContent>

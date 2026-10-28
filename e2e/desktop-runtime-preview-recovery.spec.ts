@@ -73,6 +73,7 @@ test('reacquires a mounted managed image capability after recovery', async () =>
     const composer = page.getByRole('textbox', { name: 'Ask anything' })
     await composer.click()
     await expect(composer).toBeFocused()
+    const beforeRecovery = await page.evaluate(() => window.api.desktopRuntime!.getState())
     await app.evaluate(() => {
       const pipe = (
         process as NodeJS.Process & {
@@ -92,13 +93,13 @@ test('reacquires a mounted managed image capability after recovery', async () =>
       if (!pipe) throw new Error('Desktop pipe missing')
       pipe.destroy()
     })
-    await expect(page.getByRole('button', { name: 'Quit', exact: true })).toBeFocused()
-    await page.keyboard.press('Tab')
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeFocused()
-    await page.keyboard.press('Enter')
+    // Transient connection loss recovers in place without moving focus into a modal.
     await expect
-      .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-      .toMatchObject({ phase: 'connected' })
+      .poll(async () => {
+        const state = await page.evaluate(() => window.api.desktopRuntime!.getState())
+        return { phase: state.phase, advanced: state.epoch > beforeRecovery.epoch }
+      })
+      .toEqual({ phase: 'connected', advanced: true })
     await expect(image).toBeVisible()
     await expect.poll(() => image.getAttribute('src')).not.toBe(previous)
     await expect

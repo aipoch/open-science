@@ -250,6 +250,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const runtime = {
     resolveClaudeExecutable: vi.fn(async () => '/runtime/claude'),
     resolveOpencodeExecutable: vi.fn(async () => '/runtime/opencode'),
+    probeOpencodeVersion: vi.fn(async () => '1.19.4'),
     resolveCodeBuddyExecutable: vi.fn(async () => '/runtime/codebuddy'),
     resolveCodexExecutable: vi.fn(async () => '/runtime/codex-acp'),
     probeCodexNativeVersion: vi.fn(async () => '0.144.6'),
@@ -1217,6 +1218,32 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       route: 'opencode-openai'
     })
   })
+
+  it('does not pass removed listener flags to OpenCode 2.x ACP', async () => {
+    const harness = makeHarness({ settings: makeSettings({ agentFrameworkId: 'opencode' }) })
+    harness.runtime.probeOpencodeVersion.mockResolvedValue('2.1.4')
+
+    const backend = await harness.resolver.resolveActiveBackend()
+
+    // Official @opencode/cli 2.1.4 exits before initialize with either of these flags (#3893).
+    expect(backend.args ?? []).not.toContain('--port')
+    expect(backend.args ?? []).not.toContain('--hostname')
+    expect(harness.runtime.probeOpencodeVersion).toHaveBeenCalledWith('/runtime/opencode')
+    expect(harness.runtime.reserveOpenCodeUsagePort).not.toHaveBeenCalled()
+    await backend.providerTransportLease?.release()
+  })
+
+  it.each([undefined, '3.0.0', 'not-a-version'])(
+    'refuses an unverified OpenCode protocol version %s',
+    async (version) => {
+      const harness = makeHarness({ settings: makeSettings({ agentFrameworkId: 'opencode' }) })
+      harness.runtime.probeOpencodeVersion.mockResolvedValue(version as string)
+      await expect(harness.resolver.resolveActiveBackend()).rejects.toThrow(
+        'supported OpenCode CLI version'
+      )
+      expect(harness.runtime.reserveOpenCodeUsagePort).not.toHaveBeenCalled()
+    }
+  )
 
   it('pre-registers immutable OpenCode provider routes without exposing upstream credentials', async () => {
     const providerA = {

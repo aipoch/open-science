@@ -7,6 +7,62 @@ import { buildOpencodeConfig, createOpencodeFramework, opencodeFramework } from 
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
+it('generates a 2.x plugin that exposes app MCP identities without changing foreign servers', async () => {
+  const config = opencodeFramework.prepareModelConfig(
+    { type: 'custom', model: 'test', baseUrl: 'http://localhost/v1' },
+    {
+      storageRoot: '/data',
+      executablePath: '/runtime/opencode',
+      nativeVersion: '2.1.4'
+    }
+  )
+  const plugin = config.configFiles?.find((file) =>
+    file.path.endsWith(join('open-science-v2', 'index.ts'))
+  )
+  expect(plugin).toBeDefined()
+  const definition = new Function(
+    'Plugin',
+    plugin!.content.replace(/^import .*\n/, '').replace('export default', 'return')
+  )({ define: (value: unknown) => value })
+  const servers = new Map([
+    ['open_science_notebook', { codemode: true }],
+    ['open_science_host_message', { codemode: true }],
+    ['foreign', { codemode: true }]
+  ])
+  const hooks = new Map<string, () => Promise<void>>()
+  const list = vi
+    .fn()
+    .mockResolvedValueOnce([])
+    .mockResolvedValue([{ options: { namespace: 'open_science_notebook', codemode: false } }])
+  await definition.setup({
+    mcp: {
+      transform: async (apply: (editor: unknown) => void) => apply({ list: () => servers }),
+      list: async () => ({ data: [{ name: 'open_science_notebook' }, { name: 'foreign' }] })
+    },
+    tool: { list },
+    session: {
+      hook: async (name: string, callback: () => Promise<void>) => hooks.set(name, callback)
+    }
+  })
+  expect([...servers.values()].map((server) => server.codemode)).toEqual([false, false, true])
+  await hooks.get('prompt')!()
+  expect(list).toHaveBeenCalledTimes(2)
+  vi.useFakeTimers()
+  try {
+    list.mockResolvedValue([])
+    const blocked = expect(hooks.get('prompt')!()).rejects.toThrow('tools did not become ready')
+    await vi.advanceTimersByTimeAsync(10000)
+    await blocked
+  } finally {
+    vi.useRealTimers()
+  }
+
+  const overlay = JSON.parse(config.env!.OPENCODE_CONFIG_CONTENT)
+  expect(overlay.plugins).toContain(
+    join('/data', 'opencode', 'config', 'opencode', 'open-science-v2')
+  )
+})
+
 describe('opencodeFramework spawn seam', () => {
   it.each([
     {

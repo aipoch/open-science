@@ -47,10 +47,10 @@ Notebook execution path.
 Shell executable lookup and directory searches use the same filesystem policy as other
 commands. There is no separate search parser restricting them to the session directory;
 expansions, pipelines, and working-directory changes are evaluated by the selected shell.
-Code-risk approval and managed-runtime write protection still apply. Removing the search
-preflight does not grant a directory or disable OS sandbox enforcement. Managed research
-executions retain their additional bounded search preflight and immutable runtime-variable
-admission; ordinary Notebook commands do not use that managed-only preflight.
+Code-risk approval still applies. On enforced platforms, managed-runtime write protection also
+applies; removing the search preflight does not grant a directory or disable OS sandbox enforcement.
+Managed research executions retain their additional bounded search preflight and immutable
+runtime-variable admission; ordinary Notebook commands do not use that managed-only preflight.
 
 - On macOS, Seatbelt enforces declared filesystem and network rules.
 - On Linux, bubblewrap enforces declared filesystem and network rules.
@@ -68,8 +68,12 @@ is available, except on the separate WSL2 path; there is no user-facing switch. 
 an allowlist-only network boundary. Paths and query parameters in a GET/HEAD request can still
 disclose sensitive information; a request-size limit is not an aggregate exfiltration limit.
 Windows standard mode inherits the host user's filesystem access and cannot guarantee
-network enforcement. Native Notebook and Shell execution therefore requires protected mode;
-standard mode is not an execution fallback. A bypass of an enforced boundary is in scope under the
+network enforcement. It does not OS-enforce declared read-only or denied filesystem roots,
+including application configuration, input, helper, and managed-runtime directories. Source-risk
+and language-level guards are defense in depth, not isolation of arbitrary native child processes.
+Native Notebook, Shell, and package installation remain available without
+protected-mode setup. Configured protection is checked before execution and never silently falls
+back to standard mode when protection fails. A bypass of an enforced boundary is in scope under the
 [security policy](../SECURITY.md#what-to-report).
 
 Agent-native file tools such as Read/Write/Edit run in their selected Agent process, outside
@@ -231,11 +235,11 @@ Workspace and explicitly approved folders remain accessible, along with system a
 needed by tools. `cd` and shell syntax are evaluated normally; actual file access is governed by
 the operating-system sandbox.
 
-Disabling the preference broadens host-folder access on macOS, Linux, and WSL2. Network isolation,
-explicit forbidden paths, and managed-runtime protection remain enforced. Isolated runtime/control
-mounts may still hide host paths. Windows native runtimes always retain folder restrictions and
-require protected mode; the preference affects only WSL2 Shell on Windows. Standard-mode native
-execution is refused before process creation, with guidance to configure protection in Settings.
+Disabling the preference broadens host-folder access on macOS, Linux, and WSL2. On those paths,
+network isolation, explicit forbidden paths, and managed-runtime protection remain enforced. Isolated runtime/control
+mounts may still hide host paths. Windows native runtimes retain folder restrictions in protected
+mode. Standard mode runs with the host user's folder permissions and does not enforce this
+preference; the preference affects only WSL2 Shell on Windows. Protected mode is optional.
 
 Changing the preference stops live Notebook and Shell processes, clearing their in-memory
 variables. The new value is committed only after successful process cleanup, while new execution

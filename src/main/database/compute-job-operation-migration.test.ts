@@ -49,7 +49,7 @@ describe('Compute Job operation migration', () => {
       )
     ).resolves.toEqual([
       { id: '0051_session_research_membership' },
-      { id: '0050_literature_translation' }
+      { id: '0051_literature_reading_status' }
     ])
   })
 

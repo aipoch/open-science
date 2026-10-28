@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { CreateElicitationRequest, ElicitationSchema } from '@agentclientprotocol/sdk'
 
-import { AcpElicitationOwner } from './elicitation-owner'
+import { AcpElicitationOwner, validateElicitationAnswers } from './elicitation-owner'
+import {
+  sanitizeElicitationProjection,
+  type ElicitationAnswer,
+  type PendingElicitationRequest
+} from '../../shared/elicitation'
 
 describe('AcpElicitationOwner', () => {
   it('keeps an attached choice durable when its provider connection is disposed', () => {
@@ -111,7 +116,8 @@ describe('AcpElicitationOwner', () => {
     ).toEqual({
       request,
       response: { action: 'accept', content: { question_0: 'minimal' } },
-      detached: true
+      detached: true,
+      decision: { action: 'accept', answers: [{ fieldId: 'question_0', value: 'minimal' }] }
     })
     expect(onProjection).toHaveBeenLastCalledWith(
       request,
@@ -713,4 +719,149 @@ describe('AcpElicitationOwner', () => {
     expect(pending).toEqual([])
     await expect(result).resolves.toEqual({ action: 'decline' })
   })
+})
+
+// Exercise the actual ACP promise as well as persistence; detached delivery is covered in runtime.
+describe('choice skip semantics', () => {
+  const request: PendingElicitationRequest = {
+    requestId: 'choice-skip',
+    sessionId: 'session',
+    toolCallId: 'choice-tool',
+    message: 'Choose',
+    fields: [0, 1].flatMap((index) => [
+      {
+        id: `question_${index}`,
+        label: `Question ${index}`,
+        description: `Which option for ${index}?`,
+        kind: 'single-select' as const,
+        options: [
+          { value: 'A', label: 'A' },
+          { value: 'B', label: 'B' }
+        ]
+      },
+      { id: `question_${index}_custom`, label: 'Other', kind: 'text' as const }
+    ])
+  }
+  const skipped: ElicitationAnswer[] = [0, 1].map((index) => ({
+    fieldId: `question_${index}`,
+    status: 'skipped'
+  }))
+
+  it.each(['answered', 'pending'] as const)(
+    'restores structured and legacy skips in %s projections',
+    (state) => {
+      const key = state === 'pending' ? 'draftAnswers' : 'answers'
+      for (const answers of [
+        skipped,
+        [
+          { fieldId: 'question_0_custom', value: 'User skipped' },
+          { fieldId: 'question_1_custom', value: 'User skipped' }
+        ]
+      ]) {
+        expect(sanitizeElicitationProjection({ ...request, state, [key]: answers })?.[key]).toEqual(
+          skipped
+        )
+      }
+      const literal = [{ fieldId: 'question_0_custom', status: 'answered', value: 'User skipped' }]
+      expect(sanitizeElicitationProjection({ ...request, state, [key]: literal })?.[key]).toEqual(
+        literal
+      )
+    }
+  )
+
+  it('validates complete outcomes and rejects conflicting, empty, and non-choice skips', () => {
+    expect(validateElicitationAnswers(request, skipped)).toEqual(skipped)
+    expect(() => validateElicitationAnswers(request, [skipped[0]])).toThrow()
+    expect(() =>
+      validateElicitationAnswers(request, [
+        ...skipped,
+        { fieldId: 'question_0_custom', value: 'A' }
+      ])
+    ).toThrow()
+    expect(() =>
+      validateElicitationAnswers(request, [
+        { ...skipped[0], value: 'A' } as unknown as ElicitationAnswer,
+        skipped[1]
+      ])
+    ).toThrow()
+    expect(() =>
+      validateElicitationAnswers(request, [
+        { fieldId: 'question_0_custom', value: ' ' },
+        skipped[1]
+      ])
+    ).toThrow()
+    expect(() =>
+      validateElicitationAnswers(
+        { ...request, fields: [{ id: 'text', label: 'Text', kind: 'text' }] },
+        [{ fieldId: 'text', status: 'skipped' }]
+      )
+    ).toThrow()
+  })
+
+  it.each(['mixed', 'all', 'decline', 'legacy'] as const)(
+    'delivers %s outcomes through an attached ACP response',
+    async (scenario) => {
+      const onProjection = vi.fn()
+      const owner = new AcpElicitationOwner({
+        createRequestId: () => request.requestId,
+        onProjection
+      })
+      const response = owner.request(
+        {
+          mode: 'form',
+          sessionId: 'provider-session',
+          toolCallId: request.toolCallId,
+          message: request.message,
+          requestedSchema: {
+            type: 'object',
+            properties: Object.fromEntries(
+              request.fields.map((field) => [
+                field.id,
+                {
+                  type: 'string',
+                  title: field.label,
+                  description: field.description,
+                  ...(field.options ? { enum: field.options.map((option) => option.value) } : {})
+                }
+              ])
+            )
+          }
+        },
+        { sessionId: request.sessionId },
+        { promptMessageId: 'prompt' }
+      )
+      owner.respond({
+        requestId: request.requestId,
+        action: scenario === 'decline' ? 'decline' : 'accept',
+        answers:
+          scenario === 'all'
+            ? skipped
+            : [
+                scenario === 'legacy'
+                  ? { fieldId: 'question_0_custom', value: 'User skipped' }
+                  : skipped[0],
+                { fieldId: 'question_1', value: 'B' }
+              ]
+      })
+      const wire = await response
+      expect(wire.action).toBe('accept')
+      if (!('content' in wire)) throw new Error('Missing choice outcomes')
+      const content = wire.content as Record<string, string>
+      const outcomes = Object.values(content).map((value) => JSON.parse(value))
+      expect(outcomes).toEqual([
+        {
+          question: 'Which option for 0?',
+          status: 'skipped',
+          guidance: expect.stringContaining('does not imply consent or authorization')
+        },
+        scenario === 'all' || scenario === 'decline'
+          ? { question: 'Which option for 1?', status: 'skipped', guidance: outcomes[0].guidance }
+          : { question: 'Which option for 1?', status: 'answered', answer: 'B' }
+      ])
+      expect(outcomes[0].guidance).toContain('do not ask these questions again')
+      expect(onProjection.mock.lastCall?.[1].state).toBe(
+        scenario === 'decline' ? 'declined' : 'answered'
+      )
+    }
+  )
 })

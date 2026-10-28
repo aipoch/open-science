@@ -340,7 +340,8 @@
       "src/renderer/replay-viewer/research-viewer.test.tsx",
       "src/renderer/src/lib/replay/transcript.test.ts",
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
-      "src/main/runtime-view/tuanzi.macos.integration.test.ts"
+      "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/renderer/src/components/ui/message-scroller.pause.test.tsx"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

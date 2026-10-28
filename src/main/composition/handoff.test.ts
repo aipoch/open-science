@@ -38,6 +38,8 @@ async function setup(): Promise<{
   order: string[]
   setActive(value: boolean): void
   releaseInstall: ReturnType<typeof vi.fn>
+  releaseUpdate: ReturnType<typeof vi.fn>
+  releaseAgentUpdate: ReturnType<typeof vi.fn>
 }> {
   const order: string[] = []
   let active = false
@@ -54,8 +56,11 @@ async function setup(): Promise<{
     }
   }
   const releaseInstall = vi.fn()
+  const releaseUpdate = vi.fn()
+  const releaseAgentUpdate = vi.fn()
   const dependencies = {
     managedExecution: managed,
+    holdUpdateAdmission: vi.fn(() => releaseUpdate),
     declareElectronAdapter: vi.fn(),
     webSessionPersistenceFlush: { flush: vi.fn(), notifyAborted: vi.fn() },
     settingsService: { hasActiveInstall: () => false, holdInstallAdmission: () => releaseInstall },
@@ -77,6 +82,7 @@ async function setup(): Promise<{
       })
     },
     runtime: {
+      holdUpdateAdmission: vi.fn(() => releaseAgentUpdate),
       getQuitBlockingPromptSessions: () => [],
       getActivePromptSessions: () => [],
       shutdownForQuit: vi.fn(async () => ({ reaped: true })),
@@ -101,6 +107,8 @@ async function setup(): Promise<{
     managed,
     order,
     releaseInstall,
+    releaseUpdate,
+    releaseAgentUpdate,
     setActive: (value) => {
       active = value
     }
@@ -150,7 +158,15 @@ it('aborts a data-root move when cleanup is unverified and reopens admission for
 })
 
 it('drains managed Notebook work for updates and resumes it when installation is aborted', async () => {
-  const { dependencies, managed, order, setActive, releaseInstall } = await setup()
+  const {
+    dependencies,
+    managed,
+    order,
+    setActive,
+    releaseInstall,
+    releaseUpdate,
+    releaseAgentUpdate
+  } = await setup()
   setActive(true)
   const options = capture.strategy.mock.calls[0][1] as NonNullable<
     Parameters<typeof import('../update/create-strategy').createUpdateStrategy>[1]
@@ -161,10 +177,16 @@ it('drains managed Notebook work for updates and resumes it when installation is
   })
   expect(order).toEqual(['managed-drained', 'notebook-shutdown', 'renderer-durable'])
   expect(managed.environments.prepareForDataRootHandoff).not.toHaveBeenCalled()
+  expect(dependencies.holdUpdateAdmission).toHaveBeenCalledOnce()
+  expect(dependencies.runtime.holdUpdateAdmission).toHaveBeenCalledOnce()
+  expect(releaseUpdate).not.toHaveBeenCalled()
+  expect(releaseAgentUpdate).not.toHaveBeenCalled()
   options.releaseInstallHandoff!()
   expect(managed.resume).toHaveBeenCalledOnce()
   expect(dependencies.packageHandoffHeld.current).toBe(false)
   expect(releaseInstall).toHaveBeenCalledOnce()
+  expect(releaseUpdate).toHaveBeenCalledOnce()
+  expect(releaseAgentUpdate).toHaveBeenCalledOnce()
 })
 
 it('includes the managed Notebook owner in application quit teardown', async () => {

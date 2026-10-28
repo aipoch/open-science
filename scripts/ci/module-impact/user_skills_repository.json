@@ -30,7 +30,9 @@
     "src/main/skills/helper-validation.ts",
     "src/main/skills/package-boundary.architecture.test.ts",
     "src/main/skills/host-skills-service.test.ts",
-    "scripts/check-skill-package-boundary.mjs"
+    "scripts/check-skill-package-boundary.mjs",
+    "src/main/skills/source-repository.ts",
+    "src/main/skills/source-repository.test.ts"
   ],
   "interfacePaths": [
     "src/main/skills/user-skill-repository.ts",
@@ -49,7 +51,8 @@
     "src/main/skills/diagnostics.ts",
     "src/main/skills/helper-validation.ts",
     "src/main/skills/resource-path.ts",
-    "scripts/check-skill-package-boundary.mjs"
+    "scripts/check-skill-package-boundary.mjs",
+    "src/main/skills/source-repository.ts"
   ],
   "consumerModules": ["settings_service_facade"],
   "testFiles": {
@@ -68,7 +71,8 @@
       "src/main/skills/registry.test.ts",
       "src/main/skills/self-awareness-skill.test.ts",
       "src/main/skills/skill-nudge-identity.test.ts",
-      "src/main/skills/package-boundary.architecture.test.ts"
+      "src/main/skills/package-boundary.architecture.test.ts",
+      "src/main/skills/source-repository.test.ts"
     ],
     "contract": [
       "src/main/skills/host-skills-service.test.ts",
@@ -717,5 +721,5 @@
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
   "fallbackCapability": "main_runtime",
-  "fullTestReason": "The user_skills_repository owner retains 50 explicit research consumer obligations beyond its reviewed source-derived edges, including research-reproduction.integration.test.ts, local-service.macos.integration.test.ts, research-service.macos.integration.test.ts. 45 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
+  "fullTestReason": "The user_skills_repository owner retains 50 explicit research consumer obligations beyond its reviewed source-derived edges, including research-reproduction.integration.test.ts, local-service.macos.integration.test.ts, research-service.macos.integration.test.ts. 45 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes. Saved GitHub Skill sources expand the reviewed source boundary with persistent bookmarks and Settings navigation; retain full CI validation until this boundary is reviewed and reclassified."
 }

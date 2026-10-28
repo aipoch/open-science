@@ -1,3 +1,4 @@
+import { replayAutomaticEvent } from './replay-presentation'
 import { Slider } from 'radix-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger, PopoverClose } from '@/components/ui/popover'
@@ -177,13 +178,15 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
     [props.resources]
   )
   const label = (step: ReplayStep): string => {
+    const automaticEvent = replayAutomaticEvent(step.message, t)
+    if (automaticEvent) return automaticEvent.title
     if (step.kind === 'artifact') {
       const files = step.resourceIds.flatMap((id) => {
         const resource = resourcesById.get(id)
         if (!resource) return []
         return resource.versionNumber === undefined
           ? [resource.name]
-          : [`${resource.name} · ${t('Version {{version}}', { version: resource.versionNumber })}`]
+          : [`${resource.name} (${t('Version {{version}}', { version: resource.versionNumber })})`]
       })
       if (files.length) return files.join(', ')
     }
@@ -202,12 +205,12 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
           : tool === 'bash_execute'
             ? t('Shell')
             : t('Notebook run')
-      return kernels ? `${title} · ${kernels}` : title
+      return kernels ? `${title} (${kernels})` : title
     }
     return (
       replayStepExcerpt(step) ||
       (step.runs.length
-        ? `${t('Notebook')} · ${[...new Set(step.runs.map((run) => run.kernelKind))].join(', ')}`
+        ? `${t('Notebook')} (${[...new Set(step.runs.map((run) => run.kernelKind))].join(', ')})`
         : typeLabel(step))
     )
   }
@@ -482,7 +485,7 @@ export const ReplayControls = (props: ReplayControlsProps): React.JSX.Element =>
               </Slider.Track>
               <Slider.Thumb
                 aria-label={t('Replay progress')}
-                aria-valuetext={`${t('{{current}} of {{duration}}', { current: formatReplayTime(props.positionMs), duration: formatReplayTime(props.durationMs) })}${current ? ` · ${label(current)}` : ''}`}
+                aria-valuetext={`${t('{{current}} of {{duration}}', { current: formatReplayTime(props.positionMs), duration: formatReplayTime(props.durationMs) })}${current ? `: ${label(current)}` : ''}`}
                 className="relative z-10 block size-3 rounded-full bg-primary opacity-0 transition-opacity hover:opacity-100 group-hover/timeline:opacity-100 group-focus-within/timeline:opacity-100 [@media(hover:none)]:opacity-100 focus-visible:keyboard-focus motion-reduce:transition-none"
               />
             </Slider.Root>

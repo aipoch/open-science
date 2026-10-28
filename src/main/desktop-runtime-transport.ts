@@ -1,3 +1,10 @@
+import { processBirthIdentity } from './process-birth-identity'
+import {
+  serviceStopDeadline,
+  LOCAL_SERVICE_STOP_ESCALATION_MS,
+  type LocalServiceLifetime
+} from './local-service-lifetime'
+import { DesktopRuntimeDisconnectedError } from '../shared/desktop-runtime-recovery'
 import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -45,6 +52,15 @@ const isLifecycleNative = (operation: string): boolean =>
   ['runtime-relaunch', 'renderer-flush', 'renderer-flush-aborted'].includes(operation)
 const clientId = z.string().uuid()
 const requestSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('app-exit'),
+      id: z.number().int().positive(),
+      generation: z.string().uuid(),
+      attemptId: z.string().uuid().optional(),
+      deadlineAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
+    })
+    .strict(),
   z.object({ kind: z.literal('bootstrap'), desktopInstanceId: z.string().uuid() }).strict(),
   z
     .object({
@@ -80,9 +96,11 @@ const requestSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('shutdown'),
+      reason: z.enum(['restart', 'update']).optional(),
       id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       generation: z.string().uuid(),
-      pid: z.number().int().positive()
+      pid: z.number().int().positive(),
+      deadlineAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
     })
     .strict(),
   z.object({ kind: z.literal('release'), clientId }).strict(),
@@ -97,6 +115,7 @@ const CONTROLLER_RETIRE_DEADLINE_MS = 15_000
 // Only a process authenticated over the OS-local endpoint may assert Electron caller identity.
 export async function startDesktopRuntimeTransport(options: {
   version: string
+  lifetime?: LocalServiceLifetime
   generation?: string
   launch?: 'desktop' | 'cli'
   entryPath?: string
@@ -106,9 +125,12 @@ export async function startDesktopRuntimeTransport(options: {
   permissionApprovalPresence?: { acquire(): (() => void) | undefined }
   hostCommands?: ApplicationCommandByNameDispatcher
   startup?: Pick<DatabaseStartupOwner, 'getState' | 'retry' | 'subscribe'>
-  requestShutdown?: () => void
+  requestShutdown?: (reason?: 'restart' | 'update', deadlineAt?: number) => void | Promise<void>
   createLifecycle?: () => {
-    request(operation: DesktopLifecycleRequest): Promise<unknown>
+    request(
+      operation: DesktopLifecycleRequest,
+      options?: { preserveService?: boolean }
+    ): Promise<unknown>
     disconnect(): void | Promise<void>
   }
   onNotificationAction?: (token: string, action: 'clicked' | 'closed') => void
@@ -117,6 +139,7 @@ export async function startDesktopRuntimeTransport(options: {
   // Upper bound for retiring a disconnected controller; defaults to CONTROLLER_RETIRE_DEADLINE_MS.
   controllerRetireDeadlineMs?: number
   onDisconnect?: () => void
+  onControllerDisconnect?: () => void
   onConnect?: () => void
   onNotificationView?: (state: z.infer<typeof desktopNotificationViewSchema>) => Promise<void>
   onNotificationError?: (error: unknown) => void
@@ -193,7 +216,10 @@ export async function startDesktopRuntimeTransport(options: {
     await bounded('operations', () => Promise.allSettled([...previous.operations]))
     await bounded('settlement', () => waitForLifecycleSettlement({ timeoutMs: deadline }))
     await bounded('disconnect', async () => previous.lifecycle?.disconnect())
-    if (controller === previous) controller = undefined
+    if (controller === previous) {
+      options.onControllerDisconnect?.()
+      controller = undefined
+    }
   }
   const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
   const send = (socket: WebSocket, frame: string, onSent?: () => void): void => {
@@ -220,6 +246,9 @@ export async function startDesktopRuntimeTransport(options: {
         )
         let unsubscribeStartup: (() => void) | undefined
         let desktopInstanceId: string | undefined
+        const attachmentLifecycle = options.lifetime ? options.createLifecycle?.() : undefined
+        let prepareAttemptId: string | undefined
+        let preparationAttempt: { id: string; cancelled: boolean; deadlineAt: number } | undefined
         const controls = (): boolean =>
           Boolean(
             controller &&
@@ -261,7 +290,7 @@ export async function startDesktopRuntimeTransport(options: {
             closed ||
             (isLifecycleNative(request.operation) ? !controls() : !connections.has(socket))
           )
-            throw new Error('Desktop is not connected.')
+            throw new DesktopRuntimeDisconnectedError('Desktop is not connected.')
           if (clientId && !callers.has(clientId))
             throw new Error('Desktop document is no longer available.')
           signal?.throwIfAborted()
@@ -308,10 +337,28 @@ export async function startDesktopRuntimeTransport(options: {
         const cleanup = (): void => {
           if (closed) return
           closed = true
+          if (preparationAttempt) preparationAttempt.cancelled = true
+          if (desktopInstanceId) options.lifetime?.disconnect(desktopInstanceId, connectionId)
+          if (attachmentLifecycle) {
+            const appId = desktopInstanceId
+            const attemptId = prepareAttemptId
+            void Promise.resolve(attachmentLifecycle.disconnect())
+              .finally(async () => {
+                if (appId && attemptId)
+                  await options.lifetime?.abortLeave(appId, connectionId, attemptId)
+              })
+              .catch((error) =>
+                logger.warn('desktop quit preparation disconnect failed', {
+                  message: error instanceof Error ? error.message : String(error)
+                })
+              )
+          }
           const wasAttached = connections.delete(socket)
           if (wasAttached && connections.size === 0) options.onDisconnect?.()
           for (const operation of native.values())
-            operation.reject(new Error('Desktop disconnected during a native operation.'))
+            operation.reject(
+              new DesktopRuntimeDisconnectedError('Desktop disconnected during a native operation.')
+            )
           native.clear()
           for (const release of approvalPresence.values()) release()
           approvalPresence.clear()
@@ -348,10 +395,16 @@ export async function startDesktopRuntimeTransport(options: {
               return
             }
             desktopInstanceId = message.desktopInstanceId
+            try {
+              options.lifetime?.connect(desktopInstanceId, connectionId)
+            } catch {
+              socket.close(1012, 'Local service is stopping.')
+              return
+            }
             controller ??= {
               id: desktopInstanceId,
               sockets: new Set(),
-              lifecycle: options.createLifecycle?.(),
+              lifecycle: options.lifetime ? undefined : options.createLifecycle?.(),
               retiring: false,
               operations: new Set()
             }
@@ -363,6 +416,7 @@ export async function startDesktopRuntimeTransport(options: {
               socket,
               stringifyRpcJson({
                 kind: 'bootstrap',
+                ...(options.lifetime ? { lifetime: options.lifetime.snapshot() } : {}),
                 launch: options.launch ?? 'cli',
                 control: controls() && !isStopping() ? 'granted' : 'held',
                 ...(!controls() || isStopping()
@@ -375,6 +429,7 @@ export async function startDesktopRuntimeTransport(options: {
                     }
                   : {}),
                 generation: listener.endpoint.generation,
+                birthToken: processBirthIdentity(process.pid),
                 entryPath: options.entryPath ?? process.execPath,
                 startupOptions: options.startupOptions ?? {
                   configRoot: process.cwd(),
@@ -489,9 +544,45 @@ export async function startDesktopRuntimeTransport(options: {
             responseFailureReason = 'response-send-failure'
             send(socket, frame, onSent)
           }
+          if (request.kind === 'app-exit') {
+            if (
+              !desktopInstanceId ||
+              !options.lifetime ||
+              request.generation !== listener.endpoint.generation
+            ) {
+              respond({
+                protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                ok: false,
+                error: {
+                  code: 'command-unavailable',
+                  message: 'App session identity could not be verified.'
+                }
+              })
+              return
+            }
+            void options.lifetime
+              .leave(desktopInstanceId, connectionId, {
+                ...(request.attemptId ? { attemptId: request.attemptId } : {}),
+                deadlineAt: serviceStopDeadline(request.deadlineAt),
+                detachOnDisconnect: true
+              })
+              .then(
+                (result) =>
+                  respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result }),
+                (error) =>
+                  respond({
+                    protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                    ok: false,
+                    error: toApplicationCommandErrorEnvelope(error)
+                  })
+              )
+            return
+          }
           const requiresControl =
             request.kind === 'shutdown' ||
-            (request.kind === 'lifecycle' && request.request.operation !== 'inspect') ||
+            (request.kind === 'lifecycle' &&
+              !options.lifetime &&
+              request.request.operation !== 'inspect') ||
             (request.kind === 'host-invoke' &&
               ['desktop:update-gate', 'desktop:update-abort'].includes(request.channel))
           // Recovery and rollback commands are never blocked by a pending settlement: the lifecycle
@@ -504,7 +595,9 @@ export async function startDesktopRuntimeTransport(options: {
             (request.kind === 'host-invoke' && request.channel === 'desktop:update-abort')
           // Shutdown is the last-resort escape hatch and is allowed even over a running operation.
           const overlapsOperation =
-            request.kind !== 'shutdown' && Boolean(controller?.operations.size)
+            request.kind !== 'shutdown' &&
+            !(request.kind === 'lifecycle' && options.lifetime) &&
+            Boolean(controller?.operations.size)
           if (
             requiresControl &&
             (!controls() || overlapsOperation || (!isRecovery && hasPendingLifecycleSettlement()))
@@ -552,9 +645,62 @@ export async function startDesktopRuntimeTransport(options: {
             const owner = request.request.operation === 'inspect' ? undefined : controller
             const operation = (async () => {
               try {
-                const lifecycle = controller?.lifecycle
+                const lifecycle = attachmentLifecycle ?? controller?.lifecycle
                 if (!lifecycle) throw new Error('Desktop quit coordination is unavailable.')
-                const result = await lifecycle.request(request.request)
+                let result: unknown
+                if (options.lifetime && request.request.operation === 'prepare') {
+                  if (!desktopInstanceId)
+                    throw new Error('App session identity could not be verified.')
+                  if (preparationAttempt && !preparationAttempt.cancelled)
+                    throw new Error('This App quit preparation is already active.')
+                  prepareAttemptId = request.request.attemptId ?? connectionId
+                  const attempt = {
+                    id: prepareAttemptId,
+                    cancelled: false,
+                    deadlineAt: serviceStopDeadline(request.request.deadlineAt)
+                  }
+                  preparationAttempt = attempt
+                  const last = await options.lifetime.prepareLeave(
+                    desktopInstanceId,
+                    connectionId,
+                    {
+                      attemptId: prepareAttemptId,
+                      deadlineAt: attempt.deadlineAt
+                    }
+                  )
+                  // Abort/disconnect can arrive while this request waits behind durable mutations.
+                  // Revalidate its exact attempt before any destructive preparation begins.
+                  if (
+                    closed ||
+                    attempt.cancelled ||
+                    preparationAttempt !== attempt ||
+                    Date.now() >= attempt.deadlineAt - LOCAL_SERVICE_STOP_ESCALATION_MS
+                  ) {
+                    await options.lifetime.abortLeave(desktopInstanceId, connectionId, attempt.id)
+                    throw new Error(
+                      'The App quit preparation was cancelled or its deadline expired.'
+                    )
+                  }
+                  result = await lifecycle.request(request.request, { preserveService: !last })
+                } else if (options.lifetime && request.request.operation === 'abort') {
+                  const attemptId = request.request.attemptId ?? prepareAttemptId
+                  if (!attemptId || attemptId === prepareAttemptId) {
+                    if (preparationAttempt && preparationAttempt.id === attemptId)
+                      preparationAttempt.cancelled = true
+                    result = await lifecycle.request(request.request)
+                    if (desktopInstanceId && attemptId)
+                      await options.lifetime.abortLeave(desktopInstanceId, connectionId, attemptId)
+                    if (prepareAttemptId === attemptId) prepareAttemptId = undefined
+                  } else result = null
+                } else {
+                  const lifetime = options.lifetime?.snapshot()
+                  result = await lifecycle.request(request.request, {
+                    preserveService:
+                      options.lifetime && desktopInstanceId
+                        ? options.lifetime.preservesService(desktopInstanceId, connectionId)
+                        : Boolean(lifetime && (lifetime.explicit || lifetime.apps > 1))
+                  })
+                }
                 respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result })
               } catch (error) {
                 respond({
@@ -587,12 +733,51 @@ export async function startDesktopRuntimeTransport(options: {
               return
             }
             shutdownPending = true
-            respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null }, () => {
-              if (!shutdownRequested) {
+            if (!options.lifetime) {
+              // Legacy shutdown may close this transport immediately. Flush its reply after all
+              // queued events before handing off; modern services confirm durable intent below.
+              respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null }, () => {
+                if (shutdownRequested) {
+                  shutdownPending = false
+                  return
+                }
                 shutdownRequested = true
-                setImmediate(options.requestShutdown!)
+                setImmediate(() => {
+                  void Promise.resolve()
+                    .then(() => options.requestShutdown!(request.reason, request.deadlineAt))
+                    .catch((error) => {
+                      shutdownRequested = false
+                      shutdownPending = false
+                      logger.warn('legacy desktop shutdown request failed', {
+                        message: error instanceof Error ? error.message : String(error)
+                      })
+                    })
+                })
+              })
+              return
+            }
+            pending.add(request.id)
+            void (async () => {
+              try {
+                if (!shutdownRequested)
+                  await options.requestShutdown!(request.reason, request.deadlineAt)
+                shutdownRequested = true
+                respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null })
+              } catch (error) {
+                shutdownPending = false
+                respond({
+                  protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                  ok: false,
+                  error: toApplicationCommandErrorEnvelope(error)
+                })
+              } finally {
+                pending.delete(request.id)
               }
-            })
+            })().catch((error) =>
+              logger.warn('desktop stop acknowledgement failed', {
+                message: error instanceof Error ? error.message : String(error)
+              })
+            )
             return
           }
           if (request.kind === 'host-invoke' || request.kind === 'session-event-read') {

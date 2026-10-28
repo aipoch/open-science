@@ -95,6 +95,7 @@ import type {
   ElicitationResponse,
   PendingElicitationRequest
 } from '../../../../shared/acp'
+import { resolveAgentUserChoiceQuestions } from '../../../../shared/elicitation'
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest
@@ -152,7 +153,7 @@ import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
-import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
+import { WorkspaceElicitationCard, WorkspaceElicitationRecovery } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
@@ -268,7 +269,10 @@ const attachmentLimitsText = (t: TFunction): string =>
     size: formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)
   })
 
-const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+const ResizableElicitationComposer = ({
+  children,
+  choice
+}: React.PropsWithChildren<{ choice: boolean }>): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ResizableBottomPanel
@@ -278,6 +282,7 @@ const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): Re
       constrainGrowthToOverflow
       minimumContentSelector='[data-elicitation-option-row="true"]'
       minimumContentIndex={1}
+      contentScrollSelector={choice ? '[data-testid="elicitation-options"]' : undefined}
     >
       {children}
     </ResizableBottomPanel>
@@ -359,6 +364,7 @@ type ConversationPanelView = {
   authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
+  canEditLocalDraft?: boolean
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
@@ -559,6 +565,7 @@ const ConversationPanel = ({
     retryResearchSourceContext,
     composerFocusKey,
     canEditDraft,
+    canEditLocalDraft = canEditDraft,
     persistenceBlocked,
     actionError,
     sideChatDisabledReason,
@@ -1073,6 +1080,9 @@ const ConversationPanel = ({
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
   const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const contextResetNotice = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.contextResets?.[activeSession.id] : false
+  )
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
@@ -1099,7 +1109,11 @@ const ConversationPanel = ({
       actionError)
   let resumeErrorDescription = resolvedActionError
   if (resumeDiagnostic && resolvedActionError) {
-    if (/timed out/i.test(resumeDiagnostic.detail)) {
+    if (resumeDiagnostic.detail.includes('Previous agent cleanup is unconfirmed.')) {
+      resumeErrorDescription = t(
+        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+      )
+    } else if (/timed out/i.test(resumeDiagnostic.detail)) {
       resumeErrorDescription = t(
         'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
       )
@@ -1192,7 +1206,9 @@ const ConversationPanel = ({
     ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
     : undefined
   const pendingElicitation: ElicitationProjection | undefined =
-    pendingElicitationActivity?.elicitation?.state === 'pending'
+    pendingElicitationActivity?.elicitation &&
+    (pendingElicitationActivity.elicitation.state === 'pending' ||
+      pendingElicitationActivity.elicitation.continuationRecovery)
       ? pendingElicitationActivity.elicitation
       : !pendingElicitationActivity && pendingElicitationRequest
         ? {
@@ -1887,6 +1903,23 @@ const ConversationPanel = ({
                     onResume={() => void handleResume()}
                   />
                 ) : null}
+                {contextResetNotice ? (
+                  <ErrorNotice
+                    inline
+                    level="info"
+                    className="mb-2"
+                    description={t(
+                      'Continuing in a new context using your saved conversation history.'
+                    )}
+                    dismissButton={{
+                      label: t('Dismiss'),
+                      onClick: () =>
+                        useWorkspaceOperationErrors.setState((state) => ({
+                          contextResets: { ...state.contextResets, [activeSession!.id]: false }
+                        }))
+                    }}
+                  />
+                ) : null}
                 {activeSession?.compacting ? (
                   // Auto-recovery after a request-size overflow: a neutral note, not the red error box,
                   // while the agent context is reset and the conversation is replayed as text.
@@ -2193,7 +2226,8 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {ordinaryComposerBlocked && !authenticationRequired ? (
+                  {ordinaryComposerBlocked &&
+                  (!authenticationRequired || pendingElicitation?.continuationRecovery) ? (
                     <div
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
@@ -2222,8 +2256,26 @@ const ConversationPanel = ({
                             embedded
                           />
                         </ResizableCredentialComposer>
+                      ) : pendingElicitation?.continuationRecovery ? (
+                        <WorkspaceElicitationRecovery
+                          key={pendingElicitationRequest?.requestId}
+                          elicitation={{
+                            ...pendingElicitation,
+                            continuationRecovery: {
+                              ...pendingElicitation.continuationRecovery,
+                              error: actionError ?? pendingElicitation.continuationRecovery.error
+                            }
+                          }}
+                          request={pendingElicitationRequest}
+                          onRespond={onRespondToElicitation}
+                        />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
+                          choice={Boolean(
+                            resolveAgentUserChoiceQuestions(
+                              pendingElicitationRequest?.fields ?? pendingElicitation.fields
+                            )
+                          )}
                           key={
                             pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
                           }
@@ -2299,27 +2351,15 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-xl border border-border bg-muted/50 px-4 py-3"
+                        className="relative z-10 rounded-2xl bg-bg-200 p-2"
                         aria-label={t('Imported research history')}
                       >
-                        <p className="text-sm font-medium text-foreground">
-                          {t('Imported research history')}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {t('Imported on {{date}}', {
-                            date: new Date(activeSession.packageOrigin.importedAt).toLocaleString()
-                          })}
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          {t(
-                            'The original record is read-only. Use its materials in a regular conversation to continue analysis or experiments, or create a working copy.'
-                          )}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {sessionForkAvailable() ? (
                             <Button
                               variant="outline"
                               size="sm"
+                              className="px-2 text-xs"
                               onClick={() => {
                                 void forkSession(activeSession)
                               }}
@@ -2331,6 +2371,7 @@ const ConversationPanel = ({
                           <Button
                             variant="outline"
                             size="sm"
+                            className="px-2 text-xs"
                             aria-controls="right-panel"
                             onClick={() => {
                               showSessionReplay(
@@ -2349,30 +2390,23 @@ const ConversationPanel = ({
                             sessionId={activeSession.id}
                           />
                         </div>
-                        <details className="mt-2 text-xs leading-5 text-muted-foreground">
-                          <summary className="cursor-pointer">{t('Package source')}</summary>
-                          <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-                            <dt>{t('Source project')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceProjectId}
-                            </dd>
-                            <dt>{t('Source Session')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceSessionId}
-                            </dd>
-                          </dl>
-                          <p className="mt-1">
-                            {t(
-                              'Original evidence is retained separately; local references and evidence hashes are derived during import.'
-                            )}
-                          </p>
-                        </details>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
-                          <details className="mt-2 text-xs text-muted-foreground">
-                            <summary className="cursor-pointer">
-                              {t('Not included in this package')}
-                            </summary>
-                            <ul className="mt-1 max-h-36 list-disc overflow-y-auto pl-4">
+                          <details className="group/exclusions mt-1 text-xs text-muted-foreground">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              className="justify-start px-2 text-xs"
+                            >
+                              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                <ChevronRight
+                                  className="size-4 transition-transform group-open/exclusions:rotate-90 motion-reduce:transition-none"
+                                  aria-hidden="true"
+                                />
+                                {t('Not included in this package')}
+                              </summary>
+                            </Button>
+                            <ul className="mx-2 mb-2 mt-1 max-h-36 list-disc overflow-y-auto pl-4">
                               {[
                                 ...new Set(
                                   activeSession.packageOrigin.excludedFiles.map(
@@ -3096,7 +3130,7 @@ const ConversationPanel = ({
                               onLocatePastedText={handleLocatePastedText}
                               onUndo={onUndo}
                               onRedo={onRedo}
-                              disabled={!canEditDraft}
+                              disabled={!canEditLocalDraft}
                               placeholder={
                                 researchSourceSession
                                   ? t('Ask about this research')

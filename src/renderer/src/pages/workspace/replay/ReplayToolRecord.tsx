@@ -19,6 +19,7 @@ import {
   formatStepCount
 } from '../workspace-tool-activity-groups'
 import { REPLAY_ACTIVITY_LIMIT, REPLAY_MATERIAL_RUN_LIMIT } from '@/lib/replay/scene'
+import { normalizeAgentUserChoiceAnswers } from '../../../../../shared/elicitation'
 
 const projectActivity = (activity: PersistedToolActivity, showResults: boolean): ToolActivity => {
   const { toolKind, toolContent, ...persisted } = activity
@@ -51,7 +52,7 @@ export const ReplayActivityGroup = memo(function ReplayActivityGroup({
   runDetails: Readonly<Record<string, ReplayNotebookRunDetails>>
 }): React.JSX.Element {
   const { t } = useReplayTranslation()
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
   const activities = useMemo(
     () =>
       step.activities
@@ -89,7 +90,7 @@ export const ReplayActivityGroup = memo(function ReplayActivityGroup({
       meta={
         <>
           {formatStepCount(activities, undefined, runs, t)}
-          {elapsed ? ` · ${elapsed}` : ''}
+          {elapsed ? <span className="ml-3 tabular-nums">{elapsed}</span> : null}
         </>
       }
       isExpanded={expanded}
@@ -250,15 +251,19 @@ const ReplayRawToolRecord = memo(function ReplayRawToolRecord({
     () =>
       confirmation
         ? replayText(
-            (confirmation.answers ?? confirmation.draftAnswers ?? []).map((answer) => ({
+            normalizeAgentUserChoiceAnswers(
+              confirmation.fields,
+              confirmation.answers ?? confirmation.draftAnswers ?? []
+            ).map((answer) => ({
               field:
                 confirmation.fields.find((field) => field.id === answer.fieldId)?.label ??
                 answer.fieldId,
-              value: answer.value
+              status: answer.status ?? 'answered',
+              value: answer.status === 'skipped' ? t('User skipped') : answer.value
             }))
           )
         : '',
-    [confirmation]
+    [confirmation, t]
   )
   return (
     <div className="mt-2 space-y-2 text-sm" data-replay-activity={activity.id}>

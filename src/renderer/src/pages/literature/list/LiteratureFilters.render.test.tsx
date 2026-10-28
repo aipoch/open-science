@@ -36,6 +36,7 @@ function Harness({
   const [filters, setFilters] = useState<JournalAttributeFilter[]>(initialFilters)
   const [itemType, setItemType] = useState<LiteratureItemType | 'all'>('all')
   const [hasPdf, setHasPdf] = useState<'all' | 'with' | 'without'>('all')
+  const [readingStatus, setReadingStatus] = useState<'all' | 'unread' | 'reading' | 'read'>('all')
   const [tagId, setTagId] = useState('all')
   const yearFilter = useLiteratureYearFilter(() => {})
   return (
@@ -48,6 +49,8 @@ function Harness({
       itemTypeLabels={{ journalArticle: 'Journal article' } as Record<LiteratureItemType, string>}
       hasPdf={hasPdf}
       onHasPdfChange={setHasPdf}
+      readingStatus={readingStatus}
+      onReadingStatusChange={setReadingStatus}
       yearFilter={yearFilter}
       datasets={availableDatasets}
       journalFilters={externalFilters ?? filters}
@@ -62,6 +65,7 @@ function Harness({
         yearFilter.clear()
         setItemType('all')
         setHasPdf('all')
+        setReadingStatus('all')
         setTagId('all')
       }}
     />
@@ -162,7 +166,7 @@ it('retains independent applied values for duplicate fields while another row ch
   await waitFor(() =>
     expect(change).toHaveBeenLastCalledWith([lowerBound, upperBound, { ...group, value: 'Silver' }])
   )
-  fireEvent.click(screen.getAllByRole('button', { name: 'Remove condition' })[4])
+  fireEvent.click(screen.getAllByRole('button', { name: 'Remove condition' })[5])
   await waitFor(() =>
     expect(change).toHaveBeenLastCalledWith([upperBound, { ...group, value: 'Silver' }])
   )
@@ -364,4 +368,22 @@ it('allows missing numeric values and text equality without numeric validation',
     ])
   )
   expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('filters reading status and clears it when the condition or all filters are removed', async () => {
+  Element.prototype.scrollIntoView = vi.fn()
+  render(<Harness change={vi.fn()} />)
+  const select = screen.getByRole('combobox', { name: 'Reading status' })
+  fireEvent.click(select)
+  fireEvent.click(screen.getByRole('option', { name: 'Reading' }))
+  expect(select.textContent).toBe('Reading')
+  fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+  expect(screen.getByRole('combobox', { name: 'Reading status' }).textContent).toBe('All')
+  fireEvent.click(screen.getByRole('combobox', { name: 'Reading status' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Read' }))
+  fireEvent.click(screen.getAllByRole('button', { name: 'Remove condition' })[4])
+  expect(screen.queryByRole('combobox', { name: 'Reading status' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Add condition' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Reading status' }))
+  expect(screen.getByRole('combobox', { name: 'Reading status' }).textContent).toBe('All')
 })

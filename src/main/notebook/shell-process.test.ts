@@ -7,7 +7,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
+import { EXTRA_PATH_DIRS } from '../settings/shell-path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -810,7 +811,8 @@ describe('notebook shell process behavior', () => {
         })
         expect(result.stderr).toBe('stop-before-spawn')
         expect(wrap).toHaveBeenCalledOnce()
-        expect(wrap.mock.calls[0][0].windowsProtectionRequired).toBe(true)
+        expect(wrap.mock.calls[0][0].windowsProtectionRequired).toBeUndefined()
+        expect(wrap.mock.calls[0][0].superviseProcessTree).toBe(true)
         const { filesystem, env } = wrap.mock.calls[0][0]
         if (version === '7.6') {
           expect(env.NPM_CONFIG_PREFIX).toBe(
@@ -1394,6 +1396,38 @@ describe('notebook shell process behavior', () => {
       expect(result.stdout).toBe(stdout)
       expect(result.stderr).toContain(`OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${path} `)
       expect(result.stderr).not.toContain('"ok"')
+    })
+
+    it.skipIf(process.platform !== 'darwin')(
+      'appends macOS tool directories without overriding the selected Node or leaking secrets',
+      () => {
+        const source = { PATH: '/custom/node/bin:/usr/bin:/usr/local/bin', SECRET: 'private' }
+        const env = buildShellEnv('/handoff', 'darwin', source)
+        const dirs = env.PATH!.split(delimiter)
+        expect(dirs.slice(0, 3)).toEqual(source.PATH.split(delimiter))
+        expect(dirs).toContain('/opt/homebrew/bin')
+        expect(dirs).toContain('/usr/local/bin')
+        for (const dir of EXTRA_PATH_DIRS)
+          expect(dirs.filter((value) => value === dir)).toHaveLength(1)
+        expect(env.SECRET).toBeUndefined()
+        expect(source).toEqual({
+          PATH: '/custom/node/bin:/usr/bin:/usr/local/bin',
+          SECRET: 'private'
+        })
+      }
+    )
+
+    it('preserves Linux and WSL PATH without appending host tool directories', () => {
+      const source = { PATH: '/custom/node/bin:/usr/bin' }
+      expect(buildShellEnv('/handoff', 'linux', source).PATH).toBe(source.PATH)
+      expect(
+        buildShellEnv('/handoff', 'linux', source, undefined, undefined, {
+          kind: 'wsl2-bash',
+          profileId: 'profile',
+          distro: 'Ubuntu',
+          user: 'user'
+        }).PATH
+      ).toBe(source.PATH)
     })
 
     it('keeps Windows shell runtime variables while excluding host secrets', () => {

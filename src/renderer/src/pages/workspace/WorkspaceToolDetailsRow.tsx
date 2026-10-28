@@ -18,12 +18,14 @@ import { NotebookFolderAccessNotice } from './NotebookFolderAccessNotice'
 import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { useNearViewport } from './previews/useNearViewport'
 import type { ToolExecutionPhase } from './tool-execution-phase'
-import type {
-  ToolActivityDetails,
-  ToolCodeSection,
-  ToolDetailSection
+import {
+  translateToolDetailCopy,
+  type ToolActivityDetails,
+  type ToolCodeSection,
+  type ToolDetailSection
 } from './workspace-tool-activity-details'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
+import { AuthorizedDirectoriesList } from './AuthorizedDirectoriesList'
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
@@ -45,37 +47,6 @@ type WorkspaceToolDetailsRowProps = {
 
 // Section label styling shared by static headers and collapsible toggles.
 const sectionLabelClassName = 'text-[11px] font-medium uppercase tracking-wide text-text-300'
-
-const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
-  'Agent SDK',
-  'Code',
-  'Code risk review',
-  'Command',
-  'Content',
-  'Error',
-  'File',
-  'Input',
-  'Log',
-  'Literature library',
-  'Manage packages',
-  'Memory categories',
-  'Notebook run',
-  'Output',
-  'Packages',
-  'Prompt',
-  'Request',
-  'Result',
-  'Reading',
-  'Save memory',
-  'Search memory',
-  'Shell',
-  'Skill',
-  'Tool output image',
-  'Tool search',
-  'Tools found',
-  'Web Fetch',
-  'Write file'
-])
 
 // Renders a code block plus its optional truncation note.
 const renderCodeBody = (
@@ -232,8 +203,7 @@ const WorkspaceToolDetailsRow = ({
     : notebookRunStatus
       ? t(notebookRunStatus)
       : undefined
-  const translateKnownCopy = (value: string): string =>
-    TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
+  const translateKnownCopy = (value: string): string => translateToolDetailCopy(value, t)
   const reviewStatus = details.codeReview
     ? activity.toolDisposition === 'declined' || phase === 'declined'
       ? t('declined by you')
@@ -269,6 +239,13 @@ const WorkspaceToolDetailsRow = ({
   }, [isNearViewport, notebookRunId, onNotebookRunNearViewport])
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
+    if (section.kind === 'authorized-directories')
+      return (
+        <AuthorizedDirectoriesList
+          key={`${activity.id}:${section.snapshot.revision}`}
+          directories={section.snapshot.directories}
+        />
+      )
     if (section.kind === 'summary')
       return <WorkspaceToolSummaryCard key={index} summary={section.summary} file={section.file} />
     if (section.kind === 'literature') {

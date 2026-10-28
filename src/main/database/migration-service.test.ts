@@ -315,15 +315,11 @@ describe('application database migrations', () => {
     await client.$executeRawUnsafe(
       `DELETE FROM "_open_science_migrations" WHERE id IN ('0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')`
     )
-    await client.literatureItem.create({
-      data: {
-        id: 'synthetic-history',
-        itemType: 'journalArticle',
-        title: 'Independent migration fixture',
-        containerTitle: 'Imaginary Planetary Review'
-      }
-    })
-    const before = await client.literatureItem.findMany()
+    await client.$executeRaw`INSERT INTO "LiteratureItem"
+      (id, "itemType", title, "containerTitle", "updatedAt")
+      VALUES ('synthetic-history', 'journalArticle', 'Independent migration fixture',
+        'Imaginary Planetary Review', CURRENT_TIMESTAMP)`
+    const before = await client.literatureItem.findMany({ omit: { readingStatus: true } })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: [
         '0046_journal_attributes',
@@ -331,10 +327,11 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
-    expect(await client.literatureItem.findMany()).toEqual(before)
+    expect(await client.literatureItem.findMany({ omit: { readingStatus: true } })).toEqual(before)
     expect(await client.$queryRawUnsafe('SELECT * FROM "Journal"')).toEqual([])
     expect(await client.$queryRawUnsafe('SELECT * FROM "JournalDataset"')).toEqual([])
     expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
@@ -345,16 +342,11 @@ describe('application database migrations', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'literature-receipt-upgrade-'))
     client = createProjectDbClient(storageRoot)
     await createDatabaseAtReleasedManifest(client)
-    await client.literatureItem.create({
-      data: {
-        id: 'historical-reference',
-        itemType: 'journalArticle',
-        title: 'Historical paper',
-        containerTitle: 'Already populated',
-        metadataRevision: 7
-      }
-    })
-    const before = await client.literatureItem.findMany()
+    await client.$executeRaw`INSERT INTO "LiteratureItem"
+      (id, "itemType", title, "containerTitle", "metadataRevision", "updatedAt")
+      VALUES ('historical-reference', 'journalArticle', 'Historical paper',
+        'Already populated', 7, CURRENT_TIMESTAMP)`
+    const before = await client.literatureItem.findMany({ omit: { readingStatus: true } })
     await client.$executeRawUnsafe('DROP TABLE "JournalItemBinding"')
     await client.$executeRawUnsafe('DROP TABLE "JournalDatasetEntry"')
     await client.$executeRawUnsafe('DROP TABLE "JournalDataset"')
@@ -382,14 +374,15 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
     expect(await client.literatureMetadataCommitReceipt.count()).toBe(0)
-    expect(await client.literatureItem.findMany()).toEqual(before)
+    expect(await client.literatureItem.findMany({ omit: { readingStatus: true } })).toEqual(before)
     expect(
       await client.$queryRawUnsafe(
-        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0049_pascalcase_table_names', '0050_literature_translation', '0051_session_research_membership') ORDER BY id`
+        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0049_pascalcase_table_names', '0050_literature_translation', '0051_literature_reading_status', '0051_session_research_membership') ORDER BY id`
       )
     ).toEqual(ledger)
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -597,9 +590,8 @@ describe('application database migrations', () => {
       storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
       client = createProjectDbClient(storageRoot)
       await createDatabaseAtReleasedManifest(client)
-      await client.literatureItem.create({
-        data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
-      })
+      await client.$executeRaw`INSERT INTO "LiteratureItem" (id, "itemType", title, "updatedAt")
+        VALUES ('adopted', 'book', 'ÉTUDE', CURRENT_TIMESTAMP)`
       await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
       await migrateApplicationDatabase(client)
       expect(
@@ -781,6 +773,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ],
       from: null,
@@ -841,6 +834,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ],
       from: '0033_compute_job_harvest_retry',
@@ -971,6 +965,7 @@ describe('application database migrations', () => {
           '0048_pdf_annotation_sharing',
           '0049_pascalcase_table_names',
           '0050_literature_translation',
+          '0051_literature_reading_status',
           '0051_session_research_membership'
         ]
       })
@@ -1078,6 +1073,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
@@ -1197,6 +1193,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ],
       from: '0005_project_preview_state_owner_fk',
@@ -1302,6 +1299,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ],
       from: '0005_project_preview_state_owner_fk',
@@ -1503,6 +1501,7 @@ describe('application database migrations', () => {
       { id: '0048_pdf_annotation_sharing' },
       { id: '0049_pascalcase_table_names' },
       { id: '0050_literature_translation' },
+      { id: '0051_literature_reading_status' },
       { id: '0051_session_research_membership' },
       { id: '9997_test_suffix' }
     ])
@@ -1607,6 +1606,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ],
       from: '0001_runtime_schema_baseline',
@@ -1715,6 +1715,7 @@ describe('application database migrations', () => {
       { id: '0048_pdf_annotation_sharing' },
       { id: '0049_pascalcase_table_names' },
       { id: '0050_literature_translation' },
+      { id: '0051_literature_reading_status' },
       { id: '0051_session_research_membership' }
     ])
   })
@@ -1859,6 +1860,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership',
         '9997_test_suffix'
       ],
@@ -2136,6 +2138,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
@@ -2284,6 +2287,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
@@ -2384,6 +2388,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
@@ -2487,6 +2492,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
@@ -2624,6 +2630,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
@@ -3152,6 +3159,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ]
     })
@@ -3221,7 +3229,7 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0050_literature_translation.backup',
+      'open-science.db.before-0051_literature_reading_status.backup',
       'open-science.db.before-0051_session_research_membership.backup',
       unknownBackupName
     ])
@@ -3542,6 +3550,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ],
       from: '0024_compute_job_file_evidence',
@@ -3687,6 +3696,7 @@ describe('application database migrations', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         '0051_session_research_membership'
       ],
       from: '0024_compute_job_file_evidence',

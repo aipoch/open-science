@@ -167,34 +167,47 @@ source entry with `npm run build:backend` and Web UI with `npm run build:web` fi
 `--app-path` and `OPEN_SCIENCE_APP_PATH` no longer select a hidden Electron backend.
 `--no-sandbox` does not apply to Node startup; existing Notebook/process permissions still apply.
 
-An already running Node runtime is reused through authenticated discovery, including one started
-by the desktop. Electron attaches to an existing same-version Node server without adding another
-writer. Quitting a desktop stops only a server it started; a desktop attached to a CLI-started
-server only detaches. Closing a Web tab or SDK connection does not stop the server. Use
-`open-science stop` for an explicit global stop affecting every connected client.
+An already running compatible Node runtime is reused through authenticated discovery, including one
+started by the desktop. App connections and explicit `start` keep the service running. `start` sets
+one persistent hold; repeated calls do not accumulate holds. Quitting the last App stops the service
+unless that explicit hold remains. Ordinary CLI/Web work does not itself keep the service alive, so
+start it explicitly first when that work must continue after the App quits. Closing to the tray is
+not application Quit. Closing a Web tab or SDK connection does not release an explicit hold.
 
-`open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
-the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
-command fails without signalling the PID recorded in `web-service.json`; a stale PID may have been
-reused by an unrelated process. The state file is retained for diagnosis and can be replaced by a
-later `open-science start`.
+`open-science stop` revokes explicit persistent running. While any App remains connected, it succeeds
+without stopping the service or its tasks. Once no App remains, the service stops. Use
+`open-science stop --force` to request a whole-service stop, including while Apps are connected;
+running tasks may be interrupted. Desktop windows and drafts remain available for explicit retry.
+
+A modern stop records the intended generation and waits for verified process exit. Bounded desktop
+cleanup may escalate only after checking the process birth identity and stop authority. A state-file
+PID alone never authorizes signalling. Failed authentication, unresolved identity, or an unconfirmed
+exit produces an error; retained evidence must not be deleted to bypass a live owner.
 
 Automatic discovery tries the development config directory before the production directory, skipping
 dead or unhealthy candidates until it finds a healthy service. An explicit `--config-root`,
 `OPEN_SCIENCE_CONFIG_ROOT`, or `OPEN_SCIENCE_STORAGE_ROOT` limits discovery to that directory. Live
 unhealthy records are retained; failed authentication never authorizes signalling a recorded PID.
 
-`open-science stop --json` prints exactly one result object on success:
+`open-science stop --json` returns one result object:
 
-| `result`              | Meaning                                                                      |
-| --------------------- | ---------------------------------------------------------------------------- |
-| `already-stopped`     | No live service record was found.                                            |
-| `daemon-stopped`      | The authenticated Node daemon exited (desktop-started or CLI-started).       |
-| `web-service-stopped` | Legacy desktop-host protocol only: Web stopped; old desktop remains running. |
+| `result`             | Meaning                                                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `already-stopped`    | No live service record was found.                                                                                                         |
+| `keep-alive-revoked` | Explicit persistent running was revoked; connected Apps still keep the service running.                                                   |
+| `stopped`            | The requested generation exited and its directory ownership was released.                                                                 |
+| `shutdown-requested` | Legacy protocol accepted shutdown, but completion remains unconfirmed; `completionStatus` is `unconfirmed` and the command exits nonzero. |
 
-Among lifecycle commands, `status` and `stop` support `--json`. `start` and `url` reject
-it; run `start --no-open` followed by `status --json` for machine-readable startup status. Errors
-with `--json` are reported on stderr as a JSON error object with a nonzero exit code.
+The former `daemon-stopped` and `web-service-stopped` success values are no longer emitted. Modern
+results also include the authenticated service information and `lifetime` snapshot; scripts should
+branch on `result`, not infer that every zero exit code means the service stopped. `--force` requires
+the modern lifetime protocol and fails explicitly for an older service.
+
+`start`, `status`, and `stop` support `--json`; `url` rejects it. `start --no-open --json` reports
+`started` or `already-running`, service information, and `lifetime` (or `unknown` for an older
+protocol). It does not print a browser login URL. Errors with `--json` are reported on stderr as a
+JSON error object with a nonzero exit code. Older protocols can report unconfirmed shutdown even
+if the process subsequently exits; they cannot prove the stopped generation to a script.
 
 ## Readiness checks
 
@@ -998,3 +1011,83 @@ JSON with `dataBase64`, the full image's `checksum` and `sizeBytes`, the chunk's
 `nextOffset`, decode and concatenate the chunks, then verify the full image's SHA-256 before using it.
 Paths, URLs and replacement Session scopes are not accepted. The live image cache ends with the
 Run; published images remain ordinary Artifact Versions in its saved recording.
+
+## External agents through MCP
+
+Start the selected profile normally, then let an MCP client launch the stdio adapter:
+
+```bash
+open-science start --no-open --config-root /absolute/path/to/profile
+open-science mcp --config-root /absolute/path/to/profile
+```
+
+Example client configuration (replace paths with your installation and profile paths):
+
+```json
+{
+  "mcpServers": {
+    "open-science": {
+      "command": "/absolute/path/to/open-science",
+      "args": ["mcp", "--config-root", "/absolute/path/to/profile"]
+    }
+  }
+}
+```
+
+`--profile` is an alias for `--config-root`; existing environment overrides and discovery order
+apply. For a source checkout, use `node` as the command and put the absolute path to
+`packages/open-science/cli.mjs` before `mcp` in `args`. The adapter connects to an already
+running authenticated local service; it does not start it, install anything or open a browser.
+`open-science mcp --help` works without a running service.
+
+Tool discovery works even when the service is stopped. Calls return an actionable error until
+it is available, and subsequent calls rediscover the service. Tool names consistently use
+lowercase `snake_case`; argument names retain the SDK's `camelCase`. Tools accept explicit IDs
+rather than resolving project names. Each tool publishes its description, input schema, output
+schema and behavior annotations through `tools/list`.
+
+| Tool                           | Purpose                                                  |
+| ------------------------------ | -------------------------------------------------------- |
+| `doctor`                       | Check research readiness                                 |
+| `list_runtimes`                | List detected Agent runtimes                             |
+| `list_projects`                | List projects and IDs                                    |
+| `create_project`               | Create a persistent project                              |
+| `update_project`               | Update project metadata and Agent Context                |
+| `list_sessions`                | List sessions, optionally by project                     |
+| `get_session`                  | Read session information/status, not a full transcript   |
+| `get_session_configuration`    | Read session configuration and revision                  |
+| `update_session_configuration` | Update settings with `expectedRevision`                  |
+| `start_run`                    | Submit a prompt and return a run ID                      |
+| `get_run`                      | Read progress, output and attention state                |
+| `cancel_run`                   | Explicitly cancel a run without undoing previous effects |
+| `get_plan`                     | Read the plan and its version/revision                   |
+| `respond_plan`                 | Approve/reject a reviewed version or request changes     |
+| `list_artifacts`               | List artifact metadata without downloading files         |
+
+A typical workflow calls `list_projects`, `start_run` with `{ "projectId": "…", "prompt": "…" }`,
+then polls `get_run` with the returned run ID and calls `list_artifacts` with the session ID.
+Successful calls return `structuredContent: { "result": ... }` plus the same JSON in text
+content. Tool execution failures set `isError: true`; exception bodies and credentials are not
+forwarded. After a timeout or transport failure, inspect current state before repeating a write:
+the original operation may already have succeeded. The adapter never retries mutations itself.
+
+Runs use the service's configured framework and authorization defaults. `start_run` accepts
+existing session, provider/model, permission, skill, specialist, compute-host, memory, review,
+delegation and plan-first options; it does not change the global framework. A run can require
+human action in Open-Science. Explicit `permissionPrompts: "none"` denies unresolved human
+interactions using the existing capability check; it does not expand permissions and cannot
+be combined with `turnIntent: "plan-first"`. Plan approval/rejection requires the version and
+revision from `get_plan`. Configuration updates require the revision from
+`get_session_configuration`.
+
+MCP access grants the listed operations for the selected profile under its existing permissions.
+The adapter is not a separate sandbox or a read-only view. Project/configuration changes, plan
+responses and research runs persist through existing business owners and may write files or
+incur model costs. No new database schema, historical-data migration, business status enum,
+credential store or background service is introduced. There is no arbitrary shell/RPC tool,
+credential-management tool, file import/export/download-to-path tool or remote HTTP MCP endpoint.
+
+Standard output carries only MCP protocol messages. Closing stdin or sending SIGINT/SIGTERM
+closes the adapter and its pending network requests; it neither stops the service nor cancels
+accepted runs. MCP request cancellation likewise stops waiting, not the persisted operation.
+Use `cancel_run` explicitly to cancel research.

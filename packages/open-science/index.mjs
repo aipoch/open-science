@@ -1050,7 +1050,7 @@ export const connectToOpenScience = async ({
   if (!client) {
     if (lastError) throw lastError
     throw new OpenScienceApiError(
-      'Open-Science is not running. Start it with "open-science start".',
+      'Open-Science is not running. Open the App or start the local service with "open-science start".',
       {
         code: 'daemon_unavailable'
       }

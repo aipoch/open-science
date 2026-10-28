@@ -1,8 +1,11 @@
 import { EventEmitter } from 'node:events'
+import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import type { DownloadedUpdateHelper as SdkDownloadHelper } from 'electron-updater/out/DownloadedUpdateHelper'
 import { expect, it, vi } from 'vitest'
 import {
   ElectronUpdaterStrategy,
@@ -29,10 +32,240 @@ const requireRepo = createRequire(join(process.cwd(), 'package.json'))
 const { AppUpdater } = requireRepo('electron-updater/out/AppUpdater')
 const { DebUpdater } = requireRepo('electron-updater/out/DebUpdater')
 const { CancellationToken } = requireRepo('builder-util-runtime')
+const { NodeHttpExecutor } = requireRepo('builder-util/out/nodeHttpExecutor')
+const { ElectronHttpExecutor } = requireRepo('electron-updater/out/electronHttpExecutor')
+const { DownloadedUpdateHelper } = requireRepo('electron-updater/out/DownloadedUpdateHelper')
 const log = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
 const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }
+
+type RealCacheSession = {
+  strategy: ElectronUpdaterStrategy
+  updater: MinimalAutoUpdater & EventEmitter
+  helper: () => SdkDownloadHelper
+}
+
+// Use the installed updater's provider, transfer, SHA-512 stream and persisted/in-memory cache.
+// Only the HTTP request adapter is Node-based so this loopback test needs no Electron process.
+const realCacheFixture = async (
+  rejectRetry = false
+): Promise<
+  RealCacheSession & {
+    bytes: Buffer
+    packageRequests: () => number
+    freshSession: () => RealCacheSession
+    corrupt: () => Promise<void>
+    close: () => Promise<void>
+  }
+> => {
+  const directory = await mkdtemp(join(tmpdir(), 'same-process-sdk-cache-'))
+  const bytes = Buffer.from('verified installer bytes')
+  const sha512 = createHash('sha512').update(bytes).digest('base64')
+  const info = { version: '0.27.0', files: [{ url: 'installer.deb', sha512, size: bytes.length }] }
+  let packageRequests = 0
+  const server = createServer((request, response) => {
+    if (request.url?.split('?')[0].endsWith('.yml')) {
+      response.end(JSON.stringify(info))
+    } else {
+      packageRequests += 1
+      const body = rejectRetry && packageRequests > 1 ? Buffer.alloc(bytes.length) : bytes
+      response.writeHead(200, { 'Content-Length': body.length })
+      response.end(body)
+    }
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Expected loopback server address')
+  const config = join(directory, 'app-update.yml')
+  await writeFile(config, 'updaterCacheDirName: sdk-regression\n')
+  const freshSession = (): RealCacheSession => {
+    const updater = new DebUpdater(undefined, {
+      name: 'SdkCacheRegression',
+      version: '0.26.0',
+      isPackaged: true,
+      appUpdateConfigPath: config,
+      userDataPath: join(directory, 'profile'),
+      baseCachePath: directory,
+      whenReady: async () => {},
+      quit: vi.fn(),
+      relaunch: vi.fn(),
+      onQuit: vi.fn()
+    })
+    const executor = new NodeHttpExecutor()
+    executor.download = ElectronHttpExecutor.prototype.download
+    updater.httpExecutor = executor
+    updater._testOnlyOptions = { platform: 'linux' }
+    updater.setFeedURL(`http://127.0.0.1:${address.port}/`)
+    updater.logger = log
+    updater.quitAndInstall = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.26.0',
+      platform: 'linux',
+      broadcast: () => {},
+      installationGuard: () => false,
+      fetchImpl: offline,
+      createCancellationToken: () => new CancellationToken()
+    })
+    return {
+      updater,
+      strategy,
+      helper: () => Reflect.get(updater, 'downloadedUpdateHelper') as SdkDownloadHelper
+    }
+  }
+  const session = freshSession()
+  try {
+    await session.strategy.check()
+    expect((await session.strategy.download()).state).toBe('ready')
+    expect(await session.strategy.getInstaller()).toMatchObject({ format: 'deb' })
+    expect(session.helper()).toBeInstanceOf(DownloadedUpdateHelper)
+  } catch (error) {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await rm(directory, { recursive: true, force: true })
+    throw error
+  }
+  return {
+    ...session,
+    bytes,
+    packageRequests: () => packageRequests,
+    freshSession,
+    corrupt: async () => {
+      const path = session.strategy.getStatus().localPath!
+      const damaged = Buffer.from(bytes)
+      damaged[0] ^= 1
+      await writeFile(path, damaged)
+      await utimes(path, new Date(), new Date(Date.now() + 1000))
+    },
+    close: async () => {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+}
+
+it.each(['inspect', 'reveal'] as const)(
+  'rechecks a modified same-process SDK cache after %s invalidates its installer',
+  async (inspection) => {
+    const fixture = await realCacheFixture()
+    try {
+      expect(fixture.packageRequests()).toBe(1)
+      await fixture.corrupt()
+      if (inspection === 'inspect') expect(await fixture.strategy.getInstaller()).toBeNull()
+      else expect(await fixture.strategy.revealInstaller()).toBe('missing')
+      expect(fixture.strategy.getStatus()).toMatchObject({
+        state: 'available',
+        installerMissing: true
+      })
+      const result = await fixture.strategy.download()
+      expect(fixture.packageRequests()).toBe(2)
+      expect(result.state).toBe('ready')
+      expect(await readFile(result.localPath!)).toEqual(fixture.bytes)
+      expect(await fixture.strategy.getInstaller()).toMatchObject({ format: 'deb' })
+      expect(fixture.updater.quitAndInstall).not.toHaveBeenCalled()
+    } finally {
+      await fixture.close()
+    }
+  }
+)
+
+it('rejects a damaged replacement transfer instead of reconfirming its old SDK receipt', async () => {
+  const fixture = await realCacheFixture(true)
+  try {
+    await fixture.corrupt()
+    expect(await fixture.strategy.revealInstaller()).toBe('missing')
+    const result = await fixture.strategy.download()
+    expect(fixture.packageRequests()).toBe(2)
+    expect(result.state).toBe('error')
+    expect(result.error).toContain('checksum mismatch')
+    expect(result.localPath).toBeUndefined()
+    expect(await fixture.strategy.getInstaller()).toBeNull()
+  } finally {
+    await fixture.close()
+  }
+})
+
+it('keeps healthy same-process and fresh-session SDK cache reuse unchanged', async () => {
+  const fixture = await realCacheFixture()
+  try {
+    await fixture.updater.downloadUpdate(new CancellationToken())
+    expect(fixture.packageRequests()).toBe(1)
+    const fresh = fixture.freshSession()
+    expect(await fresh.strategy.getInstaller()).toBeNull()
+    await fresh.strategy.check()
+    expect((await fresh.strategy.download()).state).toBe('ready')
+    expect(fresh.helper()).not.toBe(fixture.helper())
+    expect(fixture.packageRequests()).toBe(1)
+    expect(await fresh.strategy.getInstaller()).toMatchObject({ format: 'deb' })
+  } finally {
+    await fixture.close()
+  }
+})
+
+it('does not transfer or revive ready when cancelled during invalidated-cache cleanup', async () => {
+  const fixture = await realCacheFixture()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let entered!: () => void
+  const clearing = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const clear = fixture.helper().clear.bind(fixture.helper())
+  vi.spyOn(fixture.helper(), 'clear').mockImplementationOnce(async () => {
+    entered()
+    await gate
+    await clear()
+  })
+  try {
+    await fixture.corrupt()
+    expect(await fixture.strategy.revealInstaller()).toBe('missing')
+    const retry = fixture.strategy.download()
+    await clearing
+    fixture.updater.emit('update-downloaded', {
+      version: '0.27.0',
+      downloadedFile: fixture.helper().file
+    })
+    expect(fixture.strategy.getStatus().state).toBe('downloading')
+    expect(fixture.strategy.getStatus().localPath).toBeUndefined()
+    await fixture.strategy.cancel()
+    release()
+    expect((await retry).state).toBe('available')
+    expect(fixture.packageRequests()).toBe(1)
+    expect(await fixture.strategy.getInstaller()).toBeNull()
+    expect((await fixture.strategy.download()).state).toBe('ready')
+    expect(fixture.packageRequests()).toBe(2)
+  } finally {
+    release()
+    await fixture.close()
+  }
+})
+
+it.each(['failed', 'unavailable'] as const)(
+  'does not accept a modified SDK receipt when invalidated-cache reset is %s',
+  async (failure) => {
+    const fixture = await realCacheFixture()
+    const helper = fixture.helper()
+    const clear = helper.clear.bind(helper)
+    if (failure === 'failed')
+      vi.spyOn(helper, 'clear').mockRejectedValueOnce(new Error('cache cleanup failed'))
+    else Reflect.set(helper, 'clear', undefined)
+    try {
+      await fixture.corrupt()
+      expect(await fixture.strategy.revealInstaller()).toBe('missing')
+      expect((await fixture.strategy.download()).state).toBe('error')
+      expect(fixture.packageRequests()).toBe(1)
+      expect(await fixture.strategy.getInstaller()).toBeNull()
+      Reflect.set(helper, 'clear', clear)
+      expect((await fixture.strategy.download()).state).toBe('ready')
+      expect(fixture.packageRequests()).toBe(2)
+    } finally {
+      Reflect.set(helper, 'clear', clear)
+      await fixture.close()
+    }
+  }
+)
 
 it.each([undefined, '00000000-0000-4000-8000-000000000001'])(
   'passes only an operation UUID to the real NSIS launcher (%s)',

@@ -9,6 +9,8 @@ export const usePackageOperationStore = create<{
   operation: PackageOperationSnapshot | null
   browserReceipt?: BrowserPackageTransfer
   errorKind?: 'fork'
+  useCaseFailure?: string
+  useCaseSlug?: string
   importError?: string
   setImportError: (error: string | undefined) => void
   open: boolean
@@ -70,6 +72,8 @@ export const usePackageOperationStore = create<{
         )
       return {
         operation,
+        // Download metadata disappears at handoff; retain its card owner for this operation only.
+        useCaseSlug: operation?.useCaseDownload?.slug ?? (same ? state.useCaseSlug : undefined),
         browserReceipt,
         dismissedId: same && !newReceipt ? state.dismissedId : undefined,
         excludedStorageKeys: operation?.files
@@ -97,18 +101,25 @@ export const usePackageOperationStore = create<{
               ? 'custom'
               : preset,
         threshold: same || retry ? state.threshold : '256',
-        open: newReceipt
-          ? true
-          : same && state.dismissedId === operation?.id
-            ? false
-            : (same && operation?.presentationRevision !== state.operation?.presentationRevision) ||
-                (operation?.state === 'awaiting-selection' &&
-                  (!same ||
-                    state.operation?.state !== 'awaiting-selection' ||
-                    operation.progress.phase !== state.operation.progress.phase)) ||
-                (!same && operation?.state === 'running')
+        open: operation?.useCaseDownload
+          ? same && state.open
+          : state.operation?.useCaseDownload &&
+              !operation?.useCaseDownload &&
+              operation?.state === 'running'
+            ? true
+            : newReceipt
               ? true
-              : state.open
+              : same && state.dismissedId === operation?.id
+                ? false
+                : (same &&
+                      operation?.presentationRevision !== state.operation?.presentationRevision) ||
+                    (operation?.state === 'awaiting-selection' &&
+                      (!same ||
+                        state.operation?.state !== 'awaiting-selection' ||
+                        operation.progress.phase !== state.operation.progress.phase)) ||
+                    (!same && operation?.state === 'running')
+                  ? true
+                  : state.open
       }
     }),
   setOpen: (open) => set({ open })

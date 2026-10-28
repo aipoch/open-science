@@ -18,9 +18,9 @@ import type { NotebookRunRecord } from './analysis-test-support'
 
 it.each([0, 11])('captures self-contained Venn device cell %s', async (index) => {
   expect(await analyzeNotebookSourceFileAccess('r', cells[index])).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: index === 11 ? 'partial' : 'complete',
+    writeState: index === 11 ? 'partial' : 'complete',
+    externalState: index === 11 ? 'partial' : 'complete',
     reads: ['inputs/set-membership-111111111111.xlsx'],
     writes: index === 11 ? ['venn_5sets_proportional.png'] : [],
     ...(index === 11
@@ -29,7 +29,7 @@ it.each([0, 11])('captures self-contained Venn device cell %s', async (index) =>
   })
 })
 
-it('keeps failed upstream state blocked and recovers with successful preparation in a new kernel', async () => {
+it('keeps failed history and unproved new-kernel distinct methods uncertain', async () => {
   const root = await mkdtemp(join(tmpdir(), 'venn-device-projection-'))
   const runs: NotebookRunRecord[] = cells.map((script, index) => ({
     runId: String(index),
@@ -59,8 +59,11 @@ it('keeps failed upstream state blocked and recovers with successful preparation
         throughRunId: '11'
       })
       expect(projection.stalenessByRunId['10']?.state).toBe('unknown')
-      expect(projection.stalenessByRunId['11']).toEqual({ state: 'clear' })
-      expect(projection.dependenciesByRunId?.['11']).toEqual([])
+      expect(projection.stalenessByRunId['11']).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['opaque-call'])
+      })
+      expect(projection.dependenciesByRunId?.['11']).toBeUndefined()
     }
   } finally {
     await rm(root, { recursive: true, force: true })

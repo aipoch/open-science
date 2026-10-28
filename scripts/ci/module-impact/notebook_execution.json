@@ -151,7 +151,12 @@
     "src/main/notebook/managed-shell.macos.integration.test.ts",
     "src/main/notebook/shell-search-scope.ts",
     "src/main/notebook/execution-deadline.test.ts",
-    "src/main/notebook/execution-deadline.ts"
+    "src/main/notebook/execution-deadline.ts",
+    "src/main/notebook/kernel-process-identity.ts",
+    "src/main/notebook/kernel-process-identity.test.ts",
+    "src/main/notebook/managed-skill-read-roots.ts",
+    "src/main/notebook/managed-skill-read-roots.test.ts",
+    "src/main/notebook/managed-skill-read.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -309,7 +314,10 @@
       "src/main/notebook/managed-shell-execution.test.ts",
       "src/main/notebook/managed-shell-runtime.test.ts",
       "src/main/notebook/managed-shell.macos.integration.test.ts",
-      "src/main/notebook/execution-deadline.test.ts"
+      "src/main/notebook/execution-deadline.test.ts",
+      "src/main/notebook/kernel-process-identity.test.ts",
+      "src/main/notebook/managed-skill-read-roots.test.ts",
+      "src/main/notebook/managed-skill-read.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

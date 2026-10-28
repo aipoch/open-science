@@ -143,6 +143,7 @@ const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
 const CONTEXT_SUFFIXES = new Set([
+  'readingStatus',
   'ago',
   'duration',
   'files',
@@ -680,9 +681,8 @@ describe('process catalog boundaries', () => {
     const sharedCloseConfirmKeys = [
       "Don't ask again",
       'Minimize to tray',
-      'Return to tasks',
-      'Subagents are still running',
-      'Work is still running and will be interrupted if you quit.'
+      'Quit_verb',
+      'Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.'
     ]
 
     for (const locale of TRANSLATED) {

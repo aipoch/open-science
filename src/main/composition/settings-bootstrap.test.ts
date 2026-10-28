@@ -7,6 +7,7 @@ type NetworkOptions = ConstructorParameters<typeof NotebookNetworkSandboxOwner>[
 type NetworkSettings = Awaited<ReturnType<NetworkOptions['getSettings']>>
 
 const fixture = vi.hoisted(() => ({
+  projectAfter: vi.fn(async (pending: Promise<unknown>) => pending),
   ready: vi.fn<() => Promise<boolean>>(),
   configured: vi.fn(async () => true),
   networkOptions: undefined as NetworkOptions | undefined,
@@ -90,7 +91,9 @@ vi.mock('../settings/settings-install-coordinator', () => ({
   SettingsInstallCoordinator: class {}
 }))
 vi.mock('../settings/settings-snapshot-commit-owner', () => ({
-  SettingsSnapshotCommitOwner: class {}
+  SettingsSnapshotCommitOwner: class {
+    projectAfter = fixture.projectAfter
+  }
 }))
 vi.mock('../network-fetch', () => ({ netFetchStandard: vi.fn() }))
 vi.mock('@aipoch/skills', () => ({ UserSkillSpecialistPackageAdapter: class {} }))
@@ -200,6 +203,7 @@ it('keeps explicit protection setup and status failures observable after a conve
 it('uses the live protection policy, trust bundle and granted roots at execution time', async () => {
   const settings = await bootstrap()
   const options = fixture.networkOptions!
+  expect(options.configRoot).toBe('/config')
   await expect(options.getSettings()).resolves.toMatchObject({ allowedDomains: [] })
   await expect(options.getFolderRestrictionEnabled!()).resolves.toBe(true)
   await expect(options.getCaBundlePath!()).resolves.toBe('/ca.pem')
@@ -409,4 +413,30 @@ it('rejects an unreadable protection configuration instead of selecting an unpro
   await expect(settings.getAvailableShellRuntimeBinding()).rejects.toThrow(
     'Windows protection ownership is inconsistent.'
   )
+})
+
+it('publishes global network grants through the shared settings snapshot owner', async () => {
+  await bootstrap()
+  await fixture.settingsOptions!.onNotebookNetworkDomainAllowed!()
+  expect(fixture.projectAfter).toHaveBeenCalledOnce()
+})
+
+it('reads transition-aware authority and forwards subscriptions without an approval client', async () => {
+  await bootstrap()
+  const options = fixture.networkOptions!
+  expect(options.hasFullAccess!('session')).toBe(false)
+  options.subscribeFullAccess!('session', vi.fn())()
+  const hasFullAccess = vi.fn((sessionId: string) => sessionId === 'session')
+  const unsubscribe = vi.fn()
+  const subscribeFullAccess = vi.fn(() => unsubscribe)
+  fixture.runtime.current = { hasFullAccess, subscribeFullAccess } as never
+  expect(fixture.approvalAvailable()).toBe(false)
+  expect(options.hasFullAccess!('session')).toBe(true)
+  expect(options.hasFullAccess!('other-session')).toBe(false)
+  hasFullAccess.mockReturnValue(false)
+  expect(options.hasFullAccess!('session')).toBe(false)
+  const listener = vi.fn()
+  options.subscribeFullAccess!('session', listener)()
+  expect(subscribeFullAccess).toHaveBeenCalledWith('session', listener)
+  expect(unsubscribe).toHaveBeenCalledOnce()
 })

@@ -459,11 +459,12 @@ describe('production application command wiring', () => {
     const returnedViews = compact(
       between(ipcSource, '    applicationCommands: {', '    applicationEvents,')
     )
+    expect(returnedViews).toContain('beginStopping: applicationCommandComposition.beginStopping')
     expect(returnedViews).toContain('localWeb: applicationCommandComposition.localWeb')
     expect(returnedViews).toContain('remoteWeb: applicationCommandComposition.remoteWeb')
     expect(returnedViews).toContain('task: applicationCommandComposition.task')
     expect(returnedViews).toContain('desktop: applicationCommandComposition.desktop')
-    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(4)
+    expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(5)
   })
 
   it('shares one Electron page preview resolver with the production Reviewer owner', () => {
@@ -720,7 +721,11 @@ vi.mock('./composition/session-surfaces', () => ({
   composeSessionSurfaces: vi.fn(() => rootFixture.owners)
 }))
 vi.mock('./composition/settings-bootstrap', () => ({
-  composeSettingsBootstrap: vi.fn(() => rootFixture.owners)
+  composeSettingsBootstrap: vi.fn((options) => {
+    // Startup certification can ask permission questions before the agent runtime is constructed.
+    expect(options.getRuntimeRef().current).toBeUndefined()
+    return rootFixture.owners
+  })
 }))
 vi.mock('./composition/settings-effects', () => ({
   composeSettingsEffects: vi.fn(() => rootFixture.owners)

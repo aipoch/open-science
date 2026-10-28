@@ -357,6 +357,7 @@ describe('agent memory project scope migration', () => {
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
+        '0051_literature_reading_status',
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID

@@ -1,4 +1,10 @@
+import {
+  observeFixtureService,
+  cleanupObservedFixtureService,
+  runFixtureCleanup
+} from './local-service-cleanup'
 import { expect, test as base, type TestInfo } from '@playwright/test'
+import { buildShellProcessEnvironment } from '@aipoch/environment'
 import { spawn } from 'node:child_process'
 import {
   appendFile,
@@ -13,7 +19,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path'
 import {
   _electron as electron,
   type ElectronApplication,
@@ -155,87 +161,99 @@ const installRestartPersistenceRetry = async (
   windowId: number,
   timeoutMs: number
 ): Promise<void> => {
-  await application.evaluate(
-    ({ app, BrowserWindow, ipcMain }, { windowId, timeoutMs }) => {
-      const window = BrowserWindow.fromId(windowId)
-      if (!window) throw new Error('Electron E2E restart window is unavailable.')
-      const contents = window.webContents
-      const originalSend = contents.send
-      const sendDescriptor = Object.getOwnPropertyDescriptor(contents, 'send')
-      let requestId: string | undefined
-      let status: string | undefined
-      let recovering = false
-      let settle: ((status: string) => void) | undefined
-      const responseChannel = 'sessions:flush-response'
-      const onResponse = (
-        event: Electron.IpcMainEvent,
-        response: { requestId?: string; status?: string }
-      ): void => {
-        if (event.sender !== contents || !requestId || response?.requestId !== requestId) return
-        if (!['completed', 'conflict', 'failed'].includes(response.status ?? '')) return
-        status = response.status
-        settle?.(status!)
-      }
-      const restore = (): void => {
-        if (sendDescriptor) Object.defineProperty(contents, 'send', sendDescriptor)
-        else Reflect.deleteProperty(contents, 'send')
-        ipcMain.removeListener(responseChannel, onResponse)
-        app.removeListener('will-quit', restore)
-      }
-      ipcMain.on(responseChannel, onResponse)
-      app.once('will-quit', restore)
-      Object.defineProperty(contents, 'send', {
-        configurable: true,
-        value: (channel: string, ...args: unknown[]) => {
-          const payload = args[0] as { requestId?: string; variant?: string } | undefined
-          if (channel === 'sessions:flush-request' && !recovering) {
-            requestId = payload?.requestId
-            status = undefined
-          }
-          if (
-            channel === 'window:close-confirm-request' &&
-            payload?.variant === 'persistence-failed' &&
-            payload.requestId &&
-            requestId &&
-            !recovering
-          ) {
-            recovering = true
-            const confirmationId = payload.requestId
-            const answer = (response: { ack: true } | { choice: 'retry' | 'cancel' }): void => {
-              ipcMain.emit(
-                'window:close-confirm-response',
-                { sender: contents },
-                {
-                  requestId: confirmationId,
-                  ...response
-                }
-              )
-            }
-            // Act as the test user through the existing confirmation protocol. Never forge a
-            // successful flush or a force-quit choice; the retry runs both production gates again.
-            answer({ ack: true })
-            void (async () => {
-              const result =
-                status ??
-                (await new Promise<string>((resolve) => {
-                  const timer = setTimeout(() => resolve('timeout'), timeoutMs)
-                  settle = (value) => {
-                    clearTimeout(timer)
-                    resolve(value)
-                  }
-                }))
-              settle = undefined
-              restore()
-              answer({ choice: result === 'completed' ? 'retry' : 'cancel' })
-            })()
-            return
-          }
-          return originalSend.call(contents, channel, ...args)
+  const install = (): Promise<void> =>
+    application.evaluate(
+      ({ app, BrowserWindow, ipcMain }, { windowId, timeoutMs }) => {
+        const window = BrowserWindow.fromId(windowId)
+        if (!window) throw new Error('Electron E2E restart window is unavailable.')
+        const contents = window.webContents
+        const installed = Symbol.for('open-science.e2e.restart-persistence-retry')
+        if (Reflect.get(contents, installed)) return
+        const originalSend = contents.send
+        const sendDescriptor = Object.getOwnPropertyDescriptor(contents, 'send')
+        let requestId: string | undefined
+        let status: string | undefined
+        let recovering = false
+        let settle: ((status: string) => void) | undefined
+        const responseChannel = 'sessions:flush-response'
+        const onResponse = (
+          event: Electron.IpcMainEvent,
+          response: { requestId?: string; status?: string }
+        ): void => {
+          if (event.sender !== contents || !requestId || response?.requestId !== requestId) return
+          if (!['completed', 'conflict', 'failed'].includes(response.status ?? '')) return
+          status = response.status
+          settle?.(status!)
         }
-      })
-    },
-    { windowId, timeoutMs }
-  )
+        const restore = (): void => {
+          Reflect.deleteProperty(contents, installed)
+          if (sendDescriptor) Object.defineProperty(contents, 'send', sendDescriptor)
+          else Reflect.deleteProperty(contents, 'send')
+          ipcMain.removeListener(responseChannel, onResponse)
+          app.removeListener('will-quit', restore)
+        }
+        Reflect.set(contents, installed, true)
+        ipcMain.on(responseChannel, onResponse)
+        app.once('will-quit', restore)
+        Object.defineProperty(contents, 'send', {
+          configurable: true,
+          value: (channel: string, ...args: unknown[]) => {
+            const payload = args[0] as { requestId?: string; variant?: string } | undefined
+            if (channel === 'sessions:flush-request' && !recovering) {
+              requestId = payload?.requestId
+              status = undefined
+            }
+            if (
+              channel === 'window:close-confirm-request' &&
+              payload?.variant === 'persistence-failed' &&
+              payload.requestId &&
+              requestId &&
+              !recovering
+            ) {
+              recovering = true
+              const confirmationId = payload.requestId
+              const answer = (response: { ack: true } | { choice: 'retry' | 'cancel' }): void => {
+                ipcMain.emit(
+                  'window:close-confirm-response',
+                  { sender: contents },
+                  {
+                    requestId: confirmationId,
+                    ...response
+                  }
+                )
+              }
+              // Act as the test user through the existing confirmation protocol. Never forge a
+              // successful flush or a force-quit choice; the retry runs both production gates again.
+              answer({ ack: true })
+              void (async () => {
+                const result =
+                  status ??
+                  (await new Promise<string>((resolve) => {
+                    const timer = setTimeout(() => resolve('timeout'), timeoutMs)
+                    settle = (value) => {
+                      clearTimeout(timer)
+                      resolve(value)
+                    }
+                  }))
+                settle = undefined
+                restore()
+                answer({ choice: result === 'completed' ? 'retry' : 'cancel' })
+              })()
+              return
+            }
+            return originalSend.call(contents, channel, ...args)
+          }
+        })
+      },
+      { windowId, timeoutMs }
+    )
+  try {
+    await install()
+  } catch (error) {
+    if (!String(error).includes('Resulting promise was garbage collected')) throw error
+    // The first evaluation may have installed the hooks before its response was lost.
+    await install()
+  }
 }
 
 type ElectronCleanupTarget = {
@@ -406,7 +424,7 @@ const launchEnvironment = (
     if (value !== undefined && key !== 'ELECTRON_RENDERER_URL') environment[key] = value
   }
 
-  if (inheritedEnvironment.OPEN_SCIENCE_E2E_ISOLATE_HOME === '1') {
+  {
     // Acceptance processes must not discover the operator's provider credentials, home files,
     // or shared credential-bootstrap lock. Keep only OS launch inputs and fixture controls.
     const osInputs = new Set([
@@ -431,19 +449,54 @@ const launchEnvironment = (
       'kde_full_session',
       'kde_session_version'
     ])
+    if (process.platform === 'win32')
+      for (const key of ['programfiles', 'programfiles(x86)', 'programw6432']) osInputs.add(key)
     for (const key of Object.keys(environment)) {
-      if (!osInputs.has(key.toLowerCase()) && !key.startsWith('OPEN_SCIENCE_E2E_'))
+      if (
+        !osInputs.has(key.toLowerCase()) &&
+        !key.startsWith('OPEN_SCIENCE_E2E_') &&
+        key !== 'OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT' &&
+        key !== 'OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT' &&
+        key !== 'OPEN_SCIENCE_MICROMAMBA_BIN'
+      )
         delete environment[key]
+    }
+    // Retain OS installation inputs even when user state is isolated.
+    if (process.platform === 'win32') {
+      Object.assign(environment, buildShellProcessEnvironment('win32', inheritedEnvironment))
+      // Plain environment snapshots (including worker copies) can have differently cased keys.
+      const systemPath = (name: string): string | undefined =>
+        Object.entries(environment).find(([key]) => key.toLowerCase() === name)?.[1]
+      const windowsRoot = systemPath('systemroot') ?? systemPath('windir')
+      // Fresh test profiles need built-in cmdlets, not the runner's AllUsers module collection.
+      if (windowsRoot) {
+        for (const key of Object.keys(environment))
+          if (key.toLowerCase() === 'psmodulepath') delete environment[key]
+        environment.PSModulePath = win32.join(
+          windowsRoot,
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'Modules'
+        )
+      }
     }
     const fixtureHome = join(dirname(storageRoot), 'isolated home')
     environment.HOME = fixtureHome
     environment.USERPROFILE = fixtureHome
     environment.APPDATA = join(fixtureHome, 'AppData', 'Roaming')
-    environment.LOCALAPPDATA = join(fixtureHome, 'AppData', 'Local')
+    const localAppData =
+      process.platform === 'win32'
+        ? Object.entries(inheritedEnvironment).find(
+            ([key]) => key.toLowerCase() === 'localappdata'
+          )?.[1]
+        : undefined
+    environment.LOCALAPPDATA = localAppData ?? join(fixtureHome, 'AppData', 'Local')
     environment.XDG_CONFIG_HOME = join(fixtureHome, '.config')
     environment.XDG_DATA_HOME = join(fixtureHome, '.local', 'share')
+    environment.OPEN_SCIENCE_E2E_ISOLATE_HOME = '1'
   }
-  environment.OPEN_SCIENCE_INSTALLATION_STATE_ROOT ??= join(storageRoot, 'installation-state')
+  environment.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = join(storageRoot, 'installation-state')
   environment.OPEN_SCIENCE_CONFIG_ROOT = storageRoot
   environment.OPEN_SCIENCE_USER_DATA = join(dirname(storageRoot), 'electron-profile')
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
@@ -479,6 +532,81 @@ const launchEnvironment = (
   return environment
 }
 
+/** Hold only new service attachments so manual recovery can be exercised after automatic retries. */
+const setFixtureServiceReconnectBlocked = (_electron: unknown, blocked: boolean): void => {
+  const net = process.getBuiltinModule('node:net')
+  const prototype = net.Socket.prototype as typeof net.Socket.prototype & {
+    fixtureOriginalConnect?: typeof net.Socket.prototype.connect
+  }
+  if (!blocked) {
+    if (prototype.fixtureOriginalConnect) {
+      prototype.connect = prototype.fixtureOriginalConnect
+      delete prototype.fixtureOriginalConnect
+    }
+    return
+  }
+  if (prototype.fixtureOriginalConnect) return
+  const connect = prototype.connect
+  prototype.fixtureOriginalConnect = connect
+  prototype.connect = function (this: import('node:net').Socket, ...args: unknown[]) {
+    const result = Reflect.apply(connect, this, args)
+    if (/os-desktop-|open-science-/.test(JSON.stringify(args)))
+      this.once('connect', () => this.destroy())
+    return result
+  } as typeof connect
+}
+
+/** Playwright serializes this callback into Electron's main process; keep it self-contained. */
+const disconnectFixtureServiceConnection = (): { url: string; destroyed: boolean } => {
+  type Socket = {
+    readable?: boolean
+    writable?: boolean
+    destroyed?: boolean
+    _handle?: { constructor: { name: string } }
+    destroy(): void
+    [key: symbol]: unknown
+  }
+  const handles = (
+    process as NodeJS.Process & { _getActiveHandles(): Socket[] }
+  )._getActiveHandles()
+  const matches = handles.flatMap((socket) => {
+    if (
+      !socket.readable ||
+      !socket.writable ||
+      socket.destroyed ||
+      socket._handle?.constructor.name !== 'Pipe'
+    )
+      return []
+    const websocket = Object.getOwnPropertySymbols(socket)
+      .map(
+        (key) => socket[key] as { _socket?: Socket; url?: string; readyState?: number } | undefined
+      )
+      .find(
+        (owner) =>
+          owner?._socket === socket &&
+          owner.url === 'ws://localhost/desktop' &&
+          owner.readyState === 1
+      )
+    return websocket ? [{ socket, websocket }] : []
+  })
+  if (matches.length !== 1)
+    throw new Error(`Expected one verified Desktop service pipe, found ${matches.length}.`)
+  const { socket, websocket } = matches[0]
+  socket.destroy()
+  return { url: websocket.url!, destroyed: socket.destroyed === true }
+}
+
+const hasFixtureReconnected = (
+  before: { phase: string; epoch: number },
+  after: { phase: string; epoch: number },
+  previousGeneration: string,
+  currentGeneration: string | undefined
+): boolean =>
+  before.phase === 'connected' &&
+  after.phase === 'connected' &&
+  after.epoch > before.epoch &&
+  previousGeneration === currentGeneration
+
 const launchOpenScience = async (
   { storageRoot, userDataRoot, fakeAgentBinRoot }: LaunchRoots,
   fakeAgentEnabled: boolean,
@@ -488,6 +616,14 @@ const launchOpenScience = async (
   sessionPerformanceTrace: boolean,
   packagePath?: string
 ): Promise<ElectronApplication> => {
+  // Packaged launches have no source preload to create isolated Windows known folders.
+  // Runtime metadata reads Downloads during bootstrap, before Chromium initializes its profile.
+  const fixtureHome = join(dirname(storageRoot), 'isolated home')
+  await Promise.all(
+    [join(fixtureHome, 'AppData', 'Roaming'), join(fixtureHome, 'Downloads')].map((directory) =>
+      mkdir(directory, { recursive: true })
+    )
+  )
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
     args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
@@ -503,7 +639,7 @@ const launchOpenScience = async (
       ),
       ...(process.platform === 'darwin' && !process.env.OPEN_SCIENCE_E2E_EXECUTABLE
         ? {
-            NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(resolve(APP_ROOT, 'e2e/fixtures/mock-node-credentials.cjs'))}`
+            NODE_OPTIONS: `--require=${JSON.stringify(resolve(APP_ROOT, 'e2e/fixtures/mock-node-credentials.cjs'))}`
           }
         : {}),
       OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
@@ -700,6 +836,7 @@ class ElectronAppHarness implements ElectronApp {
     this.cleanupAudits.push(audit)
   }
   private application: ElectronApplication | undefined
+  private applicationProcess: ReturnType<typeof spawn> | undefined
   private currentPage: Page | undefined
   private mainLogDirectory: string | undefined
   private flushTimeline = ''
@@ -1604,7 +1741,8 @@ class ElectronAppHarness implements ElectronApp {
   async restartAfterCrash(options: { force?: boolean } = {}): Promise<Page> {
     const application = this.application
     if (!application) throw new Error('No Electron process is available to terminate.')
-    const child = application.process()
+    const child = this.applicationProcess
+    if (!child) throw new Error('No captured Electron child is available to terminate.')
     const before =
       process.platform === 'win32' && child.pid !== undefined
         ? await readProcessTree(child.pid)
@@ -1633,6 +1771,7 @@ class ElectronAppHarness implements ElectronApp {
     if (!reaped) throw new Error('Electron crash simulation did not reap the process tree.')
     this.resourceProfiler?.detach(application)
     this.application = undefined
+    this.applicationProcess = undefined
     this.currentPage = undefined
     await this.launch()
     return this.page
@@ -1760,6 +1899,7 @@ class ElectronAppHarness implements ElectronApp {
       this.resourceProfiler !== undefined,
       packagePath
     )
+    this.applicationProcess = this.application.process()
     if (this.electronTraceArmed) {
       const heapProfile = process.env.OPEN_SCIENCE_PERF_ELECTRON_HEAP_PROFILE === '1'
       try {
@@ -1889,43 +2029,61 @@ class ElectronAppHarness implements ElectronApp {
     if (!this.application) return
 
     const application = this.application
+    const child = this.applicationProcess
+    if (!child) throw new Error('No captured Electron child is available to clean up.')
     const page = this.currentPage
     await this.stopElectronTrace(application)
     this.resourceProfiler?.detach(application)
     this.application = undefined
+    this.applicationProcess = undefined
     this.currentPage = undefined
-    await closeElectronApplicationForCleanup(
-      {
-        close: async () => {
-          if (requireGraceful && page) {
-            const readWindowId = async (): Promise<number> =>
-              (await application.browserWindow(page)).evaluate((window) => window.id)
-            let windowId: number
-            try {
-              windowId = await readWindowId()
-            } catch (error) {
-              if (!String(error).includes('Resulting promise was garbage collected')) throw error
-              windowId = await readWindowId()
-            }
-            await installRestartPersistenceRetry(application, windowId, 5_000)
-          }
-          await application.close()
+    let service: Awaited<ReturnType<typeof observeFixtureService>>
+    try {
+      await runFixtureCleanup([
+        async () => {
+          service = await observeFixtureService(this.roots.storageRoot)
+          if (service && !service.verified)
+            process.stderr.write(
+              'Fixture service birth identity is unavailable; require passive exit and lock/receipt confirmation.\n'
+            )
         },
-        forceClose: async () => {
-          const result = await terminateProcessTree(application.process())
-          if (!result.reaped)
-            throw new Error('Electron E2E forced close did not reap the process tree.')
-        }
-      },
-      {
-        gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
-        forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
-        requireGraceful
-      }
-    ).finally(() => {
+        () =>
+          closeElectronApplicationForCleanup(
+            {
+              close: async () => {
+                if (requireGraceful && page) {
+                  const readWindowId = async (): Promise<number> =>
+                    (await application.browserWindow(page)).evaluate((window) => window.id)
+                  let windowId: number
+                  try {
+                    windowId = await readWindowId()
+                  } catch (error) {
+                    if (!String(error).includes('Resulting promise was garbage collected'))
+                      throw error
+                    windowId = await readWindowId()
+                  }
+                  await installRestartPersistenceRetry(application, windowId, 5_000)
+                }
+                await application.close()
+              },
+              forceClose: async () => {
+                const result = await terminateProcessTree(child)
+                if (!result.reaped)
+                  throw new Error('Electron E2E forced close did not reap the process tree.')
+              }
+            },
+            {
+              gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
+              forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
+              requireGraceful
+            }
+          ),
+        () => cleanupObservedFixtureService(service)
+      ])
+    } finally {
       this.stopFlushDiagnostics?.()
       this.stopFlushDiagnostics = undefined
-    })
+    }
   }
 
   private async stopElectronTrace(application = this.application): Promise<void> {
@@ -2001,6 +2159,9 @@ export {
   electronLaunchTarget,
   launchOpenScience,
   launchEnvironment,
+  disconnectFixtureServiceConnection,
+  setFixtureServiceReconnectBlocked,
+  hasFixtureReconnected,
   removeTreeForCleanup,
   test
 }

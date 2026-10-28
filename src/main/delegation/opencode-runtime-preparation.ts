@@ -137,6 +137,10 @@ const prepareOpenCodeRuntime = async (
         ? join(configRoot, path)
         : value
     }
+    if (Array.isArray(overlay.plugins))
+      overlay.plugins = overlay.plugins.map((value) =>
+        typeof value === 'string' && isAbsolute(value) ? remap(value) : value
+      )
     if (Array.isArray(overlay.instructions))
       overlay.instructions = overlay.instructions.map(remapInstruction)
     const permission = overlay.permission as Record<string, unknown> | undefined
@@ -193,7 +197,8 @@ const prepareOpenCodeRuntime = async (
     }
   }
 
-  const port = admitted.opencodeUsageApi ? await claimPort() : undefined
+  const port =
+    admitted.opencodeUsageApi && admitted.opencodeMajorVersion !== 2 ? await claimPort() : undefined
   const password = port === undefined ? undefined : randomUUID()
   const backend: ResolvedAgentBackend = {
     ...admitted,
@@ -203,6 +208,7 @@ const prepareOpenCodeRuntime = async (
         ? [...(admitted.args ?? [])]
         : replaceListenerArgs(admitted.args ?? [], port),
     opencodeConfigFiles: configFiles,
+    opencodeUsageApi: undefined,
     ...(password
       ? {
           opencodeUsageApi: {

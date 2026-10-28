@@ -5,6 +5,8 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (['research-datasets', 'europepmc', 'chea3', 'biodbnet', 'ctd'].includes(connector.id))
+    return t('Scientific data APIs, official file links and access guidance.')
   if (connector.id === 'cancer-models')
     return t(
       'Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.'
@@ -101,6 +103,35 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'europepmc/search_europepmc':
+      return t('Search Europe PMC records and available abstracts with cursor pagination.')
+    case 'genes/get_hgnc_service_info':
+    case 'genes/query_hgnc_field':
+    case 'genes/list_hgnc_files':
+      return t('Inspect HGNC fields, identifiers and official file metadata.')
+    case 'biodbnet/list_input_types':
+    case 'biodbnet/list_output_types':
+    case 'biodbnet/convert_ids':
+    case 'biodbnet/recognize_ids':
+    case 'biodbnet/map_orthologs':
+    case 'biodbnet/list_pathways':
+      return t('Query bioDBnet identifier mappings, orthology and pathways.')
+    case 'chea3/rank_transcription_factors':
+    case 'chea3/list_gmt_libraries':
+      return t('Rank transcription factors with ChEA3 or discover GMT libraries.')
+    case 'cellosaurus/get_cell_line_rdf':
+    case 'cellosaurus/query_knowledge_graph':
+    case 'cellosaurus/search_str_similarity':
+    case 'cellosaurus/list_cellosaurus_files':
+      return t('Retrieve Cellosaurus RDF, graph records, STR similarity or file links.')
+    case 'research-datasets/get_dataset_access':
+    case 'research-datasets/list_nhanes_files':
+    case 'research-datasets/list_physionet_demo_files':
+      return t('Check official dataset access requirements or discover public files.')
+    case 'drug-regulatory/list_faers_bulk_files':
+      return t('List official openFDA adverse-event bulk download links.')
+    case 'ctd/list_ctd_reports':
+      return t('List maintained CTD public report links and usage terms.')
     case 'chemistry/unichem_map_compound':
       return t('Map exact compound identifiers with UniChem.')
     case 'structures/pdbe_get_validation':

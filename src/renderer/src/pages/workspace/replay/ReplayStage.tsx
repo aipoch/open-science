@@ -62,6 +62,7 @@ import {
   createReplayPresentation,
   replayPresentationStyle,
   useReplayTranslation,
+  replayAutomaticEvent,
   type ReplayPresentationConfig
 } from './replay-presentation'
 
@@ -236,7 +237,7 @@ const ReplayCode = memo(function ReplayCode({
   const excerpt = replayExcerpt(code)
   return (
     <div className="space-y-2">
-      <pre className="m-0 overflow-hidden rounded-lg bg-bg-200 p-4 font-mono text-[13px] leading-5">
+      <pre className="m-0 overflow-hidden rounded-lg bg-bg-200 p-4 font-mono text-sm leading-5">
         <code>
           <HighlightedCodeLines
             code={excerpt}
@@ -458,6 +459,7 @@ const StepConversation = memo(function StepConversation({
     [artifactResources, step.resourceIds, interactive]
   )
   const message = step.message
+  const automaticEvent = replayAutomaticEvent(message, t)
   const content = message?.content ?? ''
   // Reconstruction is explicit. Reveal rate derives exclusively from logical scene time.
   const visible = active ? content.slice(0, messageCharacters) : content
@@ -476,17 +478,19 @@ const StepConversation = memo(function StepConversation({
       {!interactive ? (
         <div className="mb-2 flex items-center justify-between text-xs text-text-300">
           <span>
-            {message
-              ? message.role === 'user'
-                ? t('User')
-                : t('Agent')
-              : step.kind === 'review'
-                ? t('Session Reviewer')
-                : step.kind === 'notebook'
-                  ? t('Notebook')
-                  : step.kind === 'artifact'
-                    ? t('Files')
-                    : t('Tool activity')}
+            {automaticEvent
+              ? automaticEvent.title
+              : message
+                ? message.role === 'user'
+                  ? t('User')
+                  : t('Agent')
+                : step.kind === 'review'
+                  ? t('Session Reviewer')
+                  : step.kind === 'notebook'
+                    ? t('Notebook')
+                    : step.kind === 'artifact'
+                      ? t('Files')
+                      : t('Tool activity')}
           </span>
           <span>{archivedTime(step.recordedAt) ?? t('Time not recorded')}</span>
         </div>
@@ -497,7 +501,15 @@ const StepConversation = memo(function StepConversation({
           {t('Reviewer requested corrections')}
         </p>
       ) : null}
-      {message ? (
+      {automaticEvent ? (
+        <div
+          className="flex max-w-[56rem] flex-col gap-0.5 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300 sm:flex-row sm:gap-2"
+          role="status"
+        >
+          <span className="font-medium text-text-200">{automaticEvent.title}</span>
+          <span>{automaticEvent.description}</span>
+        </div>
+      ) : message ? (
         interactive ? (
           message.role === 'user' ? (
             <div className="flex min-w-0 flex-col items-end">
@@ -512,7 +524,7 @@ const StepConversation = memo(function StepConversation({
                 ) : null}
               </WorkspaceUserMessageBubble>
               {step.recordedAt !== undefined && archivedTime(step.recordedAt) ? (
-                <div className="mt-1 flex min-h-6 w-full items-center justify-end text-[11px] leading-4 text-text-000/70 tabular-nums">
+                <div className="mt-1 flex min-h-6 w-full items-center justify-end text-xs leading-4 text-text-000/70 tabular-nums">
                   <WorkspaceMessageTimestamp label={t('Sent')} date={new Date(step.recordedAt)} />
                 </div>
               ) : null}
@@ -558,10 +570,7 @@ const StepConversation = memo(function StepConversation({
       ) : null}
       {interactive && step.kind === 'artifact' && stepResources.length ? (
         <div className="mt-3 border-t border-border-200 pt-3">
-          <div className="mb-2 text-[11px] font-medium uppercase text-text-300">
-            {t('GENERATED · {{count}}', { count: stepResources.length })}
-          </div>
-          <div className={artifactGalleryClassName}>
+          <div className={artifactGalleryClassName} role="group" aria-label={t('Generated files')}>
             {stepResources.map((resource) => {
               const prepared = resources[resource.id]
               const revealed = visibleResourceIds.includes(resource.id)
@@ -1880,11 +1889,10 @@ const ReplayStageContent = ({
       {!fitContainer ? (
         <header className="flex h-16 shrink-0 items-center justify-between gap-6 border-b border-border-200 px-7">
           <div className="min-w-0">
-            <div className="truncate text-lg font-semibold">{replayDocument.source.title}</div>
-            <div className="text-xs text-text-300">{t('Reconstructed from archived records')}</div>
+            <div className="truncate text-base font-semibold">{replayDocument.source.title}</div>
           </div>
           <span className="rounded-full border border-border-200 px-3 py-1 text-xs text-text-300">
-            {t('Read-only research history')}
+            {t('Read-only')}
           </span>
         </header>
       ) : null}
@@ -2044,19 +2052,11 @@ const ReplayStageContent = ({
         </div>
       )}
       {!fitContainer ? (
-        <footer
-          className={
-            fitContainer
-              ? 'flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border-200 px-3 py-2 text-xs text-text-300'
-              : 'flex h-10 shrink-0 items-center justify-between border-t border-border-200 px-6 text-xs text-text-300'
-          }
-        >
-          <span>
-            {readiness.degraded
-              ? t('Some source material is incomplete or unavailable.')
-              : t('Presentation timing is reconstructed; recorded results are unchanged.')}
-          </span>
-          <span>
+        <footer className="flex h-10 shrink-0 items-center justify-between border-t border-border-200 px-6 text-xs text-text-300">
+          {readiness.degraded ? (
+            <span>{t('Some source material is incomplete or unavailable.')}</span>
+          ) : null}
+          <span className="ml-auto">
             {active ? t('Step {{step}}', { step: scene.stepIndex + 1 }) : t('Research replay')}
           </span>
         </footer>

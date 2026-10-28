@@ -74,7 +74,9 @@
     "src/renderer/src/pages/settings/specialist-skill-conflicts.ts",
     "src/renderer/src/pages/settings/use-resource-selection.ts",
     "src/renderer/src/pages/settings/useSpecialistEditorForm.ts",
-    "src/renderer/src/pages/settings/ResourceAvailability.tsx"
+    "src/renderer/src/pages/settings/ResourceAvailability.tsx",
+    "src/renderer/src/pages/settings/SavedSkillRepositories.tsx",
+    "src/renderer/src/pages/settings/SavedSkillRepositories.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/ConnectorAddForm.tsx",
@@ -136,7 +138,8 @@
     "src/renderer/src/pages/settings/test-utils.ts",
     "src/renderer/src/pages/settings/token-usage-analytics.ts",
     "src/renderer/src/pages/settings/use-file-credential-notice.ts",
-    "src/renderer/src/pages/settings/validation-message.ts"
+    "src/renderer/src/pages/settings/validation-message.ts",
+    "src/renderer/src/pages/settings/SavedSkillRepositories.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -170,7 +173,8 @@
       "src/renderer/src/pages/settings/resource-assignment.test.ts",
       "src/renderer/src/pages/settings/skill-editor-i18n.render.test.tsx",
       "src/renderer/src/pages/settings/skill-upload-i18n.render.test.tsx",
-      "src/renderer/src/pages/settings/specialist-resource-scope.test.ts"
+      "src/renderer/src/pages/settings/specialist-resource-scope.test.ts",
+      "src/renderer/src/pages/settings/SavedSkillRepositories.render.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -392,5 +396,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "The settings_extension_presentation owner retains 24 explicit research consumer obligations beyond its reviewed source-derived edges, including use-research-run-launcher.test.tsx, ReplayPanel.layout.test.tsx, RecordedRunObservationPreview.test.tsx. 24 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
+  "fullTestReason": "The settings_extension_presentation owner retains 24 explicit research consumer obligations beyond its reviewed source-derived edges, including use-research-run-launcher.test.tsx, ReplayPanel.layout.test.tsx, RecordedRunObservationPreview.test.tsx. 24 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes. Saved GitHub Skill sources expand the reviewed source boundary with persistent bookmarks and Settings navigation; retain full CI validation until this boundary is reviewed and reclassified."
 }

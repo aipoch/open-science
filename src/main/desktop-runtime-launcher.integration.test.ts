@@ -39,7 +39,7 @@ const desktopGeneration=crypto.randomUUID();
 const startupOptions={configRoot:root,dataRoot:root,profilePath:root,port:0,host:'127.0.0.1',credentialStore:'os'};
 const server=http.createServer((req,res)=>{
  if(req.headers.authorization!=='Bearer '+token||req.headers['x-open-science-runtime-generation']!==generation){res.writeHead(403).end();return;}
- res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration,startupOptions}));
+ res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration,startupOptions,entryPath:fs.realpathSync(process.argv[1])}));
 });
 server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.json'),JSON.stringify({schemaVersion:1,generation,pid:process.pid,host:'node',port:server.address().port,desktop:{path:path.join(root,'fixture.sock'),generation:desktopGeneration,secret:'a'.repeat(64),version:'test'}})));
 process.once('SIGTERM',()=>server.close());

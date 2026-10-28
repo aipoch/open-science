@@ -498,6 +498,12 @@ it.each([
   ['workspace_previews', 'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'],
   ['main_literature', 'src/main/literature/command-owner.ts'],
   ['page_literature', 'src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx'],
+  // Expanded gallery/import boundaries retain unfiltered execution until re-reviewed.
+  ['page_home', 'src/renderer/src/pages/home/UseCaseCarousel.tsx'],
+  ['page_home', 'src/renderer/src/pages/home/UseCaseCover.tsx'],
+  ['main_session_package', 'src/main/session-package/transfer.ts'],
+  ['main_session_package', 'src/main/session-package/use-case-catalog.ts'],
+  ['main_session_package', 'src/main/session-package/use-case-download.ts'],
   ['package_literature_discovery', 'packages/literature-discovery/src/supplements.ts'],
   ['notebook_execution', 'src/main/notebook/windows-runtime-manager.ts'],
   ['notebook_execution', 'src/main/notebook/scientific-output-analysis.ts'],
@@ -838,8 +844,7 @@ it('routes download package changes downstream and host adapters without unchang
     [
       'src/main/notebook/environment-download.ts',
       'src/main/notebook/environment-download.contract.test.ts'
-    ],
-    ['src/main/session-package/transfer.ts', 'src/main/session-package/transfer.test.ts']
+    ]
   ]) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
     expect(plan.mode).toBe('selective')

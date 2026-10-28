@@ -123,6 +123,11 @@ it('uses the packaging heap budget for Web builds in every workflow', () => {
   expect(scripts['build:web:compiled']).toBe(
     'npm run gen:web-api-map && npm run build:replay-viewer && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts'
   )
+  expect(
+    scripts['build:e2e']
+      .split(' && ')
+      .filter((command: string) => command === 'npm run build:web:compiled')
+  ).toHaveLength(1)
 })
 
 it('checks the reported Windows failures in the blocking PR core job', () => {
@@ -502,7 +507,7 @@ describe('independent source regression', () => {
     expect(consumer['runs-on']).toBe(setup['runs-on'])
     expect(setup.needs).toBeUndefined()
     expect(setup.steps.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
-    expect(setup.steps.filter(({ run }) => run === 'npm run build:web')).toHaveLength(1)
+    expect(setup.steps.some(({ run }) => /npm run build:web\b/.test(run ?? ''))).toBe(false)
     expect(
       consumer.steps.some(({ run }) => run?.includes('npm-ci') || run?.includes('npm run build:'))
     ).toBe(false)

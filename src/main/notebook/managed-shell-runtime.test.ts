@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -12,6 +13,28 @@ import {
 } from './managed-shell-execution'
 import type { NotebookSandboxInvocation, NotebookProcessSandbox } from './process-sandbox'
 import type { ExecuteShellRequest } from '../../shared/notebook'
+
+vi.mock('./working-file-observer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./working-file-observer')>()
+  return {
+    ...actual,
+    // These cases exercise real Shell ownership, not native watcher shutdown latency. Use the
+    // existing bounded snapshot fallback while retaining real files, evidence workers and writes.
+    // working-file-observer.analysis-contract.integration.test.ts retains native watcher coverage.
+    startWorkingFileObservation: (
+      request: Parameters<typeof actual.startWorkingFileObservation>[0],
+      dependencies: Parameters<typeof actual.startWorkingFileObservation>[1]
+    ) =>
+      actual.startWorkingFileObservation(request, {
+        ...dependencies,
+        watchDirectory: () => {
+          throw Object.assign(new Error('Native watcher unavailable in this fixture.'), {
+            code: 'ENOSYS'
+          })
+        }
+      })
+  }
+})
 
 describe.skipIf(process.platform === 'win32')(
   'managed Shell in the shared Notebook runtime',
@@ -91,6 +114,8 @@ describe.skipIf(process.platform === 'win32')(
     })
 
     it('keeps ordinary persistent state while using exact managed env, cwd and write grants', async () => {
+      managedCwd = join(root, 'notebooks', identity.projectId, identity.sessionId, 'managed-output')
+      await mkdir(managedCwd, { recursive: true })
       vi.stubEnv('FIXTURE_HOST_SECRET', 'must-not-inherit')
       await service.executeShell({
         ...request('export ORDINARY_FIXTURE=persistent'),
@@ -100,7 +125,7 @@ describe.skipIf(process.platform === 'win32')(
         request(
           'printf "%s:%s:%s\\n" "$FIXTURE_VALUE" "${ORDINARY_FIXTURE-unset}" "${FIXTURE_HOST_SECRET-unset}"; pwd; echo result > result.txt'
         ),
-        capability()
+        capability({ outputRoot: managedCwd })
       )
       expect(bounded.exitCode).toBe(0)
       expect(bounded.stdout).toContain('bounded:unset:unset')
@@ -122,9 +147,23 @@ describe.skipIf(process.platform === 'win32')(
       )
       const runs = await repository.readSessionRuns(identity.projectId, identity.sessionId)
       expect(runs).toHaveLength(3)
-      expect(
-        runs.find((run) => run.submissionIdentity === identity.executionInvocationId)?.cwdBefore
-      ).toBe(managedCwd)
+      const managedRun = runs.find(
+        (run) => run.submissionIdentity === identity.executionInvocationId
+      )!
+      expect(managedRun.cwdBefore).toBe(managedCwd)
+      expect(managedRun.workingFiles).toEqual([
+        expect.objectContaining({
+          relativePath: 'managed-output/result.txt',
+          generationId: expect.any(String),
+          checksum: createHash('sha256').update('result\n').digest('hex')
+        })
+      ])
+      expect(managedRun.fileEvidence?.reasonCodes).toContain('watcher-unavailable')
+      const evidencePath = join(root, ...managedRun.fileEvidence!.storageKey!.split('/'))
+      const evidenceBytes = await readFile(evidencePath)
+      expect(createHash('sha256').update(evidenceBytes).digest('hex')).toBe(
+        managedRun.fileEvidence!.checksum
+      )
     })
 
     it('admits the documented quoted managed runtime without granting ordinary environment authority', async () => {

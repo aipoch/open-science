@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test, expect } from '@playwright/test'
 import type { ElectronApplication, Page } from 'playwright'
-import { launchEnvironment, launchOpenScience } from './fixtures/electron-app'
+import {
+  launchEnvironment,
+  setFixtureServiceReconnectBlocked,
+  launchOpenScience
+} from './fixtures/electron-app'
 import { NotebookRunRepository } from '../src/main/notebook/repository'
 import { createRootNotebookLane } from '../src/main/notebook/lane-identity'
 import { createProjectViaUi } from './fixtures/project'
@@ -38,7 +42,7 @@ for (const borrowed of [false, true])
           : {})
       }
       const stopBackend = (): Promise<unknown> =>
-        promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
+        promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop', '--force'], {
           env,
           timeout: 30_000
         })
@@ -193,14 +197,14 @@ for (const borrowed of [false, true])
             .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
             .toMatchObject({ phase: 'connected' })
           // A mounted large Notebook must not veto the whole recovery barrier.
+          const beforeRecovery = await page.evaluate(() => window.api.desktopRuntime!.getState())
           await disconnect()
-          await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
           await expect
-            .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-            .toMatchObject({ phase: 'connected' })
-          await expect
-            .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-            .toMatchObject({ phase: 'connected' })
+            .poll(async () => {
+              const state = await page.evaluate(() => window.api.desktopRuntime!.getState())
+              return { phase: state.phase, advanced: state.epoch > beforeRecovery.epoch }
+            })
+            .toEqual({ phase: 'connected', advanced: true })
         }
         await page.evaluate(() => window.api.settings.getSettings())
         const before = JSON.parse(
@@ -225,7 +229,8 @@ for (const borrowed of [false, true])
           ).stdout.trim()
         )
         expect(backendParent).toBe(borrowed ? process.pid : firstPid)
-        // Exit directly from a real disconnected state, without pressing Reconnect.
+        // Retain a real outage until the Desktop is terminated.
+        await app!.evaluate(setFixtureServiceReconnectBlocked, true)
         await disconnect()
         await expect
           .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))

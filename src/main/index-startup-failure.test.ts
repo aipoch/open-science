@@ -247,7 +247,7 @@ vi.mock('./notifications/unread-task-ipc', () => ({
 vi.mock('./window-close-confirm', () => ({ createElectronCloseConfirm: vi.fn() }))
 vi.mock('./app-lifecycle', () => ({ installAppLifecycle: f.lifecycle }))
 vi.mock('./session-persistence/renderer-flush', () => ({
-  createElectronSessionPersistenceFlush: vi.fn(),
+  createElectronSessionPersistenceFlush: vi.fn(() => vi.fn(async () => undefined)),
   notifyRendererSessionPersistenceFlushAborted: vi.fn(),
   rendererSessionPersistenceFlushBlocksShutdown: vi.fn()
 }))
@@ -286,6 +286,10 @@ beforeEach(() => {
   vi.spyOn(process, 'on').mockImplementation(() => process)
 })
 afterEach(async () => {
+  // Automatic recovery owns a retry timer and may still be activating a candidate.
+  // Stop and settle that owner before the next test replaces its transport mocks.
+  for (const recovery of f.recoveries) recovery.setClosing(true)
+  await Promise.all(f.recoveries.map((recovery) => recovery.reconnect()))
   await Promise.all(f.nativeHosts.map((host) => host.close()))
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
@@ -441,11 +445,13 @@ it('flushes startup diagnostics before presenting a post-ready failure and exiti
 })
 
 it.each(['win32', 'linux', 'darwin'] as const)(
-  'keeps a window reachable after canceling disconnected native quit without a tray (%s)',
+  'delegates disconnected quit to the existing lifecycle without another native decision (%s)',
   async (platform) => {
     const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
     Object.defineProperty(process, 'platform', { value: platform })
     try {
+      const { isMainWindow } = await import('./windows')
+      const { BrowserWindow } = await import('electron')
       const destroyedWindow = { isDestroyed: () => true }
       const showMainWindow = vi.fn()
       f.lifecycle.mockReturnValue({
@@ -476,14 +482,17 @@ it.each(['win32', 'linux', 'darwin'] as const)(
       })
       expect(f.app.exit).not.toHaveBeenCalled()
       disconnect()
-      const quitListeners = f.app.on.mock.calls.filter(([event]) => event === 'before-quit')
-      const onQuit = quitListeners.at(-1)![1]
-      const event = { preventDefault: vi.fn() }
-      onQuit(event)
-      await vi.waitFor(() => expect(f.dialog.showMessageBox).toHaveBeenCalledOnce())
-      expect(event.preventDefault).toHaveBeenCalled()
-      if (platform === 'darwin') expect(showMainWindow).not.toHaveBeenCalled()
-      else await vi.waitFor(() => expect(showMainWindow).toHaveBeenCalledOnce())
+      vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(
+        destroyedWindow as InstanceType<typeof BrowserWindow>
+      )
+      vi.mocked(isMainWindow).mockReturnValue(true)
+      const frame = {}
+      f.handlers.get('desktop-runtime:quit')!({ sender: { mainFrame: frame }, senderFrame: frame })
+      expect(f.app.quit).toHaveBeenCalledOnce()
+      expect(f.dialog.showMessageBox).not.toHaveBeenCalled()
+      const lifecycleOptions = f.lifecycle.mock.calls[0][0]
+      expect(lifecycleOptions.flushSessionPersistence).toBeTypeOf('function')
+      expect(lifecycleOptions.createConfirmClose).toBeTypeOf('function')
       expect(client.close).not.toHaveBeenCalled()
       expect(f.app.exit).not.toHaveBeenCalled()
     } finally {
@@ -607,7 +616,7 @@ it('closes replaced and discarded native observations before another reconnect a
   // Manual recovery can retire an attachment without a transport onDisconnect callback.
   recovery.disconnect(clients[0])
   f.preview.mockRejectedValueOnce(new Error('Preview recovery failed.'))
-  expect((await recovery.reconnect()).phase).toBe('disconnected')
+  expect((await recovery.reconnect()).phase).toBe('reconnecting')
   await expect(captureNative(original)).rejects.toThrow('current desktop document')
   const discarded = f.nativeHosts[1]
   await expect(captureNative(discarded)).rejects.toThrow('current desktop document')
@@ -801,75 +810,116 @@ it('reports startup failure for the early import and exits when its reused recov
   }
 })
 
-it('refreshes cached package progress when an operation completed while desktop was disconnected', async () => {
-  type RecoveryOptions = Parameters<
-    typeof import('./desktop-runtime-recovery').createDesktopRuntimeRecovery
-  >[0]
-  let activate!: RecoveryOptions['activate']
-  vi.doMock('./desktop-runtime-recovery', async (original) => ({
-    ...(await original<typeof import('./desktop-runtime-recovery')>()),
-    createDesktopRuntimeRecovery: (options: RecoveryOptions) => {
-      activate = options.activate
-      return { state: () => ({ phase: 'connected', epoch: 0 }), setClosing: vi.fn() }
+it.each(['ready', 'checking-to-ready', 'checking-abort'] as const)(
+  'refreshes cached package progress with %s recovery activation',
+  async (mode) => {
+    type RecoveryOptions = Parameters<
+      typeof import('./desktop-runtime-recovery').createDesktopRuntimeRecovery
+    >[0]
+    let activate!: RecoveryOptions['activate']
+    vi.doMock('./desktop-runtime-recovery', async (original) => ({
+      ...(await original<typeof import('./desktop-runtime-recovery')>()),
+      createDesktopRuntimeRecovery: (options: RecoveryOptions) => {
+        activate = options.activate
+        return { state: () => ({ phase: 'connected', epoch: 0 }), setClosing: vi.fn() }
+      }
+    }))
+    vi.doMock('./desktop-preview-proxy', () => ({
+      createDesktopPreviewProxy: async () => ({ dispose: vi.fn(), port: 49151 })
+    }))
+    try {
+      const { isMainWindow } = await import('./windows')
+      const { BrowserWindow } = await import('electron')
+      const current = {
+        id: 'import',
+        kind: 'import',
+        state: 'running',
+        progress: { phase: 'validating' }
+      }
+      const completed = { ...current, state: 'succeeded' }
+      let startupPhase: 'ready' | 'checking' = 'ready'
+      const invokeHost = vi.fn(async (channel: string) =>
+        channel === 'desktop:package-operation-snapshot' ? completed : { locale: 'en' }
+      )
+      const client = {
+        ownsRuntime: () => false,
+        processId: () => 123,
+        runtimeInfo: () => ({ generation: 'reconnect' }),
+        invokeHost,
+        startupState: () => ({ phase: startupPhase }),
+        close: vi.fn(),
+        notificationView: vi.fn(),
+        loadSessionForEvent: vi.fn()
+      }
+      let deliver!: (event: { channel: string; payload: unknown }) => void
+      f.connect.mockImplementation(async (options) => {
+        deliver = options.onEvent
+        return client
+      })
+      f.launch.mockResolvedValue({})
+      f.lifecycle.mockReturnValue({
+        showMainWindow: vi.fn(),
+        getMainWindow: () => undefined,
+        isMainWindowHidden: () => false,
+        onSystemShutdown: vi.fn()
+      })
+      await import('./index')
+      await vi.waitFor(() => {
+        expect(f.report.mock.calls).toEqual([])
+        expect(f.completedStartup).toHaveBeenCalledOnce()
+      })
+      const originalObservation = f.nativeHosts[0]
+      await expect(captureNative(originalObservation)).resolves.toEqual({
+        bytes: Uint8Array.from([1, 2, 3])
+      })
+      deliver({ channel: 'sessions:package-operation-changed', payload: current })
+      vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(
+        {} as InstanceType<typeof BrowserWindow>
+      )
+      vi.mocked(isMainWindow).mockReturnValue(true)
+      const frame = {}
+      const event = { sender: { mainFrame: frame }, senderFrame: frame }
+      expect(f.handlers.get('package-presentation:get-state')!(event)).toEqual(current)
+      invokeHost.mockClear()
+      startupPhase = mode === 'ready' ? 'ready' : 'checking'
+      const controller = new AbortController()
+      const announce = vi.fn()
+      const activation = activate(
+        client as unknown as Parameters<RecoveryOptions['activate']>[0],
+        controller.signal,
+        announce
+      )
+      if (mode !== 'ready') {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(invokeHost).not.toHaveBeenCalled()
+        expect(announce).not.toHaveBeenCalled()
+        await expect(captureNative(originalObservation)).resolves.toEqual({
+          bytes: Uint8Array.from([1, 2, 3])
+        })
+        if (mode === 'checking-abort') {
+          const aborted = expect(activation).rejects.toMatchObject({ name: 'AbortError' })
+          controller.abort()
+          await aborted
+          expect(invokeHost).not.toHaveBeenCalled()
+          expect(announce).not.toHaveBeenCalled()
+          await expect(captureNative(originalObservation)).resolves.toEqual({
+            bytes: Uint8Array.from([1, 2, 3])
+          })
+          expect(f.handlers.get('package-presentation:get-state')!(event)).toEqual(current)
+          return
+        }
+        startupPhase = 'ready'
+      }
+      await activation
+      await expect(captureNative(originalObservation)).rejects.toThrow('current desktop document')
+      await expect(captureNative(f.nativeHosts.at(-1)!)).resolves.toEqual({
+        bytes: Uint8Array.from([1, 2, 3])
+      })
+      expect(invokeHost).toHaveBeenCalledWith('desktop:package-operation-snapshot')
+      expect(f.handlers.get('package-presentation:get-state')!(event)).toEqual(completed)
+    } finally {
+      vi.doUnmock('./desktop-runtime-recovery')
+      vi.doUnmock('./desktop-preview-proxy')
     }
-  }))
-  vi.doMock('./desktop-preview-proxy', () => ({
-    createDesktopPreviewProxy: async () => ({ dispose: vi.fn(), port: 49151 })
-  }))
-  try {
-    const { isMainWindow } = await import('./windows')
-    const { BrowserWindow } = await import('electron')
-    const current = {
-      id: 'import',
-      kind: 'import',
-      state: 'running',
-      progress: { phase: 'validating' }
-    }
-    const completed = { ...current, state: 'succeeded' }
-    const client = {
-      ownsRuntime: () => false,
-      processId: () => 123,
-      runtimeInfo: () => ({ generation: 'reconnect' }),
-      invokeHost: async (channel: string) =>
-        channel === 'desktop:package-operation-snapshot' ? completed : { locale: 'en' },
-      startupState: () => ({ phase: 'checking' }),
-      close: vi.fn(),
-      notificationView: vi.fn(),
-      loadSessionForEvent: vi.fn()
-    }
-    let deliver!: (event: { channel: string; payload: unknown }) => void
-    f.connect.mockImplementation(async (options) => {
-      deliver = options.onEvent
-      return client
-    })
-    f.launch.mockResolvedValue({})
-    f.lifecycle.mockReturnValue({
-      showMainWindow: vi.fn(),
-      getMainWindow: () => undefined,
-      isMainWindowHidden: () => false,
-      onSystemShutdown: vi.fn()
-    })
-    await import('./index')
-    await vi.waitFor(() => {
-      expect(f.report.mock.calls).toEqual([])
-      expect(f.completedStartup).toHaveBeenCalledOnce()
-    })
-    deliver({ channel: 'sessions:package-operation-changed', payload: current })
-    vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(
-      {} as InstanceType<typeof BrowserWindow>
-    )
-    vi.mocked(isMainWindow).mockReturnValue(true)
-    const frame = {}
-    const event = { sender: { mainFrame: frame }, senderFrame: frame }
-    expect(f.handlers.get('package-presentation:get-state')!(event)).toEqual(current)
-    await activate(
-      client as unknown as Parameters<RecoveryOptions['activate']>[0],
-      new AbortController().signal,
-      () => undefined
-    )
-    expect(f.handlers.get('package-presentation:get-state')!(event)).toEqual(completed)
-  } finally {
-    vi.doUnmock('./desktop-runtime-recovery')
-    vi.doUnmock('./desktop-preview-proxy')
   }
-})
+)

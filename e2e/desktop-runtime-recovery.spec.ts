@@ -6,7 +6,11 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ElectronApplication } from 'playwright'
-import { launchOpenScience, launchEnvironment } from './fixtures/electron-app'
+import {
+  launchOpenScience,
+  launchEnvironment,
+  setFixtureServiceReconnectBlocked
+} from './fixtures/electron-app'
 import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
 
 type RuntimeOwner = { pid: number; port: number; generation: string }
@@ -53,7 +57,7 @@ const cleanupRecoveryFixture = async ({
     }
     try {
       // The backend belongs to this unique profile even after app.close() clears the app handle.
-      await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
+      await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop', '--force'], {
         env,
         timeout: 30_000
       })
@@ -333,6 +337,7 @@ for (const borrowed of [false, true])
       const before = owner
       // Pipe sockets in Electron main contain only the private desktop connection; stdio and the
       // inspector are excluded by writable/readable handle identity. Assert before injecting loss.
+      await app.evaluate(setFixtureServiceReconnectBlocked, true)
       const destroyed = await app.evaluate(() => {
         const handles = (
           process as NodeJS.Process & {
@@ -361,20 +366,38 @@ for (const borrowed of [false, true])
         return pipes.length
       })
       expect(destroyed).toBe(1)
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
-      await app.evaluate(({ dialog }) => {
-        dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false })
-      })
+      await expect(
+        page
+          .getByTestId('local-service-recovery')
+          .getByRole('button', { name: 'Retry', exact: true })
+      ).toBeVisible()
       await page.getByRole('button', { name: 'Quit', exact: true }).click()
+      await page
+        .getByRole('alertdialog', { name: 'Saving is not finished' })
+        .getByRole('button', { name: 'Stay', exact: true })
+        .click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
         .toMatchObject({ closing: false, phase: 'disconnected' })
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeEnabled()
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+      await expect(
+        page
+          .getByTestId('local-service-recovery')
+          .getByRole('button', { name: 'Retry', exact: true })
+      ).toBeEnabled()
+      await page.getByTestId('session-persistence-dismiss').click()
+      await app.evaluate(setFixtureServiceReconnectBlocked, false)
+      await page
+        .getByTestId('local-service-recovery')
+        .getByRole('button', { name: 'Retry', exact: true })
+        .click()
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).not.toBeVisible()
+      await expect(
+        page
+          .getByTestId('local-service-recovery')
+          .getByRole('button', { name: 'Retry', exact: true })
+      ).not.toBeVisible()
       await expect
         .poll(() =>
           app!.evaluate(
@@ -409,6 +432,7 @@ for (const borrowed of [false, true])
         (request) => window.api.sessions.loadOne(request),
         seeded
       )
+      await app.evaluate(setFixtureServiceReconnectBlocked, true)
       const lostTitle = 'saved-once-response-loss-fixture'
       await app.evaluate((_electron, marker) => {
         type Pipe = {
@@ -452,8 +476,16 @@ for (const borrowed of [false, true])
         { session: savedBeforeLoss, title: lostTitle }
       )
       expect(saveOutcome).toContain('result of a submitted operation is unknown')
-      await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible()
-      await page.getByRole('button', { name: 'Reconnect', exact: true }).click({ clickCount: 2 })
+      await expect(
+        page
+          .getByTestId('local-service-recovery')
+          .getByRole('button', { name: 'Retry', exact: true })
+      ).toBeVisible()
+      await app.evaluate(setFixtureServiceReconnectBlocked, false)
+      await page
+        .getByTestId('local-service-recovery')
+        .getByRole('button', { name: 'Retry', exact: true })
+        .click({ clickCount: 2 })
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
@@ -467,152 +499,6 @@ for (const borrowed of [false, true])
       expect(
         JSON.parse(await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8'))
       ).toEqual(before)
-      if (!borrowed) {
-        // Cancel the single disconnected decision after quit loses its pipe, then recover.
-        await app.evaluate(({ app, BrowserWindow, dialog }) => {
-          const quitRecovery = { confirmations: 0, errors: [] as string[] }
-          ;(globalThis as typeof globalThis & { quitRecovery: typeof quitRecovery }).quitRecovery =
-            quitRecovery
-          dialog.showErrorBox = (_title, message) => {
-            quitRecovery.errors.push(message)
-          }
-          dialog.showMessageBox = async (...args: unknown[]) => {
-            const disconnected = args.some(
-              (arg) =>
-                typeof arg === 'object' &&
-                arg !== null &&
-                'message' in arg &&
-                arg.message === 'Quit while disconnected?'
-            )
-            if (disconnected) quitRecovery.confirmations += 1
-            return { response: disconnected ? 0 : 1, checkboxChecked: false }
-          }
-          const contents = BrowserWindow.getAllWindows()[0].webContents
-          const send = contents.send.bind(contents)
-          contents.send = (channel, ...args): void => {
-            send(channel, ...args)
-            if (channel !== 'desktop-runtime:state-changed' || !args[0]?.closing) return
-            contents.send = send
-            const handles = (
-              process as NodeJS.Process & {
-                _getActiveHandles(): {
-                  readable?: boolean
-                  writable?: boolean
-                  _handle?: { constructor: { name: string } }
-                  destroy(): void
-                }[]
-              }
-            )._getActiveHandles()
-            const pipe = handles.find(
-              (handle) =>
-                handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
-            )
-            if (!pipe) throw new Error('Quit preparation pipe missing')
-            pipe.destroy()
-          }
-          app.quit()
-        })
-        await expect
-          .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-          .toMatchObject({ phase: 'disconnected', closing: false })
-        expect(
-          await app.evaluate(
-            () =>
-              (
-                globalThis as typeof globalThis & {
-                  quitRecovery: { confirmations: number; errors: string[] }
-                }
-              ).quitRecovery
-          )
-        ).toEqual({ confirmations: 1, errors: [] })
-        await expect(page.getByRole('button', { name: 'Stay', exact: true })).toHaveCount(0)
-        await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
-        await expect
-          .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-          .toMatchObject({ phase: 'connected', closing: false })
-        expect(
-          JSON.parse(await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8'))
-        ).toEqual(before)
-      }
-      if (!borrowed) {
-        await app.evaluate(({ app }) => {
-          type Pipe = {
-            readable?: boolean
-            writable?: boolean
-            _handle?: { constructor: { name: string } }
-            write: (...args: unknown[]) => boolean
-            destroy(): void
-          }
-          const pipe = (process as NodeJS.Process & { _getActiveHandles(): Pipe[] })
-            ._getActiveHandles()
-            .find(
-              (handle) =>
-                handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
-            )!
-          if (!pipe) throw new Error('Final shutdown pipe missing')
-          const original = pipe.write
-          let buffered = Buffer.alloc(0)
-          ;(globalThis as typeof globalThis & { shutdownDropped: boolean }).shutdownDropped = false
-          pipe.write = function (...args): boolean {
-            if (Buffer.isBuffer(args[0])) buffered = Buffer.concat([buffered, args[0]])
-            // Parse only outgoing RFC6455 frames to drop the actual shutdown command. All earlier
-            // inspect/hold/prepare/flush traffic follows the real connection unchanged.
-            while (buffered.length >= 2) {
-              const masked = Boolean(buffered[1] & 128)
-              let bytes = buffered[1] & 127
-              let offset = 2
-              if (bytes === 126) {
-                if (buffered.length < 4) break
-                bytes = buffered.readUInt16BE(2)
-                offset = 4
-              } else if (bytes === 127) {
-                if (buffered.length < 10) break
-                bytes = Number(buffered.readBigUInt64BE(2))
-                offset = 10
-              }
-              const header = offset + (masked ? 4 : 0)
-              if (buffered.length < header + bytes) break
-              const body = Buffer.from(buffered.subarray(header, header + bytes))
-              if (masked)
-                for (let i = 0; i < body.length; i++) body[i] ^= buffered[offset + (i % 4)]
-              buffered = buffered.subarray(header + bytes)
-              if (body.toString().includes('"kind":"shutdown"')) {
-                pipe.write = original
-                ;(globalThis as typeof globalThis & { shutdownDropped: boolean }).shutdownDropped =
-                  true
-                pipe.destroy()
-                return false
-              }
-            }
-            return original.apply(this, args)
-          }
-          app.quit()
-        })
-        await expect
-          .poll(() =>
-            app!.evaluate(
-              () => (globalThis as typeof globalThis & { shutdownDropped: boolean }).shutdownDropped
-            )
-          )
-          .toBe(true)
-        await expect
-          .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-          .toMatchObject({ phase: 'disconnected', closing: false })
-        expect(
-          await app.evaluate(
-            () =>
-              (
-                globalThis as typeof globalThis & {
-                  quitRecovery: { confirmations: number; errors: string[] }
-                }
-              ).quitRecovery
-          )
-        ).toEqual({ confirmations: 2, errors: [] })
-        await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
-        await expect
-          .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-          .toMatchObject({ phase: 'connected' })
-      }
       const token = (await readFile(join(roots.storageRoot, 'web-token'), 'utf8')).trim()
       const health = await fetch(`http://127.0.0.1:${before.port}/owner`, {
         headers: {
@@ -631,7 +517,7 @@ for (const borrowed of [false, true])
         expect(
           JSON.parse(await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8'))
         ).toEqual(before)
-        await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
+        await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop', '--force'], {
           env,
           timeout: 30_000
         })
@@ -696,7 +582,7 @@ test('exits from the recovery notice when the original backend has really stoppe
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(homeNewProjectButton(page)).toBeVisible()
     try {
-      await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop'], {
+      await promisify(execFile)(process.execPath, [resolve('cli/index.mjs'), 'stop', '--force'], {
         env,
         timeout: 30_000
       })
@@ -737,13 +623,16 @@ test('exits from the recovery notice when the original backend has really stoppe
     ).toBe('')
     await expect
       .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-      .toMatchObject({ phase: 'unavailable' })
-    await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toHaveCount(0)
+      .toMatchObject({ phase: 'unavailable', reason: 'service-stopped' })
     await app.evaluate(({ dialog }) => {
       dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false })
     })
     const desktopProcess = app.process()
     await page.getByRole('button', { name: 'Quit', exact: true }).click()
+    await page
+      .getByRole('alertdialog', { name: 'Saving is not finished' })
+      .getByRole('button', { name: 'Force quit', exact: true })
+      .click()
     await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
     app = undefined
   } finally {
@@ -798,25 +687,12 @@ for (const scenario of [
       owner = JSON.parse(
         await readFile(join(roots.storageRoot, 'runtime-owner.json'), 'utf8')
       ) as RuntimeOwner
+      await page.evaluate(() => window.api.settings.markOnboardingComplete())
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await expect(homeNewProjectButton(page)).toBeVisible()
+      await app.evaluate(setFixtureServiceReconnectBlocked, true)
       await app.evaluate(
-        ({ dialog, BrowserWindow, ipcMain }, quitDisconnect) => {
-          type QuitProbe = {
-            dialogs: string[]
-            errors: string[]
-            respond?: (response?: number) => void
-          }
-          const probe: QuitProbe = { dialogs: [], errors: [] }
-          ;(globalThis as typeof globalThis & { quitProbe: QuitProbe }).quitProbe = probe
-          dialog.showErrorBox = (_title, content) => {
-            probe.errors.push(content)
-          }
-          dialog.showMessageBox = (options) => {
-            if (!('message' in options)) throw new Error('Expected an unparented quit confirmation')
-            probe.dialogs.push(options.message)
-            return new Promise((resolve) => {
-              probe.respond = (response = 0) => resolve({ response, checkboxChecked: false })
-            })
-          }
+        ({ BrowserWindow, ipcMain }, quitDisconnect) => {
           const pipe = (
             process as NodeJS.Process & {
               _getActiveHandles(): {
@@ -833,20 +709,7 @@ for (const scenario of [
                 handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
             )
           if (!pipe) throw new Error('Desktop pipe missing')
-          if (quitDisconnect === 'failed-reconnects') {
-            const net = process.getBuiltinModule('node:net')
-            const connect = net.Socket.prototype.connect
-            net.Socket.prototype.connect = function (
-              this: import('node:net').Socket,
-              ...args: unknown[]
-            ) {
-              const result = Reflect.apply(connect, this, args)
-              if (/os-desktop-|open-science-/.test(JSON.stringify(args)))
-                this.once('connect', () => this.destroy())
-              return result
-            }
-            pipe.destroy()
-          } else if (quitDisconnect === 'after-preflight') {
+          if (quitDisconnect === 'after-preflight') {
             ipcMain.prependOnceListener('sessions:flush-response', () => pipe.destroy())
           } else if (quitDisconnect === 'during-preflight') {
             const contents = BrowserWindow.getAllWindows()[0].webContents
@@ -866,9 +729,7 @@ for (const scenario of [
           ? 'during-preflight'
           : scenario === 'connection loss after quit preflight'
             ? 'after-preflight'
-            : scenario === 'quit after failed reconnects'
-              ? 'failed-reconnects'
-              : undefined
+            : undefined
       )
       await expect
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
@@ -880,102 +741,85 @@ for (const scenario of [
               : 'disconnected'
         })
       if (scenario === 'quit after failed reconnects') {
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          const before = await page.evaluate(() => window.api.desktopRuntime!.getState())
-          await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
-          await expect
-            .poll(() => page.evaluate(() => window.api.desktopRuntime!.getState()))
-            .toMatchObject({ phase: 'disconnected', epoch: before.epoch + 1 })
-        }
+        const before = await page.evaluate(() => window.api.desktopRuntime!.getState())
+        await page
+          .getByTestId('local-service-recovery')
+          .getByRole('button', { name: 'Retry', exact: true })
+          .click()
+        await expect
+          .poll(
+            async () => {
+              const state = await page.evaluate(() => window.api.desktopRuntime!.getState())
+              return {
+                settled: state.phase === 'disconnected' || state.phase === 'unavailable',
+                reason: state.reason,
+                advanced: state.epoch > before.epoch
+              }
+            },
+            { timeout: 45_000 }
+          )
+          .toEqual({ settled: true, reason: 'recovery-timeout', advanced: true })
       }
-      const requestSystemShutdown = async (): Promise<void> => {
-        const desktopProcess = app!.process()
+      if (scenario === 'native quit without window') {
+        await app.evaluate(({ dialog }) => {
+          dialog.showMessageBox = (async (...args: unknown[]) => {
+            const options = args.at(-1) as { message: string }
+            if (!['Quit Open-Science?', 'Saving is not finished'].includes(options.message))
+              throw new Error(`Unexpected native quit confirmation: ${options.message}`)
+            return {
+              response: options.message === 'Saving is not finished' ? 2 : 1,
+              checkboxChecked: false
+            }
+          }) as typeof dialog.showMessageBox
+        })
+      }
+      const desktopProcess = app.process()
+      if (scenario === 'system shutdown') {
         if (process.platform === 'win32') {
-          // Windows kill bypasses Node signal listeners; exercise the installed adapter directly.
-          await app!.evaluate(() => {
+          await app.evaluate(() => {
             setImmediate(() => process.emit('SIGTERM'))
           })
-        } else {
-          desktopProcess.kill('SIGTERM')
-        }
-        await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
-        app = undefined
-        expect(processHasExited(owner!.pid)).toBe(false)
-      }
-      if (scenario === 'system shutdown') {
-        await requestSystemShutdown()
-        return
-      }
-      if (scenario === 'quit after failed reconnects') {
-        await page.getByRole('button', { name: 'Quit', exact: true }).click()
-      } else if (scenario === 'repeated notice quit') {
-        await page.evaluate(() => {
-          void window.api.desktopRuntime!.quit()
-          void window.api.desktopRuntime!.quit()
-        })
+        } else desktopProcess.kill('SIGTERM')
+      } else if (
+        scenario === 'repeated notice quit' ||
+        scenario === 'quit after failed reconnects'
+      ) {
+        await page
+          .evaluate(() => {
+            void window.api.desktopRuntime!.quit()
+            void window.api.desktopRuntime!.quit()
+          })
+          .catch((error: unknown) => {
+            if (!page.isClosed()) throw error
+          })
       } else {
         await app.evaluate(({ app, BrowserWindow }, noWindow) => {
           if (noWindow) for (const window of BrowserWindow.getAllWindows()) window.destroy()
           app.quit()
         }, scenario === 'native quit without window')
       }
-      await expect
-        .poll(() =>
-          app!.evaluate(() => {
-            const probe = (
-              globalThis as typeof globalThis & {
-                quitProbe: { dialogs: string[]; errors: string[] }
-              }
-            ).quitProbe
-            return { dialogs: probe.dialogs, errors: probe.errors }
-          })
-        )
-        .toEqual({ dialogs: ['Quit while disconnected?'], errors: [] })
-      if (scenario === 'quit after failed reconnects') {
-        const desktopProcess = app.process()
-        await app.evaluate(() => {
-          ;(
-            globalThis as typeof globalThis & { quitProbe: { respond(response: number): void } }
-          ).quitProbe.respond(1)
-        })
-        await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
-        app = undefined
-        expect(processHasExited(owner.pid)).toBe(false)
-        return
+      if (scenario !== 'system shutdown' && scenario !== 'native quit without window') {
+        const confirmation = page.getByRole('alertdialog', { name: 'Saving is not finished' })
+        await expect(confirmation).toBeVisible()
+        if (scenario === 'system shutdown during confirmation') {
+          if (process.platform === 'win32') {
+            await app.evaluate(() => {
+              setImmediate(() => process.emit('SIGTERM'))
+            })
+          } else desktopProcess.kill('SIGTERM')
+        } else {
+          await confirmation.getByRole('button', { name: 'Stay', exact: true }).click()
+          await expect(confirmation).not.toBeVisible()
+          expect(desktopProcess.exitCode).toBeNull()
+          await expect
+            .poll(() => page.evaluate(() => window.api.desktopRuntime!.getState()))
+            .toMatchObject({ closing: false })
+          await app.evaluate(({ app }) => app.quit())
+          await confirmation.getByRole('button', { name: 'Force quit', exact: true }).click()
+        }
       }
-      if (scenario === 'system shutdown during confirmation') {
-        await requestSystemShutdown()
-        return
-      }
-      await app.evaluate(() => {
-        ;(globalThis as typeof globalThis & { quitProbe: { respond(): void } }).quitProbe.respond()
-      })
-      expect(app.process().exitCode).toBeNull()
-      expect(processHasExited(owner.pid)).toBe(false)
-      if (scenario !== 'native quit without window')
-        await expect
-          .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
-          .toMatchObject({ phase: 'disconnected', closing: false })
-      await app.evaluate(({ dialog }) => {
-        dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false })
-      })
-      const desktopProcess = app.process()
-      if (scenario === 'repeated notice quit')
-        await page
-          .evaluate(() => {
-            void window.api.desktopRuntime!.quit()
-          })
-          .catch((error: unknown) => {
-            // Successful quit can close the renderer before evaluate acknowledges the request.
-            if (!page.isClosed()) throw error
-          })
-      else
-        await app.evaluate(({ app }) => {
-          app.quit()
-        })
-      await expect.poll(() => desktopProcess.exitCode, { timeout: 10_000 }).toBe(0)
+      await expect.poll(() => desktopProcess.exitCode, { timeout: 15_000 }).toBe(0)
       app = undefined
-      expect(processHasExited(owner.pid)).toBe(false)
     } finally {
       await cleanupRecoveryFixture({ app, owner, env, root, storageRoot: roots.storageRoot })
     }

@@ -634,7 +634,7 @@ it.each([
   { name: 'R', request: { language: 'r' as const } },
   { name: 'REPL', request: { language: 'python' as const, kind: 'repl' as const } }
 ])(
-  'requires Windows protection and process-tree supervision for every persistent $name kernel',
+  'preserves standard admission and process-tree supervision for every persistent $name kernel',
   async ({ request: kernelRequest }) => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-windows-supervision-'))
     const request = baseRequest(cwdDir)
@@ -677,8 +677,9 @@ it.each([
           projectId: 'windows-supervision'
         })
       ).resolves.toMatchObject({ status: 'failed', stderr: 'sandbox invocation captured' })
-      expect(wrap).toHaveBeenCalledWith(
-        expect.objectContaining({ superviseProcessTree: true, windowsProtectionRequired: true })
+      expect(wrap).toHaveBeenCalledWith(expect.objectContaining({ superviseProcessTree: true }))
+      expect(wrap.mock.calls[0][0].windowsProtectionRequired).toBe(
+        kernelRequest.language === 'r' ? false : undefined
       )
     } finally {
       await executor.shutdown()

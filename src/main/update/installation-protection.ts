@@ -52,6 +52,7 @@ export type InstallationUpdateRecord = {
   oldManifest: InstallationManifest
   targetManifest?: InstallationManifest
   stoppedClean?: boolean
+  runtimeExited?: boolean
   preparedDebGate?: DebSystemdGate
   executor?: {
     channel: 'supervised-mac' | 'supervised-appimage' | 'supervised-deb'
@@ -235,12 +236,15 @@ function readRecord(directory: string): InstallationUpdateRecord | undefined {
       'oldManifest',
       'targetManifest',
       'stoppedClean',
+      'runtimeExited',
       'executor',
       'preparedDebGate',
       'bootIdentity'
     ])
     if (Object.keys(record).some((key) => !allowed.has(key)))
       throw new Error('Unexpected recovery data')
+    if (record.runtimeExited !== undefined && typeof record.runtimeExited !== 'boolean')
+      throw new Error('Invalid runtime exit evidence')
     if (record.preparedDebGate) {
       const gate = record.preparedDebGate
       if (
@@ -407,10 +411,17 @@ export function installationRecoveryStatus(record: InstallationUpdateRecord): Up
     operationId: record.operationId,
     phase: record.phase,
     runtime:
-      record.phase === 'preparing' ? 'running' : record.stoppedClean ? 'stopped-clean' : 'unknown',
+      record.phase === 'preparing'
+        ? 'running'
+        : record.stoppedClean
+          ? 'stopped-clean'
+          : record.runtimeExited
+            ? 'stopped-unclean'
+            : 'unknown',
     installation: record.phase === 'handoff' ? 'unknown' : 'unchanged',
     canCancel: record.phase !== 'handoff',
-    canRetryInstall: record.phase === 'stopped' && record.stoppedClean === true,
+    canRetryInstall:
+      record.phase === 'stopped' && (record.stoppedClean === true || record.runtimeExited === true),
     canRecover: true
   }
 }
@@ -492,7 +503,8 @@ export function advanceInstallationUpdate(
   location: InstallationLocation,
   operationId: string,
   phase: InstallationUpdateRecord['phase'],
-  stoppedClean?: boolean
+  stoppedClean?: boolean,
+  runtimeExited?: boolean
 ): InstallationUpdateRecord {
   return coordinated(location, (directory) => {
     const record = readRecord(directory)
@@ -501,11 +513,8 @@ export function advanceInstallationUpdate(
     const phases = ['preparing', 'stopping', 'stopped', 'handoff']
     if (phases.indexOf(phase) !== phases.indexOf(record.phase) + 1)
       throw new UpdateLifecycleError('install-failed', 'Invalid installation phase transition.')
-    if (phase === 'stopped' && stoppedClean !== true)
-      throw new UpdateLifecycleError(
-        'runtime-stop-unclean',
-        'Service shutdown was not confirmed clean.'
-      )
+    if (phase === 'stopped' && stoppedClean !== true && runtimeExited !== true)
+      throw new UpdateLifecycleError('runtime-stop-unclean', 'Service exit was not confirmed.')
     if (
       phase === 'handoff' &&
       (!record.targetManifest || record.targetManifest.version !== record.targetVersion)
@@ -514,9 +523,17 @@ export function advanceInstallationUpdate(
         'install-failed',
         'A verified target installation manifest is required before installer handoff.'
       )
-    if (phase === 'handoff' && (!record.stoppedClean || occupants(directory).length))
+    if (
+      phase === 'handoff' &&
+      (!(record.stoppedClean || record.runtimeExited) || occupants(directory).length)
+    )
       throw new UpdateLifecycleError('installation-busy', 'Services still hold this installation.')
-    const next = { ...record, phase, ...(stoppedClean === undefined ? {} : { stoppedClean }) }
+    const next = {
+      ...record,
+      phase,
+      ...(stoppedClean === undefined ? {} : { stoppedClean }),
+      ...(runtimeExited === undefined ? {} : { runtimeExited })
+    }
     atomicWrite(join(directory, 'update-in-progress.json'), next)
     return next
   })

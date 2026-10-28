@@ -632,8 +632,8 @@ describe('post-merge Windows validation', () => {
     const verification = readFileSync('scripts/ci/verify-windows-signature.ps1', 'utf8')
     expect(verification).toContain('Get-ChildItem -LiteralPath $unpacked -File -Recurse')
     expect(verification).toContain('Test-PortableExecutable $_.FullName')
-    expect(verification).toContain('resources/micromamba.exe')
-    expect(verification).toContain('resources/micromamba-compat.exe')
+    expect(verification).toContain('resources/backend/resources/micromamba.exe')
+    expect(verification).toContain('resources/backend/resources/micromamba-compat.exe')
     expect(verification).toContain('notebook-appcontainer-host.exe')
   })
 
@@ -932,7 +932,7 @@ describe('post-merge Windows validation', () => {
     }
   )
 
-  it('builds every platform without repeating the verified typecheck', () => {
+  it('builds every platform without repeating Web compilation or the verified typecheck', () => {
     const workflow = readWorkflow('build.yml')
     const verifyTypecheck = findStep(workflow.jobs.verify, 'Typecheck')
     const build = findStep(workflow.jobs.build, 'Build & package')
@@ -942,7 +942,7 @@ describe('post-merge Windows validation', () => {
     expect(verifyTypecheck.env).toEqual({ NODE_OPTIONS: '--max-old-space-size=4096' })
     expect(build.env).toMatchObject({ NODE_OPTIONS: '--max-old-space-size=8192' })
     expect(commands).toContain('npm run build:e2e')
-    expect(commands).toContain('npm run build:web')
+    expect(commands.some((command) => /^npm run build:web\b/.test(command))).toBe(false)
     expect(commands).not.toContain('npm run build')
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })

@@ -1,5 +1,6 @@
 import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
+import { isAbsolute } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import {
   NotebookExecutionStopError,
@@ -2837,9 +2838,16 @@ class NotebookLocalRpcServer {
     if (method === 'artifactSaveVersion') {
       if (!this.artifactProvenance?.saveVersion) throw new Error('Artifact save is unavailable.')
       const request = artifactSaveRequestSchema.parse(params)
+      const sourceScope = params.sourceScope as ArtifactWriteSourceScope
+      // Read current host-owned grants, never caller hints or a turn-start snapshot. Relative
+      // sources keep their original authority and cannot traverse into granted external folders.
+      const grantedImportRoots =
+        request.source.kind === 'localPath' && isAbsolute(request.source.path)
+          ? ((await this.authorizedDirectories?.())?.directories.map((root) => root.path) ?? [])
+          : []
       return this.artifactProvenance.saveVersion(
         request,
-        params.sourceScope as ArtifactWriteSourceScope,
+        { ...sourceScope, grantedImportRoots },
         signal,
         onArtifactMetadataBytes
       )
