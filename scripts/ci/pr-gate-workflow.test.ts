@@ -584,7 +584,7 @@ describe('PR Gate workflow', () => {
           )
         }
       } finally {
-        rmSync(root, { recursive: true, force: true })
+        rmSync(root, { recursive: true, force: true, maxRetries: 3 })
       }
     }
   )
