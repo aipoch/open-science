@@ -256,7 +256,7 @@ const TagForm = ({
                 {tag.name}
               </span>
               <span className="text-xs text-muted-foreground">
-                {t('Icon')}: {iconLabel(t, tag.iconKey)}: {t('Color')}:{' '}
+                {t('Icon')}: {iconLabel(t, tag.iconKey)} / {t('Color')}:{' '}
                 {colorLabel(t, tag.colorKey)}
               </span>
             </div>
