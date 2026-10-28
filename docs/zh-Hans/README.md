@@ -223,19 +223,41 @@ arXiv 预印本 · [v1](https://arxiv.org/abs/2610.17110v1) · 提交于 2026 �
 
 ## 基准测试表现
 
-以下为 2026 年 8—10 月报告的历史成绩，不是针对当前发布版本进行的新评测。
+AstaBench、ASI-Bench 与 BiomniBench-DA 是三套相互独立的基准，任务、数据集和评分方式不同，结果分别报告，不能横向比较。
 
-### 🏆 AstaBench LitQA2-FullText-Search：10/10全部命中
+### 🏆 AstaBench：LitQA2 Test 并列最高展示分数，90.67% Recall@30
 
-AIPOCH Open-Science 使用 **DeepSeek v4-flash（max）**，结合文献检索专家与技能，在官方10题验证集上取得 **100% recall@30**：每道题所需的目标论文均出现在返回结果的前30篇中。该成绩高于报告所列的3条公开验证集成绩，较其中最高的 **80%高20个百分点**。本次报告记录了3次本地重复测试，展示了系统在这组科研问题中的文献定位能力。
+AIPOCH Open-Science 使用 **gpt-6-astra**，在官方75题 LitQA2-FullText-Search Test 题集的本地评测中取得 **90.67% Recall@30（68/75）**。在10月26日报告快照收录的27条结果中，这一本地 Test 成绩与 Asta Paper Finder 和 Asta v0 **并列最高**，三者均为90.67%。该成绩来自官方 Test 题集的本地评测，尚未作为官方榜单结果提交，也不代表取得官方榜单名次。
 
-![AIPOCH Open-Science 在 AstaBench LitQA2-FullText-Search 验证集上取得100% recall@30、10/10目标论文命中；图中test与validation使用不同题目](../images/readme/astabench-litqa2.png)
+**ScholarQA-CS2：** AIPOCH Open-Science 使用 **deepseek-v4-flash**，在 **100题 Validation 题集**上取得 **0.9289/1的综合得分**。报告所列的官方 Test 最高参考分数为 **0.9192**，来自不同题集，因此两项结果不构成直接排名。
 
-图中同时列出test与validation记录，排序仅为数值对照；100%指论文检索命中率，不是科学问答正确率。
+![AIPOCH Open-Science 的 AstaBench 概览：LitQA2 Test 题集 Recall@30 为90.67%，ScholarQA-CS2 Validation 综合得分为0.9289；本地结果与官方参考记录分开展示](../images/readme/astabench-literature-research-overview.jpg)
 
-### 🏆 ASI-Bench B1–B4：四项测试成绩均居所列对照首位
+<details>
+<summary><strong>LitQA2-FullText-Search 结果对照</strong></summary>
 
-AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，结合领域专家与技能，在 ASI-Bench B1、B2、B3、B4 四项测试中分别取得 **79.35、56.11、59.67和59.46分**，均为报告所列对照中的最高展示分数。四个档位依次考察**执行完整科研方案、组织研究流程、自主选择方法，以及在干扰信息下完成自主研究**，覆盖从方法实现到自主科研执行的不同任务条件。
+![AIPOCH Open-Science 在75题 LitQA2 Test 题集上取得90.67% Recall@30，与报告快照中的最高展示分数并列；该结果并非官方榜单提交](../images/readme/astabench-litqa2-test.jpg)
+
+该本地测试于2026年10月23日运行。图中包含1条 AIPOCH Open-Science 本地 Test 结果和26条官方参考记录。同分结果使用等长条形，行顺序不区分同分名次。AIPOCH 的本地成本未统一核算，因此该图不能支持成本效率比较。
+
+此前使用 **DeepSeek v4-flash (max)** 的本地评测在另一组10题 Validation 题集上取得 **100% Recall@30（10/10）**，报告记录了该结果的3次本地重复测试。Test 与 Validation 使用不同题目，分别报告。
+
+</details>
+
+<details>
+<summary><strong>ScholarQA-CS2 Validation 结果与 Test 参考</strong></summary>
+
+![AIPOCH Open-Science 在100题 ScholarQA-CS2 Validation 题集上取得0.9289的综合得分；官方 Test 参考记录使用不同题目，不构成直接对比排名](../images/readme/astabench-scholarqa-cs2.jpg)
+
+图中将1条本地 Validation 结果与41条官方 Test 参考记录分开展示。报告正文还提及 `gpt-5.6-sol` 的一项 Validation 得分0.7905，但源表未列出该条目，也未说明题数。
+
+</details>
+
+Recall@30 衡量目标论文是否出现在提交结果的前30篇中，不是科学问答正确率。ScholarQA-CS2 得分衡量回答的综合质量，不是全部答对的问题所占比例。
+
+### 🏆 ASI-Bench B1–B4：报告所列四项对照均为最高展示分数
+
+AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，结合领域专家与技能，在 ASI-Bench B1、B2、B3、B4 四项测试中分别取得 **79.35、56.11、59.67和59.46分**，均为报告所列对照中的最高展示分数。四种评测条件依次考察**执行完整科研方案、组织研究流程、自主选择方法，以及在干扰信息下完成自主研究**，覆盖从方法实现到自主科研执行的不同任务条件。
 
 同模型、同名推理强度的本地 Codex 对照分别为74.78、56.09、58.12和55.45分，我方数值分别高 **4.57、0.02、1.55和4.01分**。B1、B2报告完成3次本地重复测试；B3、B4均为每轮60题、3次本地测试的均值。
 
@@ -243,7 +265,7 @@ AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，结合领域专�
 
 本地测试采用seed31415；B1有效计分59项，1项因报告所述评分器异常排除。B3/B4采用v0.32.0及替代裁判。公开参照的任务实例、配置和裁判条件不同；B2的0.02分仅为数值差异。
 
-### 🏆 BiomniBench-DA Public 50：所列对照第1，79.05分
+### 🏆 BiomniBench-DA Public 50：所汇总对照中的最高展示分数，79.05分
 
 AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在标记为 BiomniBench-DA Public 50 的50项生物医学数据分析任务内部评测中取得 **79.05分**，为所汇总对照中的最高展示分数。成绩由 Gemini 3.1 Pro 裁判的 **81.04分**与 DeepSeek v4-pro 裁判的 **77.06分**等权平均得到，反映该配置在生物医学数据分析过程中的综合表现。详见[评测报告](https://aipoch.com/blog/open-science-biomnibench-da)。
 
@@ -251,7 +273,7 @@ AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在标记为 BiomniBench
 
 该对照混合了不同裁判覆盖的记录，不能视为统一裁判条件下的正式排名。
 
-**评测说明：**以上为自行报告的本地或内部成绩，所列对照首位不代表官方榜单第一名，也不代表已通过统计检验确认提升。
+**评测说明：**以上为 AIPOCH Open-Science 于2026年8—10月自行报告的本地或内部评测结果，使用所注明的数据集及划分，未针对当前发布版本重新运行。在官方 Test 题集上进行本地测试，不代表已提交官方榜单或取得榜单名次。参考数值来自历史报告快照，并非实时排名；Validation 与 Test 结果不能直接比较。任务实例、模型配置、裁判覆盖范围和成本核算方式的差异，限制了跨系统比较。数值持平或存在差距，不代表具有统计显著性的提升。
 
 ## 核心能力
 

@@ -223,17 +223,39 @@ Si vous utilisez AIPOCH Open-Science dans vos recherches, vous pouvez citer la p
 
 ## Performances aux benchmarks
 
-Il s’agit de résultats historiques rapportés d’août à octobre 2026, et non d’une nouvelle évaluation de la version actuelle.
+AstaBench, ASI-Bench et BiomniBench-DA sont des familles de benchmarks distinctes, avec des tâches, des jeux de données et des méthodes de notation différents ; leurs résultats sont présentés séparément et ne sont pas directement comparables.
 
-### 🏆 AstaBench LitQA2-FullText-Search — 10/10 articles cibles retrouvés
+### 🏆 AstaBench — Meilleur score LitQA2 Test affiché ex æquo : 90.67% de Recall@30
 
-AIPOCH Open-Science a obtenu **100% de recall@30** sur les dix requêtes de validation officielles avec **DeepSeek v4-flash (max)**, des spécialistes de la recherche bibliographique et des compétences. Chaque article cible figurait parmi les 30 premiers résultats. Ce score dépasse les trois résultats publics de validation cités dans le rapport, de **20 points de pourcentage** par rapport au meilleur résultat de référence de **80%**. Trois répétitions locales ont été rapportées, montrant la localisation des articles pour cet ensemble de questions scientifiques.
+AIPOCH Open-Science a obtenu **90.67% de Recall@30 (68/75)** lors d’une évaluation locale sur le jeu Test officiel de 75 questions de LitQA2-FullText-Search avec **gpt-6-astra**. Parmi les 27 résultats inclus dans l’instantané du rapport du 26 octobre, ce score Test local **partage le meilleur Recall@30 affiché**, également obtenu par Asta Paper Finder et Asta v0 à 90.67%. Il s’agissait d’une évaluation locale sur le jeu Test officiel, et non d’une soumission à un classement officiel ou d’une place dans celui-ci.
 
-![AIPOCH Open-Science obtient 100% de recall@30 et 10/10 articles cibles sur la validation AstaBench LitQA2 ; test et validation utilisent des questions différentes](../images/readme/astabench-litqa2.png)
+**ScholarQA-CS2 :** AIPOCH Open-Science a obtenu avec **deepseek-v4-flash** un **score composite de 0.9289/1** sur **100 questions de Validation**. La référence Test officielle la plus élevée citée dans le rapport, **0.9192**, provient d’un autre jeu de questions ; les deux résultats ne constituent donc pas un classement comparatif direct.
 
-La figure comprend des résultats de test et de validation ; leur ordre est uniquement numérique. Recall@30 mesure la recherche de l'article cible, pas l'exactitude des réponses scientifiques.
+![Synthèse AstaBench d’AIPOCH Open-Science : 90.67% de Recall@30 sur LitQA2 Test et score composite de 0.9289 sur ScholarQA-CS2 Validation ; les résultats locaux sont séparés des références officielles](../images/readme/astabench-literature-research-overview.jpg)
 
-### 🏆 ASI-Bench B1–B4 — Meilleurs scores affichés dans les quatre comparaisons présentées
+<details>
+<summary><strong>Comparaison des résultats de LitQA2-FullText-Search</strong></summary>
+
+![AIPOCH Open-Science obtient 90.67% de Recall@30 sur le jeu LitQA2 Test de 75 questions, partageant le meilleur score affiché dans l’instantané du rapport ; ce résultat n’a pas été soumis à un classement officiel](../images/readme/astabench-litqa2-test.jpg)
+
+L’exécution locale a eu lieu le 23 octobre 2026. Le graphique présente un résultat Test local d’AIPOCH Open-Science et 26 enregistrements de référence officiels. Des scores égaux conservent des barres de même longueur et l’ordre des lignes ne départage pas les ex æquo. Les coûts locaux d’AIPOCH n’ont pas été comptabilisés de manière uniforme ; le graphique ne permet donc pas de comparer le rapport coût-efficacité.
+
+Une évaluation locale antérieure avec **DeepSeek v4-flash (max)** a obtenu **100% de Recall@30 (10/10)** sur le jeu Validation distinct de dix questions ; trois répétitions locales ont été rapportées pour ce résultat. Les résultats Test et Validation portent sur des questions différentes et sont présentés séparément.
+
+</details>
+
+<details>
+<summary><strong>Références Validation et Test de ScholarQA-CS2</strong></summary>
+
+![AIPOCH Open-Science obtient un score composite de 0.9289 sur les 100 questions de ScholarQA-CS2 Validation ; les références Test officielles portent sur d’autres questions et ne constituent pas un classement comparatif direct](../images/readme/astabench-scholarqa-cs2.jpg)
+
+Le graphique sépare un résultat Validation local de 41 références Test officielles. Le texte du rapport mentionne également un score Validation de 0.7905 avec `gpt-5.6-sol`, absent du tableau source et sans indication du nombre de questions.
+
+</details>
+
+Recall@30 mesure si l’article cible apparaît parmi les 30 premiers résultats soumis ; il ne mesure pas l’exactitude des réponses aux questions scientifiques. Le score ScholarQA-CS2 est une mesure composite de la qualité des réponses, et non le pourcentage de questions auxquelles une réponse entièrement correcte a été donnée.
+
+### 🏆 ASI-Bench B1–B4 — Meilleurs scores affichés dans les quatre comparaisons du rapport
 
 AIPOCH Open-Science a obtenu **79.35, 56.11, 59.67 et 59.46** sur ASI-Bench B1, B2, B3 et B4 avec **GPT-6 (gpt-6-astra / xhigh)**, des spécialistes de domaine et des compétences : les valeurs affichées les plus élevées dans les comparaisons respectives retenues par les rapports. Les quatre conditions évaluent **l'exécution d'un plan complet, l'organisation d'un processus de travail, le choix autonome des méthodes et la recherche autonome avec des informations distrayantes**.
 
@@ -243,7 +265,7 @@ Les références locales Codex utilisant le même modèle et le même niveau de 
 
 Les exécutions locales utilisent seed31415. Le score B1 d'AIPOCH couvre 59 tâches ; une a été exclue en raison du problème d'évaluation décrit dans le rapport. B3/B4 utilisent v0.32.0 et un juge de remplacement. Les références publiques diffèrent par les instances, les configurations et l'évaluation ; l'écart B2 de 0.02 point est uniquement numérique.
 
-### 🏆 Meilleur score dans la comparaison compilée BiomniBench-DA Public 50 — 79.05
+### 🏆 BiomniBench-DA Public 50 — Meilleur score affiché dans la comparaison compilée : 79.05
 
 AIPOCH Open-Science a obtenu **79.05** avec **gpt-5.6-sol (xhigh)** lors d'une évaluation interne des 50 tâches désignées BiomniBench-DA Public 50, soit le meilleur score affiché dans la comparaison compilée. Il s'agit de la moyenne à pondération égale de **81.04** pour le juge Gemini 3.1 Pro et **77.06** pour le juge DeepSeek v4-pro, décrivant l'analyse de données biomédicales de cette configuration. Voir le [rapport d'évaluation](https://aipoch.com/blog/open-science-biomnibench-da).
 
@@ -251,7 +273,7 @@ AIPOCH Open-Science a obtenu **79.05** avec **gpt-5.6-sol (xhigh)** lors d'une �
 
 La comparaison mélange différentes couvertures de juges et ne constitue pas un classement officiel sous des conditions d'évaluation uniformes.
 
-**Portée de l'évaluation :** Ces résultats locaux/internes sont déclarés par l'équipe. Arriver en tête des comparaisons présentées n'établit ni une première place officielle ni une amélioration statistiquement significative.
+**Portée de l’évaluation :** Ces résultats locaux/internes ont été déclarés par l’équipe entre août et octobre 2026 pour les jeux de données et partitions indiqués ; les évaluations n’ont pas été répétées pour la version actuelle. Une exécution locale sur un jeu Test officiel n’implique ni soumission ni place dans un classement officiel. Les références sont des instantanés de rapports historiques, et non des classements en temps réel ; les résultats Validation et Test ne sont pas directement comparables. Les différences d’instances de tâches, de configurations de modèles, de couverture des juges et de comptabilisation des coûts limitent les comparaisons entre systèmes. Les égalités ou écarts numériques n’établissent pas d’améliorations statistiquement significatives.
 
 ## Capacités principales
 

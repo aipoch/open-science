@@ -223,17 +223,39 @@ arXiv プレプリント · [v1](https://arxiv.org/abs/2610.17110v1) · 2026 年
 
 ## ベンチマーク性能
 
-以下は 2026 年 8～10 月に報告された過去の結果であり、現行リリースを対象とした新しい評価ではありません。
+AstaBench、ASI-Bench、BiomniBench-DA は課題、データセット、採点方法が異なる独立したベンチマーク群であり、結果はそれぞれ別に報告され、相互に直接比較することはできません。
 
-### 🏆 AstaBench LitQA2-FullText-Search — 10問すべてで対象論文を発見
+### 🏆 AstaBench — LitQA2 Test：報告時点の比較で最高表示スコアと同点、90.67% Recall@30
 
-AIPOCH Open-Science は **DeepSeek v4-flash（max）**、文献検索スペシャリスト、スキルを組み合わせ、公式検証セット10問で **recall@30が100%** を記録しました。すべての対象論文が検索結果の上位30件に含まれました。報告に掲載された公開検証結果3件を上回り、その最高値 **80%より20パーセントポイント高い** 値です。ローカルで3回の反復テストが報告され、この科学的な質問群での論文検索性能を示しています。
+AIPOCH Open-Science は **gpt-6-astra** を使用し、公式の75問の LitQA2-FullText-Search Test セットを用いたローカル評価で **90.67% Recall@30 (68/75)** を記録しました。10月26日時点の報告に含まれる27件の結果の中で、このローカル Test スコアは、同じく90.67%を記録した Asta Paper Finder および Asta v0 と並び、**掲載された最高の Recall@30 と同点**です。公式 Test セットを用いたローカル評価であり、公式ランキングへの提出や順位を示すものではありません。
 
-![AIPOCH Open-Science は AstaBench LitQA2検証セットでrecall@30が100%、10/10を達成。テストと検証では問題が異なる](../images/readme/astabench-litqa2.png)
+**ScholarQA-CS2:** AIPOCH Open-Science は **deepseek-v4-flash** を使用し、**100問の Validation 問題**で **0.9289/1の複合スコア**を記録しました。報告に掲載された公式 Test の最高参照値 **0.9192** は異なる問題セットによるものであるため、両者の結果から直接比較による順位を付けることはできません。
 
-図にはテストと検証の記録が含まれ、順位は数値のみの比較です。Recall@30は対象論文の検索を測る指標であり、科学的な質問への正答率ではありません。
+![AIPOCH Open-Science の AstaBench 概要：LitQA2 Test で90.67% Recall@30、ScholarQA-CS2 Validation で複合スコア0.9289。ローカル結果と公式参照を区別](../images/readme/astabench-literature-research-overview.jpg)
 
-### 🏆 ASI-Bench B1–B4 — 掲載された4つの比較すべてで最高の表示スコア
+<details>
+<summary><strong>LitQA2-FullText-Search の結果比較</strong></summary>
+
+![AIPOCH Open-Science は75問の LitQA2 Test で90.67% Recall@30を記録し、報告時点の比較で最高表示スコアと同点。公式ランキングへの提出結果ではない](../images/readme/astabench-litqa2-test.jpg)
+
+このローカル評価は2026年10月23日に実施されました。図には AIPOCH Open-Science のローカル Test 結果1件と公式参照記録26件が含まれます。同じスコアは同じ長さの棒で示し、行の順番で同点を区別していません。AIPOCH のローカル評価のコストは統一した方法で算定されていないため、この図から費用対効果を比較することはできません。
+
+それ以前に **DeepSeek v4-flash (max)** を使用したローカル評価では、別の10問の Validation セットで **100% Recall@30 (10/10)** が記録され、この結果について3回のローカル反復が報告されています。Test と Validation は異なる問題を使用しているため、結果を分けて示しています。
+
+</details>
+
+<details>
+<summary><strong>ScholarQA-CS2 の Validation と Test の参照記録</strong></summary>
+
+![AIPOCH Open-Science は100問の ScholarQA-CS2 Validation セットで複合スコア0.9289を記録。公式 Test の参照値は異なる問題によるもので、直接対決の順位を示さない](../images/readme/astabench-scholarqa-cs2.jpg)
+
+図ではローカル Validation 結果1件と公式 Test の参照記録41件を分けて示しています。報告本文には `gpt-5.6-sol` による別の Validation スコア0.7905も記載されていましたが、元の表にはその行がなく、問題数も明記されていませんでした。
+
+</details>
+
+Recall@30 は、提出された最初の30件の結果に対象論文が含まれるかを測る指標であり、科学的な質問への正答率ではありません。ScholarQA-CS2 のスコアは回答品質の複合指標であり、完全に正しく回答できた問題の割合ではありません。
+
+### 🏆 ASI-Bench B1–B4 — 報告内の4つの比較すべてで最高の表示スコア
 
 AIPOCH Open-Science は **GPT-6（gpt-6-astra / xhigh）**、分野別スペシャリスト、スキルを用い、ASI-Bench B1、B2、B3、B4でそれぞれ **79.35、56.11、59.67、59.46点** を記録しました。各値は報告に掲載された比較の最高表示値です。4条件は順に、**詳細な計画の実行、ワークフローの構成、自律的な研究手法の選択、無関係な背景情報がある状況での自律研究**を評価します。
 
@@ -243,7 +265,7 @@ AIPOCH Open-Science は **GPT-6（gpt-6-astra / xhigh）**、分野別スペシ�
 
 ローカル実行にはseed31415を使用しました。AIPOCHのB1は59問を採点し、報告に記載された採点器の問題により1問を除外しています。B3/B4はv0.32.0と代替の評価モデルを使用しました。公開参照とは問題インスタンス、構成、採点条件が異なり、B2の0.02点差は数値上の差にとどまります。
 
-### 🏆 集計されたBiomniBench-DA Public 50比較で最高値 — 79.05点
+### 🏆 BiomniBench-DA Public 50 — 集計された比較での最高表示スコア：79.05
 
 AIPOCH Open-Science は **gpt-5.6-sol（xhigh）** を使用し、BiomniBench-DA Public 50と呼ばれる50タスクの内部評価で **79.05点** を記録しました。これは集計された比較の最高表示値です。Gemini 3.1 Proによる **81.04点** とDeepSeek v4-proによる **77.06点** の等加重平均で、この構成の生物医学データ分析性能を示します。[評価報告](https://aipoch.com/blog/open-science-biomnibench-da)をご覧ください。
 
@@ -251,7 +273,7 @@ AIPOCH Open-Science は **gpt-5.6-sol（xhigh）** を使用し、BiomniBench-DA
 
 比較には異なる評価モデルの組み合わせが混在しており、統一された採点条件による公式順位ではありません。
 
-**評価範囲：** これらは自己報告のローカル・内部評価結果です。掲載された比較での最高値は、公式ランキング1位や統計的に有意な改善を意味しません。
+**評価範囲：** これらは、明記されたデータセットと分割を使用し、2026年8～10月に報告された自己報告のローカル・内部評価結果であり、現行リリース向けに再実行したものではありません。公式 Test セットを用いたローカル実行は、公式ランキングへの提出や順位を意味しません。参照値は過去の報告時点の記録であり、リアルタイムの順位ではありません。Validation と Test の結果は直接比較できません。問題の内容、モデル構成、評価モデルの適用範囲、コスト算定方法の違いにより、システム間の比較には制約があります。数値上の同点や差は、統計的に有意な改善を示すものではありません。
 
 ## 主な機能
 

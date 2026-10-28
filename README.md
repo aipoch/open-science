@@ -222,17 +222,39 @@ If you use AIPOCH Open-Science in your research, you can cite the preprint:
 
 ## Benchmark Performance
 
-These results are historical reports from August–October 2026, not a new evaluation of the current release.
+AstaBench, ASI-Bench, and BiomniBench-DA are separate benchmark families with different tasks, datasets, and scoring methods; their results are reported independently and are not directly comparable.
 
-### 🏆 AstaBench LitQA2-FullText-Search — 10/10 target-paper hits
+### 🏆 AstaBench — Tied highest displayed LitQA2 Test score: 90.67% Recall@30
 
-AIPOCH Open-Science achieved **100% recall@30** on the official 10-query validation split using **DeepSeek v4-flash (max)** with literature-retrieval specialists and Skills. Every target paper appeared among the first 30 returned results. The score exceeds the three public validation results listed in the report, **20 percentage points** above the highest reference of **80%**. Three local repeats were reported, demonstrating target-paper retrieval on this set of scientific questions.
+AIPOCH Open-Science recorded **90.67% Recall@30 (68/75)** in a local evaluation on the official 75-question LitQA2-FullText-Search Test set using **gpt-6-astra**. Among the 27 results included in the Oct 26 report snapshot, this local Test score **ties the highest displayed Recall@30**, also reported for Asta Paper Finder and Asta v0 at 90.67%. It was a local evaluation on the official Test set, not an official leaderboard submission or placement.
 
-![AIPOCH Open-Science achieves 100% recall@30 and 10/10 target-paper hits on AstaBench LitQA2-FullText-Search validation; test and validation records use different questions](docs/images/readme/astabench-litqa2.png)
+**ScholarQA-CS2:** AIPOCH Open-Science using **deepseek-v4-flash** recorded a **0.9289/1 composite score** across **100 Validation questions**. The report's highest listed official Test reference, **0.9192**, comes from a different question set, so the two results do not form a head-to-head ranking.
 
-The figure includes both test and validation records; its ordering is numerical only. Recall@30 measures target-paper retrieval, not scientific question-answering accuracy.
+![AIPOCH Open-Science AstaBench summary: 90.67% Recall@30 on the LitQA2 Test set and a 0.9289 composite score on ScholarQA-CS2 Validation; local results are separated from official references](docs/images/readme/astabench-literature-research-overview.jpg)
 
-### 🏆 ASI-Bench B1–B4 — Highest displayed scores in all four listed comparisons
+<details>
+<summary><strong>LitQA2-FullText-Search result comparison</strong></summary>
+
+![AIPOCH Open-Science records 90.67% Recall@30 on the 75-question LitQA2 Test set, tying the highest displayed score in the report snapshot; this was not an official leaderboard submission](docs/images/readme/astabench-litqa2-test.jpg)
+
+The local run was performed on Oct 23, 2026. The chart contains one AIPOCH Open-Science local Test result and 26 official reference records. Equal scores retain equal bars, and row order does not break ties. AIPOCH's local cost was not standardized, so the chart does not support a cost-efficiency comparison.
+
+An earlier local evaluation using **DeepSeek v4-flash (max)** recorded **100% Recall@30 (10/10)** on the separate 10-question Validation split; three local repeats were reported for that result. The Test and Validation results use different questions and are reported separately.
+
+</details>
+
+<details>
+<summary><strong>ScholarQA-CS2 Validation and Test references</strong></summary>
+
+![AIPOCH Open-Science records a 0.9289 composite score on the 100-question ScholarQA-CS2 Validation set; official Test references use different questions and do not form a head-to-head ranking](docs/images/readme/astabench-scholarqa-cs2.jpg)
+
+The chart separates one local Validation result from 41 official Test references. An additional `gpt-5.6-sol` Validation score of 0.7905 was mentioned in the report text but was absent from the source table, and its question count was not stated.
+
+</details>
+
+Recall@30 measures whether the target paper appears among the first 30 submitted results; it is not scientific question-answering accuracy. The ScholarQA-CS2 score is a composite measure of response quality, not the percentage of questions answered completely correctly.
+
+### 🏆 ASI-Bench B1–B4 — Highest displayed scores in all four report comparisons
 
 AIPOCH Open-Science scored **79.35, 56.11, 59.67, and 59.46** on ASI-Bench B1, B2, B3, and B4 using **GPT-6 (gpt-6-astra / xhigh)** with domain specialists and Skills, the highest displayed values in the respective comparisons retained in the reports. The four conditions evaluate **executing a fully specified plan, organizing a workflow, selecting research methods independently, and conducting autonomous research with distracting background information**.
 
@@ -242,7 +264,7 @@ The same-model local Codex references scored 74.78, 56.09, 58.12, and 55.45, giv
 
 Local runs used seed31415. AIPOCH's B1 score covers 59 tasks, with one excluded due to the scorer issue described in the report. B3/B4 used v0.32.0 and a substitute judge. Published references differ in task instances, configurations, and judging; B2's 0.02-point margin is a numerical difference only.
 
-### 🏆 Highest in the collected BiomniBench-DA Public 50 comparison — 79.05
+### 🏆 BiomniBench-DA Public 50 — Highest displayed score in the collected comparison: 79.05
 
 AIPOCH Open-Science achieved **79.05** with **gpt-5.6-sol (xhigh)** in an internal evaluation on the 50-task set labeled BiomniBench-DA Public 50, the highest displayed score in the collected comparison. The result combines **81.04** from the Gemini 3.1 Pro judge and **77.06** from the DeepSeek v4-pro judge through an equal-weight mean, reflecting this configuration's biomedical data-analysis performance. See the [evaluation report](https://aipoch.com/blog/open-science-biomnibench-da).
 
@@ -250,7 +272,7 @@ AIPOCH Open-Science achieved **79.05** with **gpt-5.6-sol (xhigh)** in an intern
 
 The comparison mixes different judge-coverage patterns and should not be interpreted as an official ranking under uniform judging conditions.
 
-**Evaluation scope:** These are self-reported local/internal results. Leading the listed comparisons does not establish official first-place leaderboard status or statistically significant improvements.
+**Evaluation scope:** These are self-reported local/internal results reported between August and October 2026 on the stated datasets and splits; they were not rerun for the current release. A local run on an official Test set does not imply an official leaderboard submission or placement. Reference values are historical report snapshots rather than live rankings; Validation and Test results are not directly comparable. Differences in task instances, model configurations, judge coverage, and cost accounting limit comparisons across systems. Numerical ties or gaps do not establish statistically significant improvements.
 
 ## Core Capabilities
 

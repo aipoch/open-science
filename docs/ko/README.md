@@ -223,15 +223,37 @@ arXiv 프리프린트 · [v1](https://arxiv.org/abs/2610.17110v1) · 2026년 10�
 
 ## 벤치마크 성능
 
-아래는 2026년 8~10월에 보고된 과거 결과이며, 현재 릴리스를 새로 평가한 결과가 아닙니다.
+AstaBench, ASI-Bench, BiomniBench-DA는 과제, 데이터셋, 채점 방식이 서로 다른 별개의 벤치마크이며, 각 결과는 별도로 보고되고 서로 직접 비교할 수 없습니다.
 
-### 🏆 AstaBench LitQA2-FullText-Search — 대상 논문 10/10 검색 성공
+### 🏆 AstaBench — LitQA2 Test: 보고서에 제시된 최고 점수와 동점, 90.67% Recall@30
 
-AIPOCH Open-Science는 **DeepSeek v4-flash(max)**, 문헌 검색 스페셜리스트와 스킬을 활용해 공식 검증 세트 10문항에서 **100% recall@30**을 기록했습니다. 모든 대상 논문이 검색 결과 상위 30개에 포함되었습니다. 보고서에 실린 공개 검증 결과 3개보다 높으며, 그중 최고인 **80%보다 20%포인트 높습니다**. 로컬 반복 테스트 3회를 보고했으며, 이 과학 질문 세트에서 대상 논문을 찾는 능력을 보여줍니다.
+AIPOCH Open-Science는 **gpt-6-astra**를 사용하여 공식 75문항 LitQA2-FullText-Search Test 세트의 로컬 평가에서 **90.67% Recall@30 (68/75)**을 기록했습니다. 10월 26일 보고서 스냅샷에 포함된 27개 결과 가운데 이 로컬 Test 점수는 각각 90.67%를 기록한 Asta Paper Finder 및 Asta v0와 함께 **제시된 최고 Recall@30과 동점**입니다. 공식 Test 세트에 대한 로컬 평가이며, 공식 순위표에 제출하거나 순위를 획득한 결과는 아닙니다.
 
-![AIPOCH Open-Science의 AstaBench LitQA2 검증 결과: 100% recall@30, 10/10 대상 논문 검색 성공. 테스트와 검증 문항은 다름](../images/readme/astabench-litqa2.png)
+**ScholarQA-CS2:** AIPOCH Open-Science는 **deepseek-v4-flash**를 사용하여 **Validation 100문항**에 걸쳐 **0.9289/1 종합 점수**를 기록했습니다. 보고서에 제시된 공식 Test 최고 참조 점수인 **0.9192**는 다른 문항 세트의 결과이므로, 두 결과로 직접 비교 순위를 매길 수 없습니다.
 
-그림에는 테스트 및 검증 기록이 함께 있으며 순서는 수치 비교입니다. Recall@30은 대상 논문 검색을 측정하며 과학 질문의 정답률을 의미하지 않습니다.
+![AIPOCH Open-Science AstaBench 요약: LitQA2 Test에서 90.67% Recall@30, ScholarQA-CS2 Validation에서 종합 점수 0.9289. 로컬 결과와 공식 참조를 구분](../images/readme/astabench-literature-research-overview.jpg)
+
+<details>
+<summary><strong>LitQA2-FullText-Search 결과 비교</strong></summary>
+
+![AIPOCH Open-Science는 75문항 LitQA2 Test에서 90.67% Recall@30을 기록하여 보고서 스냅샷에 제시된 최고 점수와 동점임. 공식 순위표에 제출한 결과는 아님](../images/readme/astabench-litqa2-test.jpg)
+
+로컬 평가는 2026년 10월 23일에 수행되었습니다. 차트에는 AIPOCH Open-Science의 로컬 Test 결과 1개와 공식 참조 기록 26개가 포함되어 있습니다. 같은 점수는 같은 길이의 막대로 표시하며, 행 순서가 동점의 순위를 나누지는 않습니다. AIPOCH의 로컬 평가 비용은 통일된 기준으로 산정되지 않았으므로 이 차트로 비용 효율성을 비교할 수 없습니다.
+
+앞서 **DeepSeek v4-flash (max)**를 사용한 로컬 평가에서는 별도의 10문항 Validation 세트에서 **100% Recall@30 (10/10)**을 기록했으며, 이 결과에 대해 로컬 반복 실행 3회가 보고되었습니다. Test와 Validation은 서로 다른 문항을 사용하므로 결과를 구분해 제시합니다.
+
+</details>
+
+<details>
+<summary><strong>ScholarQA-CS2 Validation 및 Test 참조</strong></summary>
+
+![AIPOCH Open-Science는 100문항 ScholarQA-CS2 Validation 세트에서 종합 점수 0.9289를 기록함. 공식 Test 참조는 다른 문항을 사용하므로 직접 비교한 순위를 구성하지 않음](../images/readme/astabench-scholarqa-cs2.jpg)
+
+차트는 로컬 Validation 결과 1개와 공식 Test 참조 기록 41개를 구분합니다. 보고서 본문에는 `gpt-5.6-sol`의 추가 Validation 점수 0.7905가 언급되었으나 원본 표에는 해당 행이 없었으며, 문항 수도 명시되지 않았습니다.
+
+</details>
+
+Recall@30은 제출한 첫 30개 결과에 대상 논문이 포함되는지를 측정하며, 과학 질문의 정답률을 의미하지 않습니다. ScholarQA-CS2 점수는 응답 품질의 종합 지표이며, 모든 내용을 완전히 정확하게 답한 문항의 비율이 아닙니다.
 
 ### 🏆 ASI-Bench B1–B4 — 보고서의 네 비교 모두에서 최고 표시 점수
 
@@ -243,7 +265,7 @@ AIPOCH Open-Science는 **GPT-6(gpt-6-astra / xhigh)**, 분야별 스페셜리스
 
 로컬 실행은 seed31415를 사용했습니다. AIPOCH B1은 보고서에 설명된 채점기 문제로 1개를 제외한 59개 과제를 채점했습니다. B3/B4는 v0.32.0 및 대체 평가 모델을 사용했습니다. 공개 참조와 과제 인스턴스, 구성, 채점 조건이 다르며 B2의 0.02점은 수치 차이일 뿐입니다.
 
-### 🏆 수집된 BiomniBench-DA Public 50 비교에서 최고 값 — 79.05점
+### 🏆 BiomniBench-DA Public 50 — 취합된 비교의 최고 표시 점수: 79.05
 
 AIPOCH Open-Science는 **gpt-5.6-sol(xhigh)**을 사용해 BiomniBench-DA Public 50으로 표시된 50개 과제의 내부 평가에서 **79.05점**을 얻어 수집된 비교의 최고 표시 점수를 기록했습니다. Gemini 3.1 Pro 평가의 **81.04점**과 DeepSeek v4-pro 평가의 **77.06점**을 동일 가중치로 평균한 결과로, 해당 구성의 생물의학 데이터 분석 성능을 보여줍니다. [평가 보고서](https://aipoch.com/blog/open-science-biomnibench-da)를 참고하세요.
 
@@ -251,7 +273,7 @@ AIPOCH Open-Science는 **gpt-5.6-sol(xhigh)**을 사용해 BiomniBench-DA Public
 
 서로 다른 평가 모델 적용 범위가 혼합된 비교이며, 동일한 평가 조건의 공식 순위가 아닙니다.
 
-**평가 범위:** 자체 보고한 로컬·내부 결과입니다. 제시된 비교에서 최고 점수라는 사실이 공식 1위나 통계적으로 유의한 개선을 입증하지는 않습니다.
+**평가 범위:** 명시된 데이터셋과 분할을 사용해 2026년 8~10월에 자체 보고한 로컬·내부 평가 결과이며, 현재 릴리스를 위해 다시 실행한 평가가 아닙니다. 공식 Test 세트를 로컬에서 실행했다는 사실이 공식 순위표 제출이나 순위를 의미하지는 않습니다. 참조 값은 과거 보고서 시점의 기록이며 실시간 순위가 아닙니다. Validation과 Test 결과는 직접 비교할 수 없습니다. 문항, 모델 구성, 평가 모델 적용 범위, 비용 산정 방식의 차이로 시스템 간 비교에는 제약이 있습니다. 수치상 동점이나 격차가 통계적으로 유의한 개선을 입증하지는 않습니다.
 
 ## 핵심 기능
 
