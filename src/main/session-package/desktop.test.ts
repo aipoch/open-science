@@ -201,6 +201,76 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
 })
 
+it('leaves the save-location wait while processing files after destination selection', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  const request = { projectId: 'project-1', sessionId: 'session-1' }
+  await fixture.client.project.create({ data: { id: request.projectId, name: 'Research' } })
+  await new SessionRepository(fixture.storageRoot).saveSession({
+    id: request.sessionId,
+    projectId: request.projectId,
+    title: 'Research',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: []
+  })
+  const source = join(
+    fixture.storageRoot,
+    'notebooks',
+    request.projectId,
+    request.sessionId,
+    'data.bin'
+  )
+  await mkdir(dirname(source), { recursive: true })
+  await writeFile(source, Buffer.alloc(64 * 1024))
+  const filePath = join(fixture.storageRoot, 'research.science')
+  let selected = false
+  vi.mocked(dialog.showSaveDialog).mockImplementation(async () => {
+    selected = true
+    return { canceled: false, filePath }
+  })
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: async () => undefined,
+    onOperationChanged: (snapshot) => {
+      if (snapshot.state === 'awaiting-selection')
+        queueMicrotask(() =>
+          desktop.respond({
+            action: 'select',
+            operationId: snapshot.id,
+            excludedStorageKeys: []
+          })
+        )
+    }
+  })
+  const digest = fileIo.digestFileWithinBudget
+  const phases: string[] = []
+  vi.spyOn(fileIo, 'digestFileWithinBudget').mockImplementation((...args) => {
+    // Observe real post-picker file processing without replacing hashing or the service.
+    if (selected) phases.push(desktop.operations.snapshot!.progress.phase)
+    return digest(...args)
+  })
+  try {
+    await expect(desktop.export(request)).resolves.toEqual({ saved: true, filePath })
+    expect(dialog.showSaveDialog).toHaveBeenCalledOnce()
+    expect(phases.length).toBeGreaterThan(0)
+    expect(phases).not.toContain('choosing-location')
+  } finally {
+    await desktop.close()
+    await service.close()
+    initDataRoot(undefined)
+  }
+})
+
 it.each([
   {
     name: 'unversioned reference',

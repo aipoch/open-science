@@ -7,6 +7,8 @@ import { MAC_INSTALLATION_RESUME_UPDATE_ARG } from '../../shared/mac-installatio
 const status = { state: 'idle' as const, current: '0.5.1' }
 
 const createStrategy = (): UpdateStrategy => ({
+  getInstaller: vi.fn(async () => null),
+  revealInstaller: vi.fn(async () => 'unavailable' as const),
   getStatus: vi.fn(() => status),
   check: vi.fn().mockResolvedValue(status),
   download: vi.fn().mockResolvedValue(status),

@@ -131,6 +131,7 @@ export function LiteratureResultsTable({
                       'px-3 py-2.5',
                       column.startsWith('journal:') && 'w-[180px] max-w-[180px]',
                       column === 'type' && 'w-40',
+                      column === 'readingStatus' && 'w-36',
                       column === 'authors' && 'w-56',
                       column === 'year' && 'w-20 tabular-nums',
                       column === 'publication' && 'w-56',

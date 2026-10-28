@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
@@ -1324,4 +1325,69 @@ const WorkspaceElicitationCard = ({
   )
 }
 
-export { WorkspaceElicitationCard }
+const WorkspaceElicitationRecovery = ({
+  elicitation,
+  request,
+  onRespond
+}: Pick<
+  WorkspaceElicitationCardProps,
+  'elicitation' | 'request' | 'onRespond'
+>): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const responding = useRef(false)
+  const [retryAttempted, setRetryAttempted] = useState(false)
+  const respond = async (retry: boolean): Promise<void> => {
+    if (responding.current || !request || !onRespond || (retry && retryAttempted)) return
+    responding.current = true
+    if (retry) setRetryAttempted(true)
+    setBusy(true)
+    setError(undefined)
+    try {
+      await onRespond({
+        requestId: request.requestId,
+        request,
+        action: retry ? (elicitation.state === 'declined' ? 'decline' : 'accept') : 'cancel',
+        ...(retry ? { answers: elicitation.answers, retryContinuation: true } : {})
+      })
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      responding.current = false
+      setBusy(false)
+    }
+  }
+  return (
+    <div data-testid="elicitation-recovery" className="rounded-2xl bg-bg-000 p-4 shadow-sm">
+      <ErrorNotice
+        title={t('Could not continue the task')}
+        description={t(
+          'Your conversation is preserved. End this wait to return to the conversation.'
+        )}
+        primaryButton={{
+          label: t('End this wait'),
+          onClick: () => void respond(false),
+          loading: busy
+        }}
+        secondaryButton={
+          elicitation.continuationRecovery?.retryable && !retryAttempted
+            ? {
+                label: t('Retry continuation'),
+                onClick: () => void respond(true),
+                disabled: busy
+              }
+            : undefined
+        }
+      >
+        <details className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">
+          <summary>{t('Error details')}</summary>
+          {error ?? elicitation.continuationRecovery?.error}
+        </details>
+        {error ? <p role="alert">{error}</p> : null}
+      </ErrorNotice>
+    </div>
+  )
+}
+
+export { WorkspaceElicitationCard, WorkspaceElicitationRecovery }

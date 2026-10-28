@@ -5,6 +5,7 @@ import type {
   ArtifactWriteSourceScope
 } from '../../shared/artifact-provenance'
 import type { ReadArtifactLiteratureItems } from './literature-manifest'
+import { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { createProvenanceTestFixture, provenanceGraph } from './provenance-test-fixtures'
@@ -20,7 +21,9 @@ export const createArtifactSaveFixture = async (readItems?: ReadArtifactLiteratu
     projectId: 'project-1',
     repository: fixture.notebookRepository
   })
+  const grantedRoots = new GrantedLocalRootsRepository(async () => fixture.client)
   const server = new NotebookLocalRpcServer(service, {
+    authorizedDirectories: () => grantedRoots.authorizedSnapshot(),
     transport: 'tcp',
     artifactProvenance: fixture.repository
   })
@@ -56,6 +59,7 @@ export const createArtifactSaveFixture = async (readItems?: ReadArtifactLiteratu
   return {
     ...fixture,
     server,
+    grantedRoots,
     connection,
     binding,
     environment,

@@ -2,6 +2,10 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import {
+  readAuthorizedDirectories,
+  type AuthorizedDirectorySnapshot
+} from './authorized-directories-presentation'
+import {
   buildNotebookToolSummary,
   isNotebookSummaryTool,
   readNotebookToolResult,
@@ -66,7 +70,11 @@ type ToolLiteratureSection = {
 
 type ToolSummarySection = { kind: 'summary'; summary: ToolSummary; file?: boolean }
 type ToolDetailSection =
-  ToolCodeSection | ToolDiffSection | ToolLiteratureSection | ToolSummarySection
+  | ToolCodeSection
+  | ToolDiffSection
+  | ToolLiteratureSection
+  | ToolSummarySection
+  | { kind: 'authorized-directories'; snapshot: AuthorizedDirectorySnapshot }
 
 type ToolActivityDetails = {
   codeReview?: NotebookCodeReview
@@ -1302,11 +1310,25 @@ const buildToolActivityDetails = (
       ? { ...details, displayName: 'Skill', subtitle: getLoadedSkillName(activity) }
       : undefined
   }
-  // Keep the existing input/output inspection, with a user-facing label for every provider.
   if (isAuthorizedDirectoryTool(activity.providerToolName, activity.title)) {
+    const snapshot =
+      activity.status === 'completed' &&
+      !(isRecord(activity.rawOutput) && activity.rawOutput.isError === true)
+        ? [activity.rawOutput, ...collectToolTexts(activity)]
+            .map((value) => readAuthorizedDirectories(value))
+            .find(Boolean)
+        : undefined
     return {
       displayName: t('List authorized directories'),
-      sections: buildGenericDetails(activity)?.sections ?? []
+      metaLabel: snapshot
+        ? t('{{count}} directories', {
+            count: snapshot.directories.length,
+            defaultValue_one: '{{count}} directory'
+          })
+        : undefined,
+      sections: snapshot
+        ? [{ kind: 'authorized-directories', snapshot }]
+        : (buildGenericDetails(activity)?.sections ?? [])
     }
   }
   const literatureDetails = buildLiteratureDetails(activity)

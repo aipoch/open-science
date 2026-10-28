@@ -292,6 +292,127 @@ describe('extractPdfTranslationSource', () => {
     )
   })
 
+  const symbolicFallback = () => {
+    const fixture = simpleControl('&')
+    const font = Object.assign(fixture.font, {
+      type: 'TrueType',
+      isSymbolicFont: true,
+      toFontChar: { 38: 0xe004 } as Record<number, number | undefined>
+    })
+    const glyph = Object.assign(fixture.glyph, { fontChar: '\ue004' })
+    return { ...fixture, font, glyph }
+  }
+
+  it.each([
+    'native',
+    'named-glyph',
+    'inherited-name',
+    'mapped',
+    'different-slot',
+    'incomplete-stream'
+  ])('warns only for a complete unmapped numeric Type1 glyph name: %s', async (variant) => {
+    const fixture = symbolicFallback()
+    fixture.font.type = 'Type1'
+    const font = Object.assign(fixture.font, {
+      differences: Object.assign([] as string[], { 38: 'gid00017' })
+    })
+    if (variant === 'named-glyph') font.differences[38] = 'ampersand'
+    if (variant === 'inherited-name') font.differences = Object.create(font.differences)
+    if (variant === 'mapped') font.toUnicode._map[38] = '&'
+    if (variant === 'different-slot') fixture.glyph.fontChar = '\ue005'
+    if (variant === 'incomplete-stream') fixture.items[0].str += 'A'
+    const indexes: number[] = []
+    const actual = await getPdfTranslationTextContent(
+      fixture.page as unknown as PDFPageProxy,
+      (flagged) => indexes.push(...flagged)
+    )
+    expect(indexes).toEqual(variant === 'native' ? [0] : [])
+    expect(actual.items).toEqual(fixture.items)
+  })
+
+  it('marks an embedded symbolic render slot with no Unicode mapping while retaining its native source', async () => {
+    const fixture = symbolicFallback()
+    const before = await extractPdfTranslationSource(setup(fixture.items).context)
+    const actual = await extractPdfTranslationSource(fixture.context)
+    expect(actual.source).toEqual(before.source)
+    expect(actual.coverage.warnings.flatMap((warning) => warning.reasons)).toContain(
+      'unreliable-font-unicode'
+    )
+    const indexes: number[] = []
+    const native = await getPdfTranslationTextContent(
+      fixture.page as unknown as PDFPageProxy,
+      (flagged) => indexes.push(...flagged)
+    )
+    expect(indexes).toEqual([0])
+    expect(native.items).toEqual(fixture.items)
+  })
+
+  it('distinguishes equal printable Unicode from an unmapped slot in the same font stream', async () => {
+    const fixture = symbolicFallback()
+    fixture.items.push(text('&', 200, 100))
+    fixture.font.toUnicode._map[99] = '&'
+    fixture.font.toFontChar[99] = 0xe005
+    Object.assign(fixture.operators, {
+      fnArray: [OPS.setFont, OPS.showText, OPS.showText],
+      argsArray: [
+        ['body', 10],
+        [[fixture.glyph]],
+        [[{ unicode: '&', originalCharCode: 99, fontChar: '\ue005', isInFont: true }]]
+      ]
+    })
+    const indexes: number[] = []
+    const actual = await getPdfTranslationTextContent(
+      fixture.page as unknown as PDFPageProxy,
+      (flagged) => indexes.push(...flagged)
+    )
+    expect(indexes).toEqual([0])
+    expect(actual.items).toEqual(fixture.items)
+  })
+
+  it.each([
+    'ordinary font',
+    'unknown symbolic status',
+    'different font type',
+    'missing embedded font',
+    'known Unicode mapping',
+    'own undefined mapping',
+    'unavailable Unicode map',
+    'ordinary render slot',
+    'different render slot',
+    'inherited render slot',
+    'multicharacter render slot',
+    'unavailable render map',
+    'different source code',
+    'incomplete native stream'
+  ])('does not flag a printable simple-font fallback from %s', async (variant) => {
+    const fixture = symbolicFallback()
+    if (variant === 'ordinary font') fixture.font.isSymbolicFont = false
+    if (variant === 'unknown symbolic status')
+      Reflect.deleteProperty(fixture.font, 'isSymbolicFont')
+    if (variant === 'different font type') fixture.font.type = 'Type1'
+    if (variant === 'missing embedded font') fixture.font.missingFile = true
+    if (variant === 'known Unicode mapping') fixture.font.toUnicode._map[38] = '&'
+    if (variant === 'own undefined mapping') fixture.font.toUnicode._map[38] = undefined
+    if (variant === 'unavailable Unicode map') Reflect.deleteProperty(fixture.font, 'toUnicode')
+    if (variant === 'ordinary render slot') {
+      fixture.font.toFontChar[38] = 38
+      fixture.glyph.fontChar = '&'
+    }
+    if (variant === 'different render slot') fixture.glyph.fontChar = '\ue005'
+    if (variant === 'inherited render slot') fixture.font.toFontChar = Object.create({ 38: 0xe004 })
+    if (variant === 'multicharacter render slot') fixture.glyph.fontChar += 'A'
+    if (variant === 'unavailable render map') Reflect.deleteProperty(fixture.font, 'toFontChar')
+    if (variant === 'different source code') fixture.glyph.originalCharCode = 39
+    if (variant === 'incomplete native stream') fixture.items[0].str += 'A'
+    const indexes: number[] = []
+    const actual = await getPdfTranslationTextContent(
+      fixture.page as unknown as PDFPageProxy,
+      (flagged) => indexes.push(...flagged)
+    )
+    expect(indexes).toEqual([])
+    expect(actual.items).toEqual(fixture.items)
+  })
+
   it.each([
     'mapped',
     'own undefined map entry',

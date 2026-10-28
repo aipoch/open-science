@@ -74,9 +74,11 @@ export type ElicitationProjection = {
   draftAnswers?: ElicitationAnswer[]
   answers?: ElicitationAnswer[]
   respondedAt?: number
-  // Retain the decision until the provider acknowledges its continuation. Process loss or
-  // failed admission re-presents the question with its saved answer for an explicit retry.
+  // Retain the decision until the provider acknowledges its continuation.
   continuationPending?: true
+  // Recovery belongs to this question, not the Session's latest operation error. Main alone
+  // grants retry permission after checking both the cause and delivery acceptance.
+  continuationRecovery?: { error: string; retryable?: true }
 }
 
 export type PendingElicitationRequest = {
@@ -101,6 +103,14 @@ export type ElicitationResponse = {
   // Re-answering a durable question rewinds the active conversation Branch before Main schedules
   // the replacement hidden continuation. This flag is renderer intent, never persisted.
   replacePreviousAnswer?: boolean
+  // Retry the saved decision only when Main has granted recovery permission.
+  retryContinuation?: boolean
+  // Commit a cold-session decision before attaching its execution runtime. Main retains a
+  // single-use, process-local preparation; a restart never authorizes automatic continuation.
+  prepareContinuation?: boolean
+  // A failed runtime attachment must still commit the human's decision. This never grants retry
+  // permission; Main validates the canonical question before retaining the bounded diagnostic.
+  continuationFailure?: string
   // Durable choices echo their bounded projection so Main can rehydrate it after a restart.
   request?: PendingElicitationRequest
 }
@@ -740,6 +750,9 @@ export const sanitizeElicitationProjection = (
       ? value.respondedAt
       : undefined
   const durable = sanitizeDurableElicitation(value.durable)
+  const recoveryError = isRecord(value.continuationRecovery)
+    ? cappedString(value.continuationRecovery.error, MAX_ELICITATION_MESSAGE_CHARS)
+    : undefined
 
   return {
     message,
@@ -757,6 +770,17 @@ export const sanitizeElicitationProjection = (
     value.continuationPending === true &&
     (state === 'answered' || state === 'declined')
       ? { continuationPending: true as const }
+      : {}),
+    ...(durable && recoveryError && state !== 'cancelled'
+      ? {
+          continuationRecovery: {
+            error: recoveryError,
+            ...(isRecord(value.continuationRecovery) &&
+            value.continuationRecovery.retryable === true
+              ? { retryable: true as const }
+              : {})
+          }
+        }
       : {})
   }
 }

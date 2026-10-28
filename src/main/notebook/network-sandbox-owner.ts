@@ -197,6 +197,8 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
+  hasFullAccess?: (sessionId: string) => boolean
+  subscribeFullAccess?: (sessionId: string, listener: (allowed: boolean) => void) => () => void
   getFolderRestrictionEnabled?: () => Promise<boolean>
   persistAlwaysAllow: (hostname: string) => Promise<NotebookNetworkSettings>
   requestDecision: (request: NotebookNetworkDecisionRequest) => Promise<NotebookNetworkDecision>
@@ -528,6 +530,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       TMP: commandTempRoot
     }
     let activeExecutionGrants: ReadonlySet<string> = new Set()
+    let unsubscribeFullAccess: (() => void) | undefined
     let executionActive = false
     let activeCommandText = invocation.commandText
     let activeExecutionId = invocation.executionReference
@@ -616,6 +619,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         },
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
+          if (activeSignal?.aborted) return false
           if (
             await this.isCommandGrantAllowed(
               invocation.sessionId,
@@ -802,6 +806,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       retry: () => cleanup(cleanupReason!, cleanupOutcome!)
     }
     const cleanup: NotebookSandboxedSpawn['cleanup'] = (reason, processOutcome) => {
+      unsubscribeFullAccess?.()
+      unsubscribeFullAccess = undefined
       cleanupReason ??= reason
       cleanupOutcome ??= processOutcome
       if (cleanupPromise) return cleanupPromise
@@ -942,6 +948,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         }
         if (executionActive) throw new Error('Notebook sandbox execution is already active.')
         wrapped.resetNetworkConnections()
+        unsubscribeFullAccess = this.options.subscribeFullAccess?.(
+          invocation.sessionId,
+          (allowed) => {
+            if (!allowed) wrapped.resetNetworkConnections()
+          }
+        )
         executionActive = true
         activeCommandText = request?.commandText ?? invocation.commandText
         activeExecutionId = request?.executionReference ?? invocation.executionReference
@@ -964,6 +976,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           if (ended) return
           ended = true
           activeExecutionGrants = new Set()
+          unsubscribeFullAccess?.()
+          unsubscribeFullAccess = undefined
           executionActive = false
           wrapped.setExecutionActive(false)
           wrapped.resetNetworkConnections()
@@ -990,6 +1004,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (!normalized.ok) {
       return this.networkAccessResult(request.hostname, 'blocked', request.runtime, {
         validationReason: normalized.reason
+      })
+    }
+    if (!request.signal?.aborted && this.options.hasFullAccess?.(request.sessionId)) {
+      return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime, {
+        message:
+          'The current session allows public network access without approval. Private-network and address checks still apply.'
       })
     }
     const settings = normalizeNotebookNetworkSettings(
@@ -2073,6 +2093,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (request.signal.aborted) return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
+    // The gateway still enforces private-address and explicit-deny rules. Read live authority
+    // on every connection/probe so another session or a later downgrade cannot inherit access.
+    if (this.options.hasFullAccess?.(sessionId)) return Promise.resolve(true)
     if (allowedNetworkHosts.has(normalized.hostname)) return Promise.resolve(true)
     if (commandGrants.has(normalized.hostname)) return Promise.resolve(true)
     if (request.purpose === 'probe') return Promise.resolve(false)

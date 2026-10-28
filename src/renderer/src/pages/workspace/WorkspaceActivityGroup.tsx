@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { MessageScrollerItem, useMessageScroller } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -126,8 +126,7 @@ const WorkspaceActivityGroup = ({
   revealRequest
 }: WorkspaceActivityGroupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const { scrollToMessage } = useMessageScroller()
-  const groupElementRef = useRef<HTMLDivElement>(null)
+  const { stopAutoScroll } = useMessageScroller()
   // Review receipts stay in history for approval state and timing, but do not render as steps.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
   const visibleActivities = renderableActivityEntries.map(({ activity }) => activity)
@@ -162,20 +161,9 @@ const WorkspaceActivityGroup = ({
   ).length
   const failedCount = visiblePhases.filter((phase) => phase === 'failed').length
 
-  // A row's detail panel changes this group's height. Leave bottom-follow mode first — exactly
-  // like the group header does — so the panel opens strictly downward instead of the transcript
-  // snapping to the bottom once content overflows. align:'nearest' is scroll-neutral only when the
-  // whole group fits the viewport (a taller group would be scrolled to its top), so restore the
-  // scroll offset after the mode escape: the escape must never move the viewport itself.
+  // Expanding or collapsing is a reading interaction, not message navigation.
   const handleToggleRow = (activityId: string, nextExpanded: boolean): void => {
-    const viewport = groupElementRef.current?.closest<HTMLElement>(
-      '[data-slot="message-scroller-viewport"]'
-    )
-    const previousScrollTop = viewport?.scrollTop
-
-    scrollToMessage(group.id, { align: 'nearest', behavior: 'auto' })
-
-    if (viewport && previousScrollTop !== undefined) viewport.scrollTop = previousScrollTop
+    stopAutoScroll()
     onToggleRow(activityId, nextExpanded)
   }
 
@@ -185,7 +173,6 @@ const WorkspaceActivityGroup = ({
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
       <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
         <WorkspaceActivityGroupSurface
-          ref={groupElementRef}
           icon={
             summary ? (
               <WorkspaceActivityIcon activity={summary.activity} phase={summary.phase} />
@@ -193,7 +180,7 @@ const WorkspaceActivityGroup = ({
           }
           isExpanded={isExpanded}
           onToggle={() => {
-            scrollToMessage(group.id, { align: 'nearest', behavior: 'auto' })
+            stopAutoScroll()
             onToggleGroup(group.id)
           }}
           title={formatActivityGroupPresentationTitle(

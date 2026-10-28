@@ -1,3 +1,5 @@
+import { createLinearConversationGraph } from '../../../../../shared/conversation-graph'
+import { buildReplayDocument } from '@/lib/replay/timeline'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -197,6 +199,146 @@ const openMaterials = (): void => {
 }
 
 describe('research replay interaction', () => {
+  describe.each([true, false])('automatic messages (interactive=%s)', (interactive) => {
+    const payload = 'Background execution outcomes are now available.\n\n{"runId":"private-run"}'
+    const cases: Array<{
+      name: string
+      metadata: Partial<NonNullable<ReplayStep['message']>>
+      title: string
+      description: string
+    }> = [
+      {
+        name: 'background result delivery',
+        metadata: {
+          attribution: {
+            kind: 'application',
+            feature: 'background-results',
+            purpose: 'agent-result-delivery',
+            deliveryKey: 'delivery-1',
+            deliveryIds: ['local-run:private-run']
+          }
+        },
+        title: 'Background activity',
+        description: 'New task results are available'
+      },
+      {
+        name: 'compute completion',
+        metadata: {
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: 'compute-1',
+            jobIds: ['job-1']
+          }
+        },
+        title: 'Remote job completed',
+        description: 'Analysis started automatically'
+      },
+      {
+        name: 'reloaded compute presentation',
+        metadata: { presentation: { kind: 'compute-job-completion' } },
+        title: 'Remote job completed',
+        description: 'Analysis started automatically'
+      }
+    ]
+    it.each(cases)(
+      'presents $name without the control payload',
+      ({ metadata, title, description }) => {
+        const document = makeDocument()
+        const message = document.branches[0].steps[0].message!
+        Object.assign(message, { role: 'user', content: payload }, metadata)
+        const before = JSON.stringify(document)
+        const view = render(
+          <ReplayStage
+            document={document}
+            fitContainer={interactive}
+            scene={projectReplayScene(document, 'main', 900)}
+          />
+        )
+        expect(screen.getByTestId('replay-stage').textContent).toContain(title)
+        expect(screen.getByRole('status').textContent).toContain(description)
+        expect(view.container.textContent).not.toContain('Background execution outcomes')
+        expect(view.container.textContent).not.toContain('private-run')
+        expect(view.container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
+        expect(JSON.stringify(document)).toBe(before)
+      }
+    )
+
+    if (interactive) {
+      it.each(cases)(
+        'keeps $name payload out of navigation after history projection',
+        async ({ metadata, title }) => {
+          const message = {
+            ...step('automatic', 0, payload).message!,
+            role: 'user' as const,
+            ...metadata
+          }
+          const source = {
+            session: {
+              id: 's',
+              projectId: 'p',
+              title: 'Research',
+              cwd: '/workspace',
+              status: 'idle' as const,
+              messages: [message],
+              createdAt: 1,
+              updatedAt: 1,
+              conversationGraph: createLinearConversationGraph({
+                sessionId: 's',
+                messages: [message],
+                createdAt: 1,
+                updatedAt: 1
+              })
+            },
+            runs: [],
+            resources: [],
+            issues: []
+          }
+          const before = JSON.stringify(source)
+          const document = buildReplayDocument(source)
+          render(<ReplayPanel document={document} {...callbacks()} />)
+          const browse = screen.getByRole('button', { name: 'Browse steps' })
+          expect(browse.textContent).toContain(title)
+          expect(browse.getAttribute('title')).toBe(title)
+          const slider = screen.getByRole('slider', { name: 'Replay progress' })
+          expect(slider.getAttribute('aria-valuetext')).toContain(title)
+          expect(slider.getAttribute('aria-valuetext')).not.toContain(
+            'Background execution outcomes'
+          )
+          const timeline = screen.getByTestId('replay-timeline')
+          vi.spyOn(timeline, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 32))
+          fireEvent.pointerMove(timeline, { clientX: 500 })
+          expect((await screen.findByTestId('replay-seek-preview')).textContent).toContain(title)
+          fireEvent.pointerLeave(timeline)
+          fireEvent.click(browse)
+          const directory = screen.getByRole('dialog', { name: 'Browse steps' })
+          const entry = within(directory).getByRole('button', { name: `Go to step 1: ${title}` })
+          expect(entry.getAttribute('title')).toBe(title)
+          expect(globalThis.document.body.textContent).not.toContain(
+            'Background execution outcomes'
+          )
+          expect(globalThis.document.body.textContent).not.toContain('private-run')
+          expect(JSON.stringify(source)).toBe(before)
+        }
+      )
+    }
+
+    it('preserves identical human-authored text without attribution', () => {
+      const document = makeDocument()
+      Object.assign(document.branches[0].steps[0].message!, { role: 'user', content: payload })
+      render(
+        <ReplayStage
+          document={document}
+          fitContainer={interactive}
+          scene={projectReplayScene(document, 'main', 900)}
+        />
+      )
+      expect(screen.getByTestId('replay-stage').textContent).toContain('private-run')
+      expect(screen.queryByRole('status')).toBeNull()
+    })
+  })
+
   it('exposes the visible playhead during playback and captures its latest position on demand', () => {
     const props = callbacks()
     const document = makeDocument()
@@ -907,7 +1049,7 @@ describe('replay readiness clock', () => {
 })
 
 describe('replay source metadata and final results', () => {
-  it('keeps imported package origin and excluded files inspectable beside the replay', async () => {
+  it('shows omitted files without exposing import diagnostics', async () => {
     const document = makeDocument()
     document.source.packageOrigin = {
       importId: 'import',
@@ -924,10 +1066,20 @@ describe('replay source metadata and final results', () => {
     trigger.focus()
     fireEvent.click(trigger)
     expect(screen.getByRole('dialog', { name: 'Archived research' })).toBeTruthy()
-    expect(screen.getByText('Recorded steps: 3; files: 2')).toBeTruthy()
-    expect(screen.getByText('original-project')).toBeTruthy()
-    expect(screen.getByText('original-session')).toBeTruthy()
+    const stats = screen.getByText('Steps').closest('dl')!
+    expect(within(stats).getByText('Steps').nextElementSibling?.textContent).toBe('3')
+    expect(within(stats).getByText('Files').nextElementSibling?.textContent).toBe('2')
+    const details = screen.getByText('Not included in this package').closest('details')!
+    expect(details.open).toBe(false)
     fireEvent.click(screen.getByText('Not included in this package'))
+    expect(details.open).toBe(true)
+    expect(screen.queryByText('original-project')).toBeNull()
+    expect(screen.queryByText('original-session')).toBeNull()
+    expect(screen.queryByText('Source fingerprint')).toBeNull()
+    expect(
+      screen.queryByText('Presentation timing is reconstructed; recorded results are unchanged.')
+    ).toBeNull()
+    expect(screen.getByText('Not included in this package')).toBeTruthy()
     expect(screen.getByText('large-dataset.csv')).toBeTruthy()
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -935,7 +1087,31 @@ describe('replay source metadata and final results', () => {
     expect(screen.queryByText('original-project')).toBeNull()
     chooseBranch('Other branch')
     fireEvent.click(trigger)
-    expect(screen.getByText('Recorded steps: 1; files: 2')).toBeTruthy()
+    expect(screen.getByText('Steps').nextElementSibling?.textContent).toBe('1')
+    expect(
+      within(screen.getByRole('dialog')).getByText('Files').nextElementSibling?.textContent
+    ).toBe('2')
+    await act(async () => {})
+  })
+
+  it('shows only counts when an imported package has no omitted files', async () => {
+    const document = makeDocument()
+    document.source.packageOrigin = {
+      importId: 'import',
+      sourceProjectId: 'original-project',
+      sourceSessionId: 'original-session',
+      importedAt: 1700000000000,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    render(<ReplayPanel document={document} {...callbacks()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Session information: Archived research' }))
+    const information = screen.getByRole('dialog', { name: 'Archived research' })
+    expect(within(information).getByText('Steps').nextElementSibling?.textContent).toBe('3')
+    expect(within(information).getByText('Files').nextElementSibling?.textContent).toBe('2')
+    expect(information.querySelector('details')).toBeNull()
+    expect(information.textContent).not.toContain('original-project')
+    expect(information.textContent).not.toContain('original-session')
+    expect(information.textContent).not.toContain('Imported on')
     await act(async () => {})
   })
 
@@ -1270,8 +1446,8 @@ it('identifies artifact versions and opens normal records without an intermediat
   render(<ReplayPanel document={source} {...props} />)
   fireEvent.click(screen.getByRole('button', { name: 'Browse steps' }))
   const directory = screen.getByRole('dialog', { name: 'Browse steps' })
-  expect(within(directory).getByText('result.png · Version 1')).toBeTruthy()
-  expect(within(directory).getByText('result.png · Version 2')).toBeTruthy()
+  expect(within(directory).getByText('result.png (Version 1)')).toBeTruthy()
+  expect(within(directory).getByText('result.png (Version 2)')).toBeTruthy()
   fireEvent.click(
     within(directory).getByRole('button', { name: 'Open original evidence for step 2' })
   )
@@ -1388,7 +1564,7 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   ]
   render(<ReplayPanel document={source} {...callbacks()} expanded />)
   seekProgress(3000)
-  expect(screen.getAllByText('GENERATED · 2')).toHaveLength(1)
+  expect(screen.getAllByRole('group', { name: 'Generated files' })).toHaveLength(1)
   const cards = screen.getAllByRole('button', { name: /Preview generated file/ })
   expect(cards).toHaveLength(2)
   expect(cards[0].parentElement).toBe(cards[1].parentElement)
@@ -1397,7 +1573,7 @@ it('groups adjacent generated files in one gallery without changing timeline ste
   expect(screen.getByRole('button', { name: 'Preview generated file v1.txt' })).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Preview generated file v2.txt' })).toBeNull()
   seekProgress(2000)
-  expect(screen.getAllByText('GENERATED · 2')).toHaveLength(1)
+  expect(screen.getAllByRole('group', { name: 'Generated files' })).toHaveLength(1)
   expect(
     screen.getByRole('button', { name: 'Preview generated file v1.txt' }).hasAttribute('disabled')
   ).toBe(false)

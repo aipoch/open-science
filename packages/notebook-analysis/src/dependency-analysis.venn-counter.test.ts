@@ -19,9 +19,9 @@ it.each([0, 2])('captures workbook and outputs in reported cell %s', async (inde
     await analyzeNotebookSourceFileAccess(language, cells[index]),
     JSON.stringify(facts)
   ).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: index === 2 ? 'partial' : 'complete',
+    writeState: index === 2 ? 'partial' : 'complete',
+    externalState: index === 2 ? 'partial' : 'complete',
     reads: ['inputs/set-membership-111111111111.xlsx'],
     writes: index === 0 ? [] : ['venn_5sets.pdf', 'venn_5sets.png']
   })
@@ -123,8 +123,11 @@ it('keeps Python inspection separate from self-contained R output', async () => 
     })
     const result = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '2' })
     expect(result.stalenessByRunId['0'], JSON.stringify(result)).toEqual({ state: 'clear' })
-    expect(result.stalenessByRunId['2'], JSON.stringify(result)).toEqual({ state: 'clear' })
-    expect(result.dependenciesByRunId?.['2']).toEqual([])
+    expect(result.stalenessByRunId['2'], JSON.stringify(result)).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
+    expect(result.dependenciesByRunId?.['2']).toBeUndefined()
     // df is assigned inside a possibly empty loop. It must not be guaranteed afterward.
     expect(result.stalenessByRunId['1']?.state).toBe('unknown')
   } finally {

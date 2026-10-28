@@ -28,11 +28,12 @@ it.each(['r', 'python'] as const)('captures the reported %s heatmap', async (lan
   expect(
     projectNotebookDependencies([{ run, facts }]).stalenessByRunId['0'],
     JSON.stringify(facts)
-  ).toEqual({ state: 'clear' })
+  ).toMatchObject({ state: language === 'r' ? 'unknown' : 'clear' })
+  // The palette expression has no classless-vector proof for rev's S3 path.
   expect(await analyzeNotebookSourceFileAccess(language, cells[language])).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: language === 'r' ? 'partial' : 'complete',
+    writeState: language === 'r' ? 'partial' : 'complete',
+    externalState: language === 'r' ? 'partial' : 'complete',
     reads: ['inputs/heatmap-values-555555555555.csv'],
     writes: [language === 'r' ? 'heatmap_r.png' : 'heatmap_python.png']
   })

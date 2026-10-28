@@ -4,6 +4,8 @@ import { captionKind } from './literature-pdf-caption-group.mjs'
 import { createHash } from 'node:crypto'
 import { Path2D } from '@napi-rs/canvas'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { nativeRecoveryGroupDepth } from './literature-pdf-native-figure-recovery-profile.mjs'
+import { nativeCompositingPaintSpan } from './literature-pdf-native-compositing-profile.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
 
 // Locate small tables missed by the detector. The structure model still owns
@@ -156,7 +158,9 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
 // Keep closed stroke rectangles separate from table-rule discovery: a path's
 // bounding box does not prove four edges. Explicit closed outlines and four
 // separately painted, connected sides establish frames after exact clipping.
-export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
+export function collectClosedFigureFrames(operators, viewport, paintEvidence, compositingProfile) {
+  const compositing = nativeCompositingPaintSpan(compositingProfile, operators, viewport)
+  if (compositingProfile !== undefined && !compositing) return []
   let transform = [1, 0, 0, 1, 0, 0],
     clip = [0, 0, viewport.width ?? Infinity, viewport.height ?? Infinity],
     pendingClip = false,
@@ -166,6 +170,7 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
     strokeAlpha = 1,
     fillAlpha = 1
   const stack = [],
+    isolatedGroups = [],
     frames = [],
     sides = []
   const save = () =>
@@ -231,6 +236,7 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
     }
   }
   for (const [i, op] of operators.fnArray.entries()) {
+    if (compositing && i >= compositing.begin && i <= compositing.end) continue
     frameOperationIndex = i
     // Optional native ownership evidence observes the same transform/clip
     // state as frame discovery. It does not change legacy frame selection.
@@ -278,6 +284,61 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
         for (const point of points) Util.applyTransform(point, matrix)
         clip = intersectClip(rectangle(points))
       }
+    }
+    // The symbol-axis observer separately closes every isolated group. Legacy
+    // frame callers neither request this state nor admit new operators.
+    if (paintEvidence?.isolatedGroups && op === OPS.beginGroup) {
+      const group = args?.[0],
+        matrix = Util.transform(viewport.transform, transform)
+      if (
+        pendingClip ||
+        isolatedGroups.length >= nativeRecoveryGroupDepth(paintEvidence) ||
+        !group ||
+        Object.keys(group).sort().join(',') !== 'bbox,isolated,knockout,matrix,smask' ||
+        group.matrix !== null ||
+        group.smask !== null ||
+        group.isolated !== true ||
+        group.knockout !== false ||
+        !Array.isArray(group.bbox) ||
+        group.bbox.length !== 4 ||
+        !group.bbox.every(Number.isFinite) ||
+        group.bbox[0] >= group.bbox[2] ||
+        group.bbox[1] >= group.bbox[3] ||
+        fillAlpha !== 1 ||
+        strokeAlpha !== 1 ||
+        !clip ||
+        !matrix.every(Number.isFinite)
+      ) {
+        paintEvidence.invalidIsolatedGroups = true
+        return []
+      }
+      const points = [
+        [group.bbox[0], group.bbox[1]],
+        [group.bbox[2], group.bbox[1]],
+        [group.bbox[2], group.bbox[3]],
+        [group.bbox[0], group.bbox[3]]
+      ]
+      for (const point of points) Util.applyTransform(point, matrix)
+      const rect = rectangle(points)
+      if (!rect) {
+        paintEvidence.invalidIsolatedGroups = true
+        return []
+      }
+      save()
+      clip = intersectClip(rect)
+      fillAlpha = strokeAlpha = 1
+      isolatedGroups.push({ begin: i, group })
+      paintEvidence.isolatedGroups.set(i, { begin: i, rect, clip: clip && [...clip] })
+      continue
+    } else if (paintEvidence?.isolatedGroups && op === OPS.endGroup) {
+      const previous = isolatedGroups.pop()
+      if (!previous || JSON.stringify(previous.group) !== JSON.stringify(args?.[0])) {
+        paintEvidence.invalidIsolatedGroups = true
+        return []
+      }
+      paintEvidence.isolatedGroups.get(previous.begin).end = i
+      restore()
+      continue
     }
     if (op === OPS.save) save()
     else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) restore()

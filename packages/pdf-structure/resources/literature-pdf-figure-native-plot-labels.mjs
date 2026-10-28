@@ -1,7 +1,22 @@
+import {
+  verifyNativeDualApiCertificate,
+  completeNativeDualApiPacket,
+  completeScopedNativeDualApiPacket
+} from './literature-pdf-native-dual-api-certificate.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { OPS, Util, normalizeUnicode } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import {
+  nativeFigureRecoveryProfileData,
+  attachNativeRecoveryPaintProfile,
+  createNativeForeignAccentProfile
+} from './literature-pdf-native-figure-recovery-profile.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { nativeCompositingProfileData } from './literature-pdf-native-compositing-profile.mjs'
 import { collectClosedFigureFrames, collectTableRules } from './literature-pdf-graphics.mjs'
+import {
+  closedPrintedFaceProfile,
+  printedFaceStateEntry
+} from './literature-pdf-native-printed-face-packet.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
 import { area, intersection, union } from './literature-pdf-page-geometry.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
@@ -625,8 +640,21 @@ function nativePagePacketCore(
   allowForeignSourceNormalization = false,
   wholeClaimAdvanceOnly = false,
   typedPrograms,
-  allowOpaqueTextState = false
+  allowOpaqueTextState = false,
+  groupedAxis = false,
+  literalCertificate,
+  printedFaceScope,
+  recoveryProfile
 ) {
+  const compositing =
+    recoveryProfile === undefined
+      ? undefined
+      : nativeCompositingProfileData(recoveryProfile, page, tokens, context)
+  const recovery =
+    recoveryProfile === undefined || compositing
+      ? undefined
+      : nativeFigureRecoveryProfileData(recoveryProfile, page, tokens, context)
+  if (recoveryProfile !== undefined && !recovery && !compositing) return
   const finite = (a, n) =>
       (Array.isArray(a) || ArrayBuffer.isView(a)) &&
       a.length === n &&
@@ -657,7 +685,7 @@ function nativePagePacketCore(
     (allowForeignSourceNormalization && !(scopedSources instanceof Set)) ||
     (scopedSources !== undefined &&
       (!(scopedSources instanceof Set) ||
-        !scopedSources.size ||
+        (!scopedSources.size && !recovery) ||
         scopedSources.size > 4096 ||
         [...scopedSources].some((i) => !Number.isSafeInteger(i) || i < 0)))
   )
@@ -683,13 +711,29 @@ function nativePagePacketCore(
   )
     return
   const evidence = { images: [], paths: new Map(), texts: new Map(), frames: new Map() }
-  collectClosedFigureFrames(o, v, evidence)
+  if (groupedAxis) evidence.isolatedGroups = new Map()
+  if (recovery) attachNativeRecoveryPaintProfile(evidence, recoveryProfile, page, tokens, context)
+  collectClosedFigureFrames(o, v, evidence, compositing ? recoveryProfile : undefined)
+  if (
+    groupedAxis &&
+    (evidence.invalidIsolatedGroups ||
+      !evidence.isolatedGroups.size ||
+      [...evidence.isolatedGroups.values()].some((group) => !Number.isSafeInteger(group.end)))
+  )
+    return
+  const printedFace =
+    printedFaceScope === undefined
+      ? undefined
+      : closedPrintedFaceProfile(page, context, evidence, printedFaceScope)
+  if (printedFaceScope !== undefined && !printedFace) return
   let fontName,
     size,
     packet,
     miterLimit = 10,
     typedFillColor = '#000000',
     typedFillAlpha = 1,
+    charSpacing = 0,
+    wordSpacing = 0,
     tm = [1, 0, 0, 1, 0, 0],
     x = 0,
     y = 0,
@@ -714,7 +758,8 @@ function nativePagePacketCore(
         typeof p.fontName !== 'string' ||
         typeof p.fontChar !== 'string' ||
         !Number.isFinite(p.width) ||
-        p.width < 0
+        p.width < 0 ||
+        (p.isSpace !== undefined && typeof p.isSpace !== 'boolean')
       )
         return
       const key = p.operationIndex + ':' + p.glyphIndex
@@ -742,16 +787,108 @@ function nativePagePacketCore(
     fontMap.set(f.fontName, m)
   }
   for (let i = 0; i < o.fnArray.length; i++) {
+    // The original no-text program remains intact and is accounted for as a
+    // separately bounded compositing paint. Its mask and tiling are rendered
+    // unchanged; this inventory observes only exterior native text and paths.
+    if (compositing && i >= compositing.begin && i <= compositing.end) {
+      i = compositing.end
+      continue
+    }
     const op = o.fnArray[i],
       a = o.argsArray[i]
-    if (op === OPS.save || op === OPS.paintFormXObjectBegin)
-      stack.push({ fontName, size, miterLimit, typedFillColor, typedFillAlpha })
+    if (groupedAxis && op === OPS.beginGroup) {
+      const group = evidence.isolatedGroups.get(i)
+      if (packet || !group || typedFillAlpha !== 1) return
+      stack.push({
+        fontName,
+        size,
+        miterLimit,
+        typedFillColor,
+        typedFillAlpha,
+        charSpacing,
+        wordSpacing,
+        tm,
+        x,
+        y,
+        lx,
+        ly,
+        groupEnd: group.end
+      })
+      continue
+    } else if (groupedAxis && op === OPS.endGroup) {
+      const state = stack.pop()
+      if (packet || state?.groupEnd !== i) return
+      ;({
+        fontName,
+        size,
+        miterLimit,
+        typedFillColor,
+        typedFillAlpha,
+        charSpacing,
+        wordSpacing,
+        tm,
+        x,
+        y,
+        lx,
+        ly
+      } = state)
+      continue
+    } else if (op === OPS.save || op === OPS.paintFormXObjectBegin)
+      stack.push({
+        fontName,
+        size,
+        miterLimit,
+        typedFillColor,
+        typedFillAlpha,
+        charSpacing,
+        wordSpacing,
+        tm,
+        x,
+        y,
+        lx,
+        ly
+      })
     else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
       if (!stack.length) return
-      ;({ fontName, size, miterLimit, typedFillColor, typedFillAlpha } = stack.pop())
+      ;({
+        fontName,
+        size,
+        miterLimit,
+        typedFillColor,
+        typedFillAlpha,
+        charSpacing,
+        wordSpacing,
+        tm,
+        x,
+        y,
+        lx,
+        ly
+      } = stack.pop())
     } else if (op === OPS.setFont) {
       if (typeof a?.[0] !== 'string' || !Number.isFinite(a[1]) || a[1] <= 0) return
       ;[fontName, size] = a
+    } else if (op === OPS.setCharSpacing || op === OPS.setWordSpacing) {
+      if (!finite(a, 1)) return
+      if (op === OPS.setCharSpacing) charSpacing = a[0]
+      else wordSpacing = a[0]
+    } else if (op === OPS.setRenderingIntent) {
+      // The pinned CanvasGraphics implementation is a no-op. Retain only
+      // the complete native Name argument; do not admit other state entries.
+      const intent = a?.[0],
+        name = intent && Object.getOwnPropertyDescriptor(intent, 'name')
+      if (
+        !Array.isArray(a) ||
+        a.length !== 1 ||
+        !intent ||
+        Object.getPrototypeOf(intent) !== Object.prototype ||
+        Reflect.ownKeys(intent).length !== 1 ||
+        !name ||
+        !('value' in name) ||
+        !['AbsoluteColorimetric', 'RelativeColorimetric', 'Saturation', 'Perceptual'].includes(
+          name.value
+        )
+      )
+        return
     } else if (op === OPS.beginText) {
       if (packet) return
       packet = { start: i, shows: [], glyphs: [] }
@@ -788,6 +925,7 @@ function nativePagePacketCore(
           if (typeof g === 'number') {
             if (!Number.isFinite(g)) return
             x -= (g * size) / 1000
+            if (!Number.isFinite(x)) return
             continue
           }
           const key = i + ':' + glyphIndex,
@@ -818,16 +956,24 @@ function nativePagePacketCore(
             proof.width === g?.width &&
             g?.isInFont === false &&
             g.unicode === ' ' &&
-            g.isSpace === true
+            (g.isSpace === true || g.isSpace === false) &&
+            (proof.isSpace === undefined ? g.isSpace === true : proof.isSpace === g.isSpace)
+          const foreignClippedSpace =
+            printedFace?.outside(state.clip) &&
+            g?.unicode === ' ' &&
+            g.isInFont === false &&
+            (g.isSpace === true || g.isSpace === false)
           if (proof && !rendererSkipped) return
           if (
             typeof g?.unicode !== 'string' ||
             typeof g.fontChar !== 'string' ||
             !Number.isFinite(g.width) ||
             g.width < 0 ||
+            (wordSpacing !== 0 && typeof g.isSpace !== 'boolean') ||
             (g.isInFont !== true &&
               !(
                 rendererSkipped ||
+                foreignClippedSpace ||
                 (allowEmptyOutlineSpaces &&
                   g.unicode === ' ' &&
                   fontMap
@@ -835,15 +981,28 @@ function nativePagePacketCore(
                     ?.get(g.fontChar)
                     ?.every((n) => n === 0))
               )) ||
-            g.accent != null ||
+            (g.accent != null && !recovery?.accentGlyph(key, fontName, g)) ||
             (g.operatorListId != null && !type3) ||
             g.vmetric != null
           )
             return
-          const b = type3
+          let b = type3
             ? type3.bounds.map((n, axis) => n * type3Font.fontMatrix[axis % 2 ? 3 : 0])
             : fontMap.get(fontName)?.get(g.fontChar)
           if (!b) return
+          const compound = g.accent != null && recovery?.accentGlyph(key, fontName, g)
+          if (compound) {
+            const a = compound.bounds,
+              { x: ox, y: oy } = compound.offset
+            // Canvas showText's fontSizeScale cancels the paintChar scale.
+            // Its negative canvas Y offset is positive in PDF font coordinates.
+            b = [
+              Math.min(b[0], a[0] + ox),
+              Math.min(b[1], a[1] + oy),
+              Math.max(b[2], a[2] + ox),
+              Math.max(b[3], a[3] + oy)
+            ]
+          }
           const advanceWidth = type3
             ? g.width * size * type3Font.fontMatrix[0]
             : (g.width * size) / 1000
@@ -854,7 +1013,8 @@ function nativePagePacketCore(
               m
             ),
             advance = box([x, y, x + advanceWidth, y + size], m)
-          if (!finite(ink, 4) || !inside(state.clip, ink)) return
+          if (!finite(ink, 4) || (!inside(state.clip, ink) && !printedFace?.outside(state.clip)))
+            return
           const z = {
             i,
             fontName,
@@ -865,7 +1025,12 @@ function nativePagePacketCore(
             packet,
             show
           }
-          if (typedPrograms) z.textPaint = { fillColor: typedFillColor, fillAlpha: typedFillAlpha }
+          z.textPaint = { fillColor: typedFillColor, fillAlpha: typedFillAlpha }
+          if (compound) z.compoundAccent = true
+          if (printedFace) {
+            z.paintClip = [...state.clip]
+            z.excludedByClosedFaceClip = printedFace.outside(state.clip)
+          }
           if (rendererSkipped) {
             z.rendererSkipped = true
             usedSkipped.add(key)
@@ -874,7 +1039,11 @@ function nativePagePacketCore(
           packet.glyphs.push(z)
           show.glyphs.push(z)
           glyphs.push(z)
-          x += advanceWidth
+          // Canvas adds spacing once per operator glyph, including ligatures
+          // and skipped blanks. It moves the next origin, not this glyph's
+          // pure advance box; numeric TJ adjustments receive no spacing.
+          x += advanceWidth + charSpacing + (g.isSpace ? wordSpacing : 0)
+          if (!Number.isFinite(x)) return
         }
         packet.shows.push(show)
       } else if (op === OPS.setFillRGBColor) typedFillColor = a?.[0]
@@ -888,7 +1057,11 @@ function nativePagePacketCore(
         )
           return
         for (const e of a[0]) if (e[0] === 'ca') typedFillAlpha = e[1]
+      } else if (recovery?.inertTextOperation(i)) {
+        // No text paint can consume this leading or terminal line transition.
       } else if (![OPS.dependency, OPS.setStrokeRGBColor].includes(op)) return
+    } else if (printedFace?.neutral.has(i)) {
+      // The complete native clip/path certificate excludes this foreign state.
     } else if (op === OPS.setGState) {
       if (
         !Array.isArray(a?.[0]) ||
@@ -897,12 +1070,19 @@ function nativePagePacketCore(
             !Array.isArray(e) ||
             !(
               (['CA', 'ca'].includes(e[0]) && Number.isFinite(e[1]) && e[1] >= 0 && e[1] <= 1) ||
-              (e[0] === 'SMask' && e[1] === false)
+              (e[0] === 'SMask' && e[1] === false) ||
+              ((recovery?.nested || recovery?.rasterOperation(i)) &&
+                e[0] === 'BM' &&
+                e[1] === 'source-over') ||
+              (printedFace && printedFaceStateEntry(e))
             )
         )
       )
         return
-      for (const e of a[0]) if (e[0] === 'ca') typedFillAlpha = e[1]
+      for (const e of a[0]) {
+        if (e[0] === 'ca') typedFillAlpha = e[1]
+        if (printedFace && e[0] === 'ML') miterLimit = e[1]
+      }
     } else if (op === OPS.setFillRGBColor) typedFillColor = a?.[0]
     else if (op === OPS.setMiterLimit) {
       if (!Number.isFinite(a?.[0]) || a[0] < 1) return
@@ -986,6 +1166,11 @@ function nativePagePacketCore(
       return
     const part = visible.slice(offset, offset + cs.length)
     offset += cs.length
+    const certifiedLiteral = literalCertificate?.get(index),
+      certifiedPair =
+        certifiedLiteral &&
+        r.str === certifiedLiteral.normal &&
+        part.map((z) => z.c).join('') === certifiedLiteral.raw.normalize('NFD')
     const s = r.sourceItem,
       k = page.pageNumber + ':' + index,
       match = tokens.filter((t) => t.sourceItem?.index === index),
@@ -1009,17 +1194,33 @@ function nativePagePacketCore(
       rc.get(k) !== 1 ||
       (tc.get(k) ?? 0) !== match.length ||
       match.length > 1 ||
-      (paintedText !== sourceText && !normalizedForeign) ||
+      (paintedText !== sourceText && !normalizedForeign && !certifiedPair) ||
       part.some((z) => z.g.fontName !== r.fontName) ||
       !finite(r.transform, 6)
     )
       return
     const rect = tableTextToken(r, v, 0).rect,
       q = union(part.map((z) => z.g.advance)),
-      advanceComplete = q.every((n, i) => Math.abs(n - rect[i]) <= 0.02)
+      compoundAdvance = recovery?.compoundSourceAdvance(index, r, part, rect, q) === true,
+      advanceComplete = q.every((n, i) => Math.abs(n - rect[i]) <= 0.02) || compoundAdvance
     if (!finite(rect, 4) || !finite(q, 4)) return
+    // A foreign overstrike can have no advance while still painting ink. Keep
+    // that complete glyph in the exclusion inventory; claimed sources remain
+    // subject to the existing positive-rectangle contract.
+    const foreignZeroAdvance =
+      scopedSources &&
+      !scopedSources.has(index) &&
+      advanceComplete &&
+      r.width === 0 &&
+      rect[0] === rect[2] &&
+      rect[1] < rect[3] &&
+      part.length === 1 &&
+      part.every(
+        ({ g }) => g.advance[0] === g.advance[2] && g.advance[1] < g.advance[3] && valid(g.ink)
+      )
     if (
       ((!wholeClaimAdvanceOnly || scopedSources.has(index)) &&
+        !compoundAdvance &&
         q.some(
           (n, i) =>
             Math.abs(n - rect[i]) > 0.02 &&
@@ -1036,7 +1237,7 @@ function nativePagePacketCore(
         (t) =>
           t.text !== r.str ||
           t.sourceItem.text !== r.str ||
-          !valid(t.rect) ||
+          (!valid(t.rect) && !foreignZeroAdvance) ||
           t.rect.some((n, i) => Math.abs(n - rect[i]) > 1e-6)
       )
     )
@@ -1051,6 +1252,8 @@ function nativePagePacketCore(
     })
   }
   if (
+    (recovery &&
+      records.some((r) => scopedSources?.has(r.index) && r.part.some((z) => z.g.compoundAccent))) ||
     offset !== visible.length ||
     tokens.some((t) => !records.some((r) => r.index === t.sourceItem?.index)) ||
     (scopedSources &&
@@ -1147,6 +1350,121 @@ export function nativeFractionInkPacket(page, tokens, context, sourceItems) {
   return nativePagePacketCore(page, tokens, context, true, claims, false, true)
 }
 
+// Explicit closed-program caller. Ordinary isolated groups use the existing
+// complete group observer; all declared owners still require whole advances.
+export function nativeClosedProgramInkPacket(page, tokens, context, sourceItems) {
+  if (!Array.isArray(sourceItems) || !sourceItems.length || sourceItems.length > 64) return
+  const claims = new Set()
+  for (const item of sourceItems) {
+    const raw = context?.content?.items?.[item?.index]
+    if (
+      item?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(item.index) ||
+      typeof item.text !== 'string' ||
+      !item.text.trim() ||
+      claims.has(item.index) ||
+      raw?.str !== item.text ||
+      JSON.stringify(raw.sourceItem) !== JSON.stringify(item)
+    )
+      return
+    claims.add(item.index)
+  }
+  return nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    true,
+    claims,
+    false,
+    true,
+    undefined,
+    false,
+    context.operators.fnArray.includes(OPS.beginGroup)
+  )
+}
+
+// Explicit recovery callers alone may supply an internally derived witness.
+// The default whole-program, table and page contracts never acquire it.
+export function nativeRecoveryFigureInkPacket(page, tokens, context, sourceItems, profile) {
+  if (
+    !nativeFigureRecoveryProfileData(profile, page, tokens, context) ||
+    !Array.isArray(sourceItems) ||
+    sourceItems.length > 64
+  )
+    return
+  const claims = new Set()
+  for (const item of sourceItems) {
+    const raw = context?.content?.items?.[item?.index]
+    if (
+      item?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(item.index) ||
+      typeof item.text !== 'string' ||
+      !item.text.trim() ||
+      claims.has(item.index) ||
+      raw?.str !== item.text ||
+      JSON.stringify(raw.sourceItem) !== JSON.stringify(item) ||
+      tokens.filter(
+        (t) =>
+          t.sourceItem?.pageNumber === item.pageNumber &&
+          t.sourceItem?.index === item.index &&
+          t.sourceItem?.text === item.text &&
+          t.text === item.text
+      ).length !== 1
+    )
+      return
+    claims.add(item.index)
+  }
+  const packet = nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    true,
+    claims,
+    false,
+    true,
+    undefined,
+    false,
+    context.operators.fnArray.includes(OPS.beginGroup),
+    undefined,
+    undefined,
+    profile
+  )
+  if (!packet) return
+  const owners = new Set()
+  for (const record of packet.records)
+    for (const glyph of new Set(record.part.map((part) => part.g))) {
+      if (owners.has(glyph)) return
+      owners.add(glyph)
+    }
+  return packet
+}
+export function nativeForeignCompoundInkPacket(page, tokens, context, sourceItems) {
+  const profile = createNativeForeignAccentProfile(page, tokens, context)
+  return profile && nativeRecoveryFigureInkPacket(page, tokens, context, sourceItems, profile)
+}
+
+export function nativeCompositingInkPacket(page, tokens, context, profile) {
+  const scope = nativeCompositingProfileData(profile, page, tokens, context),
+    anchor = scope && tokens.find((t) => t.sourceItem?.text?.trim())?.sourceItem
+  if (!scope || !anchor) return
+  const packet = nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    true,
+    new Set([anchor.index]),
+    false,
+    true,
+    undefined,
+    false,
+    false,
+    undefined,
+    undefined,
+    profile
+  )
+  return packet && { packet, scope }
+}
+
 // Separate typed contract: partial ordinary fonts become usable only when every
 // used font and every Type3 source/program/paint occurrence is independently closed.
 export function nativeTypedPlotPacketInventory(
@@ -1171,6 +1489,59 @@ export function nativeTypedPlotPacketInventory(
       false,
       false,
       typed
+    )
+    return inventory ? { ...inventory, ...scope } : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Only the complete symbol-axis family admits isolated groups and unclaimed
+// one-to-one PDF.js source normalization. Existing packet entries stay strict.
+export function nativeGroupedAxisPacketInventory(
+  page,
+  figure,
+  captions,
+  tables,
+  rules,
+  tokens,
+  context,
+  sourceItems
+) {
+  try {
+    if (!Array.isArray(sourceItems) || !sourceItems.length || sourceItems.length > 128) return
+    const claims = new Set()
+    for (const source of sourceItems) {
+      const record = context?.content?.items?.[source?.index]
+      if (
+        source?.pageNumber !== page.pageNumber ||
+        !Number.isSafeInteger(source.index) ||
+        source.index < 0 ||
+        typeof source.text !== 'string' ||
+        !source.text.trim() ||
+        claims.has(source.index) ||
+        record?.str !== source.text ||
+        record.sourceItem?.pageNumber !== source.pageNumber ||
+        record.sourceItem.index !== source.index ||
+        record.sourceItem.text !== source.text
+      )
+        return
+      claims.add(source.index)
+    }
+    const scope = nativePlotPacketScope(page, figure, captions, tables, rules),
+      typed = completeType3PacketPrograms(context)
+    if (!scope || !typed) return
+    const inventory = nativePagePacketCore(
+      page,
+      tokens,
+      context,
+      true,
+      claims,
+      true,
+      true,
+      typed,
+      false,
+      true
     )
     return inventory ? { ...inventory, ...scope } : undefined
   } catch {
@@ -1483,4 +1854,132 @@ export function nativeAxisTitlePacket(
     })
   }
   return plans.length === 1 ? plans[0] : undefined
+}
+
+// Explicit opt-in; the ordinary page, whole-cell and grouped-axis APIs remain strict.
+export function nativePageTextPacketInventoryWithDualApiCertificate(
+  page,
+  tokens,
+  context,
+  evidence,
+  allowEmptyOutlineSpaces = false
+) {
+  try {
+    if (typeof allowEmptyOutlineSpaces !== 'boolean') return
+    const certificate = verifyNativeDualApiCertificate(page, context, evidence)
+    if (!certificate) return
+    const claims = new Set(tokens.map((t) => t.sourceItem?.index))
+    return completeNativeDualApiPacket(
+      nativePagePacketCore(
+        page,
+        tokens,
+        context,
+        allowEmptyOutlineSpaces,
+        claims,
+        false,
+        false,
+        undefined,
+        false,
+        false,
+        certificate
+      ),
+      certificate
+    )
+  } catch {
+    return undefined
+  }
+}
+
+// A page-control conflict owns one complete native source. It never grants
+// table-body or figure ownership, nor changes any ordinary packet admission.
+export function nativePageControlInkPacket(page, tokens, context, origin, evidence) {
+  try {
+    const raw = context?.content?.items?.[origin?.index]
+    if (
+      origin?.pageNumber !== page?.pageNumber ||
+      !Number.isSafeInteger(origin.index) ||
+      origin.index < 0 ||
+      typeof origin.text !== 'string' ||
+      !origin.text.trim() ||
+      raw?.str !== origin.text ||
+      !sameOrigin(raw.sourceItem, origin) ||
+      tokens.filter((t) => sameOrigin(t.sourceItem, origin) && t.text === origin.text).length !== 1
+    )
+      return
+    const certificate = evidence
+      ? verifyNativeDualApiCertificate(page, context, evidence)
+      : new Map()
+    if (!certificate) return
+    const packet = completeScopedNativeDualApiPacket(
+      nativePagePacketCore(
+        page,
+        tokens,
+        context,
+        false,
+        new Set([origin.index]),
+        false,
+        true,
+        undefined,
+        false,
+        false,
+        certificate
+      ),
+      certificate
+    )
+    const record = packet?.records.find((r) => r.index === origin.index)
+    return record?.advanceComplete ? packet : undefined
+  } catch {
+    return
+  }
+}
+
+function sameOrigin(a, b) {
+  return a?.pageNumber === b.pageNumber && a?.index === b.index && a?.text === b.text
+}
+
+// A local printed-face contradiction needs every original source, glyph and
+// paint. A foreign glyph may retain its nonempty outline outside a complete
+// disjoint native clip; it is neither renderer-skipped nor replaced by empty ink.
+export function nativeClosedPrintedFaceInkPacket(page, tokens, context, sourceItems, scope) {
+  if (!Array.isArray(sourceItems) || !sourceItems.length || sourceItems.length > 64) return
+  const claims = new Set()
+  for (const o of sourceItems) {
+    const r = context?.content?.items?.[o?.index]
+    if (
+      o?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(o.index) ||
+      o.index < 0 ||
+      typeof o.text !== 'string' ||
+      !o.text.trim() ||
+      claims.has(o.index) ||
+      r?.str !== o.text ||
+      r.sourceItem?.pageNumber !== o.pageNumber ||
+      r.sourceItem.index !== o.index ||
+      r.sourceItem.text !== o.text
+    )
+      return
+    claims.add(o.index)
+  }
+  const packet = nativePagePacketCore(
+    page,
+    tokens,
+    context,
+    true,
+    claims,
+    false,
+    true,
+    undefined,
+    false,
+    false,
+    undefined,
+    scope
+  )
+  if (
+    !packet ||
+    packet.records.some(
+      (r) => claims.has(r.index) && r.part.some((z) => z.g.excludedByClosedFaceClip)
+    )
+  )
+    return
+  return packet
 }

@@ -429,7 +429,9 @@ class ShellProcessOwnershipRegistry {
           '-NoProfile',
           '-NonInteractive',
           '-Command',
-          `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}").CommandLine`
+          // Load the in-box identity provider directly, without discovering host module trees.
+          'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop; ' +
+            `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction Stop).CommandLine`
         ],
         { encoding: 'utf8', windowsHide: true, timeout: 5000 }
       )

@@ -6,6 +6,7 @@ import * as fontkit from 'fontkit'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { engine } from './pdfium.mjs'
 import { readReflowCatalog, writeReflowCatalog } from './reflow-catalog.mjs'
+import { readBlankPageAnchors } from './reflow-page-anchors.mjs'
 import {
   readReflowLinks,
   retainLinkedPages,
@@ -352,6 +353,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
     placements = new Map(),
     linePlacements = new Map(),
     cropPlacements = [],
+    firstContent = new Map(),
     originalPlacements = new Map(),
     layoutFailures = []
   // An original page without any replacement needs no reflow at all. In particular,
@@ -391,6 +393,28 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       )
       .map((candidate) => candidate.index)
   )
+  // Record actual paint emission, independently of joined unit source mappings.
+  // A later draw must not cover the first destination's visible line rectangle.
+  const content = (rect, kind, unitIndex) => {
+    const pageNumber = sourcePageNumbers.length
+    for (const previous of firstContent.values())
+      if (
+        previous.pageNumber === pageNumber &&
+        rect.x < previous.rect.x + previous.rect.width &&
+        rect.x + rect.width > previous.rect.x &&
+        rect.y < previous.rect.y + previous.rect.height &&
+        rect.y + rect.height > previous.rect.y
+      )
+        previous.covered = true
+    if (!firstContent.has(sourceNumber))
+      firstContent.set(sourceNumber, {
+        pageNumber,
+        rect: { ...rect },
+        kind,
+        unitIndex,
+        covered: false
+      })
+  }
   let originalDocument
   let page, cursor, sourceNumber
   const newPage = () => {
@@ -431,6 +455,15 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       ? {}
       : readReflowLinks(native, source, input, originalDocument)
     sourceLinks.catalogDestinations = catalog.destinations ?? []
+    if (!sourceLinks.wholeDocument)
+      sourceLinks.blankPageAnchors = readBlankPageAnchors(
+        native,
+        source,
+        input,
+        sourceLinks.catalogDestinations,
+        sourceLinks.geometry,
+        sourceLinks.unsafePages
+      )
     // Unsupported actions and unresolved destinations can depend on document-
     // level structures that copying individual pages cannot preserve safely.
     if (catalog.wholeDocument || sourceLinks.wholeDocument)
@@ -582,6 +615,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
             width: drawWidth,
             height: drawHeight
           })
+          content(target, 'crop')
           cropPlacements.push({
             sourcePage: number,
             source: { x: x / pw, y: y / ph, width: w / pw, height: h / ph },
@@ -759,6 +793,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
               }
             })
             linePlacements.set(unitIndex, locatedLines)
+            if (key(line) && measure(line) > 0) content(locatedLines.at(-1).rect, 'line', unitIndex)
             if (key(line))
               place(
                 unitIndex,
@@ -790,6 +825,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
         lines: linePlacements,
         crops: cropPlacements,
         placements,
+        firstContent,
         sourcePages
       },
       measure

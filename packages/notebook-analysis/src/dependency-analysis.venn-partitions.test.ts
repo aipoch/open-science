@@ -11,13 +11,19 @@ import { NotebookDependencyAnalyzer } from './analysis-test-support'
 it.each([0, 1, 2, 3, 5, 6])('captures reported Venn workflow cell %s', async (index) => {
   const { facts } = await analyzeRNotebookSource(cells[index])
   expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual([
-    'external-state'
+    ...(index === 5 ? ['control-flow'] : []),
+    'external-state',
+    ...([1, 3, 5, 6].includes(index) ? ['function-scope', 'opaque-call'] : [])
   ])
   if (index !== 2)
     expect(
       await analyzeNotebookSourceFileAccess('r', cells[index]),
       JSON.stringify(facts)
-    ).toMatchObject({ readState: 'complete', writeState: 'complete', externalState: 'complete' })
+    ).toMatchObject({
+      readState: [1, 3, 5, 6].includes(index) ? 'partial' : 'complete',
+      writeState: [1, 3, 5, 6].includes(index) ? 'partial' : 'complete',
+      externalState: [1, 3, 5, 6].includes(index) ? 'partial' : 'complete'
+    })
 })
 
 it('keeps preparation, failed CSV export, and independent replacement outputs separate', async () => {
@@ -46,10 +52,11 @@ it('keeps preparation, failed CSV export, and independent replacement outputs se
       })
       const result = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '6' })
       for (const index of [0, 1, 2, 3, 5, 6])
-        expect(result.stalenessByRunId[String(index)], JSON.stringify(result)).toEqual({
-          state: 'clear'
+        expect(result.stalenessByRunId[String(index)], JSON.stringify(result)).toMatchObject({
+          state: 'unknown'
         })
-      for (const index of [3, 5, 6]) expect(result.dependenciesByRunId?.[String(index)]).toEqual([])
+      for (const index of [3, 5, 6])
+        expect(result.dependenciesByRunId?.[String(index)]).toBeUndefined()
     }
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -61,13 +68,21 @@ it.each([
   'function(x) stats::na.exclude(base::unique(x))',
   'stats::na.omit',
   'function(x) as.character(stats::na.omit(unique(x)))'
-])('preserves ordinary mapped values through %s', async (callback) => {
-  const { facts } = await analyzeRNotebookSource(
-    `data<-list(c('a',NA,'a'),c('b'));result<-lapply(data,${callback})`
-  )
-  expect(facts.state === 'unknown' ? facts.reasons : []).toEqual([])
-  expect(facts.copyOnModifyNames).toContain('result')
-})
+])(
+  'bounds mapped missing-value operations without certifying unique methods: %s',
+  async (callback) => {
+    const { facts } = await analyzeRNotebookSource(
+      `data<-list(c('a',NA,'a'),c('b'));result<-lapply(data,${callback})`
+    )
+    if (callback === 'stats::na.omit') {
+      expect(facts.state === 'unknown' ? facts.reasons : []).toEqual([])
+      expect(facts.copyOnModifyNames).toContain('result')
+    } else {
+      expect(facts.state).toBe('unknown')
+      expect(facts.copyOnModifyNames ?? []).not.toContain('result')
+    }
+  }
+)
 
 it.each([
   'x<-readRDS("unknown.rds");lapply(x,function(v) na.omit(v))',

@@ -116,15 +116,15 @@ it.each(['margin', 'margin_auto', 'margin_part', 'rel'])(
 )
 
 it('captures the reported themed pie and bar plots', async () => {
-  // The only external state is the CSV read, resolved by the captured input.
+  // The CSV path is known; unproved Summary methods keep effects partial.
   expect((await analyzeRSources([rThemePlots]))[0]).toMatchObject({
     state: 'unknown',
-    reasons: ['external-state']
+    reasons: ['external-state', 'opaque-call']
   })
   expect(await analyzeNotebookSourceFileAccess('r', rThemePlots)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     reads: ['inputs/sample-groups-666666666666.csv'],
     writes: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png']
   })
@@ -182,12 +182,12 @@ it.each([
 
 it('captures the reported base R pie and bar charts with numeric annotations', async () => {
   expect(await analyzeNotebookSourceFileAccess('r', rBasePlots)).toEqual({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     reads: ['inputs/sample-groups-666666666666.csv'],
     writes: ['synthetic_groups_group1_bar_r.png', 'synthetic_groups_group1_pie_r.png'],
-    reasonCodes: []
+    reasonCodes: ['source-analysis-unsupported-call', 'dynamic-path-unresolved']
   })
 })
 
@@ -272,16 +272,16 @@ it.each([
 
 it('captures the reported wrapped-library bar chart', async () => {
   expect(await analyzeNotebookSourceFileAccess('r', barSource)).toEqual({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     reads: ['inputs/sample-groups-666666666666.csv'],
     writes: ['group_bar_r.png'],
-    reasonCodes: []
+    reasonCodes: ['source-analysis-unsupported-call', 'dynamic-path-unresolved']
   })
   expect((await analyzeRSources([barSource]))[0]).toMatchObject({
     state: 'unknown',
-    reasons: ['external-state']
+    reasons: ['external-state', 'opaque-call']
   })
 })
 
@@ -360,18 +360,18 @@ it.each([
 
 it('captures the input and output of the complete plotting cell', async () => {
   expect(await analyzeNotebookSourceFileAccess('r', source)).toEqual({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     reads: ['inputs/sample-groups-666666666666.csv'],
     writes: ['group_pie_r.png'],
-    reasonCodes: []
+    reasonCodes: ['source-analysis-unsupported-call', 'dynamic-path-unresolved']
   })
 })
 
 it('requires file evidence without adding unknown variable relationships', async () => {
   const [facts] = await analyzeRSources([source])
-  expect(facts).toMatchObject({ state: 'unknown', reasons: ['external-state'] })
+  expect(facts).toMatchObject({ state: 'unknown', reasons: ['external-state', 'opaque-call'] })
 })
 
 it.each(['names', 'colnames', 'rownames', 'dimnames', 'dim'])(

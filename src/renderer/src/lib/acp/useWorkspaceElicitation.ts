@@ -31,7 +31,9 @@ const pendingWorkspaceElicitations = (
   if (!waiting) return []
   return (session.activities ?? []).flatMap((activity) => {
     const elicitation = activity.elicitation
-    return elicitation?.state === 'pending' && elicitation.durable
+    return elicitation &&
+      (elicitation.state === 'pending' || elicitation.continuationRecovery) &&
+      elicitation.durable
       ? [
           {
             requestId: elicitation.durable.requestId,

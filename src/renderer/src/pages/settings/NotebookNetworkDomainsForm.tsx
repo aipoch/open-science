@@ -51,12 +51,12 @@ const statusReasonLabel = (
     case 'windowsHostMissing':
       return t('The Windows sandbox component is missing. Reinstall Open-Science.')
     case 'windowsGatewayPortUnavailable':
-      return t('The Windows sandbox gateway port is unavailable. Set up the sandbox again.')
+      return t('Network port unavailable. Try turning protection on again.')
     case 'windowsLoopbackMissing':
     case 'windowsNetworkFenceMissing':
     case 'windowsOwnershipMissing':
     case 'windowsProfileMissing':
-      return t('The Windows sandbox needs administrator setup.')
+      return t('Allow administrator access to turn on protection.')
     case 'runtimeFailure':
       return t('Could not check Notebook network protection.')
   }
@@ -82,6 +82,14 @@ const NotebookNetworkDomainsForm = ({
     JSON.stringify(draft) !== JSON.stringify(baseline) || Boolean(newDomain) || privateEditing
   const [message, setMessage] = useState<FormMessage | undefined>()
   const [isSaving, setIsSaving] = useState(false)
+  const [observedSettings, setObservedSettings] = useState(saved)
+  // Defer external snapshots until edits end, retaining their original merge baseline.
+  if (observedSettings !== saved && !dirty && !isSaving) {
+    setObservedSettings(saved)
+    setDraft(saved)
+    setBaseline(saved)
+    setBaseAllowedDomains(saved.allowedDomains)
+  }
   const [status, setStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
   const [isInstalling, setIsInstalling] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
@@ -102,18 +110,15 @@ const NotebookNetworkDomainsForm = ({
   const preparation = status.kind === 'checking' ? status.runtimePreparation : undefined
   const failure = status.windowsRuntimeSetup?.failure
   const failureDescription = status.windowsRuntimeSetup?.cancelled
-    ? t(
-        'Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.'
-      )
+    ? t('Cancelled. Downloads are kept. Try again or turn off protection.')
     : failure
       ? failure.phase === 'downloading'
         ? t('Could not download {{component}}. Check your connection and try again.', {
             component: RUNTIME_COMPONENT_NAMES[failure.component]
           })
-        : t(
-            'Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.',
-            { component: RUNTIME_COMPONENT_NAMES[failure.component] }
-          )
+        : t('Could not prepare {{component}}. Try again or turn off protection.', {
+            component: RUNTIME_COMPONENT_NAMES[failure.component]
+          })
       : status.kind === 'error'
         ? statusReasonLabel(status.reason, t)
         : ''
@@ -244,6 +249,7 @@ const NotebookNetworkDomainsForm = ({
         baseline.trustedPrivateDestinations ?? []
       )
       if (!mounted.current) return
+      setObservedSettings(useSettingsStore.getState().notebookNetwork)
       setBaseline(next)
       setDraft(next)
       setBaseAllowedDomains(next.allowedDomains)
@@ -291,7 +297,7 @@ const NotebookNetworkDomainsForm = ({
                                 })
                               : RUNTIME_COMPONENT_NAMES[preparation.component]
                           : isInstalling
-                            ? t('Setting up…')
+                            ? t('Turning on…')
                             : t('Checking…')
                     }
                   />
@@ -308,16 +314,16 @@ const NotebookNetworkDomainsForm = ({
                   ? t('Checking…')
                   : status.kind === 'ready'
                     ? window.api.platform === 'win32'
-                      ? t('Status: Active')
+                      ? t('Status: On')
                       : t('Notebook network protection is active.')
                     : status.kind === 'setupRequired'
                       ? status.platform === 'win32'
-                        ? t('Status: Not set up')
+                        ? t('Status: Off')
                         : t('Notebook network protection needs setup before notebooks can run.')
                       : status.kind === 'unsupported'
                         ? t('Notebook network protection is not supported on this platform.')
                         : window.api.platform === 'win32'
-                          ? t('Status: Setup failed')
+                          ? t('Network protection error')
                           : statusReasonLabel(status.reason, t)}
               </p>
               {window.api.platform === 'win32' && status.kind === 'ready' ? (
@@ -328,7 +334,7 @@ const NotebookNetworkDomainsForm = ({
               {status.kind === 'setupRequired' && status.platform === 'win32' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {t(
-                    'Route Notebook Python, R, REPL, Bash, and package downloads through network protection with approved domains and restricted public HTTPS reads. Until set up, Notebook continues using standard execution.'
+                    'Protect Notebook code and package downloads with network rules. When off, Notebook uses standard execution.'
                   )}
                 </p>
               ) : null}
@@ -340,14 +346,14 @@ const NotebookNetworkDomainsForm = ({
                   title={
                     status.windowsRuntimeSetup?.cancelled
                       ? t('Cancelled')
-                      : t('Status: Setup failed')
+                      : t('Network protection error')
                   }
                   description={failureDescription}
                 />
               ) : null}
               {preparing && isInstalling && !preparation ? (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {t('The Windows sandbox needs administrator setup.')}
+                  {t('Allow administrator access to turn on protection.')}
                 </p>
               ) : null}
               {cancelError ? (
@@ -355,7 +361,7 @@ const NotebookNetworkDomainsForm = ({
                   inline
                   className="mt-2"
                   role="alert"
-                  description={t('Could not cancel the setup.')}
+                  description={t('Could not cancel. Try again.')}
                 />
               ) : null}
               {window.api.platform === 'win32' &&
@@ -363,10 +369,9 @@ const NotebookNetworkDomainsForm = ({
               status.kind !== 'ready' &&
               Boolean(status.windowsRuntimeSetup?.downloadBytes) ? (
                 <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                  {t(
-                    'Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.',
-                    { size: formatBytes(status.windowsRuntimeSetup!.downloadBytes) }
-                  )}
+                  {t('Downloads up to {{size}}. Downloaded components are reused.', {
+                    size: formatBytes(status.windowsRuntimeSetup!.downloadBytes)
+                  })}
                 </p>
               ) : null}
               {status.kind === 'setupRequired' && status.reasons.length > 0 ? (
@@ -395,7 +400,7 @@ const NotebookNetworkDomainsForm = ({
                   disabled={busy}
                   onClick={() => void installWindowsSandbox()}
                 >
-                  {isInstalling ? t('Setting up…') : t('Set up')}
+                  {isInstalling ? t('Turning on…') : t('Turn on')}
                 </Button>
               ) : null}
               {!preparing && window.api.platform === 'win32' && status.kind === 'ready' ? (
@@ -414,7 +419,7 @@ const NotebookNetworkDomainsForm = ({
                     disabled={busy}
                     onClick={() => void removeWindowsSandbox()}
                   >
-                    {isRemoving ? t('Removing…') : t('Remove…')}
+                    {isRemoving ? t('Turning off…') : t('Turn off')}
                   </Button>
                 </>
               ) : null}
@@ -432,7 +437,7 @@ const NotebookNetworkDomainsForm = ({
                   {status.reason === 'trustBundleInvalid'
                     ? t('Check again')
                     : isInstalling
-                      ? t('Setting up…')
+                      ? t('Turning on…')
                       : t('Try again')}
                 </Button>
               ) : null}
@@ -443,7 +448,7 @@ const NotebookNetworkDomainsForm = ({
                   disabled={busy}
                   onClick={() => void removeWindowsSandbox()}
                 >
-                  {isRemoving ? t('Removing…') : t('Remove…')}
+                  {isRemoving ? t('Turning off…') : t('Turn off')}
                 </Button>
               ) : null}
             </div>
@@ -452,7 +457,7 @@ const NotebookNetworkDomainsForm = ({
           (status.kind === 'ready' ||
             (status.kind === 'setupRequired' && status.platform === 'win32')) ? (
             <p className="mt-2 text-xs text-muted-foreground">
-              {t('Administrator permission is required only when you choose Set up or Remove.')}
+              {t('Turning protection on or off requires administrator permission.')}
             </p>
           ) : null}
         </div>

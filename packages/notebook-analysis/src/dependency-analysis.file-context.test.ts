@@ -10804,10 +10804,10 @@ def read_inputs():
 
   it('does not reuse a builtin callback after same-run replacement and reopening', async () => {
     const context = await fileContext('r', [
-      'formatter <- function(x) round(x)\nround <- function(x) readRDS("hidden.rds")'
+      'formatter <- function(x) length(x)\nlength <- function(x) readRDS("hidden.rds")'
     ])
     expect(context?.rFunctions?.map(({ name }) => name) ?? []).not.toContain('formatter')
-    for (const fn of ['formatter', 'round', 'function(x) round(x)']) {
+    for (const fn of ['formatter', 'length', 'function(x) length(x)']) {
       expect(
         await analyzeNotebookSourceFileAccess('r', `result <- lapply(1:3, ${fn})`, context)
       ).toMatchObject({ readState: 'partial' })
@@ -10816,7 +10816,7 @@ def read_inputs():
 
   it('rebuilds R callable summaries after reopening and records invocation-time closure reads', async () => {
     const context = await fileContext('r', [
-      'factor <- 2\nformatter <- function(x) round(x * factor)',
+      'factor <- 2\nformatter <- function(x) x * factor',
       'factor <- 3'
     ])
     expect(context?.rFunctions?.map(({ name }) => name)).toContain('formatter')
@@ -10836,8 +10836,8 @@ def read_inputs():
   })
 
   it.each([
-    ['formatter <- function(x) round(x)', 'formatter <- function(x) readRDS("hidden.rds")'],
-    ['formatter <- function(x) round(x)', 'round <- function(x) readRDS("hidden.rds")']
+    ['formatter <- function(x) length(x)', 'formatter <- function(x) readRDS("hidden.rds")'],
+    ['formatter <- function(x) length(x)', 'length <- function(x) readRDS("hidden.rds")']
   ])('discards unsafe R callable knowledge after replacement: %s', async (...scripts) => {
     const context = await fileContext('r', scripts)
     // An opaque replacement can retain its identity, but never the old read-only contract.
@@ -17785,7 +17785,7 @@ describe.each(['mapply', 'Map'])('R %s callback file authority', (mapper) => {
   it('preserves a closed arithmetic callback', async () => {
     const source =
       'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- ' +
-      call('function(a,b) round(a+b)').replace('xs', '1:3').replace('ys', '4:6') +
+      call('function(a,b) a+b').replace('xs', '1:3').replace('ys', '4:6') +
       '\nbase::readLines(path)'
     expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
       readState: 'complete',
@@ -17919,7 +17919,7 @@ describe('R Reduce callback file authority', () => {
   })
   it('preserves a directly proven arithmetic reducer', async () => {
     const source =
-      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- base::Reduce(function(a,b) round(a+b),1:3,init=0)\nbase::readLines(path)'
+      'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nresult <- base::Reduce(function(a,b) a+b,1:3,init=0)\nbase::readLines(path)'
     expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
       readState: 'complete',
       writeState: 'complete',
@@ -18024,9 +18024,7 @@ describe.each(['sapply', 'vapply'])('R %s callback file authority', (mapper) => 
     }
   )
   it('preserves a contextual verified read-only callback', async () => {
-    const context = await fileContext('r', [
-      'factor <- 2\nformatter <- function(x) round(x*factor)'
-    ])
+    const context = await fileContext('r', ['factor <- 2\nformatter <- function(x) x*factor'])
     const source =
       'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nvalues <- ' +
       call('formatter').replace('indices', '1:3') +
@@ -18179,9 +18177,7 @@ describe('R lapply callback file authority', () => {
     expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
   })
   it('retains a verified read-only callback on ordinary numeric inputs', async () => {
-    const context = await fileContext('r', [
-      'factor <- 2\nformatter <- function(x) round(x*factor)'
-    ])
+    const context = await fileContext('r', ['factor <- 2\nformatter <- function(x) x*factor'])
     const source =
       'path <- "old.txt"\nbase::saveRDS(c(1,2),"cache.rds")\nvalues <- lapply(1:3,formatter)\nbase::readLines(path)'
     expect(await analyzeNotebookSourceFileAccess('r', source, context)).toMatchObject({
@@ -20756,5 +20752,1987 @@ describe('R kernel smoothing subset authority', () => {
     expect((await analyzeRNotebookSource(source)).facts.safeCallNames ?? []).not.toContain(
       'stats::ksmooth'
     )
+  })
+})
+
+describe('R scientific invocation authority', () => {
+  const setup = 'path<-"old.txt";base::saveRDS(c(1,2),"cache.rds");'
+  const tail = ';base::readLines(path);cached<-base::readRDS("cache.rds")'
+
+  it.each(['y=!!base::sum(x)', '!!!list(y=base::sum(x))'])(
+    'withdraws file authority for immediate injection in a deferred mask: %s',
+    async (argument) => {
+      const source =
+        'Summary.science<-function(...){path<<-"new.txt";base::saveRDS(8,"cache.rds");stop("injection")};x<-structure(c(1,2),class="science");' +
+        setup +
+        `mapping<-ggplot2::aes(${argument})` +
+        tail
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['cache.rds'],
+        externalState: 'partial'
+      })
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    }
+  )
+
+  it('evaluates injected ordinary values in the caller environment', async () => {
+    const source = setup + 'x<-c(1,2);mapping<-ggplot2::aes(y=!!base::sum(x))' + tail
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['old.txt'],
+      externalState: 'complete'
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+  })
+
+  it.each(['x', 'c(1,2)'])(
+    'preserves file authority while a mask call is deferred: %s',
+    async (input) => {
+      const source = setup + `mapping<-ggplot2::aes(y=base::sum(${input}))` + tail
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['old.txt'],
+        externalState: 'complete'
+      })
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toHaveLength(1)
+    }
+  )
+
+  it.each([
+    ['Summary.science', 'base::sum(x)'],
+    ['mean.science', 'base::mean(x)'],
+    ['as.double.science', 'base::as.numeric(x)'],
+    ['Math.science', 'base::abs(x)'],
+    ['unique.science', 'base::unique(x)']
+  ])('withdraws data-mask file authority through %s', async (method, call) => {
+    for (const mask of [
+      `base::with(list(x=structure(c(1,2),class="science")),${call})`,
+      `dplyr::mutate(frame,value=${call})`,
+      `dplyr::summarise(frame,value=${call})`
+    ]) {
+      const source =
+        `${method}<-function(...){path<<-"new.txt";base::saveRDS(8,"cache.rds");stop("after effects")};x<-1;` +
+        setup +
+        mask +
+        tail
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['cache.rds'],
+        externalState: 'partial'
+      })
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.serializedValueWrites ?? []).toEqual([])
+      expect(facts.copyOnModifyNames ?? []).not.toContain('cached')
+    }
+  })
+
+  it.each([false, true])(
+    'rebuilds failed data-mask file uncertainty warm=%s',
+    async (precompute) => {
+      const context = await fileContext(
+        'r',
+        [
+          'x<-1;path<-"old.txt";base::saveRDS(c(1,2),"cache.rds")',
+          'base::with(frame,base::sum(x))'
+        ],
+        [{}, { status: 'failed', kernelDispatched: true }],
+        precompute
+      )
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          'base::readLines(path);base::readRDS("cache.rds")',
+          context
+        )
+      ).toMatchObject({
+        reads: ['cache.rds'],
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it.each([
+    ['unique.numeric', '.2'],
+    ['median.numeric', '.5'],
+    ['sort.numeric', '.5'],
+    ['mean.numeric', '.5']
+  ])('invalidates paths and serialized values through trimmed mean %s', async (method, trim) => {
+    const source =
+      `${method}<-function(...){path<<-"new.txt";base::saveRDS(8,"cache.rds");stop("after effects")};` +
+      setup +
+      `value<-base::mean.default(c(1,2,3,4),trim=${trim})` +
+      tail
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.rAtomicValueNames ?? []).not.toContain('value')
+  })
+
+  it.each([false, true])(
+    'retains failed trimmed mean method bindings warm=%s',
+    async (precompute) => {
+      for (const [method, trim] of [
+        ['unique.numeric', '.2'],
+        ['median.numeric', '.5']
+      ]) {
+        const context = await fileContext(
+          'r',
+          [`${method}<-function(...)input;stop("after binding")`],
+          [{ status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        const source = setup + `value<-base::mean.default(c(1,2,3,4),trim=${trim})` + tail
+        expect((await analyzeNotebookSourceFileAccess('r', source, context)).externalState).toBe(
+          'partial'
+        )
+        expect(
+          (await analyzeRNotebookSource(source, context)).facts.rAtomicValueNames ?? []
+        ).not.toContain('value')
+      }
+    }
+  )
+
+  it.each([
+    ['.2', 'unique.numeric'],
+    ['.5', 'median.numeric'],
+    ['.5', 'sort.numeric'],
+    ['.5', 'mean.numeric']
+  ])('records nested trimmed mean method %s / %s', async (trim, method) => {
+    const { facts } = await analyzeRNotebookSource(
+      `value<-base::mean.default(c(1,2,3,4),trim=${trim})`
+    )
+    expect(facts.priorUsedNames).toContain(method)
+    expect(facts.safeCallNames).toContain(method)
+    expect(facts.rAtomicValueNames).toContain('value')
+  })
+
+  it.each(['unique.numeric', 'median.numeric', 'sort.numeric'])(
+    'ignores unused trimmed mean method %s at trim zero',
+    async (method) => {
+      const source =
+        `${method}<-function(...)input;` +
+        setup +
+        'value<-base::mean.default(c(1,2,3,4),trim=0)' +
+        tail
+      expect((await analyzeNotebookSourceFileAccess('r', source)).externalState).toBe('complete')
+      expect((await analyzeRNotebookSource(source)).facts.priorUsedNames).not.toContain(method)
+    }
+  )
+
+  it.each(['F', '2'])('bounds norm coercion effects by its native type %s', async (type) => {
+    const source =
+      'as.matrix.numeric<-function(...){path<<-"new.txt";stop("coercion")};' +
+      setup +
+      `value<-base::norm(c(1,2),type="${type}")` +
+      tail
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject(
+      type === 'F'
+        ? { reads: ['old.txt'], externalState: 'complete' }
+        : { reads: ['cache.rds'], externalState: 'partial' }
+    )
+  })
+
+  it.each(['crossprod', 'tcrossprod'])('retains matrix dispatch after %s', async (name) => {
+    const source =
+      'duplicated.matrix<-function(x,...){path<<-"new.txt";base::saveRDS(c(8,9),"cache.rds");stop("after effects")};' +
+      setup +
+      `m<-base::${name}(c(1,2));flag<-base::duplicated(m)` +
+      tail
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      externalState: 'partial'
+    })
+    const { facts } = await analyzeRNotebookSource(source)
+    expect(facts.serializedValueWrites ?? []).toEqual([])
+    expect(facts.rAtomicValueNames ?? []).not.toContain('m')
+    expect(facts.copyOnModifyNames ?? []).not.toContain('cached')
+    const producer = await analyzeRNotebookSource(`m<-base::${name}(c(1,2))`)
+    expect(producer.facts.copyOnModifyNames).toContain('m')
+  })
+
+  it.each([
+    'value<-base::outer(c(1,2),c(3,4))',
+    'value<-base::rle(c(1,0,0))',
+    'value<-base::rowsum.default(c(1,2),c(1,2))',
+    'value<-base::matrix(c(1,2),nrow=2,ncol=1)'
+  ])('keeps owned structured results distinct from ordinary vectors: %s', async (statement) => {
+    const { facts } = await analyzeRNotebookSource(statement)
+    expect(facts.copyOnModifyNames).toContain('value')
+    expect(facts.rAtomicValueNames ?? []).not.toContain('value')
+  })
+
+  it.each([
+    'sort.numeric<-function(...)input;value<-base::rowsum(c(1,2),c(2,1),reorder=FALSE)',
+    'rowsum.numeric<-function(...)input;value<-base::rowsum.default(c(1,2),c(2,1),reorder=FALSE)',
+    'diff.character<-function(...)input;value<-base::rle(c("forest","forest","lake"))',
+    'as.vector.numeric<-function(...)input;`*`<-function(...)input;value<-base::outer(c(1,2),c(3,4),FUN="*")'
+  ])('ignores methods outside the bounded native path: %s', async (statement) => {
+    expect(
+      (await analyzeNotebookSourceFileAccess('r', setup + statement + tail)).externalState
+    ).toBe('complete')
+    expect((await analyzeRNotebookSource(statement)).facts.copyOnModifyNames).toContain('value')
+  })
+
+  it.each(['shell', 'radix'])('retains the bounded %s index sort', async (method) => {
+    const source = setup + `value<-base::sort.list(c(3,1,1),method="${method}")` + tail
+    expect((await analyzeNotebookSourceFileAccess('r', source)).externalState).toBe('complete')
+    expect((await analyzeRNotebookSource(source)).facts.rAtomicValueNames).toContain('value')
+  })
+
+  it.each([false, true])(
+    'withholds RDS ownership without file-generation evidence warm=%s',
+    async (precompute) => {
+      const writer =
+        'encoded<-base::rle(c(1,0,0));base::saveRDS(encoded,"encoding.rds",compress=FALSE)'
+      const context = await fileContext('r', [writer], [], precompute)
+      const { facts } = await analyzeRNotebookSource(
+        'restored<-base::readRDS("encoding.rds")',
+        context
+      )
+      expect(facts.copyOnModifyNames ?? []).not.toContain('restored')
+      expect(facts.rAtomicValueNames ?? []).not.toContain('restored')
+      expect(facts.serializedValueReads).toEqual(['encoding.rds'])
+    }
+  )
+
+  // Distinct unknown operands/options and one classed operand per callee.
+  // Numerical-value and qualification duplicates are intentionally omitted.
+  const unprovedCalls: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ['stats::isoreg', ['axis,response']],
+    ['isoreg', ['x=axis,y=response']],
+    ['stats::smooth.spline', ['axis,response,nknots=knots_hook,lambda=0.02']],
+    ['smooth.spline', ['x=axis,y=response,all.knots=TRUE']],
+    ['stats::hclust', ['d,members=members_obj,method="average"']],
+    ['hclust', ['d=d,method="complete"']],
+    ['stats::filter', ['series,c(1,2,1)/4,sides=2']],
+    ['filter', ['x=series,filter=c(0.5,0.5),sides=1']],
+    ['stats::decompose', ['series,type="additive"']],
+    ['decompose', ['x=series,type="multiplicative"']],
+    ['stats::HoltWinters', ['series,alpha=0.3,beta=FALSE,gamma=FALSE']],
+    ['HoltWinters', ['x=series,alpha=0.3,beta=0.1,gamma=0.1']],
+    ['stats::varimax', ['loadings,normalize=TRUE,eps=1e-10']],
+    ['varimax', ['x=loadings,normalize=FALSE']],
+    ['stats::promax', ['loadings,m=4']],
+    ['promax', ['x=loadings,m=2']],
+    ['stats::wilcox.test', ['x,y,exact=TRUE']],
+    ['wilcox.test', ['x,y,exact=FALSE']],
+    ['stats::cor.test', ['x,y,method="kendall",exact=TRUE']],
+    ['cor.test', ['x,y,method="spearman",exact=FALSE']],
+    ['stats::chisq.test', ['counts,correct=FALSE']],
+    ['chisq.test', ['x=counts,correct=TRUE']],
+    ['stats::fisher.test', ['counts,conf.int=FALSE']],
+    ['fisher.test', ['x=counts,alternative="greater",conf.int=FALSE']],
+    ['stats::ar.ols', ['x,aic=FALSE,order.max=1,demean=FALSE,intercept=FALSE']],
+    ['ar.ols', ['x,aic=FALSE,order.max=1,na.action=handler']],
+    ['stats::ar.yw', ['x,aic=FALSE,order.max=1,demean=FALSE,na.action=handler']],
+    ['ar', ['x,method="yule-walker",aic=FALSE,order.max=1,na.action=handler']],
+    ['stats::ar', ['x,method="ols",aic=FALSE,order.max=1']],
+    ['ar.yw', ['x,aic=FALSE,order.max=1']],
+    ['base::svd', ['input,nu=2,nv=2']],
+    ['base::eigen', ['input,symmetric=TRUE']],
+    ['eigen', ['input,only.values=TRUE']],
+    ['base::chol', ['input,pivot=FALSE']],
+    ['chol', ['input']],
+    ['base::chol.default', ['input,pivot=FALSE']],
+    ['base::La.svd', ['input,nu=0,nv=0']],
+    ['stats::ecdf', ['x']],
+    ['stats::qqplot', ['x,y,plot.it=FALSE']],
+    ['stats::ks.test', ['x,cdf,alternative="greater",exact=FALSE']],
+    ['ks.test', ['x,y,exact=TRUE']],
+    ['stats::cov', ['input,use="pairwise.complete.obs"']],
+    ['cov', ['input,use="complete.obs"']],
+    ['stats::cor', ['input,use="pairwise.complete.obs",method="spearman"']],
+    ['cor', ['input,other,method="pearson"']],
+    ['stats::var', ['input,na.rm=TRUE']],
+    ['var', ['input,use="pairwise.complete.obs"']],
+    ['stats::sd', ['input,na.rm=TRUE']],
+    ['sd', ['input']],
+    ['stats::kruskal.test', ['input,groups']],
+    ['stats::friedman.test', ['input,groups,blocks']],
+    ['stats::quade.test', ['input,groups,blocks']],
+    ['base::scale', ['input,center=TRUE,scale=TRUE']],
+    ['scale', ['input,center=FALSE,scale=TRUE', 'input,center=offset,scale=units']],
+    [
+      'base::scale.default',
+      ['input,center=FALSE,scale=TRUE', 'input,center=c(3,6,12),scale=c(2,3,4)']
+    ],
+    ['scale.default', ['input,center=TRUE,scale=FALSE']],
+    ['stats::quantile', ['input,probs=c(.1,.25,.5,.75,.9),type=7,na.rm=TRUE']],
+    ['quantile', ['input,probs=.5,type=8,na.rm=TRUE']],
+    ['stats::mad', ['input,constant=1.4826,na.rm=TRUE']],
+    ['mad', ['input,center=offset,na.rm=TRUE']],
+    ['stats::IQR', ['input,type=7,na.rm=TRUE']],
+    ['base::diff', ['input,lag=1,differences=1']],
+    ['base::cumsum', ['input']],
+    ['base::cumprod', ['input']],
+    ['base::cummin', ['input']],
+    ['base::cummax', ['input']],
+    ['stats::weighted.mean', ['input,c(1,2,0),na.rm=TRUE']],
+    ['weighted.mean', ['input,c(1,2,0),na.rm=FALSE']],
+    ['stats::fivenum', ['input,na.rm=TRUE']],
+    ['fivenum', ['input,na.rm=FALSE']],
+    ['base::mean', ['input,trim=.2,na.rm=TRUE']],
+    ['mean.default', ['input,trim=.2,na.rm=TRUE']],
+    ['stats::median', ['input,na.rm=TRUE']],
+    ['median', ['input,na.rm=FALSE']],
+    ['base::rank', ['input,na.last="keep",ties.method="average"']],
+    ['rank', ['input,na.last="keep",ties.method="min"']],
+    ['base::prod', ['input,na.rm=TRUE']],
+    ['prod', ['input,na.rm=FALSE']],
+    ['base::order', ['input,na.last=TRUE']],
+    ['order', ['input,na.last=FALSE']],
+    ['stats::p.adjust', ['input,method="BH",n=12', 'input,method="bonferroni",n=12']],
+    ['p.adjust', ['input,method="holm",n=12', 'input,method="BY",n=12']],
+    ['base::all.equal', ['input,reference,check.attributes=FALSE']],
+    ['all.equal', ['input,reference,tolerance=1e-8,check.attributes=FALSE']],
+    [
+      'base::all.equal.numeric',
+      ['input,reference,scale=1,countEQ=FALSE,check.attributes=FALSE,formatFUN=formatter']
+    ],
+    ['all.equal.numeric', ['c(1,2),c(1,3),check.attributes=FALSE,formatFUN=formatter']],
+    ['base::as.double', ['input']],
+    ['base::as.numeric', ['input']],
+    ['base::isTRUE', ['input']],
+    ['base::isFALSE', ['input']],
+    ['base::any', ['input,na.rm=TRUE']],
+    ['base::all', ['input,na.rm=TRUE']],
+    ['pmin', ['input,2.2']],
+    ['base::pmin', ['structure(c(1,2),class="measurement"),2.2', 'c(1,2),2.2,na.rm=flag']],
+    ['pmax', ['input,2.2']],
+    ['base::pmax', ['structure(c(1,2),class="measurement"),2.2', 'c(1,2),2.2,na.rm=flag']],
+    ['log1p', ['input']],
+    ['base::log1p', ['structure(c(1,2),class="log_transform")', 'c(1,2),extra=flag']],
+    ['expm1', ['input']],
+    ['base::expm1', ['structure(c(1,2),class="log_transform")', 'c(1,2),extra=flag']],
+    ['round', ['input']],
+    [
+      'base::round',
+      ['input,digits=2', 'structure(c(1,2),class="reporting_precision")', 'c(1,2),digits=flag']
+    ],
+    ['signif', ['input']],
+    [
+      'base::signif',
+      ['input,digits=2', 'structure(c(1,2),class="reporting_precision")', 'c(1,2),digits=flag']
+    ],
+    ['sqrt', ['input']],
+    ['base::sqrt', ['structure(c(1,2),class="root_distance")', 'c(1,2),extra=flag']],
+    ['abs', ['input']],
+    ['base::abs', ['structure(c(1,2),class="root_distance")', 'c(1,2),extra=flag']],
+    ['sin', ['input']],
+    ['base::sin', ['structure(c(1,2),class="circular_phase")', 'c(1,2),extra=flag']],
+    ['cos', ['input']],
+    ['base::cos', ['structure(c(1,2),class="circular_phase")', 'c(1,2),extra=flag']],
+    ['floor', ['input']],
+    ['base::floor', ['structure(c(1,2),class="time_window")', 'c(1,2),extra=flag']],
+    ['ceiling', ['input']],
+    ['base::ceiling', ['structure(c(1,2),class="time_window")', 'c(1,2),extra=flag']],
+    ['exp', ['input']],
+    ['base::exp', ['structure(c(1,2),class="decay_log")', 'c(1,2),extra=flag']],
+    ['log', ['input']],
+    [
+      'base::log',
+      ['structure(c(1,2),class="decay_log")', 'c(1,2),extra=flag', 'c(1,2),base=option']
+    ],
+    ['logb', ['input']],
+    [
+      'base::logb',
+      [
+        'input,2',
+        '4,input',
+        'structure(4,class="power"),2',
+        '4,2,extra=input',
+        '4,b=2',
+        '4,base={input}'
+      ]
+    ],
+    [
+      'base::pmax.int',
+      [
+        'input,0',
+        '0,input',
+        '0,1,na.rm=input',
+        'structure(1,class="sensor"),0',
+        '0,1,na=TRUE',
+        '0,1,na.rm=TRUE,na.rm=FALSE',
+        'left=1,right=2'
+      ]
+    ],
+    [
+      'base::pmin.int',
+      [
+        'input,0',
+        '0,input',
+        '0,1,na.rm=input',
+        'structure(1,class="sensor"),0',
+        '0,1,na=TRUE',
+        '0,1,na.rm=TRUE,na.rm=FALSE',
+        'left=1,right=2'
+      ]
+    ],
+    [
+      'base::.rowSums',
+      [
+        'input,3,2',
+        'c(1,2,3,4,5,6),input,2',
+        'c(1,2,3,4,5,6),3,input',
+        'c(1,2,3,4,5,6),3,2,na.rm=input',
+        'structure(c(1,2,3,4,5,6),class="sensor"),3,2',
+        'c(1,2,3,4,5,6),3,2,extra=input',
+        'c(1,2,3,4,5,6),3,2,na=TRUE'
+      ]
+    ],
+    [
+      'base::.colSums',
+      [
+        'input,3,2',
+        'c(1,2,3,4,5,6),input,2',
+        'c(1,2,3,4,5,6),3,input',
+        'c(1,2,3,4,5,6),3,2,na.rm=input',
+        'structure(c(1,2,3,4,5,6),class="sensor"),3,2',
+        'c(1,2,3,4,5,6),3,2,extra=input',
+        'c(1,2,3,4,5,6),3,2,na=TRUE'
+      ]
+    ],
+    [
+      'base::.rowMeans',
+      [
+        'input,3,2',
+        'c(1,2,3,4,5,6),input,2',
+        'c(1,2,3,4,5,6),3,input',
+        'c(1,2,3,4,5,6),3,2,na.rm=input',
+        'structure(c(1,2,3,4,5,6),class="sensor"),3,2',
+        'c(1,2,3,4,5,6),3,2,extra=input',
+        'c(1,2,3,4,5,6),3,2,na=TRUE'
+      ]
+    ],
+    [
+      'base::.colMeans',
+      [
+        'input,3,2',
+        'c(1,2,3,4,5,6),input,2',
+        'c(1,2,3,4,5,6),3,input',
+        'c(1,2,3,4,5,6),3,2,na.rm=input',
+        'structure(c(1,2,3,4,5,6),class="sensor"),3,2',
+        'c(1,2,3,4,5,6),3,2,extra=input',
+        'c(1,2,3,4,5,6),3,2,na=TRUE'
+      ]
+    ],
+    [
+      'base::outer',
+      [
+        'input,c(1,2)',
+        'c(1,2),input',
+        'c(1,2),c(3,4),FUN=input',
+        'structure(c(1,2),class="dose"),c(3,4)',
+        'list(1,2),c(3,4)',
+        'c(1,2),c(3,4),FUN="+"',
+        'c(1,2),c(3,4),FUN=base::`*`',
+        'c(1,2),c(3,4),extra=input',
+        'c(1,2),c(3,4),F="*"'
+      ]
+    ],
+    [
+      'base::rowsum',
+      [
+        'input,c(1,0,2)',
+        'c(.79,.54,.74),input',
+        'c(.79,.54,.74),c(1,0,2),reorder=input',
+        'c(.79,.54,.74),c(1,0,2),na.rm=input',
+        'structure(c(.79,.54,.74),class="replicate"),c(1,0,2)',
+        'list(.79,.54,.74),c(1,0,2)',
+        'c(.79,.54,.74),c(1,0,2),extra=input',
+        'c(.79,.54,.74),c(1,0,2),re=FALSE'
+      ]
+    ],
+    [
+      'base::rowsum.default',
+      [
+        'input,c(1,0,2)',
+        'c(.79,.54,.74),input',
+        'c(.79,.54,.74),c(1,0,2),reorder=input',
+        'c(.79,.54,.74),c(1,0,2),na.rm=input',
+        'structure(c(.79,.54,.74),class="replicate"),c(1,0,2)',
+        'list(.79,.54,.74),c(1,0,2)',
+        'c(.79,.54,.74),c(1,0,2),extra=input',
+        'c(.79,.54,.74),c(1,0,2),re=FALSE'
+      ]
+    ],
+    [
+      'base::rle',
+      [
+        'input',
+        'structure(c(1,0,0),class="habitat")',
+        'list(1,0,0)',
+        'c(1,0,0),extra=input',
+        'c(1,0,0),input',
+        'x=c(1,0),x=c(0,1)'
+      ]
+    ],
+    [
+      'base::is.unsorted',
+      [
+        'input',
+        'c(3,5,5,9,10,13),na.rm=input',
+        'c(3,5,5,9,10,13),strictly=input',
+        'structure(c(3,5,5),class="sensor")',
+        'list(3,5,5)',
+        'c(3,5,5),strict=TRUE',
+        'c(3,5,5),extra=input'
+      ]
+    ],
+    [
+      'base::duplicated',
+      [
+        'input',
+        'c(4,4,4,2,0,0),incomparables=input',
+        'c(4,4,4,2,0,0),fromLast=input',
+        'c(4,4,4,2,0,0),nmax=input',
+        'structure(c(4,4,4,2,0,0),class="sample")',
+        'list(4,4,4,2,0,0)',
+        'c(4,4,4,2,0,0),extra=input',
+        'c(4,4,4,2,0,0),inc=4'
+      ]
+    ],
+    [
+      'base::anyDuplicated',
+      [
+        'input',
+        'c(4,4,4,2,0,0),incomparables=input',
+        'c(4,4,4,2,0,0),fromLast=input',
+        'structure(c(4,4,4,2,0,0),class="sample")',
+        'list(4,4,4,2,0,0)',
+        'c(4,4,4,2,0,0),extra=input',
+        'c(4,4,4,2,0,0),inc=4'
+      ]
+    ],
+    [
+      'base::sort.list',
+      [
+        'input,method="radix"',
+        'c(9,4,4,2,5,5),na.last=input',
+        'c(9,4,4,2,5,5),decreasing=input,method="shell"',
+        'c(9,4,4,2,5,5),method=input',
+        'c(9,4,4,2,5,5),partial=input',
+        'structure(c(9,4,4,2,5,5),class="peak"),method="radix"',
+        'c(9,4,4,2,5,5),method="quick"',
+        'c(9,4,4,2,5,5),method="ra"',
+        'c(9,4,4,2,5,5),na.last=NA',
+        'c(9,4,4,2,5,5),partial=c(1L,2L)',
+        'c(9,4,4,2,5,5),extra=input',
+        'c(9,4,4,2,5,5),decr=TRUE'
+      ]
+    ],
+    [
+      'stats::diffinv',
+      [
+        'input,xi=.54',
+        'c(.79,.54),lag=input,xi=c(.62,.55)',
+        'c(.79,.54),xi=input',
+        'c(.79,.54),differences=input',
+        'structure(c(.79,.54),class="signal"),xi=.54',
+        'list(.79,.54),xi=.54',
+        'c(.79,.54),extra=input',
+        'c(.79,.54),dif=1',
+        'c(.79,.54),differences=2'
+      ]
+    ],
+    [
+      'base::inverse.rle',
+      [
+        'input',
+        'list(lengths=input,values=c(3,2,4))',
+        'list(lengths=c(2,0,3),values=input)',
+        'structure(list(lengths=c(2,0,3),values=c(3,2,4)),class="signal")',
+        'list(lengths=c(2,0,3),values=list(3,2,4))',
+        'list(lengths=c(2,0,3),values=c(3,2,4),extra=input)',
+        'list(length=c(2,0,3),values=c(3,2,4))',
+        'list(c(2,0,3),c(3,2,4))'
+      ]
+    ],
+    [
+      'base::sequence',
+      [
+        'input,from=7,by=2',
+        'c(3,0,2,1),from=input,by=2',
+        'c(3,0,2,1),from=7,by=input',
+        'structure(c(3,0,2),class="pulse"),from=7',
+        'list(3,2),from=7',
+        'c(3,0,2),extra=input',
+        'c(3,0,2),fr=7'
+      ]
+    ],
+    [
+      'base::sequence.default',
+      [
+        'input,from=7,by=2',
+        'c(3,0,2,1),from=input,by=2',
+        'c(3,0,2,1),from=7,by=input',
+        'structure(c(3,0,2),class="pulse"),from=7',
+        'list(3,2),from=7',
+        'c(3,0,2),extra=input',
+        'c(3,0,2),fr=7'
+      ]
+    ],
+    [
+      'base::lengths',
+      [
+        'input',
+        'list(c(.79,.54),c(.74)),use.names=input',
+        'list(structure(c(.79,.54),class="group"))',
+        'list(input)',
+        'groups',
+        'list(list(.79))',
+        'list(environment())',
+        'c(.79,.54),extra=input',
+        'c(.79,.54),use=FALSE'
+      ]
+    ],
+    [
+      'base::.subset',
+      [
+        'input,2L',
+        'c(.79,.54,.74),input',
+        'structure(c(.79,.54),class="measure"),1L',
+        'list(.79,.54),1L',
+        'c(.79,.54),1L,extra=input',
+        'c(.79,.54),i=1L',
+        'x=c(.79,.54),1L'
+      ]
+    ],
+    [
+      'base::.subset2',
+      [
+        'input,2L',
+        'c(.79,.54,.74),input',
+        'structure(c(.79,.54),class="measure"),1L',
+        'list(.79,.54),1L',
+        'c(.79,.54),1L,extra=input',
+        'c(.79,.54),i=1L',
+        'x=c(.79,.54),1L'
+      ]
+    ],
+    [
+      'base::match',
+      [
+        'input,c(2,4,1,4),nomatch=0',
+        'c(4,3,2,4),input,nomatch=0',
+        'c(4,3,2,4),c(2,4,1,4),nomatch=input',
+        'c(4,3,2,4),c(2,4,1,4),nomatch=0,incomparables=input',
+        'structure(c(4,3),class="sample"),c(2,4),nomatch=0',
+        'c(4,3),c(2,4),extra=input',
+        'c(4,3),c(2,4),no=0',
+        'c(4,3),c(2,4),incomp=4'
+      ]
+    ],
+    [
+      'base::seq.int',
+      [
+        'input,.85,by=.1',
+        '.54,input,length.out=5',
+        '.85,.54,by=input',
+        '.54,.85,length.out=input',
+        'structure(.54,class="scan"),.85,by=.1',
+        '.54,.85,extra=input',
+        '.54,.85,len=5',
+        '.54,.85,along.with=c(1,2,3)',
+        '.54,.85,by=.1,length.out=5'
+      ]
+    ],
+    [
+      'base::rep.int',
+      [
+        'input,2',
+        'c(1,2,3),input',
+        'structure(c(1,2,3),class="stimulus"),2',
+        'c(1,2,3),extra=input',
+        'c(1,2,3),ti=2'
+      ]
+    ],
+    [
+      'base::rep_len',
+      [
+        'input,2',
+        'c(1,2,3),input',
+        'structure(c(1,2,3),class="stimulus"),2',
+        'c(1,2,3),extra=input',
+        'c(1,2,3),length=2'
+      ]
+    ],
+    [
+      'base::matrix',
+      [
+        'input,2,2',
+        'c(1,2,3,4),input,2',
+        'c(1,2,3,4),2,input',
+        'c(1,2,3,4),2,2,byrow=input',
+        'c(1,2,3,4),2,2,dimnames=input',
+        'structure(c(1,2,3,4),class="score"),2,2',
+        'c(1,2,3,4),2,2,byrow=1',
+        'c(1,2,3,4),2,2,dimnames=list(input,NULL)',
+        'c(1,2,3,4),2,2,extra=input',
+        'c(1,2,3,4),nr=2,ncol=2'
+      ]
+    ],
+    [
+      'base::max.col',
+      [
+        'input,ties.method="first"',
+        'matrix(c(1,2,2,1),2,2),ties.method=input',
+        'structure(c(1,2),class="score"),ties.method="first"',
+        'matrix(c(1,2,2,1),2,2),extra=input',
+        'matrix(c(1,2,2,1),2,2),ties="first"',
+        'matrix(c(1,2,2,1),2,2),ties.method="f"',
+        'matrix(c(1,2,2,1),2,2),ties.method="random"',
+        'matrix(c(1,2,2,1),2,2)'
+      ]
+    ],
+    [
+      'base::findInterval',
+      [
+        'input,c(1,2,2,4)',
+        'c(0,1,2,3,4,5),input',
+        'c(0,1,2,3,4,5),c(1,2,2,4),rightmost.closed=input',
+        'c(0,1,2,3,4,5),c(1,2,2,4),all.inside=input',
+        'c(0,1,2,3,4,5),c(1,2,2,4),left.open=input',
+        'structure(c(1,2),class="event"),c(1,2,2,4)',
+        'c(1,2),c(1,2,2,4),extra=input',
+        'c(1,2),c(1,2,2,4),right=TRUE',
+        'c(1,2),c(1,2,2,4),all=TRUE',
+        'c(1,2),c(1,2,2,4),left.open=1'
+      ]
+    ],
+    [
+      'base::tabulate',
+      [
+        'input,5',
+        'c(4,3,3,3,2,4),input',
+        'input',
+        'structure(c(4,3,3),class="species"),5',
+        'factor(c("a","b")),5',
+        'c(4,3,3),extra=input',
+        'bi=c(4,3,3),nbins=5',
+        'c(4,3,3),nbin=5'
+      ]
+    ],
+    [
+      'base::.bincode',
+      [
+        'input,c(0,1,2),TRUE,TRUE',
+        'c(.5,1),input,TRUE,TRUE',
+        'c(.5,1),c(0,1,2),input,TRUE',
+        'c(.5,1),c(0,1,2),TRUE,input',
+        'structure(c(.5,1),class="exposure"),c(0,1,2)',
+        'c(.5,1),c(0,1,2),extra=input',
+        'c(.5,1),c(0,1,2),ri=TRUE',
+        'c(.5,1),c(0,1,2),include=TRUE',
+        'c(.5,1),c(0,1,2),1,TRUE'
+      ]
+    ],
+    [
+      'base::append',
+      [
+        'input,c(4,5),2',
+        'c(1,2,3),input,0',
+        'c(1,2,3),c(4,5),input',
+        'structure(c(1,2),class="pulse"),c(4,5),1',
+        'c(1,2),c(4,5),extra=input',
+        'c(1,2),val=c(4,5)',
+        'c(1,2),c(4,5),aft=1'
+      ]
+    ],
+    ['log2', ['input']],
+    ['base::log2', ['structure(c(1,2),class="log_scale")', 'c(1,2),extra=flag']],
+    ['log10', ['input']],
+    ['base::log10', ['structure(c(1,2),class="log_scale")', 'c(1,2),extra=flag']],
+    ['sign', ['input']],
+    ['base::sign', ['structure(c(1,2),class="signed_residual")', 'c(1,2),extra=flag']],
+    ['trunc', ['input']],
+    ['base::trunc', ['structure(c(1,2),class="signed_residual")', 'c(1,2),extra=flag']],
+    ['tan', ['input']],
+    ['base::tan', ['structure(c(1,2),class="slope_angle")', 'c(1,2),extra=flag']],
+    ['atan', ['input']],
+    ['base::atan', ['structure(c(1,2),class="slope_angle")', 'c(1,2),extra=flag']],
+    ['asin', ['input']],
+    ['base::asin', ['structure(c(0.1,0.2),class="direction_cosine")', 'c(0.1,0.2),extra=flag']],
+    ['acos', ['input']],
+    ['base::acos', ['structure(c(0.1,0.2),class="direction_cosine")', 'c(0.1,0.2),extra=flag']],
+    ['sinh', ['input']],
+    ['base::sinh', ['structure(c(0.1,0.2),class="catenary")', 'c(0.1,0.2),extra=flag']],
+    ['cosh', ['input']],
+    ['base::cosh', ['structure(c(0.1,0.2),class="catenary")', 'c(0.1,0.2),extra=flag']],
+    ['tanh', ['input']],
+    ['base::tanh', ['structure(c(0.1,0.2),class="saturation")', 'c(0.1,0.2),extra=flag']],
+    ['atanh', ['input']],
+    ['base::atanh', ['structure(c(0.1,0.2),class="saturation")', 'c(0.1,0.2),extra=flag']],
+    ['atan2', ['input,1']],
+    [
+      'base::atan2',
+      [
+        '1,input',
+        'x=input,y=1',
+        'x=1,y=input',
+        'structure(c(1,2),class="bearing"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['gamma', ['input']],
+    ['base::gamma', ['structure(c(0.1,0.2),class="gamma normalizer")', 'c(0.1,0.2),extra=flag']],
+    ['lgamma', ['input']],
+    ['base::lgamma', ['structure(c(0.1,0.2),class="gamma normalizer")', 'c(0.1,0.2),extra=flag']],
+    ['beta', ['input,1']],
+    [
+      'base::beta',
+      [
+        '1,input',
+        'b=input,a=1',
+        'b=1,a=input',
+        'structure(c(1,2),class="beta_normalizer"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['lbeta', ['input,1']],
+    [
+      'base::lbeta',
+      [
+        '1,input',
+        'b=input,a=1',
+        'b=1,a=input',
+        'structure(c(1,2),class="beta_normalizer"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['choose', ['input,1']],
+    [
+      'base::choose',
+      [
+        '1,input',
+        'k=input,n=1',
+        'k=1,n=input',
+        'structure(c(1,2),class="pair_count"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['lchoose', ['input,1']],
+    [
+      'base::lchoose',
+      [
+        '1,input',
+        'k=input,n=1',
+        'k=1,n=input',
+        'structure(c(1,2),class="pair_count"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['factorial', ['input']],
+    [
+      'base::factorial',
+      ['structure(c(0.1,0.2),class="poisson_factorial")', 'c(0.1,0.2),extra=flag']
+    ],
+    ['lfactorial', ['input']],
+    [
+      'base::lfactorial',
+      ['structure(c(0.1,0.2),class="poisson_factorial")', 'c(0.1,0.2),extra=flag']
+    ],
+    ['digamma', ['input']],
+    ['base::digamma', ['structure(c(0.1,0.2),class="gamma_curvature")', 'c(0.1,0.2),extra=flag']],
+    ['trigamma', ['input']],
+    ['base::trigamma', ['structure(c(0.1,0.2),class="gamma_curvature")', 'c(0.1,0.2),extra=flag']],
+    ['Mod', ['input']],
+    ['base::Mod', ['structure(c(1+2i,-1+2i),class="phasor")', 'c(1+2i,-1+2i),extra=flag']],
+    ['Arg', ['input']],
+    ['base::Arg', ['structure(c(1+2i,-1+2i),class="phasor")', 'c(1+2i,-1+2i),extra=flag']],
+    ['asinh', ['input']],
+    ['base::asinh', ['structure(c(0.1,0.2),class="stabilization")', 'c(0.1,0.2),extra=flag']],
+    ['acosh', ['input']],
+    ['base::acosh', ['structure(c(0.1,0.2),class="stabilization")', 'c(0.1,0.2),extra=flag']],
+    ['Conj', ['input']],
+    ['base::Conj', ['structure(c(1+2i,-1+2i),class="correlation")', 'c(1+2i,-1+2i),extra=flag']],
+    ['Re', ['input']],
+    ['base::Re', ['structure(c(1+2i,-1+2i),class="correlation")', 'c(1+2i,-1+2i),extra=flag']],
+    ['Im', ['input']],
+    ['base::Im', ['structure(c(1+2i,-1+2i),class="correlation")', 'c(1+2i,-1+2i),extra=flag']],
+    ['besselJ', ['input,1']],
+    [
+      'base::besselJ',
+      [
+        '1,input',
+        'nu=input,x=1',
+        'nu=1,x=input',
+        'structure(c(1,2),class="cylindrical_wave"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['besselY', ['input,1']],
+    [
+      'base::besselY',
+      [
+        '1,input',
+        'nu=input,x=1',
+        'nu=1,x=input',
+        'structure(c(1,2),class="cylindrical_wave"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['psigamma', ['input,1']],
+    [
+      'base::psigamma',
+      [
+        '1,input',
+        'deriv=input,x=1',
+        'deriv=1,x=input',
+        'structure(c(1,2),class="polygamma_sensitivity"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['besselI', ['input,1', 'c(25,40),0,input']],
+    [
+      'base::besselI',
+      [
+        '1,input',
+        'nu=input,x=1',
+        'nu=1,x=input',
+        'structure(c(1,2),class="scaled_diffusion"),1',
+        'c(1,2),1,extra=flag',
+        'c(25,40),0,expon.scaled=input'
+      ]
+    ],
+    ['besselK', ['input,1', 'c(25,40),0,input']],
+    [
+      'base::besselK',
+      [
+        '1,input',
+        'nu=input,x=1',
+        'nu=1,x=input',
+        'structure(c(1,2),class="scaled_diffusion"),1',
+        'c(1,2),1,extra=flag',
+        'c(25,40),0,expon.scaled=input'
+      ]
+    ],
+    ['zapsmall', ['input,digits=6']],
+    [
+      'base::zapsmall',
+      [
+        'structure(c(1,1e-10),class="cleanup"),digits=6',
+        'c(1,1e-10),digits=input',
+        'c(1,1e-10)',
+        'c(1,1e-10),digits=6,mFUN=input',
+        'c(1,1e-10),digits=6,mFUN=function(x,ina)1',
+        'c(1,1e-10),digits=6,min.d=input',
+        'c(1,1e-10),digits=6,extra=flag',
+        'c(1,1e-10),dig=6',
+        'c(1,1e-10),digits=6,digits=8'
+      ]
+    ],
+    ['fft', ['input,1']],
+    [
+      'stats::fft',
+      [
+        '1,input',
+        'inverse=input,z=1',
+        'inverse=1,z=input',
+        'structure(c(1,2),class="fft"),1',
+        'c(1,2),1,extra=flag'
+      ]
+    ],
+    ['polyroot', ['input']],
+    ['base::polyroot', ['structure(c(1+2i,-1+2i),class="poles")', 'c(1+2i,-1+2i),extra=flag']],
+    ['convolve', ['input,c(1,2)']],
+    [
+      'stats::convolve',
+      [
+        'c(1,2),input',
+        'c(1,2),c(1,2),conj=input',
+        'c(1,2),c(1,2),type=input',
+        'structure(c(1,2),class="pulse"),c(1,2)',
+        'c(1,2),c(1,2),ty="open"',
+        'c(1,2),c(1,2),extra=flag'
+      ]
+    ],
+    [
+      'stats::dbinom',
+      [
+        'input,6,.54',
+        '0:6,input,.54',
+        '0:6,6,input',
+        '0:6,6,.54,log=input',
+        'structure(0:6,class="counts"),6,.54',
+        '0:6,6,.54,extra=input'
+      ]
+    ],
+    [
+      'stats::pbinom',
+      [
+        'input,6,.54',
+        '0:6,input,.54',
+        '0:6,6,input',
+        '0:6,6,.54,lower.tail=input',
+        '0:6,6,.54,log.p=input',
+        'structure(0:6,class="counts"),6,.54',
+        '0:6,6,.54,extra=input'
+      ]
+    ],
+    [
+      'stats::dhyper',
+      [
+        'input,5,7,4',
+        '0:4,input,7,4',
+        '0:4,5,input,4',
+        '0:4,5,7,input',
+        '0:4,5,7,4,log=input',
+        'structure(0:4,class="urn"),5,7,4',
+        '0:4,5,7,4,extra=input'
+      ]
+    ],
+    [
+      'stats::phyper',
+      [
+        'input,5,7,4',
+        '0:4,input,7,4',
+        '0:4,5,input,4',
+        '0:4,5,7,input',
+        '0:4,5,7,4,lower.tail=input',
+        '0:4,5,7,4,log.p=input',
+        'structure(0:4,class="urn"),5,7,4',
+        '0:4,5,7,4,extra=input'
+      ]
+    ],
+    [
+      'stats::dweibull',
+      [
+        'input,2,7.9',
+        '1,input,7.9',
+        '1,2,input',
+        '1,2,7.9,log=input',
+        'structure(1,class="fatigue"),2,7.9',
+        '1,2,7.9,extra=input',
+        '1,sh=2,scale=7.9'
+      ]
+    ],
+    [
+      'stats::pweibull',
+      [
+        'input,2,7.9',
+        '1,input,7.9',
+        '1,2,input',
+        '1,2,7.9,lower.tail=input',
+        '1,2,7.9,log.p=input',
+        'structure(1,class="fatigue"),2,7.9',
+        '1,2,7.9,extra=input',
+        '1,sh=2,scale=7.9'
+      ]
+    ],
+    [
+      'stats::dlogis',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,log=input',
+        'structure(1,class="calibration"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,lo=.79,scale=.54'
+      ]
+    ],
+    [
+      'stats::plogis',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,lower.tail=input',
+        '1,.79,.54,log.p=input',
+        'structure(1,class="calibration"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,lo=.79,scale=.54'
+      ]
+    ],
+    [
+      'stats::dcauchy',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,log=input',
+        'structure(1,class="lorentzian"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,lo=.79,scale=.54'
+      ]
+    ],
+    [
+      'stats::pcauchy',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,lower.tail=input',
+        '1,.79,.54,log.p=input',
+        'structure(1,class="lorentzian"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,lo=.79,scale=.54'
+      ]
+    ],
+    ['nextn', ['input']],
+    [
+      'stats::nextn',
+      [
+        '17,input',
+        'factors=input,n=17',
+        'structure(17,class="padding")',
+        '17,extra=input',
+        '17,fac=2'
+      ]
+    ],
+    [
+      'stats::dlnorm',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,log=input',
+        'structure(1,class="particles"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,meanl=.79,sdlog=.54'
+      ]
+    ],
+    [
+      'stats::plnorm',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,lower.tail=input',
+        '1,.79,.54,log.p=input',
+        'structure(1,class="particles"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,meanl=.79,sdlog=.54'
+      ]
+    ],
+    [
+      'stats::dnbinom',
+      [
+        'input,2,.25',
+        '1,input,.25',
+        '1,2,input',
+        'input,2,mu=6',
+        '1,input,mu=6',
+        '1,2,mu=input',
+        '1,2,.25,log=input',
+        '1,2,mu=6,log=input',
+        'structure(1,class="ecological"),2,.25',
+        '1,2,.25,extra=input',
+        '1,2,pr=.25',
+        '1,2,m=6'
+      ]
+    ],
+    [
+      'stats::pnbinom',
+      [
+        'input,2,.25',
+        '1,input,.25',
+        '1,2,input',
+        'input,2,mu=6',
+        '1,input,mu=6',
+        '1,2,mu=input',
+        '1,2,.25,lower.tail=input',
+        '1,2,mu=6,lower.tail=input',
+        '1,2,.25,log.p=input',
+        '1,2,mu=6,log.p=input',
+        'structure(1,class="ecological"),2,.25',
+        '1,2,.25,extra=input',
+        '1,2,pr=.25',
+        '1,2,m=6'
+      ]
+    ],
+    [
+      'stats::dbeta',
+      [
+        'input,2,5',
+        '1,input,5',
+        '1,2,input',
+        '1,2,5,input',
+        '1,2,5,log=input',
+        '1,2,5,ncp=0,log=input',
+        'structure(1,class="posterior"),2,5',
+        '1,2,5,extra=input',
+        '1,shap=2,shape2=5',
+        '1,2,5,nc=0'
+      ]
+    ],
+    [
+      'stats::pbeta',
+      [
+        'input,2,5',
+        '1,input,5',
+        '1,2,input',
+        '1,2,5,input',
+        '1,2,5,lower.tail=input',
+        '1,2,5,ncp=0,lower.tail=input',
+        '1,2,5,log.p=input',
+        '1,2,5,ncp=0,log.p=input',
+        'structure(1,class="posterior"),2,5',
+        '1,2,5,extra=input',
+        '1,shap=2,shape2=5',
+        '1,2,5,nc=0'
+      ]
+    ],
+    [
+      'base::crossprod',
+      [
+        'input',
+        'input,c(1,2)',
+        'c(1,2),input',
+        'structure(c(1,2),class="spectral"),c(3,4)',
+        'c(1,2),extra=input',
+        'c(1,2),xx=input'
+      ]
+    ],
+    [
+      'base::tcrossprod',
+      [
+        'input',
+        'input,c(1,2)',
+        'c(1,2),input',
+        'structure(c(1,2),class="spectral"),c(3,4)',
+        'c(1,2),extra=input',
+        'c(1,2),xx=input'
+      ]
+    ],
+    [
+      'base::norm',
+      [
+        'input',
+        'base::tcrossprod(c(1,2),c(3,4)),input',
+        'structure(base::tcrossprod(c(1,2),c(3,4)),class="spectral")',
+        'base::tcrossprod(c(1,2),c(3,4)),extra=input',
+        'base::tcrossprod(c(1,2),c(3,4)),typ="F"',
+        'base::tcrossprod(c(1,2),c(3,4)),"2"',
+        'base::tcrossprod(c(1,2),c(3,4)),c("F","M")'
+      ]
+    ],
+    [
+      'stats::dexp',
+      [
+        'input,.79',
+        '1,input',
+        '1,.79,log=input',
+        'structure(1,class="kinetic"),.79',
+        '1,.79,extra=input',
+        '1,ra=.79'
+      ]
+    ],
+    [
+      'stats::pexp',
+      [
+        'input,.79',
+        '1,input',
+        '1,.79,lower.tail=input',
+        '1,.79,log.p=input',
+        'structure(1,class="kinetic"),.79',
+        '1,.79,extra=input',
+        '1,ra=.79'
+      ]
+    ],
+    [
+      'stats::qexp',
+      [
+        'input,.79',
+        '.5,input',
+        '.5,.79,lower.tail=input',
+        '.5,.79,log.p=input',
+        'structure(.5,class="kinetic"),.79',
+        '.5,.79,extra=input',
+        '.5,ra=.79'
+      ]
+    ],
+    [
+      'stats::dgeom',
+      [
+        'input,.25',
+        '1,input',
+        '1,.25,log=input',
+        'structure(1,class="detection"),.25',
+        '1,.25,extra=input',
+        '1,pr=.25'
+      ]
+    ],
+    [
+      'stats::pgeom',
+      [
+        'input,.25',
+        '1,input',
+        '1,.25,lower.tail=input',
+        '1,.25,log.p=input',
+        'structure(1,class="detection"),.25',
+        '1,.25,extra=input',
+        '1,pr=.25'
+      ]
+    ],
+    [
+      'stats::qgeom',
+      [
+        'input,.25',
+        '.5,input',
+        '.5,.25,lower.tail=input',
+        '.5,.25,log.p=input',
+        'structure(.5,class="detection"),.25',
+        '.5,.25,extra=input',
+        '.5,pr=.25'
+      ]
+    ],
+    [
+      'stats::dunif',
+      [
+        'input,.25,1.33',
+        '1,input,1.33',
+        '1,.25,input',
+        '1,.25,1.33,log=input',
+        'structure(1,class="calibration"),.25,1.33',
+        '1,.25,1.33,extra=input',
+        '1,mi=.25,max=1.33'
+      ]
+    ],
+    [
+      'stats::punif',
+      [
+        'input,.25,1.33',
+        '1,input,1.33',
+        '1,.25,input',
+        '1,.25,1.33,lower.tail=input',
+        '1,.25,1.33,log.p=input',
+        'structure(1,class="calibration"),.25,1.33',
+        '1,.25,1.33,extra=input',
+        '1,mi=.25,max=1.33'
+      ]
+    ],
+    [
+      'stats::qunif',
+      [
+        'input,.25,1.33',
+        '1,input,1.33',
+        '1,.25,input',
+        '1,.25,1.33,lower.tail=input',
+        '1,.25,1.33,log.p=input',
+        'structure(1,class="calibration"),.25,1.33',
+        '1,.25,1.33,extra=input',
+        '1,mi=.25,max=1.33'
+      ]
+    ],
+    [
+      'stats::qlogis',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,lower.tail=input',
+        '1,.79,.54,log.p=input',
+        'structure(1,class="calibration"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,loc=.79,scale=.54'
+      ]
+    ],
+    [
+      'stats::qhyper',
+      [
+        'input,5,7,4',
+        '.5,input,7,4',
+        '.5,5,input,4',
+        '.5,5,7,input',
+        '.5,5,7,4,lower.tail=input',
+        '.5,5,7,4,log.p=input',
+        'structure(.5,class="urn"),5,7,4',
+        '.5,5,7,4,extra=input'
+      ]
+    ],
+    [
+      'stats::qnbinom',
+      [
+        'input,2,.25',
+        '1,input,.25',
+        '1,2,input',
+        'input,2,mu=6',
+        '1,input,mu=6',
+        '1,2,mu=input',
+        '1,2,.25,lower.tail=input',
+        '1,2,mu=6,lower.tail=input',
+        '1,2,.25,log.p=input',
+        '1,2,mu=6,log.p=input',
+        'structure(1,class="ecological"),2,.25',
+        '1,2,.25,extra=input',
+        '1,2,pr=.25',
+        '1,2,m=6'
+      ]
+    ],
+    [
+      'stats::qbeta',
+      [
+        'input,2,5',
+        '1,input,5',
+        '1,2,input',
+        '1,2,5,input',
+        '1,2,5,lower.tail=input',
+        '1,2,5,ncp=0,lower.tail=input',
+        '1,2,5,log.p=input',
+        '1,2,5,ncp=0,log.p=input',
+        'structure(1,class="posterior"),2,5',
+        '1,2,5,extra=input',
+        '1,shap=2,shape2=5',
+        '1,2,5,nc=0'
+      ]
+    ],
+    [
+      'stats::qweibull',
+      [
+        'input,2,7.9',
+        '1,input,7.9',
+        '1,2,input',
+        '1,2,7.9,lower.tail=input',
+        '1,2,7.9,log.p=input',
+        'structure(1,class="fatigue"),2,7.9',
+        '1,2,7.9,extra=input',
+        '1,sh=2,scale=7.9'
+      ]
+    ],
+    [
+      'stats::qbinom',
+      [
+        'input,6,.54',
+        '.5,input,.54',
+        '.5,6,input',
+        '.5,6,.54,lower.tail=input',
+        '.5,6,.54,log.p=input',
+        'structure(.5,class="counts"),6,.54',
+        '.5,6,.54,extra=input'
+      ]
+    ],
+    [
+      'stats::qcauchy',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,lower.tail=input',
+        '1,.79,.54,log.p=input',
+        'structure(1,class="calibration"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,loc=.79,scale=.54'
+      ]
+    ],
+    [
+      'stats::qlnorm',
+      [
+        'input,.79,.54',
+        '1,input,.54',
+        '1,.79,input',
+        '1,.79,.54,lower.tail=input',
+        '1,.79,.54,log.p=input',
+        'structure(1,class="calibration"),.79,.54',
+        '1,.79,.54,extra=input',
+        '1,meanl=.79,sdlog=.54'
+      ]
+    ],
+    [
+      'stats::dwilcox',
+      [
+        'input,3,4',
+        '0:4,input,4',
+        '0:4,3,input',
+        '0:4,3,4,log=input',
+        'structure(0:4,class="ranks"),3,4',
+        '0:4,3,4,extra=input'
+      ]
+    ],
+    [
+      'stats::pwilcox',
+      [
+        'input,3,4',
+        '0:4,input,4',
+        '0:4,3,input',
+        '0:4,3,4,lower.tail=input',
+        '0:4,3,4,log.p=input',
+        'structure(0:4,class="ranks"),3,4',
+        '0:4,3,4,extra=input'
+      ]
+    ],
+    [
+      'stats::qwilcox',
+      [
+        'input,3,4',
+        '0:4,input,4',
+        '0:4,3,input',
+        '0:4,3,4,lower.tail=input',
+        '0:4,3,4,log.p=input',
+        'structure(0:4,class="ranks"),3,4',
+        '0:4,3,4,extra=input'
+      ]
+    ],
+    [
+      'stats::dsignrank',
+      [
+        'input,4',
+        '0:4,input',
+        '0:4,4,log=input',
+        'structure(0:4,class="ranks"),4',
+        '0:4,4,extra=input'
+      ]
+    ],
+    [
+      'stats::psignrank',
+      [
+        'input,4',
+        '0:4,input',
+        '0:4,4,lower.tail=input',
+        '0:4,4,log.p=input',
+        'structure(0:4,class="ranks"),4',
+        '0:4,4,extra=input'
+      ]
+    ],
+    [
+      'stats::qsignrank',
+      [
+        'input,4',
+        '0:4,input',
+        '0:4,4,lower.tail=input',
+        '0:4,4,log.p=input',
+        'structure(0:4,class="ranks"),4',
+        '0:4,4,extra=input'
+      ]
+    ]
+  ]
+
+  it.each(unprovedCalls.flatMap(([name, args]) => args.map((value) => [name, value] as const)))(
+    'withdraws file and ownership authority across %s(%s)',
+    async (name, args) => {
+      const source = setup + `unproved_result<-${name}(${args})` + tail
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['cache.rds'],
+        externalState: 'partial'
+      })
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.serializedValueWrites ?? []).toEqual([])
+      expect(facts.copyOnModifyNames ?? []).not.toContain('cached')
+    }
+  )
+
+  const unprovedStatements = [
+    'result<-{base::cut(input,c(1,2,3),labels=FALSE)}',
+    'result<-{base::cut(structure(c(1,2),class="bins"),c(1,2,3),labels=FALSE)}',
+    'result<-{base::cut(c(1,2),breaks,labels=FALSE)}',
+    'result<-{base::cut(c(1,2),3,labels=FALSE)}',
+    'result<-{base::cut(c(1,2),c(1,2,3))}',
+    'result<-{base::cut(c(1,2),c(1,2,3),labels=FALSE,right=flag)}',
+    'result<-{base::cut(c(1,2),c(1,2,3),labels=FALSE,unknown=TRUE)}',
+    'result<-{cut.double<-function(...)new.env();base::cut(c(1,2),c(1,2,3),labels=FALSE)}',
+    'result<-{cut.default<-function(...)new.env();base::cut(c(1,2),c(1,2,3),labels=FALSE)}',
+    'result<-{anyDuplicated.double<-function(...)0L;base::cut(c(1,2),c(1,2,3),labels=FALSE)}',
+    'result<-{base::unique(input)}',
+    'result<-{base::unique(structure(c(1,2,1),class="replicates"))}',
+    'result<-{base::unique(c(1,2,1),incomparables=excluded)}',
+    'result<-{base::unique(c(1,2,1),fromLast=flag)}',
+    'result<-{base::unique(c(1,2,1),nmax=limit)}',
+    'result<-{base::unique(c(1,2,1),unknown=TRUE)}',
+    'result<-{unique.double<-function(...)new.env();base::unique(c(1,2,1))}',
+    'result<-{unique.default<-function(...)new.env();base::unique(c(1,2,1))}',
+    'result<-{base::rev(input)}',
+    'result<-{base::rev(structure(c(1,2),class="sequence"))}',
+    'result<-{base::rev(c(1,2),extra=unknown)}',
+    'result<-{rev.double<-function(...)new.env();base::rev(c(1,2))}',
+    'result<-{rev.default<-function(...)new.env();base::rev(c(1,2))}',
+    'factor<-input;callback<-function(x,y){path<<-"new.txt";x*y*factor};product<-base::outer(c(1,2),c(3,4),FUN=callback)',
+    'scale.double<-function(...)external(input);z<-base::scale(c(1,2,3))',
+    'scale.default<-function(...)external(input);z<-base::scale(c(1,2,3))',
+    'as.matrix.double<-function(...)external(input);z<-base::scale(c(1,2,3))',
+    'quantile.default<-function(...)external(input);fit<-stats::quantile(c(1,2,3),probs=.5)',
+    'median.double<-function(...)external(input);fit<-stats::mad(c(1,2,3))',
+    'diff.double<-function(...)external(input);fit<-stats::IQR(c(1,2,3))',
+    'diff.double<-function(...)external(input);fit<-base::diff(c(1,2,3))',
+    'diff.default<-function(...)external(input);fit<-base::diff(c(1,2,3))',
+    'weighted.mean.double<-function(...)external(input);fit<-stats::weighted.mean(c(1,2,3),c(1,0,2))',
+    'sort.double<-function(...)external(input);fit<-stats::fivenum(c(1,2,3))',
+    'mean.double<-function(...)external(input);fit<-base::mean(c(1,2,3),trim=.2)',
+    'median.double<-function(...)external(input);fit<-stats::median(c(1,2,3))',
+    'all.equal.double<-function(...)external(input);fit<-base::all.equal(c(1,2),c(1,3),check.attributes=FALSE)',
+    'format.double<-function(...)external(input);fit<-base::all.equal.numeric(c(1,2),c(1,3),check.attributes=FALSE)',
+    'unique.numeric<-function(...)input;grouped<-base::rowsum(c(1,2,3),c(2,1,2))',
+    'unique.default<-function(...)input;grouped<-base::rowsum(c(1,2,3),c(2,1,2))',
+    'sort.numeric<-function(...)input;grouped<-base::rowsum(c(1,2,3),c(2,1,2))',
+    'sort.default<-function(...)input;grouped<-base::rowsum(c(1,2,3),c(2,1,2))',
+    'unique.numeric<-function(...)input;grouped<-base::rowsum.default(c(1,2,3),c(2,1,2))',
+    'unique.default<-function(...)input;grouped<-base::rowsum.default(c(1,2,3),c(2,1,2))',
+    'sort.numeric<-function(...)input;grouped<-base::rowsum.default(c(1,2,3),c(2,1,2))',
+    'sort.default<-function(...)input;grouped<-base::rowsum.default(c(1,2,3),c(2,1,2))',
+    'diff.integer<-function(...)input;encoded<-base::rle(c(1,0,0))',
+    'diff.numeric<-function(...)input;encoded<-base::rle(c(1,0,0))',
+    'diff.double<-function(...)input;encoded<-base::rle(c(1,0,0))',
+    'diff.default<-function(...)input;encoded<-base::rle(c(1,0,0))',
+    'duplicated.numeric<-function(...)input;values<-base::duplicated(c(4,4,4,2,0,0))',
+    'duplicated.integer<-function(...)input;values<-base::duplicated(c(4,4,4,2,0,0))',
+    'duplicated.double<-function(...)input;values<-base::duplicated(c(4,4,4,2,0,0))',
+    'duplicated.default<-function(...)input;values<-base::duplicated(c(4,4,4,2,0,0))',
+    'anyDuplicated.numeric<-function(...)input;values<-base::anyDuplicated(c(4,4,4,2,0,0))',
+    'anyDuplicated.integer<-function(...)input;values<-base::anyDuplicated(c(4,4,4,2,0,0))',
+    'anyDuplicated.double<-function(...)input;values<-base::anyDuplicated(c(4,4,4,2,0,0))',
+    'anyDuplicated.default<-function(...)input;values<-base::anyDuplicated(c(4,4,4,2,0,0))',
+    'diffinv.numeric<-function(...)input;values<-stats::diffinv(c(.79,.54),xi=.54)',
+    'diffinv.integer<-function(...)input;values<-stats::diffinv(c(.79,.54),xi=.54)',
+    'diffinv.double<-function(...)input;values<-stats::diffinv(c(.79,.54),xi=.54)',
+    'diffinv.default<-function(...)input;values<-stats::diffinv(c(.79,.54),xi=.54)',
+    'sequence.numeric<-function(...)input;values<-base::sequence(c(3,0,2))',
+    'sequence.integer<-function(...)input;values<-base::sequence(c(3,0,2))',
+    'sequence.double<-function(...)input;values<-base::sequence(c(3,0,2))',
+    'sequence.default<-function(...)input;values<-base::sequence(c(3,0,2))',
+    'as.matrix.numeric<-function(x,...){path<<-"new.txt";stop("method")};value<-base::max.col(matrix(c(1,2,2,1),2,2),"first")',
+    'as.matrix.double<-function(x,...){path<<-"new.txt";stop("method")};value<-base::max.col(matrix(c(1,2,2,1),2,2),"first")',
+    'as.matrix.integer<-function(x,...){path<<-"new.txt";stop("method")};value<-base::max.col(matrix(c(1,2,2,1),2,2),"first")',
+    'as.matrix.default<-function(x,...){path<<-"new.txt";stop("method")};value<-base::max.col(matrix(c(1,2,2,1),2,2),"first")'
+  ]
+  it.each(unprovedStatements)(
+    'preserves method and callback uncertainty: %s',
+    async (statement) => {
+      const source = setup + statement + tail
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['cache.rds'],
+        externalState: 'partial'
+      })
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.serializedValueWrites ?? []).toEqual([])
+      expect(facts.copyOnModifyNames ?? []).not.toContain('cached')
+    }
+  )
+
+  // The original assertions supply the result contracts; matrices and rle
+  // records deliberately receive ownership without ordinary-vector promotion.
+  const primitiveCalls: ReadonlyArray<
+    readonly [string, string, readonly string[], readonly string[]]
+  > = [
+    ['apply', 'base::apply(matrix(1:6,nrow=2),1,function(v) sum(v))', [], []],
+    ['rev', 'result<-rev(c("a","b"))', [], ['cached']],
+    ['pmin', 'result<-pmin(c(1,2),c(2,1),na.rm=TRUE)', [], ['cached']],
+    ['pmax', 'result<-pmax(c(1,2),c(2,1),na.rm=TRUE)', [], ['cached']],
+    ['log1p', 'result<-log1p(x=c(1,2))', [], ['cached']],
+    ['expm1', 'result<-expm1(x=c(1,2))', [], ['cached']],
+    ['round', 'result<-round(x=c(1,2))', [], ['cached']],
+    ['signif', 'result<-signif(x=c(1,2))', [], ['cached']],
+    ['sqrt', 'result<-sqrt(x=c(1,2))', [], ['cached']],
+    ['abs', 'result<-abs(x=c(1,2))', [], ['cached']],
+    ['sin', 'result<-sin(x=c(1,2))', [], ['cached']],
+    ['cos', 'result<-cos(x=c(1,2))', [], ['cached']],
+    ['floor', 'result<-floor(x=c(1,2))', [], ['cached']],
+    ['ceiling', 'result<-ceiling(x=c(1,2))', [], ['cached']],
+    ['exp', 'result<-exp(x=c(1,2))', [], ['cached']],
+    ['log', 'result<-log(x=c(1,2))', [], ['cached']],
+    ['logb', 'values<-base::logb(c(1,2),-1);total<-base::sum(values)', ['values', 'total'], []],
+    [
+      'pmax.int',
+      'values<-base::pmax.int(c(NA_real_,-Inf,.54,Inf),.54);total<-base::sum(values,na.rm=TRUE)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'pmin.int',
+      'values<-base::pmin.int(c(NA_real_,-Inf,.54,Inf),.54);total<-base::sum(values,na.rm=TRUE)',
+      ['values', 'total'],
+      []
+    ],
+    ['anyNA', 'flag<-base::anyNA(c(NA_real_,1));total<-base::sum(flag)', ['flag', 'total'], []],
+    [
+      '.rowSums',
+      'values<-base::.rowSums(c(1,2,3,4,5,6),3,2);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      '.colSums',
+      'values<-base::.colSums(c(1,2,3,4,5,6),3,2);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      '.rowMeans',
+      'values<-base::.rowMeans(c(1,2,3,4,5,6),3,2);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      '.colMeans',
+      'values<-base::.colMeans(c(1,2,3,4,5,6),3,2);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    ['outer', 'product<-base::outer(numeric(),c(.85,.55))', [], ['product', 'cached']],
+    ['rowsum', 'grouped<-base::rowsum(c(.79,.54,.74),c(1,0,2))', [], ['grouped', 'cached']],
+    [
+      'rowsum.default',
+      'grouped<-base::rowsum.default(c(.79,.54,.74),c(1,0,2))',
+      [],
+      ['grouped', 'cached']
+    ],
+    ['rle', 'encoded<-base::rle(numeric())', [], ['encoded', 'cached']],
+    [
+      'is.unsorted',
+      'value<-base::is.unsorted(c(3,5,5));total<-base::sum(value)',
+      ['value', 'total'],
+      []
+    ],
+    [
+      'duplicated',
+      'values<-base::duplicated(c(4,4,4,2,0,0));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'anyDuplicated',
+      'values<-base::anyDuplicated(c(4,4,4,2,0,0));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'sort.list',
+      'values<-base::sort.list(numeric());total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'diffinv',
+      'values<-stats::diffinv(c(.79,.54));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'inverse.rle',
+      'values<-base::inverse.rle(list(lengths=c(2,0,3),values=c(3,2,4)));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'sequence',
+      'values<-base::sequence(c(3,0,2,1));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'sequence.default',
+      'values<-base::sequence.default(c(3,0,2,1));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    ['lengths', 'counts<-base::lengths(list());total<-base::sum(counts)', ['counts', 'total'], []],
+    [
+      '.subset',
+      'values<-base::.subset(c(.79,.54,.74),2L);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      '.subset2',
+      'values<-base::.subset2(c(.79,.54,.74),2L);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'match',
+      'values<-base::match(c(4,3,2,4),c(2,4,1,4));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    ['seq.int', 'values<-base::seq.int(1,3);total<-base::sum(values)', ['values', 'total'], []],
+    [
+      'rep.int',
+      'values<-base::rep.int(c(1,2,3),2);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'rep_len',
+      'values<-base::rep_len(c(1,2,3),2);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    ['matrix', 'values<-base::matrix()', [], ['values']],
+    [
+      'max.col',
+      'values<-base::max.col(c(1,2),ties.method="first");counts<-base::tabulate(values,2);total<-base::sum(counts)',
+      ['values', 'counts', 'total'],
+      []
+    ],
+    [
+      'findInterval',
+      'values<-base::findInterval(c(0,1,2,3,4,5),c(1,2,2,4));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'tabulate',
+      'values<-base::tabulate(c(4,3,3,3,2,4));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      '.bincode',
+      'values<-base::.bincode(c(.5,1),c(0,1,2));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'append',
+      'values<-base::append(c(1,2),c(4,5));total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    ['log2', 'result<-log2(x=c(1,2))', [], ['cached']],
+    ['log10', 'result<-log10(x=c(1,2))', [], ['cached']],
+    ['sign', 'result<-sign(x=c(1,2))', [], ['cached']],
+    ['trunc', 'result<-trunc(x=c(1,2))', [], ['cached']],
+    ['tan', 'result<-tan(x=c(1,2))', [], ['cached']],
+    ['atan', 'result<-atan(x=c(1,2))', [], ['cached']],
+    ['asin', 'result<-asin(x=c(0.1,0.2))', [], ['cached']],
+    ['acos', 'result<-acos(x=c(0.1,0.2))', [], ['cached']],
+    ['sinh', 'result<-sinh(x=c(0.1,0.2))', [], ['cached']],
+    ['cosh', 'result<-cosh(x=c(0.1,0.2))', [], ['cached']],
+    ['tanh', 'result<-tanh(x=c(0.1,0.2))', [], ['cached']],
+    ['atanh', 'result<-atanh(x=c(0.1,0.2))', [], ['cached']],
+    ['atan2', 'values<-atan2(y=1,x=c(-0.2,-0.4));total<-base::sum(values)', ['values'], []],
+    ['gamma', 'result<-gamma(x=c(0.1,0.2))', [], ['cached']],
+    ['lgamma', 'result<-lgamma(x=c(0.1,0.2))', [], ['cached']],
+    ['beta', 'values<-beta(a=1,b=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['lbeta', 'values<-lbeta(a=1,b=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['choose', 'values<-choose(n=1,k=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['lchoose', 'values<-lchoose(n=1,k=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['factorial', 'result<-factorial(x=c(0.1,0.2))', [], ['cached']],
+    ['lfactorial', 'result<-lfactorial(x=c(0.1,0.2))', [], ['cached']],
+    ['digamma', 'result<-digamma(x=c(0.1,0.2))', [], ['cached']],
+    ['trigamma', 'result<-trigamma(x=c(0.1,0.2))', [], ['cached']],
+    ['Mod', 'result<-Mod(z=c(1+2i,-1+2i))', [], ['cached']],
+    ['Arg', 'result<-Arg(z=c(1+2i,-1+2i))', [], ['cached']],
+    ['asinh', 'result<-asinh(x=c(0.1,0.2))', [], ['cached']],
+    ['acosh', 'result<-acosh(x=c(0.1,0.2))', [], ['cached']],
+    ['Conj', 'result<-Conj(z=c(1+2i,-1+2i))', [], ['cached']],
+    ['Re', 'result<-Re(z=c(1+2i,-1+2i))', [], ['cached']],
+    ['Im', 'result<-Im(z=c(1+2i,-1+2i))', [], ['cached']],
+    ['besselJ', 'values<-besselJ(x=1,nu=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['besselY', 'values<-besselY(x=1,nu=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['psigamma', 'values<-psigamma(c(43,55,NA_real_));total<-base::sum(values)', ['values'], []],
+    ['besselI', 'values<-besselI(x=1,nu=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['besselK', 'values<-besselK(x=1,nu=c(0.2,0.4));total<-base::sum(values)', ['values'], []],
+    ['zapsmall', 'values<-zapsmall(c(1,1e-10),6);total<-base::sum(values)', ['values'], []],
+    ['fft', 'values<-fft(c(1+2i,3-1i));total<-base::sum(values)', ['values'], []],
+    ['polyroot', 'result<-polyroot(z=c(1+2i,-1+2i))', [], ['cached']],
+    ['convolve', 'value<-stats::convolve(c(1,2),c(2,1));total<-base::sum(value)', ['value'], []],
+    ['dbinom', 'values<-stats::dbinom(0:6,6,.54);total<-base::sum(values)', ['values'], []],
+    ['pbinom', 'values<-stats::pbinom(0:6,6,.54);total<-base::sum(values)', ['values'], []],
+    ['dhyper', 'values<-stats::dhyper(0:4,5,7,4);total<-base::sum(values)', ['values'], []],
+    ['phyper', 'values<-stats::phyper(0:4,5,7,4);total<-base::sum(values)', ['values'], []],
+    ['dweibull', 'values<-stats::dweibull(1,2);total<-base::sum(values)', ['values'], []],
+    ['pweibull', 'values<-stats::pweibull(1,2);total<-base::sum(values)', ['values'], []],
+    ['dlogis', 'values<-stats::dlogis(1);total<-base::sum(values)', ['values'], []],
+    ['plogis', 'values<-stats::plogis(1);total<-base::sum(values)', ['values'], []],
+    ['dcauchy', 'values<-stats::dcauchy(1);total<-base::sum(values)', ['values'], []],
+    ['pcauchy', 'values<-stats::pcauchy(1);total<-base::sum(values)', ['values'], []],
+    ['nextn', 'f<-c(2,3,5);n<-stats::nextn(17,f)', [], []],
+    ['dlnorm', 'values<-stats::dlnorm(1);total<-base::sum(values)', ['values'], []],
+    ['plnorm', 'values<-stats::plnorm(1);total<-base::sum(values)', ['values'], []],
+    [
+      'dnbinom',
+      'values<-stats::dnbinom(1,2,.25);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    [
+      'pnbinom',
+      'values<-stats::pnbinom(1,2,.25);total<-base::sum(values)',
+      ['values', 'total'],
+      []
+    ],
+    ['dbeta', 'values<-stats::dbeta(.5,2,5);total<-base::sum(values)', ['values', 'total'], []],
+    ['pbeta', 'values<-stats::pbeta(.5,2,5);total<-base::sum(values)', ['values', 'total'], []],
+    ['crossprod', 'values<-base::crossprod(c(1,2))', [], ['values']],
+    ['tcrossprod', 'values<-base::tcrossprod(c(1,2))', [], ['values']],
+    ['norm', 'value<-base::norm(type="F",x=base::tcrossprod(c(1,2),c(3,4)))', [], []],
+    ['dexp', 'value<-stats::dexp(1);total<-base::sum(value)', ['value', 'total'], []],
+    ['pexp', 'value<-stats::pexp(1);total<-base::sum(value)', ['value', 'total'], []],
+    ['qexp', 'value<-stats::qexp(.5);total<-base::sum(value)', ['value', 'total'], []],
+    ['dgeom', 'value<-stats::dgeom(1,.25);total<-base::sum(value)', ['value', 'total'], []],
+    ['pgeom', 'value<-stats::pgeom(1,.25);total<-base::sum(value)', ['value', 'total'], []],
+    ['qgeom', 'value<-stats::qgeom(.5,.25);total<-base::sum(value)', ['value', 'total'], []],
+    ['dunif', 'values<-stats::dunif(1);total<-base::sum(values)', ['values'], []],
+    ['punif', 'values<-stats::punif(1);total<-base::sum(values)', ['values'], []],
+    ['qunif', 'values<-stats::qunif(1);total<-base::sum(values)', ['values'], []],
+    ['qlogis', 'value<-stats::qlogis(1);total<-base::sum(value)', ['value', 'total'], []],
+    ['qhyper', 'values<-stats::qhyper(0,5,7,4);total<-base::sum(values)', ['values', 'total'], []],
+    ['qnbinom', 'values<-stats::qnbinom(0,3,.4);total<-base::sum(values)', ['values', 'total'], []],
+    ['qbeta', 'values<-stats::qbeta(0,2,5);total<-base::sum(values)', ['values', 'total'], []],
+    ['qweibull', 'values<-stats::qweibull(1,2);total<-base::sum(values)', ['values'], []],
+    ['qbinom', 'values<-stats::qbinom(0,8,.25);total<-base::sum(values)', ['values', 'total'], []],
+    ['qcauchy', 'value<-stats::qcauchy(1);total<-base::sum(value)', ['value', 'total'], []],
+    ['qlnorm', 'value<-stats::qlnorm(1);total<-base::sum(value)', ['value', 'total'], []],
+    ['dwilcox', 'values<-stats::dwilcox(0:4,3,4);total<-base::sum(values)', ['values'], []],
+    ['pwilcox', 'values<-stats::pwilcox(0:4,3,4);total<-base::sum(values)', ['values'], []],
+    ['qwilcox', 'values<-stats::qwilcox(0:4,3,4);total<-base::sum(values)', ['values'], []],
+    ['dsignrank', 'values<-stats::dsignrank(0:4,4);total<-base::sum(values)', ['values'], []],
+    ['psignrank', 'values<-stats::psignrank(0:4,4);total<-base::sum(values)', ['values'], []],
+    ['qsignrank', 'values<-stats::qsignrank(0:4,4);total<-base::sum(values)', ['values'], []]
+  ]
+  it.each(primitiveCalls)(
+    'retains bounded %s effects and result proof',
+    async (_name, statement, atomic, owned) => {
+      const source = setup + statement + tail
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['old.txt'],
+        externalState: 'complete'
+      })
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.rAtomicValueNames ?? []).toEqual(expect.arrayContaining([...atomic]))
+      expect(facts.copyOnModifyNames ?? []).toEqual(expect.arrayContaining([...owned]))
+    }
+  )
+
+  // Revoke both before and after evaluating an argument that rewrites a cache.
+  it.each([
+    'base::round(input)',
+    'stats::qbeta(.5,2,input)',
+    'base::duplicated(c(1,1),fromLast=input)',
+    'base::sequence(c(2,1),from=input)',
+    'base::rowsum.default(c(1,2),input,reorder=FALSE)'
+  ])('withdraws writes produced while forcing %s', async (call) => {
+    const expression = call.replace('input', '{base::saveRDS(8,"cache.rds");input}')
+    expect((await analyzeRNotebookSource(expression)).facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it.each([false, true])(
+    'rebuilds failed scientific authority after reopening warm=%s',
+    async (precompute) => {
+      for (const call of [
+        'stats::smooth.spline(input,1:4)',
+        'base::round(input)',
+        'stats::qbeta(.5,2,input)',
+        'base::rle(input)'
+      ]) {
+        const context = await fileContext(
+          'r',
+          ['path<-"old.txt"', call],
+          [{}, { status: 'failed', kernelDispatched: true }],
+          precompute
+        )
+        expect(
+          (await analyzeNotebookSourceFileAccess('r', 'base::readLines(path)', context)).reads
+        ).toEqual([])
+      }
+    }
+  )
+
+  it.each([false, true])('retains a failed implicit method binding warm=%s', async (precompute) => {
+    const context = await fileContext(
+      'r',
+      ['diff.integer<-function(...)input;stop("after binding")'],
+      [{ status: 'failed', kernelDispatched: true }],
+      precompute
+    )
+    const source =
+      'encoded<-base::rle(c(1,0,0));base::saveRDS(encoded,"encoded.rds",compress=FALSE)'
+    expect((await analyzeNotebookSourceFileAccess('r', source, context)).externalState).toBe(
+      'partial'
+    )
+    expect(
+      (await analyzeRNotebookSource(source, context)).facts.copyOnModifyNames ?? []
+    ).not.toContain('encoded')
   })
 })

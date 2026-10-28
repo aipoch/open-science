@@ -51,7 +51,9 @@ import type { ImageInputCompatibilityPort } from './image-input-compatibility-po
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
-import type { AcpTurnSkillHooks } from './turn-skill-owner'
+import type { AcpSpecialistResolutionContext, AcpTurnSkillHooks } from './turn-skill-owner'
+
+export type { AcpSpecialistResolutionContext } from './turn-skill-owner'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateUpdate) => void
@@ -287,7 +289,10 @@ export type AcpRuntimeOptions = {
   // Re-resolves capabilities from the latest Specialist profile and installed catalog. This is
   // intentionally separate from Main Agent enablement: a Main-disabled installed Skill remains
   // eligible for a Specialist.
-  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  resolveSpecialistSkills?: (
+    specialistId: string,
+    context?: AcpSpecialistResolutionContext
+  ) => Promise<EffectiveSpecialistSkills>
   // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
   // projectId carries the Project id. Returns undefined when absent or on lookup failure.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>

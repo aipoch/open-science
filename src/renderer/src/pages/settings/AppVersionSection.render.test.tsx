@@ -68,11 +68,13 @@ describe('AppVersionSection', () => {
     })
 
     const links = Array.from(container.querySelectorAll('a'))
-    expect(links).toHaveLength(3)
+    expect(links).toHaveLength(5)
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      'https://aipoch.com/open-science/download',
       'https://www.aipoch.com/docs/',
       'https://github.com/aipoch/open-science/releases',
-      'https://github.com/aipoch/open-science/blob/main/LICENSE'
+      'https://github.com/aipoch/open-science/blob/main/LICENSE',
+      'https://github.com/aipoch/open-science/blob/main/SECURITY.md'
     ])
     expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
   })
@@ -100,6 +102,14 @@ describe('AppVersionSection', () => {
     expect(link.getAttribute('aria-label')).toBe(i18next.t('Open Help Center in your browser'))
     expect(link.target).toBe('_blank')
     expect(link.rel).toBe('noreferrer')
+
+    const security = container.querySelector<HTMLAnchorElement>(
+      'a[href="https://github.com/aipoch/open-science/blob/main/SECURITY.md"]'
+    )!
+    expect(security.getAttribute('aria-label')).toBe(i18next.t('Security'))
+    expect(security.textContent).toContain(
+      i18next.t('Read the security policy and report vulnerabilities.')
+    )
   })
 
   it('updates the existing help link after a language switch and resolves System through the app', async () => {
@@ -126,16 +136,16 @@ describe('AppVersionSection', () => {
       root.render(<AppVersionSection />)
     })
 
-    const links = Array.from(container.querySelectorAll('a'))
+    const links = Array.from(container.querySelectorAll('a.group'))
     const icons = Array.from(container.querySelectorAll('[data-slot="about-resource-icon"]'))
     const titles = Array.from(container.querySelectorAll('[data-slot="about-resource-title"]'))
     const descriptions = Array.from(
       container.querySelectorAll('[data-slot="about-resource-description"]')
     )
 
-    expect(links).toHaveLength(3)
+    expect(links).toHaveLength(4)
     expect(links.every((link) => link.classList.contains('group'))).toBe(true)
-    expect(icons).toHaveLength(3)
+    expect(icons).toHaveLength(4)
     expect(
       icons.every(
         (icon) =>
@@ -143,7 +153,7 @@ describe('AppVersionSection', () => {
           icon.classList.contains('group-focus-visible:text-primary')
       )
     ).toBe(true)
-    expect(titles).toHaveLength(3)
+    expect(titles).toHaveLength(4)
     expect(titles.every((title) => !title.classList.contains('translate-y-2.5'))).toBe(true)
     expect(
       titles.every(
@@ -158,7 +168,7 @@ describe('AppVersionSection', () => {
           title.classList.contains('[@media(any-pointer:coarse)]:!translate-y-0')
       )
     ).toBe(true)
-    expect(descriptions).toHaveLength(3)
+    expect(descriptions).toHaveLength(4)
     expect(descriptions.every((description) => !description.classList.contains('opacity-0'))).toBe(
       true
     )
@@ -290,3 +300,35 @@ it('shows a rejected update action while preserving the ready installer action',
   expect(container.querySelector('[role="alert"]')?.textContent).toContain('IPC unavailable')
   expect(useUpdateStore.getState().status.state).toBe('ready')
 })
+
+it.each(['idle', 'checking', 'up-to-date', 'error'] as const)(
+  'keeps official download and instructions available while %s',
+  (state) => {
+    const check = vi.fn(async () => {})
+    const download = vi.fn(async () => {})
+    const apply = vi.fn(async () => {})
+    useUpdateStore.setState({ check, download, apply, status: { state, current: '0.2.0' } })
+    act(() => root.render(<AppVersionSection />))
+    const resources = container.querySelector('[data-testid="manual-update-links"]')!
+    expect(resources.querySelector('a')?.getAttribute('href')).toBe(
+      'https://aipoch.com/open-science/download'
+    )
+    const instructions = resources.querySelector<HTMLButtonElement>('button')!
+    expect(instructions.disabled).toBe(false)
+    act(() => instructions.click())
+    const back = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Back to settings"]'
+    )!
+    expect(document.activeElement).toBe(back)
+    act(() =>
+      back.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    )
+    expect(document.activeElement).toBe(instructions)
+    expect(container.querySelector('[data-manual-update-guide]')).toBeNull()
+    expect(check).not.toHaveBeenCalled()
+    expect(download).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+  }
+)

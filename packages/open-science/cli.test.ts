@@ -22,7 +22,9 @@ import {
   reportCliError,
   runCli,
   runTaskCommand,
-  startCommand
+  startCommand,
+  stopCommand,
+  statusCommand
 } from './cli.mjs'
 
 const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
@@ -637,7 +639,9 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['codex', 'login', 'extra'])).toThrow(
       'codex login accepts no arguments.'
     )
-    expect(() => parseCliArgs(['status', '--force'])).toThrow('--force requires codex login.')
+    expect(() => parseCliArgs(['status', '--force'])).toThrow(
+      '--force requires stop or codex login.'
+    )
     expect(
       parseCliArgs([
         'run',
@@ -1972,13 +1976,13 @@ describe('task CLI', () => {
       }
     )
 
-    expect(warn).toHaveBeenCalledWith(
-      'Run event stream stopped: Open-Science event stream timed out after 30000 milliseconds. Final Run state will still be read from Open-Science.'
-    )
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
       id: 'run-1',
       status: 'failed',
       error: 'Provider failed'
+    })
+    expect(JSON.parse(warn.mock.calls[0][0])).toEqual({
+      warning: { code: 'event_stream_stopped', message: streamFailure.message }
     })
     expect(setExitCode).toHaveBeenCalledWith(1)
   })
@@ -2058,8 +2062,9 @@ describe('task CLI', () => {
       )
     ).rejects.toMatchObject({
       code: 'timeout',
-      message:
-        'Timed out waiting for run run-1. Server run cancellation also failed: daemon disconnected',
+      message: expect.stringContaining(
+        'Timed out waiting for run run-1. Server run cancellation also failed: daemon disconnected'
+      ),
       cause: cancelError
     })
   })
@@ -2208,5 +2213,407 @@ describe('Session package CLI', () => {
         { timeoutMs: 7200000 }
       )
     }
+  })
+})
+
+describe('service interruption results', () => {
+  it.each(['ready', 'create'])(
+    'releases event resources when stream %s fails before submission',
+    async (phase) => {
+      const failure = Object.assign(new Error('Event stream setup failed.'), { code: 'timeout' })
+      let signal: AbortSignal | undefined
+      const release = vi.fn().mockResolvedValue({ done: true })
+      const startRun = vi.fn()
+      await expect(
+        runTaskCommand(
+          parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait']),
+          {
+            connect: async () => ({
+              listProjects,
+              startRun,
+              events: (options: { signal: AbortSignal }) => {
+                signal = options.signal
+                if (phase === 'create') throw failure
+                return { ready: Promise.reject(failure), return: release }
+              }
+            }),
+            stdinIsTTY: true
+          }
+        )
+      ).rejects.toBe(failure)
+      expect(signal?.aborted).toBe(true)
+      expect(startRun).not.toHaveBeenCalled()
+      expect(failure).not.toHaveProperty('completionStatus')
+      expect(failure).not.toHaveProperty('runId')
+      if (phase === 'ready') expect(release).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('retains an acknowledged run ID when terminal state cannot be read, preserving the original error code', async () => {
+    const failure = Object.assign(new Error('The local service is stopping.'), {
+      code: 'command-unavailable',
+      status: 503
+    })
+    const startRun = vi
+      .fn()
+      .mockResolvedValue({ id: 'run-accepted', sessionId: 'session-1', status: 'running' })
+    await expect(
+      runTaskCommand(
+        parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait', '--json']),
+        {
+          connect: async () => ({
+            listProjects,
+            startRun,
+            waitForRun: async () => {
+              throw failure
+            }
+          }),
+          stdinIsTTY: true
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'command-unavailable',
+      status: 503,
+      runId: 'run-accepted',
+      completionStatus: 'unconfirmed'
+    })
+    expect(startRun).toHaveBeenCalledOnce()
+    const error = vi.fn(),
+      setExitCode = vi.fn()
+    reportCliError(failure, ['run', '--json'], { error, setExitCode })
+    expect(JSON.parse(error.mock.calls[0][0]).error.code).toBe('command-unavailable')
+    expect(setExitCode).toHaveBeenCalledWith(1)
+  })
+
+  it('keeps a known submission rejection distinct from a lost submission response', async () => {
+    const failure = Object.assign(new Error('The local service is stopping.'), {
+      code: 'command-unavailable',
+      status: 503
+    })
+    const startRun = vi.fn().mockRejectedValue(failure)
+    await expect(
+      runTaskCommand(parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--json']), {
+        connect: async () => ({ listProjects, startRun }),
+        stdinIsTTY: true
+      })
+    ).rejects.toBe(failure)
+    expect(failure).not.toHaveProperty('completionStatus')
+    expect(failure).not.toHaveProperty('runId')
+    expect(startRun).toHaveBeenCalledOnce()
+  })
+
+  it('returns nonzero for a cancelled wait while keeping a successful cancel command successful', async () => {
+    const cancelled = { id: 'run-1', sessionId: 'session-1', status: 'cancelled' }
+    const client = {
+      listProjects,
+      startRun: async () => ({ ...cancelled, status: 'running' }),
+      waitForRun: async () => cancelled,
+      cancelRun: async () => cancelled
+    }
+    const setExitCode = vi.fn(),
+      log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait', '--json']),
+      {
+        connect: async () => client,
+        stdinIsTTY: true,
+        setExitCode,
+        log
+      }
+    )
+    expect(setExitCode).toHaveBeenCalledExactlyOnceWith(1)
+    setExitCode.mockClear()
+    await runTaskCommand(parseCliArgs(['run', 'cancel', 'run-1', '--json']), {
+      connect: async () => client,
+      setExitCode,
+      log
+    })
+    expect(setExitCode).not.toHaveBeenCalled()
+  })
+
+  it.each(['text', 'json'])('explains submit-only Plan attention in %s output', async (format) => {
+    const started = {
+      id: 'run-1',
+      sessionId: 'session-1',
+      status: 'running',
+      attention: { kind: 'plan-approval', plan: { artifactVersionId: 'plan-1', revision: 1 } }
+    }
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs([
+        'run',
+        '--project',
+        'Research',
+        '--prompt',
+        'work',
+        ...(format === 'text' ? [] : [`--${format}`])
+      ]),
+      {
+        connect: async () => ({ listProjects, startRun: async () => started }),
+        stdinIsTTY: true,
+        log
+      }
+    )
+    if (format === 'text') {
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('waiting for Plan approval'))
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining('Exiting the App may interrupt this work')
+      )
+    } else {
+      expect(log).toHaveBeenCalledOnce()
+      expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+        id: 'run-1',
+        submissionStatus: 'submitted-not-completed',
+        next: ['run', 'status', 'run-1'],
+        notice: expect.stringContaining('Exiting the App')
+      })
+    }
+  })
+
+  it.each([true, false])(
+    'reports an unconfirmed result without fabricating an ID (submitted=%s)',
+    async (submitted) => {
+      const failure = Object.assign(new Error('Local service disconnected.'), {
+        code: 'daemon_unavailable'
+      })
+      const client = {
+        listProjects,
+        startRun: submitted
+          ? vi
+              .fn()
+              .mockResolvedValue({ id: 'run-observed', sessionId: 'session-1', status: 'running' })
+          : vi.fn().mockRejectedValue(failure),
+        waitForRun: vi.fn().mockRejectedValue(failure)
+      }
+      await expect(
+        runTaskCommand(
+          parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait', '--json']),
+          {
+            connect: async () => client,
+            stdinIsTTY: true
+          }
+        )
+      ).rejects.toBe(failure)
+      expect(failure).toMatchObject({
+        code: 'daemon_unavailable',
+        completionStatus: submitted ? 'unconfirmed' : 'submission-unconfirmed'
+      })
+      if (submitted) expect(failure).toHaveProperty('runId', 'run-observed')
+      else expect(failure).not.toHaveProperty('runId')
+      expect(client.startRun).toHaveBeenCalledOnce()
+      const error = vi.fn()
+      const setExitCode = vi.fn()
+      reportCliError(failure, ['run', '--json'], { error, setExitCode })
+      expect(JSON.parse(error.mock.calls[0][0]).error.completionStatus).toBe(
+        submitted ? 'unconfirmed' : 'submission-unconfirmed'
+      )
+      expect(setExitCode).not.toHaveBeenCalledWith(0)
+    }
+  )
+
+  it('returns a confirmed terminal outcome even if the advisory event iterator never closes', async () => {
+    const client = {
+      listProjects,
+      events: () => ({
+        ready: Promise.resolve(),
+        [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) })
+      }),
+      startRun: async () => ({ id: 'run-1', sessionId: 'session-1', status: 'running' }),
+      waitForRun: async () => ({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'completed',
+        output: 'confirmed'
+      })
+    }
+    const log = vi.fn()
+    const started = Date.now()
+    await runTaskCommand(
+      parseCliArgs(['run', '--project', 'Research', '--prompt', 'work', '--wait']),
+      {
+        connect: async () => client,
+        stdinIsTTY: true,
+        log
+      }
+    )
+    expect(Date.now() - started).toBeLessThan(1800)
+    expect(log).toHaveBeenCalledWith('confirmed')
+  })
+})
+
+describe('local service CLI status', () => {
+  it('does not send a legacy shutdown request when the authenticated bootstrap belongs to another root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cli-legacy-root-unit-'))
+    const copy = await mkdtemp(join(tmpdir(), 'cli-legacy-copy-unit-'))
+    try {
+      const fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ configRoot: root })
+      })
+      await expect(
+        stopCommand(
+          { json: true },
+          {
+            findServiceState: async () => ({ pid: 12345, port: 12345, configRoot: copy }),
+            isAlive: () => true,
+            requestServiceLifetime: async () => undefined,
+            readWebToken: async () => 'fixture-token',
+            fetch,
+            log: vi.fn()
+          }
+        )
+      ).rejects.toMatchObject({ code: 'service_identity_unverified' })
+      expect(fetch.mock.calls.every(([url]) => url.endsWith('/api/bootstrap'))).toBe(true)
+    } finally {
+      await Promise.all([root, copy].map((path) => rm(path, { recursive: true, force: true })))
+    }
+  })
+
+  it.each([false, true])(
+    'marks accepted legacy shutdown as nonzero unconfirmed (json=%s)',
+    async (json) => {
+      const log = vi.fn(),
+        setExitCode = vi.fn()
+      await stopCommand(
+        { json },
+        {
+          findServiceState: async () => ({
+            pid: 12345,
+            port: 12345,
+            configRoot: '/private-fixture'
+          }),
+          isAlive: () => false,
+          requestServiceLifetime: async () => undefined,
+          readWebToken: async () => 'fixture-token',
+          fetch: async () => ({
+            ok: true,
+            json: async () => ({ configRoot: '/private-fixture' }),
+            arrayBuffer: async () => new ArrayBuffer(0)
+          }),
+          verifyServiceConfigRoot: async () => undefined,
+          log,
+          setExitCode
+        }
+      )
+      expect(setExitCode).toHaveBeenCalledExactlyOnceWith(1)
+      if (json)
+        expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+          result: 'shutdown-requested',
+          completionStatus: 'unconfirmed'
+        })
+      else expect(log).toHaveBeenCalledWith(expect.stringContaining('older service protocol'))
+      expect(log.mock.calls.flat().join(' ')).not.toContain('Local service stopped.')
+    }
+  )
+
+  it('waits for the accepted owner rather than reporting stopped from a stale discovery PID', async () => {
+    let clock = 0
+    const oldState = { pid: 11111, port: 12345, configRoot: '/private-fixture' }
+    const generation = 'd1ed69cd-9883-452a-9ddd-e67c4a530a1e'
+    const serviceGeneration = '042a3798-beda-4e60-9d8a-179223668d45'
+    const service = {
+      pid: 22222,
+      generation,
+      lifetime: {
+        version: 1,
+        generation: serviceGeneration,
+        stopping: true,
+        explicit: false,
+        apps: 0
+      },
+      identity: {
+        configRoot: oldState.configRoot,
+        pid: 22222,
+        generation,
+        serviceGeneration,
+        birthToken: 'birth-B',
+        version: '9.2.1'
+      }
+    }
+    const isAlive = vi.fn((pid) => pid === service.pid)
+    const log = vi.fn()
+    await expect(
+      stopCommand(
+        { json: true },
+        {
+          findServiceState: async () => oldState,
+          isAlive,
+          requestServiceLifetime: async () => service,
+          log,
+          now: () => clock,
+          sleep: async (ms: number) => {
+            clock += ms
+          },
+          readServiceProcessBirth: async () => 'birth-B',
+          readRuntimeOwner: async () =>
+            JSON.stringify({ generation, pid: service.pid, birthToken: 'birth-B' })
+        }
+      )
+    ).rejects.toMatchObject({ code: 'service_stop_unconfirmed' })
+    expect(isAlive).toHaveBeenCalledWith(service.pid)
+    expect(log).not.toHaveBeenCalled()
+    expect(clock).toBe(22_000)
+  })
+
+  it('reports a live but unreachable service as unknown rather than stopped', async () => {
+    const state = { pid: 12345, port: 12345, configRoot: '/private-fixture' }
+    const log = vi.fn(),
+      setExitCode = vi.fn(),
+      requestServiceLifetime = vi.fn()
+    await statusCommand(
+      { json: true },
+      {
+        findServiceState: async () => state,
+        isAlive: () => true,
+        readWebToken: async () => 'fixture-token',
+        fetch: async () => ({ ok: false }),
+        log,
+        setExitCode,
+        requestServiceLifetime
+      }
+    )
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual({
+      ...state,
+      running: null,
+      status: 'unreachable',
+      lifetime: 'unknown'
+    })
+    expect(setExitCode).toHaveBeenCalledWith(1)
+    expect(requestServiceLifetime).not.toHaveBeenCalled()
+  })
+
+  it('emits a single JSON result when start reuses an existing App service', async () => {
+    const state = { pid: 12345, port: 12345, configRoot: '/private-fixture' }
+    const lifetime = {
+      version: 1,
+      generation: 'fixture-generation',
+      explicit: true,
+      stopping: false,
+      apps: 1
+    }
+    const requestServiceLifetime = vi.fn().mockResolvedValue({ lifetime })
+    const locateBackend = vi.fn().mockRejectedValue(new Error('No local backend is installed'))
+    const log = vi.fn()
+    await startCommand(parseCliArgs(['start', '--json', '--no-open']).options, {
+      findServiceState: async () => state,
+      isAlive: () => true,
+      readWebToken: async () => 'fixture-token',
+      fetch: async () => ({ ok: true }),
+      log,
+      requestServiceLifetime,
+      locateBackend
+    })
+    expect(requestServiceLifetime).toHaveBeenCalledWith(
+      state.configRoot,
+      'start',
+      expect.any(Function)
+    )
+    expect(log).toHaveBeenCalledOnce()
+    expect(locateBackend).not.toHaveBeenCalled()
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual({
+      result: 'already-running',
+      ...state,
+      lifetime
+    })
   })
 })

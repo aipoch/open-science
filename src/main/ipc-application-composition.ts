@@ -141,7 +141,7 @@ export type ApplicationRuntimeInterfaces = {
   startBrowserPackageImportDiscovery: (port?: number) => Promise<void>
   applicationCommands: Pick<
     ApplicationCommandComposition,
-    'localWeb' | 'remoteWeb' | 'task' | 'desktop'
+    'localWeb' | 'remoteWeb' | 'task' | 'desktop' | 'beginStopping'
   >
   applicationEvents: ApplicationEventSource
   permissionApprovalPresence: PermissionApprovalPresence
@@ -583,6 +583,7 @@ export const createApplicationModules = async (
     modules
   })
   const handoff = await composeHandoff({
+    holdUpdateAdmission: () => applicationCommandComposition.holdUpdateAdmission(),
     loadSessionSummaries: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
     declareElectronAdapter,
     webSessionPersistenceFlush,
@@ -834,6 +835,7 @@ export const createApplicationModules = async (
     startBrowserPackageImportDiscovery: (port) =>
       sessionPackageSurfaces.browserPackageImport.startDiscovery(port),
     applicationCommands: {
+      beginStopping: applicationCommandComposition.beginStopping,
       localWeb: applicationCommandComposition.localWeb,
       remoteWeb: applicationCommandComposition.remoteWeb,
       task: applicationCommandComposition.task,

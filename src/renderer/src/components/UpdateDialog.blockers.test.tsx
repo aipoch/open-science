@@ -77,7 +77,14 @@ it('shows manual verification without promising restart and prevents repeated ac
   act(() => root.render(<UpdateDialog />))
   expect(document.body.textContent).toContain('Verifying installer…')
   expect(document.body.textContent).not.toContain('will close to finish installing')
-  for (const button of document.querySelectorAll('button')) expect(button.disabled).toBe(true)
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[data-testid="manual-update-controls"] button'
+  ))
+    expect(button.disabled).toBe(true)
+  expect(
+    document.querySelector<HTMLButtonElement>('[data-testid="manual-update-links"] button')
+      ?.disabled
+  ).toBe(false)
 })
 
 it('retains unknown technical errors even when a blocker is present', () => {

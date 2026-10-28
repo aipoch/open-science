@@ -1,3 +1,9 @@
+import { SkillSourceRepository } from '../skills/source-repository'
+import type {
+  SavedSkillSource,
+  AddSkillSourceRequest,
+  RemoveSkillSourceRequest
+} from '../../shared/skill-sources'
 import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import { SkillReleaseInstallConflict as MarketplaceInstallConflict } from '@aipoch/skills'
 import { readFile, stat } from 'node:fs/promises'
@@ -34,7 +40,12 @@ import { ClassificationSettingsOwner } from './classification-settings'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
 
-import { createLogger, startDiagnosticOperation, type Logger } from '@aipoch/diagnostics/node'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  startDiagnosticOperation,
+  type Logger
+} from '@aipoch/diagnostics/node'
 import type { BundledSkill, SkillRegistry } from '@aipoch/skills'
 import type {
   AgentHomeSkillView,
@@ -238,6 +249,7 @@ export type SettingsServiceOptions = {
   withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
   onProviderHealthChanged?: () => Promise<void>
+  onNotebookNetworkDomainAllowed?: () => Promise<void>
   openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
@@ -455,9 +467,11 @@ class SettingsService {
   private readonly installCoordinator: SettingsInstallCoordinator
   private readonly backendResolver: AgentBackendResolver
   private readonly scenarioModels: ScenarioModelOwner
+  private readonly skillSources: SkillSourceRepository
   private readonly configRoot: string
   private readonly networkProxy: NetworkProxySettingsOwner
   private readonly notebookNetwork: NotebookNetworkSettingsOwner
+  private readonly onNotebookNetworkDomainAllowed?: () => Promise<void>
   private readonly withNotebookFolderPolicyChange: (commit: () => Promise<void>) => Promise<void>
   private notebookFolderPolicyWrite: Promise<unknown> = Promise.resolve()
   private readonly packageMirror: PackageMirrorSettingsOwner
@@ -509,6 +523,7 @@ class SettingsService {
 
   constructor(options: SettingsServiceOptions = {}) {
     this.configRoot = options.configRoot ?? resolveConfigRoot()
+    this.skillSources = new SkillSourceRepository(this.configRoot)
     this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.repository = options.repository ?? new SettingsRepository(this.configRoot)
     this.withNotebookFolderPolicyChange =
@@ -526,6 +541,7 @@ class SettingsService {
       repository: this.repository,
       apply: options.applyNetworkProxy ?? (async () => undefined)
     })
+    this.onNotebookNetworkDomainAllowed = options.onNotebookNetworkDomainAllowed
     this.notebookNetwork = new NotebookNetworkSettingsOwner({
       repository: this.repository,
       apply: options.applyNotebookNetwork ?? (async () => undefined)
@@ -758,12 +774,22 @@ class SettingsService {
     return this.notebookNetwork.get()
   }
 
-  allowNotebookNetworkDomain(
+  async allowNotebookNetworkDomain(
     hostname: string,
     assertCurrent?: () => Promise<void>,
     finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
-    return this.notebookNetwork.allowDomain(hostname, assertCurrent, finalize)
+    const settings = await this.notebookNetwork.allowDomain(hostname, assertCurrent, finalize)
+    try {
+      await this.onNotebookNetworkDomainAllowed?.()
+    } catch (error) {
+      // Publication must not undo consent that has already committed.
+      this.log.warn(
+        'Network access saved, but settings publication failed.',
+        diagnosticErrorFields(error)
+      )
+    }
+    return settings
   }
 
   getNotebookNetworkStatus(): Promise<NotebookNetworkStatus> {
@@ -1107,6 +1133,16 @@ class SettingsService {
   async detectCodex(): Promise<SettingsSnapshot> {
     await this.runtimeManager.detectCodex()
     return this.getSettingsView()
+  }
+
+  listSkillSources(): Promise<SavedSkillSource[]> {
+    return this.skillSources.list()
+  }
+  addSkillSource(request: AddSkillSourceRequest): Promise<SavedSkillSource[]> {
+    return this.skillSources.add(request)
+  }
+  removeSkillSource(request: RemoveSkillSourceRequest): Promise<SavedSkillSource[]> {
+    return this.skillSources.remove(request)
   }
 
   async listSkills(): Promise<SkillView[]> {

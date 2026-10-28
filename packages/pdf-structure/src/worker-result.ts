@@ -48,6 +48,7 @@ const rawNote = z.object({ text: z.string(), rect, page: z.number().int().positi
 const rawTableData = z.object({
   sourceViewport: z.object({ width: z.number().positive(), height: z.number().positive() }),
   grid: z.array(z.array(z.string()).max(128)).max(256),
+  unreliableMathSourceItems: pdfTableSourceItemsSchema.optional(),
   cells: z
     .array(
       z.object({
@@ -123,7 +124,10 @@ function fitSourceMetadataBudget(input: unknown): unknown {
   } catch {
     const withoutOrigins: unknown = JSON.parse(
       JSON.stringify(input, (key, value) =>
-        key === 'sourceItems' || key === 'sourceSegments' || key === 'nativeBody'
+        key === 'sourceItems' ||
+        key === 'sourceSegments' ||
+        key === 'nativeBody' ||
+        key === 'unreliableMathSourceItems'
           ? undefined
           : value
       )
@@ -279,6 +283,9 @@ export const readWorkerResult = async (
         return {
           rowCount: data.grid.length,
           columnCount: data.grid[0].length,
+          ...(data.unreliableMathSourceItems
+            ? { unreliableMathSourceItems: data.unreliableMathSourceItems }
+            : {}),
           cells: data.cells.map((cell) => ({
             row: cell.row,
             column: cell.column,

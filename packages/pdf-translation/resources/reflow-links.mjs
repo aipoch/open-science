@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Unbundled Node worker. */
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFString, PDFHexString } from 'pdf-lib'
 import { translatedPdfLinkLabel, translatedPdfLinkFragment } from './link-labels.mjs'
+import { literalSourceIdentity } from './literal-source-identity.mjs'
+import { mapBlankPageAnchor } from './reflow-page-anchors.mjs'
+import { captureNativeLinkOrigins, nativeLinkOriginSpan } from './native-link-origin.mjs'
 
 const compact = (text) => text.replace(/\s/gu, '')
 const contains = (a, b) =>
@@ -329,6 +332,7 @@ export function readReflowLinks(native, source, input, originalDocument) {
         p.FPDF_ClosePage(page)
       }
     }
+    captureNativeLinkOrigins(native, source, input, result, geometry)
     const bookmarks = readOutlines(originalDocument, native, source, readDestination)
     return {
       ...bookmarks,
@@ -362,9 +366,17 @@ export function retainLinkedPages(retained, links, units) {
 }
 
 export function mapReflowLinks(
-  { links, geometry, outlines, outlineCount, showOutlines, catalogDestinations = [] },
+  {
+    links,
+    geometry,
+    outlines,
+    outlineCount,
+    showOutlines,
+    catalogDestinations = [],
+    blankPageAnchors = new Map()
+  },
   input,
-  { originals, lines, crops, placements, sourcePages },
+  { originals, lines, crops, placements, sourcePages, firstContent },
   measure
 ) {
   const failed = new Set(),
@@ -398,18 +410,23 @@ export function mapReflowLinks(
       )
       if (owners.length !== 1) return undefined
       const { unit, unitIndex } = owners[0],
-        source = span(unit.source, link.labels[i])
+        nativeSource = nativeLinkOriginSpan(link, unit, unitIndex, i),
+        source = span(unit.source, link.labels[i]) ?? nativeSource
       if (!source) return undefined
       const target =
-        compact(source.text) === compact(unit.source)
+        nativeSource ??
+        (compact(source.text) === compact(unit.source)
           ? { start: 0, text: unit.translation }
           : (translatedPdfLinkLabel(unit.source, unit.translation, source.text, source.start) ??
             translatedPdfLinkFragment(unit.source, unit.translation, source.text, source.start) ??
+            (unit.kind === 'text'
+              ? literalSourceIdentity(unit.source, unit.translation, source.text, source.start)
+              : undefined) ??
             (/^(?:https?:\/\/|mailto:|[^\s@]+@)/u.test(source.text) ||
             /^\[\d+(?:\s*[,–-]\s*\d+)*\]$/u.test(source.text) ||
             unit.source === unit.translation
               ? span(unit.translation, source.text)
-              : undefined))
+              : undefined)))
       if (!target) return undefined
       let covered = ''
       for (const line of lines.get(unitIndex) ?? []) {
@@ -500,7 +517,17 @@ export function mapReflowLinks(
     return { ...outline, target }
   })
   const mappedCatalog = catalogDestinations.map((entry) => {
-    const target = destination(entry.destination)
+    const target =
+      destination(entry.destination) ??
+      mapBlankPageAnchor(
+        entry,
+        blankPageAnchors,
+        firstContent,
+        sourcePages,
+        placements,
+        lines,
+        input.units
+      )
     if (!target) failed.add(entry.destination.pageNumber)
     return { ...entry, target }
   })

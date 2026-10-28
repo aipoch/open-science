@@ -371,7 +371,7 @@ describe('artifact provenance graph', () => {
   })
 
   it.each(['proportional_venn_5sets.png', 'proportional_venn_5sets_hires.png'])(
-    'reconstructs %s without discarded font probes and failed theme setup',
+    'retains %s without certifying unproved Excel set operations',
     async (filename) => {
       const cells: string[] = JSON.parse(
         await readFile(join(__dirname, '../notebook/reported-venn-layers.fixture.json'), 'utf8')
@@ -439,7 +439,8 @@ describe('artifact provenance graph', () => {
           computeActivities: [],
           notebookDependencies: dependencies
         })
-        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
+        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('incomplete')
+        expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
         const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: [],
@@ -452,15 +453,17 @@ describe('artifact provenance graph', () => {
           )
         })
         expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-6'])
+        expect(recipe.capture.state).toBe('blocked')
+        expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
         expect(
           reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
-        ).toBeDefined()
+        ).toBeUndefined()
       } finally {
         await rm(root, { recursive: true, force: true })
       }
     }
   )
-  it('reconstructs the Venn PNG from its Excel input and two required R cells', async () => {
+  it('retains the Venn target and blocks unproved Excel-to-kernel steps', async () => {
     const cells: string[] = JSON.parse(
       await readFile(join(__dirname, '../notebook/reported-venn.fixture.json'), 'utf8')
     )
@@ -509,7 +512,8 @@ describe('artifact provenance graph', () => {
         computeActivities: [],
         notebookDependencies: dependencies
       })
-      expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
+      expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('incomplete')
+      expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
       const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
@@ -517,10 +521,21 @@ describe('artifact provenance graph', () => {
           recipeRun(a.run.runId, a.runIndex, { script: a.run.script, kernelKind: 'r' })
         )
       })
-      expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-2', 'run-3'])
+      // Unknown kernel dependencies cannot certify the earlier Excel cell as
+      // required. Retain the observed writer, but block this incomplete recipe.
+      expect(graph.entities).toContainEqual(
+        expect.objectContaining({
+          kind: 'file-generation',
+          generationId: 'png',
+          checksum: checksum('b')
+        })
+      )
+      expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-3'])
+      expect(recipe.capture.state).toBe('blocked')
+      expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
       expect(
         reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
-      ).toBeDefined()
+      ).toBeUndefined()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -623,7 +638,7 @@ describe('artifact provenance graph', () => {
   })
 
   it.each([false, true])(
-    'retains a generated RDS bridge with proven producer=%s',
+    'retains an RDS bridge without certifying plot column types with proven producer=%s',
     async (provenProducer) => {
       const cells = JSON.parse(
         await readFile(
@@ -698,18 +713,14 @@ describe('artifact provenance graph', () => {
           computeActivities: [],
           notebookDependencies: dependencies
         })
-        // The original producer orders unproven keys, which can dispatch xtfrm methods.
-        // File generations retain its bridge across epochs without certifying hidden effects.
-        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe(
-          provenProducer ? 'complete' : 'incomplete'
-        )
-        if (!provenProducer) {
-          expect(dependencies.stalenessByRunId.plot).toMatchObject({
-            state: 'unknown',
-            reasons: expect.arrayContaining(['opaque-call'])
-          })
-          expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
-        }
+        // A proven producer and physical generations retain the bridge, but
+        // RDS/table ownership does not establish types of plotted columns.
+        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('incomplete')
+        expect(dependencies.stalenessByRunId.plot).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['opaque-call'])
+        })
+        expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
         const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: [],
@@ -722,13 +733,9 @@ describe('artifact provenance graph', () => {
           recipe,
           'original-inputs'
         )
-        if (provenProducer) {
-          expect(plan).toBeDefined()
-        } else {
-          expect(recipe.capture.state).toBe('blocked')
-          expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
-          expect(plan).toBeUndefined()
-        }
+        expect(recipe.capture.state).toBe('blocked')
+        expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
+        expect(plan).toBeUndefined()
       } finally {
         await rm(root, { recursive: true, force: true })
       }
@@ -987,7 +994,7 @@ describe('artifact provenance graph', () => {
   )
 
   it.each(['png', 'pdf'])(
-    'replays Python preparation and R plotting for the %s target',
+    'retains Python preparation and blocks unproved R plotting for the %s target',
     async (extension) => {
       const cells = JSON.parse(
         await readFile(
@@ -1052,8 +1059,9 @@ describe('artifact provenance graph', () => {
           storageRoot: root,
           repository: { readSessionRuns: async () => activities.map((a) => a.run) }
         }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-8' })
-        expect(dependencies.stalenessByRunId['run-8'], JSON.stringify(dependencies)).toEqual({
-          state: 'clear'
+        expect(dependencies.stalenessByRunId['run-8'], JSON.stringify(dependencies)).toMatchObject({
+          state: 'unknown',
+          reasons: expect.arrayContaining(['opaque-call'])
         })
         const graph = sealArtifactProvenanceGraph({
           target: {
@@ -1068,7 +1076,8 @@ describe('artifact provenance graph', () => {
           computeActivities: [],
           notebookDependencies: dependencies
         })
-        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
+        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('incomplete')
+        expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
         expect(
           graph.activities.filter((a) => a.kind === 'notebook-run').map((a) => a.activityId),
           JSON.stringify(dependencies)
@@ -1084,9 +1093,11 @@ describe('artifact provenance graph', () => {
           )
         })
         expect(recipe.steps.map((s) => s.activityId)).toEqual(['run-5', 'run-8'])
+        expect(recipe.capture.state).toBe('blocked')
+        expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
         expect(
           reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
-        ).toBeDefined()
+        ).toBeUndefined()
       } finally {
         await rm(root, { recursive: true, force: true })
       }
