@@ -184,7 +184,7 @@ export const providerFormModelForFramework = (
 
 // The provider kind pre-selected when the Add provider form opens, matched to the active agent
 // framework's most common official vendor: Claude Code → Anthropic, Codex → OpenAI,
-// OpenCode → DeepSeek, CodeBuddy → MiniMax. Exhaustive over AgentFrameworkId so a new framework
+// OpenCode and Pi → DeepSeek, CodeBuddy → MiniMax. Exhaustive over AgentFrameworkId so a new framework
 // forces a deliberate choice, and keyed off OfficialVendorId so a registry rename fails at compile
 // time.
 export const defaultProviderKindKey = (
@@ -196,6 +196,7 @@ export const defaultProviderKindKey = (
     case 'codex':
       return 'official:openai'
     case 'opencode':
+    case 'pi':
       return 'official:deepseek'
     case 'codebuddy':
       return 'official:minimax'

@@ -1189,7 +1189,7 @@ class AcpPermissionBroker {
         : undefined
     const codexGroup = codexGroupMatch?.kind === 'group' ? codexGroupMatch.group : undefined
     const managedSkill = isManagedSkillPermission(params, policyContext)
-    const categoryKey =
+    const resolvedCategoryKey =
       managedSkill && !isMcp
         ? 'skill'
         : isWebSearch
@@ -1206,6 +1206,9 @@ class AcpPermissionBroker {
                     policyContext?.notebookShellRuntimeQualifier ??
                       policyContext?.notebookShellRuntime
                   )))
+    const categoryKey = policyContext?.oneCallOnly ? undefined : resolvedCategoryKey
+    // A correlated Pi Skill call may use an existing app-owned Skill grant, while its provider
+    // response and any new approval remain one-shot. Other Pi capabilities stay one-call-only.
     const capability: PermissionCapability | undefined = managedSkill
       ? { kind: 'skill_operation', key: 'skill:invoke' }
       : categoryKey
@@ -1564,22 +1567,25 @@ class AcpPermissionBroker {
       outcome: 'approval_required',
       fallback:
         !pending.appOwned &&
+        !pending.policyContext?.oneCallOnly &&
         (!pending.capability || !this.permissionGrantRegistry || !pending.projectId),
       reason: pending.appOwned
         ? 'app_owned_approval'
-        : !pending.capability
-          ? pending.automaticRequest
-            ? unmappedPermissionReason(
-                pending.automaticRequest,
-                pending.categoryKey,
-                pending.policyContext?.mcpServerNames ?? []
-              )
-            : 'capability_unmapped'
-          : !this.permissionGrantRegistry
-            ? 'registry_unavailable'
-            : !pending.projectId
-              ? 'project_context_unavailable'
-              : 'grant_not_matched'
+        : pending.policyContext?.oneCallOnly
+          ? 'one_call_only'
+          : !pending.capability
+            ? pending.automaticRequest
+              ? unmappedPermissionReason(
+                  pending.automaticRequest,
+                  pending.categoryKey,
+                  pending.policyContext?.mcpServerNames ?? []
+                )
+              : 'capability_unmapped'
+            : !this.permissionGrantRegistry
+              ? 'registry_unavailable'
+              : !pending.projectId
+                ? 'project_context_unavailable'
+                : 'grant_not_matched'
     })
     let resolveResponse!: (response: RequestPermissionResponse) => void
     let rejectResponse!: (error: unknown) => void

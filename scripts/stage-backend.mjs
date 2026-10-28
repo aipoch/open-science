@@ -42,6 +42,9 @@ await cp(backend, join(stage, 'out/backend'), {
   // Dependency analysis is consumed above; it is not a runtime or diagnostic source map.
   filter: (path) => !values.desktop || path !== join(backend, 'dependencies.json')
 })
+// The app-owned Pi adapter runs as a separate Node process beside the backend bundle. Its SDK
+// dependencies are included in the staged node_modules by the ordinary dependency walker below.
+await cp(join(root, 'out/pi-acp'), join(stage, 'out/pi-acp'), { recursive: true })
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,

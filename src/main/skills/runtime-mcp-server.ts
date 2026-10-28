@@ -7,6 +7,7 @@ import {
 } from '@aipoch/skills/projection'
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import { isAbsolute, join } from 'node:path'
+import { createHash } from 'node:crypto'
 
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -133,19 +134,48 @@ const createSkillRuntimeMcpServerConfig = ({
   env: skillRuntimeProcessEnvironment(environment)
 })
 
+// Main-only provenance: names received from a framework or ACP peer are not proof that a server
+// came from the app's bounded Skill loader. A fingerprint also rejects in-place config changes.
+const ownedSkillRuntimeServers = new WeakMap<object, string>()
+const skillServerFingerprint = (server: McpServer): string | undefined => {
+  try {
+    return createHash('sha256').update(JSON.stringify(server)).digest('hex')
+  } catch {
+    return undefined
+  }
+}
+const isOwnedSkillRuntimeAcpServer = (server: McpServer): boolean => {
+  const expected = ownedSkillRuntimeServers.get(server)
+  return expected !== undefined && skillServerFingerprint(server) === expected
+}
+
+// Transfer provenance only across an unchanged copy made by an app-owned boundary.
+const inheritSkillRuntimeAcpServerOwnership = (source: McpServer, copy: McpServer): void => {
+  if (!isOwnedSkillRuntimeAcpServer(source)) return
+  const fingerprint = skillServerFingerprint(source)
+  if (fingerprint && skillServerFingerprint(copy) === fingerprint) {
+    ownedSkillRuntimeServers.set(copy, fingerprint)
+  }
+}
+
 const createSkillRuntimeAcpServerConfig = ({
   command,
   entryPath,
   ...environment
-}: SkillRuntimeMcpServerConfig): McpServer => ({
-  name: SKILL_RUNTIME_MCP_SERVER_NAME,
-  command,
-  args: [entryPath, SKILL_RUNTIME_MCP_SERVER_ARG],
-  env: Object.entries(skillRuntimeProcessEnvironment(environment)).map(([name, value]) => ({
-    name,
-    value
-  }))
-})
+}: SkillRuntimeMcpServerConfig): McpServer & { args: string[] } => {
+  const server: McpServer & { args: string[] } = {
+    name: SKILL_RUNTIME_MCP_SERVER_NAME,
+    command,
+    args: [entryPath, SKILL_RUNTIME_MCP_SERVER_ARG],
+    env: Object.entries(skillRuntimeProcessEnvironment(environment)).map(([name, value]) => ({
+      name,
+      value
+    }))
+  }
+  const fingerprint = skillServerFingerprint(server)
+  if (fingerprint !== undefined) ownedSkillRuntimeServers.set(server, fingerprint)
+  return server
+}
 
 const narrowSkillRuntimeAcpServers = (
   servers: readonly McpServer[],
@@ -200,6 +230,8 @@ export {
   SKILL_RUNTIME_ROOT_ENV,
   SKILL_RUNTIME_DIRECTORY_ENV,
   createSkillRuntimeAcpServerConfig,
+  isOwnedSkillRuntimeAcpServer,
+  inheritSkillRuntimeAcpServerOwnership,
   narrowSkillRuntimeAcpServers,
   createSkillRuntimeMcpServer,
   createSkillRuntimeMcpServerConfig,

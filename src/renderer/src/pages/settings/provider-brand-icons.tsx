@@ -74,3 +74,34 @@ export const TencentCloudColor = (props: BrandIconProps): React.JSX.Element => (
     />
   </svg>
 )
+
+// Pi's 4×4 pixel mark and brand colors, redrawn from piLogoLines() in
+// @earendil-works/pi-coding-agent 1.4.0 (MIT). The name and mark remain third-party trademarks.
+const PI_MARK_PIXELS: readonly (readonly [column: number, row: number, fill: string])[] = [
+  [0, 0, '#E48A7A'],
+  [1, 0, '#E48A7A'],
+  [2, 0, '#E48A7A'],
+  [0, 1, '#4F8EB3'],
+  [2, 1, '#E48A7A'],
+  [0, 2, '#4F8EB3'],
+  [1, 2, '#4F8EB3'],
+  [3, 2, '#EAB65D'],
+  [0, 3, '#4F8EB3'],
+  [3, 3, '#EAB65D']
+]
+
+export const PiColor = (props: BrandIconProps): React.JSX.Element => (
+  <svg {...iconProps(props)}>
+    <title>Pi</title>
+    {PI_MARK_PIXELS.map(([column, row, fill]) => (
+      <rect
+        key={`${column}-${row}`}
+        x={2 + column * 5}
+        y={2 + row * 5}
+        width={5}
+        height={5}
+        fill={fill}
+      />
+    ))}
+  </svg>
+)

@@ -30,6 +30,7 @@ import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { AgentFrameworkIcon } from './provider-icons'
+import { isPiFrameworkReady, PI_SDK_VERSION } from '../../../../shared/agent-framework-id'
 import { RepairFrameworkDialog } from './RepairFrameworkDialog'
 import { SettingsSection } from './SettingsLayout'
 import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
@@ -38,6 +39,7 @@ import { UninstallRuntimeDialog } from './UninstallRuntimeDialog'
 // The agent frameworks the settings page manages, keyed by their short name (used for the
 // uninstall dialog target and the framework card descriptors).
 type FrameworkKey = 'claude' | 'opencode' | 'codex' | 'codebuddy'
+type FrameworkCardKey = FrameworkKey | 'pi'
 
 type AgentPanelProps = {
   variant?: 'settings' | 'onboarding'
@@ -83,6 +85,7 @@ const AgentPanel = ({
   const opencodeInstall = useSettingsStore((state) => state.installStates.opencode)
   const codexInstall = useSettingsStore((state) => state.installStates.codex)
   const codebuddyInstall = useSettingsStore((state) => state.installStates.codebuddy)
+  const piInstall = useSettingsStore((state) => state.installStates.pi)
   // Any install running locks the framework selector and every card's uninstall button.
   const anyInstalling = useSettingsStore(selectAnyInstalling)
   const npmAvailable = useSettingsStore((state) => state.npmAvailable)
@@ -278,7 +281,8 @@ const AgentPanel = ({
       'claude-code': preflight.claudeReady,
       opencode: preflight.opencodeReady,
       codex: codexReady,
-      codebuddy: preflight.codebuddyReady
+      codebuddy: preflight.codebuddyReady,
+      pi: preflight.piReady === true
     }
     if (readyByFramework[agentFrameworkId]) return
 
@@ -294,6 +298,7 @@ const AgentPanel = ({
     preflight.claudeReady,
     codexReady,
     preflight.codebuddyReady,
+    preflight.piReady,
     preflight.opencodeReady,
     queueOnboardingSwitch
   ])
@@ -332,7 +337,7 @@ const AgentPanel = ({
   // points at each agent's own repository — for Codex that is the ACP adapter repo, since the app
   // talks to Codex through the agentclientprotocol/codex-acp bridge.
   type FrameworkCardModel = {
-    key: FrameworkKey
+    key: FrameworkCardKey
     frameworkId: AgentFrameworkId
     name: string
     icon: React.ReactNode
@@ -526,6 +531,31 @@ const AgentPanel = ({
     }
   ]
 
+  // Main owns registration and readiness. Older/incomplete backends do not expose a Pi card.
+  if (isPiFrameworkReady(agentFrameworks, preflight.piReady)) {
+    frameworkCards.push({
+      key: 'pi',
+      frameworkId: 'pi',
+      name: 'Pi',
+      icon: <AgentFrameworkIcon frameworkId="pi" size={24} />,
+      description: t(
+        'Minimal open-source coding agent, bundled and connected through the Pi ACP adapter.'
+      ),
+      ready: true,
+      installed: true,
+      version: PI_SDK_VERSION,
+      path: preflight.piRuntimePath,
+      sourceLabel: 'earendil-works/pi',
+      sourceUrl: 'https://github.com/earendil-works/pi',
+      notReadyHint: null,
+      uninstallCommand: '',
+      managed: false,
+      installSources: [],
+      install: piInstall,
+      onInstall: () => Promise.resolve(undefined)
+    })
+  }
+
   const installedFrameworks = frameworkCards.filter(
     (card) => card.ready || card.installed || card.updateRequired
   )
@@ -672,7 +702,9 @@ const AgentPanel = ({
       onSelect={() => requestSwitch(card.frameworkId)}
       radioTabIndex={card.ready ? (card.frameworkId === installedRadioId ? 0 : -1) : undefined}
       onRepairRequired={
-        cardNeedsRepair(card) && !card.updateRequired ? () => setPendingRepair(card.key) : undefined
+        card.key !== 'pi' && cardNeedsRepair(card) && !card.updateRequired
+          ? () => setPendingRepair(card.key as FrameworkKey)
+          : undefined
       }
       selectDisabled={
         anyInstalling ||
@@ -686,9 +718,9 @@ const AgentPanel = ({
       isDetecting={isDetectingAnyFramework}
       promptInFlight={promptInFlight}
       onUninstall={() => {
-        setPendingUninstall(card.key)
+        if (card.key !== 'pi') setPendingUninstall(card.key)
       }}
-      showUninstall={!isOnboarding}
+      showUninstall={!isOnboarding && card.key !== 'pi'}
       installSources={card.installSources}
       install={card.install}
       installRunning={anyInstalling || (!isOnboarding && isSwitching)}

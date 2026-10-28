@@ -28287,6 +28287,7 @@ describe('ACP runtime — connect failure logging', () => {
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect(call).toBeDefined()
     expect(call?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'not-found',
       framework: 'claude-code',
       generation: 1,
@@ -28371,6 +28372,7 @@ describe('ACP runtime — connect failure logging', () => {
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect(call).toBeDefined()
     expect(call?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'error',
       framework: 'opencode',
       generation: 1,
@@ -28468,6 +28470,7 @@ describe('ACP runtime — connect failure logging', () => {
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect(call).toBeDefined()
     expect(call?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'string',
       framework: 'opencode',
       generation: 1,
@@ -30398,6 +30401,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       ([message]) => message === 'agent connection failed'
     )
     expect(failure?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'not-found',
       framework: 'opencode',
       generation: 1,

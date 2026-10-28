@@ -98,6 +98,7 @@
     "src/main/acp/permission-broker.ts",
     "src/main/acp/permission-context.test.ts",
     "src/main/acp/permission-context.ts",
+    "src/main/acp/pi-permission-correlation.ts",
     "src/main/acp/permission-frequency.test.ts",
     "src/main/acp/permission-policy.test.ts",
     "src/main/acp/permission-policy.ts",

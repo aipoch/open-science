@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AGENT_FRAMEWORK_ID_VALUES } from './agent-framework-id'
 import type { SessionConversationCommand } from './conversation-command-contract'
 import {
   activateConversationBranch,
@@ -20,7 +21,7 @@ const commandBase = {
   timestamp: z.number().finite().nonnegative(),
   preparationId: identity.optional()
 }
-const agentFrameworkId = z.enum(['claude-code', 'opencode', 'codex', 'codebuddy'])
+const agentFrameworkId = z.enum(AGENT_FRAMEWORK_ID_VALUES)
 const segmentSchema = z.object({
   id: identity,
   frameworkId: agentFrameworkId,

@@ -65,7 +65,12 @@ export default defineConfig(
     }
   },
   {
-    files: ['resources/notebook/*.js', 'resources/find-overlay/*.js'],
+    files: [
+      'resources/notebook/*.js',
+      'resources/find-overlay/*.js',
+      'scripts/build-pi-acp.mjs',
+      'src/main/pi-acp/permission-guard.mjs'
+    ],
     rules: typescriptRulesOff
   },
   {

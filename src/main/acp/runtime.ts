@@ -3114,11 +3114,13 @@ class AcpRuntime {
         ? 'opencode'
         : backend.framework.id === 'codebuddy'
           ? 'codebuddy'
-          : backend.framework.id === 'codex'
-            ? backend.modelRoute === 'codex-bridge'
-              ? 'codex-bridge'
-              : 'codex-response'
-            : 'claude-code'
+          : backend.framework.id === 'pi'
+            ? 'pi'
+            : backend.framework.id === 'codex'
+              ? backend.modelRoute === 'codex-bridge'
+                ? 'codex-bridge'
+                : 'codex-response'
+              : 'claude-code'
     return {
       target,
       ...(backend.context.window ? { contextWindow: backend.context.window } : {})

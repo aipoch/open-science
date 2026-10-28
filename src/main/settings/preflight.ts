@@ -19,6 +19,9 @@ export type PreflightInput = {
   codebuddyPathExists: boolean
   // Whether the recorded codex-acp adapter still reports a version.
   codexPathExists: boolean
+  // Main must supply a validated Pi adapter/runtime before exposing Pi as ready.
+  piRuntimeReady?: boolean
+  piRuntimePath?: string
   // The selected framework, resolved (default applied) by the caller.
   agentFrameworkId: AgentFrameworkId
   // Whether a provider's current credentials are usable (subscription auth is checked by its owner;
@@ -40,6 +43,8 @@ const computePreflight = ({
   opencodePathExists,
   codebuddyPathExists,
   codexPathExists,
+  piRuntimeReady,
+  piRuntimePath,
   agentFrameworkId,
   isProviderKeyUsable,
   activeProviderCompatible,
@@ -50,18 +55,21 @@ const computePreflight = ({
   const opencodeReady = Boolean(settings.opencodePath) && opencodePathExists
   const codebuddyReady = Boolean(settings.codebuddyPath) && codebuddyPathExists
   const codexReady = Boolean(settings.codex?.resolvedPath) && codexPathExists
+  const piReady = piRuntimeReady === true
   const readyByFramework: Record<AgentFrameworkId, boolean> = {
     'claude-code': claudeReady,
     opencode: opencodeReady,
     codex: codexReady,
-    codebuddy: codebuddyReady
+    codebuddy: codebuddyReady,
+    pi: piReady
   }
   const agentReady = readyByFramework[agentFrameworkId]
   const runtimeConfiguredByFramework: Record<AgentFrameworkId, boolean> = {
     'claude-code': Boolean(settings.claude?.resolvedPath),
     opencode: Boolean(settings.opencodePath),
     codex: Boolean(settings.codex?.resolvedPath),
-    codebuddy: Boolean(settings.codebuddyPath)
+    codebuddy: Boolean(settings.codebuddyPath),
+    pi: piReady
   }
   const runtimeReadiness = {
     status: agentReady
@@ -121,6 +129,8 @@ const computePreflight = ({
     opencodeReady,
     codebuddyReady,
     codexReady,
+    piReady,
+    ...(piReady && piRuntimePath ? { piRuntimePath } : {}),
     agentFrameworkId,
     agentReady,
     activeProviderReady,

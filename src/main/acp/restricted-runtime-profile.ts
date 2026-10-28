@@ -226,6 +226,9 @@ const prepareRestrictedBackend = (
   if (backend.framework.id === 'codebuddy') {
     return prepareCodeBuddyBackend(backend, profileRoot, profile)
   }
+  if (backend.framework.id === 'pi') {
+    return Promise.reject(new Error('Restricted inference is not yet available for Pi.'))
+  }
   return prepareClaudeBackend(backend, profileRoot, profile)
 }
 

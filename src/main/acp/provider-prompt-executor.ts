@@ -67,6 +67,9 @@ const NOOP_PROBE: AcpProviderTurnProbe = Object.freeze({
   finalize: () => EMPTY_FACTS,
   cancel: () => undefined
 })
+const RESPONSE_USAGE_TURN_ADAPTER: AcpProviderTurnAdapter = Object.freeze({
+  begin: () => NOOP_PROBE
+})
 
 const reportBestEffort = (
   report: ProviderPromptExecutionInput['reportBestEffortFailure'],
@@ -335,6 +338,8 @@ class AcpProviderPromptExecutor {
     }
     if (frameworkId === 'codex') return createCodexTurnAdapter()
     if (frameworkId === 'codebuddy') return codeBuddyTurnAdapter
+    // Pi ACP returns aggregate usage on PromptResponse; it has no OpenCode usage API to probe.
+    if (frameworkId === 'pi') return RESPONSE_USAGE_TURN_ADAPTER
 
     // Capture one generation's immutable API before adapter.begin awaits. Re-reading the owner for
     // the final snapshot could mix credentials or lose usage after a generation switch.

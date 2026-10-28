@@ -141,6 +141,8 @@
     "scripts/backend-dependencies.test.ts",
     "scripts/build-backend.mjs",
     "scripts/build-notebook-host.mjs",
+    "scripts/build-pi-acp.mjs",
+    "src/main/pi-acp/permission-guard.mjs",
     "scripts/windows-dev-notebook-host.integration.test.ts",
     "scripts/wsl2-build-flags.mjs",
     "scripts/wsl2-build-flags.d.mts",

@@ -126,6 +126,7 @@ const createInitialPreflight = (): Preflight => ({
   claudeReady: false,
   opencodeReady: false,
   codexReady: false,
+  piReady: false,
   codebuddyReady: false,
   agentFrameworkId: 'claude-code',
   agentReady: false,
@@ -150,7 +151,8 @@ export const createInitialRuntimeSetupState = (): RuntimeSetupState => ({
     'claude-code': createInitialRuntimeInstallState(),
     opencode: createInitialRuntimeInstallState(),
     codex: createInitialRuntimeInstallState(),
-    codebuddy: createInitialRuntimeInstallState()
+    codebuddy: createInitialRuntimeInstallState(),
+    pi: createInitialRuntimeInstallState()
   }
 })
 
@@ -509,7 +511,7 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     updateInstallStates(set, (current) => {
       const runtimes: AgentFrameworkId[] = runtime
         ? [runtime]
-        : ['claude-code', 'opencode', 'codex', 'codebuddy']
+        : ['claude-code', 'opencode', 'codex', 'codebuddy', 'pi']
       const installStates = { ...current }
 
       for (const id of runtimes) {

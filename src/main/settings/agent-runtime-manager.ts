@@ -73,6 +73,12 @@ import {
   runAcpInitializeSmoke,
   type CodexDetectDeps
 } from './codex-detect'
+import {
+  isPiAdapterAvailable,
+  isPiRuntimeReady,
+  piAdapterPath,
+  resolvePiExecutable as resolveManagedPiExecutable
+} from '../agent-framework/pi-runtime'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
@@ -470,6 +476,9 @@ export class AgentRuntimeManager {
         this.storeReusableRuntimeProbe('environmentCheckRuntimeProbe', runtimeProbe)
 
       const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+      // Settings needs a cheap availability signal to show the bundled Pi card for every framework.
+      // Spawn the ACP smoke process only when Pi is selected; checkEnvironment owns the same probe.
+      const piReady = agentFrameworkId === 'pi' ? await isPiRuntimeReady() : isPiAdapterAvailable()
       const framework = getAgentFramework(agentFrameworkId)
       const activeProvider = settings.activeProviderId
         ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
@@ -515,6 +524,8 @@ export class AgentRuntimeManager {
         opencodePathExists: runtimeProbe.opencodeVersion !== null,
         codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
         codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
+        piRuntimeReady: piReady,
+        ...(piReady ? { piRuntimePath: piAdapterPath() } : {}),
         agentFrameworkId,
         isProviderKeyUsable: (provider) =>
           provider.id === activeProvider?.id && activeProviderKeyUsable,
@@ -525,24 +536,32 @@ export class AgentRuntimeManager {
     })
   }
 
+  async resolvePiExecutable(): Promise<string> {
+    return resolveManagedPiExecutable()
+  }
+
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     return this.trackDetection(async (signal) => {
       const settings = await this.repository.getSettings()
       signal.throwIfAborted()
       const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
       const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
-      const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime] = await Promise.all([
-        this.trackDetection(() =>
-          this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion, signal)
-        ),
-        this.trackDetection(() =>
-          this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal)
-        ),
-        this.trackDetection(() =>
-          this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion, signal)
-        ),
-        this.trackDetection(() => this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal))
-      ])
+      const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime, piReady] =
+        await Promise.all([
+          this.trackDetection(() =>
+            this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion, signal)
+          ),
+          this.trackDetection(() =>
+            this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal)
+          ),
+          this.trackDetection(() =>
+            this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion, signal)
+          ),
+          this.trackDetection(() =>
+            this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal)
+          ),
+          agentFrameworkId === 'pi' ? isPiRuntimeReady() : Promise.resolve(false)
+        ])
 
       signal.throwIfAborted()
       this.storeResolvedRuntimeProbe(
@@ -576,7 +595,18 @@ export class AgentRuntimeManager {
             id: 'codebuddy',
             label: getAgentFramework('codebuddy').displayName,
             runtime: codebuddyRuntime
-          }
+          },
+          ...(agentFrameworkId === 'pi'
+            ? [
+                {
+                  id: 'pi' as const,
+                  label: getAgentFramework('pi').displayName,
+                  runtime: piReady
+                    ? { found: true, path: piAdapterPath(), version: '0.1.8' }
+                    : { found: false }
+                }
+              ]
+            : [])
         ],
         encryptionAvailable: isEncryptionAvailable(),
         credentialStore: getCredentialStore()
