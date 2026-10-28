@@ -194,9 +194,6 @@
     "Reading_readingStatus": "En cours de lecture",
     "Read_readingStatus": "Lecture terminée",
     "Set reading status": "Définir l’état de lecture",
-    "{{count}} steps remaining_one": "{{count}} étape restante",
-    "{{count}} steps remaining_many": "{{count}} étapes restantes",
-    "{{count}} steps remaining_other": "{{count}} étapes restantes",
     "Input help": "Aide de saisie",
     "Your changes have not been saved. Discard them and leave the editor?": "Vos modifications n’ont pas été enregistrées. Voulez-vous les abandonner et quitter l’éditeur ?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Rechercher des chaînes expérimentales PDB aux structures 3D similaires à partir d’une chaîne déposée.",
@@ -7985,6 +7982,15 @@
     "Verifying download…": "Vérification du téléchargement…",
     "Example download progress": "Progression du téléchargement de l’exemple",
     "Could not cancel download. Try again.": "Impossible d’annuler le téléchargement. Réessayez.",
-    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez."
+    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez.",
+    "Ran {{count}} steps_one": "{{count}} étape exécutée",
+    "{{count}} steps running_one": "{{count}} étape en cours",
+    "{{count}} steps awaiting approval_one": "{{count}} étape en attente d’approbation",
+    "Ran {{count}} steps_other": "{{count}} étapes exécutées",
+    "{{count}} steps running_other": "{{count}} étapes en cours",
+    "{{count}} steps awaiting approval_other": "{{count}} étapes en attente d’approbation",
+    "Ran {{count}} steps_many": "{{count}} étapes exécutées",
+    "{{count}} steps running_many": "{{count}} étapes en cours",
+    "{{count}} steps awaiting approval_many": "{{count}} étapes en attente d’approbation"
   }
 }

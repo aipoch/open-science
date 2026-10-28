@@ -192,7 +192,6 @@
     "Reading_readingStatus": "読書中",
     "Read_readingStatus": "読了",
     "Set reading status": "読書状況を設定",
-    "{{count}} steps remaining_other": "残り{{count}}ステップ",
     "Input help": "入力ヘルプ",
     "Your changes have not been saved. Discard them and leave the editor?": "変更は保存されていません。破棄してエディターを離れますか？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "登録済みの鎖を使って、類似した3D構造を持つ実験由来のPDB鎖を検索します。",
@@ -7649,6 +7648,9 @@
     "Verifying download…": "ダウンロードを検証中…",
     "Example download progress": "事例のダウンロード進捗",
     "Could not cancel download. Try again.": "ダウンロードをキャンセルできませんでした。もう一度お試しください。",
-    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。"
+    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。",
+    "Ran {{count}} steps_other": "{{count}} ステップ実行済み",
+    "{{count}} steps running_other": "{{count}} ステップ実行中",
+    "{{count}} steps awaiting approval_other": "{{count}} ステップ承認待ち"
   }
 }

@@ -193,8 +193,6 @@
     "Reading_readingStatus": "Wird gelesen",
     "Read_readingStatus": "Gelesen",
     "Set reading status": "Lesestatus festlegen",
-    "{{count}} steps remaining_one": "Noch {{count}} Schritt",
-    "{{count}} steps remaining_other": "Noch {{count}} Schritte",
     "Input help": "Eingabehilfe",
     "Your changes have not been saved. Discard them and leave the editor?": "Ihre Änderungen wurden nicht gespeichert. Verwerfen Sie sie und verlassen Sie den Editor?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Experimentell bestimmte PDB-Ketten mit ähnlichen 3D-Strukturen anhand einer hinterlegten Kette finden.",
@@ -7813,6 +7811,12 @@
     "Verifying download…": "Download wird überprüft…",
     "Example download progress": "Downloadfortschritt des Beispiels",
     "Could not cancel download. Try again.": "Download konnte nicht abgebrochen werden. Versuchen Sie es erneut.",
-    "Could not download this example. Try again.": "Dieses Beispiel konnte nicht heruntergeladen werden. Versuchen Sie es erneut."
+    "Could not download this example. Try again.": "Dieses Beispiel konnte nicht heruntergeladen werden. Versuchen Sie es erneut.",
+    "Ran {{count}} steps_one": "{{count}} Schritt ausgeführt",
+    "{{count}} steps running_one": "{{count}} Schritt wird ausgeführt",
+    "{{count}} steps awaiting approval_one": "{{count}} Schritt wartet auf Freigabe",
+    "Ran {{count}} steps_other": "{{count}} Schritte ausgeführt",
+    "{{count}} steps running_other": "{{count}} Schritte werden ausgeführt",
+    "{{count}} steps awaiting approval_other": "{{count}} Schritte warten auf Freigabe"
   }
 }

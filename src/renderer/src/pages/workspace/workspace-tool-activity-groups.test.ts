@@ -6,6 +6,7 @@ import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ConversationItem } from './workspace-conversation-items'
 import {
   formatActivityGroupElapsed,
+  formatActivityGroupProgress,
   formatActivityGroupPresentationTitle,
   formatActivityGroupTitle,
   formatStepCount,
@@ -671,6 +672,38 @@ describe('getRenderableActivityEntries', () => {
     const rendered = getRenderableActivityEntries(activities)
 
     expect(rendered.map((entry) => entry.activity.id)).toEqual(['tool-search-wrapper', 'read-1'])
+  })
+})
+
+describe('formatActivityGroupProgress', () => {
+  it('counts executed outcomes without treating pending or unexecuted calls as runs', () => {
+    expect(
+      formatActivityGroupProgress([
+        'completed',
+        'failed',
+        'executing',
+        'awaiting-approval',
+        'prepared',
+        'declined',
+        'closed'
+      ])
+    ).toBe('Ran 2 steps · 1 step running · 1 step awaiting approval · 1 failed')
+  })
+
+  it('includes admitted runs that timed out, were interrupted, or were cancelled', () => {
+    expect(formatActivityGroupProgress(['limit-reached', 'interrupted', 'cancelled'])).toBe(
+      'Ran 3 steps'
+    )
+  })
+
+  it('reports no executed steps while calls are only waiting for approval', () => {
+    expect(formatActivityGroupProgress(['awaiting-approval', 'awaiting-approval'])).toBe(
+      'Ran 0 steps · 2 steps awaiting approval'
+    )
+  })
+
+  it('uses a singular executed count after a successful call', () => {
+    expect(formatActivityGroupProgress(['completed'])).toBe('Ran 1 step')
   })
 })
 

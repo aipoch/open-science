@@ -182,7 +182,7 @@ describe('WorkspaceActivityGroup row toggling', () => {
     expect(container.querySelectorAll('[data-testid="tool-chip"]')).toHaveLength(1)
     expect(container.querySelector('[data-testid="notebook-code-review-receipt"]')).toBeNull()
     expect(container.textContent).not.toContain('Code risk review')
-    expect(container.textContent).toContain('1 step')
+    expect(container.textContent).toContain('Ran 0 steps')
     expect(container.textContent).toContain('300ms')
     expect(container.textContent).not.toContain('ran a tool')
     await render([review])

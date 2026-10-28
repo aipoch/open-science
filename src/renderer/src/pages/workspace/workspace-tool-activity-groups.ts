@@ -20,7 +20,8 @@ import {
   getToolExecutionPhase,
   isNotebookExecutionActivity,
   isNotebookCodeReviewActivity,
-  isPendingNotebookCodeReview
+  isPendingNotebookCodeReview,
+  type ToolExecutionPhase
 } from './tool-execution-phase'
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
@@ -417,7 +418,39 @@ const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableAct
     )
 }
 
-// Formats the group header's total visible-step count, flagging any failed steps.
+// Count only executed outcomes; approval requests and prepared code have not run.
+const formatActivityGroupProgress = (
+  phases: ToolExecutionPhase[],
+  t: TFunction = i18next.t.bind(i18next)
+): string => {
+  const ranCount = phases.filter((phase) =>
+    ['completed', 'failed', 'limit-reached', 'interrupted', 'cancelled'].includes(phase)
+  ).length
+  const runningCount = phases.filter((phase) => phase === 'executing').length
+  const awaitingCount = phases.filter((phase) => phase === 'awaiting-approval').length
+  const failedCount = phases.filter((phase) => phase === 'failed').length
+  const parts = [
+    t('Ran {{count}} steps', { count: ranCount, defaultValue_one: 'Ran {{count}} step' })
+  ]
+  if (runningCount > 0)
+    parts.push(
+      t('{{count}} steps running', {
+        count: runningCount,
+        defaultValue_one: '{{count}} step running'
+      })
+    )
+  if (awaitingCount > 0)
+    parts.push(
+      t('{{count}} steps awaiting approval', {
+        count: awaitingCount,
+        defaultValue_one: '{{count}} step awaiting approval'
+      })
+    )
+  if (failedCount > 0) parts.push(t('{{count}} failed', { count: failedCount }))
+  return parts.join(' · ')
+}
+
+// Formats the recorded total for replay, including calls whose results are not yet revealed.
 const formatStepCount = (
   activities: ToolActivity[],
   permission?: SessionPermissionRuntimeContext,
@@ -492,6 +525,7 @@ const formatActivityGroupElapsed = (elapsedMs: number): string => {
 export {
   formatActivityGroupElapsed,
   formatActivityGroupPresentationTitle,
+  formatActivityGroupProgress,
   formatActivityGroupTitle,
   formatStepCount,
   getActivityGroupElapsedMs,

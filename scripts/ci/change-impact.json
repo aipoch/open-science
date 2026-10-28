@@ -448,6 +448,8 @@
         "e2e/launch-environment.spec.ts",
         "e2e/message-tool-layout-stability.spec.ts",
         "e2e/message-tool-collapse-scroll.spec.ts",
+        "e2e/activity-group-header.spec.ts",
+        "e2e/fixtures/activity-group-header/**",
         "e2e/workspace-project-switcher.spec.ts",
         "e2e/workspace-conversation.spec.ts",
         "e2e/workspace-files.spec.ts",

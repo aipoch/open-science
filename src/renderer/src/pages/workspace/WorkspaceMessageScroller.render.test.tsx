@@ -948,7 +948,7 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(html).toContain('2 steps · 1s')
+    expect(html.replace(/<[^>]+>/g, '')).toContain('Ran 2 steps · 1s')
   })
 
   it('renders a coordinator-owned handoff status in the original turn timeline', async () => {
@@ -2264,7 +2264,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('Using tool: Web Search')
-    expect(html).toContain('2 steps remaining')
+    expect(html).toContain('Ran 0 steps · 2 steps running')
     expect(html).not.toContain('Used tool: ToolSearch')
     expect(html).toContain('Web Search')
     expect(html).toContain('latest typhoon updates July 2026')

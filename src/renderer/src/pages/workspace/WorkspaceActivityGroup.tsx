@@ -25,7 +25,7 @@ import { getLoadedSkillName, isSkillLoadActivity } from './workspace-skill-load'
 import {
   formatActivityGroupElapsed,
   formatActivityGroupPresentationTitle,
-  formatStepCount,
+  formatActivityGroupProgress,
   getActivityGroupElapsedMs,
   getRenderableActivityEntries,
   isSearchActivity
@@ -159,7 +159,6 @@ const WorkspaceActivityGroup = ({
   const remainingCount = visiblePhases.filter(
     (phase) => phase === 'executing' || phase === 'awaiting-approval'
   ).length
-  const failedCount = visiblePhases.filter((phase) => phase === 'failed').length
 
   // Expanding or collapsing is a reading interaction, not message navigation.
   const handleToggleRow = (activityId: string, nextExpanded: boolean): void => {
@@ -174,8 +173,15 @@ const WorkspaceActivityGroup = ({
       <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
         <WorkspaceActivityGroupSurface
           icon={
-            summary ? (
-              <WorkspaceActivityIcon activity={summary.activity} phase={summary.phase} />
+            summary && !['completed', 'prepared', 'awaiting-approval'].includes(summary.phase) ? (
+              <span
+                className={cn(
+                  summary.phase === 'failed' &&
+                    'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                )}
+              >
+                <WorkspaceActivityIcon activity={summary.activity} phase={summary.phase} />
+              </span>
             ) : undefined
           }
           isExpanded={isExpanded}
@@ -192,15 +198,9 @@ const WorkspaceActivityGroup = ({
           )}
           meta={
             <>
-              {remainingCount > 0
-                ? t('{{count}} steps remaining', {
-                    count: remainingCount,
-                    defaultValue_one: '{{count}} step remaining'
-                  })
-                : formatStepCount(visibleActivities, permission, notebookRunsById, t)}
-              {remainingCount > 0 && failedCount > 0
-                ? ` · ${t('{{count}} failed', { count: failedCount })}`
-                : null}
+              <span role="status" aria-atomic="true">
+                {formatActivityGroupProgress(visiblePhases, t)}
+              </span>
               {(isExpanded || remainingCount === 0) &&
               !phases.some(({ phase }) => phase === 'awaiting-approval') ? (
                 <>

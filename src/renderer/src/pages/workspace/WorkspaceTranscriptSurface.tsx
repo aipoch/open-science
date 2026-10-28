@@ -86,11 +86,6 @@ export const WorkspaceActivityGroupSurface = ({
       className="flex w-full items-center gap-2 rounded-lg py-[5px] pl-1.5 pr-2.5 text-[13px] transition-colors hover:bg-bg-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
       onClick={onToggle}
     >
-      {icon}
-      <span className="min-w-0 truncate text-left font-medium text-text-000">{title}</span>
-      <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-000">
-        {meta}
-      </span>
       <span
         className={cn(
           'inline-flex w-4 shrink-0 items-center justify-center text-text-100 transition-transform duration-200',
@@ -98,6 +93,19 @@ export const WorkspaceActivityGroupSurface = ({
         )}
       >
         <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+      </span>
+      <span
+        data-testid="tool-group-title"
+        className="min-w-0 truncate text-left font-medium text-text-000"
+      >
+        {title}
+      </span>
+      <span
+        data-testid="tool-group-meta"
+        className="ml-auto inline-flex min-w-0 max-w-[65%] shrink-0 items-center gap-2 text-[12px] tabular-nums text-text-200"
+      >
+        {icon}
+        <span className="min-w-0 text-right [overflow-wrap:anywhere]">{meta}</span>
       </span>
     </button>
     {animate ? (

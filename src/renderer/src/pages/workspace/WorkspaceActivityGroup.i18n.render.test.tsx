@@ -57,21 +57,27 @@ describe('WorkspaceActivityGroup i18n', () => {
         />
       )
     await act(async () => render())
-    expect(container.textContent).toContain('2 steps remaining')
+    expect(container.textContent).toContain('Ran 2 steps · 2 steps running')
     expect(container.textContent).toContain('1 failed')
     expect(container.querySelector('.animate-spin')).not.toBeNull()
     expect(container.querySelector('[data-testid="tool-chip"]')).toBeNull()
     activities[1].status = 'completed'
     await act(async () => render())
-    expect(container.textContent).toContain('1 step remaining')
+    expect(container.textContent).toContain('Ran 3 steps · 1 step running')
     activities[2].status = 'completed'
     await act(async () => render())
     expect(container.textContent).not.toContain('remaining')
+    expect(container.textContent).toContain('Ran 4 steps · 1 failed')
     expect(container.querySelector('.animate-spin')).toBeNull()
     expect(container.textContent).toContain('1 failed')
     expect(
       container.querySelector('[data-testid="tool-group-header"]')?.getAttribute('aria-expanded')
     ).toBe('false')
+    activities[3].status = 'completed'
+    await act(async () => render())
+    expect(container.textContent).toContain('Ran 4 steps')
+    expect(container.textContent).not.toContain('failed')
+    expect(container.querySelector('[data-testid="tool-group-header"] .lucide-check')).toBeNull()
   })
 
   it('renders active manage_packages progress inside its tool group', () => {

@@ -196,10 +196,6 @@
     "Read_readingStatus": "Прочитано",
     "Set reading status": "Задать статус чтения",
     "Unread": "Не прочитано",
-    "{{count}} steps remaining_one": "Остался {{count}} шаг",
-    "{{count}} steps remaining_few": "Осталось {{count}} шага",
-    "{{count}} steps remaining_many": "Осталось {{count}} шагов",
-    "{{count}} steps remaining_other": "Осталось {{count}} шага",
     "Input help": "Справка по вводу",
     "Your changes have not been saved. Discard them and leave the editor?": "Изменения не сохранены. Отменить их и выйти из редактора?",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "Найти экспериментальные цепи PDB с похожими 3D-структурами по депонированной цепи.",
@@ -8129,6 +8125,18 @@
     "Verifying download…": "Проверка загрузки…",
     "Example download progress": "Ход загрузки примера",
     "Could not cancel download. Try again.": "Не удалось отменить загрузку. Повторите попытку.",
-    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку."
+    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку.",
+    "Ran {{count}} steps_one": "Выполнен {{count}} шаг",
+    "{{count}} steps running_one": "{{count}} шаг выполняется",
+    "{{count}} steps awaiting approval_one": "{{count}} шаг ожидает подтверждения",
+    "Ran {{count}} steps_few": "Выполнено {{count}} шага",
+    "{{count}} steps running_few": "{{count}} шага выполняются",
+    "{{count}} steps awaiting approval_few": "{{count}} шага ожидают подтверждения",
+    "Ran {{count}} steps_many": "Выполнено {{count}} шагов",
+    "{{count}} steps running_many": "{{count}} шагов выполняются",
+    "{{count}} steps awaiting approval_many": "{{count}} шагов ожидают подтверждения",
+    "Ran {{count}} steps_other": "Выполнено {{count}} шага",
+    "{{count}} steps running_other": "{{count}} шага выполняются",
+    "{{count}} steps awaiting approval_other": "{{count}} шага ожидают подтверждения"
   }
 }

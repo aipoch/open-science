@@ -192,7 +192,6 @@
     "Reading_readingStatus": "阅读中",
     "Read_readingStatus": "已读",
     "Set reading status": "设置阅读状态",
-    "{{count}} steps remaining_other": "剩余 {{count}} 步",
     "Input help": "输入帮助",
     "Your changes have not been saved. Discard them and leave the editor?": "更改尚未保存。要放弃更改并离开编辑器吗？",
     "Find experimental PDB chains with similar 3D structures using a deposited chain.": "使用已收录的链查找具有相似三维结构的实验 PDB 链。",
@@ -7649,6 +7648,9 @@
     "Verifying download…": "正在校验下载文件…",
     "Example download progress": "案例下载进度",
     "Could not cancel download. Try again.": "无法取消下载，请重试。",
-    "Could not download this example. Try again.": "无法下载此案例，请重试。"
+    "Could not download this example. Try again.": "无法下载此案例，请重试。",
+    "Ran {{count}} steps_other": "已运行 {{count}} 步",
+    "{{count}} steps running_other": "{{count}} 步执行中",
+    "{{count}} steps awaiting approval_other": "{{count}} 步待批准"
   }
 }
