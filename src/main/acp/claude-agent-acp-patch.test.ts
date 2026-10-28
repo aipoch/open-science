@@ -1,7 +1,8 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { promisify } from 'node:util'
 import type { McpServerStatus, Query } from '@anthropic-ai/claude-agent-sdk'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -12,6 +13,166 @@ import {
 } from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
 
 type McpStatusQuery = Pick<Query, 'mcpServerStatus' | 'close'>
+
+it.runIf(process.platform === 'win32')(
+  'recovers launch files only after both owning processes exit',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'acp-launch-recovery-'))
+    const entry = join(root, 'probe.mjs')
+    const launchRoot = join(root, '.open-science-launch')
+    writeFileSync(
+      entry,
+      `
+import { once } from 'node:events';
+import { spawnWithFileConfiguration } from ${JSON.stringify(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/open-science-launch.js'))};
+const child = spawnWithFileConfiguration({command:process.execPath,
+  args:['-e',process.env.HOLD ? 'setInterval(()=>{},1000)' : '', '--', '--settings', JSON.stringify({env:{TOKEN:'synthetic'}})],
+  env:process.env,cwd:process.env.CLAUDE_CONFIG_DIR});
+await once(child, 'spawn');
+console.log(JSON.stringify({childPid:child.pid}));
+await once(child, 'close');
+`
+    )
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: root }
+    const owner = spawn(process.execPath, [entry], { env: { ...env, HOLD: '1' }, stdio: 'pipe' })
+    let childPid: number | undefined
+    try {
+      const [data] = await once(owner.stdout, 'data')
+      childPid = JSON.parse(data.toString()).childPid
+      const [directory] = readdirSync(launchRoot)
+      const relaunch = (): Promise<{ stdout: string; stderr: string }> =>
+        promisify(execFile)(process.execPath, [entry], { env, timeout: 5000 })
+      await relaunch()
+      expect(readdirSync(launchRoot)).toEqual([directory])
+      const closed = once(owner, 'close')
+      owner.kill('SIGKILL')
+      await closed
+      // Some Windows hosts terminate the whole job with the adapter. Model a still-live CLI
+      // through the persisted ownership boundary so recovery must check both identities.
+      const receipt = join(launchRoot, directory, 'owner.json')
+      const originalReceipt = readFileSync(receipt, 'utf8')
+      writeFileSync(receipt, JSON.stringify({ pid: owner.pid, childPid: process.pid }))
+      await relaunch()
+      expect(readdirSync(launchRoot)).toEqual([directory])
+      writeFileSync(receipt, originalReceipt)
+      try {
+        process.kill(childPid!, 'SIGKILL')
+      } catch {
+        // The host may already have stopped the whole job.
+      }
+      await vi.waitFor(() => expect(() => process.kill(childPid!, 0)).toThrow(), { timeout: 3000 })
+      childPid = undefined
+      await relaunch()
+      expect(readdirSync(launchRoot)).toEqual([])
+    } finally {
+      owner.kill('SIGKILL')
+      if (childPid) {
+        try {
+          process.kill(childPid, 'SIGKILL')
+        } catch {
+          /* Already exited. */
+        }
+      }
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  }
+)
+
+it.each(['mcp', 'settings'])(
+  'creates a session with large %s configuration without exceeding the process launch limit',
+  async (kind) => {
+    const root = mkdtempSync(join(tmpdir(), 'acp-launch-'))
+    const cli = join(root, 'cli.mjs')
+    const entry = join(root, 'probe.mjs')
+    writeFileSync(
+      cli,
+      `
+import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
+import { strict as assert } from 'node:assert';
+if (process.env.PROBE_EXIT === 'exit') process.exit(7);
+const flag = process.env.PROBE_KIND === 'mcp' ? '--mcp-config' : '--settings';
+const value = process.argv[process.argv.indexOf(flag) + 1];
+const config = JSON.parse(value.startsWith('{') ? value : readFileSync(value, 'utf8'));
+const payload = process.env.PROBE_KIND === 'mcp' ? config.mcpServers.fixture.env.FIXTURE_PAYLOAD : config.env.FIXTURE_PAYLOAD;
+assert.equal(payload, 'x'.repeat(Number(process.env.PROBE_LENGTH)));
+createInterface({input:process.stdin}).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.type !== 'control_request') return;
+  if (process.env.PROBE_EXIT === 'reject') {
+    process.stdout.write(JSON.stringify({type:'control_response',response:{subtype:'error',request_id:request.request_id,error:'fixture-rejected'}})+'\\n');
+    return;
+  }
+  const response = request.request.subtype === 'initialize'
+    ? {commands:[],models:[{value:'fixture',displayName:'Fixture',description:''}],agents:[],account:{}}
+    : request.request.subtype === 'mcp_status'
+      ? {mcpServers:[{name:'fixture',status:'connected'}]} : {};
+  process.stdout.write(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:request.request_id,response}})+'\\n');
+});
+`
+    )
+    writeFileSync(
+      entry,
+      `
+import { ClaudeAcpAgent } from ${JSON.stringify(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'))};
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+const outcomes = [];
+const launchRoot = join(process.env.CLAUDE_CONFIG_DIR, '.open-science-launch');
+const remaining = () => existsSync(launchRoot) ? readdirSync(launchRoot).length : 0;
+for (const [length, fail] of [[10, ''], [40000, ''], [40000, 'exit'], [40000, 'reject']]) {
+  process.env.PROBE_LENGTH = String(length);
+  process.env.PROBE_EXIT = fail;
+  const agent = new ClaudeAcpAgent({sessionUpdate:async()=>{}}, {log(){},error(){}});
+  try {
+    const payload = 'x'.repeat(length);
+    const result = await agent.newSession({cwd:${JSON.stringify(root)},
+      mcpServers: process.env.PROBE_KIND === 'mcp'
+        ? [{name:'fixture',command:process.execPath,args:[],env:[{name:'FIXTURE_PAYLOAD',value:payload}]}] : [],
+      _meta:{claudeCode:{options:{settingSources:[],
+        ...(process.env.PROBE_KIND === 'settings' ? {settings:{env:{FIXTURE_PAYLOAD:payload}}} : {})}}}
+    });
+    outcomes.push({length,created:!!result.sessionId});
+  } catch(error) {
+    outcomes.push(fail && (error.message.includes('code 7') || error.message === 'fixture-rejected') ? {length,failed:true} : {length,error:error.message});
+  } finally {
+    await agent.dispose();
+    const deadline = Date.now() + 2000;
+    while (remaining() && Date.now() < deadline) await delay(20);
+    outcomes.at(-1).remaining = remaining();
+  }
+}
+console.log(JSON.stringify(outcomes));
+`
+    )
+    try {
+      const { stdout } = await promisify(execFile)(process.execPath, [entry], {
+        env: {
+          PATH: process.env.PATH,
+          SystemRoot: process.env.SystemRoot,
+          TEMP: root,
+          TMP: root,
+          TMPDIR: root,
+          HOME: root,
+          USERPROFILE: root,
+          CLAUDE_CONFIG_DIR: root,
+          CLAUDE_CODE_EXECUTABLE: cli,
+          PROBE_KIND: kind
+        },
+        timeout: 10_000
+      })
+      expect(JSON.parse(stdout)).toEqual([
+        { length: 10, created: true, remaining: 0 },
+        { length: 40000, created: true, remaining: 0 },
+        { length: 40000, failed: true, remaining: 0 },
+        { length: 40000, failed: true, remaining: 0 }
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    }
+  }
+)
 
 const queryWithStatus = (mcpServerStatus: McpStatusQuery['mcpServerStatus']): McpStatusQuery => ({
   mcpServerStatus,
