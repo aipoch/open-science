@@ -138,7 +138,10 @@ describe.skipIf(process.platform === 'win32')('private Unix service lease', () =
     first.server.closeAllConnections()
     await new Promise<void>((resolve) => first.server.close(() => resolve()))
     const replacement = await listen(proof, first.socketPath)
-    await expect(lease.get('/result')).rejects.toThrow()
+    await Promise.all([
+      expect(lease.get('/result')).rejects.toThrow(),
+      expect(lease.get('/redirect')).rejects.toThrow()
+    ])
     expect(replacement.paths).toEqual([])
   })
 })
