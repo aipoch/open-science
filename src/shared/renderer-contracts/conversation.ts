@@ -159,7 +159,7 @@ export const sessionsDeleteSessionContracts = {
   'sessions.importPackage': callable<
     (
       request?: SessionPackageImportRequest,
-      file?: File | string,
+      file?: File | string | import('../use-cases').UseCaseSource,
       options?: { readonly nonInteractive: true }
     ) => Promise<SessionPackageImportResult>
   >()('sessions', [
@@ -169,6 +169,9 @@ export const sessionsDeleteSessionContracts = {
     POSITIONAL,
     RUNTIME_VALIDATED
   ]),
+  'sessions.useCaseCatalog': callable<
+    (mode: 'cached' | 'refreshed') => Promise<import('../use-cases').UseCase[]>
+  >()('sessions', ['sessions:use-case-catalog', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.packageOperation': callable<
     (
       request: import('../session-package').PackageOperationRequest

@@ -59,7 +59,10 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
+import type {
+  DelegatedQuestionRequest,
+  PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
@@ -1060,7 +1063,7 @@ describe('ConversationPanel header spacing', () => {
     renderPanel()
     expect(getConversationHeader().textContent).toContain('New conversation')
     expect(
-      getConversationHeader().querySelector('[aria-label="Copying files… · View progress"]')
+      getConversationHeader().querySelector('[aria-label="Copying files… View progress"]')
     ).not.toBeNull()
 
     renderPanel({
@@ -1079,7 +1082,7 @@ describe('ConversationPanel header spacing', () => {
     })
     expect(getConversationHeader().textContent).toContain('Research Session')
     const progress = getConversationHeader().querySelector<HTMLButtonElement>(
-      '[aria-label="Copying files… · View progress"]'
+      '[aria-label="Copying files… View progress"]'
     )!
     act(() => progress.click())
     expect(usePackageOperationStore.getState().open).toBe(true)
@@ -2888,7 +2891,11 @@ describe('ConversationPanel composer intake', () => {
     })
     const elicitationComposer = container.querySelector('[data-testid="elicitation-composer"]')
     expect(elicitationComposer).not.toBeNull()
-    expect(elicitationComposer?.classList.contains('max-h-[min(70dvh,44rem)]')).toBe(true)
+    expect(
+      elicitationComposer?.classList.contains(
+        'max-h-[min(max(70dvh,min(18rem,calc(100dvh-2rem))),44rem)]'
+      )
+    ).toBe(true)
     expect(elicitationComposer?.classList.contains('overflow-visible')).toBe(true)
     expect(elicitationComposer?.classList.contains('px-px')).toBe(true)
     expect(elicitationComposer?.classList.contains('pb-px')).toBe(true)
@@ -2901,7 +2908,11 @@ describe('ConversationPanel composer intake', () => {
     const scrollSurface = container.querySelector(
       '[data-testid="elicitation-composer-scroll"]'
     ) as HTMLDivElement
-    expect(scrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(scrollSurface.classList.contains('overflow-hidden')).toBe(true)
+    const optionsScroll = container.querySelector<HTMLElement>(
+      '[data-testid="elicitation-options"]'
+    )!
+    expect(optionsScroll.classList.contains('overflow-y-auto')).toBe(true)
     expect(scrollSurface.classList.contains('overscroll-contain')).toBe(true)
     expect(scrollSurface.classList.contains('border-border-200')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-sm')).toBe(true)
@@ -2914,7 +2925,11 @@ describe('ConversationPanel composer intake', () => {
     )
     expect(optionRows).toHaveLength(2)
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 480 }) as DOMRect
-    scrollSurface.getBoundingClientRect = () => ({ top: 32 }) as DOMRect
+    optionsScroll.getBoundingClientRect = () => ({ top: 80 }) as DOMRect
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 360 },
+      scrollHeight: { configurable: true, value: 360 }
+    })
     optionRows[1].getBoundingClientRect = () => ({ bottom: 180 }) as DOMRect
 
     act(() => {
@@ -2932,13 +2947,17 @@ describe('ConversationPanel composer intake', () => {
     expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
 
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 288 }) as DOMRect
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 168 },
+      scrollHeight: { configurable: true, value: 168 }
+    })
     act(() => {
       resizeHandle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' }))
     })
     expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
 
-    Object.defineProperties(scrollSurface, {
-      clientHeight: { configurable: true, value: 256 },
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 168 },
       scrollHeight: { configurable: true, value: 400 }
     })
     act(() => {
@@ -2949,8 +2968,8 @@ describe('ConversationPanel composer intake', () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 568 })
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 300 }) as DOMRect
-    Object.defineProperties(scrollSurface, {
-      clientHeight: { configurable: true, value: 250 },
+    Object.defineProperties(optionsScroll, {
+      clientHeight: { configurable: true, value: 180 },
       scrollHeight: { configurable: true, value: 500 }
     })
     act(() => {
@@ -3497,23 +3516,36 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it.each(
-    (['before-rearm', 'after-rearm'] as const).flatMap((order) =>
-      [false, true].flatMap((previousFailure) =>
+    (['before-rearm', 'after-rearm'] as const).flatMap((order) => [
+      ...[false, true].flatMap((previousFailure) =>
         [false, true].map((authenticationRequired) => ({
           order,
           previousFailure,
-          authenticationRequired
+          authenticationRequired,
+          decision: 'answered' as const,
+          failure: authenticationRequired
+            ? 'Authentication required'
+            : 'Runtime Session turn is already owned by another execution.'
         }))
-      )
-    )
+      ),
+      // The supplied recording shows both Finish and Skip returning the same question
+      // after this error. Verify the public error/recovery boundary for both decisions;
+      // this does not claim why the Specialist was unavailable in that installation.
+      ...(['answered', 'declined'] as const).map((decision) => ({
+        order,
+        previousFailure: false,
+        authenticationRequired: false,
+        decision,
+        failure: 'The bound specialist is unavailable.'
+      }))
+    ])
   )(
-    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure, authentication: $authenticationRequired)',
-    async ({ order, previousFailure, authenticationRequired }) => {
+    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure, authentication: $authenticationRequired, decision: $decision, error: $failure)',
+    async ({ order, previousFailure, authenticationRequired, decision, failure }) => {
       // This tests failure disclosure, not the still-unknown cause of the reported
       // admission rejection. Feed the public event contract emitted by AcpRuntime.
-      const failure = authenticationRequired
-        ? 'Authentication required'
-        : 'Runtime Session turn is already owned by another execution.'
+      const answers =
+        decision === 'answered' ? [{ fieldId: 'question_0', value: 'confirm' }] : undefined
       const answered = materializeSessionConversationGraph({
         id: `question-continuation-${order}-${previousFailure}`,
         projectId: 'project-a',
@@ -3563,8 +3595,8 @@ describe('ConversationPanel composer intake', () => {
                 },
                 { id: 'question_0_custom', label: 'Other', kind: 'text' }
               ],
-              state: 'answered',
-              answers: [{ fieldId: 'question_0', value: 'confirm' }],
+              state: decision,
+              answers,
               respondedAt: 3,
               continuationPending: true,
               durable: {
@@ -3624,10 +3656,10 @@ describe('ConversationPanel composer intake', () => {
         elicitation: { requests: [] }
       })
       expect(
-        current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
-      ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+        current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.answers
+      ).toEqual(answers)
       if (authenticationRequired) {
-        expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+        expect(container.querySelector('[data-testid="elicitation-recovery"]')).not.toBeNull()
         expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
         expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()
         expect(container.textContent).toContain('Sign in to continue this conversation')
@@ -3648,15 +3680,21 @@ describe('ConversationPanel composer intake', () => {
         expect(container.textContent).not.toContain('Sign in to continue this conversation')
         expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
         expect(
-          current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
-        ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+          current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.answers
+        ).toEqual(answers)
       } else {
         expect(
           container.textContent,
           'The retryable question must explain why confirmation did not continue the task'
         ).toContain(failure)
       }
-      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+      expect(
+        container.querySelector('[data-testid="elicitation-composer"]'),
+        'A failed continuation must not send the user back to the same blocking question'
+      ).toBeNull()
+      expect(container.querySelector('[data-testid="elicitation-recovery"]')).not.toBeNull()
+      expect(container.textContent).toContain('End this wait')
+      expect(container.textContent).not.toContain('Retry continuation')
     }
   )
 
@@ -3725,11 +3763,20 @@ describe('ConversationPanel composer intake', () => {
       const authority = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(activeSession)
       })
+      let waitingSession: PersistedChatSession = {
+        ...structuredClone(activeSession),
+        status: 'waiting-for-user',
+        activeRun: undefined
+      }
       const waitingAuthority = new AcpDurableContinuationContextOwner({
-        loadSessionForContinuation: async () => ({
-          ...structuredClone(activeSession),
-          status: 'waiting-for-user'
-        })
+        loadSessionForContinuation: async () => structuredClone(waitingSession),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          waitingSession = {
+            ...mutate(structuredClone(waitingSession)),
+            runtimeTranscriptOwner: 'main'
+          }
+          return structuredClone(waitingSession)
+        }
       })
       await expect(
         waitingAuthority.prepareElicitation({
@@ -3740,6 +3787,14 @@ describe('ConversationPanel composer intake', () => {
           action: 'decline'
         })
       ).resolves.toMatchObject({ request: { requestId: 'export-choice-request' } })
+      expect(waitingSession.activities![0].elicitation).toMatchObject({
+        state: 'declined',
+        continuationPending: true
+      })
+      expect(waitingSession.conversationGraph!.activities[0].elicitation).toEqual(
+        waitingSession.activities![0].elicitation
+      )
+      expect(activeSession.activities![0].elicitation?.state).toBe('pending')
       await expect(
         authority.prepareElicitation({
           projectId: activeSession.projectId,
@@ -9395,6 +9450,10 @@ describe('ConversationPanel error box + report affordance', () => {
       [
         ['Internal error', 'Your conversation is preserved. Try Resume again.'],
         [
+          'Previous agent cleanup is unconfirmed.',
+          'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+        ],
+        [
           'Resume timed out',
           'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
         ],
@@ -10040,7 +10099,17 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
       }
     })
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Imported research history"]')).not.toBeNull()
+    const importedHistory = container.querySelector('[aria-label="Imported research history"]')
+    expect(importedHistory).not.toBeNull()
+    expect(importedHistory?.textContent).not.toContain('Read-only')
+    expect(importedHistory?.textContent).not.toContain(
+      'Code execution and continuation are disabled.'
+    )
+    expect(importedHistory?.querySelector('details')).toBeNull()
+    expect(importedHistory?.textContent).not.toContain('Package source')
+    expect(importedHistory?.textContent).not.toContain('Imported on')
+    expect(importedHistory?.textContent).toContain('View replay')
+    expect(importedHistory?.textContent).toContain('Fork to continue')
     expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
     expect(container.textContent).not.toContain('Asked by Researcher')
     expect(container.querySelector('[data-testid="ordinary-composer-form"]')).toBeNull()

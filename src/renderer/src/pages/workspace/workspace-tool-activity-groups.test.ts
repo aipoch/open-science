@@ -15,6 +15,10 @@ import {
   isSearchActivity
 } from './workspace-tool-activity-groups'
 import { i18next } from '@/i18n'
+import {
+  buildToolActivityDetails,
+  translateToolDetailCopy
+} from './workspace-tool-activity-details'
 
 const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   id: 'tool-1',
@@ -432,6 +436,182 @@ describe('formatActivityGroupPresentationTitle', () => {
         new Map([['run-1', notebookRun]])
       )
     ).toBe(expected)
+    expect(
+      formatActivityGroupPresentationTitle(
+        [notebookActivity, createActivity({ id: 'ordinary', status: 'in_progress' })],
+        undefined,
+        undefined,
+        new Map([['run-1', notebookRun]])
+      )
+    ).toBe('Running')
+  })
+
+  it('reuses the tool row display name and follows the current execution', () => {
+    const done = createActivity({ id: 'done', providerToolName: 'read_file' })
+    const queued = createActivity({
+      id: 'queued',
+      status: 'pending',
+      providerToolName: 'mcp__open-science-artifacts__write_artifact_file',
+      rawInput: { filename: 'report.txt', content: 'Report' }
+    })
+    const running = createActivity({
+      id: 'running',
+      status: 'in_progress',
+      toolKind: 'execute',
+      title: 'mcp.open-science command',
+      rawInput: { command: 'ls' }
+    })
+    const calls = [done, queued, running]
+    expect(formatActivityGroupPresentationTitle(calls, 'Group title', undefined)).toBe(
+      'Using tool: Terminal'
+    )
+    running.status = 'completed'
+    queued.status = 'in_progress'
+    expect(formatActivityGroupPresentationTitle(calls, 'Group title', undefined)).toBe(
+      'Using tool: Write file'
+    )
+    queued.status = 'completed'
+    expect(formatActivityGroupPresentationTitle(calls, 'Group title', undefined)).toBe(
+      'Group title'
+    )
+  })
+
+  it.each([
+    ['python', 'Notebook run'],
+    ['bash', 'Shell'],
+    ['repl', 'Agent SDK']
+  ])(
+    'shares the existing %s display name and translation with tool rows',
+    async (language, name) => {
+      const activity = notebook({
+        executionInvocationId: 'invocation-1',
+        rawInput: { language, code: 'print(1)', command: 'ls' },
+        rawOutput: {
+          runId: 'run-1',
+          executionInvocationId: 'invocation-1',
+          status: 'running',
+          kernelKind: language
+        }
+      })
+      expect(buildToolActivityDetails(activity)?.displayName).toBe(name)
+      expect(formatActivityGroupPresentationTitle([activity], undefined, undefined)).toBe(
+        `Using tool: ${name}`
+      )
+      const korean = i18next.createInstance()
+      await korean.init({
+        lng: 'ko',
+        fallbackLng: 'en',
+        keySeparator: false,
+        nsSeparator: false,
+        interpolation: { escapeValue: false },
+        resources: { ko: { translation: ko } }
+      })
+      const t = korean.t.bind(korean)
+      const details = buildToolActivityDetails(activity, t)!
+      expect(
+        formatActivityGroupPresentationTitle([activity], undefined, undefined, undefined, t)
+      ).toBe(t('Using tool: {{name}}', { name: translateToolDetailCopy(details.displayName, t) }))
+      expect(translateToolDetailCopy(details.displayName, t)).not.toBe(name)
+    }
+  )
+
+  it.each([
+    ['execute', 'Terminal'],
+    ['read', 'Read'],
+    ['edit', 'Edit'],
+    ['delete', 'Delete'],
+    ['move', 'Move'],
+    ['think', 'Task'],
+    ['switch_mode', 'Switch Mode'],
+    ['other', 'Tool']
+  ] as const)(
+    'translates the generic %s display name in running headers',
+    async (toolKind, name) => {
+      const korean = i18next.createInstance()
+      await korean.init({
+        lng: 'ko',
+        fallbackLng: 'en',
+        keySeparator: false,
+        nsSeparator: false,
+        interpolation: { escapeValue: false },
+        resources: { ko: { translation: ko } }
+      })
+      const t = korean.t.bind(korean)
+      const activity = createActivity({
+        status: 'in_progress',
+        toolKind,
+        rawInput: { command: 'echo ready' },
+        rawOutput: 'ready'
+      })
+      expect(t(name)).not.toBe(name)
+      expect(
+        formatActivityGroupPresentationTitle([activity], undefined, undefined, undefined, t)
+      ).toBe(t('Using tool: {{name}}', { name: t(name) }))
+    }
+  )
+
+  it.each([
+    ['notebook_shutdown', 'Notebook shutdown'],
+    ['inspect_packages', 'Notebook'],
+    ['manage_environments', 'Notebook']
+  ])('keeps the existing %s mapping when generic details exist', async (tool, name) => {
+    const korean = i18next.createInstance()
+    await korean.init({
+      lng: 'ko',
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { ko: { translation: ko } }
+    })
+    for (const identity of [
+      `mcp__open-science-notebook__${tool}`,
+      `mcp__open_science_notebook__${tool}`,
+      `mcp.open-science-notebook.${tool}`,
+      `open-science-notebook_${tool}`
+    ]) {
+      for (const source of ['providerToolName', 'title'] as const) {
+        const activity = createActivity({
+          status: 'in_progress',
+          toolKind: 'other',
+          [source]: identity,
+          rawInput: { runtimeId: 'python' },
+          rawOutput: 'pending'
+        })
+        expect(buildToolActivityDetails(activity)).toBeDefined()
+        expect(formatActivityGroupPresentationTitle([activity], undefined, undefined)).toBe(
+          `Using tool: ${name}`
+        )
+        const t = korean.t.bind(korean)
+        expect(
+          formatActivityGroupPresentationTitle([activity], undefined, undefined, undefined, t)
+        ).toBe(t('Using tool: {{name}}', { name: t(name) }))
+      }
+    }
+  })
+
+  it('shows ordinary running and approval states without inferring future steps', () => {
+    const activity = createActivity({
+      id: 'ordinary',
+      status: 'in_progress',
+      promptMessageId: 'prompt'
+    })
+    expect(formatActivityGroupPresentationTitle([activity], undefined, undefined)).toBe('Running')
+    expect(
+      formatActivityGroupPresentationTitle([activity], undefined, {
+        state: 'pending',
+        originatingPromptMessageId: 'prompt',
+        fingerprint: 'fingerprint',
+        createdAt: 1,
+        request: {
+          requestId: 'permission',
+          sessionId: 'session',
+          toolCallId: 'ordinary',
+          title: 'Read',
+          options: []
+        }
+      })
+    ).toBe('Waiting for your approval')
   })
 
   it('leaves non-Notebook group titles unchanged', () => {

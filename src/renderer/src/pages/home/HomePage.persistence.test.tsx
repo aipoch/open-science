@@ -10,6 +10,9 @@ import { createInitialSessionState, useSessionStore } from '@/stores/session-sto
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { HomePage } from './HomePage'
 
+// Catalog requests and card interactions have their own suite and browser journey.
+vi.mock('./UseCaseCarousel', () => ({ UseCaseCarousel: () => null }))
+
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
 vi.mock('@/components/NetworkStatusIndicator', () => ({ NetworkStatusIndicator: () => null }))
 vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))

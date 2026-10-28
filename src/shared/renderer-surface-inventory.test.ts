@@ -247,7 +247,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   'notebook-env': ['cancel', 'provision', 'repair'],
   notebook: ['export-ipynb', 'export-ipynb-all'],
   'remote-access': ['probe'],
-  sessions: ['export-package', 'import-package', 'package-operation'],
+  sessions: ['export-package', 'import-package', 'package-operation', 'use-case-catalog'],
   runtime: [
     'pick-interpreter',
     'register-interpreter',
@@ -346,7 +346,15 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'set-data-root-and-relaunch',
     'validate-data-root'
   ],
-  update: ['apply', 'cancel', 'download', 'recheck', 'recover'],
+  update: [
+    'apply',
+    'cancel',
+    'download',
+    'get-installer',
+    'recheck',
+    'recover',
+    'reveal-installer'
+  ],
   uploads: ['stage-local-path']
 }
 

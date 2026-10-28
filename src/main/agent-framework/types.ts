@@ -339,6 +339,8 @@ export type ResolvedAgentBackend = {
   // Process-local snapshot of app-generated OpenCode config/plugin/instruction files. Delegated
   // Attempts materialize this admission's files rather than rereading mutable global config.
   opencodeConfigFiles?: readonly Readonly<AgentConfigFile>[]
+  // Probed from the executable for this generation, never persisted as session state.
+  opencodeMajorVersion?: 1 | 2
   proxyEnvironmentMode?: ProxyEnvironmentMode
   // Framework-native session options retained by the runtime and passed through buildSessionSetup.
   sessionOptions?: Record<string, unknown>
@@ -369,11 +371,12 @@ export type ResolvedAgentBackend = {
   contextUsageModel?: string
   authentication?: AgentAuthentication
   providerConfiguration?: AgentProviderConfiguration
-  // Authenticated loopback API exposed by the same OpenCode ACP process. The runtime snapshots
+  // Authenticated loopback API exposed by ACP (1.x) or its owned companion (2.x). The runtime snapshots
   // assistant messages around a prompt so it can aggregate every model step in that user turn.
   opencodeUsageApi?: {
     baseUrl: string
     authorization: string
+    version?: 2
   }
   // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;
   // reviewer sessions register their Codex prompt_cache_key here so routing never depends on content.

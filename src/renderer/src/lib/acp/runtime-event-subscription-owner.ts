@@ -10,6 +10,7 @@ type RuntimeEventListener = (
   snapshot?: RuntimeEventSnapshotContext
 ) => void
 type RuntimeEventSubscriptionOwner = {
+  reset: () => void
   observeEvent: (event: AcpRuntimeEvent) => void
   observeEvents: (events: readonly AcpRuntimeEvent[]) => void
   observeInitialSnapshot: (
@@ -152,6 +153,16 @@ const createRuntimeEventSubscriptionOwner = (): RuntimeEventSubscriptionOwner =>
   }
 
   return {
+    reset(): void {
+      retainedEvents.length = 0
+      retainedEventIds.clear()
+      pendingInitialEvents.clear()
+      directEventsSinceSnapshot.clear()
+      previousSnapshotEventIds.clear()
+      initialized = false
+      preserveInitialReplay = false
+      arrivalSequence = 0
+    },
     observeEvent(event: AcpRuntimeEvent): void {
       observeEvents([event])
     },

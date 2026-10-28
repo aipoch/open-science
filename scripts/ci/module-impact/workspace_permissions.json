@@ -6,6 +6,7 @@
     "src/renderer/src/pages/workspace/PermissionApprovalControls.specialist-switch.render.test.tsx",
     "src/renderer/src/pages/workspace/PermissionApprovalControls.tsx",
     "src/renderer/src/pages/workspace/PermissionScopeConfirmationDialog.tsx",
+    "src/renderer/src/pages/workspace/QuestionSkipButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
     "src/renderer/src/pages/workspace/WorkspaceElicitationCard.tsx",
     "src/renderer/src/pages/workspace/permission-request-presentation.test.ts",

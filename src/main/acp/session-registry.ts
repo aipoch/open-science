@@ -3,6 +3,7 @@ import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { AcpSessionAggregate, type AcpSessionAggregateAttachInput } from './session-aggregate'
 
 type RegistryOptions = {
+  onAttachmentChanged?: (entry: AcpSessionRegistryEntry) => void
   addStartupBlocker?: (token: symbol) => void
   removeStartupBlocker?: (token: symbol) => void
   foreignIdentityCollision?: (sessionIds: readonly string[]) => Error | undefined
@@ -192,6 +193,7 @@ class AcpSessionRegistry {
       })
     }
     this.currentSessionIdValue = appSessionId
+    this.options.onAttachmentChanged?.(registryEntry(appSessionId, record))
     return registryEntry(appSessionId, record)
   }
   detach(attachment: AcpSessionAttachment, mode: 'provider' | 'connection'): boolean {
@@ -206,6 +208,7 @@ class AcpSessionRegistry {
         this.currentSessionIdValue = undefined
       }
     }
+    this.options.onAttachmentChanged?.(registryEntry(attachment.appSessionId, record))
     return true
   }
   beginDelete(appSessionId: string): AcpSessionDeletion {

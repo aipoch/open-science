@@ -1,5 +1,5 @@
 import { mkdirSync, realpathSync, lstatSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, toNamespacedPath } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 // This database has no application tables. Its exclusive transaction is a kernel-backed,
@@ -51,7 +51,8 @@ export function acquireRuntimeDirectorySync(directory: string): RuntimeDirectory
   }
   let database: DatabaseSync
   for (let attempt = 0; ; attempt++) {
-    database = new DatabaseSync(path)
+    // SQLite needs the Windows extended path prefix for deeply nested Attempt stores.
+    database = new DatabaseSync(toNamespacedPath(path))
     try {
       database.exec('PRAGMA busy_timeout = 0; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE')
       break

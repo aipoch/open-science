@@ -235,6 +235,9 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}
         run: >-
           npm test --
+          src/main/desktop-runtime-recovery.integration.test.ts
+          src/main/desktop-update-integration.test.ts
+          src/main/storage/content-repository.test.ts
           src/main/session-package/browser-import.test.ts
           src/main/notebook/working-file-observer.test.ts
           src/main/session-persistence/projection.test.ts

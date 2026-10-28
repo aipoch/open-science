@@ -82,6 +82,19 @@ it.each(cells)('captures reported cell $index', async (cell) => {
     invalid: facts.copyOnModifyInvalidatedNames,
     receiver: facts.receiverCalls
   })
+  if (language === 'r' && [7, 8].includes(cell.index)) {
+    // abs can dispatch Math methods on columns whose primitive type is unknown.
+    expect(facts.state === 'unknown' ? facts.reasons : [], detail).toContain('opaque-call')
+    expect(await analyzeNotebookSourceFileAccess(language, cell.script)).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
+      reads: ['processed/diff_results.csv'],
+      writes:
+        cell.index === 8 ? ['processed/diagonal_volcano.pdf', 'processed/diagonal_volcano.png'] : []
+    })
+    return
+  }
   expect(facts.state === 'unknown' ? facts.reasons : [], detail).not.toContain('opaque-call')
   expect(await analyzeNotebookSourceFileAccess(language, cell.script), detail).toMatchObject({
     readState: 'complete',

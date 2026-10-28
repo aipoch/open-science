@@ -83,6 +83,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { NotebookKernelExecutor } from './kernel-executor'
+import { runShellCommand } from './shell-process'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
 import {
   beginMigration,
@@ -201,6 +202,69 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each(
+    (['darwin', 'linux', 'win32', 'wsl2'] as const).flatMap((target) =>
+      (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({ target, runtime }))
+    )
+  )(
+    'makes managed Skill resources read-only for $runtime on $target',
+    async ({ target, runtime }) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'sandbox-skill-resources-')))
+      fixtureDirectories.push(root)
+      const configRoot = join(root, 'config')
+      const skills = join(configRoot, 'codex', 'skills')
+      await mkdir(skills, { recursive: true })
+      const owner = new NotebookNetworkSandboxOwner({
+        configRoot,
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: target === 'wsl2' ? 'win32' : target,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        // A broad user grant must not turn the built-in Skill read grant into write access.
+        getGrantedLocalRoots: async () => [
+          { id: 'config', name: 'config', path: configRoot, access: 'rw' }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      try {
+        const wrapped = await owner.wrap({
+          ...(target === 'wsl2'
+            ? {
+                target: {
+                  kind: 'wsl2',
+                  profileId: 'wsl',
+                  distro: 'Ubuntu',
+                  user: 'researcher'
+                } as const
+              }
+            : {}),
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'read Skill reference',
+          sessionId: 'skill-session',
+          projectId: 'skill-project',
+          runtime,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+        expect(filesystem.readOnlyRoots).toContain(skills)
+        expect(filesystem.deniedWriteRoots).toContain(skills)
+        expect(filesystem.readWriteRoots).not.toContain(skills)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
   it.each([true, false])(
     'parks a Shell network request, deduplicates it, and releases only a live connection (%s)',
     async (connectionLive) => {
@@ -319,7 +383,67 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   )
 
-  it('refuses native Windows execution without protection even when folder relaxation was saved', async () => {
+  it.each(
+    [false, true].flatMap((configured) =>
+      [false, true].flatMap((restrictFolders) =>
+        (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({
+          configured,
+          restrictFolders,
+          runtime
+        }))
+      )
+    )
+  )(
+    'pins $runtime launch mode (protected: $configured, folder preference: $restrictFolders)',
+    async ({ configured, restrictFolders, runtime }) => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
+      const root = await mkdtemp(join(tmpdir(), 'os-windows-mode-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => restrictFolders,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        const wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query public database',
+          sessionId: 's',
+          projectId: 'p',
+          runtime,
+          superviseProcessTree: true,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [root],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            windowsProtectionRequired: configured,
+            superviseProcessTree: true,
+            filesystem: expect.objectContaining({ restrictFolders: configured })
+          })
+        )
+        expect(wrapped.env.HTTPS_PROXY).toBe('http://127.0.0.1:4567')
+        expect(wrapped.beginSpawn).toBeTypeOf('function')
+        expect(backend.installWindows).not.toHaveBeenCalled()
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('refuses explicit protected admission when protection is no longer configured', async () => {
     backend.isWindowsProtectionConfigured.mockResolvedValue(false)
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/unused',
@@ -377,18 +501,14 @@ describe('NotebookNetworkSandboxOwner', () => {
           platform: 'win32'
         })
         await expect(spawn(process.execPath, ['-m', 'pip', '--version'], {})).rejects.toThrow(
-          configured ? 'installer reached backend' : 'require Windows protected mode'
+          'installer reached backend'
         )
-        if (configured) {
-          expect(backend.wrap).toHaveBeenCalledWith(
-            expect.objectContaining({
-              superviseProcessTree: true,
-              windowsProtectionRequired: true
-            })
-          )
-        } else {
-          expect(backend.wrap).not.toHaveBeenCalled()
-        }
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            superviseProcessTree: true,
+            windowsProtectionRequired: configured
+          })
+        )
       } finally {
         await owner.dispose()
       }
@@ -892,6 +1012,109 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['bash', 'python', 'r', 'repl'] as const)(
+    'uses live session full access for %s without persisting or requesting approval',
+    async (runtime) => {
+      let fullSession: string | undefined = 'session-1'
+      let onFullAccess: ((allowed: boolean) => void) | undefined
+      const unsubscribe = vi.fn()
+      const requestDecision = vi.fn().mockResolvedValue('deny')
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        hasFullAccess: (sessionId) => sessionId === fullSession,
+        subscribeFullAccess: (sessionId, listener) => {
+          expect(sessionId).toBe('session-1')
+          onFullAccess = listener
+          return unsubscribe
+        },
+        persistAlwaysAllow,
+        requestDecision,
+        platform: 'linux'
+      })
+      const controller = new AbortController()
+      const wrapped = await owner.wrap({
+        signal: controller.signal,
+        executable: '/usr/bin/runtime',
+        args: [],
+        env: {},
+        cwd: '/workspace',
+        commandText: 'download dataset',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime,
+        executionReference: 'execution-1',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const request = backend.request!
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(false)
+      const end = wrapped.beginExecution?.()
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(true)
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      expect(requestDecision).not.toHaveBeenCalled()
+      backend.resetNetworkConnections.mockClear()
+      fullSession = 'other-session'
+      onFullAccess!(false)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      fullSession = 'session-1'
+      onFullAccess!(true)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      controller.abort()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      end?.()
+      expect(unsubscribe).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      expect(persistAlwaysAllow).not.toHaveBeenCalled()
+      expect(backend.updatePolicy).not.toHaveBeenCalled()
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it('answers explicit full-access requests without command context or durable grants', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('deny')
+    const persistAlwaysAllow = vi.fn()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      hasFullAccess: (sessionId) => sessionId === 'full-session',
+      persistAlwaysAllow,
+      requestDecision
+    })
+    const request = {
+      sessionId: 'full-session',
+      projectId: 'project',
+      hostname: 'data.example.org',
+      reason: 'Download'
+    }
+    await expect(owner.requestNetworkAccess(request)).resolves.toMatchObject({
+      status: 'alreadyAllowed'
+    })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, hostname: 'localhost' })
+    ).resolves.toMatchObject({ status: 'blocked' })
+    await expect(
+      owner.requestNetworkAccess({ ...request, signal: AbortSignal.abort() })
+    ).resolves.toMatchObject({ status: 'denied', decisionSource: 'aborted' })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, sessionId: 'other-session' })
+    ).resolves.toMatchObject({ status: 'denied' })
+    expect(requestDecision).toHaveBeenCalledOnce()
+    expect(persistAlwaysAllow).not.toHaveBeenCalled()
+    expect(backend.updatePolicy).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+
   it('applies allow-once to every matching connection in the next command only', async () => {
     const requestDecision = vi.fn().mockResolvedValue('allowOnce')
     const persistAlwaysAllow = vi.fn()
@@ -1275,6 +1498,108 @@ describe('NotebookNetworkSandboxOwner', () => {
     } finally {
       prepare.mockRestore()
       await owner.dispose()
+    }
+  })
+
+  it.each(['bash', 'repl'] as const)(
+    'rejects removed protection after selecting the protected %s interpreter',
+    async (runtimeKind) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-selected-runtime-mode-'))
+      fixtureDirectories.push(root)
+      const runtime = { root, node: process.execPath, powershell: process.execPath }
+      const prepare = vi
+        .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
+        .mockImplementation(async () => {
+          backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+          return runtime
+        })
+      const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockReturnValue(runtime)
+      backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: owner })
+      try {
+        const request = {
+          cwd: root,
+          runtimeRoot: root,
+          sessionId: 'selected-mode',
+          projectId: 'project'
+        }
+        const result =
+          runtimeKind === 'bash'
+            ? await runShellCommand({
+                ...request,
+                command: 'echo query',
+                handoffDir: root,
+                platform: 'win32',
+                runtimeBinding: { kind: 'powershell', version: '7.6' },
+                processSandbox: owner
+              })
+            : await executor.execute({
+                ...request,
+                kind: 'repl',
+                language: 'python',
+                code: 'console.log("query")',
+                dataRoot: root,
+                notebookSessionRoot: root
+              })
+        expect(result.stderr).toContain('require Windows protected mode')
+        expect(backend.wrap).not.toHaveBeenCalled()
+      } finally {
+        await executor.shutdown()
+        await owner.dispose()
+        prepare.mockRestore()
+        get.mockRestore()
+      }
+    }
+  )
+
+  it('pins protection before validating the prepared interpreter identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-mode-identity-race-'))
+    fixtureDirectories.push(root)
+    const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockImplementation(() => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+      return { root, node: process.execPath, powershell: process.execPath }
+    })
+    backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      windowsRuntimeRoot: join(root, 'protected-runtimes'),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(
+        owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query',
+          sessionId: 's',
+          projectId: 'p',
+          runtime: 'repl',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+      ).rejects.toThrow('require Windows protected mode')
+      expect(backend.wrap).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+      get.mockRestore()
     }
   })
 
@@ -2402,7 +2727,7 @@ it('does not automatically grant durable permissions to an agent-created R envir
 })
 
 it.each(['managed', 'external'] as const)(
-  'blocks %s R in unconfigured Windows standard mode before process creation',
+  'runs %s R in unconfigured Windows standard mode without protection setup',
   async (selection) => {
     const root = await mkdtemp(join(tmpdir(), 'os-r-standard-'))
     fixtureDirectories.push(root)
@@ -2456,12 +2781,17 @@ it.each(['managed', 'external'] as const)(
         projectId: 'project',
         timeoutMs: 5000
       })
-      expect(result.status).toBe('failed')
-      expect(result.stderr).toContain('require Windows protected mode')
-      expect(beginSpawn).not.toHaveBeenCalled()
-      expect(started).not.toHaveBeenCalled()
+      expect(result.status, result.stderr).toBe('completed')
+      expect(result.stdout).toBe('15')
+      expect(beginSpawn).toHaveBeenCalledOnce()
+      expect(started).toHaveBeenCalledOnce()
       expect(notStarted).not.toHaveBeenCalled()
-      expect(backend.wrap).not.toHaveBeenCalled()
+      expect(backend.wrap).toHaveBeenCalledWith(
+        expect.objectContaining({
+          windowsProtectionRequired: false,
+          superviseProcessTree: true
+        })
+      )
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {
       await executor.shutdown()

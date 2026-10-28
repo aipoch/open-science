@@ -50,7 +50,7 @@ export const SessionPackageImportError = (): React.JSX.Element => {
             </Button>
           </div>
           <div className={`${dialogBodyClassName} min-h-0 space-y-4 overflow-y-auto`}>
-            <Dialog.Description className="text-sm leading-relaxed text-muted-foreground">
+            <Dialog.Description className="sr-only">
               {t('Your existing research is unchanged.')}
             </Dialog.Description>
             <ErrorNotice inline role="alert" tone="amber" description={dialogError} />

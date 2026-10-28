@@ -1,3 +1,6 @@
+import { RESEARCH_DATASET_TOOLS } from './research-datasets'
+import { MOLECULAR_DATA_TOOLS } from './molecular-data'
+import { EUROPEPMC_TOOLS } from './literature-europepmc'
 import { TCIA_TOOLS } from './tcia'
 import { KEGG_TOOLS } from './kegg'
 import { RXNORM_TOOLS } from './rxnorm'
@@ -47,6 +50,9 @@ import { ZINC_TOOLS } from './zinc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...RESEARCH_DATASET_TOOLS,
+  ...MOLECULAR_DATA_TOOLS,
+  ...EUROPEPMC_TOOLS,
   ...TCIA_TOOLS,
   ...KEGG_TOOLS,
   ...RXNORM_TOOLS,

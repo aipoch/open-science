@@ -11,6 +11,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePdfTranslationPreparation } from './use-pdf-translation-preparation'
+import { pdfjsLib } from '../pdfjs'
 import {
   preparePdfTranslationStructure,
   type PdfTranslationStructureContext
@@ -279,9 +280,18 @@ describe('reader-owned PDF preparation', () => {
     expect(preparePdfTranslationStructure).not.toHaveBeenCalled()
     await act(async () => current.start())
     expect(current.state.status).toBe('running')
+    expect(extractPdfTranslationSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        document,
+        sourceIdentity,
+        nativeDocumentFactory: pdfjsLib.getDocument,
+        signal: expect.any(AbortSignal)
+      })
+    )
     expect(preparePdfTranslationStructure).toHaveBeenCalledWith({
       extraction: ready,
       document,
+      nativeDocumentFactory: pdfjsLib.getDocument,
       context: { source: { attachmentVersionId: 'version' }, identity: sourceIdentity },
       signal: expect.any(AbortSignal)
     })
@@ -302,11 +312,17 @@ describe('reader-owned PDF preparation', () => {
           sourceVersionId: 'managed-version'
         }
       },
-      identity: sourceIdentity
+      identity: { sourceChecksum: 'b'.repeat(64), sourceSizeBytes: 200 }
     }
     vi.mocked(extractPdfTranslationSource).mockResolvedValue(ready)
     await render()
     await act(async () => current.start())
+    expect(extractPdfTranslationSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceIdentity: context.identity,
+        nativeDocumentFactory: pdfjsLib.getDocument
+      })
+    )
     expect(preparePdfTranslationStructure).toHaveBeenCalledWith(
       expect.objectContaining({ context })
     )

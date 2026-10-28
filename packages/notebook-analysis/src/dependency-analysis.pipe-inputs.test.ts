@@ -16,9 +16,11 @@ it.each([
   expect(facts.copyOnModifyInvalidatedNames ?? []).not.toContain('out')
   expect(facts.priorUsedNames ?? []).not.toContain('_')
   expect(facts.priorUsedNames ?? []).not.toContain('.')
+  // Table ownership survives, but sum's masked column has no classless proof.
+  const state = expression.includes('sum(value)') ? 'partial' : 'complete'
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
+    readState: state,
+    writeState: state,
     reads: ['input.csv'],
     writes: ['output.csv']
   })

@@ -190,5 +190,6 @@
   "resources/pdf-translation-local/worker.mjs": [
     "src/main/literature/pdf-translation/local.ts",
     "src/main/literature/pdf-translation/local-worker.integration.test.ts"
-  ]
+  ],
+  "packages/open-science/cli.mjs": ["packages/open-science/mcp.integration.test.ts"]
 }

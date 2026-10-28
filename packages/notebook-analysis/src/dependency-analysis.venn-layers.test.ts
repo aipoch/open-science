@@ -45,10 +45,10 @@ it.each(
         sessionId: 's',
         throughRunId: '6'
       })
-      expect(projection.stalenessByRunId['6'], JSON.stringify(projection)).toEqual({
-        state: 'clear'
+      expect(projection.stalenessByRunId['6'], JSON.stringify(projection)).toMatchObject({
+        state: indices.includes(1) ? 'unknown' : 'clear'
       })
-      expect(projection.dependenciesByRunId?.['6']).toEqual([])
+      expect(projection.dependenciesByRunId?.['6']).toEqual(indices.includes(1) ? undefined : [])
       const context = await analyzer.sourceFileAccessContext({
         projectId: 'p',
         sessionId: 's',

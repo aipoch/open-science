@@ -12,7 +12,9 @@ import {
   publishPackages,
   publishTarball,
   waitForPublished,
-  releaseSource
+  releaseSource,
+  VISIBILITY_ATTEMPTS,
+  VISIBILITY_INTERVAL_MS
 } from './publish-npm-release.mjs'
 import { releaseManifests } from './stage-npm-release.mjs'
 import { runtimeTargets, runtimePackageName } from '../packages/open-science/runtime-package.mjs'
@@ -265,7 +267,12 @@ describe('parallel platform publication', () => {
       registry.set(pkg.manifest.name, published(pkg))
     })
     let settled = false
-    const result = publishPackages(packages, async (name: string) => registry.get(name), uploads)
+    const result = publishPackages(
+      packages,
+      async (name: string) => registry.get(name),
+      uploads,
+      async () => {}
+    )
       .catch((error: AggregateError) => error)
       .finally(() => {
         settled = true
@@ -331,8 +338,9 @@ describe('parallel platform publication', () => {
     const delay = vi.fn(async () => {})
     const lookup = vi.fn(async () => null)
     await expect(waitForPublished(packages[0], lookup, delay)).rejects.toThrow('not visible')
-    expect(lookup).toHaveBeenCalledTimes(6)
-    expect(delay).toHaveBeenCalledTimes(5)
+    expect(lookup).toHaveBeenCalledTimes(VISIBILITY_ATTEMPTS)
+    expect(delay).toHaveBeenCalledTimes(VISIBILITY_ATTEMPTS - 1)
+    expect(delay).toHaveBeenCalledWith(VISIBILITY_INTERVAL_MS)
     delay.mockClear()
     await expect(
       waitForPublished(
@@ -351,6 +359,72 @@ describe('parallel platform publication', () => {
       )
     ).rejects.toThrow('registry unavailable')
     expect(delay).not.toHaveBeenCalled()
+  })
+
+  it('converges when a concurrent rerun landed the same immutable version during publish', async () => {
+    const registry = new Map()
+    const uploads = vi.fn(async (pkg: (typeof packages)[number]) => {
+      // Simulate the E403 race: a concurrent run landed this exact version, so npm
+      // rejects the duplicate while the registry already shows matching bytes.
+      registry.set(pkg.manifest.name, published(pkg))
+      if (pkg.manifest.name !== packages.at(-1)?.manifest.name)
+        throw new Error('npm publish failed (exit 1, signal null): E403')
+    })
+    const lookup = async (name: string): Promise<ReturnType<typeof published> | undefined> =>
+      registry.get(name)
+    await publishPackages(packages, lookup, uploads, async () => {})
+    expect(uploads).toHaveBeenCalledTimes(packages.length)
+  })
+
+  it('keeps polling when the concurrent publication is not visible yet', async () => {
+    const registry = new Map()
+    const uploads = vi.fn(async (pkg: (typeof packages)[number]) => {
+      if (pkg.manifest.name !== packages.at(-1)?.manifest.name)
+        throw new Error('npm publish failed (exit 1, signal null): E403')
+      registry.set(pkg.manifest.name, published(pkg))
+    })
+    // The concurrent bytes surface only after the E403, mid-verification window.
+    let probes = 0
+    const lookup = async (name: string): Promise<ReturnType<typeof published> | undefined> => {
+      if (name !== packages.at(-1)?.manifest.name && probes++ < 3) return undefined
+      return registry.get(name)
+    }
+    const delay = vi.fn(async () => {
+      for (const pkg of packages.slice(0, -1)) registry.set(pkg.manifest.name, published(pkg))
+    })
+    await publishPackages(packages, lookup, uploads, delay)
+    expect(uploads).toHaveBeenCalledTimes(packages.length)
+  })
+
+  it('treats a publish failure as fatal when the registry shows no matching version', async () => {
+    const uploads = vi.fn(async () => {
+      throw new Error('ENEEDAUTH')
+    })
+    await expect(
+      publishPackages(
+        packages,
+        async () => null,
+        uploads,
+        async () => {}
+      )
+    ).rejects.toThrow('ENEEDAUTH')
+    expect(uploads).toHaveBeenCalledTimes(5)
+  })
+
+  it('includes npm stderr detail in subprocess failure messages', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'npm-publish-stderr-'))
+    try {
+      const cli = join(directory, 'npm.cjs')
+      await writeFile(
+        cli,
+        'process.stderr.write("E403 cannot publish over existing version"); process.exit(1)'
+      )
+      await expect(publishTarball(packages[0], cli)).rejects.toThrow(
+        'E403 cannot publish over existing version'
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('propagates real npm subprocess failures with package identity', async () => {

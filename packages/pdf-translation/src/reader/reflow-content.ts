@@ -18,7 +18,8 @@ export function pdfReflowContentKinds(
     const heading = text
       .replace(/^(?:\d+(?:\.\d+)*[.)]?|[IVXLCDM]+[.)])\s+/u, '')
       .replace(/[:：]$/u, '')
-    if (
+    if (unit.referenceBoundary && !unit.sourceOnly) reference = undefined
+    else if (
       /^(?:references|bibliography|literature cited|works cited|参考文献|參考文獻)[:：]?$/iu.test(
         heading
       )

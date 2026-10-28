@@ -10,18 +10,18 @@ import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const { scrollToMessage } = vi.hoisted(() => ({ scrollToMessage: vi.fn() }))
+const { stopAutoScroll } = vi.hoisted(() => ({ stopAutoScroll: vi.fn() }))
 
 vi.mock('@/components/ui/message-scroller', () => ({
   MessageScrollerItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  useMessageScroller: () => ({ scrollToMessage })
+  useMessageScroller: () => ({ stopAutoScroll })
 }))
 
 let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
-  scrollToMessage.mockReset()
+  stopAutoScroll.mockReset()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -35,6 +35,45 @@ afterEach(async () => {
 })
 
 describe('WorkspaceActivityGroup i18n', () => {
+  it('keeps running and failed status visible while details are collapsed', async () => {
+    const activities = ['completed', 'in_progress', 'pending', 'failed'].map((status, index) => ({
+      id: `summary-${index}`,
+      kind: 'tool' as const,
+      title: 'Read source',
+      status: status as 'completed' | 'in_progress' | 'pending' | 'failed',
+      eventIds: [],
+      sortIndex: index,
+      createdAt: 1,
+      updatedAt: 2
+    }))
+    const render = (): void =>
+      root.render(
+        <WorkspaceActivityGroup
+          group={{ id: 'summary', type: 'activity-group', createdAt: 1, sortIndex: 1, activities }}
+          isExpanded={false}
+          onToggleGroup={vi.fn()}
+          expansionOverrides={{}}
+          onToggleRow={vi.fn()}
+        />
+      )
+    await act(async () => render())
+    expect(container.textContent).toContain('2 steps remaining')
+    expect(container.textContent).toContain('1 failed')
+    expect(container.querySelector('.animate-spin')).not.toBeNull()
+    expect(container.querySelector('[data-testid="tool-chip"]')).toBeNull()
+    activities[1].status = 'completed'
+    await act(async () => render())
+    expect(container.textContent).toContain('1 step remaining')
+    activities[2].status = 'completed'
+    await act(async () => render())
+    expect(container.textContent).not.toContain('remaining')
+    expect(container.querySelector('.animate-spin')).toBeNull()
+    expect(container.textContent).toContain('1 failed')
+    expect(
+      container.querySelector('[data-testid="tool-group-header"]')?.getAttribute('aria-expanded')
+    ).toBe('false')
+  })
+
   it('renders active manage_packages progress inside its tool group', () => {
     // Fake only Date: this test needs a frozen clock for the elapsed label, but faking
     // setTimeout/setInterval strands jsdom's requestAnimationFrame and would stall Motion's
@@ -648,7 +687,7 @@ describe('WorkspaceActivityGroup i18n', () => {
     )
   })
 
-  it('anchors the group in view before toggling its height', () => {
+  it('pauses following before toggling the group height', () => {
     const onToggleGroup = vi.fn()
     act(() => {
       root.render(
@@ -687,11 +726,8 @@ describe('WorkspaceActivityGroup i18n', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="tool-group-header"]')?.click()
     })
 
-    expect(scrollToMessage).toHaveBeenCalledWith('group-anchor-1', {
-      align: 'nearest',
-      behavior: 'auto'
-    })
-    expect(scrollToMessage.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(stopAutoScroll).toHaveBeenCalledWith()
+    expect(stopAutoScroll.mock.invocationCallOrder[0]).toBeLessThan(
       onToggleGroup.mock.invocationCallOrder[0]!
     )
   })

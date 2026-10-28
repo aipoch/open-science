@@ -169,11 +169,11 @@ test('question skip is recorded per question while the menu still declines the w
   await page.getByTestId('elicitation-option-Option 2').click()
   await page.getByRole('button', { name: 'Finish', exact: true }).click()
   expect(JSON.parse(await page.getByTestId('submitted-answer').innerText()).answers).toContainEqual(
-    { fieldId: 'question_0_custom', value: 'User skipped' }
+    { fieldId: 'question_0', status: 'skipped' }
   )
   await expect(page.getByTestId('elicitation-answer-summary')).toContainText('User skipped')
   await page.goto('/ask-user.html?mixed=1')
-  await page.getByRole('button', { name: 'Skip options' }).click()
+  await page.getByRole('button', { name: 'More skip options' }).click()
   await page.getByRole('menuitem', { name: 'Skip all' }).click()
   expect(JSON.parse(await page.getByTestId('submitted-answer').innerText()).action).toBe('decline')
 })

@@ -23,6 +23,18 @@ const {
 } = await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
 
 it.each([
+  ['Figure 1 showcases the fields at three different times.', undefined],
+  ['Fig. 2 showcases the distributions for both samples.', undefined],
+  ['Figure 1: Showcases of independent panels.', 'figure'],
+  ['Figure 1 Showcases of independent panels.', 'figure'],
+  ['Figure 1 Showcase of independent panels.', 'figure'],
+  ['Figure 1 showcases of independent panels.', 'figure'],
+  ['Figure 1 showcases used for demonstration.', 'figure']
+])('distinguishes a finite showcase reference from a title: %s', (text, expected) => {
+  expect(captionKind(text)).toBe(expected)
+})
+
+it.each([
   ['Figure 3 (for the upper panel). Since both paths are retained, the result follows.', undefined],
   [
     'Figure 3: (a) Independent paths. Since both paths are retained, the result is comparable.',
@@ -356,6 +368,32 @@ it('rejects figure references that open prose with an action verb', () => {
     expect(captionKind(text)).toBeUndefined()
   }
   expect(captionKind('Figure 4: Corresponding graphs for the Satellite dataset.')).toBe('figure')
+})
+
+it('keeps a likewise figure subject out of adjacent graphic ownership', () => {
+  const reference = 'Figure 3 likewise displays the estimates for the selected groups.'
+  expect(captionKind(reference)).toBeUndefined()
+  expect(captionKind('Figure 3: Likewise displayed estimates for the selected groups.')).toBe(
+    'figure'
+  )
+  expect(captionKind('Figure 3 Likewise calibrated estimates for the selected groups.')).toBe(
+    'figure'
+  )
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [{ kind: 'image', normalizedRect: [0.12, 0.1, 0.88, 0.35] }],
+    lines: [
+      { text: 'Figure 2: Estimates for all groups.', x: 100, y: 300, width: 350 },
+      { text: reference, x: 72, y: 350, width: 456 },
+      { text: 'The selected groups are evaluated on a separate page.', x: 72, y: 364, width: 456 }
+    ].map((line) => ({ ...line, height: 10, fontSize: 10 }))
+  }
+  expect(
+    findCaptionCandidates([page]).map((candidate: { lines: string[] }) => candidate.lines)
+  ).toEqual([['Figure 2: Estimates for all groups.']])
 })
 
 it('rejects next-batch figure prose actions and code-like index rows', () => {
@@ -1773,4 +1811,180 @@ it.each([
   const before = structuredClone({ a, candidate })
   expect(isNativeRowReference(candidate, a.page, a.context, a.rules)).toBe(false)
   expect({ a, candidate }).toEqual(before)
+})
+
+function wrappedPanelReferencePage(): {
+  pageNumber: number
+  width: number
+  height: number
+  invalidGraphicsBounds: number
+  graphicsBounds: { kind: string; normalizedRect: number[] }[]
+  lines: CaptionLine[]
+} {
+  return {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [{ kind: 'path', normalizedRect: [0.1, 0.03, 0.9, 0.15] }],
+    lines: [
+      'The independent estimates for the measured groups are shown in',
+      'Fig. 4.a and the density in Fig. 4.b. The bands show a common',
+      'confidence interval computed over independent repetitions in each group.'
+    ].map((text, i) => ({ text, x: 50, y: 200 + 21 * i, width: 450, height: 12, fontSize: 12 }))
+  }
+}
+
+function retainsWrappedPanelCaption(page: ReturnType<typeof wrappedPanelReferencePage>): boolean {
+  const start = page.lines.find((l) => /^Fig\. /.test(l.text))
+  return findCaptionCandidates([page]).some((c) => c.lines[0] === start?.text)
+}
+
+it('keeps a complete wrapped panel reference in its native body paragraph', () => {
+  const page = wrappedPanelReferencePage()
+  const before = structuredClone(page)
+  expect(retainsWrappedPanelCaption(page)).toBe(false)
+  expect(page).toEqual(before)
+})
+
+it('keeps native mathematical paint inside the following complete body row', () => {
+  const page = wrappedPanelReferencePage()
+  page.graphicsBounds.push({
+    kind: 'path',
+    normalizedRect: [300 / 600, 244 / 800, 310 / 600, 250 / 800]
+  })
+  expect(retainsWrappedPanelCaption(page)).toBe(false)
+})
+
+const wrappedPanelRefusals: [
+  string,
+  (page: ReturnType<typeof wrappedPanelReferencePage>) => void
+][] = [
+  [
+    'complete preceding sentence',
+    (p) => {
+      p.lines[0].text += '.'
+    }
+  ],
+  [
+    'different preceding font',
+    (p) => {
+      p.lines[0].fontSize = 14
+    }
+  ],
+  [
+    'independent caption punctuation',
+    (p) => {
+      p.lines[1].text = 'Fig. 4.a: Density estimates for independent repeated measurements.'
+    }
+  ],
+  [
+    'missing preceding source',
+    (p) => {
+      p.lines.shift()
+    }
+  ],
+  [
+    'different column',
+    (p) => {
+      p.lines[0].x += 15
+    }
+  ],
+  [
+    'uneven physical leading',
+    (p) => {
+      p.lines[2].y += 3
+    }
+  ],
+  [
+    'foreign native source in corridor',
+    (p) => {
+      p.lines.push({ text: 'External witness', x: 100, y: 215, width: 60, height: 5, fontSize: 5 })
+    }
+  ],
+  [
+    'foreign graphic across corridor',
+    (p) => {
+      p.graphicsBounds.push({ kind: 'path', normalizedRect: [0.2, 214 / 800, 0.5, 220 / 800] })
+    }
+  ],
+  [
+    'vertical foreign image',
+    (p) => {
+      p.graphicsBounds.push({ kind: 'image', normalizedRect: [0.2, 0.24, 0.25, 0.33] })
+    }
+  ],
+  [
+    'invalid native graphics',
+    (p) => {
+      p.invalidGraphicsBounds = 1
+    }
+  ],
+  [
+    'missing graphics inventory',
+    (p) => {
+      Reflect.deleteProperty(p, 'graphicsBounds')
+    }
+  ],
+  [
+    'missing page extent',
+    (p) => {
+      Reflect.deleteProperty(p, 'width')
+    }
+  ],
+  [
+    'unknown graphics kind',
+    (p) => {
+      p.graphicsBounds[0].kind = 'unknown'
+    }
+  ],
+  [
+    'different following font',
+    (p) => {
+      p.lines[2].fontSize = 14
+    }
+  ],
+  [
+    'independent following sentence',
+    (p) => {
+      p.lines[2].text = 'Confidence intervals are given separately for the measured groups.'
+    }
+  ],
+  [
+    'different preceding relation',
+    (p) => {
+      p.lines[0].text = 'The independent estimates for measured groups use different conditions'
+    }
+  ]
+]
+
+it.each(wrappedPanelRefusals)(
+  'retains a panel caption without complete continuation proof: %s',
+  (_, change) => {
+    const page = wrappedPanelReferencePage()
+    change(page)
+    const before = structuredClone(page)
+    expect(retainsWrappedPanelCaption(page)).toBe(true)
+    expect(page).toEqual(before)
+  }
+)
+
+// Complete finite prose grammar; noun titles and printed punctuation retain captions.
+it.each([
+  ['Figure 1 tests the assay.', null],
+  ['Fig. 2 on the upper left compares the traces.', null],
+  ['Figure 3 on the lower right shows the controls.', null],
+  ['Figure 4 on the left presents our models.', null],
+  ['Figure 1. Tests of the method.', 'figure'],
+  ['Figure 1: Tests of the method.', 'figure'],
+  ['Figure 1 Tests of the method', 'figure'],
+  ['Figure 1 tests', 'figure'],
+  ['Figure 1 Testing the method', 'figure'],
+  ['Figure 1 on the upper left: comparisons', 'figure'],
+  ['Figure 1 on the upper left comparisons of assays', 'figure'],
+  ['Fig. 1. On the upper left, compare the controls.', 'figure'],
+  ['Figure 1 Results on the left', 'figure'],
+  ['Table 1 tests the method.', 'table']
+])('distinguishes bounded finite figure prose: %s', (text, expected) => {
+  expect(captionKind(text)).toBe(expected ?? undefined)
 })

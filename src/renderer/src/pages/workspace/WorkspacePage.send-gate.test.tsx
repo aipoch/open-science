@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as React from 'react'
 
 import { useSettingsStore } from '@/stores/settings-store'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -195,6 +196,7 @@ describe('WorkspacePage send gate while compacting', () => {
   let root: Root
 
   beforeEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false }, true)
     setDefaultWorkspaceAgentSettings()
     useComputeStore.setState({ pendingApprovals: [] })
     useSettingsStore.setState({ pendingApprovals: [], pendingCredentialRequests: [] })
@@ -261,6 +263,7 @@ describe('WorkspacePage send gate while compacting', () => {
       root.unmount()
     })
     vi.useRealTimers()
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false }, true)
     container.remove()
   })
 
@@ -305,6 +308,31 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.sessionTools.menuBindings?.['toggle-pin']?.disabled).toBe(true)
     expect(conversationProps.sessionTools.menuBindings?.edit?.disabled).toBe(true)
     togglePinned.mockRestore()
+  })
+
+  it('keeps a previously ready local draft editable during service recovery without enabling persistence writes', async () => {
+    root = createRoot(container)
+    const present = async (ready: boolean): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspacePage
+            isSessionPersistenceHydrated={true}
+            isSessionPersistenceReady={ready}
+            canDeleteConversations={false}
+          />
+        )
+      )
+    }
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected' }))
+    await present(false)
+    expect(conversationProps.view.canEditLocalDraft).toBe(false)
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+    await present(true)
+    expect(conversationProps.view.canEditLocalDraft).toBe(true)
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'reconnecting' }))
+    await present(false)
+    expect(conversationProps.view.canEditLocalDraft).toBe(true)
+    expect(conversationProps.view.canEditDraft).toBe(false)
   })
 
   it.each(['codex-shared', 'codex-isolated'] as const)(

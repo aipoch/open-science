@@ -9,6 +9,11 @@ import { dirname, join } from 'node:path'
 import { copyFiles, FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import {
+  assertElectronHostDependencies,
+  backendOnlyElectronDependencies,
+  electronHostDependencyGuard
+} from './electron-host-dependencies.mjs'
 
 import {
   WSL2_BASH_PREVIEW_MANIFEST,
@@ -38,6 +43,88 @@ describe('macOS native privacy purpose descriptions', () => {
 })
 
 describe('electron-builder local evidence exclusion', () => {
+  it('excludes backend feature copies from Electron while retaining the staged backend', () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
+    const root = process.cwd()
+    const filter = new FileMatcher(root, root, (value) => value, [
+      '**/*',
+      ...config.files
+    ]).createFilter()
+    for (const name of backendOnlyElectronDependencies) {
+      for (const file of ['', '/package.json', '/dist/index.js', '/node_modules/child/index.js'])
+        expect(
+          filter(join(root, 'node_modules', name + file), {
+            isDirectory: () => file === ''
+          } as Stats)
+        ).toBe(false)
+    }
+    for (const name of [
+      '@aipoch/diagnostics',
+      '@aipoch/providers',
+      '@aipoch/connector-core',
+      '@aipoch/connector-mcp-client',
+      '@aipoch/process-tree-native',
+      '@aipoch/safe-file-publisher-native',
+      '@aipoch/credential-identity-probe-native',
+      'electron-updater',
+      'ws',
+      'zod'
+    ])
+      expect(
+        filter(join(root, 'node_modules', name, 'package.json'), {
+          isDirectory: () => false
+        } as Stats)
+      ).toBe(true)
+  })
+
+  it('rejects direct and transitive desktop consumers of excluded feature packages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'electron-host-boundary-'))
+    const put = async (name: string, manifest: object): Promise<void> => {
+      const directory = join(root, 'node_modules', name)
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'package.json'), JSON.stringify({ name, ...manifest }))
+    }
+    try {
+      for (const name of backendOnlyElectronDependencies)
+        expect(() => assertElectronHostDependencies([`${name}/subpath`], root)).toThrow(name)
+      await put('@fixture/desktop', {
+        dependencies: { bridge: '1' },
+        devDependencies: { 'styled-exceljs': '1' }
+      })
+      await put('bridge', {
+        dependencies: { '@fixture/desktop': '1' },
+        optionalDependencies: { 'missing-platform-binding': '1' }
+      })
+      expect(() =>
+        assertElectronHostDependencies(
+          ['node:fs', 'path', 'electron', './chunk.js', '@fixture/desktop/subpath'],
+          root
+        )
+      ).not.toThrow()
+      for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+        await put('bridge', { [field]: { 'styled-exceljs': '1' } })
+        expect(() => assertElectronHostDependencies(['@fixture/desktop'], root)).toThrow(
+          '@fixture/desktop -> bridge -> styled-exceljs'
+        )
+      }
+      const guard = electronHostDependencyGuard(root)
+      expect(() =>
+        guard.generateBundle.call({
+          getModuleIds: () => ['bundled-feature', 'styled-exceljs'].values(),
+          getModuleInfo: (id: string) => ({ isExternal: id === 'styled-exceljs' })
+        })
+      ).toThrow('styled-exceljs')
+      expect(() =>
+        guard.generateBundle.call({
+          getModuleIds: () => ['styled-exceljs'].values(),
+          getModuleInfo: () => ({ isExternal: false })
+        })
+      ).not.toThrow()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('runs desktop staging with an explicit target after building its current checkout', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-hook-'))
     try {
@@ -79,6 +166,8 @@ describe('electron-builder local evidence exclusion', () => {
     const destination = join(root, 'packaged')
     const applicationFiles = [
       'out/main/index.js',
+      'out/main/index.js.map',
+      'out/preload/index.js',
       'out/renderer/index.html',
       'resources/notebook/python_loop.py',
       'resources/skills/skill-creator/scripts/utils.js',
@@ -90,7 +179,11 @@ describe('electron-builder local evidence exclusion', () => {
       'out/cli-artifacts/win32-x64.json',
       'out/cli-artifacts/.archive-fixture/backend/index.cjs',
       'out/desktop-backend/out/backend/index.cjs',
-      'out/desktop-backend-build/index.cjs'
+      'out/desktop-backend-build/index.cjs',
+      'out/size-dmg-baseline/Open-Science.app/Contents/Resources/app.asar',
+      'out/cli-size-candidate/node-runtime/node',
+      'out/future-staging-name/payload.bin',
+      'out/translation-bundle/worker.cjs'
     ]
     const developmentFiles = [
       'scripts/stage-backend.mjs',
@@ -377,9 +470,8 @@ describe('electron-builder native image processing', () => {
       from: 'packages/notebook-network-sandbox/vendor/wsl2/manifest.json',
       to: 'notebook-network-sandbox/wsl2/manifest.json'
     })
-    expect(config.mac?.extraResources).toHaveLength(1)
+    expect(config.mac?.extraResources).toBeUndefined()
     expect(config.linux?.extraResources).toEqual([
-      { from: 'resources/bin/linux/${arch}/micromamba', to: 'micromamba' },
       { from: 'build/deb-cli-launcher', to: 'open-science-cli' }
     ])
   })

@@ -3,6 +3,58 @@ import { describe, expect, it } from 'vitest'
 import { projectDiagnosticLog, projectDiagnosticSession } from './projection'
 
 describe('diagnostic log projection', () => {
+  it.each(['specialist-resolution', 'acp-provider-session-adoption'])(
+    'retains bounded Specialist checkpoints for %s without exporting configuration',
+    (operation) => {
+      const projected = projectDiagnosticLog({
+        data: {
+          operation,
+          phase: 'identity',
+          sessionId: 'session-1',
+          specialistId: 'specialist-1',
+          frameworkId: 'codex',
+          modelRoute: 'codex-bridge',
+          backendId: 'codex:provider-1',
+          bindingSource: 'registry',
+          bindingRevision: 3,
+          resolver: 'identity',
+          reason: 'unavailable',
+          systemPrompt: 'PRIVATE',
+          answers: ['PRIVATE'],
+          token: 'PRIVATE',
+          profile: { body: 'PRIVATE' }
+        }
+      })
+      expect(projected).toMatchObject({
+        diagnostics: {
+          operation,
+          phase: 'identity',
+          sessionId: 'session-1',
+          specialistId: 'specialist-1',
+          frameworkId: 'codex',
+          modelRoute: 'codex-bridge',
+          backendId: 'codex:provider-1',
+          bindingSource: 'registry',
+          bindingRevision: 3,
+          resolver: 'identity',
+          reason: 'unavailable'
+        }
+      })
+      expect(JSON.stringify(projected)).not.toContain('PRIVATE')
+      expect(
+        projectDiagnosticLog({
+          data: {
+            operation,
+            frameworkId: 'PRIVATE',
+            modelRoute: 'PRIVATE',
+            bindingSource: 'PRIVATE',
+            resolver: 'PRIVATE',
+            bindingRevision: -1
+          }
+        })
+      ).toEqual({ diagnostics: { operation } })
+    }
+  )
   it('redacts credential-shaped codes and retains logger loss counts', () => {
     const projected = projectDiagnosticLog({
       msg: 'log records dropped',

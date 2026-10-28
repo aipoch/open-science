@@ -15,11 +15,25 @@ const patchName = '@shadcn+react+0.3.0.patch'
 const patchPath = join(process.cwd(), 'patches', patchName)
 const patchSource = readFileSync(patchPath, 'utf8').replaceAll('\r\n', '\n')
 const patchLines = patchSource.split('\n')
+const declarations = readFileSync(
+  join(process.cwd(), 'node_modules/@shadcn/react/dist/message-scroller/index.d.ts'),
+  'utf8'
+)
+const previousPauseDeclarations = declarations
+  .split('\n')
+  .filter(
+    (line) => !line.includes('paused: boolean') && !line.includes('Explicit interaction pause')
+  )
+  .join('\n')
+const originalDeclarations = previousPauseDeclarations
+  .split('\n')
+  .filter((line) => !line.includes('stopAutoScroll') && !line.includes('Pause automatic following'))
+  .join('\n')
 const original = '"use client";\n' + patchLines.find((line) => line.startsWith('-import'))!.slice(1)
 const patched = '"use client";\n' + patchLines.find((line) => line.startsWith('+import'))!.slice(1)
 // Compact, byte-exact snapshots from the original Git patches; no Git history is needed in CI.
 let historicalSource = original
-const historicalVersions = history.map(({ commit, sha256, edits }) => {
+const historicalVersions = history.map(({ commit, sha256, edits, ...metadata }) => {
   for (const [offset, length, replacement] of [...edits].reverse() as [number, number, string][]) {
     historicalSource =
       historicalSource.slice(0, offset) + replacement + historicalSource.slice(offset + length)
@@ -27,7 +41,7 @@ const historicalVersions = history.map(({ commit, sha256, edits }) => {
   if (createHash('sha256').update(historicalSource).digest('hex') !== sha256) {
     throw new Error(`Corrupt historical patch fixture: ${commit}`)
   }
-  return { name: commit, source: historicalSource, status: 0 }
+  return { name: commit, source: historicalSource, status: 0, ...metadata }
 })
 let fixture: string | undefined
 
@@ -87,6 +101,14 @@ describe('dependency patch installation', () => {
       JSON.stringify({ version: scenario.version ?? '0.3.0' })
     )
     writeFileSync(entry, scenario.source)
+    writeFileSync(
+      join(packageDir, 'dist', 'message-scroller', 'index.d.ts'),
+      scenario.name === 'already patched'
+        ? declarations
+        : 'pauseApi' in scenario && scenario.pauseApi
+          ? previousPauseDeclarations
+          : originalDeclarations
+    )
     writeFileSync(
       join(fixture, 'patches', patchName),
       scenario.corrupt

@@ -95,6 +95,7 @@ export type AgentBackendRuntimePort = Pick<
   AgentRuntimeManager,
   | 'resolveClaudeExecutable'
   | 'resolveOpencodeExecutable'
+  | 'probeOpencodeVersion'
   | 'resolveCodeBuddyExecutable'
   | 'resolveCodexExecutable'
   | 'probeCodexNativeVersion'
@@ -377,6 +378,16 @@ export class AgentBackendResolver {
       framework.id === 'codex'
         ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
+    const opencodeVersion =
+      framework.id === 'opencode'
+        ? await this.runtime.probeOpencodeVersion(executablePath)
+        : undefined
+    const opencodeMajorVersion = opencodeVersion?.startsWith('2.') ? 2 : 1
+    if (framework.id === 'opencode' && !/^[12]\.\d+\./.test(opencodeVersion ?? '')) {
+      throw new Error(
+        'Could not identify a supported OpenCode CLI version. Re-detect OpenCode in Settings.'
+      )
+    }
     if (
       framework.id === 'claude-code' &&
       target.providerType === 'claude-shared' &&
@@ -490,7 +501,9 @@ export class AgentBackendResolver {
         ...(context.grantedLocalRoots?.length
           ? { grantedLocalRoots: context.grantedLocalRoots }
           : {}),
-        ...(codexNativeVersion ? { nativeVersion: codexNativeVersion } : {}),
+        ...(codexNativeVersion || opencodeVersion
+          ? { nativeVersion: codexNativeVersion ?? opencodeVersion }
+          : {}),
         responsesConnection,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
@@ -502,7 +515,9 @@ export class AgentBackendResolver {
       })
       await this.runtime.materializeAgentConfigFiles(modelConfig.configFiles)
       const opencodeUsagePort =
-        framework.id === 'opencode' ? await this.runtime.reserveOpenCodeUsagePort() : undefined
+        framework.id === 'opencode' && opencodeMajorVersion === 1
+          ? await this.runtime.reserveOpenCodeUsagePort()
+          : undefined
       const opencodeUsagePassword = opencodeUsagePort === undefined ? undefined : randomUUID()
       const usesCodexSystemProxy =
         framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
@@ -522,7 +537,10 @@ export class AgentBackendResolver {
           : {}),
         executablePath,
         ...(framework.id === 'opencode'
-          ? { opencodeConfigFiles: modelConfig.configFiles?.map((file) => ({ ...file })) }
+          ? {
+              opencodeMajorVersion,
+              opencodeConfigFiles: modelConfig.configFiles?.map((file) => ({ ...file }))
+            }
           : {}),
         env: {
           ...(modelConfig.env ?? {}),

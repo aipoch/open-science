@@ -116,6 +116,21 @@ it('uses cached results without inspecting or installing a model', async () => {
   expect(api.localModels.install).not.toHaveBeenCalled()
 })
 
+it('passes the configured native document factory without opening an auxiliary document eagerly', async () => {
+  const nativeDocumentFactory = vi.fn<typeof import('pdfjs-dist').getDocument>()
+  await preparePdfTranslationStructure({
+    document,
+    extraction,
+    context,
+    signal: new AbortController().signal,
+    nativeDocumentFactory
+  })
+  expect(applyCachedPdfStructureSources).toHaveBeenCalledWith(
+    expect.objectContaining({ nativeDocumentFactory })
+  )
+  expect(nativeDocumentFactory).not.toHaveBeenCalled()
+})
+
 it.each([undefined, true])(
   'requests original unit identity only when explicitly enabled (%s)',
   async (preserveUnitIdentity) => {

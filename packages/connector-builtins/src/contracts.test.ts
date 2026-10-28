@@ -1035,7 +1035,14 @@ describe('CELLxGENE Discover registration and input contracts', () => {
 describe('Cellosaurus registration', () => {
   it('exposes identity and quality tools with valid generated examples', () => {
     const tools = getConnectorTools('cellosaurus')
-    expect(tools.map((tool) => tool.id)).toEqual(['search_cell_lines', 'get_cell_line'])
+    expect(tools.map((tool) => tool.id)).toEqual([
+      'get_cell_line_rdf',
+      'query_knowledge_graph',
+      'search_str_similarity',
+      'list_cellosaurus_files',
+      'search_cell_lines',
+      'get_cell_line'
+    ])
     expect(CONNECTOR_CATALOG.find((entry) => entry.id === 'cellosaurus')).toMatchObject({
       sources: ['Cellosaurus'],
       requiresNcbi: false

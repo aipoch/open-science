@@ -1,3 +1,5 @@
+import type { AcpSpecialistResolutionContext } from './runtime-contract'
+import { recordMainAgentContext } from './main-agent-process-ownership'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import {
@@ -51,7 +53,10 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
     specialistId: string,
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
-  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  resolveSpecialistSkills?: (
+    specialistId: string,
+    context?: AcpSpecialistResolutionContext
+  ) => Promise<EffectiveSpecialistSkills>
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
@@ -107,10 +112,14 @@ export class AcpProviderSessionAdopter {
       const specialistId = hasAuthoritativeSpecialistBinding
         ? request.specialistId
         : this.deps.registry.lookup(stableAppSessionId)?.aggregate.snapshot().specialistId
-      diagnostics.phase('resolve-specialist')
+      diagnostics.phase('resolve-specialist', {
+        specialistId,
+        bindingRevision: specialistBindingRevision,
+        bindingSource: hasAuthoritativeSpecialistBinding ? 'request' : 'registry'
+      })
       const [specialistIdentity, specialistSkills] = await Promise.all([
-        this.resolveSpecialistIdentity(specialistId, startupBackend),
-        this.resolveSpecialistSkills(specialistId)
+        this.resolveSpecialistIdentity(specialistId, startupBackend, stableAppSessionId),
+        this.resolveSpecialistSkills(specialistId, startupBackend, stableAppSessionId)
       ])
       const handoffAppend = this.deps.peekClaudeReplay(stableAppSessionId)
       diagnostics.phase('resolve-project-context')
@@ -144,6 +153,7 @@ export class AcpProviderSessionAdopter {
         })
         .start()
       adoptedProviderSessionId = provisionalSession.sessionId
+      recordMainAgentContext(request.connection, adoptedProviderSessionId)
 
       const reserved = this.deps.reserveIdentity(identity, [
         stableAppSessionId,
@@ -275,28 +285,69 @@ export class AcpProviderSessionAdopter {
 
   private async resolveSpecialistIdentity(
     specialistId: string | undefined,
-    backend: AcpBackendGenerationView
+    backend: AcpBackendGenerationView,
+    sessionId: string
   ): Promise<{ append: string; prefix: string } | undefined> {
     if (!specialistId) return undefined
+    const context = {
+      operation: 'specialist-resolution',
+      mode: 'adopt',
+      phase: 'identity',
+      sessionId,
+      specialistId,
+      frameworkId: backend.framework.id,
+      backendId: backend.backendId,
+      modelRoute: backend.modelRoute
+    }
     if (!this.deps.resolveSpecialistIdentity) {
+      log.warn('bound specialist identity resolution failed', {
+        ...context,
+        reason: 'resolver-missing'
+      })
       throw new Error('The bound specialist is unavailable.')
     }
+    let identity
     try {
-      const identity = await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
-      if (!identity) throw new Error('The bound specialist is unavailable.')
-      return identity
-    } catch {
+      identity = await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+    } catch (error) {
+      log.warn('bound specialist identity resolution failed', {
+        ...context,
+        reason: 'resolver-threw',
+        ...diagnosticErrorFields(error)
+      })
       throw new Error('The bound specialist is unavailable.')
     }
+    if (!identity) {
+      log.warn('bound specialist identity resolution failed', { ...context, reason: 'unavailable' })
+      throw new Error('The bound specialist is unavailable.')
+    }
+    return identity
   }
 
   private async resolveSpecialistSkills(
-    specialistId: string | undefined
+    specialistId: string | undefined,
+    backend: AcpBackendGenerationView,
+    sessionId: string
   ): Promise<EffectiveSpecialistSkills | undefined> {
     if (!specialistId || !this.deps.resolveSpecialistSkills) return undefined
     try {
-      return await this.deps.resolveSpecialistSkills(specialistId)
-    } catch {
+      return await this.deps.resolveSpecialistSkills(specialistId, {
+        sessionId,
+        frameworkId: backend.framework.id,
+        modelRoute: backend.modelRoute
+      })
+    } catch (error) {
+      log.warn('bound specialist capability resolution failed', {
+        operation: 'specialist-resolution',
+        mode: 'adopt',
+        phase: 'skills',
+        reason: 'resolver-threw',
+        sessionId,
+        specialistId,
+        frameworkId: backend.framework.id,
+        modelRoute: backend.modelRoute,
+        ...diagnosticErrorFields(error)
+      })
       return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
     }
   }

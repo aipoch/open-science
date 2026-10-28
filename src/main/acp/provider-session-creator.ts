@@ -1,3 +1,4 @@
+import { recordMainAgentContext } from './main-agent-process-ownership'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import type {
@@ -119,6 +120,7 @@ export class AcpProviderSessionCreator {
         .start()
       provisionalSession = session
 
+      recordMainAgentContext(connection, session.sessionId)
       const reserved = this.deps.reserveIdentity(session.sessionId, startupGeneration)
       if (reserved.collision) {
         this.disposeProvisional(session, 'primary collision session disposal failed')

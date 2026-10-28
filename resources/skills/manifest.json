@@ -158,6 +158,12 @@
       "activationPolicy": "always-on",
       "exposure": "internal",
       "updatedAt": "2026-08-09T00:00:00.000Z"
+    },
+    {
+      "id": "docx-generation",
+      "name": "DOCX Generation",
+      "source": "featured",
+      "updatedAt": "2026-10-26T00:00:00.000Z"
     }
   ]
 }

@@ -35,9 +35,9 @@ it.each([
   'a<-c(1,2);b<-c(2,3);base::intersect(a,b);base::setdiff(a,b);base::union(a,b);base::setequal(a,b)'
 ])('tracks ordinary transform results: %s', async (script) => {
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-    readState: script.includes('mean') ? 'partial' : 'complete',
-    writeState: script.includes('mean') ? 'partial' : 'complete',
-    externalState: script.includes('mean') ? 'partial' : 'complete'
+    readState: script.includes('mean') || script.includes('pmax') ? 'partial' : 'complete',
+    writeState: script.includes('mean') || script.includes('pmax') ? 'partial' : 'complete',
+    externalState: script.includes('mean') || script.includes('pmax') ? 'partial' : 'complete'
   })
 })
 it.each([
@@ -228,7 +228,7 @@ it('keeps Python exploration and the failed image preview outside the R dependen
     })
     expect(result.stalenessByRunId['12'], JSON.stringify(result)).toEqual({
       state: 'unknown',
-      reasons: ['opaque-call']
+      reasons: ['external-state', 'opaque-call']
     })
     expect(result.stalenessByRunId['0']).toEqual({ state: 'clear' })
     expect(result.stalenessByRunId['8']).toBeUndefined()
@@ -276,7 +276,7 @@ it.each(cells.filter((c) => c.language === 'r' && c.status === 'completed'))(
         kernelEpochId: 'epoch'
       })
       const { facts } = await analyzeRNotebookSource(script, context)
-      const unprovenDispatch = ['3', '4', '5', '6', '12'].includes(runId)
+      const unprovenDispatch = ['2', '3', '4', '5', '6', '12'].includes(runId)
       expect(
         facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
         JSON.stringify(facts)
@@ -330,11 +330,14 @@ it('retains the prepared inputs without certifying the joined plot dependency ch
     })
     expect(projection.stalenessByRunId['12'], JSON.stringify(projection)).toEqual({
       state: 'unknown',
-      reasons: ['opaque-call']
+      reasons: ['external-state', 'opaque-call']
     })
     expect(projection.dependenciesByRunId?.['12']).toBeUndefined()
-    expect(projection.stalenessByRunId['2']).toEqual({ state: 'clear' })
-    expect(projection.dependenciesByRunId?.['2']).toEqual([])
+    expect(projection.stalenessByRunId['2']).toEqual({
+      state: 'unknown',
+      reasons: ['external-state', 'opaque-call']
+    })
+    expect(projection.dependenciesByRunId?.['2']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }

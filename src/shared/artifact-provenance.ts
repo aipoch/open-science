@@ -80,9 +80,11 @@ export type CreateArtifactVersionRequest = {
   literature?: ArtifactLiteratureRequest
 }
 
-// The source scope is supplied only by the main-process capability issuer.
+// The source scope is supplied only by the main process.
 export type ArtifactWriteSourceScope = {
   allowedImportRoots: string[]
+  // Current user grants, refreshed by the host for each save; absolute sources only.
+  grantedImportRoots?: string[]
   workspaceCwd?: string
   notebookDataDir?: string
   notebookSessionRoot?: string

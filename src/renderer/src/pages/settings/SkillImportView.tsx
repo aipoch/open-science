@@ -1,3 +1,4 @@
+import { SavedSkillRepositories } from './SavedSkillRepositories'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -242,6 +243,14 @@ const SkillImportView = ({
           </Button>
         </div>
       </div>
+      <SavedSkillRepositories
+        scannedRepository={scannedRepo}
+        busy={busy}
+        onScan={(repository) => {
+          updateInput(repository)
+          void runPreview(repository)
+        }}
+      />
       <div aria-busy={busy}>
         {message?.kind === 'error' ? (
           <ErrorNotice

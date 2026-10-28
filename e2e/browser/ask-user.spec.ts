@@ -1,5 +1,156 @@
 import { expect, test } from '@playwright/test'
 
+for (const height of [700, 400, 300]) {
+  test(`long question remains readable and actionable at 390×${height}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height })
+    await page.goto('/ask-user.html?mixed=1&embedded=1&long=1')
+    const options = page.getByTestId('elicitation-options')
+    const skip = page.getByRole('button', { name: 'Skip', exact: true })
+    await expect
+      .poll(() => options.evaluate((node) => node.clientHeight))
+      .toBeGreaterThanOrEqual(40)
+    await expect(skip).toBeInViewport({ ratio: 1 })
+    const title = page.getByRole('heading', { name: /Question line 1/ })
+    await expect(title).toHaveText(
+      Array.from({ length: 24 }, (_, index) => `Question line ${index + 1}`).join('\n')
+    )
+    const titleScroll = page.getByTestId('elicitation-question-title')
+    await expect(titleScroll).toHaveAccessibleName(/Question line 24/)
+    const footerBefore = await skip.boundingBox()
+    await titleScroll.focus()
+    await page.keyboard.press('End')
+    await expect.poll(() => titleScroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+    expect((await skip.boundingBox())!.y).toBeCloseTo(footerBefore!.y, 0)
+    await page.getByTestId('elicitation-option-Option 16').click()
+    await expect(page.getByRole('button', { name: 'Next question', exact: true })).toBeInViewport({
+      ratio: 1
+    })
+    await page.getByRole('button', { name: 'Next question', exact: true }).click()
+    await expect(page.getByRole('heading', { name: /Which approach/ })).toBeVisible()
+    await skip.click()
+    expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', value: ['Option 16'] },
+        { fieldId: 'question_1', status: 'skipped' }
+      ]
+    })
+  })
+}
+
+test('embedded question keeps its title and actions fixed while scrolling and resizing choices', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 700 })
+  await page.goto('/ask-user.html?mixed=1&embedded=1')
+  const title = page.getByRole('heading', { name: 'Which outputs?', exact: true })
+  const skipAll = page.getByRole('button', { name: 'More skip options', exact: true })
+  const options = page.getByTestId('elicitation-option-Option 1').locator('..')
+  await expect(skipAll).toBeInViewport({ ratio: 1 })
+  const titleBefore = await title.boundingBox()
+  const footerBefore = await skipAll.boundingBox()
+  await options.hover()
+  await page.mouse.wheel(0, 1000)
+  await expect.poll(() => options.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+  expect((await title.boundingBox())!.y).toBeCloseTo(titleBefore!.y, 0)
+  expect((await skipAll.boundingBox())!.y).toBeCloseTo(footerBefore!.y, 0)
+  expect(
+    await page.getByTestId('elicitation-composer-scroll').evaluate((node) => node.scrollTop)
+  ).toBe(0)
+  const handle = page.getByRole('separator', { name: 'Resize question panel' })
+  await handle.focus()
+  await handle.press('ArrowDown')
+  const smaller = await page.getByTestId('elicitation-composer').boundingBox()
+  await expect(title).toBeInViewport({ ratio: 1 })
+  await expect(skipAll).toBeInViewport({ ratio: 1 })
+  await handle.press('ArrowUp')
+  expect((await page.getByTestId('elicitation-composer').boundingBox())!.height).toBeGreaterThan(
+    smaller!.height
+  )
+  for (let index = 0; index < 12; index += 1) await handle.press('ArrowDown')
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Which approach', exact: false })).toBeVisible()
+  await expect.poll(() => options.evaluate((node) => node.scrollTop)).toBe(0)
+  await page.getByRole('textbox').fill('One\nTwo\nThree\nFour\nFive\nSix\nSeven\nEight')
+  await expect(page.getByRole('button', { name: 'Finish', exact: true })).toBeInViewport({
+    ratio: 1
+  })
+  await expect(skipAll).toBeInViewport({ ratio: 1 })
+  await page.screenshot({ path: test.info().outputPath('question-fixed-actions.png') })
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+    action: 'accept',
+    answers: [
+      { fieldId: 'question_0', status: 'skipped' },
+      { fieldId: 'question_1', status: 'skipped' }
+    ]
+  })
+})
+
+test('split skip menu supports dismissal, focus return, and explicit skipping of all questions', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 700 })
+  await page.goto('/ask-user.html?mixed=1&embedded=1&dark=1')
+  const trigger = page.getByRole('button', { name: 'More skip options', exact: true })
+  const skip = page.getByRole('button', { name: 'Skip', exact: true })
+  await expect(page.getByRole('menuitem', { name: 'Skip all', exact: true })).toHaveCount(0)
+  await skip.focus()
+  await page.keyboard.press('Tab')
+  await expect(trigger).toBeFocused()
+  await trigger.press('ArrowDown')
+  const menuItem = page.getByRole('menuitem', { name: 'Skip all', exact: true })
+  await expect(menuItem).toBeFocused()
+  await expect(page.getByTestId('submitted-answer')).toHaveText('')
+  await page.keyboard.press('Escape')
+  await expect(menuItem).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+  await skip.click()
+  await expect(page.getByRole('heading', { name: 'Which approach', exact: false })).toBeVisible()
+  await trigger.click()
+  await expect(menuItem).toBeVisible()
+  expect(await menuItem.locator('..').getAttribute('data-side')).toBe('bottom')
+  await page.screenshot({ path: test.info().outputPath('split-skip-menu.png') })
+  await menuItem.click()
+  await expect(menuItem).toHaveCount(0)
+  expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+    action: 'decline'
+  })
+})
+
+test('Chinese single-question skip is recorded and remains reviewable', async ({ page }) => {
+  await page.goto('/ask-user.html?locale=zh-Hans')
+  await page.getByRole('button', { name: '跳过', exact: true }).click()
+  await expect(page.getByTestId('elicitation-answer-row')).toHaveText('用户跳过')
+  expect(JSON.parse(await page.getByTestId('submitted-answer').innerText())).toMatchObject({
+    action: 'accept',
+    answers: [{ fieldId: 'question_0', status: 'skipped' }]
+  })
+  const presentation = (): Promise<Record<string, string | null | undefined>> =>
+    page.getByTestId('elicitation-answer-row').evaluate((row) => {
+      const icon = row.firstElementChild!
+      const label = row.children[1].firstElementChild!
+      return {
+        text: row.textContent,
+        iconBackground: getComputedStyle(icon).backgroundColor,
+        iconColor: getComputedStyle(icon).color,
+        textColor: getComputedStyle(label).color,
+        fontWeight: getComputedStyle(label).fontWeight,
+        strokeWidth: icon.querySelector('svg')?.getAttribute('stroke-width')
+      }
+    })
+  const skippedPresentation = await presentation()
+  await page.getByTestId('elicitation-answer-row').click()
+  await expect(
+    page.getByTestId('elicitation-choice-review').locator('[data-selected="true"]')
+  ).toHaveCount(0)
+  await page.reload()
+  await page.getByRole('button', { name: '更多跳过选项', exact: true }).click()
+  await page.getByRole('menuitem', { name: '跳过全部', exact: true }).click()
+  await expect(page.getByTestId('elicitation-answer-row')).toHaveText('用户跳过')
+  expect(await presentation()).toEqual(skippedPresentation)
+})
+
 for (const surface of ['main', 'delegate']) {
   test(`${surface} supports 16 choices and keyboard multi-selection`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 700 })
@@ -162,7 +313,7 @@ test('Chinese agent-decide answers stay translated while the submitted value sta
   const answer = page.getByTestId('elicitation-answer-row')
   await expect(answer).toHaveText('让智能体决定')
   expect(JSON.parse(await page.getByTestId('submitted-answer').innerText()).answers).toEqual([
-    { fieldId: 'question_0_custom', value: 'Let the agent decide' }
+    { fieldId: 'question_0_custom', status: 'answered', value: 'Let the agent decide' }
   ])
   await answer.click()
   const review = page.getByTestId('elicitation-choice-review')
@@ -171,3 +322,232 @@ test('Chinese agent-decide answers stay translated while the submitted value sta
     'Let the agent decide'
   )
 })
+
+for (const side of ['top', 'bottom'] as const) {
+  test(`skip menu connects to the control and fits a narrow window when opening ${side}`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 320, height: 500 })
+    await page.goto('/ask-user.html?single=1&locale=zh-Hans')
+    const skip = page.getByRole('button', { name: '跳过', exact: true, includeHidden: true })
+    const group = skip.locator('..')
+    // Put the real control at either viewport edge to exercise Radix collision placement.
+    await group.evaluate((element, openingSide) => {
+      Object.assign((element as HTMLElement).style, {
+        position: 'fixed',
+        right: '8px',
+        top: openingSide === 'bottom' ? '8px' : 'auto',
+        bottom: openingSide === 'top' ? '8px' : 'auto'
+      })
+    }, side)
+    await page.getByRole('button', { name: '更多跳过选项' }).click()
+    const menu = page.getByRole('menu')
+    await expect(menu).toHaveAttribute('data-side', side)
+    const groupBox = (await group.boundingBox())!
+    const menuBox = (await menu.boundingBox())!
+    expect(Math.abs(menuBox.width - groupBox.width)).toBeLessThan(1)
+    const gap =
+      side === 'top'
+        ? groupBox.y - menuBox.y - menuBox.height
+        : menuBox.y - groupBox.y - groupBox.height
+    expect(gap).toBeLessThanOrEqual(0)
+    expect(gap).toBeGreaterThanOrEqual(-1.5)
+    expect(menuBox.x).toBeGreaterThanOrEqual(0)
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(320)
+    await expect
+      .poll(() =>
+        menu.evaluate((element) =>
+          Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+        )
+      )
+      .toBe(0)
+    const radii = await group.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        top: parseFloat(style.borderTopRightRadius),
+        bottom: parseFloat(style.borderBottomRightRadius)
+      }
+    })
+    expect(radii[side]).toBe(0)
+    expect(radii[side === 'top' ? 'bottom' : 'top']).toBeGreaterThan(0)
+    await page.screenshot({ path: test.info().outputPath(`connected-skip-${side}.png`) })
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect
+      .poll(() => group.evaluate((element) => getComputedStyle(element).borderRadius))
+      .toBe('8px')
+  })
+}
+
+test('skip menu reverses its edge animation smoothly and keeps the arrow in sync', async ({
+  page
+}) => {
+  await page.goto('/ask-user.html?single=1')
+  const trigger = page.getByRole('button', { name: 'More skip options' })
+  const menu = page.getByTestId('question-skip-menu')
+  await trigger.click()
+  await expect(menu).toBeVisible()
+  await expect(menu).toHaveAttribute('data-connected', 'true')
+  expect(
+    await menu.evaluate(
+      (element) =>
+        element
+          .getAnimations()
+          .find((animation) =>
+            animation.effect?.getKeyframes().some((frame) => 'clipPath' in frame)
+          )
+          ?.effect?.getTiming().duration
+    )
+  ).toBe(240)
+  expect(
+    await trigger.locator('svg').evaluate((element) => getComputedStyle(element).transitionDuration)
+  ).toBe('0.24s')
+  await expect
+    .poll(() =>
+      menu.evaluate((element) =>
+        Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+      )
+    )
+    .toBe(0)
+  await menu.evaluate((element) => {
+    ;(element as HTMLElement).dataset.instance = 'original'
+  })
+  await page.keyboard.press('Escape')
+  await expect
+    .poll(
+      () =>
+        menu.evaluate(
+          (element) =>
+            element
+              .getAnimations()
+              .find((animation) =>
+                animation.effect?.getKeyframes().some((frame) => 'clipPath' in frame)
+              )
+              ?.effect?.getTiming().duration
+        ),
+      { intervals: [5], timeout: 100 }
+    )
+    .toBe(160)
+  expect(
+    await trigger.locator('svg').evaluate((element) => getComputedStyle(element).transitionDuration)
+  ).toBe('0.16s')
+  // Reverse during the 160 ms exit, before Radix Presence removes the node.
+  await page.waitForTimeout(40)
+  const before = await menu.evaluate((element) => getComputedStyle(element).clipPath)
+  expect(before).not.toBe('inset(0%)')
+  await trigger.click()
+  await expect(menu).toHaveAttribute('data-instance', 'original')
+  const after = await menu.evaluate((element) => getComputedStyle(element).clipPath)
+  const clip = (value: string): number => Math.max(...(value.match(/[\d.]+/g) ?? []).map(Number))
+  expect(clip(after)).toBeLessThan(100)
+  expect(Math.abs(clip(after) - clip(before))).toBeLessThan(35)
+  await expect
+    .poll(() =>
+      menu.evaluate((element) =>
+        Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+      )
+    )
+    .toBe(0)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByRole('menuitem', { name: 'Skip all' })).toBeFocused()
+  await expect(menu).toHaveAttribute('data-instance', 'original')
+  await page.getByRole('heading', { name: 'Which outputs?' }).click()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(menu).toHaveCount(0)
+})
+
+test('skip control honors reduced motion without delaying Escape focus return', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/ask-user.html?single=1')
+  const trigger = page.getByRole('button', { name: 'More skip options' })
+  await trigger.press('ArrowDown')
+  const menu = page.getByTestId('question-skip-menu')
+  await expect(page.getByRole('menuitem', { name: 'Skip all' })).toBeFocused()
+  expect(await menu.evaluate((element) => element.getAnimations().length)).toBe(0)
+  expect(await trigger.locator('svg').evaluate((element) => element.getAnimations().length)).toBe(0)
+  expect(
+    await menu.evaluate((element) =>
+      Math.max(...(getComputedStyle(element).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+    )
+  ).toBe(0)
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+})
+
+test('Escape restores focus immediately and a following Tab is not undone by exit motion', async ({
+  page
+}) => {
+  await page.goto('/ask-user.html?single=1')
+  const trigger = page.getByRole('button', { name: 'More skip options' })
+  await page.evaluate(() => {
+    const next = document.createElement('button')
+    next.textContent = 'Following control'
+    next.id = 'following-skip-control'
+    document.querySelector('[data-testid="question-skip-control"]')!.after(next)
+  })
+  await trigger.press('ArrowDown')
+  await page.keyboard.press('Escape')
+  // Observe focus before the 160 ms exit can finish.
+  expect(await trigger.evaluate((element) => element === document.activeElement)).toBe(true)
+  await page.keyboard.press('Tab')
+  const next = page.locator('#following-skip-control')
+  await expect(next).toBeFocused()
+  await expect(page.getByTestId('question-skip-menu')).toHaveCount(0)
+  await expect(next).toBeFocused()
+})
+
+for (const side of ['top', 'bottom'] as const) {
+  test(`skip menu visibly expands ${side} after placement without depending on starting-style`, async ({
+    page
+  }) => {
+    await page.goto('/ask-user.html?single=1')
+    await page.getByTestId('question-skip-control').evaluate((element, openingSide) => {
+      Object.assign((element as HTMLElement).style, {
+        position: 'fixed',
+        right: '16px',
+        top: openingSide === 'bottom' ? '16px' : 'auto',
+        bottom: openingSide === 'top' ? '16px' : 'auto'
+      })
+    }, side)
+    const clips = await page.evaluate(async () => {
+      // Portal measurement must not rely on a browser synthesizing @starting-style on mount.
+      const removeStartingStyle = (sheet: CSSStyleSheet | CSSGroupingRule): void => {
+        for (let index = sheet.cssRules.length - 1; index >= 0; index--) {
+          const rule = sheet.cssRules[index]
+          if (
+            rule.cssText.startsWith('@starting-style') &&
+            rule.cssText.includes('question-skip-menu')
+          ) {
+            sheet.deleteRule(index)
+          } else if ('cssRules' in rule) removeStartingStyle(rule as CSSGroupingRule)
+        }
+      }
+      for (const sheet of document.styleSheets) removeStartingStyle(sheet)
+      const trigger = document.querySelector<HTMLButtonElement>('[aria-label="More skip options"]')!
+      trigger.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' })
+      )
+      const samples: number[] = []
+      const start = performance.now()
+      while (performance.now() - start < 500) {
+        await new Promise(requestAnimationFrame)
+        const menu = document.querySelector<HTMLElement>('[data-testid="question-skip-menu"]')
+        if (!menu) continue
+        const rect = menu.getBoundingClientRect()
+        if (rect.top < 0 || rect.bottom > innerHeight) continue
+        samples.push(
+          Math.max(...(getComputedStyle(menu).clipPath.match(/[\d.]+/g) ?? []).map(Number))
+        )
+      }
+      return samples
+    })
+    expect(clips[0]).toBeGreaterThan(80)
+    expect(clips.some((clip) => clip > 1 && clip < 99)).toBe(true)
+    expect(clips.at(-1)).toBe(0)
+    await expect(page.getByRole('menu')).toHaveAttribute('data-side', side)
+  })
+}

@@ -127,6 +127,72 @@ const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runS
     timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
   })
 
+describe.runIf(process.platform === 'win32')(
+  'Windows standard execution without protection setup',
+  () => {
+    it('runs and retains a real PowerShell session through the supervised standard launcher', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-standard-admission-'))
+      const denied = join(root, 'declared-denied')
+      await mkdir(denied)
+      await writeFile(join(denied, 'sentinel.txt'), 'HOST_ACCESS')
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => true,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const adapter = new NotebookShellProcessAdapter('win32', owner)
+      const wrap = owner.wrap.bind(owner)
+      const launches: string[] = []
+      const wrapping = vi.spyOn(owner, 'wrap').mockImplementation(async (invocation) => {
+        const wrapped = await wrap(invocation)
+        launches.push(wrapped.args[0])
+        return wrapped
+      })
+      try {
+        expect(await owner.windowsProtectionConfigured()).toBe(false)
+        const first = await adapter.execute({
+          ...shellRequest(root),
+          protectedDirs: [denied],
+          command: '$standardValue = 42; [Console]::Write($standardValue)'
+        })
+        expect(first, JSON.stringify(first)).toMatchObject({ exitCode: 0, stdout: '42' })
+        const second = await adapter.execute({
+          ...shellRequest(root),
+          protectedDirs: [denied],
+          command: '[Console]::Write($standardValue + 1)'
+        })
+        expect(second, JSON.stringify(second)).toMatchObject({ exitCode: 0, stdout: '43' })
+        // Standard supervision is not filesystem isolation, even when callers declare deny roots.
+        // Exercise only synthetic fixtures; protected-mode denial is covered separately below.
+        const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`
+        const access = await adapter.execute({
+          ...shellRequest(root),
+          protectedDirs: [denied],
+          command: `[Console]::Write([IO.File]::ReadAllText(${quote(join(denied, 'sentinel.txt'))}))`
+        })
+        expect(access, JSON.stringify(access)).toMatchObject({ exitCode: 0, stdout: 'HOST_ACCESS' })
+        expect(wrapping.mock.calls[0][0].filesystem.deniedReadRoots).toContain(denied)
+        expect(wrapping.mock.calls[0][0].filesystem.readOnlyRoots).toContain(root)
+        expect(launches).toEqual(['supervise'])
+        expect(await owner.windowsProtectionConfigured()).toBe(false)
+      } finally {
+        const shutdown = await adapter.shutdown()
+        await owner.dispose()
+        wrapping.mockRestore()
+        vi.unstubAllEnvs()
+        expect(shutdown).toEqual({ reaped: true })
+        expect(await readdir(join(root, 'commands'))).toEqual([])
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
+    }, 60_000)
+  }
+)
+
 describe.runIf(process.platform === 'win32')('Windows notebook shell integration', () => {
   let protectionRoot: string
   let protectionOwner: NotebookNetworkSandboxOwner
@@ -294,11 +360,6 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
       })
       try {
         const ready = await adapter.execute(request(second, '[Console]::Write("SESSION_READY")'))
-        if (!protectedMode) {
-          expect(ready).toMatchObject({ exitCode: null, stdout: '' })
-          expect(ready.stderr).toContain('require Windows protected mode')
-          return
-        }
         expect(ready, JSON.stringify(ready)).toMatchObject({
           exitCode: 0,
           stdout: 'SESSION_READY'
@@ -377,18 +438,11 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           ...request,
           command: '$value = "kept"; [Console]::Write($null -eq [Console]::ReadLine())'
         })
-        if (!protectedMode) {
-          expect(first).toMatchObject({ exitCode: null, stdout: '' })
-          expect(first.stderr).toContain('require Windows protected mode')
-          expect(launches).toEqual([])
-          expect(registry.hasReceipts()).toBe(false)
-          return
-        }
         expect(first, JSON.stringify(first)).toMatchObject({
           stdout: 'True',
           exitCode: 0
         })
-        // The protected runtime must preserve variables across its control messages.
+        // Both modes must preserve variables across control messages.
         {
           const second = await adapter.execute({
             ...request,
@@ -397,7 +451,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           expect(second, JSON.stringify(second)).toMatchObject({ stdout: 'kept', exitCode: 0 })
         }
         expect(registry.hasReceipts()).toBe(true)
-        expect(launches).toEqual(['launch'])
+        expect(launches).toEqual([protectedMode ? 'launch' : 'supervise'])
       } finally {
         const shutdown = await adapter.shutdown()
         await owner.dispose()

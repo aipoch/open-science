@@ -9,7 +9,6 @@ import {
   dialogPanelClassName,
   dialogHeaderClassName,
   dialogTitleClassName,
-  dialogDescriptionClassName,
   dialogBodyClassName,
   dialogFooterClassName,
   dialogCancelButtonClassName,
@@ -109,7 +108,7 @@ export const SessionDiscussionDialog = ({
               <Dialog.Title className={dialogTitleClassName}>
                 {t('Ask in a conversation')}
               </Dialog.Title>
-              <Dialog.Description className={dialogDescriptionClassName}>
+              <Dialog.Description className="sr-only">
                 {t('Add to a draft. Send when ready.')}
               </Dialog.Description>
             </div>
@@ -128,7 +127,7 @@ export const SessionDiscussionDialog = ({
           <div className={cn(dialogBodyClassName, 'flex min-h-0 flex-col gap-3 overflow-hidden')}>
             <p
               className="truncate text-sm text-muted-foreground"
-              title={`${context.sourceTitle} · ${context.stepTitle ?? ''}`}
+              title={`${context.sourceTitle}: ${context.stepTitle ?? ''}`}
             >
               {context.scope === 'session'
                 ? t('Entire research')
@@ -137,7 +136,7 @@ export const SessionDiscussionDialog = ({
                     context.stepTitle || context.sourceTitle
                   ]
                     .filter(Boolean)
-                    .join(' · ')}
+                    .join(': ')}
             </p>
             <Input
               autoFocus

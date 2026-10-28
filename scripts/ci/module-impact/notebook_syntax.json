@@ -39,6 +39,7 @@
       "packages/notebook-syntax/src/unavailable.test.ts"
     ],
     "contract": [
+      "scripts/backend-dependencies.test.ts",
       "src/main/notebook/package-boundaries.architecture.test.ts",
       "src/main/host-layer-dependencies.architecture.test.ts"
     ],

@@ -658,6 +658,7 @@ describe('PR Gate workflow', () => {
           type: 'choice',
           options: [
             'classified',
+            'static',
             'unit-coverage',
             'module-coverage',
             'i18n',
@@ -1200,6 +1201,116 @@ describe('PR Gate workflow', () => {
     expect(enforce?.run).not.toContain('check zizmor')
   })
 
+  it('isolates lint while keeping setup and enforcement in both static groups', () => {
+    const job = workflow.jobs.static
+    expect(job.name).toBe('Static checks (${{ matrix.group }})')
+    expect(job.strategy).toEqual({
+      'fail-fast': false,
+      matrix: {
+        group:
+          '${{ fromJSON(contains(fromJSON(needs.preflight.outputs.plan).lanes, \'lint\') && \'["checks","lint"]\' || \'["checks"]\') }}'
+      }
+    })
+    expect(job['continue-on-error']).not.toBe(true)
+    const common = ['Checkout', 'Setup Node', 'Install dependencies']
+    for (const step of job.steps ?? []) {
+      if (common.includes(step.name!)) {
+        expect(step.if).toBeUndefined()
+      } else if (step.name === 'Enforce selected static checks') {
+        expect(step.if).toBe('${{ always() }}')
+      } else {
+        const group = step.name === 'Lint' ? 'lint' : 'checks'
+        expect(step.if, step.name).toMatch(
+          new RegExp(`^\\$\\{\\{ matrix.group == '${group}'(?: && \\(.*\\))? \\}\\}$`)
+        )
+      }
+    }
+    expect(workflow.jobs.gate.needs).toContain('static')
+    const gate = workflow.jobs.gate.steps?.find(
+      ({ name }) => name === 'Evaluate deterministic gate from trusted base'
+    )
+    expect(gate?.env?.PR_GATE_NEEDS).toContain('needs.static.result')
+  })
+
+  it.each(['LINT_OUTCOME', 'TYPECHECKS_OUTCOME', 'ACTIONLINT_OUTCOME', 'I18N_OUTCOME'])(
+    'blocks the static bundle when %s fails even if its sibling group succeeds',
+    (failedOutcome) => {
+      const enforce = workflow.jobs.static.steps!.find(
+        ({ name }) => name === 'Enforce selected static checks'
+      )!
+      for (const outcome of ['success', 'failure', 'cancelled']) {
+        // A lint-only runner skips every checks-group outcome and vice versa.
+        const env = Object.fromEntries(Object.keys(enforce.env!).map((key) => [key, 'skipped']))
+        env[failedOutcome] = outcome
+        const result = spawnSync('bash', ['-eu'], {
+          input: enforce.run,
+          encoding: 'utf8',
+          env: { ...process.env, ...env }
+        })
+        expect(result.status, result.stderr).toBe(outcome === 'success' ? 0 : 1)
+        const plan = {
+          schemaVersion: 1,
+          lanes: ['policy', 'lint', 'i18n'],
+          bundles: ['policy', 'static']
+        }
+        expect(
+          evaluatePrGate(
+            plan,
+            {
+              preflight: 'success',
+              policy: 'success',
+              static: result.status === 0 ? 'success' : 'failure'
+            },
+            { executionMode: 'bundles' }
+          ).ok
+        ).toBe(outcome === 'success')
+      }
+    }
+  )
+
+  it('dispatches the real static groups and contracts without runtime or desktop jobs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pr-gate-static-dispatch-'))
+    try {
+      const output = join(dir, 'output')
+      const classify = workflow.jobs.preflight.steps!.find(({ id }) => id === 'classify')!
+      const result = spawnSync('bash', ['-eu'], {
+        input: classify.run,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          EVENT_NAME: 'workflow_dispatch',
+          DRY_RUN_MODE: 'static',
+          GITHUB_OUTPUT: output
+        }
+      })
+      expect(result.status, result.stderr).toBe(0)
+      const lines = readFileSync(output, 'utf8').split('\n')
+      const plan = JSON.parse(lines.find((line) => line.startsWith('plan='))!.slice(5))
+      expect(plan.mode).toBe('selective')
+      expect(plan.roots).toEqual(['module_registration'])
+      expect(plan.bundles).toEqual(['policy', 'static'])
+      expect(plan.lanes).toEqual([
+        'policy',
+        'docs',
+        'format',
+        'lint',
+        'typecheck_node',
+        'typecheck_web',
+        'interface_contracts',
+        'i18n'
+      ])
+      expect(
+        evaluatePrGate(
+          plan,
+          { preflight: 'success', policy: 'success', static: 'success' },
+          { executionMode: 'bundles' }
+        ).ok
+      ).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('uses runner-local concurrency while preserving separate static outcomes', () => {
     const lint = workflow.jobs.static.steps?.find(({ name }) => name === 'Lint')
     const typechecks = workflow.jobs.static.steps?.find(
@@ -1294,7 +1405,7 @@ describe('PR Gate workflow', () => {
     expect(guard?.run).toContain('scripts/ci/audit-module-ownership.test.ts')
     expect(guard?.run).toContain('scripts/ci/module-graph/consumer-coverage.test.ts')
     expect(guard?.if).toBe(
-      "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}"
+      "${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration')) }}"
     )
     expect(guard?.['continue-on-error']).not.toBe(true)
     const generate = workflow.jobs.static.steps?.find(
@@ -1302,7 +1413,7 @@ describe('PR Gate workflow', () => {
     )
     expect(generate?.run).toContain('generate:module-consumers')
     expect(generate?.if).toBe(
-      "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
+      "${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit')) }}"
     )
     const steps = workflow.jobs.static.steps ?? []
     expect(steps.indexOf(generate!)).toBe(steps.indexOf(guard!) - 1)
@@ -1314,7 +1425,7 @@ describe('PR Gate workflow', () => {
     )
     expect(step?.run).toBe('node scripts/ci/module-registration-tests.mjs')
     expect(step?.if).toBe(
-      "${{ contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}"
+      "${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}"
     )
     expect(step?.['continue-on-error']).not.toBe(true)
   })

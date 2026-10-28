@@ -38,7 +38,7 @@ export const ReplayFileRow = ({
       </span>
       <span
         className={
-          compact ? 'flex shrink-0 flex-col items-end gap-0.5 text-[10px]' : 'flex shrink-0 gap-2'
+          compact ? 'flex shrink-0 flex-col items-end gap-0.5 text-xs' : 'flex shrink-0 gap-2'
         }
       >
         {resource.versionNumber !== undefined ? (

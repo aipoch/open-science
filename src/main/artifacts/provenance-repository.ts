@@ -687,6 +687,7 @@ class ArtifactProvenanceRepository {
               relativeBaseDirs,
               {
                 signal,
+                grantedImportRoots: sourceScope.grantedImportRoots,
                 maxBytes: Math.max(
                   0,
                   LOCAL_RESOURCE_BUDGETS.requestBytes -
@@ -712,6 +713,7 @@ class ArtifactProvenanceRepository {
           },
           {
             allowedImportRoots: sourceScope.allowedImportRoots,
+            grantedImportRoots: sourceScope.grantedImportRoots,
             relativeBaseDirs,
             signal,
             reserveFile: (fileBytes) => this.writeBudgetOwner.reserve({ ...request, fileBytes }),

@@ -18,7 +18,12 @@ const readPreparedLiteratureSidecar = async (
   source: ArtifactWriteSource,
   allowedImportRoots: string[],
   relativeBaseDirs: string[],
-  options?: { signal?: AbortSignal; maxBytes?: number; onBytes?: (bytes: number) => void }
+  options?: {
+    signal?: AbortSignal
+    maxBytes?: number
+    onBytes?: (bytes: number) => void
+    grantedImportRoots?: string[]
+  }
 ): Promise<ReturnType<typeof artifactLiteratureSidecarSchema.parse> | undefined> => {
   if (source.kind !== 'localPath' || !/\.(?:docx|zip)$/iu.test(source.path)) {
     return undefined
@@ -28,7 +33,9 @@ const readPreparedLiteratureSidecar = async (
   const sourcePath = await resolveAllowedImportFilePath(
     source.path,
     allowedImportRoots,
-    relativeBaseDirs
+    relativeBaseDirs,
+    'artifact',
+    options?.grantedImportRoots
   )
   const candidate = `${sourcePath}${ARTIFACT_LITERATURE_SIDECAR_SUFFIX}`
   try {
@@ -38,7 +45,13 @@ const readPreparedLiteratureSidecar = async (
     if (isMissingFileError(error)) return undefined
     throw error
   }
-  const sidecarPath = await resolveAllowedImportFilePath(candidate, allowedImportRoots)
+  const sidecarPath = await resolveAllowedImportFilePath(
+    candidate,
+    allowedImportRoots,
+    [],
+    'artifact',
+    options?.grantedImportRoots
+  )
   const chunks: Buffer[] = []
   let bytes = 0
   // Recheck actual bytes, because the sidecar can grow after stat. Aborting destroys the stream.

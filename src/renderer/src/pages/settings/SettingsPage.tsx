@@ -1,4 +1,5 @@
 import { type SettingsEditorLeaveState, SettingsFormFooter } from './SettingsLayout'
+import { dismissSettingsManualUpdateGuide } from './settings-manual-update-guide'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
@@ -1460,6 +1461,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           // closed intentionally via the ✕ button or Escape.
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
+            // The inline guide owns Escape even after focus moves to another Settings control.
+            if (dismissSettingsManualUpdateGuide(event)) return
             if (
               event.target instanceof Element &&
               event.target.closest('[data-testid="permission-undo-stack"]')

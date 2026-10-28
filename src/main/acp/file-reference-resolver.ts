@@ -136,8 +136,9 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
 
       const snapshotPath = join(directory, basename(sourcePath))
       const snapshotHash = createHash('sha256')
+      // Share FileHandle ownership so stream cancellation cannot close a raw fd twice.
       await pipeline(
-        createReadStream(sourcePath, { fd: sourceHandle.fd, autoClose: false }),
+        createReadStream(sourcePath, { fd: sourceHandle, autoClose: false }),
         new Transform({
           transform: (chunk: Buffer, _encoding, callback) => {
             if (
@@ -170,7 +171,7 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
       // Windows can retain timestamps for same-size writes while a file handle is open.
       const sourceHash = createHash('sha256')
       for await (const chunk of createReadStream(sourcePath, {
-        fd: sourceHandle.fd,
+        fd: sourceHandle,
         autoClose: false,
         start: 0,
         end: Math.max(0, sourceInfo.size - 1)

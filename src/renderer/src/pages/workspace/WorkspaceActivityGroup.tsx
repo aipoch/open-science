@@ -1,13 +1,14 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { MessageScrollerItem, useMessageScroller } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../../shared/compute'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import { RemoteJobRow } from '@/components/RemoteJobRow'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
+import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
 import { WorkspaceActivityGroupSurface } from './WorkspaceTranscriptSurface'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
@@ -125,26 +126,44 @@ const WorkspaceActivityGroup = ({
   revealRequest
 }: WorkspaceActivityGroupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const { scrollToMessage } = useMessageScroller()
-  const groupElementRef = useRef<HTMLDivElement>(null)
+  const { stopAutoScroll } = useMessageScroller()
   // Review receipts stay in history for approval state and timing, but do not render as steps.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
   const visibleActivities = renderableActivityEntries.map(({ activity }) => activity)
 
-  // A row's detail panel changes this group's height. Leave bottom-follow mode first — exactly
-  // like the group header does — so the panel opens strictly downward instead of the transcript
-  // snapping to the bottom once content overflows. align:'nearest' is scroll-neutral only when the
-  // whole group fits the viewport (a taller group would be scrolled to its top), so restore the
-  // scroll offset after the mode escape: the escape must never move the viewport itself.
+  const phases = [
+    ...visibleActivities,
+    ...group.activities.filter(isNotebookCodeReviewActivity)
+  ].map((activity) => ({
+    activity,
+    phase: getToolExecutionPhase(activity, permission, notebookRunsById)
+  }))
+  // Keep approval and abnormal outcomes visible even when all detail rows are hidden.
+  const summary = [
+    'executing',
+    'awaiting-approval',
+    'failed',
+    'limit-reached',
+    'interrupted',
+    'cancelled',
+    'declined',
+    'prepared',
+    'closed',
+    'completed'
+  ]
+    .map((phase) => phases.find((entry) => entry.phase === phase))
+    .find((entry) => entry !== undefined)
+  const visiblePhases = visibleActivities.map((activity) =>
+    getToolExecutionPhase(activity, permission, notebookRunsById)
+  )
+  const remainingCount = visiblePhases.filter(
+    (phase) => phase === 'executing' || phase === 'awaiting-approval'
+  ).length
+  const failedCount = visiblePhases.filter((phase) => phase === 'failed').length
+
+  // Expanding or collapsing is a reading interaction, not message navigation.
   const handleToggleRow = (activityId: string, nextExpanded: boolean): void => {
-    const viewport = groupElementRef.current?.closest<HTMLElement>(
-      '[data-slot="message-scroller-viewport"]'
-    )
-    const previousScrollTop = viewport?.scrollTop
-
-    scrollToMessage(group.id, { align: 'nearest', behavior: 'auto' })
-
-    if (viewport && previousScrollTop !== undefined) viewport.scrollTop = previousScrollTop
+    stopAutoScroll()
     onToggleRow(activityId, nextExpanded)
   }
 
@@ -154,10 +173,14 @@ const WorkspaceActivityGroup = ({
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
       <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
         <WorkspaceActivityGroupSurface
-          ref={groupElementRef}
+          icon={
+            summary ? (
+              <WorkspaceActivityIcon activity={summary.activity} phase={summary.phase} />
+            ) : undefined
+          }
           isExpanded={isExpanded}
           onToggle={() => {
-            scrollToMessage(group.id, { align: 'nearest', behavior: 'auto' })
+            stopAutoScroll()
             onToggleGroup(group.id)
           }}
           title={formatActivityGroupPresentationTitle(
@@ -169,15 +192,30 @@ const WorkspaceActivityGroup = ({
           )}
           meta={
             <>
-              {formatStepCount(visibleActivities, permission, notebookRunsById, t)} ·{' '}
-              <ActivityGroupElapsed
-                activities={[
-                  ...visibleActivities,
-                  ...group.activities.filter(isNotebookCodeReviewActivity)
-                ]}
-                permission={permission}
-                notebookRunsById={notebookRunsById}
-              />
+              {remainingCount > 0
+                ? t('{{count}} steps remaining', {
+                    count: remainingCount,
+                    defaultValue_one: '{{count}} step remaining'
+                  })
+                : formatStepCount(visibleActivities, permission, notebookRunsById, t)}
+              {remainingCount > 0 && failedCount > 0
+                ? ` · ${t('{{count}} failed', { count: failedCount })}`
+                : null}
+              {(isExpanded || remainingCount === 0) &&
+              !phases.some(({ phase }) => phase === 'awaiting-approval') ? (
+                <>
+                  {' '}
+                  ·{' '}
+                  <ActivityGroupElapsed
+                    activities={[
+                      ...visibleActivities,
+                      ...group.activities.filter(isNotebookCodeReviewActivity)
+                    ]}
+                    permission={permission}
+                    notebookRunsById={notebookRunsById}
+                  />
+                </>
+              ) : null}
             </>
           }
         >

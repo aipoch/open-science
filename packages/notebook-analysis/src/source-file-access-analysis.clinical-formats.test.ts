@@ -882,7 +882,8 @@ saveRDS(dds, "outputs/deseq2-object.rds")`
     reads: ['inputs/gene-counts.csv', 'inputs/sample-sheet.csv'],
     writes: ['outputs/deseq2-object.rds', 'outputs/deseq2-results.csv', 'outputs/rlog-matrix.tsv'],
     readState: 'partial',
-    writeState: 'complete'
+    // Unknown CSV column types do not bound Math dispatch during round.
+    writeState: 'partial'
   })
 })
 

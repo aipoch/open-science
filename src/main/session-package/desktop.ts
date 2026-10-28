@@ -1,3 +1,5 @@
+import { downloadUseCase } from './use-case-download'
+import type { UseCaseSource } from '../../shared/use-cases'
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
 import { PACKAGE_REQUIRES_UPDATE } from './archive'
 import {
@@ -8,7 +10,7 @@ import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
@@ -64,7 +66,17 @@ export class SessionPackageDesktop {
     filePath: string
     selection?: PackageFileSelection
   }
+  // The sensitive-content retry in respond() never passes export options, so it inherits this
+  // remembered policy instead of falling back into the native save-dialog branch.
+  private stageDownloadForRetries = false
+  private downloadDirectory?: string
   private lastImportFile?: NativeImportFile
+  private pendingUseCase?: {
+    requestId: string
+    source: UseCaseSource
+    callerId?: string
+    originClientId?: string
+  }
   private enqueueing: Promise<void> = Promise.resolve()
   private busy = false
   private readonly pendingCleanup = new Set<() => Promise<void>>()
@@ -283,6 +295,20 @@ export class SessionPackageDesktop {
           false
         )
       } else if (request.action === 'discard-import') {
+        if (this.lastImportFile?.id === request.requestId) {
+          if (
+            this.operations.active ||
+            this.activeFile ||
+            this.lastImportFile.recovery ||
+            this.operations.snapshot?.cleanupPending
+          )
+            throw new Error('Wait for the current package operation to finish.')
+          const source = this.lastImportFile
+          return Promise.resolve(source.onReleased?.()).then(() => {
+            if (this.lastImportFile === source) this.lastImportFile = undefined
+            return this.operations.snapshot
+          })
+        }
         this.pendingFiles.find((file) => file.id === request.requestId)?.onReleased?.()
         this.pendingFiles = this.pendingFiles.filter((file) => file.id !== request.requestId)
         this.operations.setPendingImports(
@@ -292,6 +318,12 @@ export class SessionPackageDesktop {
         if (this.activeFile || this.operations.active || this.operations.snapshot?.cleanupPending)
           throw new Error('Wait for the current package operation to finish.')
         if (request.action === 'retry-import') {
+          const pending = this.pendingUseCase
+          if (pending && pending.requestId === this.operations.snapshot?.importRequestId) {
+            return this.import(pending.callerId, pending.originClientId, {}, pending.source).then(
+              () => this.operations.snapshot
+            )
+          }
           if (
             !this.lastImportFile ||
             this.operations.snapshot?.importRequestId !== this.lastImportFile.id
@@ -365,7 +397,8 @@ export class SessionPackageDesktop {
     await this.operations.close()
     await this.operation
     await this.enqueueing
-    for (const source of sources) source?.onReleased?.()
+    for (const source of sources) await source?.onReleased?.()
+    if (this.downloadDirectory) await rm(this.downloadDirectory, { recursive: true, force: true })
   }
 
   private async acceptCleanup<T>(work: () => Promise<T>): Promise<T> {
@@ -425,6 +458,43 @@ export class SessionPackageDesktop {
       )
     } finally {
       signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  // Local Web callers hand the returned path to the renderer for a browser download, so the
+  // archive lands in private per-host and per-export directories.
+  private async stageDownloadPath(title: string): Promise<string> {
+    const root = (this.downloadDirectory ??= await mkdtemp(
+      join(tmpdir(), 'open-science-package-exports-')
+    ))
+    await this.pruneStaleDownloads(root)
+    const directory = await mkdtemp(join(root, 'export-'))
+    const today = new Date()
+    const date = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0')
+    ].join('-')
+    const base = `${sanitizeExportFilename(title || 'Session', 220)}-${date}`
+    return join(directory, `${base}.science`)
+  }
+
+  // Staged downloads are ephemeral: drop anything a previous caller never claimed.
+  private async pruneStaleDownloads(directory: string): Promise<void> {
+    try {
+      const cutoff = Date.now() - 60 * 60 * 1000
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.startsWith('export-')) continue
+        try {
+          const path = join(directory, entry.name)
+          const info = await stat(path)
+          if (info.mtimeMs < cutoff) await rm(path, { recursive: true, force: true })
+        } catch {
+          // A racing download or unreadable entry must not block this export.
+        }
+      }
+    } catch {
+      // Best-effort cleanup: a missing or unreadable directory only delays pruning.
     }
   }
 
@@ -649,9 +719,18 @@ export class SessionPackageDesktop {
   export(
     request: SessionPackageRequest,
     callerId?: string,
-    destinationPath?: string
+    destinationPath?: string,
+    options?: { stageDownload?: boolean }
   ): Promise<SessionPackageExportResult> {
-    return this.exportWithPolicy(request, callerId, false, destinationPath)
+    // Admission records the policy so a rejected concurrent export cannot change retries.
+    return this.exportWithPolicy(
+      request,
+      callerId,
+      false,
+      destinationPath,
+      undefined,
+      options?.stageDownload ?? false
+    )
   }
 
   private exportWithPolicy(
@@ -659,12 +738,15 @@ export class SessionPackageDesktop {
     callerId?: string,
     allowSensitiveContent = false,
     destinationPath?: string,
-    selection?: PackageFileSelection
+    selection?: PackageFileSelection,
+    stageDownload?: boolean
   ): Promise<SessionPackageExportResult> {
+    const stage = stageDownload ?? this.stageDownloadForRetries
     let operationSignal: AbortSignal | undefined
     return this.operations
       .run('export', request, async (signal) => {
         operationSignal = signal
+        this.stageDownloadForRetries = stage
         this.options.assertCanStart?.()
         if (destinationPath)
           this.lastExport = {
@@ -696,6 +778,19 @@ export class SessionPackageDesktop {
                               budgetSignal,
                               summary
                             )
+                            if (stage) {
+                              // Local Web callers download the staged archive from the renderer;
+                              // a headless host has no native dialog to ask for a destination.
+                              signal.throwIfAborted()
+                              filePath = await this.stageDownloadPath(title)
+                              this.lastExport = {
+                                operationId: this.operations.snapshot!.id,
+                                filePath: filePath!,
+                                selection: excluded
+                              }
+                              this.operations.report({ phase: 'preparing' })
+                              return excluded
+                            }
                             this.operations.report({ phase: 'choosing-location' })
                             signal.throwIfAborted()
                             const today = new Date()
@@ -723,6 +818,7 @@ export class SessionPackageDesktop {
                               filePath: filePath!,
                               selection: excluded
                             }
+                            this.operations.report({ phase: 'preparing' })
                             return excluded
                           }
                         })
@@ -756,11 +852,17 @@ export class SessionPackageDesktop {
     callerId?: string,
     originClientId?: string,
     target: import('../../shared/session-package').SessionPackageImportRequest = {},
-    sourcePath?: string,
+    source?: string | UseCaseSource,
     validateBeforeTarget = false,
-    options?: { readonly nonInteractive?: true }
+    options?: { readonly nonInteractive?: true; readonly onReleased?: () => Promise<void> }
   ): Promise<SessionPackageImportResult> {
+    let sourcePath = typeof source === 'string' ? source : undefined
+    const useCase = typeof source === 'object' ? source.useCase : undefined
     const nonInteractive = options?.nonInteractive === true
+    let released: Promise<void> | undefined
+    const releaseSource = options?.onReleased
+      ? () => (released ??= options.onReleased!())
+      : undefined
     let operationSignal: AbortSignal | undefined
     let importFile: NativeImportFile | undefined
     const rememberSource = (path: string): void => {
@@ -769,7 +871,8 @@ export class SessionPackageDesktop {
       const onReleased =
         this.activeFile?.path === path
           ? this.activeFile.onReleased
-          : this.lastImportFile?.onReleased
+          : (releaseSource ??
+            (this.lastImportFile?.path === path ? this.lastImportFile.onReleased : undefined))
       // Only a queued retry owns the previous handle. An explicit import of the same path
       // remains a new request, and changing its destination cannot inherit recovery authority.
       const recovery =
@@ -811,6 +914,29 @@ export class SessionPackageDesktop {
         undefined,
         async (signal) => {
           operationSignal = signal
+          // Catalog downloads share the operation lock, progress, cancellation and retry ownership.
+          if (useCase) {
+            this.options.assertCanStart?.()
+            const requestId = randomUUID()
+            this.pendingUseCase = { requestId, source: { useCase }, callerId, originClientId }
+            this.operations.setImportSource(requestId, `${useCase}.science`, target)
+            const downloaded = await downloadUseCase(
+              useCase,
+              signal,
+              (completedBytes, totalBytes) =>
+                this.operations.reportUseCaseDownload(completedBytes, totalBytes)
+            ).catch((error) => this.failOperation(error))
+            this.pendingUseCase = undefined
+            sourcePath = downloaded.path
+            rememberSource(sourcePath)
+            this.lastImportFile!.onReleased = () => {
+              void this.acceptCleanup(() =>
+                withPackageCleanup(async () => undefined, downloaded.release)
+              ).catch(() => undefined)
+            }
+            validateBeforeTarget = true
+            this.operations.finishUseCaseDownload()
+          }
           if (
             sourcePath &&
             (!isAbsolute(sourcePath) || extname(sourcePath).toLowerCase() !== '.science')
@@ -861,13 +987,14 @@ export class SessionPackageDesktop {
             }
           }
           if (sourcePath && validateBeforeTarget) {
+            const inspectionPath = sourcePath
             // Browser uploads are untrusted bytes: reuse archive inspection before target selection.
             // importFrom still revalidates the staged archive and owns packageOrigin/receipt.json.
             this.options.assertCanStart?.()
             this.operations.report({ phase: 'validating' })
             try {
               await this.acceptCleanup(() =>
-                this.options.service.inspect(sourcePath, signal, (progress) =>
+                this.options.service.inspect(inspectionPath, signal, (progress) =>
                   this.operations.report({
                     ...progress,
                     overallPercent: (packageImportPercent(progress) ?? 0) / 4
@@ -975,16 +1102,24 @@ export class SessionPackageDesktop {
           }
         },
         target,
-        () => Boolean(importFile?.recovery)
+        () => Boolean(importFile?.recovery),
+        useCase
       )
-      .catch((error) => {
+      .then(async (result) => {
+        await importFile?.onReleased?.()
+        return result
+      })
+      .catch(async (error) => {
+        if (!importFile) await releaseSource?.()
         if (
           operationSignal?.aborted &&
           !this.shutdown.signal.aborted &&
           !this.operations.snapshot?.result?.recovery &&
           !importFile?.recovery
-        )
+        ) {
+          await importFile?.onReleased?.()
           return null
+        }
         throw error
       })
   }

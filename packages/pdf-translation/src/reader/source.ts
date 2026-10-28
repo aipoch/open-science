@@ -50,6 +50,8 @@ type PdfTranslationSourceData = Readonly<{
       /** Text owned by an original picture/diagram, never a translation request. */
       figure?: true
       preserve?: 'formula' | 'code' | 'literal' | 'reference'
+      /** The local layout proved the end of a preceding bibliography at this unit. */
+      referenceBoundary?: true
     }
   >[]
 }>
@@ -109,13 +111,15 @@ export function createPdfTranslationSource(input: PdfTranslationSourceData): Pdf
         }
       : {}),
     units: Object.freeze(
-      input.units.map(({ id, source, fragments, sourceOnly, figure, preserve }) =>
-        Object.freeze({
+      input.units.map((unit) => {
+        const { id, source, fragments, sourceOnly, figure, preserve } = unit
+        return Object.freeze({
           id,
           source,
           ...(sourceOnly === true ? { sourceOnly: true as const } : {}),
           ...(figure === true ? { figure: true as const } : {}),
           ...(preserve ? { preserve } : {}),
+          ...(unit.referenceBoundary === true ? { referenceBoundary: true as const } : {}),
           fragments: Object.freeze(
             fragments.map(({ pageNumber, rect, items, unclippedRect }) =>
               Object.freeze({
@@ -141,7 +145,7 @@ export function createPdfTranslationSource(input: PdfTranslationSourceData): Pdf
             )
           )
         })
-      )
+      })
     )
   })
 }

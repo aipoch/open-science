@@ -1,3 +1,4 @@
+import { useManualUpdate } from '@/components/use-manual-update'
 import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: Settings About · macrostructure: identity + resource list
@@ -5,17 +6,20 @@ import { InlineNotice } from '@/components/ui/inline-notice'
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (semantic Settings tokens) · slop: pass
  */
-import { CircleHelp, Download, FileText, RefreshCw, Scale } from 'lucide-react'
+import { CircleHelp, Download, FileText, RefreshCw, Scale, Shield } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useEffect, useRef } from 'react'
 
 import { license as licenseId } from '../../../../../package.json'
 import { AppLogo } from '@/components/AppLogo'
+import { ManualUpdateGuide, ManualUpdateLinks } from '@/components/ManualUpdate'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { useLocaleStore } from '@/stores/locale-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP, getDocumentationUrl } from '../../../../shared/app-config'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
+import { SETTINGS_MANUAL_UPDATE_GUIDE_CLOSE } from './settings-manual-update-guide'
 
 export type AppVersionSectionPreviewState =
   'default' | 'hover' | 'focus' | 'active' | 'disabled' | 'loading' | 'error' | 'success'
@@ -48,6 +52,17 @@ const AppVersionSection = ({
   const status = useUpdateStore((state) => state.status)
   const check = useUpdateStore((state) => state.check)
   const openDialog = useUpdateStore((state) => state.openDialog)
+  const manual = useManualUpdate(true)
+  const sectionRef = useRef<HTMLDivElement>(null)
+  const { closeGuide, guideOpenRef } = manual
+  useEffect(() => {
+    const section = sectionRef.current
+    const returnFromGuide = (): void => {
+      if (guideOpenRef.current) closeGuide()
+    }
+    section?.addEventListener(SETTINGS_MANUAL_UPDATE_GUIDE_CLOSE, returnFromGuide)
+    return () => section?.removeEventListener(SETTINGS_MANUAL_UPDATE_GUIDE_CLOSE, returnFromGuide)
+  }, [closeGuide, guideOpenRef])
 
   const version = appInfo?.version ?? status.current
   const isChecking = status.state === 'checking'
@@ -87,117 +102,175 @@ const AppVersionSection = ({
   })()
 
   return (
-    <SettingsSection title={t('About')} aria-label={t('App version')}>
-      <SettingsRow
-        label={
-          <div className="flex min-w-0 items-center gap-3">
-            <AppLogo className="size-12 shrink-0 rounded-lg" />
-            <div className="min-w-0 flex-1">
-              <p className="flex flex-wrap items-baseline gap-x-2">
-                <span className="text-sm font-semibold text-foreground">{APP.name}</span>
-                <span className="text-xs text-muted-foreground tabular-nums">v{version}</span>
-              </p>
-              <p className="mt-0.5 text-xs font-normal text-muted-foreground">{APP.copyright}</p>
-              {statusLine ? (
-                !status.error && status.state !== 'error' ? (
-                  <p className="mt-1 text-xs text-muted-foreground" role="status">
-                    {statusLine}
+    <div
+      ref={sectionRef}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && manual.guideOpenRef.current) {
+          event.preventDefault()
+          event.stopPropagation()
+          manual.closeGuide()
+        }
+      }}
+    >
+      {manual.guideOpen ? (
+        <ManualUpdateGuide manual={manual} status={status} backLabel={t('Back to settings')} />
+      ) : null}
+      <div hidden={manual.guideOpen} className={manual.guideOpen ? 'hidden' : 'contents'}>
+        <SettingsSection title={t('About')} aria-label={t('App version')}>
+          <SettingsRow
+            label={
+              <div className="flex min-w-0 items-center gap-3">
+                <AppLogo className="size-12 shrink-0 rounded-lg" />
+                <div className="min-w-0 flex-1">
+                  <p className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="text-sm font-semibold text-foreground">{APP.name}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">v{version}</span>
                   </p>
-                ) : (
-                  <InlineNotice level="error" role="alert" className="mt-2">
-                    {statusLine}
-                  </InlineNotice>
-                )
+                  <p className="mt-0.5 text-xs font-normal text-muted-foreground">
+                    {APP.copyright}
+                  </p>
+                  {statusLine ? (
+                    !status.error && status.state !== 'error' ? (
+                      <p className="mt-1 text-xs text-muted-foreground" role="status">
+                        {statusLine}
+                      </p>
+                    ) : (
+                      <InlineNotice level="error" role="alert" className="mt-2">
+                        {statusLine}
+                      </InlineNotice>
+                    )
+                  ) : null}
+                </div>
+              </div>
+            }
+            className="pt-0 sm:grid-cols-[minmax(0,1fr)_auto]"
+          >
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void check()}
+                disabled={!canCheck}
+              >
+                <RefreshCw
+                  className={isChecking ? 'size-4 animate-spin' : 'size-4'}
+                  aria-hidden="true"
+                />
+                {isChecking ? t('Checking…') : t('Check now')}
+              </Button>
+
+              {hasUpdate ? (
+                <Button type="button" onClick={() => openDialog()}>
+                  <Download className="size-4" aria-hidden="true" />
+                  {isDownloading
+                    ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
+                    : status.state === 'ready'
+                      ? t('Update ready')
+                      : t('Update to {{version}}', { version: status.latest })}
+                </Button>
               ) : null}
             </div>
+          </SettingsRow>
+
+          <div className="mb-5 pl-[3.75rem]">
+            <ManualUpdateLinks manual={manual} align="start" />
           </div>
-        }
-        className="pt-0 sm:grid-cols-[minmax(0,1fr)_auto]"
-      >
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => void check()} disabled={!canCheck}>
-            <RefreshCw
-              className={isChecking ? 'size-4 animate-spin' : 'size-4'}
-              aria-hidden="true"
-            />
-            {isChecking ? t('Checking…') : t('Check now')}
-          </Button>
 
-          {hasUpdate ? (
-            <Button type="button" onClick={() => openDialog()}>
-              <Download className="size-4" aria-hidden="true" />
-              {isDownloading
-                ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
-                : status.state === 'ready'
-                  ? t('Update ready')
-                  : t('Update to {{version}}', { version: status.latest })}
-            </Button>
-          ) : null}
-        </div>
-      </SettingsRow>
+          <div>
+            <ExternalTextLink
+              href={getDocumentationUrl(locale)}
+              data-settings-anchor="general.help-center"
+              aria-label={t('Open Help Center in your browser')}
+              className={`${resourceLinkClassName} ${helpPreviewClassName}`}
+            >
+              <CircleHelp
+                data-slot="about-resource-icon"
+                className={resourceIconClassName}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span data-slot="about-resource-title" className={resourceTitleClassName}>
+                  {t('Help Center')}
+                </span>
+                <span
+                  data-slot="about-resource-description"
+                  className={resourceDescriptionClassName}
+                >
+                  {t('Read setup guides and troubleshooting.')}
+                </span>
+              </span>
+            </ExternalTextLink>
 
-      <div>
-        <ExternalTextLink
-          href={getDocumentationUrl(locale)}
-          data-settings-anchor="general.help-center"
-          aria-label={t('Open Help Center in your browser')}
-          className={`${resourceLinkClassName} ${helpPreviewClassName}`}
-        >
-          <CircleHelp
-            data-slot="about-resource-icon"
-            className={resourceIconClassName}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1">
-            <span data-slot="about-resource-title" className={resourceTitleClassName}>
-              {t('Help Center')}
-            </span>
-            <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
-              {t('Read setup guides and troubleshooting.')}
-            </span>
-          </span>
-        </ExternalTextLink>
-
-        <ExternalTextLink
-          href={APP.links.githubReleases}
-          aria-label={t('Open release notes in your browser')}
-          className={resourceLinkClassName}
-        >
-          <FileText
-            data-slot="about-resource-icon"
-            className={resourceIconClassName}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1">
-            <span data-slot="about-resource-title" className={resourceTitleClassName}>
-              {t('Release notes')}
-            </span>
-            <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
-              {t('See changes and fixes in every version.')}
-            </span>
-          </span>
-        </ExternalTextLink>
-        <ExternalTextLink
-          href={APP.links.license}
-          aria-label={t('Open-source license')}
-          className={resourceLinkClassName}
-        >
-          <Scale
-            data-slot="about-resource-icon"
-            className={resourceIconClassName}
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1">
-            <span data-slot="about-resource-title" className={resourceTitleClassName}>
-              {t('Open-source license')}
-            </span>
-            <span data-slot="about-resource-description" className={resourceDescriptionClassName}>
-              {licenseId}
-            </span>
-          </span>
-        </ExternalTextLink>
+            <ExternalTextLink
+              href={APP.links.githubReleases}
+              aria-label={t('Open release notes in your browser')}
+              className={resourceLinkClassName}
+            >
+              <FileText
+                data-slot="about-resource-icon"
+                className={resourceIconClassName}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span data-slot="about-resource-title" className={resourceTitleClassName}>
+                  {t('Release notes')}
+                </span>
+                <span
+                  data-slot="about-resource-description"
+                  className={resourceDescriptionClassName}
+                >
+                  {t('See changes and fixes in every version.')}
+                </span>
+              </span>
+            </ExternalTextLink>
+            <ExternalTextLink
+              href={APP.links.license}
+              aria-label={t('Open-source license')}
+              className={resourceLinkClassName}
+            >
+              <Scale
+                data-slot="about-resource-icon"
+                className={resourceIconClassName}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span data-slot="about-resource-title" className={resourceTitleClassName}>
+                  {t('Open-source license')}
+                </span>
+                <span
+                  data-slot="about-resource-description"
+                  className={resourceDescriptionClassName}
+                >
+                  {licenseId}
+                </span>
+              </span>
+            </ExternalTextLink>
+            <ExternalTextLink
+              href={APP.links.security}
+              aria-label={t('Security')}
+              className={resourceLinkClassName}
+            >
+              <Shield
+                data-slot="about-resource-icon"
+                className={resourceIconClassName}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span data-slot="about-resource-title" className={resourceTitleClassName}>
+                  {t('Security')}
+                </span>
+                <span
+                  data-slot="about-resource-description"
+                  className={resourceDescriptionClassName}
+                >
+                  {t('Read the security policy and report vulnerabilities.')}
+                </span>
+              </span>
+            </ExternalTextLink>
+          </div>
+        </SettingsSection>
       </div>
-    </SettingsSection>
+    </div>
   )
 }
 

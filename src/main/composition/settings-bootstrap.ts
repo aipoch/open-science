@@ -180,6 +180,7 @@ export async function composeSettingsBootstrap({
   }
   const notebookNetworkSandbox = await modules.add(undefined, () => {
     const capability = new NotebookNetworkSandboxOwner({
+      configRoot: resolveConfigRoot(),
       windowsRuntimeRoot: join(resolveConfigRoot(), 'notebook-runtimes'),
       packaged: runtimeMetadata().packaged,
       allowRuntimeAccessPrompt: !headless,
@@ -205,6 +206,9 @@ export async function composeSettingsBootstrap({
         return (await service.getPackageMirror()).caBundle
       },
       getGrantedLocalRoots: async () => grantedRootsRepositoryRef.current?.list() ?? [],
+      hasFullAccess: (sessionId) => getRuntimeRef().current?.hasFullAccess(sessionId) ?? false,
+      subscribeFullAccess: (sessionId, listener) =>
+        getRuntimeRef().current?.subscribeFullAccess(sessionId, listener) ?? (() => {}),
       persistAlwaysAllow: async (hostname) => {
         const service = settingsServiceRef.current
         if (!service) throw new Error('Settings are not ready.')
@@ -326,6 +330,9 @@ export async function composeSettingsBootstrap({
         await lifecycle.shutdownAll({ afterShutdown: commit })
       },
       applyNotebookNetwork: async (settings) => notebookNetworkSandbox.applySettings(settings),
+      onNotebookNetworkDomainAllowed: async () => {
+        await settingsSnapshotCommits.projectAfter(Promise.resolve())
+      },
       validatePackageMirror: async (settings) => {
         await resolveNotebookTrustBundle(settings.caBundle)
       },

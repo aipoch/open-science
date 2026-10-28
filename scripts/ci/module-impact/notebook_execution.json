@@ -23,6 +23,8 @@
     "src/main/notebook/windows-launch-diagnostics.test.ts",
     "src/main/notebook/windows-launch-diagnostics.ts",
     "src/main/notebook/kernel-process-lifecycle.test.ts",
+    "src/main/notebook/kernel-process-identity.ts",
+    "src/main/notebook/kernel-process-identity.test.ts",
     "src/main/notebook/kernel-process-lifecycle.windows-posix.ts",
     "src/main/notebook/kernel-protocol.test.ts",
     "src/main/notebook/kernel-protocol.ts",
@@ -133,7 +135,10 @@
     "src/main/notebook/trust-bundle.ts",
     "src/main/notebook/working-file-observer.ts",
     "src/main/notebook/execution-deadline.test.ts",
-    "src/main/notebook/execution-deadline.ts"
+    "src/main/notebook/execution-deadline.ts",
+    "src/main/notebook/managed-skill-read-roots.ts",
+    "src/main/notebook/managed-skill-read-roots.test.ts",
+    "src/main/notebook/managed-skill-read.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -274,7 +279,10 @@
       "src/main/notebook/scientific-output-analysis.test.ts",
       "src/main/notebook/shell-npm-environment.test.ts",
       "src/main/notebook/trust-bundle.test.ts",
-      "src/main/notebook/execution-deadline.test.ts"
+      "src/main/notebook/execution-deadline.test.ts",
+      "src/main/notebook/kernel-process-identity.test.ts",
+      "src/main/notebook/managed-skill-read-roots.test.ts",
+      "src/main/notebook/managed-skill-read.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

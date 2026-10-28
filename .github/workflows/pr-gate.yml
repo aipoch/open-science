@@ -15,6 +15,7 @@ on:
         type: choice
         options:
           - classified
+          - static
           - unit-coverage
           - module-coverage
           - i18n
@@ -173,6 +174,12 @@ jobs:
           TRUSTED_CLASSIFIER_SOURCE: ${{ steps.trusted_classifier.outputs.source }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "static" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["module_registration"],"lanes":["policy","docs","format","lint","typecheck_node","typecheck_web","interface_contracts","i18n"],"bundles":["policy","static"],"reasonChains":["workflow_dispatch static -> both static groups and registration contracts"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo "lanes=$(node -e 'console.log(JSON.stringify(JSON.parse(process.argv[1]).lanes))' "$plan")" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "macos-smoke" ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:macos-smoke"],"lanes":["policy","build","e2e_smoke_macos"],"bundles":["policy","macos_e2e"],"macosProfile":"smoke","macosGroups":["journeys"],"reasonChains":["focused single-runner macOS smoke"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -477,11 +484,15 @@ jobs:
         run: node scripts/ci/check-pr-policy.mjs
 
   static:
-    name: Static checks
+    name: Static checks (${{ matrix.group }})
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(contains(fromJSON(needs.preflight.outputs.plan).lanes, 'lint') && '["checks","lint"]' || '["checks"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -489,6 +500,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Check GitHub Actions correctness
+        if: ${{ matrix.group == 'checks' }}
         id: actionlint
         continue-on-error: true
         shell: bash
@@ -506,6 +518,7 @@ jobs:
           # ShellCheck/Pyflakes integrations vary with runner images and have separate baselines.
           "$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes=
       - name: Audit GitHub Actions security with zizmor
+        if: ${{ matrix.group == 'checks' }}
         continue-on-error: true
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
@@ -523,7 +536,7 @@ jobs:
         run: node scripts/ci/npm-ci.mjs
       - name: Check Markdown formatting
         id: docs
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs') }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs')) }}
         continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
@@ -531,7 +544,7 @@ jobs:
         run: node scripts/ci/check-changed-format.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --kind markdown
       - name: Check formatting
         id: format
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'format') }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'format')) }}
         continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
@@ -539,12 +552,12 @@ jobs:
         run: node scripts/ci/check-changed-format.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --kind non-markdown
       - name: Lint
         id: lint
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'lint') }}
+        if: ${{ matrix.group == 'lint' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'lint')) }}
         continue-on-error: true
         run: npm run lint -- --concurrency auto
       - name: Typecheck node and web
         id: typechecks
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_node') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_web') }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_node') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_web')) }}
         continue-on-error: true
         shell: bash
         env:
@@ -586,18 +599,18 @@ jobs:
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
       - name: Generate derived consumer index
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit')) }}
         run: npm run generate:module-consumers
       - name: Check complete module ownership and consumer evidence
         # Registration/full plans include these guards in the contract suite below.
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration')) }}
         run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-graph/consumer-coverage.test.ts
       - name: Check module registration policy and architecture contracts
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
         run: node scripts/ci/module-registration-tests.mjs
       - name: Check interface contract baseline (shadow)
         id: interface_contracts
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts')) }}
         continue-on-error: true
         env:
           RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
@@ -616,7 +629,7 @@ jobs:
           fi
       - name: Check i18n catalog
         id: i18n
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'i18n') }}
+        if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'i18n')) }}
         continue-on-error: true
         run: npx vitest run src/renderer/src/i18n/resources.test.ts
       - name: Enforce selected static checks
@@ -1106,6 +1119,8 @@ jobs:
           src/main/process-tree.windows.integration.test.ts
           src/main/delegation/process-ownership.test.ts
           src/main/delegation/production-composition.test.ts
+          src/main/acp/main-agent-process-ownership.test.ts
+          src/main/service-process-recovery.test.ts
           --maxWorkers=1
           --testTimeout=30000
           --hookTimeout=30000
@@ -1140,6 +1155,7 @@ jobs:
           npx vitest run
           scripts/windows-dev-notebook-host.integration.test.ts
           scripts/ci/run-windows-browser-diagnostics.test.ts
+          scripts/electron-app-fixture.test.ts
           scripts/windows-updater-certification.test.ts
           build/packaging.test.ts
           scripts/windows-update-handoff-uninstall.test.ts
@@ -1169,6 +1185,14 @@ jobs:
           packages/specialists/src/repository.test.ts
           packages/environment/src/micromamba-cache-powershell.test.ts
           packages/environment/src/micromamba-cache-acl.integration.test.ts
+          src/main/local-service-lifetime.test.ts
+          src/main/node-fatal-errors.test.ts
+          src/main/desktop-runtime-recovery.test.ts
+          src/main/desktop-runtime-stop-deadline.integration.test.ts
+          src/main/update/installation-occupancy.test.ts
+          src/main/verified-service-stop.test.ts
+          packages/open-science/runtime-control.test.ts
+          src/main/local-service-stop-intent.integration.test.ts
       - name: Test scheduled Windows validation regressions
         id: windows_regressions
         continue-on-error: true
@@ -1216,6 +1240,7 @@ jobs:
           src/main/notebook/package-process-sandbox.windows.integration.test.ts
           src/main/notebook/powershell-search-parser.windows.integration.test.ts
           src/main/notebook/shell-search-scope.test.ts
+          src/main/notebook/shell-process-ownership.test.ts
       - name: Test Windows notebook shell service timeout
         id: windows_service_timeout
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_service_timeout')) }}

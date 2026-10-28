@@ -302,7 +302,7 @@ async function main() {
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const port=server.address().port;
  await writeFile(join(root,'web-service.json'),JSON.stringify({pid:process.pid,port}));
- const control=await startRuntimeControl(root,'node',async()=>port,{path:join(root,'runtime.sock'),generation,secret:'a'.repeat(64),version:'0.37.1'},startupOptions);
+ const control=await startRuntimeControl(root,'node',async()=>port,{path:join(root,'runtime.sock'),generation,secret:'a'.repeat(64),version:'0.37.1'},startupOptions,undefined,startupOptions?{entryPath:process.argv[1],launch:'cli',lifetime:{snapshot:()=>({version:1,generation,explicit:true,stopping:false,apps:0})}}:undefined);
  process.send('ready');
 }main();`,
           resolveDir: process.cwd()

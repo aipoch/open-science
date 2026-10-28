@@ -34,6 +34,48 @@ const CODEX_STEERING_INITIALIZE = Object.freeze({
 })
 
 describe('native follow-up compatibility layer', () => {
+  it('preserves multiple text blocks and attached files in a 2.x inbox input', () => {
+    expect(
+      buildOpenCodeHttpFollowUpBody(
+        [
+          { type: 'text', text: 'first' },
+          { type: 'text', text: 'skill guidance' },
+          {
+            type: 'file',
+            mime: 'image/png',
+            url: 'data:image/png;base64,aA==',
+            filename: 'image.png'
+          }
+        ],
+        2
+      )
+    ).toEqual({
+      text: 'first\n\nskill guidance',
+      files: [{ uri: 'data:image/png;base64,aA==', name: 'image.png' }],
+      delivery: 'steer',
+      resume: false
+    })
+  })
+
+  it('accepts only a matching 2.x inbox acknowledgement', () => {
+    const result = {
+      data: {
+        type: 'user',
+        id: 'msg_1',
+        sessionID: 'session',
+        delivery: 'steer',
+        payload: { text: 'hello' }
+      }
+    }
+    expect(parseOpenCodeHttpFollowUp(result, 'hello', 2, 'session')).toBe(true)
+    expect(parseOpenCodeHttpFollowUp(result, 'different', 2, 'session')).toBe(false)
+    expect(parseOpenCodeHttpFollowUp(result, 'hello', 2, 'other-session')).toBe(false)
+    expect(
+      parseOpenCodeHttpFollowUp({ data: { ...result.data, id: '' } }, 'hello', 2, 'session')
+    ).toBe(false)
+    expect(parseOpenCodeHttpFollowUp({}, 'hello', 2, 'session')).toBe(false)
+  })
+
   it('reads steering from Claude and Codex initialize _meta', () => {
     expect(readSteeringAdvertisement(CLAUDE_STEERING_INITIALIZE)).toEqual({ supported: true })
     expect(retainInitializeCapabilities(CLAUDE_STEERING_INITIALIZE)).toEqual({
