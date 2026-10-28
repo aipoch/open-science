@@ -344,7 +344,12 @@ describe('parallel platform publication', () => {
 
   it('reports staged packages as pending instead of failing when the registry lags', async () => {
     const uploads = vi.fn(async () => {})
-    const pending = await publishPackages(packages, async () => null, uploads, async () => {})
+    const pending = await publishPackages(
+      packages,
+      async () => null,
+      uploads,
+      async () => {}
+    )
     expect(pending).toEqual(packages.map((pkg) => pkg.manifest.name))
     expect(uploads).toHaveBeenCalledTimes(6)
   })
@@ -356,7 +361,12 @@ describe('parallel platform publication', () => {
       registry.set(pkg.manifest.name, published(pkg))
     })
     await expect(
-      publishPackages(packages, async (name: string) => registry.get(name), uploads, async () => {})
+      publishPackages(
+        packages,
+        async (name: string) => registry.get(name),
+        uploads,
+        async () => {}
+      )
     ).rejects.toThrow('ENEEDAUTH')
     expect(uploads).toHaveBeenCalledTimes(5)
   })
