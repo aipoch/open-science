@@ -354,6 +354,7 @@ const createItem = async (
       normalizedTitle: normalizeSearchText(item.title),
       normalizedAbstract: normalizeSearchText(item.abstract),
       normalizedContainerTitle: normalizeSearchText(item.containerTitle),
+      normalizedPersonalNote: normalizeSearchText(item.personalNote ?? ''),
       abstract: item.abstract,
       issuedText: item.issuedText,
       issuedYear: item.issuedYear,
@@ -439,6 +440,7 @@ const replaceItemMetadata = async (
       normalizedTitle: normalizeSearchText(item.title),
       normalizedAbstract: normalizeSearchText(item.abstract),
       normalizedContainerTitle: normalizeSearchText(item.containerTitle),
+      normalizedPersonalNote: normalizeSearchText(item.personalNote ?? ''),
       abstract: item.abstract,
       issuedText: item.issuedText,
       issuedYear: item.issuedYear ?? null,
@@ -865,6 +867,7 @@ class LiteratureCatalog {
         contains(Prisma.sql`i."normalizedTitle"`, text),
         contains(Prisma.sql`i."normalizedAbstract"`, text),
         contains(Prisma.sql`i."normalizedContainerTitle"`, text),
+        contains(Prisma.sql`i."normalizedPersonalNote"`, text),
         creatorMatches(text)
       ]
       const identifiers = searchIdentifiers(normalizeSpace(text))

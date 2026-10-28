@@ -878,6 +878,216 @@ describe('LiteratureCatalog', () => {
     ).toMatchObject({ entries: [{ id: paper.id }] })
   })
 
+  it.each(['library', 'global-search'] as const)(
+    'searches personal notes with normalized literal text in %s',
+    async (scope) => {
+      const catalog = await setup()
+      const paper = await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: 'book',
+          title: 'Methods comparison',
+          personalNote:
+            "这个方法适合我的数据。 ＲＮＡ\n\t  ÉTUDE БИОЛОГИЯ U\u0308berblick gene_A 50% O'Brien"
+        })
+      })
+      await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({ itemType: 'book', title: 'Unrelated reference' })
+      })
+      for (const query of [
+        '适合我的数据',
+        'rna étude',
+        'биология',
+        'überblick',
+        'gene_A',
+        '50%',
+        "O'Brien"
+      ]) {
+        expect.soft(await catalog.search({ scope, query }), `${scope}: ${query}`).toMatchObject({
+          totalCount: 1,
+          entries: [{ id: paper.id }]
+        })
+        expect
+          .soft(await catalog.search({ scope, query, countOnly: true }), `count: ${query}`)
+          .toEqual({
+            totalCount: 1,
+            entries: []
+          })
+        expect
+          .soft(await catalog.search({ scope, filter: { query } }), `filter: ${query}`)
+          .toMatchObject({
+            totalCount: 1,
+            entries: [{ id: paper.id }]
+          })
+      }
+      for (const query of ['geneXA', '50X', 'etude', "' OR 1=1 --"])
+        expect((await catalog.search({ scope, query })).totalCount).toBe(0)
+      expect(
+        await catalog.search({ scope, query: 'rna', filter: { query: 'missing phrase' } })
+      ).toMatchObject({ totalCount: 0, entries: [] })
+      // Item notes remain paper results; the Notes kind continues to mean PDF annotations.
+      if (scope === 'global-search')
+        expect(await catalog.search({ scope, query: 'rna', entryKind: 'note' })).toEqual({
+          totalCount: 0,
+          entries: []
+        })
+    }
+  )
+
+  it('keeps personal-note search current after imports, edits and clearing a note', async () => {
+    const catalog = await setup()
+    const {
+      itemIds: [id]
+    } = await catalog.importItems([
+      literatureItemInputSchema.parse({
+        itemType: 'book',
+        title: 'Imported method',
+        personalNote: 'Original observation'
+      })
+    ])
+    expect(await catalog.search({ scope: 'library', query: 'original observation' })).toMatchObject(
+      {
+        totalCount: 1,
+        entries: [{ id }]
+      }
+    )
+    for (const personalNote of ['Revised observation', '']) {
+      const view = (await catalog.get(id))!
+      await catalog.transact({
+        kind: 'update-item',
+        itemId: id,
+        expectedMetadataRevision: view.metadataRevision,
+        item: { ...view.item, personalNote }
+      })
+      const restarted = new LiteratureCatalog(async () => client!)
+      for (const scope of ['library', 'global-search'] as const) {
+        expect
+          .soft((await restarted.search({ scope, query: 'original observation' })).totalCount)
+          .toBe(0)
+        expect
+          .soft((await restarted.search({ scope, query: 'revised observation' })).totalCount)
+          .toBe(personalNote ? 1 : 0)
+      }
+    }
+  })
+
+  it('keeps personal-note matches within the agent search project and explicit item scopes', async () => {
+    const catalog = await setup()
+    const ids: string[] = []
+    for (const title of ['Scoped method', 'Outside method'])
+      ids.push(
+        (
+          await catalog.transact({
+            kind: 'create-item',
+            item: literatureItemInputSchema.parse({
+              itemType: 'book',
+              title,
+              personalNote: '这个方法适合我的数据'
+            })
+          })
+        ).id
+      )
+    await catalog.transact({
+      kind: 'set-project-items',
+      projectId: 'project-1',
+      itemIds: [ids[0]],
+      included: true,
+      source: 'manual'
+    })
+    const request = {
+      scope: 'library' as const,
+      query: '适合我的数据',
+      projectId: 'project-1',
+      limit: 1
+    }
+    expect(await catalog.searchForAgent(request)).toMatchObject({
+      totalCount: 1,
+      entries: [{ id: ids[0] }]
+    })
+    expect(await catalog.searchForAgent({ ...request, countOnly: true })).toEqual({
+      totalCount: 1,
+      entries: []
+    })
+    expect(await catalog.searchForAgent({ ...request, itemIds: [ids[1]] })).toMatchObject({
+      totalCount: 0,
+      entries: []
+    })
+    expect(
+      await catalog.searchForAgent({ ...request, projectId: 'missing-project' })
+    ).toMatchObject({ totalCount: 0, entries: [] })
+  })
+
+  it('preserves personal-note search scopes, pagination, counts and selected IDs', async () => {
+    const catalog = await setup()
+    const ids: string[] = []
+    for (const title of ['A evidence', 'B method', 'C method'])
+      ids.push(
+        (
+          await catalog.transact({
+            kind: 'create-item',
+            item: literatureItemInputSchema.parse({
+              itemType: 'book',
+              title,
+              personalNote: 'Shared evidence'
+            })
+          })
+        ).id
+      )
+    const collection = await catalog.transact({ kind: 'create-collection', name: 'Methods' })
+    await catalog.transact({
+      kind: 'set-collection-item',
+      collectionId: collection.id,
+      itemId: ids[1],
+      included: true
+    })
+    await catalog.transact({
+      kind: 'set-project-items',
+      projectId: 'project-1',
+      itemIds: [ids[1]],
+      included: true,
+      source: 'manual'
+    })
+    const request = {
+      scope: 'library' as const,
+      query: 'evidence',
+      sortBy: 'title' as const,
+      limit: 1
+    }
+    expect(await catalog.search(request)).toMatchObject({
+      totalCount: 3,
+      entries: [{ id: ids[0] }]
+    })
+    expect(await catalog.search({ ...request, offset: 1 })).toMatchObject({
+      totalCount: 3,
+      entries: [{ id: ids[1] }]
+    })
+    expect(await catalog.search({ ...request, allItemIds: true })).toMatchObject({
+      itemIds: ids,
+      totalCount: 3
+    })
+    expect(
+      await catalog.search({ ...request, allItemIds: true, itemIds: [ids[1], ids[2]] })
+    ).toMatchObject({ itemIds: [ids[1], ids[2]], totalCount: 2 })
+    for (const scope of ['library', 'global-search'] as const) {
+      for (const filter of [{ collectionId: collection.id }, { projectId: 'project-1' }])
+        expect(await catalog.search({ scope, query: 'evidence', ...filter })).toMatchObject({
+          totalCount: 1,
+          entries: [{ id: ids[1] }]
+        })
+      expect(
+        (await catalog.search({ scope, query: 'evidence', projectId: 'missing' })).totalCount
+      ).toBe(0)
+    }
+    await catalog.transact({ kind: 'set-item-lifecycle', itemIds: [ids[2]], state: 'deleted' })
+    for (const scope of ['library', 'global-search'] as const)
+      expect((await catalog.search({ scope, query: 'evidence' })).totalCount).toBe(2)
+    expect(await catalog.search({ ...request, lifecycle: 'deleted' })).toMatchObject({
+      totalCount: 1,
+      entries: [{ id: ids[2] }]
+    })
+  })
+
   it('retains normalized matching and mixed-kind counts in global search', async () => {
     const catalog = await setup()
     const paper = await catalog.transact({

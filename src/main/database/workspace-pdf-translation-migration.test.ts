@@ -38,8 +38,12 @@ it('upgrades the prior translation schema without changing its saved records and
   )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0049_pascalcase_table_names',
-    to: '0051_literature_reading_status',
-    applied: ['0050_literature_translation', '0051_literature_reading_status']
+    to: '0052_literature_personal_note_search',
+    applied: [
+      '0050_literature_translation',
+      '0051_literature_reading_status',
+      '0052_literature_personal_note_search'
+    ]
   })
   expect(
     await client.$queryRawUnsafe(

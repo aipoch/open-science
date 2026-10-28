@@ -600,6 +600,7 @@ model LiteratureItem {
   normalizedTitle          String                            @default("")
   normalizedAbstract       String                            @default("")
   normalizedContainerTitle String                            @default("")
+  normalizedPersonalNote   String                            @default("")
   id                       String                            @id @default(cuid())
   itemType                 String
   title                    String

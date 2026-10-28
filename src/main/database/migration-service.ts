@@ -6,6 +6,10 @@ import { literatureSmartCollectionsMigration } from './migrations/0044-literatur
 import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { literatureTranslationMigration } from './migrations/0050-literature-translation'
 import { literatureReadingStatusMigration } from './migrations/0051-literature-reading-status'
+import {
+  literaturePersonalNoteSearchMigration,
+  backfillLiteraturePersonalNoteSearch
+} from './migrations/0052-literature-personal-note-search'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
@@ -255,6 +259,12 @@ const LITERATURE_SEARCH_TEXT_CHECKSUM = checksumMigrationPayload(
   literatureSearchTextMigration.id,
   literatureSearchTextMigration.statements,
   literatureSearchTextMigration.verifiers
+)
+const LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM = checksumMigrationPayload(
+  literaturePersonalNoteSearchMigration.id,
+  literaturePersonalNoteSearchMigration.statements,
+  literaturePersonalNoteSearchMigration.verifiers,
+  literaturePersonalNoteSearchMigration.operations
 )
 const BASELINE_CHECKSUM = checksumMigrationPayload(
   BASELINE_ID,
@@ -948,6 +958,12 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...literaturePersonalNoteSearchMigration,
+    checksum: LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1352,6 +1368,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await verifyCurrentRuntimeSchema(client, currentApplicationSchemaExtensions)
   await runMigrationVerifiers(client, literatureTranslationMigration.verifiers)
   await runMigrationVerifiers(client, literatureReadingStatusMigration.verifiers)
+  await runMigrationVerifiers(client, literaturePersonalNoteSearchMigration.verifiers)
   // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
   // the exact stronger expressions from the immutable suffix.
   await runMigrationVerifiers(
@@ -2059,6 +2076,12 @@ const applyManifestMigration = async (
           migration.checksum === LITERATURE_SEARCH_TEXT_CHECKSUM
         ) {
           await backfillLiteratureSearchText(transaction)
+        }
+        if (
+          migration.id === literaturePersonalNoteSearchMigration.id &&
+          migration.checksum === LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM
+        ) {
+          await backfillLiteraturePersonalNoteSearch(transaction)
         }
         if (options.repairVisionEvidenceReference && !contractAlreadySatisfied) {
           // The upstream history created VisionEvidence before this immutable migration. Rebuild it

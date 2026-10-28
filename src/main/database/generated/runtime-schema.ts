@@ -454,6 +454,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "normalizedTitle" TEXT NOT NULL DEFAULT '',
     "normalizedAbstract" TEXT NOT NULL DEFAULT '',
     "normalizedContainerTitle" TEXT NOT NULL DEFAULT '',
+    "normalizedPersonalNote" TEXT NOT NULL DEFAULT '',
     "id" TEXT NOT NULL PRIMARY KEY,
     "itemType" TEXT NOT NULL,
     "title" TEXT NOT NULL,
