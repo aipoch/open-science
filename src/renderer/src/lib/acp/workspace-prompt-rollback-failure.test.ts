@@ -246,8 +246,8 @@ describe('failed prompt rollback after a rejected dispatch', () => {
       ).length
     expect(await send(agent, 'Second attempt')).toBeUndefined()
     expect(hasPendingWorkspacePromptRollback(SESSION_ID)).toBe(true)
-    expect(useWorkspaceOperationErrors.getState().errors[SESSION_ID]).toContain(
-      'No space left on device'
+    expect(useWorkspaceOperationErrors.getState().errors[SESSION_ID]).toBe(
+      'Session storage is not ready.'
     )
     expect(
       vi

@@ -480,8 +480,8 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     await h.resume()
     const reported = useWorkspaceOperationErrors.getState().errors['session-1']
     expect(reported).toContain('Provider unreachable')
-    expect(reported).toContain('No space left on device')
-    expect(reported).toMatch(/rolled back/i)
+    expect(reported).not.toContain('No space left on device')
+    expect(reported).not.toMatch(/rolled back/i)
     expect(h.durable().promptPreparation).toBeDefined()
     failRollback = false
     await h.resume()
