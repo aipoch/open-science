@@ -308,7 +308,7 @@ test('persists Russian into the built main-process native quit dialog', async ({
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
     .toEqual({
       buttons: ['Отмена', 'Выйти'],
-      detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
+      detail: 'При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся.',
       includesRendererCatalog: false,
       message: 'Выйти из Open-Science?'
     })
@@ -325,7 +325,7 @@ test('persists Russian into the built main-process native quit dialog', async ({
     .poll(() => app.capturePersistedLocaleNativeQuitDialog())
     .toEqual({
       buttons: ['Отмена', 'Выйти'],
-      detail: 'Выполнение ещё не завершено. При выходе работа будет прервана.',
+      detail: 'При выходе незавершённые задачи будут прерваны. Сохранённые диалоги и файлы останутся.',
       includesRendererCatalog: false,
       message: 'Выйти из Open-Science?'
     })
@@ -339,7 +339,7 @@ test('persists German into the built main-process native quit dialog', async ({ 
 
   const expectedDialog = {
     buttons: ['Abbrechen', 'Beenden'],
-    detail: 'Die Arbeit läuft noch und wird beim Beenden unterbrochen.',
+    detail: 'Beim Beenden werden nicht abgeschlossene Aufgaben unterbrochen. Ihre gespeicherten Konversationen und Dateien bleiben erhalten.',
     includesRendererCatalog: false,
     message: 'Open-Science beenden?'
   }

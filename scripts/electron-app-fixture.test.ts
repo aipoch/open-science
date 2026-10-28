@@ -14,6 +14,7 @@ vi.mock('electron', () => ({ app: {} }))
 import {
   closeElectronApplicationForCleanup,
   disconnectFixtureServiceConnection,
+  setFixtureServiceReconnectBlocked,
   hasFixtureReconnected,
   launchEnvironment,
   installRestartPersistenceRetry,
@@ -47,6 +48,30 @@ it.each(['LOCALAPPDATA', 'localappdata'])(
 )
 
 describe('fixture service connection evidence', () => {
+  it('holds only service reconnections and restores the original socket method', () => {
+    class Socket extends EventEmitter {
+      destroy = vi.fn()
+      connect(): this {
+        return this
+      }
+    }
+    const original = Socket.prototype.connect
+    const control = runInNewContext(`(${setFixtureServiceReconnectBlocked.toString()})`, {
+      process: { getBuiltinModule: () => ({ Socket }) }
+    }) as typeof setFixtureServiceReconnectBlocked
+    control(undefined, true)
+    const service = new Socket()
+    Reflect.apply(service.connect, service, [{ path: '/tmp/os-desktop-fixture.sock' }])
+    service.emit('connect')
+    expect(service.destroy).toHaveBeenCalledOnce()
+    const unrelated = new Socket()
+    Reflect.apply(unrelated.connect, unrelated, [{ port: 9229 }])
+    unrelated.emit('connect')
+    expect(unrelated.destroy).not.toHaveBeenCalled()
+    control(undefined, false)
+    expect(Socket.prototype.connect).toBe(original)
+  })
+
   it('disconnects only the unique ws-owned Desktop service pipe', () => {
     const unrelated = {
       readable: true,
@@ -153,7 +178,9 @@ it('isolates credentials, preload options, home and installation state by defaul
     NODE_OPTIONS: '--require=/operator/preload.cjs',
     OPEN_SCIENCE_CONFIG_ROOT: '/operator/config',
     OPEN_SCIENCE_INSTALLATION_STATE_ROOT: '/operator/installations',
-    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build'
+    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build',
+    OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT: '49152',
+    OPEN_SCIENCE_MICROMAMBA_BIN: '/fixture/micromamba'
   })
   expect(environment).toMatchObject({
     PATH: '/os/bin',
@@ -161,7 +188,9 @@ it('isolates credentials, preload options, home and installation state by defaul
     USERPROFILE: resolve('fixture/isolated home'),
     OPEN_SCIENCE_CONFIG_ROOT: storageRoot,
     OPEN_SCIENCE_INSTALLATION_STATE_ROOT: resolve('fixture/storage/installation-state'),
-    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build'
+    OPEN_SCIENCE_E2E_BUILD_ID: 'fixture-build',
+    OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT: '49152',
+    OPEN_SCIENCE_MICROMAMBA_BIN: '/fixture/micromamba'
   })
   expect(environment.OPENAI_API_KEY).toBeUndefined()
   expect(environment.NODE_OPTIONS).toBeUndefined()

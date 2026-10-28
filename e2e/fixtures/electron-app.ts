@@ -455,7 +455,9 @@ const launchEnvironment = (
       if (
         !osInputs.has(key.toLowerCase()) &&
         !key.startsWith('OPEN_SCIENCE_E2E_') &&
-        key !== 'OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT'
+        key !== 'OPEN_SCIENCE_WINDOWS_APPCONTAINER_CERT' &&
+        key !== 'OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT' &&
+        key !== 'OPEN_SCIENCE_MICROMAMBA_BIN'
       )
         delete environment[key]
     }
@@ -530,6 +532,30 @@ const launchEnvironment = (
   return environment
 }
 
+/** Hold only new service attachments so manual recovery can be exercised after automatic retries. */
+const setFixtureServiceReconnectBlocked = (_electron: unknown, blocked: boolean): void => {
+  const net = process.getBuiltinModule('node:net')
+  const prototype = net.Socket.prototype as typeof net.Socket.prototype & {
+    fixtureOriginalConnect?: typeof net.Socket.prototype.connect
+  }
+  if (!blocked) {
+    if (prototype.fixtureOriginalConnect) {
+      prototype.connect = prototype.fixtureOriginalConnect
+      delete prototype.fixtureOriginalConnect
+    }
+    return
+  }
+  if (prototype.fixtureOriginalConnect) return
+  const connect = prototype.connect
+  prototype.fixtureOriginalConnect = connect
+  prototype.connect = function (this: import('node:net').Socket, ...args: unknown[]) {
+    const result = Reflect.apply(connect, this, args)
+    if (/os-desktop-|open-science-/.test(JSON.stringify(args)))
+      this.once('connect', () => this.destroy())
+    return result
+  } as typeof connect
+}
+
 /** Playwright serializes this callback into Electron's main process; keep it self-contained. */
 const disconnectFixtureServiceConnection = (): { url: string; destroyed: boolean } => {
   type Socket = {
@@ -590,6 +616,10 @@ const launchOpenScience = async (
   sessionPerformanceTrace: boolean,
   packagePath?: string
 ): Promise<ElectronApplication> => {
+  // Packaged launches have no source preload to create the isolated OS directory inputs.
+  await mkdir(join(dirname(storageRoot), 'isolated home', 'AppData', 'Roaming'), {
+    recursive: true
+  })
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
     args: [...electronLaunchTarget(userDataRoot).args, ...(packagePath ? [packagePath] : [])],
@@ -2122,6 +2152,7 @@ export {
   launchOpenScience,
   launchEnvironment,
   disconnectFixtureServiceConnection,
+  setFixtureServiceReconnectBlocked,
   hasFixtureReconnected,
   removeTreeForCleanup,
   test
