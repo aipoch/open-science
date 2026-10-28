@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v1.0.4 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 최종 업데이트)_. 이번 패치는 CLI와 데스크톱 다운로드 크기를 크게 줄이고 독립 실행형 CLI의 연구 도구를 로컬 MCP 서버로 제공합니다. 확정된 중간 메시지와 도구 그룹 접기, Crossref를 통한 수동 철회·정정 검사, 승인된 폴더의 아티팩트 가져오기, GitHub Skills 가져오기에서의 리포지토리 저장, 질문 카드의 구조화된 건너뛰기 동작과 함께 Notebook, 설정, 세션 패키지, Replay 관련 수정도 포함합니다. 자세한 내용은 [v1.0.4 릴리스 노트](../../release-notes/1.0.4/ko.md)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v1.0.5 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 최종 업데이트)_. 이번 패치는 과학 커넥터에 네이티브 소스 API와 공식 파일 검색을 추가하고, Literature 참조 문헌에 필터링과 일괄 업데이트가 가능한 읽기 상태 추적을 도입하며, Web UI에서 세션 패키지 내보내기와 가져오기를 지원하고, 로컬 서비스 수명을 명시적 실행 유지 요청에 묶습니다. 또한 설치 프로그램 표시를 포함한 수동 업데이트 진입점과 설정의 보안 정책 링크를 추가하고, 네트워크 권한, OpenCode 2.x 호환성, macOS Notebook 도구 검색, Windows Notebook 시작 대기 문제를 수정합니다. 자세한 내용은 [v1.0.5 릴리스 노트](../../release-notes/1.0.5/ko.md)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

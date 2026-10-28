@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **[AIPOCH Open-Science v1.0.4 をリリース](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 10 月）_。このパッチでは、CLI とデスクトップのダウンロードサイズを大幅に縮小し、スタンドアロン CLI のリサーチツールをローカル MCP サーバー経由で公開します。確定済みの中間メッセージとツールグループの折りたたみ、Crossref による手動の撤回・訂正チェック、許可済みフォルダーからのアーティファクト取り込み、GitHub Skills インポートでのリポジトリ保存、質問カードの構造化スキップ操作に加え、Notebook、設定、セッションパッケージ、リプレイの修正も含まれます。詳細は [v1.0.4 リリースノート](../../release-notes/1.0.4/ja.md)をご覧ください。
+> 💡 **[AIPOCH Open-Science v1.0.5 をリリース](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 10 月）_。このパッチでは、Scientific Connector にネイティブのソース API と公式のファイル検出が追加され、Literature の参照にはフィルタリングと一括更新を備えた読書状態の追跡が導入されます。セッションパッケージのエクスポートとインポートが Web UI に対応し、ローカルサービスの存続期間は明示的な維持要求に基づいて管理されるようになりました。また、インストーラー表示を伴う手動アップデートのエントリーポイントや、設定のセキュリティポリシーリンクも追加され、ネットワーク権限、OpenCode 2.x との互換性、macOS での Notebook ツール検出、Windows での Notebook 起動待機の問題も修正されています。詳細は [v1.0.5 リリースノート](../../release-notes/1.0.5/ja.md)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />
