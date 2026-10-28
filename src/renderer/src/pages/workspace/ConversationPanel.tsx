@@ -1739,6 +1739,7 @@ const ConversationPanel = ({
             />
           )}
           <PackageExportProgressButton />
+          <PackageOperationIndicator />
           <NotificationBell className="md:hidden" />
           <button
             type="button"
@@ -1755,7 +1756,6 @@ const ConversationPanel = ({
             <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
           </button>
         </header>
-        <PackageOperationIndicator />
 
         {isNewConversation ? null : displayedSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />

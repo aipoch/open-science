@@ -495,7 +495,7 @@ const ProviderForm = ({
             )}
           </p>
           <code className="font-mono text-xs text-muted-foreground">
-            {t('Default model: grok-4.7 · 500K')}
+            {t('Default model: grok-4.7: 500K')}
           </code>
         </div>
       ) : isCodexSubscription ? (

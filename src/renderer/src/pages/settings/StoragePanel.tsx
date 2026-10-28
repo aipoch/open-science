@@ -505,7 +505,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
             <p className="mt-1.5 text-xs text-muted-foreground">
               {info
                 ? info.isDefault
-                  ? t('{{size}} on disk · default location', {
+                  ? t('{{size}} on disk: default location', {
                       size: formatBytes(info.usage.totalBytes)
                     })
                   : t('{{size}} on disk', { size: formatBytes(info.usage.totalBytes) })

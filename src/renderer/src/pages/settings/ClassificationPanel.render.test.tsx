@@ -394,7 +394,7 @@ it('offers only matching Zen credentials and clears them when switching provider
   )
   expect(screen.queryByLabelText('API key')).toBeNull()
   fireEvent.keyDown(screen.getByRole('combobox', { name: 'API key source' }), { key: 'Enter' })
-  expect(await screen.findByRole('option', { name: 'Research Zen · ••••4321' })).toBeTruthy()
+  expect(await screen.findByRole('option', { name: 'Research Zen / ••••4321' })).toBeTruthy()
   expect(screen.queryByRole('option', { name: 'Router' })).toBeNull()
   expect(screen.queryByRole('option', { name: 'Legacy router' })).toBeNull()
   fireEvent.click(screen.getByRole('option', { name: 'Use a new API key' }))

@@ -599,6 +599,6 @@ describe('ProviderList', () => {
   it('badges a dual-endpoint provider with both routes', () => {
     renderList([provider({ apiEndpoints: ['messages', 'chat-completions'] })])
 
-    expect(container.textContent).toContain('/v1/messages · /v1/chat/completions')
+    expect(container.textContent).toContain('/v1/messages / /v1/chat/completions')
   })
 })

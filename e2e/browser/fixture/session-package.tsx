@@ -464,13 +464,13 @@ void localeReady.then(() =>
               {newConversationSurface ? 'New conversation' : 'Nanomaterials and tumour immunity'}
             </h1>
             <PackageExportProgressButton />
+            <PackageOperationIndicator />
           </header>
-          <PackageOperationIndicator />
         </div>
       ) : null}
       {mode === 'early-error' ? <SessionPackageImportError /> : <SessionPackageOperation />}
       {mode && !backgroundMode ? (
-        <div className="mx-auto max-w-3xl p-4">
+        <div className="mx-auto flex max-w-3xl justify-end p-4">
           <PackageOperationIndicator />
         </div>
       ) : null}

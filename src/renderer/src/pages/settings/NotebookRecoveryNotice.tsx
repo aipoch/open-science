@@ -57,7 +57,7 @@ export const NotebookRecoveryNotice = ({
         <div key={operation.operationId} className="mt-2 text-xs">
           <p>{reason(operation.reason)}</p>
           <code className="block break-all">
-            {operation.runtimeId} · {operation.operationId}
+            {operation.runtimeId} / {operation.operationId}
           </code>
           {operation.targetPath ? (
             <code className="block break-all">{operation.targetPath}</code>

@@ -710,6 +710,7 @@ const HomePage = ({
                 ) : null}
                 <NetworkStatusIndicator variant="pill" withTooltipProvider={false} />
                 <PackageExportProgressButton iconOnly />
+                <PackageOperationIndicator iconOnly />
                 <span className="hidden sm:inline-flex">
                   <GitHubStarBadge variant="home" withTooltipProvider={false} />
                 </span>
@@ -794,7 +795,6 @@ const HomePage = ({
                 </Tooltip>
               </div>
             </header>
-            <PackageOperationIndicator />
 
             {sessionUpdates.length > 0 ? (
               <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>

@@ -77,8 +77,8 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 className="size-4"
               />
               <span className="truncate">
-                {current.model || current.providerName}
-                <span className="ml-1.5 text-muted-foreground">· {current.providerName}</span>
+                {current.model || current.providerName}{' '}
+                <span className="ml-1.5 text-muted-foreground">{current.providerName}</span>
               </span>
             </>
           ) : (
@@ -96,7 +96,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 {group.provider.name}
                 {compatible ? null : (
                   <span className="ml-1 font-normal text-muted-foreground">
-                    {t('· not usable with this framework')}
+                    {t('not usable with this framework')}
                   </span>
                 )}
               </SelectLabel>

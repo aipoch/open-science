@@ -525,9 +525,6 @@ const EntryRow = ({
           className="mt-1 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
         >
           {entry.origin === 'agent' ? <span>{t('auto')}</span> : null}
-          {entry.origin === 'agent' && (categoryLabel || projectLabel) ? (
-            <span aria-hidden="true">·</span>
-          ) : null}
           {categoryLabel ? (
             <span className="max-w-52 truncate rounded-md bg-muted px-1.5 py-0.5 text-foreground/80">
               {categoryLabel}

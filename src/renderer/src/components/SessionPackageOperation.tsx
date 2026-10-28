@@ -468,15 +468,18 @@ export const PackageExportProgressButton = ({
   )
 }
 
-export const PackageOperationIndicator = (): React.JSX.Element | null => {
+export const PackageOperationIndicator = ({
+  iconOnly = false
+}: {
+  iconOnly?: boolean
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const {
     operation: sourceOperation,
     browserReceipt,
     open,
     dismissedId,
-    setOpen,
-    dismiss
+    setOpen
   } = usePackageOperationStore()
   const awayFromHome = useNavigationStore((state) => state.view !== 'home')
   const operation = packageOperationPresentation(
@@ -484,101 +487,67 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
     browserReceipt,
     awayFromHome || open
   )
-  const [cancellingId, setCancellingId] = useState<string>()
-  const [cancelError, setCancelError] = useState<{ id: string; message: string }>()
   if (
     !operation ||
     open ||
     dismissedId === operation.id ||
+    ((operation.state === 'cancelled' || operation.state === 'succeeded') &&
+      !operation.cleanupPending &&
+      !operation.result?.imported &&
+      !operation.result?.recovery &&
+      !operation.importQueueFull &&
+      !operation.pendingImports?.length) ||
     (operation.kind === 'export' && operation.progress.phase !== 'selecting')
   )
     return null
-  const active = packageOperationActive(operation)
-  const cancelling = cancellingId === operation.id || operation.state === 'cancelling'
-  const configuringExport = operation.kind === 'export' && operation.state === 'awaiting-selection'
-  const cancel = async (): Promise<void> => {
-    if (cancelling) return
-    setCancellingId(operation.id)
-    setCancelError(undefined)
-    try {
-      await window.api.sessions.packageOperation({ action: 'cancel', operationId: operation.id })
-    } catch (error) {
-      setCancelError({
-        id: operation.id,
-        message: error instanceof Error ? error.message : String(error)
-      })
-    } finally {
-      setCancellingId(undefined)
-    }
-  }
   const { status, waiting, busy } = operationStatus(operation, t)
+  const configuringExport = operation.kind === 'export' && operation.state === 'awaiting-selection'
+  const needsAttention =
+    waiting ||
+    operation.cleanupPending ||
+    operation.result?.recovery ||
+    operation.pendingImports?.length ||
+    operation.importQueueFull
   const Icon =
-    operation.state === 'succeeded' ? Check : waiting ? Clock3 : busy ? LoaderCircle : PackageOpen
+    operation.state === 'failed'
+      ? CircleAlert
+      : needsAttention
+        ? Clock3
+        : busy
+          ? LoaderCircle
+          : PackageOpen
+  const action = configuringExport ? t('Continue setup') : t('View progress')
   return (
-    <section
-      aria-label={t('Package progress')}
-      className="mb-3 shrink-0 overflow-hidden rounded-lg border border-border bg-muted/40"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+    <span role="group" aria-label={t('Package progress')} className="inline-flex shrink-0">
+      <span role="status" className="sr-only">
+        {status}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          'h-8 min-w-8 max-w-40 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground',
+          iconOnly && 'size-9 max-w-none p-0'
+        )}
+        aria-label={`${status} ${action}`}
+        title={status}
+        onClick={() => setOpen(true)}
+      >
         <Icon
-          className={`size-4 shrink-0 ${waiting ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-primary'} ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
+          className={cn(
+            'size-4 shrink-0',
+            operation.state === 'failed'
+              ? 'text-status-failure-foreground'
+              : needsAttention
+                ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                : 'text-primary',
+            busy && !needsAttention && 'animate-spin motion-reduce:animate-none'
+          )}
           aria-hidden="true"
         />
-        <p role="status" className="min-w-0 flex-1 basis-48 text-sm">
-          {status}
-        </p>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          {active && !operation.browserReceiptOnly ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={cancelling || operation.progress.phase === 'cleaning'}
-              onClick={() => void cancel()}
-            >
-              {cancelling ? (
-                <LoaderCircle
-                  className="size-3.5 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-              ) : null}
-              {t('Cancel')}
-            </Button>
-          ) : null}
-          <Button variant="link" size="sm" className="text-xs" onClick={() => setOpen(true)}>
-            {configuringExport ? t('Continue setup') : t('View progress')}
-            <ChevronRight
-              className={`size-3.5 ${configuringExport && !cancelling ? 'motion-safe:animate-[package-setup-nudge_1.6s_ease-in-out_3] motion-safe:transition-transform motion-safe:group-hover/button:animate-none motion-safe:group-hover/button:translate-x-0.5 motion-safe:group-focus-visible/button:animate-none motion-safe:group-focus-visible/button:translate-x-0.5' : ''}`}
-              aria-hidden="true"
-            />
-          </Button>
-        </div>
-        {!active ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            aria-label={t('Dismiss')}
-            onClick={dismiss}
-          >
-            <X className="size-3.5" aria-hidden="true" />
-          </Button>
-        ) : null}
-      </div>
-      {active && !operation.browserReceiptOnly && cancelError?.id === operation.id ? (
-        <ErrorNotice
-          inline
-          role="alert"
-          tone="amber"
-          description={cancelError.message}
-          className="px-3 pb-2 pt-0"
-        />
-      ) : null}
-      {operation.state === 'running' && !waiting && !operation.browserReceiptOnly ? (
-        <div className="border-t border-border px-3 py-3">
-          <PackageProgressMeter operation={operation} compact />
-        </div>
-      ) : null}
-    </section>
+        <span className={iconOnly ? 'sr-only' : 'hidden truncate lg:inline'}>{action}</span>
+      </Button>
+    </span>
   )
 }
 

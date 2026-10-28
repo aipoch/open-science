@@ -1514,7 +1514,7 @@ describe('RuntimesPanel packages dialog', () => {
     expect(dialog?.textContent).toContain('Build')
     expect(dialog?.textContent).toContain('Channel')
     expect(dialog?.textContent).toContain('py312hb2f4e1b_0')
-    expect(dialog?.textContent).toContain('2 of 2 · 2 conda, 0 pypi')
+    expect(dialog?.textContent).toContain('2 of 2 / 2 conda, 0 pypi')
 
     const filter = document.querySelector<HTMLInputElement>(
       '[data-testid="runtime-packages-filter"]'
@@ -1534,7 +1534,7 @@ describe('RuntimesPanel packages dialog', () => {
 
     await act(async () => setInputValue(filter!, 'nump'))
     expect(document.querySelectorAll('[data-testid="runtime-package-row"]').length).toBe(1)
-    expect(dialog?.textContent).toContain('1 of 2 · 2 conda, 0 pypi')
+    expect(dialog?.textContent).toContain('1 of 2 / 2 conda, 0 pypi')
   })
 
   it('shows name/version only (no conda columns or summary) for pip-style listings', async () => {

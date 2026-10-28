@@ -107,7 +107,7 @@ type NoticeKey =
   | '{{fileName}}: unsupported file — upload a .md file or a .zip / .skill bundle.'
   | '{{fileName}}: preview exceeds the {{limit}} limit. You can still import it.'
   | 'Selection is too large ({{total}}); upload at most {{limit}} at a time.'
-  | 'Imported {{imported}} · skipped {{skipped}} · failed {{failed}}'
+  | 'Imported {{imported}}, skipped {{skipped}}, failed {{failed}}'
 
 type Notice = { key: NoticeKey; params?: Record<string, string> }
 
@@ -360,7 +360,7 @@ const SkillUploadView = ({
     }
 
     setSummary({
-      key: 'Imported {{imported}} · skipped {{skipped}} · failed {{failed}}',
+      key: 'Imported {{imported}}, skipped {{skipped}}, failed {{failed}}',
       params: {
         imported: String(imported),
         skipped: String(skipped),
@@ -468,7 +468,7 @@ const SkillUploadView = ({
               const alreadyImported = candidate.kind === 'bundle' && candidate.alreadyImported
               const secondary =
                 candidate.kind === 'bundle'
-                  ? `${candidate.fileName} · ${candidate.subPath}`
+                  ? `${candidate.fileName} / ${candidate.subPath}`
                   : candidate.fileName
               return (
                 <li key={candidate.key} className="flex flex-wrap items-center gap-3 py-2.5">

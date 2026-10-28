@@ -199,7 +199,7 @@ const installFailureDescription = (failure: InstallFailure, t: Translate): strin
 }
 
 const operationErrorReference = (snapshot: WslSetupSnapshot): string | undefined =>
-  snapshot.errorCode ? `${snapshot.errorCode} · ${snapshot.operationReference}` : undefined
+  snapshot.errorCode ? `${snapshot.errorCode} / ${snapshot.operationReference}` : undefined
 
 const dependencyInstallLabel = (errorCode: string, t: Translate): string => {
   if (
@@ -646,7 +646,7 @@ export const WslLocalShellSection = ({
           tone={currentInstallFailure === 'spawn-failed' ? 'red' : 'amber'}
           title={installFailureTitle(currentInstallFailure, t)}
           description={installFailureDescription(currentInstallFailure, t)}
-          errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} · ${snapshot.operationReference}`}
+          errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} / ${snapshot.operationReference}`}
           diagnosticsLabel={t('Diagnostics')}
           secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
           primaryButton={{
@@ -729,8 +729,8 @@ export const WslLocalShellSection = ({
       separated
       title={
         developmentPreview
-          ? t('Local Shell · WSL2 Bash Development Preview')
-          : t('Local Shell · WSL2 Bash Preview')
+          ? t('Local Shell: WSL2 Bash Development Preview')
+          : t('Local Shell: WSL2 Bash Preview')
       }
       description={t(
         'Choose the exact WSL2 distribution and non-root Linux user Open-Science should verify. Selection alone never enables WSL2 Bash.'

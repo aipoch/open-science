@@ -172,7 +172,7 @@ describe('Specialist Marketplace settings', () => {
     )
     expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(container.textContent).toContain('Example Specialist')
-    expect(container.textContent).toContain('Example Publisher · v1.0.0')
+    expect(container.textContent).toContain('Example Publisher / v1.0.0')
     expect(container.textContent).toContain('Author: Example Author')
     expect(container.textContent).toContain('Community')
     expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
@@ -976,7 +976,7 @@ describe('Specialist Marketplace settings', () => {
       })
     })
     expect(progress?.getAttribute('aria-valuenow')).toBe('50')
-    expect(container.textContent).toContain('50 B / 100 B · 50%')
+    expect(container.textContent).toContain('50 B / 100 B / 50%')
 
     await act(async () => {
       prepared.resolve({

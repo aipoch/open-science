@@ -305,7 +305,7 @@ describe('Trusted browser revocation', () => {
     expect(api.revokeBrowsers).not.toHaveBeenCalled()
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(dialog?.textContent).toContain('Revoke trusted browser?')
-    expect(dialog?.textContent).toContain('Chrome · macOS')
+    expect(dialog?.textContent).toContain('Chrome / macOS')
 
     // Cancel closes without revoking.
     const cancel = [...(dialog?.querySelectorAll('button') ?? [])].find(
@@ -477,7 +477,7 @@ describe('Pairing requests', () => {
     await act(async () => trust!.click())
     expect(api.approve).toHaveBeenCalledExactlyOnceWith({ requestId: 'req-1', decision: 'always' })
     expect(container.querySelector('[data-testid="remote-trust-toast"]')?.textContent).toContain(
-      'Chrome · macOS trusted for 180 days.'
+      'Chrome / macOS trusted for 180 days.'
     )
   })
 

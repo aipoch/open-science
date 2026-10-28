@@ -196,7 +196,7 @@ const ModelPolicySelect = (props: ModelPolicySelectProps): React.JSX.Element => 
                   <span className="truncate">
                     {selectedEntry.label}
                     <span className="ml-1.5 text-muted-foreground">
-                      · {selectedEntry.providerName}
+                      / {selectedEntry.providerName}
                     </span>
                   </span>
                 </>
@@ -204,7 +204,7 @@ const ModelPolicySelect = (props: ModelPolicySelectProps): React.JSX.Element => 
                 <span className="truncate">{disabledLabel}</span>
               ) : unavailable ? (
                 <span className="truncate">
-                  {configuration.model} · {configuration.providerId} · {t('Unavailable')}
+                  {configuration.model} / {configuration.providerId} / {t('Unavailable')}
                 </span>
               ) : (
                 <span className="truncate">{inheritLabel}</span>
@@ -215,7 +215,7 @@ const ModelPolicySelect = (props: ModelPolicySelectProps): React.JSX.Element => 
             <SelectItem value={INHERIT_KEY}>{inheritLabel}</SelectItem>
             {unavailable ? (
               <SelectItem value={selectedKey} disabled>
-                {configuration.model} · {configuration.providerId} · {t('Unavailable')}
+                {configuration.model} / {configuration.providerId} / {t('Unavailable')}
               </SelectItem>
             ) : null}
             {groups.map(({ provider, entries }) => (
@@ -232,7 +232,7 @@ const ModelPolicySelect = (props: ModelPolicySelectProps): React.JSX.Element => 
                       />
                     }
                   >
-                    {entry.label} · {entry.providerName}
+                    {entry.label} / {entry.providerName}
                   </SelectItem>
                 ))}
               </SelectGroup>

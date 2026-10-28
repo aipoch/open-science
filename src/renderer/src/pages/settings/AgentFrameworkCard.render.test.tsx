@@ -394,12 +394,12 @@ it('offers an optional update without selecting or disabling a ready runtime', (
     name: 'Codex',
     path: '/codex',
     updateAvailable: true,
-    versionDetail: 'Codex CLI 0.144.6 · ACP 1.6.2',
+    versionDetail: 'Codex CLI 0.144.6 / ACP 1.6.2',
     onInstall,
     onSelect
   })
   expect(container.querySelector('[role="radio"]')).not.toBeNull()
-  expect(container.textContent).toContain('Codex CLI 0.144.6 · ACP 1.6.2')
+  expect(container.textContent).toContain('Codex CLI 0.144.6 / ACP 1.6.2')
   act(() => container.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')?.click())
   expect(onInstall).toHaveBeenCalledWith('managed')
   expect(onSelect).not.toHaveBeenCalled()

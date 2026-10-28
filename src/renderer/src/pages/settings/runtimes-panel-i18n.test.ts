@@ -35,7 +35,7 @@ describe('runtimes panel describers', () => {
   })
 
   it('localizes readiness while passing probe detail through untouched', () => {
-    expect(envReadyLine(env({ version: '3.12.1' }), zh)).toBe('就绪 · 3.12.1')
+    expect(envReadyLine(env({ version: '3.12.1' }), zh)).toBe('就绪 / 3.12.1')
     // `detail` comes from the main-process probe, not the catalog, so it must survive as-is.
     expect(envReadyLine(env({ runnable: false, detail: 'missing libffi' }), zh)).toBe(
       'missing libffi'
