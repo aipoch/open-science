@@ -102,7 +102,8 @@ export function createDesktopRuntimeRecovery(options: {
       // not cancel the replacement; a pending replacement disconnect still cancels normally.
       if (repairing && client === current) return
       cancellation?.abort()
-      if (state.closing) return
+      // Keep the lost connection observable if quit is canceled; schedule() still
+      // prevents reconnecting while shutdown owns the attachment.
       if (state.phase === 'connected') restartAuthorization = undefined
       publish({
         ...state,

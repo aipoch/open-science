@@ -201,6 +201,30 @@ describe('same-backend desktop recovery', () => {
     await Promise.resolve()
     expect(activate).not.toHaveBeenCalled()
   })
+  it('retains a mid-quit disconnect and resumes automatic recovery only after canceled quit', async () => {
+    vi.useFakeTimers()
+    const old = client()
+    const next = client()
+    const connect = vi.fn(async () => next)
+    const recovery = createDesktopRuntimeRecovery({
+      client: old,
+      connect,
+      automatic: true,
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    recovery.setClosing(true)
+    recovery.disconnect(old)
+    await recovery.reconnect()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(connect).not.toHaveBeenCalled()
+    expect(recovery.state()).toMatchObject({ closing: true, reason: 'connection-lost' })
+    expect(recovery.state().phase).not.toBe('connected')
+    recovery.setClosing(false)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(connect).toHaveBeenCalledOnce()
+    expect(recovery.state()).toMatchObject({ phase: 'connected', closing: false })
+  })
   it('cancels hung activation on quit and allows another attempt after canceled quit', async () => {
     const old = client()
     const next = client()
