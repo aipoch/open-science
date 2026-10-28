@@ -713,7 +713,11 @@ vi.mock('./composition/session-surfaces', () => ({
   composeSessionSurfaces: vi.fn(() => rootFixture.owners)
 }))
 vi.mock('./composition/settings-bootstrap', () => ({
-  composeSettingsBootstrap: vi.fn(() => rootFixture.owners)
+  composeSettingsBootstrap: vi.fn((options) => {
+    // Startup certification can ask permission questions before the agent runtime is constructed.
+    expect(options.getRuntimeRef().current).toBeUndefined()
+    return rootFixture.owners
+  })
 }))
 vi.mock('./composition/settings-effects', () => ({
   composeSettingsEffects: vi.fn(() => rootFixture.owners)

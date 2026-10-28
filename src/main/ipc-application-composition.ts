@@ -222,6 +222,11 @@ export const createApplicationModules = async (
   )
   const permissionApprovalPresence = new PermissionApprovalPresence()
   const webSessionPersistenceFlush = createWebSessionPersistenceFlush(applicationEvents)
+  // Session reads and permission scope validation both need a late-bound view of ACP ownership:
+  // startup runs before the runtime exists, while later reads must preserve live prompt state.
+  const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
+    current: undefined
+  }
   const settingsBootstrap = await composeSettingsBootstrap({
     applicationEvents,
     permissionApprovalPresence,
@@ -263,11 +268,6 @@ export const createApplicationModules = async (
     composition
   })
   const uploadStorage = await composeUploadStorage({ storageStartup })
-  // Session reads and permission scope validation both need a late-bound view of ACP ownership:
-  // startup runs before the runtime exists, while later reads must preserve live prompt state.
-  const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
-    current: undefined
-  }
   const backgroundResults = await composeBackgroundResults({
     applicationEvents,
     ...settingsBootstrap,
