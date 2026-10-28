@@ -614,7 +614,7 @@ export function ComputeHostDetail({
             {host.authentication?.mode === 'password'
               ? t('Username and password')
               : t('SSH configuration')}
-            {' · '}
+            {' / '}
             {/* Only password hosts carry a stored credential; ssh_config always reads "missing"
                 from the repository placeholder, which would read as a fault rather than a fact. */}
             {host.authentication?.mode === 'password' ? (
@@ -624,7 +624,7 @@ export function ComputeHostDetail({
                   : host.authentication.credentialStatus === 'missing'
                     ? t('Credential missing')
                     : t('Credential configured')}
-                {' · '}
+                {' / '}
               </>
             ) : null}
             {authenticationRetriesPaused

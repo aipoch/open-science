@@ -487,7 +487,7 @@ for (const width of [1280, 320]) {
     await expect(dialog.getByText('18.0 MiB / 42.0 MiB')).toBeVisible()
     await expect(dialog.getByRole('progressbar')).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Hide progress', exact: true }).click()
-    const indicator = page.getByRole('region', { name: 'Package progress', exact: true })
+    const indicator = page.getByRole('group', { name: 'Package progress', exact: true })
     await expect(indicator.getByRole('status')).toHaveText('Checking Session package…')
     await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
     await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
@@ -548,35 +548,24 @@ for (const width of [1280, 320]) {
 }
 
 for (const width of [1280, 414]) {
-  test(`hidden export setup offers continue and direct cancel at ${width}px`, async ({
+  test(`compact export setup opens the dialog for cancellation at ${width}px`, async ({
     page
   }, testInfo) => {
     await page.setViewportSize({ width, height: 900 })
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto('/session-package.html?background')
-    const indicator = page.getByRole('region', { name: 'Package progress', exact: true })
+    const indicator = page.getByRole('group', { name: 'Package progress', exact: true })
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(indicator.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
-    const arrow = indicator
-      .getByRole('button', { name: 'Continue setup', exact: true })
-      .locator('svg')
-    await expect(arrow).toHaveCSS('animation-name', 'package-setup-nudge')
-    await expect(arrow).toHaveCSS('animation-iteration-count', '3')
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    await expect(arrow).toHaveCSS('animation-name', 'none')
+    expect(await indicator.evaluate((element) => Boolean(element.closest('header')))).toBe(true)
+    expect((await indicator.boundingBox())!.height).toBeLessThanOrEqual(36)
+    await expect(indicator.getByRole('button')).toHaveCount(1)
     await indicator.screenshot({ path: testInfo.outputPath('export-setup-actions.png') })
-    expect(await indicator.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
-      true
-    )
-    await indicator.getByRole('button', { name: 'Continue setup', exact: true }).click()
-    await expect(
-      page.getByRole('dialog', { name: 'Export Session package', exact: true })
-    ).toBeVisible()
-    await page.getByRole('button', { name: 'Hide progress', exact: true }).click()
-    await indicator.getByRole('button', { name: 'Cancel', exact: true }).click()
-    await expect(indicator.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
-    await expect(indicator.getByRole('status')).toHaveText('Cancelling and cleaning up…')
-    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await indicator.getByRole('button', { name: /Continue setup/ }).click()
+    const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
+    await expect(dialog.getByRole('status')).toHaveText('Cancelling and cleaning up…')
   })
 }
 
@@ -584,7 +573,7 @@ for (const width of [1280, 320]) {
   test(`background export stays in the header at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 })
     await page.goto('/session-package.html?background=running')
-    await expect(page.getByRole('region', { name: 'Package progress' })).toHaveCount(0)
+    await expect(page.getByRole('group', { name: 'Package progress' })).toHaveCount(0)
     const progressButton = page.getByRole('button', { name: /Copying files… View progress/ })
     await expect(progressButton).toBeVisible()
     await expect(progressButton).toBeInViewport()

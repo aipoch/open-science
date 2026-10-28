@@ -278,7 +278,7 @@ const SpecialistEditor = ({
                 <div className="mt-2 text-xs text-muted-foreground">
                   <strong className="text-foreground">{t('Package provenance')}</strong>
                   <span className="block">
-                    {t('Imported · Original version {{version}} · {{status}}', {
+                    {t('Imported, Original version {{version}}, {{status}}', {
                       version: editSpecialist.packageVersion ?? '0.1.0',
                       status: editSpecialist.modifiedSinceImport
                         ? t('Modified after import')

@@ -184,9 +184,9 @@ describe('SkillUploadView copy', () => {
       button.click()
     })
     await flush()
-    expect(container.textContent).toContain('Imported 1 · skipped 0 · failed 0')
+    expect(container.textContent).toContain('Imported 1, skipped 0, failed 0')
 
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('已匯入 1 個 · 略過 0 個 · 失敗 0 個')
+    expect(container.textContent).toContain('已匯入 1 個，略過 0 個，失敗 0 個')
   })
 })

@@ -437,7 +437,7 @@ const AgentPanel = ({
           : undefined,
       versionDetail:
         codex.resolvedPath || codex.version || codex.nativeVersion
-          ? t('Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}', {
+          ? t('Codex CLI {{nativeVersion}}, ACP {{adapterVersion}}', {
               nativeVersion: codex.nativeVersion ?? t('Unknown'),
               adapterVersion: codex.version ?? t('Unknown')
             })
@@ -792,7 +792,7 @@ const AgentPanel = ({
           {installedFrameworks.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {t('Installed')} · {installedFrameworks.length}
+                {t('Installed')} / {installedFrameworks.length}
               </p>
               <div
                 role="radiogroup"
@@ -807,7 +807,7 @@ const AgentPanel = ({
           {availableFrameworks.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {t('Available')} · {availableFrameworks.length}
+                {t('Available')} / {availableFrameworks.length}
               </p>
               <div className="space-y-3">{availableFrameworks.map(renderFrameworkCard)}</div>
             </div>

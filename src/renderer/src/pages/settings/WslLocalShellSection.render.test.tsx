@@ -264,7 +264,7 @@ describe('WslLocalShellSection', () => {
     await act(async () => root.render(<WslLocalShellSection developmentPreview />))
     await flush()
 
-    expect(container.textContent).toContain('Local Shell · WSL2 Bash Development Preview')
+    expect(container.textContent).toContain('Local Shell: WSL2 Bash Development Preview')
   })
 
   it('checks WSL2 once when no prior setup snapshot exists and reuses that snapshot on reopen', async () => {
@@ -504,7 +504,7 @@ describe('WslLocalShellSection', () => {
 
     expect(install).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('installation was cancelled')
-    expect(container.textContent).toContain('wsl_install_uac_cancelled · feedface')
+    expect(container.textContent).toContain('wsl_install_uac_cancelled / feedface')
     expect(container.textContent).toContain('keep using PowerShell')
   })
 
@@ -613,7 +613,7 @@ describe('WslLocalShellSection', () => {
     })
     await renderAndCheck()
 
-    expect(container.textContent).toContain('wsl_workspace_not_ntfs · a1b2c3d4')
+    expect(container.textContent).toContain('wsl_workspace_not_ntfs / a1b2c3d4')
     expect(container.textContent).toContain(
       'Move the Open-Science data folder to a local NTFS drive'
     )

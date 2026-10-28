@@ -862,7 +862,7 @@ export function ConnectorsPanel({
                               </span>
                               <span className="block line-clamp-2 text-xs leading-5 text-muted-foreground">
                                 {server.name}
-                                {server.description ? ` · ${server.description}` : ''}
+                                {server.description ? ` / ${server.description}` : ''}
                               </span>
                             </button>
                             <div

@@ -305,9 +305,9 @@ const ConnectorDetailView = ({
                               count: remembered.length
                             })}
                             {tool.permission === 'block'
-                              ? ` · ${t('currently blocked')}`
+                              ? ` / ${t('currently blocked')}`
                               : tool.permission === 'allow' || autoAllow
-                                ? ` · ${t('currently unnecessary')}`
+                                ? ` / ${t('currently unnecessary')}`
                                 : ''}
                           </span>
                           {remembered.map((grant) => (

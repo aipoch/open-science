@@ -346,7 +346,7 @@ function MarketplaceInstallControls({
           description={conflict ? conflictDescription : undefined}
           errorCode={[failure?.error ?? 'conflict', conflictReason, conflictSkillId]
             .filter(Boolean)
-            .join(' · ')}
+            .join(' / ')}
           diagnosticsLabel={t('Details')}
           primaryButton={
             conflict && onManageLocal

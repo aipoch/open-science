@@ -228,7 +228,7 @@ const SkillImportApprovalRequestDialog = ({
                           return {
                             name: candidate.name,
                             description: candidate.description,
-                            sourceLabel: `${request.source.label} · ${candidate.subPath}`,
+                            sourceLabel: `${request.source.label} / ${candidate.subPath}`,
                             metadata: candidate.metadata,
                             body: candidate.body,
                             replacement: candidate.replacement,

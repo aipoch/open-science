@@ -149,7 +149,7 @@ const PermissionRow = ({
       ? `${grant.connectorDisplayName} (${grant.connectorServerId})`
       : grant.connectorServerId
   const title = connectorName
-    ? `${connectorName} · ${grant.connectorToolName ?? grant.capabilityLabel}`
+    ? `${connectorName} / ${grant.connectorToolName ?? grant.capabilityLabel}`
     : t(grant.capabilityLabel)
   const qualifierLabel =
     grant.qualifierKind === 'any'
@@ -176,7 +176,7 @@ const PermissionRow = ({
     grant.qualifierKind === 'command_group' ? createdLabel : undefined
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join(' / ')
   const policyHint =
     grant.effectiveState === 'blocked_by_policy'
       ? t('Blocked in Connectors; this permission is currently inactive')

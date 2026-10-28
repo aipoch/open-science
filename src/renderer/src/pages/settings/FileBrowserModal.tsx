@@ -273,7 +273,7 @@ function DetailPanel({
         {/* No preview placeholder */}
         <div className="rounded border border-dashed border-border bg-muted/30 px-3 py-4 text-center">
           <p className="text-xs text-muted-foreground">
-            {t('No preview ·')} {formatSize(entry.size)}
+            {t('No preview')} {formatSize(entry.size)}
           </p>
         </div>
 

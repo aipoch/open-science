@@ -286,7 +286,7 @@ describe('Skill Marketplace', () => {
     expect(container.querySelector('[data-skill-id="skill-2"]')).not.toBeNull()
     await click('Select all filtered results (1)')
     await click('Install…')
-    expect(container.textContent).toContain('Review selection · 1')
+    expect(container.textContent).toContain('Review selection / 1')
     expect(container.textContent).toContain('skill-2: 1.0.0+build-1')
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
   })
@@ -686,7 +686,7 @@ describe('Skill Marketplace', () => {
     await click('Install…')
     expect(window.api.settings.startSkillMarketplaceBatch).not.toHaveBeenCalled()
     let dialog = document.querySelector('[data-testid="skill-marketplace-batch-confirm"]')!
-    expect(dialog.querySelector('h4')?.textContent).toBe('Review selection · 37')
+    expect(dialog.querySelector('h4')?.textContent).toBe('Review selection / 37')
     expect(dialog.querySelectorAll(':scope > p')).toHaveLength(0)
     const details = dialog.querySelector('details')!
     expect(details.open).toBe(false)

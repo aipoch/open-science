@@ -18,6 +18,6 @@ export const mirrorStatusText = (mirror: PackageMirror | undefined, t: TFunction
     return t('Automatic mirror selection')
   }
   const parts = [mirror!.condaChannel, mirror!.pypiIndex].filter(Boolean)
-  if (parts.length === 0) return t('Automatic mirror selection · Custom CA bundle configured')
+  if (parts.length === 0) return t('Automatic mirror selection: Custom CA bundle configured')
   return t('Fetching packages from {{hosts}}', { hosts: parts.join(' , ') })
 }

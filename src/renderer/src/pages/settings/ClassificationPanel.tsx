@@ -740,7 +740,7 @@ const ClassificationEditor = ({
                 {matchingProviders.map((provider) => (
                   <SelectItem key={provider.id} value={provider.id}>
                     {provider.name}
-                    {provider.maskedKey ? ` · ${provider.maskedKey}` : ''}
+                    {provider.maskedKey ? ` / ${provider.maskedKey}` : ''}
                   </SelectItem>
                 ))}
                 <SelectItem value="new">{t('Use a new API key')}</SelectItem>

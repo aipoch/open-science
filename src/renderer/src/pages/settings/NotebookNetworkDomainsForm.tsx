@@ -377,7 +377,7 @@ const NotebookNetworkDomainsForm = ({
               {status.kind === 'setupRequired' && status.reasons.length > 0 ? (
                 <p className="mt-1 text-xs text-muted-foreground">
                   {[...new Set(status.reasons.map((reason) => statusReasonLabel(reason, t)))].join(
-                    ' · '
+                    ' / '
                   )}
                 </p>
               ) : null}

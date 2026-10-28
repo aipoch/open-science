@@ -27,7 +27,7 @@ describe('mirrorStatusText', () => {
   })
   it('reports a trust-only configuration without inventing a package host', () => {
     expect(mirrorStatusText({ caBundle: '/certs/complete.pem' }, t)).toBe(
-      'Automatic mirror selection · Custom CA bundle configured'
+      'Automatic mirror selection: Custom CA bundle configured'
     )
   })
   it('translates the sentence but keeps the host values verbatim', () => {

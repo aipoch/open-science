@@ -617,7 +617,7 @@ describe('TagsPanel', () => {
       Array.from(container.querySelectorAll('[data-slot="tag-resource-subtitle"]')).map(
         (subtitle) => subtitle.textContent
       )
-    ).toEqual(['alpha-mcp · Search papers', 'beta-mcp'])
+    ).toEqual(['alpha-mcp / Search papers', 'beta-mcp'])
     expect(
       Array.from(container.querySelectorAll('button[aria-label^="Remove Lab connector"]')).map(
         (button) => button.getAttribute('aria-label')

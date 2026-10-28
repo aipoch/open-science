@@ -2807,7 +2807,7 @@ describe('SettingsPage layout', () => {
     await act(async () => navButton('Remote')?.click())
 
     expect(document.body.textContent).toContain('Trusted browsers')
-    expect(document.body.textContent).toContain('Safari · macOS')
+    expect(document.body.textContent).toContain('Safari / macOS')
     expect(document.body.textContent).toContain('Expires')
     expect(document.body.textContent).toContain(
       'Remote access is paused. Provider setup and trusted browsers are kept for reuse.'
@@ -3051,7 +3051,7 @@ describe('SettingsPage layout', () => {
     await act(async () => navButton('Remote')?.click())
 
     expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
-    expect(document.body.textContent).toContain('Safari · macOS')
+    expect(document.body.textContent).toContain('Safari / macOS')
     expect(document.body.textContent).toContain('654321')
   })
 
@@ -3391,8 +3391,8 @@ describe('SettingsPage layout', () => {
       })
       await act(async () => navButton('Remote')?.click())
 
-      expect(document.body.textContent).toContain('Chrome on iOS · iOS/iPadOS')
-      expect(document.body.textContent).toContain('Google Chrome · Windows')
+      expect(document.body.textContent).toContain('Chrome on iOS / iOS/iPadOS')
+      expect(document.body.textContent).toContain('Google Chrome / Windows')
       expect(document.body.textContent).toContain('123456')
       expect(document.body.textContent).toContain('Allow for up to 12 hours')
       expect(document.body.textContent).not.toContain('Allow once')
@@ -5657,7 +5657,7 @@ describe('SettingsPage Codex framework', () => {
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
     // The native and adapter versions are displayed separately; the repo link points at the ACP adapter.
-    expect(document.body.textContent).toContain('Codex CLI 0.157.1 · ACP 1.6.2')
+    expect(document.body.textContent).toContain('Codex CLI 0.157.1, ACP 1.6.2')
     expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())
@@ -5858,8 +5858,8 @@ describe('SettingsPage Codex framework', () => {
     await openAgentPanel()
 
     // Two ready runtimes land in the Installed group; Codex/CodeBuddy (not ready) in Available.
-    expect(document.body.textContent).toContain('Installed · 2')
-    expect(document.body.textContent).toContain('Available · 2')
+    expect(document.body.textContent).toContain('Installed / 2')
+    expect(document.body.textContent).toContain('Available / 2')
     // Claude is renamed in this panel only.
     expect(document.body.textContent).toContain('Claude Agent')
 
@@ -5911,8 +5911,8 @@ describe('SettingsPage Codex framework', () => {
     })
     await openAgentPanel()
 
-    expect(document.body.textContent).toContain('Installed · 2')
-    expect(document.body.textContent).toContain('Available · 2')
+    expect(document.body.textContent).toContain('Installed / 2')
+    expect(document.body.textContent).toContain('Available / 2')
     expect(document.body.textContent).toContain('CodeBuddy')
     expect(document.body.textContent).toContain('v2.138.0')
     expect(document.body.textContent).toContain(
@@ -6058,8 +6058,8 @@ describe('SettingsPage Codex framework', () => {
     })
     await openAgentPanel()
 
-    expect(document.body.textContent).toContain('Installed · 2')
-    expect(document.body.textContent).toContain('Available · 2')
+    expect(document.body.textContent).toContain('Installed / 2')
+    expect(document.body.textContent).toContain('Available / 2')
     expect(document.body.textContent).toContain('Update required')
     expect(document.body.querySelector('[aria-label="Update Codex"]')).not.toBeNull()
     const frameworkRadios = Array.from(

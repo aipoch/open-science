@@ -375,7 +375,7 @@ export function SkillMarketplaceBatchControls({
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h4 ref={reviewHeading} tabIndex={-1} className="text-sm font-medium">
-                    {t('Review selection')} · {draft.items.length}
+                    {t('Review selection')} / {draft.items.length}
                   </h4>
                   <div className="ml-auto flex items-center gap-2">
                     <Button

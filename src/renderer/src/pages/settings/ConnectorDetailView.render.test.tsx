@@ -641,7 +641,7 @@ describe('ConnectorDetailView', () => {
     ).find((button) => button.textContent?.includes('lookup_gene'))
     await act(async () => toolButton?.click())
 
-    expect(document.body.textContent).toContain('Remembered approvals: 1 · currently unnecessary')
+    expect(document.body.textContent).toContain('Remembered approvals: 1 / currently unnecessary')
     expect(document.body.textContent).toContain('Project')
     await act(async () =>
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))

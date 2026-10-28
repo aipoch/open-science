@@ -95,7 +95,7 @@ const literatureResourceRow = (item: LiteratureItemView): TagResourceRow => ({
   resourceId: item.id,
   title: item.item.title,
   subtitle:
-    [item.item.issuedYear, item.item.containerTitle].filter(Boolean).join(' · ') || undefined,
+    [item.item.issuedYear, item.item.containerTitle].filter(Boolean).join(' / ') || undefined,
   literatureReference: {
     itemId: item.id,
     metadataRevision: item.metadataRevision,
@@ -256,7 +256,7 @@ const TagForm = ({
                 {tag.name}
               </span>
               <span className="text-xs text-muted-foreground">
-                {t('Icon')}: {iconLabel(t, tag.iconKey)} · {t('Color')}:{' '}
+                {t('Icon')}: {iconLabel(t, tag.iconKey)}: {t('Color')}:{' '}
                 {colorLabel(t, tag.colorKey)}
               </span>
             </div>
@@ -559,7 +559,7 @@ const TagsList = ({
         resourceId: connector.id,
         title: connector.displayName,
         subtitle: connector.description?.trim()
-          ? `${connector.name} · ${connector.description.trim()}`
+          ? `${connector.name} / ${connector.description.trim()}`
           : connector.name,
         accessibleTitle:
           connector.displayName === connector.name

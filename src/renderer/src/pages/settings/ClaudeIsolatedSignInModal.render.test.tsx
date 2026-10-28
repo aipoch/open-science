@@ -158,21 +158,21 @@ describe('ClaudeIsolatedSignInModal UI state', () => {
   it('shows the Step 1 run-command block for a pure manual sign-in', () => {
     renderModal({ browserSignInPending: false })
 
-    expect(document.body.textContent).toContain('Step 1 · Run')
+    expect(document.body.textContent).toContain('Step 1: Run')
     expect(findButton('Copy')).toBeDefined()
     // The paste field keeps its "Step 2" numbering when Step 1 is present.
-    expect(document.body.textContent).toContain('Step 2 · Paste')
+    expect(document.body.textContent).toContain('Step 2: Paste')
   })
 
   it('hides the run-command step during a browser sign-in (the app runs it) and shows the status banner', () => {
     renderModal({ browserSignInPending: true })
 
     // The app already runs `claude setup-token`, so the "Step 1 · Run this yourself" block is gone.
-    expect(document.body.textContent).not.toContain('Step 1 · Run')
+    expect(document.body.textContent).not.toContain('Step 1: Run')
     expect(findButton('Copy')).toBeUndefined()
     // The paste field survives as a fallback, but without the now-orphaned "Step 2" numbering.
     expect(findInput('Claude setup token')).toBeDefined()
-    expect(document.body.textContent).not.toContain('Step 2 · Paste')
+    expect(document.body.textContent).not.toContain('Step 2: Paste')
     // The status banner explains the browser flow is in progress.
     expect(document.body.querySelector('[role="status"]')?.textContent).toContain(
       'Opening your browser'

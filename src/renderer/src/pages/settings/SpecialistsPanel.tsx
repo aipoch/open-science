@@ -681,14 +681,12 @@ const InstalledSpecialistsPanel = ({
                       <strong className="block">{skill.id}</strong>
                       <span className="text-xs text-muted-foreground">
                         {skill.kind === 'builtin'
-                          ? t(
-                              'Featured Skill · referenced by name and not copied into the package.'
-                            )
+                          ? t('Featured Skill: referenced by name and not copied into the package.')
                           : skill.kind === 'owned'
-                            ? t('Owned Skill · v{{version}} · bundled by default.', {
+                            ? t('Owned Skill v{{version}}, bundled by default.', {
                                 version: skill.version
                               })
-                            : t('Installed Skill · v{{version}} · include it to bundle a copy.', {
+                            : t('Installed Skill v{{version}}, include it to bundle a copy.', {
                                 version: skill.version
                               })}
                       </span>
@@ -885,7 +883,7 @@ const InstalledSpecialistsPanel = ({
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-              {packagePreview ? t('Import ZIP · Preview') : t('Import ZIP')}
+              {packagePreview ? t('Import ZIP: Preview') : t('Import ZIP')}
             </p>
             <h2 className="mt-1 text-xl font-semibold">
               {packagePreview
@@ -935,7 +933,7 @@ const InstalledSpecialistsPanel = ({
               {t('The package will be safely parsed and previewed before it is saved.')}
             </p>
             <p className="mt-4 text-xs text-muted-foreground">
-              {t('Limits: 50 MB compressed · 200 MB uncompressed · 2,000 files · 25 MB per file')}
+              {t('Limits: 50 MB compressed, 200 MB uncompressed, 2,000 files, 25 MB per file')}
             </p>
             <p className="mx-auto mt-2 max-w-xl text-xs text-muted-foreground">
               {t(
@@ -1023,7 +1021,7 @@ const InstalledSpecialistsPanel = ({
                   {summary.skills.map((skill) => (
                     <details key={skill.id} className="rounded-lg border border-border px-3 py-2">
                       <summary className="cursor-pointer text-xs font-medium">
-                        {skill.id} · {skill.version} ·{' '}
+                        {skill.id} / {skill.version}{' '}
                         {skill.disposition
                           .split('-')
                           .map((part, index) =>
@@ -1179,7 +1177,7 @@ const InstalledSpecialistsPanel = ({
                                   {diagnostic.path || diagnostic.relatedId ? (
                                     <span className="mt-0.5 block font-mono text-[10px] opacity-60">
                                       {diagnostic.path}
-                                      {diagnostic.path && diagnostic.relatedId ? ' · ' : ''}
+                                      {diagnostic.path && diagnostic.relatedId ? ' / ' : ''}
                                       {diagnostic.relatedId
                                         ? t('ID: {{id}}', { id: diagnostic.relatedId })
                                         : ''}
@@ -1345,7 +1343,7 @@ const InstalledSpecialistsPanel = ({
                             {packagePreview.diagnostics.some(
                               (item) => item.code === 'specialist.overwrite-downgrade'
                             )
-                              ? ` · ${t('downgrade')}`
+                              ? ` / ${t('downgrade')}`
                               : ''}
                           </dd>
                         </div>
@@ -1447,7 +1445,7 @@ const InstalledSpecialistsPanel = ({
                 {specialist.displayName ?? specialist.name}
               </h2>
               <p className="text-xs text-muted-foreground">
-                {t('Built-in · Version {{version}}', { version: specialist.version })}
+                {t('Built-in: Version {{version}}', { version: specialist.version })}
               </p>
             </div>
           </div>
@@ -2168,7 +2166,7 @@ const InstalledSpecialistsPanel = ({
                           })}
                           className="min-w-0 cursor-pointer truncate rounded-md text-left text-[11px] text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
-                          {t('Built-in · Version {{version}}', { version: item.version })}
+                          {t('Built-in: Version {{version}}', { version: item.version })}
                         </button>
                         <ResourceTagBadges
                           reference={{

@@ -649,7 +649,7 @@ export function CredentialsPanel({
                             : credential.kind === 'token'
                               ? t('Access token')
                               : t('OAuth')}
-                          {' · '}
+                          {' / '}
                           {encryptionAvailable
                             ? credential.kind === 'oauth' && !credential.needsClientSecret
                               ? t('Sign-in required')
@@ -657,15 +657,15 @@ export function CredentialsPanel({
                             : t('Temporarily unavailable')}
                         </>
                       ) : credential.kind === 'api_key' ? (
-                        t('API key · Stored')
+                        t('API key: Stored')
                       ) : credential.kind === 'token' ? (
-                        t('Access token · Stored')
+                        t('Access token: Stored')
                       ) : credential.status === 'connected' ? (
-                        t('OAuth · Connected')
+                        t('OAuth: Connected')
                       ) : (
-                        t('OAuth · Sign-in required')
+                        t('OAuth: Sign-in required')
                       )}
-                      {' · '}
+                      {' / '}
                       {t('{{count}} Connectors', {
                         count: credential.consumerCount,
                         defaultValue_one: '{{count}} Connector'
