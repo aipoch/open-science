@@ -100,6 +100,20 @@ function graphOnlyRecoveryFixture(
 }
 
 describe('Session Plan feedback recovery', () => {
+  it('keeps imported recovery historical without discarding its durable state', () => {
+    const session = hydrateSession(fixture())
+    session.packageOrigin = {
+      importId: 'import-operation',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 600,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    const original = structuredClone(session)
+    expect(resolveSessionRecoveryPresentation(session)).toBeUndefined()
+    expect(session).toEqual(original)
+  })
+
   it('does not attribute feedback recovery to the original prompt', () => {
     expect(resolveTurnOutcome(fixture(), 'original')).toBeUndefined()
     expect(resolveTurnOutcome(fixture(), 'feedback')?.kind).toBe('cancelled')

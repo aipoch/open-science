@@ -9952,6 +9952,79 @@ describe('ConversationPanel error box + report affordance', () => {
   })
 })
 
+it.each(['legacy', 'turn'] as const)(
+  'keeps an imported %s failure out of the live error area',
+  (surface) => {
+    const error =
+      'Internal error: stream disconnected before completion: Transport error: network error: error decoding response body'
+    const activeSession: ChatSession = {
+      id: 'imported-session',
+      projectId: 'project-a',
+      title: 'Imported research',
+      cwd: '',
+      status: surface === 'legacy' ? 'error' : 'idle',
+      error,
+      messages:
+        surface === 'turn'
+          ? [
+              {
+                id: 'imported-prompt',
+                role: 'user',
+                content: 'Research request',
+                status: 'complete',
+                eventIds: [],
+                createdAt: 1,
+                updatedAt: 1,
+                turnOutcome: { kind: 'failed', settledAt: 2, error }
+              }
+            ]
+          : [],
+      createdAt: 1,
+      updatedAt: 2,
+      packageOrigin: {
+        importId: 'import-operation',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 3,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    }
+    const original = structuredClone(activeSession)
+    renderPanel({ view: { activeSession } })
+    const liveAlerts = (): Element[] =>
+      [...container.querySelectorAll('[role="alert"], .border-red-200')].filter(
+        (alert) => !alert.closest('[data-slot="historical-turn-outcome"]')
+      )
+    expect(liveAlerts()).toEqual([])
+    const history = container.querySelector<HTMLDetailsElement>(
+      '[data-slot="historical-turn-outcome"]'
+    )
+    if (surface === 'turn') {
+      expect(history?.open).toBe(false)
+      expect(history?.textContent).toContain(error)
+      act(() => history?.querySelector('summary')?.click())
+      expect(history?.open).toBe(true)
+    } else {
+      expect(history).toBeNull()
+      expect(container.textContent).not.toContain(error)
+    }
+    expect(container.textContent).toContain('Fork to continue')
+    expect(activeSession).toEqual(original)
+
+    renderPanel({ view: { activeSession, actionError: 'Could not fork session' } })
+    expect(
+      liveAlerts()
+        .map((alert) => alert.textContent)
+        .join(' ')
+    ).toContain('Could not fork session')
+    expect(
+      liveAlerts()
+        .map((alert) => alert.textContent)
+        .join(' ')
+    ).not.toContain(error)
+  }
+)
+
 it('offers Fork to continue while leaving the imported conversation read-only', async () => {
   forkSessionMock.mockClear()
   const activeSession: ChatSession = {

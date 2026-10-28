@@ -61,7 +61,8 @@ const eligiblePrompt = (message: ChatMessage): boolean =>
 const resolveCurrentTurnOutcomeItem = (
   session: ChatSession | undefined
 ): CurrentTurnOutcomeItem | undefined => {
-  if (!session) return undefined
+  // Imported turns are history, including the latest one; they have no live recovery target.
+  if (!session || session.packageOrigin) return undefined
   const latestPrompt = latestOutcomePrompt(session)
   const preparation = session.promptPreparation
   if (preparation && latestPrompt?.id === preparation.promptMessageId) {

@@ -962,6 +962,65 @@ describe('fork turn boundary', () => {
   })
 })
 
+describe('imported turn outcomes', () => {
+  const packageOrigin = {
+    importId: 'import-operation',
+    sourceProjectId: 'source-project',
+    sourceSessionId: 'source-session',
+    importedAt: 600,
+    manifestChecksum: 'a'.repeat(64)
+  }
+
+  it.each(['legacy', 'turn'] as const)(
+    'keeps an imported %s failure as history without changing its data',
+    (surface) => {
+      const error = 'Internal error: stream disconnected before completion'
+      const input = session({
+        packageOrigin,
+        status: surface === 'legacy' ? 'error' : 'idle',
+        error,
+        messages: [
+          message({
+            turnOutcome: surface === 'turn' ? { kind: 'failed', settledAt: 500, error } : undefined
+          }),
+          message({ id: 'answer', role: 'agent', status: 'error', sortIndex: 1 })
+        ]
+      })
+      const original = structuredClone(input)
+      expect(resolveCurrentTurnOutcomeItem(input)).toBeUndefined()
+      expect(createWorkspaceConversationTimeline(input)).toContainEqual(
+        expect.objectContaining({
+          type: 'turn-outcome',
+          promptMessageId: 'prompt-1',
+          outcome: expect.objectContaining({ kind: 'failed', error })
+        })
+      )
+      expect(input).toEqual(original)
+    }
+  )
+
+  it.each(['cancelled', 'interrupted'] as const)(
+    'does not offer live recovery for an imported %s turn',
+    (kind) => {
+      const input = session({
+        packageOrigin,
+        messages: [
+          message({
+            turnOutcome:
+              kind === 'cancelled'
+                ? { kind, settledAt: 500, recovery: 'resume' }
+                : { kind, settledAt: 500, recovery: 'resume', cause: 'connection-lost' }
+          })
+        ]
+      })
+      expect(resolveCurrentTurnOutcomeItem(input)).toBeUndefined()
+      expect(
+        createWorkspaceConversationTimeline(input).some(({ type }) => type === 'turn-outcome')
+      ).toBe(false)
+    }
+  )
+})
+
 describe('fork inherited turn outcomes', () => {
   const failed = { kind: 'failed', settledAt: 150, error: 'Provider failed' } as const
   const interrupted = {

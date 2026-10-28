@@ -1043,7 +1043,8 @@ const ConversationPanel = ({
   // Anchorless legacy diagnostics remain readable. A hidden or historical turn is still an anchor,
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
-  const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const showLegacyRunError =
+    !isImported && legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
   const contextResetNotice = useWorkspaceOperationErrors((state) =>
     activeSession ? state.contextResets?.[activeSession.id] : false
   )
