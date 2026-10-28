@@ -5203,7 +5203,10 @@
       ],
       "pureExternalImports": {
         "src/renderer/src/lib/utils.ts": ["clsx", "tailwind-merge"]
-      }
+      },
+      "resourcePaths": ["src/renderer/src/components/ui/split-button.css"],
+      "resourceImports": ["src/renderer/src/components/ui/split-button.css"],
+      "resourceTests": ["src/renderer/src/components/ui/split-button.test.tsx"]
     },
     "renderer_utilities": {
       "sources": [
