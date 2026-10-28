@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RuntimeStopError } from './runtime-stop-confirmation'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
@@ -21,7 +23,7 @@ vi.mock('./update/installation-reboot-recovery', () => ({
 vi.mock('./update/installation-protection', () => ({
   inspectInstallationUpdate: () => state.record,
   inspectInstallationAvailability: state.availability,
-  installationRootForEntry: () => '/tmp',
+  installationRootForEntry: () => tmpdir(),
   installationRecoveryStatus: (record: InstallationUpdateRecord) => ({
     phase: record.phase,
     runtime: record.stoppedClean ? 'stopped-clean' : 'running',
@@ -41,9 +43,9 @@ vi.mock('./runtime-stop-confirmation', async (original) => ({
 }))
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 const config = {
-  configRoot: '/tmp/config',
-  dataRoot: '/tmp/data',
-  profilePath: '/tmp/profile',
+  configRoot: join(tmpdir(), 'config'),
+  dataRoot: join(tmpdir(), 'data'),
+  profilePath: join(tmpdir(), 'profile'),
   host: '127.0.0.1' as const,
   port: 44100,
   credentialStore: 'os' as const
@@ -83,7 +85,7 @@ function setup(
     launch,
     control: 'granted',
     generation: 'gen',
-    entryPath: '/tmp/entry',
+    entryPath: join(tmpdir(), 'entry'),
     startupOptions: config
   }))
   const reconnect = vi.fn().mockResolvedValue(undefined)
@@ -94,7 +96,7 @@ function setup(
       launch,
       control: 'granted',
       generation: 'gen',
-      entryPath: '/tmp/entry',
+      entryPath: join(tmpdir(), 'entry'),
       startupOptions: config
     }),
     processId: () => 123,
@@ -108,7 +110,7 @@ function setup(
   const verifyArtifact = vi.fn().mockResolvedValue({ version: '2', files: {} })
   const onHandoff = vi.fn()
   const hooks = createDesktopUpdateIntegration({
-    location: { installationRoot: '/tmp' },
+    location: { installationRoot: tmpdir() },
     client: () => client,
     currentVersion: '1',
     allowedProcessIds: () => [],
@@ -160,7 +162,7 @@ describe('Desktop installation orchestration', () => {
     state.reboot.mockResolvedValue({ intent: 'cancel', startupOptions: config })
     const { hooks, stop, restart } = setup()
     expect((await hooks.recoverInstall!()).outcome).toBe('recovered')
-    expect(state.reboot).toHaveBeenCalledWith({ installationRoot: '/tmp' }, 'op', {
+    expect(state.reboot).toHaveBeenCalledWith({ installationRoot: tmpdir() }, 'op', {
       version: '1',
       allowedProcessIds: expect.any(Function)
     })
@@ -211,7 +213,7 @@ describe('Desktop installation orchestration', () => {
     await hooks.prepareInstall!(status, {})
     await hooks.installGate!({})
     const result = await hooks.cancelInstall!()
-    expect(state.finish).toHaveBeenCalledWith({ installationRoot: '/tmp' }, 'op', 'cancel')
+    expect(state.finish).toHaveBeenCalledWith({ installationRoot: tmpdir() }, 'op', 'cancel')
     expect(restart).toHaveBeenCalledWith(config)
     expect(invoke).not.toHaveBeenCalledWith('desktop:update-abort')
     expect(result.outcome).toBe('cancelled')
