@@ -340,6 +340,47 @@ roles remain explicit in the tables above.
 - Loading commands expose `aria-busy` and preserve their existing disabled rules. Reduced motion disables the content animation and nested spinner rotation. Dense navigation, selection, send/stop and cancellation controls retain immediate feedback.
 - The Home update action reveals its label on hover and keyboard focus over 200ms. Touch, download progress and failures keep the label visible. Clicking always opens the existing update dialog once; revealing a label adds no disclosure state. The Session update action retains its persistent label.
 
+### SplitButton
+
+Use `@/components/ui/split-button` for a primary action with a separate dropdown arrow.
+Compose `SplitButtonGroup`, `SplitButtonPrimary`, `SplitButtonTrigger` and `SplitButtonContent`
+inside `SplitButton`. Labels arrive translated from the caller.
+
+```tsx
+<SplitButton disabled={disabled} busy={busy} hideMenu={!hasAlternatives}>
+  <SplitButtonGroup>
+    <SplitButtonPrimary className="border-0" onClick={onPrimary}>
+      {primaryLabel}
+    </SplitButtonPrimary>
+    <SplitButtonTrigger className="border-0" size="icon" aria-label={optionsLabel}>
+      <ChevronDown aria-hidden="true" />
+    </SplitButtonTrigger>
+  </SplitButtonGroup>
+  <SplitButtonContent matchWidth align="end">
+    <DropdownMenuItem onSelect={onAlternative}>{alternativeLabel}</DropdownMenuItem>
+  </SplitButtonContent>
+</SplitButton>
+```
+
+- Default `kind="menu"` accepts existing `DropdownMenuItem` and radio items. Use
+  `kind="popover"` for search, session pickers and custom panels; retain their focus and keyboard
+  behavior. Options, selection, hover/pinning and effects belong to the caller.
+- Use `open` / `onOpenChange` for controlled state, or `defaultOpen` for uncontrolled state.
+  Root `disabled` or `busy` disables both buttons; each segment also accepts `disabled`.
+  `hideMenu` removes the arrow and panel when only the primary action is needed.
+- Both segments accept Button props, including `variant`, `size`, `className`, `ref` and
+  `asChild`. Preserve existing colors and icons; custom filled segments use `border-0` to avoid
+  transparent gaps. Keep the shared separator and neutral panel background.
+- Use `matchWidth` for short menus. Give larger panels their own width and `align="start"` or
+  `"end"`; content retains positioning, collision, portal `container` and layer props.
+  The component handles connected corners, final placement and reversible 240/160 ms animation.
+  Let the component manage panel mounting; do not conditionally render or key content by `open`,
+  or override its animation.
+- Examples: [QuestionSkipButton](../src/renderer/src/pages/workspace/QuestionSkipButton.tsx)
+  for actions, [PermissionScopeButton](../src/renderer/src/pages/workspace/PermissionScopeButton.tsx)
+  for radio choices, and [LibraryChatButton](../src/renderer/src/pages/workspace/previews/LibraryChatButton.tsx)
+  for search and hover/pinning. Preserve the Tooltip focus guard described in `AGENTS.md`.
+
 ### External Link
 
 - Ordinary external text links use the shared `ExternalTextLink` component: an underlined `text-primary` label trailed by a lucide `ArrowUpRight` icon. Do not use a bare `<a>` or a Unicode `↗` for those links. Specialized branded controls (the GitHub badge), actionable consent flows (startup issue submission), and Agent Markdown links retain their own owners, accessible names, activation checks and navigation policy; their different visual treatment is intentional. This exception does not cover ordinary help, documentation or resource links.

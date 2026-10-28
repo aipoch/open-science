@@ -226,6 +226,13 @@ should compose `ErrorNotice` instead of rolling their own layout.
   external GitHub link disabled until the user has reviewed the current URL; editing diagnostics
   invalidates prior consent.
 
+## Split buttons
+
+For a primary action with a separate dropdown arrow, reuse
+`src/renderer/src/components/ui/split-button.tsx`. Keep options, permissions and effects in the
+caller. Use `kind="menu"` for actions or radio choices; use `kind="popover"` for search and custom
+panels. See [SplitButton usage](docs/design.md#splitbutton) before adding a new control.
+
 ## Shared context menus
 
 Integrate new renderer context menus through `src/renderer/src/components/action-menu/`; do not
